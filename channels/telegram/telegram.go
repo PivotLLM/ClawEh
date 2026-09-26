@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mymmrac/telego"
+	ta "github.com/mymmrac/telego/telegoapi"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/tenebris-tech/alerter"
@@ -63,33 +64,26 @@ const hRuleSubstitute = "──────────────────�
 // long-poll goroutine to exit. var (not const) so tests can shorten it.
 var pollExitTimeout = 10 * time.Second
 
-// longPollRetryTimeout is how long telego sleeps before retrying getUpdates
-// after an error. telego's retry sleep is NOT context-aware (long_polling.go),
-// so the default 8s can keep the old poller alive past Stop()'s wait on a config
-// reload — overlapping the new poller and triggering Telegram 409 "terminated by
-// other getUpdates" errors. A short value drains the old poller well within
-// pollExitTimeout so the new one starts cleanly, while still retrying genuine
-// transient errors.
-var longPollRetryTimeout = 2 * time.Second
+// pollTimeoutSeconds is the getUpdates long-poll timeout Telegram holds each
+// request open for.
+const pollTimeoutSeconds = 30
+
+// pollBuffer is the capacity of the updates channel between the poll loop and
+// the bot handler.
+const pollBuffer = 100
 
 // isTransientPollError reports whether a telego log message describes a
-// recoverable, auto-retried long-poll failure — a transient Telegram 5xx or a
-// network blip during getUpdates — rather than a genuine fault. telego emits
-// these via Errorf at ERROR; they are demoted to WARN because the poll loop
-// retries automatically and no updates are lost (the offset is not advanced on
-// a failed call). Genuine faults — 401 unauthorized, 409 conflict, 4xx bad
-// request — are left at ERROR. Wired into the telego logger via
-// WithErrorDowngrade.
+// recoverable long-poll failure — a transient Telegram 5xx or a network blip
+// during getUpdates — rather than a genuine fault. telego logs these itself via
+// Errorf at ERROR; they are demoted to WARN because pollUpdates retries them
+// and no updates are lost (the offset is not advanced on a failed call).
+// Wired into the telego logger via WithErrorDowngrade.
 func isTransientPollError(msg string) bool {
 	m := strings.ToLower(msg)
 	// Restrict to the long-poll update path so unrelated telego errors are
 	// never downgraded.
-	if !strings.Contains(m, "getupdates") && !strings.Contains(m, "getting updates") {
+	if !strings.Contains(m, "getupdates") {
 		return false
-	}
-	// telego's own "Retrying getting updates in Ns..." recovery notice.
-	if strings.Contains(m, "retrying getting updates") {
-		return true
 	}
 	// A transient HTTP 5xx from Telegram's API (telego formats these as
 	// "internal server error: <code>"), or a transport-level blip that means the
@@ -186,12 +180,9 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		chatIDs:        make(map[string]int64),
 	}
 
-	// The channel is built before the bot so telego's logger can alert through
-	// it: telego reports long-poll failures only via Errorf.
 	opts = append(opts, telego.WithLogger(
 		logger.NewLogger("telego").WithContentSensitive().
-			WithErrorDowngrade(isTransientPollError).
-			WithErrorHook(ch.alertPollFailure),
+			WithErrorDowngrade(isTransientPollError),
 	))
 
 	bot, err := telego.NewBot(botCfg.Token, opts...)
@@ -206,10 +197,10 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 // pollAlertMsgLimit bounds the telego message carried in a polling alert.
 const pollAlertMsgLimit = 200
 
-// alertPollFailure raises a high alert for a telego error that is not a
-// transient long-poll blip — a revoked token (401) or a second poller on the
-// same token (409). telego repeats the error every retry; the alerter
-// de-duplicates on the channel name (EventID, filled in by Alert).
+// alertPollFailure raises an alert for a long-poll failure that no retry can
+// fix: Telegram rejecting the bot token (401). The poll loop keeps retrying at
+// its slowest rate in case the token is restored; the alerter de-duplicates
+// the repeats on the channel name (EventID, filled in by Alert).
 func (c *TelegramChannel) alertPollFailure(msg string) {
 	if r := []rune(msg); len(r) > pollAlertMsgLimit {
 		msg = string(r[:pollAlertMsgLimit]) + "..."
@@ -233,16 +224,13 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		c.coalescer = nil
 	}
 
-	rawUpdates, err := c.bot.UpdatesViaLongPolling(pollCtx, &telego.GetUpdatesParams{
-		Timeout: 30,
-	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
-	if err != nil {
-		c.cancel()
-		return fmt.Errorf("failed to start long polling: %w", err)
-	}
-
-	updates, pollDone := watchLongPoll(pollCtx, rawUpdates)
+	updates := make(chan telego.Update, pollBuffer)
+	pollDone := make(chan struct{})
 	c.pollDone = pollDone
+	go func() {
+		defer close(pollDone)
+		c.pollUpdates(pollCtx, updates)
+	}()
 
 	bh, err := th.NewBotHandler(c.bot, updates)
 	if err != nil {
@@ -299,7 +287,7 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 			}
 		}
 
-		// Block until telego's long-poll goroutine has actually exited.
+		// Block until the long-poll goroutine has actually exited.
 		// Without this, the next Start() (e.g. during config reload) races
 		// into a 409 "terminated by other getUpdates request" against an
 		// in-flight HTTP poll on Telegram's side.
@@ -317,39 +305,81 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-// watchLongPoll relays telego's long-poll updates channel through a goroutine
-// we own. The returned done channel is closed only after the upstream channel
-// is closed — which telego does from a defer inside doLongPolling — giving
-// Stop() a reliable signal that the long-poll goroutine has exited. Once ctx
-// is cancelled the relay drains the upstream so doLongPolling isn't blocked
-// on send.
-func watchLongPoll(ctx context.Context, src <-chan telego.Update) (<-chan telego.Update, chan struct{}) {
-	dst := make(chan telego.Update, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer close(dst)
-		for {
+// pollUpdates is the long-poll loop; it closes updates when it returns. It
+// replaces telego's UpdatesViaLongPolling, which retries after a fixed delay,
+// ignores Telegram's retry_after, and sleeps without watching ctx. Every
+// failure is retried: a 429 waits the retry_after Telegram asked for plus
+// channels.RetryAfterPadding, anything else backs off from
+// channels.ConnRetryMin to channels.ConnRetryMax. Waits end at once when ctx is
+// cancelled, so Stop() is not held up by a sleeping retry.
+func (c *TelegramChannel) pollUpdates(ctx context.Context, updates chan<- telego.Update) {
+	defer close(updates)
+	params := &telego.GetUpdatesParams{Timeout: pollTimeoutSeconds}
+	var backoff time.Duration
+	for ctx.Err() == nil {
+		batch, err := c.bot.GetUpdates(ctx, params)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			var wait time.Duration
+			wait, backoff = pollRetryWait(err, backoff)
+			c.pollFailed(err, wait)
 			select {
 			case <-ctx.Done():
-				for range src {
-				}
 				return
-			case u, ok := <-src:
-				if !ok {
-					return
-				}
-				select {
-				case dst <- u:
-				case <-ctx.Done():
-					for range src {
-					}
-					return
-				}
+			case <-time.After(wait):
+			}
+			continue
+		}
+		backoff = 0
+		c.ReportConnected()
+		for _, u := range batch {
+			if u.UpdateID < params.Offset {
+				continue
+			}
+			params.Offset = u.UpdateID + 1
+			select {
+			case <-ctx.Done():
+				return
+			case updates <- u.WithContext(ctx):
 			}
 		}
-	}()
-	return dst, done
+	}
+}
+
+// pollRetryWait returns how long to wait after a failed getUpdates, and the
+// backoff to carry into the next failure. A server-given retry_after is
+// honoured, padded, and leaves the backoff where it was.
+func pollRetryWait(err error, backoff time.Duration) (wait, next time.Duration) {
+	var apiErr *ta.Error
+	if errors.As(err, &apiErr) && apiErr.Parameters != nil && apiErr.Parameters.RetryAfter > 0 {
+		return time.Duration(apiErr.Parameters.RetryAfter)*time.Second + channels.RetryAfterPadding, backoff
+	}
+	next = channels.NextConnRetry(backoff)
+	return next, next
+}
+
+// pollFailed records a failed getUpdates. A rejected token (401) cannot be
+// fixed by retrying, so it alerts at once; every other failure feeds the
+// channel's outage tracker, which alerts only if the outage outlasts
+// channels.ConnDownAlertAfter.
+func (c *TelegramChannel) pollFailed(err error, wait time.Duration) {
+	var apiErr *ta.Error
+	if errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusUnauthorized {
+		logger.ErrorCF("telegram", "Telegram rejected the bot token", map[string]any{
+			"channel": c.Name(),
+			"error":   err.Error(),
+		})
+		c.alertPollFailure(err.Error())
+		return
+	}
+	logger.WarnCF("telegram", "Telegram poll failed; retrying", map[string]any{
+		"channel": c.Name(),
+		"error":   err.Error(),
+		"retry":   wait.String(),
+	})
+	c.ReportConnFailure(err)
 }
 
 func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
