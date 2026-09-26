@@ -57,7 +57,10 @@ type AuthStore struct {
 	// fileSeen is the (mtime, size) of the credentials file at the last Reload,
 	// which is what Watch compares against; zero when the file was absent.
 	fileSeen fileStamp
-	sessions map[[sha256.Size]byte]*authSession
+	// generation counts the credentials file changes Reload has seen (its
+	// stamp or its account); the login limiter clears its locks when it moves.
+	generation uint64
+	sessions   map[[sha256.Size]byte]*authSession
 }
 
 type fileStamp struct {
@@ -120,6 +123,9 @@ func (s *AuthStore) Reload() {
 
 	s.mu.Lock()
 	changed := !sameCredentials(s.creds, creds)
+	if changed || stamp != s.fileSeen {
+		s.generation++
+	}
 	s.creds = creds
 	s.fileSeen = stamp
 	if changed {
@@ -165,6 +171,19 @@ func (s *AuthStore) Watch(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}
+}
+
+// Refresh re-reads the credentials file if its mtime or size changed since
+// the last Reload, and returns the credentials generation. The login handler
+// calls it on every attempt, so an account written by `claw admin` takes
+// effect at once rather than at the next Watch poll.
+func (s *AuthStore) Refresh() uint64 {
+	if s.fileChanged() {
+		s.Reload()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generation
 }
 
 func (s *AuthStore) fileChanged() bool {

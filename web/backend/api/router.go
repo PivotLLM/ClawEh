@@ -59,7 +59,7 @@ type Handler struct {
 	// gateway sets it, which the auth endpoints report as "no admin account".
 	// Guarded by reloadMu.
 	auth *middleware.AuthStore
-	// loginLimiter applies the failed-login backoff. Owned by the handler for
+	// loginLimiter applies the failed-login lockout. Owned by the handler for
 	// its lifetime; safe for concurrent use.
 	loginLimiter *middleware.LoginLimiter
 	// bootListeners and tlsManager are the running gateway's listener

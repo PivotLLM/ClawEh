@@ -81,13 +81,16 @@ the button next to the version in the sidebar.
 
 ## Failed logins
 
-After 5 failures from one address within 10 minutes that address is locked for
-1 minute, doubling on each further lockout up to 1 hour; 100 failures in 10
-minutes from anywhere lock all logins for 60 seconds. Locked attempts get 429
-with `Retry-After`. The first lockout per address raises the "WebUI login
-locked out" alert. Logins, failures, lockouts and logouts are logged with the
-username and client address (never the password) and recorded in the audit log
-(see `docs/audit.md`).
+10 failures from one client address within 10 minutes lock that address for 5
+minutes; 10 failures against one username (as typed, existing or not) within
+10 minutes lock that username for 10 minutes. Every attempt during a lock is
+refused with 429 and `Retry-After` and restarts the lock at its full length.
+`claw admin` (any rewrite of `credentials.json`) or a gateway restart clears
+every lock. Each lock start raises an alert. The full operator description is
+the README's [Authentication failures](../README.md#authentication-failures)
+section. Logins, failures, lockouts, refused attempts and logouts are logged
+with the username and client address (never the password) and recorded in the
+audit log (see `docs/audit.md`).
 
 ## What does not need a login
 

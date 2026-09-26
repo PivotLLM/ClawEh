@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -68,20 +69,24 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 //
 // Every failure — wrong username, wrong password — is the same 401 with the
 // same message, so the response does not confirm which half was right. Failed
-// attempts count toward the per-address and global backoff; a locked address
-// gets 429 with Retry-After before the password is even checked.
+// attempts count toward the per-address and per-username lockout
+// (middleware.LoginLimiter); an attempt while either is locked gets 429 with
+// Retry-After before the password is checked, and restarts the lock. A change
+// to the credentials file (`claw admin`) clears every lock first.
 func (h *Handler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	store := h.authStore()
-	if store == nil || !store.Configured() {
+	if store == nil {
+		middleware.WriteUnauthorized(w, r, false)
+		return
+	}
+	if h.loginLimiter.SyncCredentials(store.Refresh()) {
+		logger.InfoCF("auth", "Credentials file changed; login locks cleared", nil)
+	}
+	if !store.Configured() {
 		middleware.WriteUnauthorized(w, r, false)
 		return
 	}
 	ip := clientIP(r)
-
-	if wait := h.loginLimiter.Check(ip); wait > 0 {
-		writeLoginLocked(w, wait)
-		return
-	}
 
 	var in struct {
 		Username string `json:"username"`
@@ -92,32 +97,55 @@ func (h *Handler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if wait := h.loginLimiter.Attempt(ip, in.Username); wait > 0 {
+		logger.WarnCF("auth", "Login refused: locked", map[string]any{"username": in.Username, "ip": ip})
+		audit.Auth("locked", in.Username, ip, audit.OutcomeError)
+		writeLoginLocked(w, wait)
+		return
+	}
+
 	id, ok := store.Login(in.Username, in.Password)
 	if !ok {
-		locked, first := h.loginLimiter.Failure(ip)
+		started := h.loginLimiter.Failure(ip, in.Username)
 		logger.WarnCF("auth", "Login failed", map[string]any{"username": in.Username, "ip": ip})
 		audit.Auth("login", in.Username, ip, audit.OutcomeError)
-		if locked > 0 {
-			logger.WarnCF("auth", "Login lockout", map[string]any{"username": in.Username, "ip": ip, "lock": locked.String()})
-			audit.Auth("lockout", in.Username, ip, audit.OutcomeError)
-			if first {
-				h.alerterRef().Send(alerter.Alert{
-					Title:       "WebUI login locked out",
-					Description: ip + " was locked out after repeated failed logins; the lock doubles on each repeat, up to an hour",
-					Details:     "last username tried: " + in.Username,
-					EventID:     "auth-lockout",
-				})
-			}
+		for _, lock := range started {
+			h.alertLoginLockout(lock, ip, in.Username)
 		}
 		writeJSONError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 
-	h.loginLimiter.Success(ip)
+	h.loginLimiter.Success(ip, in.Username)
 	middleware.SetSessionCookie(w, r, id)
 	logger.InfoCF("auth", "Login", map[string]any{"username": in.Username, "ip": ip})
 	audit.Auth("login", in.Username, ip, audit.OutcomeOK)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// alertLoginLockout logs, audits and alerts a lockout that has just started.
+func (h *Handler) alertLoginLockout(lock middleware.LockStart, ip, username string) {
+	kind := "address"
+	a := alerter.Alert{
+		Priority:    alerter.Normal,
+		Title:       "WebUI login address locked out",
+		Description: fmt.Sprintf("%s was locked out after %d failed logins in ten minutes; every further attempt from it restarts the %s lock", ip, middleware.LoginIPFailures, lock.For),
+		Details:     "last username tried: " + username,
+		EventID:     "auth-lockout-ip",
+	}
+	if lock.Account {
+		kind = "account"
+		a = alerter.Alert{
+			Priority:    alerter.Normal,
+			Title:       "WebUI login account locked out",
+			Description: fmt.Sprintf("username %q was locked out after %d failed logins in ten minutes; every further attempt for it restarts the %s lock", username, middleware.LoginUserFailures, lock.For),
+			Details:     "last client address: " + ip,
+			EventID:     "auth-lockout-account",
+		}
+	}
+	logger.WarnCF("auth", "Login lockout", map[string]any{"kind": kind, "username": username, "ip": ip, "lock": lock.For.String()})
+	audit.Auth("lockout", username, ip, audit.OutcomeError)
+	h.alerterRef().Send(a)
 }
 
 // handleAuthLogout ends the caller's session and clears the cookie.

@@ -496,6 +496,21 @@ Users should also carefully consider the financial implications of connecting ap
 
 To reduce the risk of financial surprises, we strongly recommend using prepaid APIs and/or subscription-based CLIs where possible. You should also ensure that appropriate cost monitoring, usage limits, budget alerts, rate limits, and other containment controls are in place. Choosing to run Claw, expose it through external services, and connect it to paid models or sensitive tools is your decision, and you bear full responsibility for the outcome.
 
+## Authentication failures
+
+The WebUI login counts failed attempts two ways at once, and either one can lock logins out:
+
+- **Per client address.** 10 failed logins from one IP address within ten minutes lock that address for 5 minutes.
+- **Per account.** 10 failed logins against one username within ten minutes lock that username for 10 minutes, from every address. The username is counted exactly as typed, whether or not such an account exists, so the answer never reveals which username is the real one.
+
+While a lock is in force, **every** attempt it covers is refused, including one with the right password, and each refused attempt restarts the lock at its full length (5 minutes for an address, 10 for an account). There is no cap and no escalation: a lock ends only after a full lockout period with no attempts at all. Failures older than ten minutes stop counting, and a successful login clears the failure counts of its address and username.
+
+A locked attempt is answered `429 Too Many Requests` with a `Retry-After` header (seconds) and the body `{"error":"too many failed logins","retry_after":<seconds>}`. The body is the same whether the address or the account is locked and whether the account exists; the WebUI shows "Too many failed sign-ins. Try again in N seconds." Trying again before then restarts the lock. An ordinary wrong username or password is `401` with `{"error":"invalid username or password"}`.
+
+To end every lock at once, run `claw admin` on the server (setting a new password, or the same one): the gateway notices the credentials file changed on the next login attempt, clears all address and account locks, and accepts the new account straight away. Restarting the gateway also clears all locks, since they are kept only in memory.
+
+Each lock that starts raises a Normal-priority operator alert: "WebUI login address locked out" (event id `auth-lockout-ip`, naming the address) or "WebUI login account locked out" (`auth-lockout-account`, naming the username). Attempts that only extend an existing lock do not alert again; a new lock after an earlier one has ended does. Failed logins, lock starts and refused attempts are logged with the username and client address (never the password) and recorded in the audit log. See [ALERTS.md](ALERTS.md) and [docs/audit.md](docs/audit.md).
+
 ## Running as a service (Linux)
 
 `claw.service` in the project root is a systemd unit file for running ClawEh

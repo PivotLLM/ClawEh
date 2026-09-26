@@ -24,10 +24,17 @@ observe does not need an entry.
   working. A running gateway notices the file within a minute and signs
   everyone out when it changes. Sessions are cookies (`claw_session`, or
   `__Host-claw_session` over HTTPS), idle 12 h, absolute 7 days, kept in memory
-  (a restart signs everyone out). Five failed logins from one address lock it
-  for 1 minute, doubling to 1 hour; 100 failures in 10 minutes from anywhere
-  lock all logins for 60 seconds; the first lockout per address raises the
-  "WebUI login locked out" alert. Exempt from login: `/health`, `/ready`,
+  (a restart signs everyone out). 10 failed logins from one client address
+  in 10 minutes lock that address for 5 minutes, and 10 failed logins against
+  one username (as typed, existing or not) in 10 minutes lock that username
+  for 10 minutes; every attempt during a lock is refused with 429 and
+  `Retry-After` and restarts the lock at its full length. There is no global
+  lock across all addresses, so no one can lock every login at once. Running
+  `claw admin` (or restarting the gateway) clears every lock, and the new
+  account works at the next attempt. Each lock start raises "WebUI login
+  address locked out" (`auth-lockout-ip`) or "WebUI login account locked out"
+  (`auth-lockout-account`). See "Authentication failures" in the README.
+  Exempt from login: `/health`, `/ready`,
   `/ping`, the MCPFusion OAuth API under `/api/v1/`, `POST /api/message/{token}`,
   the signed LINE webhook, and the login endpoints themselves. Loopback is
   **not** exempt. A credentials file readable by group or others is ignored

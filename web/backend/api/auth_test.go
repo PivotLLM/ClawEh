@@ -2,11 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
@@ -185,47 +189,165 @@ func TestAuthLogin_BadBody(t *testing.T) {
 	}
 }
 
-func TestAuthLogin_LockoutAfterFiveFailuresAlertsOnce(t *testing.T) {
+// assertLocked checks a locked answer: 429, Retry-After, and the one generic
+// body every lock gives, whatever is locked and whether the account exists.
+func assertLocked(t *testing.T, rec *httptest.ResponseRecorder, retryAfter string) {
+	t.Helper()
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 (%s)", rec.Code, rec.Body.String())
+	}
+	if ra := rec.Header().Get("Retry-After"); ra != retryAfter {
+		t.Fatalf("Retry-After = %q, want %q", ra, retryAfter)
+	}
+	want := `{"error":"too many failed logins","retry_after":` + retryAfter + "}\n"
+	if rec.Body.String() != want {
+		t.Fatalf("locked body = %q, want %q", rec.Body.String(), want)
+	}
+}
+
+func alertIDs(rec *testalerts.Recorder) []string {
+	alerts := rec.Alerts()
+	ids := make([]string, 0, len(alerts))
+	for _, a := range alerts {
+		ids = append(ids, a.EventID)
+	}
+	return ids
+}
+
+func TestAuthLogin_IPLockout(t *testing.T) {
 	env := newAuthEnv(t, true)
 	const ip = "203.0.113.7"
-	for i := range middleware.LoginFailuresPerIP {
-		if rec := env.login(authTestUser, "wrong password number x", ip); rec.Code != http.StatusUnauthorized {
+	// Different usernames so only the address threshold is reached.
+	for i := range middleware.LoginIPFailures - 1 {
+		if rec := env.login(fmt.Sprintf("guess%d", i), "wrong password", ip); rec.Code != http.StatusUnauthorized {
 			t.Fatalf("failure %d: status = %d", i+1, rec.Code)
 		}
 	}
+	if len(env.rec.Alerts()) != 0 {
+		t.Fatal("alert before the threshold")
+	}
+	if rec := env.login("guess-last", "wrong password", ip); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("locking failure: status = %d", rec.Code)
+	}
 	alerts := env.rec.Alerts()
-	if len(alerts) != 1 || alerts[0].EventID != "auth-lockout" || !strings.Contains(alerts[0].Description, ip) {
+	if len(alerts) != 1 || alerts[0].EventID != "auth-lockout-ip" || alerts[0].Priority != alerter.Normal ||
+		!strings.Contains(alerts[0].Description, ip) {
 		t.Fatalf("alerts after lockout = %+v", alerts)
 	}
 
-	// Locked: even the right password is refused with 429 and a Retry-After.
-	rec := env.login(authTestUser, authTestPass, ip)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("locked login = %d", rec.Code)
+	// Locked: even the right password is refused, and every attempt restarts
+	// the five minutes without alerting again.
+	for range 3 {
+		env.now = env.now.Add(middleware.LoginIPLockout - time.Second)
+		assertLocked(t, env.login(authTestUser, authTestPass, ip), "300")
 	}
-	if ra := rec.Header().Get("Retry-After"); ra != "60" {
-		t.Fatalf("Retry-After = %q, want 60", ra)
+	if len(env.rec.Alerts()) != 1 {
+		t.Fatalf("extensions alerted again: %v", alertIDs(env.rec))
 	}
 	// Another address is unaffected.
 	if other := env.login(authTestUser, authTestPass, "127.0.0.1"); other.Code != http.StatusNoContent {
 		t.Fatalf("other address login = %d", other.Code)
 	}
 
-	// After the lock, five more failures lock for twice as long and do not
-	// alert again.
-	env.now = env.now.Add(middleware.LoginLockBase + time.Second)
-	for range middleware.LoginFailuresPerIP {
-		env.login(authTestUser, "still wrong password", ip)
-	}
-	if len(env.rec.Alerts()) != 1 {
-		t.Fatalf("second lockout alerted again: %d alerts", len(env.rec.Alerts()))
-	}
-	rec = env.login(authTestUser, authTestPass, ip)
-	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "120" {
-		t.Fatalf("second lock: %d Retry-After=%s", rec.Code, rec.Header().Get("Retry-After"))
-	}
-	env.now = env.now.Add(2*middleware.LoginLockBase + time.Second)
+	// Five quiet minutes end the lock.
+	env.now = env.now.Add(middleware.LoginIPLockout + time.Second)
 	if rec := env.login(authTestUser, authTestPass, ip); rec.Code != http.StatusNoContent {
 		t.Fatalf("login after lock expiry = %d", rec.Code)
+	}
+
+	// A new lock after that one expired alerts again.
+	for i := range middleware.LoginIPFailures {
+		env.login(fmt.Sprintf("again%d", i), "wrong password", ip)
+	}
+	if ids := alertIDs(env.rec); len(ids) != 2 || ids[1] != "auth-lockout-ip" {
+		t.Fatalf("second lock start alerts = %v", ids)
+	}
+}
+
+func TestAuthLogin_AccountLockout(t *testing.T) {
+	for _, user := range []string{authTestUser, "nobody-by-this-name"} {
+		t.Run(user, func(t *testing.T) {
+			env := newAuthEnv(t, true)
+			// Different addresses so only the username threshold is reached.
+			for i := range middleware.LoginUserFailures {
+				if rec := env.login(user, "wrong password", fmt.Sprintf("198.51.100.%d", i)); rec.Code != http.StatusUnauthorized {
+					t.Fatalf("failure %d: status = %d", i+1, rec.Code)
+				}
+			}
+			alerts := env.rec.Alerts()
+			if len(alerts) != 1 || alerts[0].EventID != "auth-lockout-account" || alerts[0].Priority != alerter.Normal {
+				t.Fatalf("alerts after lockout = %+v", alerts)
+			}
+			// Locked from any address, right password or not; the response is
+			// the same whether the account exists or not.
+			for range 3 {
+				env.now = env.now.Add(middleware.LoginUserLockout - time.Second)
+				assertLocked(t, env.login(user, authTestPass, "192.0.2.50"), "600")
+			}
+			if len(env.rec.Alerts()) != 1 {
+				t.Fatalf("extensions alerted again: %v", alertIDs(env.rec))
+			}
+			// Other usernames from the same address are unaffected.
+			if rec := env.login("someone-else", "x", "192.0.2.50"); rec.Code != http.StatusUnauthorized {
+				t.Fatalf("other username = %d, want 401", rec.Code)
+			}
+			env.now = env.now.Add(middleware.LoginUserLockout + time.Second)
+			rec := env.login(user, authTestPass, "192.0.2.50")
+			if user == authTestUser && rec.Code != http.StatusNoContent {
+				t.Fatalf("login after lock expiry = %d", rec.Code)
+			}
+			if user != authTestUser && rec.Code != http.StatusUnauthorized {
+				t.Fatalf("unknown user after lock expiry = %d, want 401", rec.Code)
+			}
+		})
+	}
+}
+
+func TestAuthLogin_SuccessClearsCounters(t *testing.T) {
+	env := newAuthEnv(t, true)
+	const ip = "203.0.113.8"
+	for range middleware.LoginIPFailures - 1 {
+		env.login(authTestUser, "wrong password", ip)
+	}
+	if rec := env.login(authTestUser, authTestPass, ip); rec.Code != http.StatusNoContent {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	for range middleware.LoginIPFailures - 1 {
+		env.login(authTestUser, "wrong password", ip)
+	}
+	if rec := env.login(authTestUser, authTestPass, ip); rec.Code != http.StatusNoContent {
+		t.Fatalf("login after success reset = %d (counters not cleared)", rec.Code)
+	}
+	if len(env.rec.Alerts()) != 0 {
+		t.Fatalf("alerts = %v", alertIDs(env.rec))
+	}
+}
+
+// Running `claw admin` rewrites credentials.json; the next login attempt sees
+// the change and clears every lock, so the new password works immediately.
+func TestAuthLogin_CredentialsChangeClearsAllLocks(t *testing.T) {
+	env := newAuthEnv(t, true)
+	const ip = "203.0.113.9"
+	for range middleware.LoginIPFailures {
+		env.login(authTestUser, "wrong password", ip)
+	}
+	for i := range middleware.LoginUserFailures {
+		env.login("other", "wrong password", fmt.Sprintf("198.51.100.%d", i))
+	}
+	assertLocked(t, env.login(authTestUser, authTestPass, ip), "600")
+	assertLocked(t, env.login("other", "x", "192.0.2.1"), "600")
+
+	const newPass = "the operator's brand new password"
+	if err := admin.Write(env.store.Path(), authTestUser, newPass); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(env.store.Path(), time.Now(), time.Now().Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := env.login(authTestUser, newPass, ip); rec.Code != http.StatusNoContent {
+		t.Fatalf("login with the new password after claw admin = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := env.login("other", "x", "192.0.2.1"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("account lock survived the credentials change: %d", rec.Code)
 	}
 }

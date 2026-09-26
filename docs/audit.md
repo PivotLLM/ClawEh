@@ -10,7 +10,7 @@ only deletion is the daily retention prune (90 days).
 |---|---|---|---|
 | `tool_call` | every tool an agent runs (including `agent_spawn`) | agent id; chat sender id | session, channel, tool, outcome (`ok`/`error`), duration_ms, `turn_id`, details `{"chat_id", "args"}` |
 | `config_write` | every `PUT`/`PATCH /api/config` that saves | WebUI username; client IP | summary = changed top-level keys, details `{"keys":[...]}` |
-| `auth` | WebUI login, logout, lockout | username; client IP | summary = the action, outcome `ok`/`error` |
+| `auth` | WebUI login, logout, lockout, attempt refused while locked (`locked`) | username; client IP | summary = the action, outcome `ok`/`error` |
 
 Tool arguments are stored only as a redacted digest, the same redaction the
 INFO log uses: file contents, edit text and HTTP bodies become byte counts,

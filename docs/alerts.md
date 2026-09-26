@@ -85,7 +85,8 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | USB device monitor stopped | The udevadm monitor stream ended | `devices:usb` |
 | | Device store unavailable | The paired-device database could not be opened for a request | `device-store` |
 | | Device authentication locked out | A client address failed device authentication five times in ten minutes | client IP |
-| | WebUI login locked out | A client address failed five WebUI logins in ten minutes | `auth-lockout` |
+| | WebUI login address locked out | A client address failed ten WebUI logins in ten minutes | `auth-lockout-ip` |
+| | WebUI login account locked out | A username failed ten WebUI logins in ten minutes | `auth-lockout-account` |
 | | Daily model spend over threshold | The day's model cost reached `agents.defaults.daily_spend_alert_usd` | `spend:<day>` |
 | | Database failed integrity check | A SQLite store failed `PRAGMA quick_check` during a backup and was skipped | `backup:<path>` |
 | | TLS certificate reload failed | A changed certificate or key file did not load; the old pair keeps serving | `tls-reload` |

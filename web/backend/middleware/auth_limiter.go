@@ -5,41 +5,106 @@ import (
 	"time"
 )
 
-// Login backoff. Per client address: LoginFailuresPerIP failures inside
-// LoginFailureWindow lock that address for LoginLockBase, doubling on each
-// further lockout up to LoginLockMax. Across all addresses: LoginGlobalFailures
-// failures inside the window lock every login for LoginGlobalLock, so a
-// distributed guess is slowed even when no single address trips its own limit.
+// Login lockout. Failed logins are counted per client address and per
+// submitted username over loginFailureWindow. Reaching the threshold locks
+// that address or username; while it is locked every attempt is refused and
+// restarts the lock at its full length, so a lock ends only after a full
+// lockout period with no attempts at all. There is no escalation and no cap.
 const (
-	LoginFailureWindow  = 10 * time.Minute
-	LoginFailuresPerIP  = 5
-	LoginLockBase       = time.Minute
-	LoginLockMax        = time.Hour
-	LoginGlobalFailures = 100
-	LoginGlobalLock     = 60 * time.Second
+	// LoginIPFailures is how many failed logins from one client address
+	// inside loginFailureWindow lock that address.
+	LoginIPFailures = 10
+	// LoginIPLockout is how long a locked address stays locked after its
+	// last attempt.
+	LoginIPLockout = 5 * time.Minute
+	// LoginUserFailures is how many failed logins against one username (as
+	// submitted, whether or not the account exists) inside
+	// loginFailureWindow lock that username.
+	LoginUserFailures = 10
+	// LoginUserLockout is how long a locked username stays locked after its
+	// last attempt.
+	LoginUserLockout = 10 * time.Minute
 
-	// loginEntryTTL is how long a quiet address is remembered (so its lockout
-	// doubling and "already alerted" state survive a pause between bursts).
-	loginEntryTTL = 24 * time.Hour
+	// loginFailureWindow is how far back failures are counted.
+	loginFailureWindow = 10 * time.Minute
+	// loginPruneInterval bounds how often the tables are swept for quiet
+	// entries, so a flood of distinct usernames does not make every attempt
+	// walk the whole map.
+	loginPruneInterval = time.Minute
 )
 
-type loginEntry struct {
-	failures    []time.Time
-	lockedUntil time.Time
-	lockouts    int
-	alerted     bool
-	lastSeen    time.Time
+// LockStart describes a lockout that a failure has just started.
+type LockStart struct {
+	Account bool   // true for a username lock, false for a client-address lock
+	Key     string // the client address or the username
+	For     time.Duration
 }
 
-// LoginLimiter tracks failed logins by client address and applies the
-// backoff above. It is safe for concurrent use.
+type lockEntry struct {
+	failures    []time.Time
+	lockedUntil time.Time
+}
+
+// lockTable is the failure and lock state for one kind of key.
+type lockTable struct {
+	threshold int
+	lockout   time.Duration
+	entries   map[string]*lockEntry
+}
+
+func newLockTable(threshold int, lockout time.Duration) *lockTable {
+	return &lockTable{threshold: threshold, lockout: lockout, entries: make(map[string]*lockEntry)}
+}
+
+// touchLocked reports whether key is locked at now and, if it is, restarts
+// the lock from now.
+func (t *lockTable) touchLocked(key string, now time.Time) bool {
+	e, ok := t.entries[key]
+	if !ok || !e.lockedUntil.After(now) {
+		return false
+	}
+	e.lockedUntil = now.Add(t.lockout)
+	return true
+}
+
+// failure records a failure for key and reports whether it started a lock.
+func (t *lockTable) failure(key string, now time.Time) bool {
+	e, ok := t.entries[key]
+	if !ok {
+		e = &lockEntry{}
+		t.entries[key] = e
+	}
+	e.failures = append(dropBefore(e.failures, now.Add(-loginFailureWindow)), now)
+	if len(e.failures) < t.threshold {
+		return false
+	}
+	e.failures = nil
+	e.lockedUntil = now.Add(t.lockout)
+	return true
+}
+
+// prune drops entries that are not locked and have no failure inside the
+// window: they carry no state.
+func (t *lockTable) prune(now time.Time) {
+	cutoff := now.Add(-loginFailureWindow)
+	for k, e := range t.entries {
+		e.failures = dropBefore(e.failures, cutoff)
+		if len(e.failures) == 0 && !e.lockedUntil.After(now) {
+			delete(t.entries, k)
+		}
+	}
+}
+
+// LoginLimiter applies the login lockout above, keyed by client address and
+// by submitted username. It is safe for concurrent use.
 type LoginLimiter struct {
 	now func() time.Time
 
-	mu           sync.Mutex
-	ips          map[string]*loginEntry
-	global       []time.Time
-	globalLocked time.Time
+	mu        sync.Mutex
+	ips       *lockTable
+	users     *lockTable
+	lastPrune time.Time
+	credGen   uint64
 }
 
 // NewLoginLimiter creates a limiter; now is the clock (time.Now in
@@ -48,91 +113,82 @@ func NewLoginLimiter(now func() time.Time) *LoginLimiter {
 	if now == nil {
 		now = time.Now
 	}
-	return &LoginLimiter{now: now, ips: make(map[string]*loginEntry)}
+	return &LoginLimiter{
+		now:   now,
+		ips:   newLockTable(LoginIPFailures, LoginIPLockout),
+		users: newLockTable(LoginUserFailures, LoginUserLockout),
+	}
 }
 
-// Check reports how long ip must wait before a login attempt is accepted; 0
-// means it may try now.
-func (l *LoginLimiter) Check(ip string) time.Duration {
+// SyncCredentials clears every lock and failure count when gen differs from
+// the credentials generation seen by the previous call, so writing the
+// credentials file (`claw admin`) lets the operator straight back in. It
+// reports whether it cleared anything.
+func (l *LoginLimiter) SyncCredentials(gen uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if gen == l.credGen {
+		return false
+	}
+	l.credGen = gen
+	l.ips = newLockTable(LoginIPFailures, LoginIPLockout)
+	l.users = newLockTable(LoginUserFailures, LoginUserLockout)
+	return true
+}
+
+// Attempt is called before the password is checked. When ip or username is
+// locked it restarts each lock that applies and returns how long the caller
+// must now wait; 0 means the attempt may proceed.
+func (l *LoginLimiter) Attempt(ip, username string) time.Duration {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.pruneLocked(now)
-	if wait := l.globalLocked.Sub(now); wait > 0 {
-		return wait
+	var wait time.Duration
+	if l.ips.touchLocked(ip, now) {
+		wait = l.ips.lockout
 	}
-	if e, ok := l.ips[ip]; ok {
-		if wait := e.lockedUntil.Sub(now); wait > 0 {
-			return wait
-		}
+	if l.users.touchLocked(username, now) {
+		wait = max(wait, l.users.lockout)
 	}
-	return 0
+	return wait
 }
 
-// Failure records a failed login from ip. It returns the lock this failure
-// triggered (0 when none) and whether it is the first lockout recorded for ip,
-// which is when the operator is alerted.
-func (l *LoginLimiter) Failure(ip string) (locked time.Duration, firstLockout bool) {
+// Failure records a failed login for ip and username and returns the locks it
+// started (none, one or both).
+func (l *LoginLimiter) Failure(ip, username string) []LockStart {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.pruneLocked(now)
-
-	l.global = append(l.global, now)
-	if len(l.global) >= LoginGlobalFailures && l.globalLocked.Before(now) {
-		l.globalLocked = now.Add(LoginGlobalLock)
-		l.global = l.global[:0]
-		locked = LoginGlobalLock
+	var started []LockStart
+	if l.ips.failure(ip, now) {
+		started = append(started, LockStart{Key: ip, For: l.ips.lockout})
 	}
-
-	e, ok := l.ips[ip]
-	if !ok {
-		e = &loginEntry{}
-		l.ips[ip] = e
+	if l.users.failure(username, now) {
+		started = append(started, LockStart{Account: true, Key: username, For: l.users.lockout})
 	}
-	e.lastSeen = now
-	e.failures = append(e.failures, now)
-	if len(e.failures) < LoginFailuresPerIP {
-		return locked, false
-	}
-
-	e.failures = e.failures[:0]
-	e.lockouts++
-	d := LoginLockBase
-	for i := 1; i < e.lockouts && d < LoginLockMax; i++ {
-		d *= 2
-	}
-	d = min(d, LoginLockMax)
-	e.lockedUntil = now.Add(d)
-	firstLockout = !e.alerted
-	e.alerted = true
-	return max(locked, d), firstLockout
+	return started
 }
 
-// Success records a successful login from ip, clearing its failure history
-// and lockout escalation.
-func (l *LoginLimiter) Success(ip string) {
+// Success records a successful login, clearing the failure counts of ip and
+// username.
+func (l *LoginLimiter) Success(ip, username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e, ok := l.ips[ip]; ok {
-		e.failures = e.failures[:0]
-		e.lockouts = 0
-		e.lockedUntil = time.Time{}
-		e.lastSeen = l.now()
-	}
+	delete(l.ips.entries, ip)
+	delete(l.users.entries, username)
 }
 
-// pruneLocked drops failures outside the window and addresses quiet for
-// loginEntryTTL. Called with mu held.
+// pruneLocked sweeps quiet entries at most once per loginPruneInterval.
+// Called with mu held.
 func (l *LoginLimiter) pruneLocked(now time.Time) {
-	cutoff := now.Add(-LoginFailureWindow)
-	l.global = dropBefore(l.global, cutoff)
-	for ip, e := range l.ips {
-		e.failures = dropBefore(e.failures, cutoff)
-		if now.Sub(e.lastSeen) > loginEntryTTL && !e.lockedUntil.After(now) {
-			delete(l.ips, ip)
-		}
+	if now.Sub(l.lastPrune) < loginPruneInterval {
+		return
 	}
+	l.lastPrune = now
+	l.ips.prune(now)
+	l.users.prune(now)
 }
 
 func dropBefore(ts []time.Time, cutoff time.Time) []time.Time {
