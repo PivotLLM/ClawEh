@@ -78,7 +78,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// so the agent has somewhere to write.
 		writeSubdir := c.Agents.Defaults.WorkspaceWriteSubdir
 		if restrict && writeSubdir != "" && workspace != "" {
-			if err := os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o700); err != nil {
 				logger.WarnCF("tools", "failed to create workspace write subdir", map[string]any{
 					"path":  filepath.Join(workspace, writeSubdir),
 					"error": err.Error(),
@@ -362,7 +362,7 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 	// Ensure the auto Maestro tree exists before Stat validation.
 	if agentCfg.MaestroEnabled() && strings.TrimSpace(workspace) != "" {
 		base := config.MaestroDataDir(workspace)
-		if err := os.MkdirAll(base, 0o755); err != nil {
+		if err := os.MkdirAll(base, 0o700); err != nil {
 			logger.WarnCF("tools", "failed to create maestro data dir for mount", map[string]any{
 				"path":  base,
 				"error": err.Error(),

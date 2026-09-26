@@ -29,6 +29,7 @@ type ProviderDispatcher struct {
 
 // NewProviderDispatcher creates a new dispatcher with the given config.
 func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
+	logBypassEnabled(cfg)
 	return &ProviderDispatcher{
 		cache: make(map[string]LLMProvider),
 		cfg:   cfg,

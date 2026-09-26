@@ -3,8 +3,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-
-	"github.com/PivotLLM/ClawEh/config"
 )
 
 type setupStatusResponse struct {
@@ -26,7 +24,7 @@ func (h *Handler) registerSetupStatusRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return

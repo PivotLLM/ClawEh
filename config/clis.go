@@ -2,18 +2,28 @@ package config
 
 import (
 	"maps"
+	"slices"
+	"strings"
 
 	"github.com/PivotLLM/spawnllm"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // CLI agents — the local binaries ClawEh can drive as providers.
 //
 // Each of these needs a provider entry, a model entry, and a handful of flags
-// that are not optional and not guessable: the permission flag every CLI needs
-// to run unattended, the sentinel model id that means "let the CLI pick its own
-// model", and a timeout long enough for an agentic run. Getting any of them
-// wrong fails quietly — a CLI denied permission to use tools returns success
-// with an empty answer, so the assistant simply goes mute.
+// that are not optional and not guessable: the flags the CLI needs to run
+// headless, the permission-bypass flag it needs to use tools unattended, the
+// sentinel model id that means "let the CLI pick its own model", and a timeout
+// long enough for an agentic run. Getting any of them wrong fails quietly — a
+// CLI denied permission to use tools returns success with an empty answer, so
+// the assistant simply goes mute.
+//
+// The permission-bypass flag is the one an operator decides on: it lets the
+// CLI run commands and edit files anywhere the service user can, outside
+// ClawEh's own controls. It is passed only when the provider's
+// bypass_restrictions ("Bypass CLI restrictions" in the WebUI) is on.
 //
 // This table is the single source for all of it. The WebUI builds its CLI
 // section from it, the provider factory takes the required arguments from it,
@@ -40,10 +50,14 @@ type CLIAgent struct {
 	// the CLIs that need telling to read the prompt from stdin take that marker
 	// last, after the model flag.
 	TrailingArgs []string
-	// RequiredArgs are passed on every invocation. These are not preferences:
-	// without them the CLI stops to ask for approval it cannot receive, and
-	// answers nothing. A model's extra_args are appended to these.
+	// RequiredArgs are passed on every invocation: the non-security flags the
+	// CLI needs to run headless. A model's extra_args are appended to these.
 	RequiredArgs []string
+	// BypassArgs are the CLI's skip-permissions / sandbox-bypass flags. They are
+	// passed only when the provider has bypass_restrictions on; otherwise they
+	// are withheld, and stripped from a model's extra_args, so the CLI's own
+	// permission settings decide what it may do.
+	BypassArgs []string
 	// Env is set for every invocation, for CLIs that need it.
 	Env map[string]string
 	// RequestTimeout is the per-request timeout in seconds. CLI agents run
@@ -63,7 +77,8 @@ var CLIAgents = []CLIAgent{
 		Binary:         "claude",
 		BaseArgs:       spawnllm.ClaudeCliBaseArgs(),
 		TrailingArgs:   []string{spawnllm.StdinArg},
-		RequiredArgs:   []string{"--dangerously-skip-permissions", "--no-chrome"},
+		RequiredArgs:   []string{"--no-chrome"},
+		BypassArgs:     []string{"--dangerously-skip-permissions"},
 		Env:            map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
 		RequestTimeout: 3600,
 	},
@@ -73,7 +88,8 @@ var CLIAgents = []CLIAgent{
 		Binary:         "codex",
 		BaseArgs:       spawnllm.CodexCliBaseArgs(),
 		TrailingArgs:   []string{spawnllm.StdinArg},
-		RequiredArgs:   []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"},
+		RequiredArgs:   []string{"--skip-git-repo-check"},
+		BypassArgs:     []string{"--dangerously-bypass-approvals-and-sandbox"},
 		RequestTimeout: 3600,
 	},
 	{
@@ -84,7 +100,7 @@ var CLIAgents = []CLIAgent{
 		Label:          "Antigravity CLI",
 		Binary:         "agy",
 		BaseArgs:       spawnllm.AntigravityCliBaseArgs(),
-		RequiredArgs:   []string{"--dangerously-skip-permissions"},
+		BypassArgs:     []string{"--dangerously-skip-permissions"},
 		RequestTimeout: 3600,
 	},
 	{
@@ -92,7 +108,7 @@ var CLIAgents = []CLIAgent{
 		Label:          "Cursor CLI",
 		Binary:         "cursor-agent",
 		BaseArgs:       spawnllm.CursorCliBaseArgs(),
-		RequiredArgs:   []string{"--yolo"},
+		BypassArgs:     []string{"--yolo"},
 		RequestTimeout: 3600,
 	},
 }
@@ -113,28 +129,43 @@ func CLIAgentByProtocol(protocol string) *CLIAgent {
 	return nil
 }
 
-// CLIArgs returns the arguments to run a CLI model with: the protocol's
-// required arguments, then the model's own extra_args.
+// CLIArgs returns the arguments to run a CLI model with: the protocol's bypass
+// flags when bypass is on, its required arguments, then the model's own
+// extra_args.
 //
 // The required arguments are supplied rather than copied into every model
 // because omitting them is invisible until an assistant answers nothing. A
 // model that has been given the same flag explicitly does not get it twice.
-func CLIArgs(protocol string, extraArgs []string) []string {
+//
+// When bypass is off, a bypass flag written into a model's extra_args is
+// stripped and one warning logged: the provider setting is the one place the
+// decision is made, and a flag left over from a config that predates it must
+// not quietly override the checkbox.
+func CLIArgs(protocol string, bypass bool, extraArgs []string) []string {
 	agent := CLIAgentByProtocol(protocol)
 	if agent == nil {
 		return extraArgs
 	}
-	args := make([]string, 0, len(agent.RequiredArgs)+len(extraArgs))
-	seen := make(map[string]struct{}, len(agent.RequiredArgs))
-	for _, a := range agent.RequiredArgs {
-		args = append(args, a)
-		seen[a] = struct{}{}
+	supplied := agent.RequiredArgs
+	if bypass {
+		supplied = append(append([]string{}, agent.BypassArgs...), agent.RequiredArgs...)
 	}
+	args := make([]string, 0, len(supplied)+len(extraArgs))
+	args = append(args, supplied...)
+	var stripped []string
 	for _, a := range extraArgs {
-		if _, dup := seen[a]; dup {
+		switch {
+		case slices.Contains(supplied, a):
 			continue
+		case !bypass && slices.Contains(agent.BypassArgs, a):
+			stripped = append(stripped, a)
+		default:
+			args = append(args, a)
 		}
-		args = append(args, a)
+	}
+	if len(stripped) > 0 {
+		logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Bypass CLI restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
+			map[string]any{"protocol": agent.Protocol, "flags": strings.Join(stripped, " ")})
 	}
 	return args
 }

@@ -18,7 +18,7 @@ func TestStoreInboundAttachments(t *testing.T) {
 	utils.SetMediaStagingDir(t.TempDir())
 	defer utils.SetMediaStagingDir("")
 
-	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus())
+	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus(), "", nil)
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestStoreInboundAttachments(t *testing.T) {
 // TestStoreInboundAttachmentsNoStore is a no-op (no panic, nil refs) when no
 // media store is injected.
 func TestStoreInboundAttachmentsNoStore(t *testing.T) {
-	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus())
+	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus(), "", nil)
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)
 	}

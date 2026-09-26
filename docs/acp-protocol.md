@@ -62,7 +62,11 @@ R1:
   the short-lived spawns `rabbit-agent` makes, so pairing happens only once.
 - **Auth token**: the configured device-channel `token` (or `word_token`) is
   presented on connect; once the gateway issues a device token at connect
-  (`hello-ok.auth.deviceToken`), it is persisted and used thereafter.
+  (`hello-ok.auth.deviceToken`), it is persisted and used thereafter. The
+  gateway stores device tokens hashed, so a connect on the shared secret always
+  issues a fresh device token and revokes the device's earlier ones — which is
+  why the bridge persists the issued token rather than re-presenting the
+  shared one.
 - **Pairing**: on first connect the device is unpaired → the gateway records a
   pending pairing and rejects the connect. Approve it once with `claw devices`
   (or set `channels.device.auto_approve` for a trusted LAN), then re-run. There is

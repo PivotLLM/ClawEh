@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -267,30 +268,6 @@ func TestHandleUpdateModel_InvalidIndexStringReturns400(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteModel_Success(t *testing.T) {
-	configPath := setupTestEnv(t)
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/api/models/0", nil)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if len(cfg.Models) != 0 {
-		t.Fatalf("models len = %d, want 0 after delete", len(cfg.Models))
-	}
-}
-
 func TestHandleDeleteModel_InvalidIndexReturns404(t *testing.T) {
 	configPath := setupTestEnv(t)
 
@@ -323,7 +300,7 @@ func TestHandleDeleteModel_InvalidIndexStringReturns400(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteModel_ClearsDefaultWhenDefaultDeleted(t *testing.T) {
+func TestHandleDeleteModel_RefusesWhileReferenced(t *testing.T) {
 	configPath := setupTestEnv(t)
 
 	// Confirm the default model is set to custom-default
@@ -343,6 +320,53 @@ func TestHandleDeleteModel_ClearsDefaultWhenDefaultDeleted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/models/0", nil)
 	mux.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"custom-default"`, "agents.defaults.models"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body %q does not name %s", body, want)
+		}
+	}
+
+	cfg2, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if len(cfg2.Models) != 1 || cfg2.Models[0].ModelName != "custom-default" {
+		t.Fatalf("models = %+v, want custom-default still present", cfg2.Models)
+	}
+	if cfg2.Agents.Defaults.DefaultModelName() != "custom-default" {
+		t.Fatalf("default model = %q, want custom-default untouched", cfg2.Agents.Defaults.DefaultModelName())
+	}
+}
+
+func TestHandleDeleteModel_Unreferenced(t *testing.T) {
+	configPath := setupTestEnv(t)
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Models = append(cfg.Models, config.ModelConfig{
+		ModelName: "spare",
+		Model:     "gpt-4o-mini",
+		Provider:  "openai",
+		Enabled:   true,
+	})
+	if err = config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/models/1", nil)
+	mux.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -351,8 +375,8 @@ func TestHandleDeleteModel_ClearsDefaultWhenDefaultDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg2.Agents.Defaults.DefaultModelName() != "" {
-		t.Fatalf("default model = %q, want empty after deleting default", cfg2.Agents.Defaults.DefaultModelName())
+	if len(cfg2.Models) != 1 || cfg2.Models[0].ModelName != "custom-default" {
+		t.Fatalf("models = %+v, want only custom-default", cfg2.Models)
 	}
 }
 
@@ -463,6 +487,8 @@ func TestMaskAPIKey(t *testing.T) {
 		{"", ""},
 		{"short", "****"},
 		{"12345678", "****"},
+		{"12345678901", "****"},         // 11: still masked whole
+		{"123456789012", "123****9012"}, // 12: the shortest partially shown
 		{"sk-abcdefghijklm", "sk-****jklm"},
 	}
 	for _, tc := range tests {

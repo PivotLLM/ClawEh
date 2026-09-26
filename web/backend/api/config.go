@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -23,30 +24,41 @@ func (h *Handler) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/backup", h.handleRunBackup)
 }
 
-// handleRunBackup runs an on-demand backup of config.json and the cron jobs file
-// into <data dir>/backup/YYYYMMDD/, regardless of the nightly toggle.
+// handleRunBackup runs an on-demand backup archive into the configured backup
+// destination, regardless of the nightly toggle. "folder" is the destination
+// directory (what the WebUI shows), "archive" the tarball written into it.
 //
 //	POST /api/backup
 func (h *Handler) handleRunBackup(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, "failed to load config", http.StatusInternalServerError)
 		return
 	}
-	day, copied, err := backup.RunForConfig(cfg, h.configPath, time.Now())
+	res, err := backup.RunForConfig(cfg, h.configPath, time.Now(), backup.Options{}) //nolint:contextcheck // RunForConfig takes no context; the integrity check runs its PRAGMA on a detached context, and a started backup must finish even if the request is dropped
 	if err != nil {
 		http.Error(w, "backup failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	skipped := make([]string, 0, len(res.Skipped))
+	for _, s := range res.Skipped {
+		skipped = append(skipped, s.Path)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	encodeJSON(w, map[string]any{"folder": day, "files": copied})
+	encodeJSON(w, map[string]any{
+		"folder":  backup.DestFor(cfg, ""),
+		"archive": res.Archive,
+		"bytes":   res.Bytes,
+		"files":   res.Files,
+		"skipped": skipped,
+	})
 }
 
 // handleGetConfig returns the complete system configuration.
 //
 //	GET /api/config
 func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -54,7 +66,8 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Credentials are masked here: this endpoint has no operator auth, so the
 	// response must not be a dump of every key the gateway holds. PUT and PATCH
-	// restore masked values from disk, so a read-edit-write round trip is safe.
+	// restore masked values from the live config, so a read-edit-write round
+	// trip is safe. A secret reference ("env:NAME") is shown as written.
 	out, err := maskedConfigJSON(cfg)
 	if err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
@@ -80,9 +93,12 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// A client that read the masked config and is writing it back sends "****"
 	// in place of each credential; swap those for the stored values so the round
 	// trip does not destroy them.
-	if current, cerr := config.LoadConfig(h.configPath); cerr == nil {
-		if restored, rerr := restoreMaskedSecrets(body, current); rerr == nil {
-			body = restored
+	current, cerr := h.currentConfig()
+	if cerr == nil {
+		if stored, serr := config.MarshalWithSecretRefs(current); serr == nil {
+			if restored, rerr := restoreMaskedSecrets(body, stored); rerr == nil {
+				body = restored
+			}
 		}
 	}
 
@@ -95,24 +111,47 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		cfg.Tools.Exec.AllowRemote = config.DefaultConfig().Tools.Exec.AllowRemote
 	}
 
-	if errs := validateConfig(&cfg); len(errs) > 0 {
+	if !h.saveValidatedConfig(w, func(c *config.Config) { *c = cfg }) {
+		return
+	}
+	recordConfigWrite(r, current, &cfg)
+
+	w.Header().Set("Content-Type", "application/json")
+	encodeJSON(w, map[string]string{"status": "ok"})
+}
+
+// saveValidatedConfig runs mutate on the live config under the store lock,
+// rejects the result with a validation_error response when validateConfig
+// finds fault, and saves it otherwise. It reports whether the save happened;
+// on false a response has been written.
+func (h *Handler) saveValidatedConfig(w http.ResponseWriter, mutate func(*config.Config)) bool {
+	var errs []string
+	err := h.updateConfig(func(c *config.Config) error {
+		mutate(c)
+		if errs = validateConfig(c); len(errs) > 0 {
+			return errValidation
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errValidation):
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		encodeJSON(w, map[string]any{
 			"status": "validation_error",
 			"errors": errs,
 		})
-		return
+		return false
+	case err != nil:
+		writeUpdateError(w, err)
+		return false
 	}
-
-	if err := config.SaveConfig(h.configPath, &cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	encodeJSON(w, map[string]string{"status": "ok"})
+	return true
 }
+
+// errValidation marks an updateConfig callback that stopped on validateConfig
+// findings, which the caller reports in the validation_error shape.
+var errValidation = errors.New("config validation failed")
 
 func execAllowRemoteOmitted(body []byte) bool {
 	var raw struct {
@@ -147,14 +186,15 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load existing config and marshal to a map for merging
-	cfg, err := config.LoadConfig(h.configPath)
+	// The live config, as the file holds it (references as references), is the
+	// base the patch merges into.
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	existing, err := json.Marshal(cfg)
+	existing, err := config.MarshalWithSecretRefs(cfg)
 	if err != nil {
 		http.Error(w, "Failed to serialize current config", http.StatusInternalServerError)
 		return
@@ -185,20 +225,10 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if errs := validateConfig(&newCfg); len(errs) > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		encodeJSON(w, map[string]any{
-			"status": "validation_error",
-			"errors": errs,
-		})
+	if !h.saveValidatedConfig(w, func(c *config.Config) { *c = newCfg }) {
 		return
 	}
-
-	if err := config.SaveConfig(h.configPath, &newCfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
+	recordConfigWrite(r, cfg, &newCfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]string{"status": "ok"})
@@ -219,6 +249,18 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, err.Error())
 	}
 
+	// Every agent, default, summarization and subagent chain must name a model
+	// that exists. A reference to a disabled model is allowed (disabling is a
+	// legitimate temporary action) but has no channel back to the client, so it
+	// is logged instead.
+	refErrs, refWarnings := cfg.ValidateModelReferences()
+	for _, err := range refErrs {
+		errs = append(errs, err.Error())
+	}
+	for _, w := range refWarnings {
+		logger.WarnCF("config", "reference to disabled model", map[string]any{"detail": w})
+	}
+
 	// Validate agent bindings (default-channel constraints)
 	if err := cfg.ValidateBindings(); err != nil {
 		errs = append(errs, err.Error())
@@ -227,6 +269,16 @@ func validateConfig(cfg *config.Config) []string {
 	// Gateway port range
 	if cfg.Gateway.Port != 0 && (cfg.Gateway.Port < 1 || cfg.Gateway.Port > 65535) {
 		errs = append(errs, fmt.Sprintf("gateway.port %d is out of valid range (1-65535)", cfg.Gateway.Port))
+	}
+
+	// Listener settings LoadConfig refuses (a half-configured certificate, an
+	// off-box MCP host) must be refused here too, or a WebUI save could write a
+	// config the gateway then cannot start on.
+	if err := cfg.Gateway.Validate(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := config.ValidateMCPHostListen(cfg.MCPHost.Listen); err != nil {
+		errs = append(errs, err.Error())
 	}
 
 	// Gateway IP allowlist: every entry must be a valid CIDR.

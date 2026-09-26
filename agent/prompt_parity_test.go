@@ -113,10 +113,10 @@ func parityStore(t *testing.T, key, summary string) session.SessionStore {
 	}
 	t.Cleanup(func() { closeT(t, store) })
 	for _, m := range parityHistory() {
-		store.AddFullMessage(key, m)
+		addFullMessage(t, store, key, m)
 	}
 	if summary != "" {
-		store.SetSummary(key, summary)
+		setSummary(t, store, key, summary)
 	}
 	return store
 }

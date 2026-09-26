@@ -40,11 +40,11 @@ func Write(dataDir string) error {
 	if dataDir == "" {
 		return errors.New("pidfile: no data directory")
 	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("pidfile: create %s: %w", dataDir, err)
 	}
 	p := Path(dataDir)
-	if err := os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		return fmt.Errorf("pidfile: write %s: %w", p, err)
 	}
 	return nil

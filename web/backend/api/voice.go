@@ -22,7 +22,7 @@ func (h *Handler) registerVoiceRoutes(mux *http.ServeMux) {
 //
 //	GET /api/voice/stt
 func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -47,39 +47,37 @@ func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
 //
 //	PUT /api/voice/stt  {"stt": [...]}
 func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	var body struct {
 		STT []config.STTProvider `json:"stt"`
 	}
-	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-
 	for i := range body.STT {
 		body.STT[i].Provider = strings.TrimSpace(body.STT[i].Provider)
 		if body.STT[i].Provider == "" {
 			http.Error(w, "each STT entry needs a provider", http.StatusBadRequest)
 			return
 		}
-		key := body.STT[i].APIKey
-		if key == "" || strings.Contains(key, "****") {
-			if i < len(cfg.Voice.STT) {
-				body.STT[i].APIKey = cfg.Voice.STT[i].APIKey
-			} else {
-				body.STT[i].APIKey = ""
-			}
-		}
 	}
 
-	cfg.Voice.STT = body.STT
-	if err = config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+	err := h.updateConfig(func(cfg *config.Config) error {
+		for i := range body.STT {
+			key := body.STT[i].APIKey
+			if key == "" || strings.Contains(key, "****") {
+				if i < len(cfg.Voice.STT) {
+					body.STT[i].APIKey = cfg.Voice.STT[i].APIKey
+				} else {
+					body.STT[i].APIKey = ""
+				}
+			}
+		}
+		cfg.Voice.STT = body.STT
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 	// Reload so the running agent loop re-detects the active transcriber.

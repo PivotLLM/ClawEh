@@ -719,3 +719,56 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 func containsStr(s []string, v string) bool {
 	return slices.Contains(s, v)
 }
+
+// TestBuildStdioEnv_AllowlistedBaseWithOverlay verifies that a stdio server's
+// environment starts from the allowlisted parent environment (no CLAW_* or
+// ALERTER_*), with env_file values overlaid and config env winning over both.
+func TestBuildStdioEnv_AllowlistedBaseWithOverlay(t *testing.T) {
+	t.Setenv("CLAW_GATEWAY_TOKEN", "secret")
+	t.Setenv("ALERTER_SMTP_PASSWORD", "secret")
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("HOME", "/home/alice")
+	t.Setenv("NVM_DIR", "/home/alice/.nvm")
+	t.Setenv("SHARED_VAR", "from_parent")
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("API_KEY=from_file\nSHARED_VAR=from_file\nHOME=/from/file\n"), 0o644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	env, err := buildStdioEnv(config.MCPServerConfig{
+		Command: "npx",
+		EnvFile: envFile,
+		Env:     map[string]string{"SHARED_VAR": "from_config", "NEW_VAR": "from_config"},
+	})
+	if err != nil {
+		t.Fatalf("buildStdioEnv: %v", err)
+	}
+
+	got := make(map[string]string, len(env))
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		if _, dup := got[k]; dup {
+			t.Errorf("duplicate key %s in %v", k, env)
+		}
+		got[k] = v
+	}
+	for _, k := range []string{"CLAW_GATEWAY_TOKEN", "ALERTER_SMTP_PASSWORD"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("stdio env leaked %s", k)
+		}
+	}
+	want := map[string]string{
+		"PATH":       "/usr/bin:/bin",
+		"NVM_DIR":    "/home/alice/.nvm",
+		"HOME":       "/from/file",  // env_file overrides the parent
+		"API_KEY":    "from_file",   // env_file adds
+		"SHARED_VAR": "from_config", // config overrides env_file and the parent
+		"NEW_VAR":    "from_config",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}

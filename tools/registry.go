@@ -516,12 +516,13 @@ func (r *ToolRegistry) executeWithContext(
 	}
 
 	// Defense-in-depth: check tool allowlist from context before execution.
-	// Suite tools (cogmem, maestro) are exempt — they are gated as a unit by the
-	// per-agent suite flag at registration, not by the per-tool allowlist. Gate on
-	// the canonical (internal) name so MCP tools route to the mcp_tools allow-list
-	// even when the caller used the bare ExternalName.
-	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil && !entry.SuiteExempt {
-		if !checker.IsToolAllowed(canonical) {
+	// Suite tools (cogmem, maestro, fusion) are exempt from the ALLOW side — they
+	// are gated as a unit by the per-agent suite flag at registration, not by the
+	// per-tool allowlist — but the agent's deny list still applies to them. Gate
+	// on the canonical (internal) name so MCP tools route to the mcp_tools
+	// allow-list even when the caller used the bare ExternalName.
+	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil {
+		if checker.IsToolDenied(canonical) || (!entry.SuiteExempt && !checker.IsToolAllowed(canonical)) {
 			logger.WarnCF("tool", "Tool execution denied by agent allowlist",
 				map[string]any{
 					"tool": canonical,

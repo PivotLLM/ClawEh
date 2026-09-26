@@ -5,7 +5,12 @@ import ReactDOM from "react-dom/client"
 
 import "./i18n"
 import "./index.css"
+import { installAuthRedirect } from "./lib/auth-redirect"
 import { routeTree } from "./routeTree.gen"
+
+// Every API module fetches on its own; one wrapper on the global fetch sends
+// the browser to the login page when the session is gone (401).
+installAuthRedirect()
 
 const queryClient = new QueryClient()
 

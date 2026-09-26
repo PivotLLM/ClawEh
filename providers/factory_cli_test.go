@@ -19,7 +19,7 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 		t.Fatalf("CreateProvider(claude-cli) error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*ClaudeCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(claude-cli) returned %T, want *ClaudeCliProvider", provider)
 	}
@@ -42,7 +42,7 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		t.Fatalf("CreateProvider error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*ClaudeCliProvider)
 	if !ok {
 		t.Fatalf("returned %T, want *ClaudeCliProvider", provider)
 	}
@@ -64,7 +64,7 @@ func TestCreateProvider_CursorCli(t *testing.T) {
 		t.Fatalf("CreateProvider(cursor-cli) error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*CursorCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*CursorCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(cursor-cli) returned %T, want *CursorCliProvider", provider)
 	}
@@ -86,7 +86,7 @@ func TestCreateProvider_AntigravityCli(t *testing.T) {
 		t.Fatalf("CreateProvider(antigravity-cli) error = %v", err)
 	}
 
-	agyProvider, ok := provider.(*AntigravityCliProvider)
+	agyProvider, ok := unwrapCLI(provider).(*AntigravityCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(antigravity-cli) returned %T, want *AntigravityCliProvider", provider)
 	}
@@ -111,7 +111,7 @@ func TestCreateProvider_AntigravityCliWithModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider(antigravity-cli/gemini-2.5-flash) error = %v", err)
 	}
-	if _, ok := provider.(*AntigravityCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*AntigravityCliProvider); !ok {
 		t.Fatalf("CreateProvider returned %T, want *AntigravityCliProvider", provider)
 	}
 	// modelID should carry through the actual model name
@@ -133,7 +133,7 @@ func TestCreateProvider_AntigravityCliDefaultWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider error = %v", err)
 	}
-	agyProvider, ok := provider.(*AntigravityCliProvider)
+	agyProvider, ok := unwrapCLI(provider).(*AntigravityCliProvider)
 	if !ok {
 		t.Fatalf("returned %T, want *AntigravityCliProvider", provider)
 	}
@@ -161,7 +161,7 @@ func TestCreateProvider_GeminiCliIsAnAliasForAntigravity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a config naming gemini-cli no longer starts: %v", err)
 	}
-	if _, ok := provider.(*AntigravityCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*AntigravityCliProvider); !ok {
 		t.Fatalf("gemini-cli produced %T, want *AntigravityCliProvider", provider)
 	}
 	if modelID != "gemini-2.5-pro" {

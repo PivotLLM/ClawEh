@@ -13,6 +13,7 @@ import (
 	"github.com/PivotLLM/toolspec"
 	_ "modernc.org/sqlite"
 
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -25,6 +26,9 @@ type sqliteDataStore struct {
 	db *sql.DB
 }
 
+// connectionPragmas is the DSN query every pooled connection is opened with.
+const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+
 // NewSQLiteDataStore opens (or creates) the fusion token store at path with WAL
 // mode and returns it as a toolspec.DataStore. Pure Go (modernc.org/sqlite), no
 // CGO. The parent directory is created (0700) since it holds OAuth secrets.
@@ -32,20 +36,21 @@ func NewSQLiteDataStore(path string) (toolspec.DataStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("fusion datastore: create dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// OAuth tokens live in here: make the file private before SQLite creates
+	// it, so the -wal/-shm side files inherit that mode too.
+	if err := perms.EnsurePrivateFile(path); err != nil {
+		return nil, fmt.Errorf("fusion datastore: %w", err)
+	}
+	// The pragmas travel in the DSN so the driver applies them to EVERY
+	// connection database/sql opens, not only the first: an Exec'd PRAGMA
+	// reaches one pooled connection, and a later one opened under load ran
+	// with busy_timeout=0, failing a contended write at once with SQLITE_BUSY.
+	// journal_mode is safe here because this store has a single opener
+	// (sharedEngine's sync.Once), so the one-time WAL conversion of a fresh
+	// file cannot race another writer.
+	db, err := sql.Open("sqlite", path+"?"+connectionPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("fusion datastore: open %s: %w", path, err)
-	}
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA synchronous=NORMAL",
-	}
-	for _, p := range pragmas {
-		if _, err := db.ExecContext(context.Background(), p); err != nil {
-			utils.CloseQuietly(db)
-			return nil, fmt.Errorf("fusion datastore: %q: %w", p, err)
-		}
 	}
 	if _, err := db.ExecContext(context.Background(),
 		`CREATE TABLE IF NOT EXISTS kv (

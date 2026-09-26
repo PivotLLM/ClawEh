@@ -11,107 +11,49 @@ import (
 )
 
 // registerWebUIRoutes binds WebUI Channel management endpoints to the ServeMux.
+//
+// The browser no longer fetches the channel token: /webui/ws accepts the login
+// session cookie, so the token stays on the server and is only for non-browser
+// clients that present it as a Bearer header.
 func (h *Handler) registerWebUIRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/webui/token", h.handleGetWebUIToken)
-	mux.HandleFunc("POST /api/webui/token", h.handleRegenWebUIToken)
 	mux.HandleFunc("POST /api/webui/setup", h.handleWebUISetup)
-}
-
-// handleGetWebUIToken returns the current WS token and URL for the frontend.
-//
-//	GET /api/webui/token
-func (h *Handler) handleGetWebUIToken(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	wsURL := h.buildWsURL(r, cfg)
-
-	w.Header().Set("Content-Type", "application/json")
-	encodeJSON(w, map[string]any{
-		"token":   cfg.Channels.WebUI.Token,
-		"ws_url":  wsURL,
-		"enabled": cfg.Channels.WebUI.Enabled,
-	})
-}
-
-// handleRegenWebUIToken generates a new WebUI WebSocket token and saves it.
-//
-//	POST /api/webui/token
-func (h *Handler) handleRegenWebUIToken(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	token := generateSecureToken()
-	cfg.Channels.WebUI.Token = token
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	wsURL := h.buildWsURL(r, cfg)
-
-	w.Header().Set("Content-Type", "application/json")
-	encodeJSON(w, map[string]any{
-		"token":  token,
-		"ws_url": wsURL,
-	})
 }
 
 // EnsureWebUIChannel checks if the WebUI Channel is properly configured and
 // enables it with sensible defaults if not. Returns true if config was changed.
 func (h *Handler) EnsureWebUIChannel() (bool, error) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to load config: %w", err)
-	}
-
 	changed := false
-
-	if !cfg.Channels.WebUI.Enabled {
-		cfg.Channels.WebUI.Enabled = true
-		changed = true
-	}
-
-	if cfg.Channels.WebUI.Token == "" {
-		cfg.Channels.WebUI.Token = generateSecureToken()
-		changed = true
-	}
-
-	// AllowTokenQuery and AllowOrigins are deliberately NOT forced here.
-	//
-	// Setup used to set AllowTokenQuery=true and AllowOrigins=["*"], the latter so
-	// a frontend dev server on :5173 could connect — a development convenience
-	// written into every production install. The browser now sends the token as a
-	// WebSocket subprotocol (webui.TokenSubprotocol), so query tokens are not
-	// needed, and an empty AllowOrigins means same-origin, which is what the
-	// bundled UI always is. Running the frontend from a dev server is the case
-	// that needs AllowOrigins set explicitly, and that is a deliberate act.
-
-	// Without allow_from, IsAllowedSender returns false and silently drops every message.
-	if len(cfg.Channels.WebUI.AllowFrom) == 0 {
-		cfg.Channels.WebUI.AllowFrom = config.FlexibleStringSlice{"*"}
-		changed = true
-	}
-
-	if changed {
-		if err := config.SaveConfig(h.configPath, cfg); err != nil {
-			return false, fmt.Errorf("failed to save config: %w", err)
+	err := h.updateConfig(func(cfg *config.Config) error {
+		if !cfg.Channels.WebUI.Enabled {
+			cfg.Channels.WebUI.Enabled = true
+			changed = true
 		}
-	}
 
+		if cfg.Channels.WebUI.Token == "" {
+			cfg.Channels.WebUI.Token = generateSecureToken()
+			changed = true
+		}
+
+		// Without allow_from, IsAllowedSender returns false and silently drops every message.
+		if len(cfg.Channels.WebUI.AllowFrom) == 0 {
+			cfg.Channels.WebUI.AllowFrom = config.FlexibleStringSlice{"*"}
+			changed = true
+		}
+
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to save config: %w", err)
+	}
 	return changed, nil
 }
 
 // handleWebUISetup automatically configures everything needed for the WebUI Channel to work.
 //
-//	POST /api/webui/setup
+//	POST /api/webui/setup → {"enabled":true,"changed":bool}
 func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
 	changed, err := h.EnsureWebUIChannel()
 	if err != nil {
@@ -119,18 +61,8 @@ func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	wsURL := h.buildWsURL(r, cfg)
-
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]any{
-		"token":   cfg.Channels.WebUI.Token,
-		"ws_url":  wsURL,
 		"enabled": true,
 		"changed": changed,
 	})

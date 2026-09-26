@@ -40,7 +40,10 @@ func NewGatewayCommand() *cobra.Command {
 				// just the console/journal, so the fatal reason is captured.
 				logger.ErrorCF("gateway", "gateway exited with error", map[string]any{"error": err.Error()})
 				fmt.Fprintf(os.Stderr, "\nError: %s\n\n", err)
-				os.Exit(1)
+				// 1 for a startup or configuration error; exitCodeServiceDied
+				// when a core service died after startup and the gateway shut
+				// itself down for the service manager to restart.
+				os.Exit(exitCode(err))
 			}
 			return nil
 		},

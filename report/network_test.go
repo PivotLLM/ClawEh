@@ -15,7 +15,7 @@ func TestCollectNetwork_Listeners(t *testing.T) {
 	tb := findTable(t, collectNetwork(t.Context(), cfg, env), "Listeners")
 
 	_, gw := findRow(t, tb, "Gateway")
-	if gw[1] != "0.0.0.0:18790" {
+	if gw[1] != "127.0.0.1:18790 (HTTP), 0.0.0.0:18443 (HTTPS)" {
 		t.Errorf("gateway bind = %q", gw[1])
 	}
 	contains(t, gw[2], "192.168.1.0/24", "gateway allowlist")

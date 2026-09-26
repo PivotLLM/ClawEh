@@ -277,6 +277,7 @@ func validConfigForValidation() *config.Config {
 		Provider:  "OpenAI", // must match a DefaultConfig provider name exactly
 		Enabled:   true,
 	}}
+	cfg.Agents.Defaults.Models = []string{"m"} // the template's CLI aliases are not in Models above
 	return cfg
 }
 

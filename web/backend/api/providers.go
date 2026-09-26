@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,7 +49,7 @@ type providerResponse struct {
 }
 
 func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -68,7 +69,7 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			Protocol:                p.Protocol,
 			BaseURL:                 p.BaseURL,
 			APIKey:                  maskAPIKey(p.APIKey),
-			Proxy:                   p.Proxy,
+			Proxy:                   maskProxyURL(p.Proxy),
 			StrictCompat:            p.StrictCompat,
 			RequireReasoningContent: p.RequireReasoningContent,
 			NoParallelToolCalls:     p.NoParallelToolCalls,
@@ -85,33 +86,30 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleAddProvider(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	var p config.Provider
-	if err = json.NewDecoder(r.Body).Decode(&p); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	cfg.Providers = append(cfg.Providers, p)
-	// Validate only the new provider, not the whole list — pre-existing invalid
-	// entries (e.g. a stale protocol awaiting migration) must not block adding a
-	// valid one.
-	if err = cfg.ValidateProvider(len(cfg.Providers) - 1); err != nil {
-		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if err = config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+	index := -1
+	err := h.updateConfig(func(cfg *config.Config) error {
+		cfg.Providers = append(cfg.Providers, p)
+		index = len(cfg.Providers) - 1
+		// Validate only the new provider, not the whole list — pre-existing invalid
+		// entries (e.g. a stale protocol awaiting migration) must not block adding a
+		// valid one.
+		if err := cfg.ValidateProvider(index); err != nil {
+			return badRequest("Validation error: %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	encodeJSON(w, map[string]any{"status": "ok", "index": len(cfg.Providers) - 1})
+	encodeJSON(w, map[string]any{"status": "ok", "index": index})
 }
 
 func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
@@ -121,48 +119,52 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if idx < 0 || idx >= len(cfg.Providers) {
-		http.Error(w, fmt.Sprintf("Index %d out of range", idx), http.StatusNotFound)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 
-	// Start from the existing entry so omitted fields keep their value.
-	p := cfg.Providers[idx]
-	oldName := p.Name
-	if err = json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
-		return
-	}
-	// An empty or masked API key means "keep the stored key".
-	if p.APIKey == "" || strings.Contains(p.APIKey, "****") {
-		p.APIKey = cfg.Providers[idx].APIKey
-	}
-	cfg.Providers[idx] = p
+	err = h.updateConfig(func(cfg *config.Config) error {
+		if idx < 0 || idx >= len(cfg.Providers) {
+			return notFound("Index %d out of range", idx)
+		}
 
-	// Validate only the edited provider, not the whole list — this lets an
-	// operator repair entries one at a time even while others are still invalid
-	// (e.g. migrating several providers off a renamed protocol).
-	if err = cfg.ValidateProvider(idx); err != nil {
-		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
-		return
-	}
+		// Start from the existing entry so omitted fields keep their value.
+		p := cfg.Providers[idx]
+		oldName := p.Name
+		if decErr := json.Unmarshal(body, &p); decErr != nil {
+			return badRequest("Invalid JSON: %v", decErr)
+		}
+		// An empty or masked API key means "keep the stored key"; a masked proxy
+		// URL (its userinfo shown as ****) likewise keeps the stored one.
+		if p.APIKey == "" || strings.Contains(p.APIKey, "****") {
+			p.APIKey = cfg.Providers[idx].APIKey
+		}
+		if isMasked(p.Proxy) {
+			p.Proxy = cfg.Providers[idx].Proxy
+		}
+		cfg.Providers[idx] = p
 
-	// If the provider was renamed, re-point models that referenced it.
-	if p.Name != oldName {
-		for i := range cfg.Models {
-			if cfg.Models[i].Provider == oldName {
-				cfg.Models[i].Provider = p.Name
+		// Validate only the edited provider, not the whole list — this lets an
+		// operator repair entries one at a time even while others are still invalid
+		// (e.g. migrating several providers off a renamed protocol).
+		if verr := cfg.ValidateProvider(idx); verr != nil {
+			return badRequest("Validation error: %v", verr)
+		}
+
+		// If the provider was renamed, re-point models that referenced it.
+		if p.Name != oldName {
+			for i := range cfg.Models {
+				if cfg.Models[i].Provider == oldName {
+					cfg.Models[i].Provider = p.Name
+				}
 			}
 		}
-	}
-
-	if err = config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -176,27 +178,23 @@ func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if idx < 0 || idx >= len(cfg.Providers) {
-		http.Error(w, fmt.Sprintf("Index %d out of range", idx), http.StatusNotFound)
-		return
-	}
-
-	name := cfg.Providers[idx].Name
-	for _, m := range cfg.Models {
-		if m.Provider == name {
-			http.Error(w, fmt.Sprintf("provider %q is in use by model %q", name, m.ModelName), http.StatusConflict)
-			return
+	err = h.updateConfig(func(cfg *config.Config) error {
+		if idx < 0 || idx >= len(cfg.Providers) {
+			return notFound("Index %d out of range", idx)
 		}
-	}
 
-	cfg.Providers = append(cfg.Providers[:idx], cfg.Providers[idx+1:]...)
-	if err = config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		name := cfg.Providers[idx].Name
+		for _, m := range cfg.Models {
+			if m.Provider == name {
+				return &httpError{status: http.StatusConflict, msg: fmt.Sprintf("provider %q is in use by model %q", name, m.ModelName)}
+			}
+		}
+
+		cfg.Providers = append(cfg.Providers[:idx], cfg.Providers[idx+1:]...)
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

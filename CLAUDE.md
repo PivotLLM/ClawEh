@@ -73,9 +73,38 @@ Rules:
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Module: `github.com/PivotLLM/ClawEh`
 - Binary: `claw` (main.go at repo root) — the gateway, the WebUI HTTP layer, the session
-  API, and the embedded frontend all share one process and one HTTP mux on
-  `cfg.Gateway.Port` (default `18790`). There is no longer a separate
-  `claw-launcher` / `claw-web` binary.
+  API, and the embedded frontend all share one process and one HTTP mux. The mux is
+  served on **two listeners** (`internal/gateway/httphost.go`): plain HTTP on loopback
+  only (`127.0.0.1` and `[::1]` on `cfg.Gateway.Port`, default `18790`) and, when
+  `gateway.host` is not loopback, HTTPS on `gateway.host:gateway.tls_port` (default
+  `18443`) with a self-signed or operator-supplied certificate managed by
+  `internal/tlscert` (`claw tls` inspects it; see `docs/tls.md`). Plain HTTP is never
+  served off-box. There is no longer a separate `claw-launcher` / `claw-web` binary.
+- **Operator login:** every `/api/*` request and `/webui/ws` require the admin
+  account created by `claw admin` (`internal/admincmd`; credentials, argon2id and
+  the file format in `internal/admin`; sessions and the middleware in
+  `web/backend/middleware/auth*.go`). Loopback is not exempt. `<CLAW_HOME>/credentials.json`
+  is the only account; there is no default and no WebUI path to create one. See
+  `docs/webui-auth.md`. The handler chain on the listener is IP allowlist → Host
+  check (421) → cross-origin protection → security headers → login → body limit → mux.
+- **One configuration:** `config.Store` (`config/store.go`) is the in-memory config the
+  WebUI API reads (`h.currentConfig()`) and writes (`h.updateConfig(fn)`: lock → clone →
+  mutate → resolve secret refs → validate listeners → atomic save → swap); the gateway
+  derives its pruned running copy from it at boot and on every reload (`store.Reload()`).
+  Handlers must not call `config.LoadConfig` themselves. Secret fields may hold
+  `env:NAME` / `file:/path` references (`config/secrets.go`), resolved at load and written
+  back on save; unknown keys are warned at load (`config/unknown_keys.go`).
+- **Startup guards:** `internal/perms.Enforce` runs before the config loads — `CLAW_HOME`
+  becomes 0700, secrets/DBs 0600, and a group/other-readable `config.json` aborts startup
+  with the `chmod 600` to run. Everything ClawEh creates under `CLAW_HOME` is 0700/0600.
+- **Audit log:** `internal/audit` (`<CLAW_HOME>/audit.db`) records tool calls, config
+  writes and logins; every turn carries a `turn_id` on its log lines. See `docs/audit.md`.
+- **Fail fast:** if the HTTP listener, the MCP host server or the agent loop dies after
+  start, `internal/gateway/fatal.go` alerts, shuts down cleanly and exits 3 so systemd
+  restarts the process.
+- **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
+  DB via `VACUUM INTO`, state, credentials, TLS); `claw backup` / `claw restore`. See
+  `docs/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
@@ -88,6 +117,7 @@ Upstream picoclaw docs are not carried in this repo.
 ```
 make build       # build the binary (embeds the frontend bundle)
 make test        # the full gate: generate, format check, vet, golangci-lint,
+                 # govulncheck (pinned, installed into bin/, needs network),
                  # then test.sh: the Go suite with -race and a coverage floor,
                  # the frontend typecheck/lint/unit tests and the MCP server
                  # integration checks. Rewrites nothing and exits non-zero on
@@ -101,12 +131,14 @@ make check-webui         # the browser suite against a running dev instance
 ```
 To build and deploy **production**: run `update-claw.sh` (on PATH). It builds the binary, stops the service, installs, and restarts. Do not run build/install commands directly for prod.
 
+**Release artefacts (cut by the user on macOS):** `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make build-all`, `make sbom`, then `make release-sign MINISIGN_KEY=…` (runs `release-checksums` first). Upload every `*.tar.gz`, `*.tar.gz.sha256`, `checksums.txt`, `checksums.txt.minisig` and `sbom.json`. `claw upgrade` refuses a release without a valid `checksums.txt.minisig`, verified against `releasePublicKey` in `internal/upgrade/pubkey.go` — an empty key there means `claw upgrade` refuses everything, so the key must be set before the first release that ships this code.
+
 Systemd units: `claw-ai.service` is **production** — never build to, install to, or restart it directly; production deploys go through `update-claw.sh` only. `claw-dev.service` is the local **dev** instance for iterating in a developer account; build the binary and restart `claw-dev.service` for local testing. Never touch production or `update-claw.sh` when testing.
 
 ## Key Architecture Notes
 - **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `global` and `providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; runaway recursion is bounded by `agents.defaults.max_subagent_depth` (default 3, shared by `agent_spawn` and Maestro dispatch — see `tools/agents/depth.go`), which replaced the old blanket `PrimaryOnly` restriction. Guard: `providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`). Cognitive memory lives in `github.com/PivotLLM/cogmem` (store, composer, consolidation, portable export, toolspec tools, and the `Session` the loop drives with `Observe`/`Recall`). **Same invariant: cogmem imports only toolspec + stdlib (+ SQLite) — never ClawEh.** The host side is `cogmemhost/` (the attachment loader that enforces file-tool permissions, the logging bridge via `cogmem/logger.SetBackend`, and the `config.MemoryConfig` → `cogmem.Settings` mapping); `tools/cogmem` mounts the module's tools under the `cogmem` namespace. Cogmem keeps its own inbox of unconsolidated messages, so it never reads the session archive; the one-time inbox backfill from the archive on upgrade is host code in `agent/memory_wiring.go`. The context engine lives in `github.com/PivotLLM/ctxengine` (transcript, archive, assembly, eviction, compaction, and the `session_*` tools; ClawEh imports its `memory` and `session` packages for the store). **Same invariant: ctxengine imports only spawnllm + toolspec + stdlib (+ SQLite) — never ClawEh.** The host side is in `agent/`: `ContextBuilder.PromptLayers` builds the system prompt layers the engine assembles, `compressModelCaller` (`agent/context_manager.go`) is the one `ModelCaller` that walks the summarization chain for both the engine and cogmem, `agent/llmcontext_logging.go` bridges its logger, and `tools/session` mounts its tools. The engine and cogmem never see each other: the loop observes messages into cogmem after each engine `Add*` and hands cogmem's `Recall` blocks to `Assemble` as injections.
-- **Providers**: claude-cli, codex-cli, antigravity-cli (binary `agy`; `gemini-cli` is an accepted alias since Google deprecated it), cursor-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory. The client implementations live in spawnllm; ClawEh's `factory_provider.go`/`dispatch.go`/`fallback.go`/`cooldown.go` map config → providers and own the policy.
-- **Configuration report**: the `report` package builds a config-derived inventory of what the install can do (a security assessment table, listeners, providers and models, tokens as set/not set, channels, per-agent tools and folder access, external services, devices, data, schedules) and renders it as PDF; `GET /api/report/pdf` serves it and the WebUI Report page opens it. It never emits a secret value (guarded by a test). See `docs/report.md`.
+- **Providers**: claude-cli, codex-cli, antigravity-cli (binary `agy`; `gemini-cli` is an accepted alias since Google deprecated it), cursor-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory. The client implementations live in spawnllm; ClawEh's `factory_provider.go`/`dispatch.go`/`fallback.go`/`cooldown.go` map config → providers and own the policy. The CLIs' permission-bypass flags (`--dangerously-skip-permissions`, `--yolo`, …) are `BypassArgs` in `config/clis.go` and are passed **only** when the provider's `bypass_restrictions` is true (the WebUI checkbox *Bypass CLI restrictions*, default off); a bypass flag in `extra_args` is stripped when it is off. CLI, `shell_exec` and stdio-MCP child processes start from the `internal/childenv` allowlist, never the full service environment (CLIs additionally get their vendor's `ANTHROPIC_*`/`OPENAI_*`/… variables).
+- **Configuration report**: the `report` package builds a config-derived inventory of what the install can do (a security assessment table, listeners, providers and models, tokens as set/not set, channels, per-agent tools and folder access, external services, devices, data, schedules) and renders it as PDF; `GET /api/report/pdf` serves it. The WebUI Report page shows the product identification line and the security assessment table inline (`GET /api/report/assessment`, JSON from the same collector) with a **Download full report** button for the PDF. Neither output ever emits a secret value (guarded by tests). See `docs/report.md`.
 - **Operator alerts**: `github.com/tenebris-tech/alerter` (queued, de-duplicated alerts; always logged, delivered on channels configured only by `ALERTER_*` variables or `~/.alerter`). The gateway builds one in `internal/gateway/alerts.go` (app name, short hostname, `<CLAW_HOME>/logs/alerts.log` unless `ALERTER_LOG` is set) and hands it to the agent loop, which passes it to the cooldown tracker and MCP manager; the channel manager and cron service get it too. Channels get it through `BaseChannel.SetAlerter`/`Alert` (injected by the manager). Code with no owner (package singletons, free functions, per-registry providers) raises through the process default in the `alerts` package (`alerts.Send`), set once by the gateway; tests capture it with `internal/testalerts.Install`. Prefer explicit injection wherever the constructor site has the alerter in hand. Every alert (title, event id, source) is listed in `ALERTS.md`; **add a row there when you add an alert.** Every alert is `alerter.Normal` priority; `Urgent` and `Emergency` mean "reach a person now, at any hour" and are not used by ClawEh. Never raise an alert above Normal without asking, and if one is agreed mark it `*` (Urgent) or `**` (Emergency) in the Priority column. `GET /api/gateway/alerts` tails the file; the Logs page shows it via its source selector. See `docs/alerts.md`.
 - **Cron**: mtime-based reload from disk; only saves when jobs are due. Prevents CLI/service race.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
@@ -119,7 +151,11 @@ Speaks the **OpenClaw Gateway WebSocket protocol** so hardware/voice clients pai
 Code: `channels/device/` (protocol in `server.go`, listener/bus bridge in `gateway.go`,
 read surface in `agentquery.go`); agent-loop wiring in `internal/gateway/device_query.go`.
 **Full protocol + findings: `docs/device-gateway-protocol.md`.** Own listener on
-`channels.device` (default port `18791`), separate from the WebUI/admin port.
+`channels.device` (default port `18791`), separate from the gateway's HTTP (18790)
+and HTTPS (18443) listeners; plain WebSocket with its own token/pairing auth,
+64 KiB pre-auth read limit, per-IP auth-failure lockout, and a Host check. Device
+tokens are stored hashed: a connect on the shared token issues fresh device
+tokens and revokes the old ones.
 
 Status: **working** with the Rabbit R1 (through the Rabbit agent; the gateway sees a
 `mode=node` client) and the "Claw to Talk" Android app (`com.alvin.clawtotalk`,
@@ -188,13 +224,18 @@ anything that alters gateway startup, readiness or config reload:
 ```
 make build && sudo systemctl stop claw-dev && cp build/claw ~/bin/claw && sudo systemctl start claw-dev
 until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
+export CLAW_E2E_USER=<admin> CLAW_E2E_PASSWORD=<password>   # the dev instance's `claw admin` account
 make check-webui
 ```
+
+The suite logs in first (the WebUI and `/api/*` require the admin account), so
+the dev instance needs one (`claw admin`) and the two variables must be
+exported; it exits 2 with a hint otherwise.
 
 Stop the service before copying: the running binary makes the copy fail with
 "Text file busy", and a restart then silently brings the old build back.
 
-- **The plan is `docs/webui-test-plan.md`** — 97 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 108 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

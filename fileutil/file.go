@@ -53,7 +53,7 @@ import (
 //	err := utils.WriteFileAtomic("public.txt", data, 0o644)
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 

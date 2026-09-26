@@ -44,10 +44,14 @@ func seedSession(t *testing.T, dir, sessionKey, summary string, msgs ...provider
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
 	for _, msg := range msgs {
-		store.AddFullMessage(sessionKey, msg)
+		if _, err = store.AddFullMessage(sessionKey, msg); err != nil {
+			t.Fatalf("AddFullMessage() error = %v", err)
+		}
 	}
 	if summary != "" {
-		store.SetSummary(sessionKey, summary)
+		if err = store.SetSummary(sessionKey, summary); err != nil {
+			t.Fatalf("SetSummary() error = %v", err)
+		}
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)

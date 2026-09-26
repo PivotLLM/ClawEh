@@ -46,11 +46,11 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Model parked after repeated failures | A model reaches the settled category cooldown after the 1/3/5-minute escalation | provider/model |
 | | MCP server unreachable | A reconnect or background connect attempt failed and the server is in cooldown | server name |
 | | MCP host server stopped | ClawEh's own MCP server died after startup | `mcpserver` |
-| | HTTP listener stopped | The WebUI/API listener failed to bind or died | `http` |
+| | HTTP listener stopped | The loopback or HTTPS listener died after start; the gateway exits so the service manager restarts it | `http` |
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |
-| | Channel failed to start | A channel exhausted its start retries | channel name |
+| | Channel failed to start | A channel has failed to start ten times in a row; retries continue every five minutes | channel name |
 | | Channel send failed | An outbound message was dropped after its send retries | channel name |
-| | Channel receive loop stopped | The device gateway listener failed while the channel still reports running | channel name |
+| | Channel receive loop stopped | The device gateway listener failed; it re-listens with backoff while the channel still reports running | channel name |
 | | Channel connection down | A channel has had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`) | channel name |
 | | Channel credentials rejected | Slack or Matrix rejected the channel's token | channel name |
 | | Telegram polling failed | Telegram rejected the bot token (401) | channel name |
@@ -78,6 +78,16 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Device source not started | A device event source failed to start | `devices:<kind>` |
 | | USB device monitor stopped | The udevadm monitor stream ended | `devices:usb` |
 | | Device store unavailable | The paired-device database could not be opened for a request | `device-store` |
+| | Device authentication locked out | A client address failed device authentication five times in ten minutes | client IP |
+| | WebUI login locked out | A client address failed five WebUI logins in ten minutes | `auth-lockout` |
+| | Daily model spend over threshold | The day's model cost reached `agents.defaults.daily_spend_alert_usd` | `spend:<day>` |
+| | Database failed integrity check | A SQLite store failed `PRAGMA quick_check` during a backup and was skipped | `backup:<path>` |
+| | TLS certificate reload failed | A changed certificate or key file did not load; the old pair keeps serving | `tls-reload` |
+| | TLS certificate expires soon | An operator-supplied certificate is within 14 or 3 days of expiry, or expired | `tls-expiry` |
+| | Self-signed TLS certificate renewal failed | The self-signed certificate could not be regenerated before expiry | `tls-selfsigned` |
+| | Session retention failed | The nightly session-retention pass could not delete an idle archive or a cogmem snapshot | `session-retention` |
+| | Session store write failed | A message could not be written to the session store, so the turn was abandoned | `session-store` |
+| | Context compaction breaker tripped | Three automatic compactions failed in a row; only the safety-net pass still runs | session key |
 
 ## Repeats
 

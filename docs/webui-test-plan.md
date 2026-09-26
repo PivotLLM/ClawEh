@@ -2,9 +2,11 @@
 
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
-also automated in `tests/frontend-e2e.mjs`, which prints the same IDs.
+also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
+108 checks in all; the runner prints the same tally at the end.
 
 ```
+export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
 node tests/frontend-e2e.mjs                      # whole plan
 node tests/frontend-e2e.mjs --only F,J           # selected groups
 node tests/frontend-e2e.mjs --base http://host:port
@@ -23,8 +25,24 @@ real memory is not at risk, but it is still a write. The runner refuses port
 | Requirement | Notes |
 |---|---|
 | A running gateway | `make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev` |
+| An admin account | The WebUI and `/api/*` are behind a login. Create the account on the dev instance with `claw admin`, then `export CLAW_E2E_USER=… CLAW_E2E_PASSWORD=…`. The runner signs in first and stops with that instruction if it cannot |
 | At least one agent, model and provider | The plan asserts against live data; an empty install fails A3 |
 | Playwright + Chromium | Override with `PLAYWRIGHT_MODULE` / `CHROME_PATH` |
+
+**Every request below carries the session.** The runner keeps one browser
+context, so the cookie from `POST /api/auth/login` goes with every page it opens
+and every API probe it makes. Following the plan by hand, sign in once with a
+cookie jar and pass it to each `curl`:
+
+```
+curl -c jar -H 'Content-Type: application/json' \
+     -d '{"username":"<admin>","password":"<password>"}' $BASE/api/auth/login   # 204
+curl -b jar $BASE/api/config
+```
+
+Only `/health`, `/ready` and the three `/api/auth/*` endpoints answer without
+it; anything else under `/api/*` is `401`. Where a step says **anonymous**, run
+it without the jar.
 
 **Wait for startup before testing.** `/health` answers as soon as the listener
 binds; `/ready` only answers 200 once the channels are up. Poll `/ready`, not
@@ -46,10 +64,11 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 18 routes in a browser with the console open:
-`/`, `/agents`, `/agent/bindings`, `/agent/tools`, `/agent/skills`, `/channels`,
-`/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`, `/mcp/servers`, `/memory`,
-`/models`, `/providers`, `/voice`, `/setup`, `/status`.
+**Process.** Load each of the 19 routes in a browser with the console open:
+`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/tools`, `/agent/skills`,
+`/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
+`/mcp/servers`, `/memory`, `/models`, `/providers`, `/voice`, `/setup`,
+`/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -67,15 +86,18 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 18 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 19 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 | D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
 
+The chat socket is authenticated by the login session cookie, which the browser
+attaches on its own. No token is fetched or sent by the page.
+
 | ID | Process | Expected |
 |---|---|---|
-| E1 | `curl $BASE/api/webui/token` | `200`, with a non-empty `token` and a `ws_url` beginning `ws://` or `wss://` |
-| E2 | Load `/`, and inspect the WebSocket the page opens | Constructed with subprotocols `["claw-token", "<token>"]`. **The token must not appear in the URL** — a token in a query string is recorded by proxies, access logs, Referer headers and browser history |
+| E1 | `curl -b jar $BASE/api/webui/token` | `404`. This endpoint handed the chat token to any peer inside the CIDR allowlist, which made the `/webui/ws` gate no gate at all; it was removed with the login and must not come back |
+| E2 | Load `/`, inspect the WebSocket the page opens, then **anonymous** `curl -o /dev/null -w '%{http_code}' $BASE/webui/ws` | The socket URL is `ws(s)://<page host>/webui/ws?session_id=…` — the page's own origin, **no `token=` in the URL** (a query-string token is recorded by proxies, access logs, Referer headers and browser history) and **no subprotocols**. The anonymous request is `401`: the cookie is the gate |
 | E3 | Load `/` and wait ~2s | Chat does not report "disconnected" or a connection error |
 
 ## F. Agents — autosave and list realignment
@@ -136,10 +158,11 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/voice` | Both render, no console errors |
-| K4 | Click **Report** in the sidebar (below the groups) | `/report` renders with an **Open report (PDF)** button, no console errors |
+| K4 | Click **Report** in the sidebar (below the groups) | `/report` renders an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Download full report** button whose `href` is `/api/report/pdf`; no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
+| K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
 
 ## L. Setup wizard
 
@@ -152,8 +175,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 
 | ID | Process | Expected |
 |---|---|---|
-| M1–M11 | `curl -o /dev/null -w '%{http_code}' $BASE<path>` for `/api/system/version`, `/api/config`, `/api/models`, `/api/providers`, `/api/agents/tools`, `/api/skills`, `/api/devices`, `/api/devices/pending`, `/api/webui/token`, `/health`, `/ready` | All `200`. `/ready` returning 503 after startup means the readiness flag was never set |
-| M90 | `curl $BASE/api/config` and search for credentials | Every `api_key` is masked. `/api/*` has no operator authentication, so an unmasked credential here is readable by anything that can reach the port |
+| M1–M11 | `curl -b jar -o /dev/null -w '%{http_code}' $BASE<path>` for `/api/system/version`, `/api/config`, `/api/models`, `/api/providers`, `/api/agents/tools`, `/api/skills`, `/api/devices`, `/api/devices/pending`, `/api/auth/status`, `/health`, `/ready` | All `200`. `/ready` returning 503 after startup means the readiness flag was never set |
+| M90 | `curl -b jar $BASE/api/config` and search for credentials | Every `api_key` is masked. The login gates `/api/*`, but a credential in this response would still sit in the browser's memory, devtools and any proxy log for the signed-in session — masking is defence in depth, not a substitute for the login |
 
 ## N. Memory curation
 
@@ -189,6 +212,33 @@ and deletes it at the end. Nothing outside that domain is touched.
 | O4 | Load `/status` | The memory, assistants and uptime tiles all render live figures; memory reads as a size with a unit |
 | O5 | Load `/status` and read the lower detail box | It carries a **Compiler** line (`go1.27.1`) and an **Environment** line (`Ubuntu 24.04.4 LTS on amd64`, falling back to `linux on amd64` on a host that publishes no name). The memory tile shows one figure — no Go heap: the heap is a subset of RSS and a diagnostic detail, and this page reports how big the process is |
 | O6 | Compare `providers` from `GET /api/system/status` against the `ready` flags in `GET /api/providers` | The two agree. Both read one backend rule — an API key for HTTP providers, a binary that actually resolves for CLI ones — so a mismatch means one surface went back to guessing from the config. Any CLI provider that is `ready` with no `command` set reports the binary it resolved to |
+
+## P. Authentication
+
+The login page, the refusals, the session, and sign-out. P1, P2 and P5 run in
+browser contexts of their own so the suite's session is untouched; P2 records
+one failed login, which the limiter forgets on the next success (P5).
+
+| ID | Process | Expected |
+|---|---|---|
+| P1 | In a fresh browser (no session), load `/agents` | Redirected to `/login?next=%2Fagents`. The page shows the **Username** and **Password** fields and a **Sign in** button, with no console errors. The frontend gate remembers where the visitor was going, so a bookmark still works after signing in. (With no admin account the same page instead reads **No admin account** and tells you to run `claw admin` on the server) |
+| P2 | On `/login`, enter the right username with a wrong password, **Sign in** | The form stays on `/login` and shows **Invalid username or password.** — one message for a bad username and a bad password alike, so the form never confirms which half was right. `GET /api/auth/status` from that browser still says `authenticated: false` |
+| P3 | **anonymous** `curl -i $BASE/api/config` | `401` with a JSON `error` (`authentication required`, or `no admin account` with a `claw admin` hint) and **no configuration in the body** |
+| P4 | `curl -b jar $BASE/api/auth/status` | `{"configured":true,"authenticated":true,"username":"<admin>"}` — the username is the one that signed in |
+| P5 | Sign in in a second browser, open `/agents`, click **Sign out** in the sidebar footer | The browser lands on `/login` with the form showing. From that browser `GET /api/auth/status` is `authenticated: false` and `GET /api/config` is `401`: the session ended on the server, not just in the browser |
+
+## Q. Audit page
+
+`GET /api/audit?kind=…&agent=…&limit=…&before_id=…` returns
+`{events, next_before_id, dropped}`, newest first. The page asks for 100 rows at
+a time.
+
+| ID | Process | Expected |
+|---|---|---|
+| Q1 | Open the **Services** group in the sidebar, click **Audit** | The link is under Services and navigates to `/audit` with no console errors |
+| Q2 | Load `/audit` | The table renders with the columns **Time, Kind, Actor / agent, Channel, Tool / summary, Outcome, Duration**, no console errors. The suite's own login is an `auth` event, so the trail is never empty by now; an empty state or an error here means events are not being recorded |
+| Q3 | Open the **Kind** filter and pick **Auth** | The page requests `/api/audit?…kind=auth…` and every row shown reads **Auth** — the filter is applied by the server, not by hiding rows |
+| Q4 | `curl -b jar '$BASE/api/audit?limit=100'`, then load `/audit` | **Load more** is shown when, and only when, the API returned 100 events **and** `next_before_id > 0`. On a fresh instance it is 0 and the button is absent; either way the page and the API must agree |
 
 ---
 

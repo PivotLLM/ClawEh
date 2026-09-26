@@ -102,7 +102,7 @@ func formatFallbackNotice(passed []providers.FallbackAttempt, next providers.Fal
 	}
 	failed := passed[0]
 	return fmt.Sprintf("⚠️ %s.\nTrying %s…",
-		attemptDescription(attemptName(failed), failoverStatus(failed.Error), failed.Reason),
+		attemptText(attemptName(failed), failed.Error, failed.Reason),
 		nextName,
 	)
 }
@@ -202,7 +202,7 @@ func renderFailoverError(err error) string {
 			if a.Skipped {
 				continue
 			}
-			attempts = append(attempts, attemptDescription(a.Model, failoverStatus(a.Error), a.Reason))
+			attempts = append(attempts, attemptText(a.Model, a.Error, a.Reason))
 		}
 		if len(attempts) == 0 {
 			return ""
@@ -213,9 +213,29 @@ func renderFailoverError(err error) string {
 		return "All models failed:\n  • " + strings.Join(attempts, "\n  • ")
 	}
 	if fe, ok := errors.AsType[*providers.FailoverError](err); ok {
-		return attemptDescription(fe.Model, fe.Status, fe.Reason) + "."
+		return attemptText(fe.Model, fe, fe.Reason) + "."
+	}
+	// The declined-tools error has no HTTP status or known pattern, so the chain
+	// returns it unclassified (wrapped in "fallback: unclassified error from …")
+	// rather than as an exhausted chain. Its text is the whole point: show it.
+	if declined, ok := errors.AsType[*providers.CLIDeclinedError](err); ok {
+		return declined.Error()
 	}
 	return ""
+}
+
+// attemptText renders one failed attempt from its error. The CLI declined-tools
+// guard's error is written for the user (it names the setting to change), so it
+// is shown verbatim rather than reduced to its failover classification; every
+// other error is rendered by attemptDescription with its HTTP status.
+func attemptText(model string, err error, reason providers.FailoverReason) string {
+	if declined, ok := errors.AsType[*providers.CLIDeclinedError](err); ok {
+		if model == "" {
+			model = "model"
+		}
+		return model + " error: " + declined.Error()
+	}
+	return attemptDescription(model, failoverStatus(err), reason)
 }
 
 // failoverStatus extracts the HTTP status code carried by a classified

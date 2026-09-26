@@ -152,6 +152,9 @@ export function AgentsPage() {
         // Always sent (like tools/mounts) so clearing the box persists; the
         // backend drops an empty slice on save (omitempty).
         mcp_tools: a.mcp_tools ?? [],
+        // Always sent so clearing the list persists; blank rows (an entry
+        // being typed) are dropped. The backend drops an empty slice on save.
+        deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
         // Always sent (like tools) so removing all mounts persists; the backend
         // drops an empty slice on save (omitempty).
         mounts: (a.mounts ?? [])
@@ -190,6 +193,7 @@ export function AgentsPage() {
       share_common: edits.shareCommon,
       mounts: edits.mounts,
       mcp_tools: edits.mcpTools,
+      deny_tools: edits.denyTools,
       maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -539,6 +543,8 @@ export function AgentsPage() {
                       onMountsChange={(ms) => edit(i, { mounts: ms })}
                       mcpTools={e.mcpTools}
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}
+                      denyTools={e.denyTools}
+                      onDenyToolsChange={(dt) => edit(i, { denyTools: dt })}
                       agentBindings={bindingViewsForAgent(bindings, agent.id)}
                       onSetDefaultBinding={(target, deliverTo) =>
                         handleSetDefaultBinding(agent.id, target, deliverTo)

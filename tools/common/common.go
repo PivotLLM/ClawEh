@@ -70,10 +70,10 @@ func copyFile(src, dst string) error {
 	}
 	defer utils.CloseQuietly(in)
 
-	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o700); mkErr != nil {
 		return mkErr
 	}
-	out, err := os.Create(dst) //nolint:gosec // dst confined to the common dir by confine()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func putCommon(commonDir, workspace string, args map[string]any) *global.Result 
 	}
 
 	// Create the common directory on first write.
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+	if err := os.MkdirAll(commonDir, 0o700); err != nil {
 		return errResult("common_put: %v", err)
 	}
 	if err := copyFile(srcAbs, dstAbs); err != nil {

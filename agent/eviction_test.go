@@ -40,6 +40,7 @@ func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Me
 func (m *trackingContextManager) Assemble(_ context.Context, _ ctxengine.AssembleRequest) (ctxengine.Assembly, error) {
 	return ctxengine.Assembly{}, nil
 }
+func (m *trackingContextManager) ObserveUsage(_, _ int)                             {}
 func (m *trackingContextManager) Compact(_ context.Context) error                   { return nil }
 func (m *trackingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
 func (m *trackingContextManager) RenderedSummary() string                           { return "" }
@@ -53,10 +54,8 @@ func (m *trackingContextManager) Close(_ context.Context) error {
 
 // makeEntry is a test helper that inserts a cmEntry directly into the sync.Map.
 func makeEntry(al *AgentLoop, key string, cm ctxengine.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
-	entry := &cmEntry{
-		cm:           cm,
-		lastAccessed: lastAccessed,
-	}
+	entry := &cmEntry{cm: cm}
+	entry.lastAccessed.Store(lastAccessed.UnixNano())
 	entry.refcount.Store(refcount)
 	al.contextManagers.Store(key, entry)
 	return entry
@@ -204,7 +203,7 @@ func TestGetContextManager_RefcountLifecycle(t *testing.T) {
 	}
 
 	// With refcount==0 and stale time, eviction should fire.
-	entry.lastAccessed = time.Now().Add(-3 * time.Hour)
+	entry.lastAccessed.Store(time.Now().Add(-3 * time.Hour).UnixNano())
 	al.runEvictionPass(defaultEvictTTL)
 	if !cm.closed.Load() {
 		t.Error("expected eviction after refcount drops to 0 and TTL exceeded")

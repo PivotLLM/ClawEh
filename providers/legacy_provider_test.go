@@ -13,7 +13,7 @@ func TestCreateProvider_NoModelList_ReturnsError(t *testing.T) {
 	cfg := config.DefaultConfig()
 	// Clear everything so there's no models configured.
 	cfg.Models = nil
-	cfg.Agents.Defaults.SetDefaultModel("")
+	cfg.Agents.Defaults.Models = nil
 
 	_, _, err := CreateProvider(cfg)
 	if err == nil {

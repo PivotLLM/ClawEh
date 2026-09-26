@@ -45,11 +45,11 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 // on every single request — and raced the device channel for the same file. The
 // caller must NOT close what it gets back; the handle lives for the process.
 //
-// The config is still loaded per call, because callers use it for live values
-// and it is cheap. A data dir change (config reload) reopens against the new
-// path rather than serving the old database.
+// The live config is read per call, because callers use it for live values
+// and it is a snapshot. A data dir change (config reload) reopens against the
+// new path rather than serving the old database.
 func (h *Handler) openDeviceStore(ctx context.Context) (*device.Store, *config.Config, error) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -104,9 +104,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // and enables the channel if needed), reloads the gateway, and returns the device
 // setup payload plus a rendered QR (PNG data-URL + ASCII).
 func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
-	cfg, changed, err := device.EnsureProvisioned(h.configPath)
+	changed := false
+	err := h.updateConfig(func(c *config.Config) error {
+		d := &c.Channels.Device
+		if d.Token == "" {
+			tok, terr := device.GenerateSharedToken()
+			if terr != nil {
+				return terr
+			}
+			d.Token, changed = tok, true
+		}
+		if d.WordToken == "" {
+			wtok, werr := device.GenerateWordToken()
+			if werr != nil {
+				return werr
+			}
+			d.WordToken, changed = wtok, true
+		}
+		if !d.Enabled {
+			d.Enabled, changed = true, true
+		}
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
 	// Only reload when provisioning actually changed config (first-time token/enable).
@@ -135,40 +164,46 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	cfg, err := config.LoadConfig(h.configPath)
+	// Only persist + reload (which re-binds the device listener) when something
+	// actually changed, so saving with no edits is a cheap no-op.
+	changed := false
+	err := h.updateConfig(func(c *config.Config) error {
+		d := &c.Channels.Device
+		if body.ListenLAN != nil {
+			newHost := "127.0.0.1"
+			if *body.ListenLAN {
+				newHost = "0.0.0.0"
+			}
+			if d.Host != newHost {
+				d.Host = newHost
+				changed = true
+			}
+		}
+		if body.ExternalURL != nil {
+			if v := strings.TrimSpace(*body.ExternalURL); v != d.ExternalURL {
+				d.ExternalURL = v
+				changed = true
+			}
+		}
+		if body.Enabled != nil && d.Enabled != *body.Enabled {
+			d.Enabled = *body.Enabled
+			changed = true
+		}
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
-	d := &cfg.Channels.Device
-	changed := false
-	if body.ListenLAN != nil {
-		newHost := "127.0.0.1"
-		if *body.ListenLAN {
-			newHost = "0.0.0.0"
-		}
-		if d.Host != newHost {
-			d.Host = newHost
-			changed = true
-		}
-	}
-	if body.ExternalURL != nil {
-		if v := strings.TrimSpace(*body.ExternalURL); v != d.ExternalURL {
-			d.ExternalURL = v
-			changed = true
-		}
-	}
-	if body.Enabled != nil && d.Enabled != *body.Enabled {
-		d.Enabled = *body.Enabled
-		changed = true
-	}
-	// Only persist + reload (which re-binds the device listener) when something
-	// actually changed, so saving with no edits is a cheap no-op.
 	if changed {
-		if err := config.SaveConfig(h.configPath, cfg); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
-			return
-		}
 		if reload := h.reloadFunc(); reload != nil {
 			if reloadErr := reload(); reloadErr != nil {
 				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
@@ -182,19 +217,22 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 // the gateway so the new value takes effect, and returns the refreshed pairing status.
 // The long QR token is left untouched.
 func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
-		return
-	}
 	wtok, werr := device.GenerateWordToken()
 	if werr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "word token generation failed"})
 		return
 	}
-	cfg.Channels.Device.WordToken = wtok
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
+	err := h.updateConfig(func(c *config.Config) error {
+		c.Channels.Device.WordToken = wtok
+		return nil
+	})
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
 	if reload := h.reloadFunc(); reload != nil {
@@ -207,7 +245,7 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http
 
 // handleDevicePairStatus returns the current pairing config without mutating it.
 func (h *Handler) handleDevicePairStatus(w http.ResponseWriter, _ *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return

@@ -6,8 +6,8 @@ require (
 	github.com/PivotLLM/MCPFusion v0.4.3
 	github.com/PivotLLM/Maestro v0.5.3
 	github.com/PivotLLM/cogmem v0.0.5
-	github.com/PivotLLM/ctxengine v0.0.4
-	github.com/PivotLLM/spawnllm v0.1.12
+	github.com/PivotLLM/ctxengine v0.0.6
+	github.com/PivotLLM/spawnllm v0.1.13
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.4
@@ -29,7 +29,9 @@ require (
 	github.com/tenebris-tech/alerter v0.1.4
 	github.com/tenebris-tech/mlogger v0.0.5
 	github.com/tenebris-tech/secmsg v0.1.1
+	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
+	golang.org/x/term v0.46.0
 	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.31.0
@@ -38,7 +40,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.74.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.75.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
@@ -84,14 +86,13 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/arch v0.31.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	modernc.org/libc v1.77.0 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

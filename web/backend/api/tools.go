@@ -36,7 +36,7 @@ func (h *Handler) registerToolRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleListTools(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -46,22 +46,19 @@ func (h *Handler) handleListTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
 	var req toolStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-	if err := applyToolState(cfg, r.PathValue("name"), req.Enabled); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+	err := h.updateConfig(func(cfg *config.Config) error {
+		if err := applyToolState(cfg, r.PathValue("name"), req.Enabled); err != nil {
+			return badRequest("%s", err.Error())
+		}
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -22,7 +22,7 @@ func deviceSender(id string) bus.SenderInfo {
 // allow-list (the gateway already authenticates via token + pairing). An empty
 // allow-list previously meant "deny all", silently dropping every device turn.
 func TestDeviceChannelEmptyAllowFromAllowsPairedDevice(t *testing.T) {
-	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus())
+	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus(), "", nil)
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestDeviceChannelEmptyAllowFromAllowsPairedDevice(t *testing.T) {
 func TestDeviceChannelExplicitAllowFromRestricts(t *testing.T) {
 	dc, err := NewDeviceChannel(
 		config.DeviceChannelConfig{Enabled: true, AllowFrom: config.FlexibleStringSlice{"device:allowed"}},
-		t.TempDir(), false, bus.NewMessageBus(),
+		t.TempDir(), false, bus.NewMessageBus(), "", nil,
 	)
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)

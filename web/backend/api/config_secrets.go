@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // Secret handling for GET/PUT/PATCH /api/config.
@@ -18,37 +21,46 @@ import (
 // to the config, and the failure mode when someone forgets is a silent leak.
 // Matching on the name means a new "…_token" or "…_secret" field is covered the
 // day it is introduced.
-
-// isSecretKey reports whether a JSON field name denotes a credential.
 //
-// The value must also be a non-empty string for masking to apply, which is what
-// keeps numeric fields like chars_per_token — a suffix match, but an int — from
-// being treated as secrets.
-func isSecretKey(key string) bool {
-	k := strings.ToLower(key)
-	switch {
-	case k == "api_key" || strings.HasSuffix(k, "_api_key"):
-		return true
-	case k == "token" || strings.HasSuffix(k, "_token"):
-		return true
-	case k == "secret" || strings.HasSuffix(k, "_secret"):
-		return true
-	case k == "password" || strings.HasSuffix(k, "_password") || k == "password_hash":
-		return true
-	default:
-		return false
-	}
-}
+// Four shapes are covered:
+//   - a credential string ("api_key", "…_token", "…_secret", "…password"),
+//   - a list of credential strings ("api_keys"),
+//   - a map whose VALUES are all treated as credentials ("env", "headers"):
+//     env is where secrets go, whatever the variable is called, and a header
+//     value such as Authorization is a credential by definition,
+//   - a proxy URL ("proxy"), whose userinfo (user:password) is masked.
 
+// The field-name predicates (config.IsSecretKey and friends) live in the config
+// package, where the same set decides which fields accept an "env:"/"file:"
+// secret reference. A reference string is not a secret, so masking leaves it
+// readable: the operator sees where the value comes from, not the value.
 // maskSecrets walks a decoded config and replaces every credential with a
 // display form ("sk-****cdef"). It mutates v in place.
 func maskSecrets(v any) {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if s, ok := val.(string); ok && s != "" && isSecretKey(k) {
-				t[k] = maskAPIKey(s)
-				continue
+			switch {
+			case config.IsSecretKey(k):
+				if s, ok := val.(string); ok && s != "" {
+					t[k] = maskSecretValue(s)
+					continue
+				}
+			case config.IsSecretListKey(k):
+				if list, ok := val.([]any); ok {
+					maskStringList(list)
+					continue
+				}
+			case config.IsSecretMapKey(k):
+				if m, ok := val.(map[string]any); ok {
+					maskMapValues(m)
+					continue
+				}
+			case config.IsProxyKey(k):
+				if s, ok := val.(string); ok && !config.IsSecretRef(s) {
+					t[k] = maskProxyURL(s)
+					continue
+				}
 			}
 			maskSecrets(val)
 		}
@@ -57,6 +69,54 @@ func maskSecrets(v any) {
 			maskSecrets(item)
 		}
 	}
+}
+
+// maskSecretValue masks a credential for display, leaving a secret reference
+// ("env:NAME", "file:/path") as written: it names where the secret lives and
+// is what the operator needs to see to edit it.
+func maskSecretValue(s string) string {
+	if config.IsSecretRef(s) {
+		return s
+	}
+	return maskAPIKey(s)
+}
+
+// maskStringList masks every non-empty string element in place.
+func maskStringList(list []any) {
+	for i, item := range list {
+		if s, ok := item.(string); ok && s != "" {
+			list[i] = maskSecretValue(s)
+		}
+	}
+}
+
+// maskMapValues masks every non-empty string value in place, whatever its key.
+func maskMapValues(m map[string]any) {
+	for k, val := range m {
+		if s, ok := val.(string); ok && s != "" {
+			m[k] = maskSecretValue(s)
+		}
+	}
+}
+
+// maskProxyURL replaces the userinfo of a proxy URL with "****", so
+// "http://user:pass@proxy:3128" is shown as "http://****@proxy:3128". A URL
+// without userinfo is returned unchanged. A scheme-less "user:pass@host" is
+// masked the same way by position.
+func maskProxyURL(s string) string {
+	if s == "" {
+		return s
+	}
+	if u, err := url.Parse(s); err == nil && u.User != nil {
+		u.User = nil
+		return strings.Replace(u.String(), "://", "://****@", 1)
+	}
+	if !strings.Contains(s, "://") {
+		if at := strings.LastIndex(s, "@"); at >= 0 {
+			return "****" + s[at:]
+		}
+	}
+	return s
 }
 
 // unmaskSecrets restores masked credentials in an incoming config from the
@@ -81,11 +141,28 @@ func unmaskSecrets(incoming, stored any) {
 		}
 		for k, val := range in {
 			prev, present := st[k]
-			if s, isStr := val.(string); isStr && isSecretKey(k) && isMasked(s) {
-				if p, isStr := prev.(string); present && isStr {
-					in[k] = p
+			switch {
+			case config.IsSecretKey(k) || config.IsProxyKey(k):
+				if s, isStr := val.(string); isStr && isMasked(s) {
+					if p, isStr := prev.(string); present && isStr {
+						in[k] = p
+					}
+					continue
 				}
-				continue
+			case config.IsSecretListKey(k):
+				if list, isList := val.([]any); isList {
+					if prevList, isList := prev.([]any); present && isList {
+						unmaskStringList(list, prevList)
+					}
+					continue
+				}
+			case config.IsSecretMapKey(k):
+				if m, isMap := val.(map[string]any); isMap {
+					if prevMap, isMap := prev.(map[string]any); present && isMap {
+						unmaskMapValues(m, prevMap)
+					}
+					continue
+				}
 			}
 			if present {
 				unmaskSecrets(val, prev)
@@ -100,6 +177,53 @@ func unmaskSecrets(incoming, stored any) {
 			if prev, found := matchStoredElement(item, st, i); found {
 				unmaskSecrets(item, prev)
 			}
+		}
+	}
+}
+
+// unmaskStringList restores masked elements of a credential list. A masked
+// element has no identity of its own, so it is matched to the stored element
+// whose mask it is — the one at the same position first, then any other not
+// yet used — and only when nothing masks to it is the same position taken.
+func unmaskStringList(list, stored []any) {
+	used := make([]bool, len(stored))
+	matches := func(j int, s string) bool {
+		p, ok := stored[j].(string)
+		return ok && !used[j] && maskAPIKey(p) == s
+	}
+	restore := func(i int, s string) {
+		if i < len(stored) && matches(i, s) {
+			list[i], used[i] = stored[i], true
+			return
+		}
+		for j := range stored {
+			if matches(j, s) {
+				list[i], used[j] = stored[j], true
+				return
+			}
+		}
+		if i < len(stored) && !used[i] {
+			if p, ok := stored[i].(string); ok {
+				list[i], used[i] = p, true
+			}
+		}
+	}
+	for i, item := range list {
+		if s, ok := item.(string); ok && isMasked(s) {
+			restore(i, s)
+		}
+	}
+}
+
+// unmaskMapValues restores masked values of an env/headers map by key.
+func unmaskMapValues(m, stored map[string]any) {
+	for k, val := range m {
+		s, ok := val.(string)
+		if !ok || !isMasked(s) {
+			continue
+		}
+		if p, ok := stored[k].(string); ok {
+			m[k] = p
 		}
 	}
 }
@@ -150,12 +274,14 @@ func matchStoredElement(item any, stored []any, idx int) (any, bool) {
 	return nil, false
 }
 
-// isMasked reports whether s carries the mask marker written by maskAPIKey.
+// isMasked reports whether s carries the mask marker written by maskAPIKey and
+// maskProxyURL.
 func isMasked(s string) bool { return strings.Contains(s, "****") }
 
-// maskedConfigJSON marshals cfg with every credential masked.
-func maskedConfigJSON(cfg any) ([]byte, error) {
-	raw, err := json.Marshal(cfg)
+// maskedConfigJSON renders cfg as the file holds it (secret references shown
+// as references) with every literal credential masked.
+func maskedConfigJSON(cfg *config.Config) ([]byte, error) {
+	raw, err := config.MarshalWithSecretRefs(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -168,18 +294,14 @@ func maskedConfigJSON(cfg any) ([]byte, error) {
 }
 
 // restoreMaskedSecrets takes a request body and returns it with masked
-// credentials replaced by the ones currently on disk.
-func restoreMaskedSecrets(body []byte, stored any) ([]byte, error) {
+// credentials replaced by the stored ones, given as the stored config's JSON.
+func restoreMaskedSecrets(body, stored []byte) ([]byte, error) {
 	var in any
 	if err := json.Unmarshal(body, &in); err != nil {
 		return nil, err
 	}
-	rawStored, err := json.Marshal(stored)
-	if err != nil {
-		return nil, err
-	}
 	var st any
-	if err := json.Unmarshal(rawStored, &st); err != nil {
+	if err := json.Unmarshal(stored, &st); err != nil {
 		return nil, err
 	}
 	unmaskSecrets(in, st)

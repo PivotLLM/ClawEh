@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -37,6 +38,11 @@ type sessionRecord struct {
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
+	// hashed marks a record keyed by tokenhash.Hash(token) rather than by the
+	// token itself: service tokens loaded from disk, where only the hash is
+	// kept. Resolve hashes the presented token to reach these, and never lets
+	// the stored hash string itself authenticate.
+	hashed bool
 }
 
 // sessionTokenStore maps SST<64hex> tokens to session records.
@@ -172,7 +178,10 @@ func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 // agents present have their service token (re)registered; service tokens for
 // agents no longer present are revoked. archiveDirFor maps an agentID to its
 // archive dir; agents it returns "" for (unknown) are skipped. This is what lets
-// `claw token` changes take effect without a restart.
+// `claw token` changes take effect without a restart. The values are the
+// stored form from servicetoken.Load — hashes — so the record is keyed by the
+// hash and Resolve hashes the presented token to find it; a plaintext value
+// (tests) is keyed as-is.
 func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveDirFor func(agentID string) string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,6 +204,7 @@ func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 			sessionKey: s.serviceSessionKey(agentID),
 			archiveDir: archiveDir,
 			pinned:     true,
+			hashed:     tokenhash.IsHashed(tok),
 		}
 		s.bySvc[agentID] = tok
 	}
@@ -225,12 +235,19 @@ func (s *sessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 	s.tokens[tok] = rec
 }
 
-// Resolve looks up a token. Returns the record and true if found.
+// Resolve looks up a presented token. Returns the record and true if found.
+// A record stored under the token's hash is reached by hashing the presented
+// value; presenting the hash string itself matches nothing.
 func (s *sessionTokenStore) Resolve(token string) (sessionRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rec, ok := s.tokens[token]
-	return rec, ok
+	if rec, ok := s.tokens[token]; ok && !rec.hashed {
+		return rec, true
+	}
+	if rec, ok := s.tokens[tokenhash.Hash(token)]; ok && rec.hashed {
+		return rec, true
+	}
+	return sessionRecord{}, false
 }
 
 // Revoke removes the token for a given session key (called on clear/eviction).

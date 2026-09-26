@@ -21,6 +21,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -307,18 +308,12 @@ func resolveServerEnvFile(
 	return cfg, nil
 }
 
-// buildStdioEnv assembles the child environment for a stdio server: the parent
-// process environment, overlaid by an optional env file, overlaid by the
-// server's explicit Env map (config wins over file wins over parent).
+// buildStdioEnv assembles the child environment for a stdio server: the
+// allowlisted parent environment (childenv.Base — never CLAW_* or ALERTER_*),
+// overlaid by an optional env file, overlaid by the server's explicit Env map
+// (config wins over file wins over parent).
 func buildStdioEnv(cfg config.MCPServerConfig) ([]string, error) {
-	envMap := make(map[string]string)
-
-	// Start with parent process environment
-	for _, e := range os.Environ() {
-		if idx := strings.Index(e, "="); idx > 0 {
-			envMap[e[:idx]] = e[idx+1:]
-		}
-	}
+	overlay := make(map[string]string, len(cfg.Env))
 
 	// Load environment variables from file if specified
 	if cfg.EnvFile != "" {
@@ -326,17 +321,13 @@ func buildStdioEnv(cfg config.MCPServerConfig) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load env file %s: %w", cfg.EnvFile, err)
 		}
-		maps.Copy(envMap, envVars)
+		maps.Copy(overlay, envVars)
 	}
 
 	// Environment variables from config override those from file
-	maps.Copy(envMap, cfg.Env)
+	maps.Copy(overlay, cfg.Env)
 
-	env := make([]string, 0, len(envMap))
-	for k, v := range envMap {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
-	return env, nil
+	return childenv.Merge(childenv.Base(), overlay), nil
 }
 
 // ConnectServer connects to a single MCP server

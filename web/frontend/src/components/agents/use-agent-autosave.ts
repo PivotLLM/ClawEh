@@ -29,6 +29,7 @@ export interface AgentEdits {
   shareCommon: boolean
   mounts: MountEntry[]
   mcpTools: string[]
+  denyTools: string[]
   maestro: MaestroRunnerEdits
 }
 
@@ -51,6 +52,7 @@ export function editsFromAgent(a: AgentEntry): AgentEdits {
     shareCommon: a.share_common !== false,
     mounts: a.mounts ?? [],
     mcpTools: a.mcp_tools ?? [],
+    denyTools: a.deny_tools ?? [],
     maestro: maestroEditsFromAgent(a),
   }
 }

@@ -30,7 +30,9 @@ func setupTestEnv(t *testing.T) string {
 		Provider:  "openai",
 		Enabled:   true,
 	}}
-	cfg.Agents.Defaults.SetDefaultModel("custom-default")
+	// Replace the whole default chain: SetDefaultModel would keep the
+	// template's trailing "Codex CLI", which this fixture does not define.
+	cfg.Agents.Defaults.Models = []string{"custom-default"}
 	cfg.Agents.List = []config.AgentConfig{{
 		ID:      "main",
 		Name:    "Main",

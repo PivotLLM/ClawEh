@@ -58,3 +58,11 @@ Example snippet:
 ```
 
 Get your key at [OpenRouter Keys](https://openrouter.ai/keys).
+
+**Related: `/model` lists an entry with no provider, or the log says
+`fallback alias dropped (not enabled in models)`.** An agent's model list
+(`agents.list[].models`, or a default, summarization or subagent chain) names a
+model that has since been deleted or disabled. The gateway drops the reference
+at startup and warns; a config save or file reload that references a missing
+model is rejected outright. Fix it in the agent's model list (WebUI Agents page)
+by pointing the slot at a model that exists and is enabled.

@@ -113,7 +113,6 @@ func collectCredentials(_ context.Context, cfg *config.Config, env Environment) 
 	}
 	t.Rows = append(t.Rows,
 		row("WebUI token", setOrNot(cfg.Channels.WebUI.Token)),
-		row("WebUI token accepted in the query string", yesNo(cfg.Channels.WebUI.AllowTokenQuery)),
 		row("Device gateway shared token", setOrNot(cfg.Channels.Device.Token)),
 		row("Device gateway word token", setOrNot(cfg.Channels.Device.WordToken)),
 	)

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,56 @@ func TestRenderFailoverErrorSkipsCooldownOnly(t *testing.T) {
 	}}
 	if out := renderFailoverError(err); out != "" {
 		t.Fatalf("expected empty render for all-skipped, got %q", out)
+	}
+}
+
+// The CLI declined-tools guard's message tells the user what to change, so the
+// renderer must show it verbatim wherever the error surfaces: as one attempt of
+// an exhausted chain, as a lone FailoverError, in the mid-chain notice, and
+// when the chain returns it unclassified (it carries no HTTP status or pattern).
+func TestRenderFailoverErrorKeepsCLIDeclinedMessage(t *testing.T) {
+	const declinedText = "The Claude CLI declined to use tools. Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+	declined := &providers.CLIDeclinedError{Message: declinedText}
+
+	exhausted := &providers.FallbackExhaustedError{Attempts: []providers.FallbackAttempt{
+		{
+			Provider: "Claude CLI", Model: "claude-cli", Reason: providers.FailoverUnknown,
+			Error: &providers.FailoverError{Reason: providers.FailoverUnknown, Model: "claude-cli", Wrapped: declined},
+		},
+		{
+			Provider: "x", Model: "grok-2", Reason: providers.FailoverBilling,
+			Error: &providers.FailoverError{Reason: providers.FailoverBilling, Status: 402},
+		},
+	}}
+	out := renderFailoverError(exhausted)
+	if !strings.Contains(out, "claude-cli error: "+declinedText) {
+		t.Fatalf("exhausted render dropped the declined message: %q", out)
+	}
+	if !strings.Contains(out, "grok-2 error HTTP 402") {
+		t.Fatalf("exhausted render lost the other attempt: %q", out)
+	}
+
+	single := &providers.FailoverError{Reason: providers.FailoverUnknown, Model: "claude-cli", Wrapped: declined}
+	if out := renderFailoverError(single); out != "claude-cli error: "+declinedText+"." {
+		t.Fatalf("single FailoverError render: %q", out)
+	}
+
+	notice := formatFallbackNotice(
+		[]providers.FallbackAttempt{{
+			Model: "claude-cli", Alias: "Claude", Reason: providers.FailoverUnknown,
+			Error: &providers.FailoverError{Reason: providers.FailoverUnknown, Wrapped: declined},
+		}},
+		providers.FallbackCandidate{Model: "gpt-4o"},
+	)
+	if !strings.Contains(notice, "Claude error: "+declinedText+".\nTrying gpt-4o…") {
+		t.Fatalf("fallback notice dropped the declined message: %q", notice)
+	}
+
+	// The cause (agy names the denied action) stays behind the message.
+	withCause := fmt.Errorf("fallback: unclassified error from Claude CLI/claude-cli: %w",
+		&providers.CLIDeclinedError{Message: declinedText, Cause: errors.New("agy denied RunCommand")})
+	if out := renderTurnError(context.Background(), time.Minute, withCause); out != declinedText+": agy denied RunCommand" {
+		t.Fatalf("unclassified render: %q", out)
 	}
 }
 

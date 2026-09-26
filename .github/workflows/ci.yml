@@ -1,0 +1,97 @@
+# CI: the same gate a developer runs (`make test`) plus a light macOS
+# compile-and-test job. Nothing here is a second definition of "passing":
+# the Linux job calls the Makefile, so what CI checks and what `make test`
+# checks cannot drift apart.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # test.sh disables colour when NO_COLOR is set; the log stays readable.
+  NO_COLOR: "1"
+
+jobs:
+  test:
+    name: make test (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # pnpm/action-setup reads the version from web/frontend/package.json
+      # ("packageManager"), so the pin lives in one place.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/frontend/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/frontend/pnpm-lock.yaml
+
+      # golangci-lint: `make test` runs fmt-check and lint through it.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          install-only: true
+
+      # oxlint is a global install by project convention (see Makefile
+      # frontend-lint); test.sh skips the lint step silently without it.
+      - name: Install oxlint
+        run: npm install -g oxlint@1.81.0
+
+      # probe (github.com/PivotLLM/MCPProbe, public, no releases) drives the
+      # MCP integration section of test.sh; the suite fails without it.
+      - name: Install probe (MCPProbe)
+        run: |
+          git clone --depth 1 https://github.com/PivotLLM/MCPProbe /tmp/mcpprobe
+          cd /tmp/mcpprobe
+          go build -o "$(go env GOPATH)/bin/probe" .
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install frontend dependencies
+        run: make frontend-deps
+
+      - name: make test
+        run: make test
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failures
+          path: .test-failures.log
+          if-no-files-found: ignore
+
+  macos:
+    name: go build and test (macos)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and test
+        run: |
+          make generate
+          go build ./...
+          go test ./...

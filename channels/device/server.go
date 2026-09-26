@@ -8,14 +8,19 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -68,6 +73,10 @@ type Server struct {
 	inbound InboundFunc
 	querier AgentQuerier // optional: serves agents.list / chat.history to operator clients
 	conns   sync.Map     // chatID -> *liveConn
+
+	throttle *authThrottle
+	preauth  atomic.Int32        // connections upgraded but not yet authenticated
+	alert    func(alerter.Alert) // optional: the channel's operator alerter
 }
 
 // liveConn is a post-handshake device connection used for conversation routing.
@@ -121,13 +130,17 @@ func NewServer(store *Store, opts ServerOptions) *Server {
 			},
 		},
 		// Advertised surface — kept honest to what is implemented. Expanded by phase.
-		methods: []string{"connect", "health", "chat.send", "node.event"},
-		events:  []string{gatewayproto.EventConnectChallenge, "tick", "chat", "agent"},
+		methods:  []string{"connect", "health", "chat.send", "node.event"},
+		events:   []string{gatewayproto.EventConnectChallenge, "tick", "chat", "agent"},
+		throttle: newAuthThrottle(),
 	}
 }
 
 // SetInbound installs the agent bridge invoked on each chat.send.
 func (s *Server) SetInbound(fn InboundFunc) { s.inbound = fn }
+
+// SetAlerter installs the function operator alerts are raised through.
+func (s *Server) SetAlerter(fn func(alerter.Alert)) { s.alert = fn }
 
 // SetQuerier installs the read-only agent/session accessor used to answer
 // operator-client RPCs (agents.list, chat.history). When set, those methods are
@@ -183,6 +196,15 @@ func (w *connWriter) ping() error {
 
 // HandleWS upgrades an HTTP request to the gateway protocol and runs the handshake.
 func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
+	if s.preauth.Add(1) > channels.DeviceMaxPreauthConns {
+		s.preauth.Add(-1)
+		logger.WarnCF("device", "too many connections awaiting authentication", map[string]any{"remoteIp": clientIP(r)})
+		http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	release := sync.OnceFunc(func() { s.preauth.Add(-1) })
+	defer release()
+
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.DebugCF("device", "websocket upgrade failed", map[string]any{"error": err.Error()})
@@ -190,6 +212,9 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	// Belt-and-suspenders with EnableCompression:false — never compress writes.
 	conn.EnableWriteCompression(false)
+	// The first frame is unauthenticated: cap it well below the advertised
+	// payload limit, which applies only once the handshake has succeeded.
+	conn.SetReadLimit(gatewayproto.MaxPreauthPayloadBytes)
 	cw := &connWriter{conn: conn}
 
 	connID := randomToken(16)
@@ -222,6 +247,8 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	logger.InfoCF("device", "connect accepted", map[string]any{
 		"deviceId": hello.deviceID, "role": hello.role,
 	})
+	release()
+	conn.SetReadLimit(gatewayproto.MaxPayloadBytes)
 
 	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
 		utils.CloseQuietly(conn)
@@ -290,16 +317,27 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	// Rabbit R1) reconnects presenting its device token rather than the shared
 	// secret, so shared-token-only auth would wrongly reject it. When no shared
 	// secret is configured (loopback dev), auth is open.
-	if (s.opts.SharedToken != "" || s.opts.WordToken != "") && !s.authorizeGateway(r.Context(), &p) {
-		if s.opts.LogMessages {
-			logger.WarnCF("device", "gateway auth failed", map[string]any{
-				"clientId":           p.Client.ID,
-				"tokenPresent":       p.Auth != nil && p.Auth.Token != "",
-				"deviceTokenPresent": p.Auth != nil && p.Auth.DeviceToken != "",
-			})
+	if s.opts.SharedToken != "" || s.opts.WordToken != "" {
+		ip := remoteHost(r)
+		if wait := s.throttle.retryAfter(ip); wait > 0 {
+			detail := map[string]any{"code": gatewayproto.DetailAuthRateLimited}
+			e := gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "too many failed authentication attempts", detail)
+			e.Retryable = true
+			e.RetryAfterMs = int(wait.Milliseconds())
+			return nil, &handshakeFail{id: req.ID, err: e, code: websocket.ClosePolicyViolation, reason: "rate limited"}
 		}
-		detail := map[string]any{"code": gatewayproto.DetailAuthTokenMismatch}
-		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "gateway authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
+		if !s.authorizeGateway(r.Context(), &p) {
+			if s.opts.LogMessages {
+				logger.WarnCF("device", "gateway auth failed", map[string]any{
+					"clientId":           p.Client.ID,
+					"tokenPresent":       p.Auth != nil && p.Auth.Token != "",
+					"deviceTokenPresent": p.Auth != nil && p.Auth.DeviceToken != "",
+				})
+			}
+			s.recordAuthFailure(ip)
+			detail := map[string]any{"code": gatewayproto.DetailAuthTokenMismatch}
+			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "gateway authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
+		}
 	}
 
 	// Device identity is required for a device/node client.
@@ -352,8 +390,50 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		})
 	}
 
-	hello := s.buildHelloOk(ctx, connID, paired, negotiatedProtocol)
+	hello := s.buildHelloOk(ctx, connID, paired, &p, negotiatedProtocol)
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes}, nil
+}
+
+// presentedDeviceTokens returns the device tokens the connect request carried
+// that belong to deviceID, with their plaintext, so hello-ok can echo them. A
+// token that verifies but belongs to another device is not echoed.
+func (s *Server) presentedDeviceTokens(ctx context.Context, deviceID string, p *gatewayproto.ConnectParams) []DeviceToken {
+	if p == nil || p.Auth == nil {
+		return nil
+	}
+	var out []DeviceToken
+	for _, tok := range []string{p.Auth.DeviceToken, p.Auth.Token} {
+		if tok == "" {
+			continue
+		}
+		dt, ok, err := s.store.TokenByValue(ctx, tok)
+		if err != nil || !ok || dt.DeviceID != deviceID {
+			continue
+		}
+		out = append(out, *dt)
+	}
+	return out
+}
+
+// recordAuthFailure counts a failed gateway authentication against ip. The
+// lockout that ends the run of failures is logged, and the first lockout for an
+// IP raises an operator alert (later ones for the same IP repeat the log only).
+func (s *Server) recordAuthFailure(ip string) {
+	lockout, first := s.throttle.fail(ip)
+	if lockout == 0 {
+		return
+	}
+	logger.WarnCF("device", "client locked out after repeated authentication failures", map[string]any{
+		"remoteIp": ip, "lockout": lockout.String(),
+	})
+	if first && s.alert != nil {
+		s.alert(alerter.Alert{
+			EventID: ip,
+			Title:   "Device authentication locked out",
+			Description: fmt.Sprintf("%s failed device gateway authentication %d times within %s and is locked out for %s; each further lockout doubles, up to %s",
+				ip, channels.DeviceAuthFailThreshold, channels.DeviceAuthFailWindow, lockout, channels.DeviceAuthLockoutMax),
+		})
+	}
 }
 
 // verifyDeviceIdentity checks the nonce echo, key/id consistency, signed-at skew, and
@@ -447,7 +527,14 @@ func (s *Server) authorizeGateway(ctx context.Context, p *gatewayproto.ConnectPa
 
 // buildHelloOk assembles the hello-ok payload for a paired device, echoing the
 // negotiated protocol version (which may be lower than ProtocolVersion).
-func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *PairedDevice, protocol int) gatewayproto.HelloOk {
+//
+// The device tokens it carries come from one of two places. When the device
+// authenticated with one of its own tokens, that token is echoed back: it is
+// the only plaintext the gateway has, since the store keeps hashes. Otherwise
+// (shared secret, word token, open auth — the first connect after approval
+// among them) the device's tokens are rotated and the new ones sent, so the
+// device always leaves hello-ok holding a token it can reconnect with.
+func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *PairedDevice, p *gatewayproto.ConnectParams, protocol int) gatewayproto.HelloOk {
 	role := gatewayproto.RoleNode
 	if len(paired.Roles) > 0 {
 		role = paired.Roles[0]
@@ -456,14 +543,22 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 		}
 	}
 	auth := gatewayproto.HelloAuth{Role: role, Scopes: paired.Scopes, IssuedAtMs: time.Now().UnixMilli()}
-	if toks, err := s.store.ListTokens(ctx, paired.DeviceID); err == nil {
-		for _, t := range toks {
-			auth.DeviceTokens = append(auth.DeviceTokens, gatewayproto.HelloDeviceToken{
-				DeviceToken: t.Token, Role: t.Role, Scopes: t.Scopes, IssuedAtMs: t.CreatedAtMs,
+	toks := s.presentedDeviceTokens(ctx, paired.DeviceID, p)
+	if len(toks) == 0 {
+		issued, err := s.store.IssueTokens(ctx, paired.DeviceID, paired.Roles, paired.Scopes)
+		if err != nil {
+			logger.WarnCF("device", "failed to issue device tokens", map[string]any{
+				"deviceId": paired.DeviceID, "error": err.Error(),
 			})
-			if t.Role == role && auth.DeviceToken == "" {
-				auth.DeviceToken = t.Token
-			}
+		}
+		toks = issued
+	}
+	for _, t := range toks {
+		auth.DeviceTokens = append(auth.DeviceTokens, gatewayproto.HelloDeviceToken{
+			DeviceToken: t.Token, Role: t.Role, Scopes: t.Scopes, IssuedAtMs: t.CreatedAtMs,
+		})
+		if t.Role == role && auth.DeviceToken == "" {
+			auth.DeviceToken = t.Token
 		}
 	}
 	return gatewayproto.HelloOk{
@@ -1091,4 +1186,13 @@ func clientIP(r *http.Request) string {
 		return ""
 	}
 	return r.RemoteAddr
+}
+
+// remoteHost is clientIP without the port: the key the auth throttle counts by.
+func remoteHost(r *http.Request) string {
+	addr := clientIP(r)
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }

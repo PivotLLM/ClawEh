@@ -43,14 +43,18 @@ type DeviceChannel struct {
 	host         string
 	port         int
 	allowedCIDRs []string
-	httpSrv      *http.Server
+	allowedHosts hostAllowlist
+	loopDone     chan struct{}
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
 
 // NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
 // gateway protocol server. logMessages enables full inbound/outbound content logs.
-func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus) (*DeviceChannel, error) {
+// The listener answers only to Host names it is known by: localhost, its bind
+// host, the hosts of cfg.ExternalURL and gatewayExternalURL, any IP literal,
+// and extraHosts (reserved for TLS certificate names).
+func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus, gatewayExternalURL string, extraHosts []string) (*DeviceChannel, error) {
 	stateDir := filepath.Join(dataDir, "state")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
@@ -94,7 +98,9 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		host:         host,
 		port:         port,
 		allowedCIDRs: cfg.AllowedCIDRs,
+		allowedHosts: newHostAllowlist(host, []string{cfg.ExternalURL, gatewayExternalURL}, extraHosts),
 	}
+	srv.SetAlerter(dc.Alert)
 	// Bridge each device utterance into the message bus. The agent's reply returns
 	// via Send -> server.DeliverReply.
 	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey, sessionKey string, attachments []InboundAttachment) {
@@ -218,45 +224,97 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 		}
 		c.server.HandleWS(w, r)
 	})
-	wrapped, err := ipAllowlistHandler(c.allowedCIDRs, handler)
+	wrapped, err := ipAllowlistHandler(c.allowedCIDRs, hostCheckHandler(c.allowedHosts, handler))
 	if err != nil {
 		return fmt.Errorf("device: %w", err)
 	}
 
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenTCP(addr)
 	if err != nil {
 		return fmt.Errorf("device: listen %s: %w", addr, err)
 	}
-	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
-	// deadlines after the gorilla upgrade hijacks the conn.
-	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped, ReadHeaderTimeout: 10 * time.Second}
+	c.loopDone = make(chan struct{})
 	c.SetRunning(true)
-	go func() {
-		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
-			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
-			c.Alert(alerter.Alert{
-				Title:       "Channel receive loop stopped",
-				Description: c.Name() + ": device gateway listener error; devices cannot connect until the gateway is restarted",
-				Details:     serveErr.Error(),
-			})
-		}
-	}()
+	go c.serveLoop(ln, addr, wrapped)
 	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})
 	return nil
 }
 
-// Stop shuts down the device listener and store.
+// Test seams: listenTCP binds the listener and retryAfter waits between
+// re-listen attempts.
+var (
+	listenTCP  = func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
+	retryAfter = time.After
+)
+
+// serveLoop serves ln until the channel's context is cancelled. If Serve fails
+// it re-listens on addr with channels.NextConnRetry backoff (a failed re-bind,
+// such as the port being in use, waits the same way), raising "Channel receive
+// loop stopped" once per outage and logging when the listener is back.
+func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Handler) {
+	defer close(c.loopDone)
+	var backoff time.Duration
+	for {
+		err := c.serve(ln, addr, handler)
+		if c.ctx.Err() != nil {
+			return
+		}
+		// Each Serve failure opens an outage: alert once here, not on the
+		// re-bind attempts that follow.
+		backoff = channels.NextConnRetry(backoff)
+		logger.ErrorCF("device", "Device gateway listener error; re-listening", map[string]any{
+			"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
+		})
+		c.Alert(alerter.Alert{
+			Title:       "Channel receive loop stopped",
+			Description: c.Name() + ": device gateway listener error; re-listening on " + addr + " with backoff until it is back",
+			Details:     err.Error(),
+		})
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-retryAfter(backoff):
+			}
+			ln, err = listenTCP(addr)
+			if err == nil {
+				break
+			}
+			backoff = channels.NextConnRetry(backoff)
+			logger.WarnCF("device", "Device gateway re-listen failed", map[string]any{
+				"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
+			})
+		}
+		logger.InfoCF("device", "Device gateway listener restored", map[string]any{"addr": addr})
+		backoff = 0
+	}
+}
+
+// serve runs one http.Server on ln until it fails or the channel's context is
+// cancelled, which closes the server (and ln) so Serve returns. It always
+// returns a non-nil error; the caller decides whether it was a stop or a fault.
+func (c *DeviceChannel) serve(ln net.Listener, addr string, handler http.Handler) error {
+	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
+	// deadlines after the gorilla upgrade hijacks the conn.
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	// Close immediately rather than graceful Shutdown: a live device WebSocket
+	// would otherwise block the shutdown (and a config reload) for seconds. The
+	// device reconnects after the listener re-binds.
+	stop := context.AfterFunc(c.ctx, func() { utils.CloseQuietly(srv) })
+	defer stop()
+	return srv.Serve(ln)
+}
+
+// Stop shuts down the device listener and store. It returns once the serve
+// loop has exited, so the port is free for a restarted channel to bind.
 func (c *DeviceChannel) Stop(_ context.Context) error {
 	c.SetRunning(false)
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.httpSrv != nil {
-		// Close immediately rather than graceful Shutdown: a live device WebSocket
-		// would otherwise block the shutdown (and a config reload) for seconds. The
-		// device reconnects after the listener re-binds.
-		utils.CloseQuietly(c.httpSrv)
+	if c.loopDone != nil {
+		<-c.loopDone
 	}
 	if c.store != nil {
 		utils.CloseQuietly(c.store)

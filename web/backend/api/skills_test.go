@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -259,6 +260,23 @@ func TestHandleImportSkill(t *testing.T) {
 	expected := "---\nname: plain-skill\ndescription: Plain Skill\n---\n\n# Plain Skill\n\nUse this skill to test imports.\n"
 	if string(content) != expected {
 		t.Fatalf("saved skill content mismatch:\n%s", string(content))
+	}
+	if runtime.GOOS != "windows" {
+		// Imported skills live under CLAW_HOME: directory and SKILL.md are owner-only.
+		di, err := os.Stat(filepath.Dir(skillFile))
+		if err != nil {
+			t.Fatalf("Stat(skill dir) error = %v", err)
+		}
+		if got := di.Mode().Perm(); got != 0o700 {
+			t.Errorf("skill dir mode = %04o, want 0700", got)
+		}
+		fi, err := os.Stat(skillFile)
+		if err != nil {
+			t.Fatalf("Stat(SKILL.md) error = %v", err)
+		}
+		if got := fi.Mode().Perm(); got != 0o600 {
+			t.Errorf("SKILL.md mode = %04o, want 0600", got)
+		}
 	}
 
 	rec2 := httptest.NewRecorder()

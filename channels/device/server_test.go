@@ -212,6 +212,56 @@ func TestHandshakePairingFlow(t *testing.T) {
 	}
 }
 
+// helloOf decodes a successful connect response's hello-ok payload.
+func helloOf(t *testing.T, r connectResp) gatewayproto.HelloOk {
+	t.Helper()
+	if !r.OK || r.Error != nil {
+		t.Fatalf("expected hello-ok, got ok=%v err=%+v", r.OK, r.Error)
+	}
+	var hello gatewayproto.HelloOk
+	if err := json.Unmarshal(r.Payload, &hello); err != nil {
+		t.Fatalf("decode hello-ok: %v", err)
+	}
+	return hello
+}
+
+// TestHandshakeDeviceTokenReconnect pins the token lifecycle now that the store
+// keeps hashes: a device that reconnects on its own token gets that token echoed
+// back; one that reconnects on the shared secret is issued fresh tokens and its
+// old ones stop authenticating.
+func TestHandshakeDeviceTokenReconnect(t *testing.T) {
+	_, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true, SharedToken: "secret-token"})
+	em := newEmulator(t)
+
+	first := helloOf(t, em.connect(t, wsURL, "secret-token"))
+	tok1 := first.Auth.DeviceToken
+	if tok1 == "" || tok1 == "secret-token" {
+		t.Fatalf("first hello-ok should carry a device token, got %+v", first.Auth)
+	}
+
+	// Reconnect on the device token: accepted, and the same token is echoed.
+	echoed := helloOf(t, em.connect(t, wsURL, tok1))
+	if echoed.Auth.DeviceToken != tok1 {
+		t.Fatalf("device-token reconnect echoed %q, want the presented token", echoed.Auth.DeviceToken)
+	}
+	if len(echoed.Auth.DeviceTokens) != 1 || echoed.Auth.DeviceTokens[0].DeviceToken != tok1 {
+		t.Fatalf("deviceTokens = %+v, want just the presented token", echoed.Auth.DeviceTokens)
+	}
+
+	// Reconnect on the shared secret: tokens rotate.
+	rotated := helloOf(t, em.connect(t, wsURL, "secret-token"))
+	tok2 := rotated.Auth.DeviceToken
+	if tok2 == "" || tok2 == tok1 {
+		t.Fatalf("shared-secret reconnect should issue a new token, got %q (was %q)", tok2, tok1)
+	}
+	if stale := em.connect(t, wsURL, tok1); stale.OK || stale.Error == nil || stale.Error.Code != gatewayproto.CodeInvalidRequest {
+		t.Fatalf("rotated-away token should be rejected, got ok=%v err=%+v", stale.OK, stale.Error)
+	}
+	if again := helloOf(t, em.connect(t, wsURL, tok2)); again.Auth.DeviceToken != tok2 {
+		t.Fatalf("new token reconnect echoed %q, want %q", again.Auth.DeviceToken, tok2)
+	}
+}
+
 // TestHandshakeAutoApprove verifies the dev/LAN auto-approve path yields hello-ok on first connect.
 func TestHandshakeAutoApprove(t *testing.T) {
 	_, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})

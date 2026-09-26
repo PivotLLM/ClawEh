@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { getWebUIToken } from "@/api/webui"
+import {
+  chatSocketUrl,
+  connectChat,
+  disconnectChat,
+} from "./claw-chat-controller"
 
-import { expectConsole } from "../test-setup"
-import { connectChat, disconnectChat } from "./claw-chat-controller"
-
-vi.mock("@/api/webui", () => ({ getWebUIToken: vi.fn() }))
 vi.mock("@/api/sessions", () => ({ getSessionHistory: vi.fn() }))
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock("@/i18n", () => ({ default: { t: (k: string) => k } }))
@@ -41,14 +41,19 @@ class FakeWebSocket {
   }
 }
 
+function stubLocation(overrides: Partial<Location>) {
+  vi.stubGlobal("location", { ...window.location, ...overrides })
+}
+
 beforeEach(() => {
   opened = []
   localStorage.clear()
   vi.stubGlobal("WebSocket", FakeWebSocket)
-  vi.mocked(getWebUIToken).mockResolvedValue({
-    token: "s3cret-token",
-    ws_url: "ws://127.0.0.1:18790/webui/ws",
-    enabled: true,
+  vi.stubGlobal("fetch", vi.fn())
+  stubLocation({
+    protocol: "http:",
+    host: "localhost:18790",
+    hostname: "localhost",
   })
 })
 
@@ -57,27 +62,28 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe("connectChat token handling", () => {
-  // This is the property commit 7a18938 exists to establish. A token in the
-  // query string is recorded by proxies, access logs, Referer headers and
-  // browser history; the subprotocol is not. If someone ever "simplifies" this
-  // back to ?token=, this test fails.
-  it("sends the token as a subprotocol, never in the URL", async () => {
+describe("connectChat session handling", () => {
+  // The browser authenticates the socket with its login session cookie, which
+  // it attaches on its own. Nothing about the WebUI channel token reaches the
+  // browser any more: no fetch for it, no subprotocol, nothing in the URL.
+  it("opens the socket with no token and no subprotocol", async () => {
     await connectChat()
 
     expect(opened).toHaveLength(1)
     const [socket] = opened
-
-    expect(socket.protocols).toEqual(["claw-token", "s3cret-token"])
-    expect(socket.url).not.toContain("s3cret-token")
-    expect(socket.url).not.toContain("token=")
+    expect(socket.protocols).toBeUndefined()
+    expect(socket.url).not.toContain("token")
+    expect(fetch).not.toHaveBeenCalled()
   })
 
-  // The marker must match channels/webui.TokenSubprotocol on the Go side. A
-  // mismatch fails the handshake with no useful client-side error.
-  it("offers the claw-token marker first", async () => {
+  // Same origin as the page: that is what makes the cookie travel with the
+  // handshake, and what the server's origin check requires.
+  it("connects to /webui/ws on the page's own origin", async () => {
     await connectChat()
-    expect((opened[0].protocols as string[])[0]).toBe("claw-token")
+    const url = new URL(opened[0].url)
+    expect(url.protocol).toBe("ws:")
+    expect(url.host).toBe("localhost:18790")
+    expect(url.pathname).toBe("/webui/ws")
   })
 
   it("passes the session id in the query string", async () => {
@@ -86,54 +92,11 @@ describe("connectChat token handling", () => {
     expect(url.searchParams.get("session_id")).toBeTruthy()
   })
 
-  // The gateway reports its own bind address, which is loopback by default. A
-  // browser on another machine cannot reach that, so the controller rewrites
-  // the host to whatever the page was served from.
-  it("rewrites a loopback ws_url to the browsing host", async () => {
-    vi.mocked(getWebUIToken).mockResolvedValue({
-      token: "t",
-      ws_url: "ws://127.0.0.1:18790/webui/ws",
-      enabled: true,
-    })
-    vi.stubGlobal("location", {
-      ...window.location,
-      hostname: "claw.example.lan",
-      protocol: "http:",
-      host: "claw.example.lan",
-    })
-
-    await connectChat()
-    expect(new URL(opened[0].url).hostname).toBe("claw.example.lan")
-  })
-
-  // …but only when the browser is genuinely elsewhere. Rewriting while the
-  // browser IS on localhost would be a no-op at best and wrong at worst.
-  it("leaves the ws_url alone when the browser is on localhost", async () => {
-    vi.stubGlobal("location", {
-      ...window.location,
-      hostname: "localhost",
-      protocol: "http:",
-      host: "localhost",
-    })
-
-    await connectChat()
-    expect(new URL(opened[0].url).hostname).toBe("127.0.0.1")
-  })
-
-  // No token means the gateway refused to issue one. Opening a socket anyway
-  // would fail the handshake and start the reconnect loop against a server that
-  // is working exactly as intended.
-  it("does not open a socket when no token is issued", async () => {
-    // The controller logs this deliberately; declared so the console guard in
-    // test-setup.ts treats it as expected rather than as a failure.
-    expectConsole(/No webui token available/)
-    vi.mocked(getWebUIToken).mockResolvedValue({
-      token: "",
-      ws_url: "ws://x/y",
-      enabled: true,
-    })
-    await connectChat()
-    expect(opened).toHaveLength(0)
+  it("uses wss: when the page was served over https", () => {
+    stubLocation({ protocol: "https:", host: "claw.example.com" })
+    expect(chatSocketUrl("abc")).toBe(
+      "wss://claw.example.com/webui/ws?session_id=abc",
+    )
   })
 
   it("does not open a second socket while one is connecting", async () => {

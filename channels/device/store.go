@@ -13,6 +13,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/PivotLLM/ClawEh/internal/perms"
+	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -40,7 +42,10 @@ type PairedDevice struct {
 	LastSeenAtMs int64
 }
 
-// DeviceToken is a persistent bearer token issued per granted role on approval.
+// DeviceToken is a persistent bearer token issued per granted role. The
+// database holds only tokenhash.Hash(token); Token carries the plaintext when
+// a token is minted (Approve, IssueTokens) or when it was presented for lookup
+// (TokenByValue), which are the only times the plaintext exists.
 type DeviceToken struct {
 	Token       string
 	DeviceID    string
@@ -121,23 +126,27 @@ const (
 	walConvertBackoff  = 40 * time.Millisecond
 )
 
+// connectionPragmas are per-connection settings. They travel in the DSN so the
+// driver applies them to EVERY connection database/sql opens, not only the
+// first: an Exec'd PRAGMA reaches one pooled connection, and a later one
+// opened under load ran with busy_timeout=0, failing a contended write at
+// once with SQLITE_BUSY. The driver applies busy_timeout before the rest.
+//
+// journal_mode is deliberately NOT here. It is a property of the file, not the
+// connection, so it needs setting once — and converting a fresh file to WAL is
+// the racy step ensureWAL exists for. Re-running it on every pooled connection
+// would put that race back on every open.
+const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
+
 func OpenStore(ctx context.Context, path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// Pairing tokens live in here: make the file private before SQLite
+	// creates it, so the -wal/-shm side files inherit that mode too.
+	if err := perms.EnsurePrivateFile(path); err != nil {
+		return nil, fmt.Errorf("device: %w", err)
+	}
+	db, err := sql.Open("sqlite", path+"?"+connectionPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("device: open %s: %w", path, err)
-	}
-	// busy_timeout first: it is a connection setting that takes no lock, and
-	// every statement after it inherits the wait.
-	pragmas := []string{
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA synchronous=NORMAL",
-	}
-	for _, p := range pragmas {
-		if _, err := db.ExecContext(ctx, p); err != nil {
-			utils.CloseQuietly(db)
-			return nil, fmt.Errorf("device: %q: %w", p, err)
-		}
 	}
 	if err := ensureWAL(ctx, db); err != nil {
 		utils.CloseQuietly(db)
@@ -155,7 +164,57 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("device: migrate agent_id: %w", err)
 	}
+	if err := hashPlaintextTokens(ctx, db); err != nil {
+		utils.CloseQuietly(db)
+		return nil, fmt.Errorf("device: migrate tokens: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// hashPlaintextTokens is the one-time migration for databases written before
+// device tokens were hashed at rest: every device_tokens.token that is not yet
+// in tokenhash form is replaced by its hash. The plaintext is in the row, so
+// the hash can be computed without the device's help, and the device's own
+// copy keeps authenticating because TokenByValue hashes what it is presented.
+// Idempotent: on an already-migrated database it matches no rows.
+func hashPlaintextTokens(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `SELECT token FROM device_tokens WHERE token NOT LIKE ?`, tokenhash.Prefix+"%")
+	if err != nil {
+		return err
+	}
+	var plain []string
+	for rows.Next() {
+		var tok string
+		if err = rows.Scan(&tok); err != nil {
+			utils.CloseQuietly(rows)
+			return err
+		}
+		plain = append(plain, tok)
+	}
+	if err = rows.Err(); err != nil {
+		utils.CloseQuietly(rows)
+		return err
+	}
+	utils.CloseQuietly(rows)
+	if len(plain) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	for _, tok := range plain {
+		if _, err := tx.ExecContext(ctx, `UPDATE device_tokens SET token=? WHERE token=?`, tokenhash.Hash(tok), tok); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	logger.InfoCF("device", "hashed stored device tokens", map[string]any{"count": len(plain)})
+	return nil
 }
 
 // Close closes the database.
@@ -396,7 +455,7 @@ func (s *Store) Approve(ctx context.Context, requestID string, roles, scopes []s
 	}
 	defer rollback(tx)
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO paired_devices
+	if _, err = tx.ExecContext(ctx, `INSERT INTO paired_devices
 		(device_id, public_key, display_name, platform, device_family, client_id, client_mode, roles, scopes, created_at_ms, approved_at_ms, last_seen_at_ms)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)
 		ON CONFLICT(device_id) DO UPDATE SET
@@ -408,20 +467,9 @@ func (s *Store) Approve(ctx context.Context, requestID string, roles, scopes []s
 		return nil, nil, err
 	}
 
-	var tokens []DeviceToken
-	for _, role := range roles {
-		tok, err := randomHex(32)
-		if err != nil {
-			return nil, nil, err
-		}
-		dt := DeviceToken{Token: tok, DeviceID: dev.DeviceID, Role: role, Scopes: scopes, CreatedAtMs: now}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO device_tokens
-			(token, device_id, role, scopes, created_at_ms, revoked_at_ms)
-			VALUES (?,?,?,?,?,NULL)`,
-			dt.Token, dt.DeviceID, dt.Role, marshalStrings(dt.Scopes), dt.CreatedAtMs); err != nil {
-			return nil, nil, err
-		}
-		tokens = append(tokens, dt)
+	tokens, err := insertTokens(ctx, tx, dev.DeviceID, roles, scopes, now)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE request_id=?`, requestID); err != nil {
@@ -503,14 +551,37 @@ func (s *Store) SetDeviceAgent(ctx context.Context, deviceID, agentID string) er
 	return nil
 }
 
-// TokenByValue returns a non-revoked device token by its value, or (nil,false).
+// insertTokens mints one token per role for deviceID inside tx, storing each
+// token's hash, and returns the plaintext tokens for the caller to hand out.
+func insertTokens(ctx context.Context, tx *sql.Tx, deviceID string, roles, scopes []string, now int64) ([]DeviceToken, error) {
+	var tokens []DeviceToken
+	for _, role := range roles {
+		tok, err := randomHex(32)
+		if err != nil {
+			return nil, err
+		}
+		dt := DeviceToken{Token: tok, DeviceID: deviceID, Role: role, Scopes: scopes, CreatedAtMs: now}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO device_tokens
+			(token, device_id, role, scopes, created_at_ms, revoked_at_ms)
+			VALUES (?,?,?,?,?,NULL)`,
+			tokenhash.Hash(dt.Token), dt.DeviceID, dt.Role, marshalStrings(dt.Scopes), dt.CreatedAtMs); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, dt)
+	}
+	return tokens, nil
+}
+
+// TokenByValue returns the non-revoked device token a client presented, or
+// (nil,false). The presented value is hashed for the lookup; the returned
+// Token is the presented plaintext.
 func (s *Store) TokenByValue(ctx context.Context, token string) (*DeviceToken, bool, error) {
 	var t DeviceToken
 	var scopes string
 	var revoked sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT token, device_id, role, scopes, created_at_ms, revoked_at_ms
-		FROM device_tokens WHERE token=?`, token).Scan(
-		&t.Token, &t.DeviceID, &t.Role, &scopes, &t.CreatedAtMs, &revoked)
+	err := s.db.QueryRowContext(ctx, `SELECT device_id, role, scopes, created_at_ms, revoked_at_ms
+		FROM device_tokens WHERE token=?`, tokenhash.Hash(token)).Scan(
+		&t.DeviceID, &t.Role, &scopes, &t.CreatedAtMs, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -520,37 +591,37 @@ func (s *Store) TokenByValue(ctx context.Context, token string) (*DeviceToken, b
 	if revoked.Valid && revoked.Int64 > 0 {
 		return nil, false, nil
 	}
+	t.Token = token
 	t.Scopes = unmarshalStrings(scopes)
 	t.RevokedAtMs = revoked.Int64
 	return &t, true, nil
 }
 
-// ListTokens returns the device's non-revoked tokens (for hello-ok issuance).
-func (s *Store) ListTokens(ctx context.Context, deviceID string) ([]DeviceToken, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT token, device_id, role, scopes, created_at_ms, revoked_at_ms
-		FROM device_tokens WHERE device_id=? AND (revoked_at_ms IS NULL OR revoked_at_ms=0)
-		ORDER BY created_at_ms ASC`, deviceID)
+// IssueTokens replaces every token the device holds with a fresh one per role
+// and returns the new plaintext tokens. It is how hello-ok hands a device its
+// tokens when the device did not present one (first connect after approval,
+// or a reconnect on the shared secret): the stored hashes cannot be sent back,
+// so the device gets new tokens and the ones it did not use stop working.
+func (s *Store) IssueTokens(ctx context.Context, deviceID string, roles, scopes []string) ([]DeviceToken, error) {
+	if len(roles) == 0 {
+		roles = []string{"node"}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			logger.DebugCF("device", "rows close failed", map[string]any{"error": closeErr.Error()})
-		}
-	}()
-	var out []DeviceToken
-	for rows.Next() {
-		var t DeviceToken
-		var scopes string
-		var revoked sql.NullInt64
-		if err := rows.Scan(&t.Token, &t.DeviceID, &t.Role, &scopes, &t.CreatedAtMs, &revoked); err != nil {
-			return nil, err
-		}
-		t.Scopes = unmarshalStrings(scopes)
-		t.RevokedAtMs = revoked.Int64
-		out = append(out, t)
+	defer rollback(tx)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM device_tokens WHERE device_id=?`, deviceID); err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	tokens, err := insertTokens(ctx, tx, deviceID, roles, scopes, nowMs())
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }
 
 // UpdateLastSeen stamps the device's last-seen time.

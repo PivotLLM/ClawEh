@@ -4,6 +4,13 @@
 package report
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +20,36 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 )
+
+// writeTestCert writes a self-signed certificate valid until notAfter to
+// certPath (0600), creating the directory. Only the certificate is written:
+// the report reads the certificate file alone and never needs the key.
+func writeTestCert(t *testing.T, certPath string, notAfter time.Time) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "testbox"},
+		DNSNames:     []string{"testbox"},
+		NotBefore:    notAfter.Add(-365 * 24 * time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // Distinctive fake secrets planted everywhere a credential can live. The
 // no-secrets test asserts none of them reach the rendered report.
@@ -91,7 +128,9 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 			Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: secretAPIKey,
 			Proxy: "http://proxyuser:" + secretProxyPass + "@proxy.local:3128",
 		},
-		{Name: "Claude CLI", Protocol: "claude-cli"},
+		// One CLI with the bypass on and one without, so both renderings are
+		// covered.
+		{Name: "Claude CLI", Protocol: "claude-cli", BypassRestrictions: true},
 		{Name: "Codex CLI", Protocol: "codex-cli", Command: "/opt/codex/bin/codex"},
 	}
 	cfg.Models = []config.ModelConfig{
@@ -142,7 +181,7 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 		Enabled: true, ChannelSecret: secretLINE, ChannelAccessToken: secretLINEAccess,
 		WebhookHost: "0.0.0.0", WebhookPort: 18792, WebhookPath: "/webhook/line", AllowFrom: []string{"U1"},
 	}
-	cfg.Channels.WebUI = config.WebUIConfig{Enabled: true, Token: secretWebUI, AllowOrigins: []string{"https://alice.example.com"}}
+	cfg.Channels.WebUI = config.WebUIConfig{Enabled: true, Token: secretWebUI}
 	cfg.Channels.Device = config.DeviceChannelConfig{Enabled: true, Token: secretDevice, WordToken: secretWordToken, Host: "0.0.0.0"}
 	cfg.Bindings = []config.AgentBinding{
 		{AgentID: "bob", Match: config.BindingMatch{Channel: "telegram-bob"}, Default: true, DeliverTo: "42"},

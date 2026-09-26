@@ -38,8 +38,12 @@ export interface CLIInfo {
   models_enabled: number
   /** Headless mode, JSON output — what the provider always passes. */
   base_args: string[]
-  /** The permission flags ClawEh passes on every invocation. */
+  /** The non-security flags the CLI needs to run headless, always passed. */
   required_args: string[]
+  /** The skip-permissions / sandbox-bypass flags, passed only when bypass_restrictions is on. */
+  bypass_args: string[]
+  /** The CLI provider's "Bypass CLI restrictions" setting. False when there is no provider. */
+  bypass_restrictions: boolean
   /** What this CLI's models add on top, deduplicated across them. */
   extra_args?: string[]
   /** Last, after the model flag: the stdin marker. */
@@ -65,6 +69,20 @@ export async function setCLIEnabled(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
+  })
+}
+
+// setCLIBypassRestrictions sets a configured CLI's "Bypass CLI restrictions":
+// whether its skip-permissions / sandbox-bypass flag is passed. Separate from
+// the enable switch on purpose — enabling never turns this on.
+export async function setCLIBypassRestrictions(
+  protocol: string,
+  bypass: boolean,
+): Promise<void> {
+  await request(`/api/system/clis/${encodeURIComponent(protocol)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bypass_restrictions: bypass }),
   })
 }
 

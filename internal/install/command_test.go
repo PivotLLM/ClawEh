@@ -22,6 +22,8 @@ func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 		"ExecStart=/home/alice/bin/claw",
 		"WantedBy=multi-user.target",
 		"TimeoutStopSec=60",
+		"NoNewPrivileges=yes",
+		"PrivateTmp=yes",
 		"Environment=CLAW_HOME=/home/alice/.claw",
 		"Environment=PATH=/home/alice/bin:/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin:/bin",
 	}
@@ -210,6 +212,12 @@ func TestBuildUserUnit(t *testing.T) {
 	}
 	if !strings.Contains(unit, "TimeoutStopSec=60") {
 		t.Errorf("user unit missing TimeoutStopSec=60:\n%s", unit)
+	}
+	if !strings.Contains(unit, "NoNewPrivileges=yes") {
+		t.Errorf("user unit missing NoNewPrivileges=yes:\n%s", unit)
+	}
+	if strings.Contains(unit, "PrivateTmp=") {
+		t.Errorf("user unit must not set PrivateTmp= (needs unprivileged user namespaces in a per-user manager):\n%s", unit)
 	}
 	if !strings.Contains(unit, "Environment=CLAW_HOME=/home/alice/.claw") {
 		t.Errorf("user unit missing Environment=CLAW_HOME:\n%s", unit)

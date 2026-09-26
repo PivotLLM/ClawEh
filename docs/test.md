@@ -12,11 +12,13 @@ produces a binary. It runs, in order:
 - `go generate ./...`
 - `gofmt`/`gofumpt` formatting check (`make fmt-check`)
 - `go vet ./...`
+- `golangci-lint` (`make lint`)
+- `govulncheck ./...` (`make govulncheck`; installs a pinned binary into
+  `bin/` when missing, needs network access to the vulnerability database, and
+  fails the gate on a vulnerability reachable from the code)
 - `./test.sh`, the suite proper (below)
 
-The exit code is 0 only when every stage passes. `golangci-lint` (`make lint`)
-is currently outside the gate while the remaining findings are worked off; the
-Makefile has a note on restoring it.
+The exit code is 0 only when every stage passes.
 
 ## What `test.sh` runs
 

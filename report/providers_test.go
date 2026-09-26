@@ -71,8 +71,8 @@ func TestCollectProviders_CLILaunchLine(t *testing.T) {
 		}
 	}
 	_, claude := findRow(t, cli, "Claude CLI (Claude CLI)")
-	// Base args, then required + extra args (deduplicated), no --model for the
-	// sentinel id, then the stdin marker.
+	// Base args, then (bypass on) the bypass flag, required + extra args
+	// (deduplicated), no --model for the sentinel id, then the stdin marker.
 	want := "claude -p --output-format json --dangerously-skip-permissions --no-chrome --verbose -"
 	if claude[1] != want {
 		t.Errorf("claude launch = %q\nwant %q", claude[1], want)
@@ -80,18 +80,24 @@ func TestCollectProviders_CLILaunchLine(t *testing.T) {
 	contains(t, claude[2], "process working directory", "claude workdir")
 	contains(t, claude[3], "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "env names")
 	contains(t, claude[3], "MY_SECRET_ENV", "env names")
+	if claude[4] != "on" {
+		t.Errorf("claude bypass column = %q, want on", claude[4])
+	}
 	if strings.Contains(tableText(cli), secretEnvValue) {
 		t.Error("env value leaked into the CLI table")
 	}
 
+	// Bypass off: the sandbox-bypass flag is not passed, and the column says so.
 	_, codex := findRow(t, cli, "Codex Fast (Codex CLI)")
-	want = "/opt/codex/bin/codex exec --json --color never --dangerously-bypass-approvals-and-sandbox " +
-		"--skip-git-repo-check -m o4-mini -C /tmp/codex-ws -"
+	want = "/opt/codex/bin/codex exec --json --color never --skip-git-repo-check -m o4-mini -C /tmp/codex-ws -"
 	if codex[1] != want {
 		t.Errorf("codex launch = %q\nwant %q", codex[1], want)
 	}
 	if codex[2] != "/tmp/codex-ws" {
 		t.Errorf("codex workdir = %q", codex[2])
+	}
+	if codex[4] != "off" {
+		t.Errorf("codex bypass column = %q, want off", codex[4])
 	}
 }
 

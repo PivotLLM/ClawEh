@@ -7,9 +7,11 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 )
 
@@ -31,10 +33,16 @@ func listeners(cfg *config.Config) []listener {
 	if gw.ExternalURL != "" {
 		gwNotes = append(gwNotes, "external_url "+gw.ExternalURL)
 	}
+	// Plain HTTP is loopback-only; an off-box gateway.host adds the HTTPS
+	// listener on tls_port.
+	gwAddr := bindAddr("127.0.0.1", gw.EffectivePort()) + " (HTTP)"
+	if gw.HTTPSEnabled() {
+		gwAddr += ", " + bindAddr(gw.Host, gw.EffectiveTLSPort()) + " (HTTPS)"
+	}
 	out := make([]listener, 0, 4)
 	out = append(out, listener{
 		Name:    "Gateway (WebUI and HTTP API)",
-		Addr:    bindAddr(gw.Host, gw.Port),
+		Addr:    gwAddr,
 		Allow:   gatewayAllow(gw.EffectiveAllowedCIDRs()),
 		Notes:   strings.Join(gwNotes, "; "),
 		Enabled: true,
@@ -97,6 +105,24 @@ func listeners(cfg *config.Config) []listener {
 	return out
 }
 
+// tlsSummary describes the HTTPS listener's certificate: its source, names,
+// expiry and fingerprint, read from the certificate file the gateway uses.
+func tlsSummary(cfg *config.Config) string {
+	if !cfg.Gateway.HTTPSEnabled() {
+		return "not enabled (gateway.host is loopback: the WebUI and API are plain HTTP on this host only)"
+	}
+	opts := tlscert.OptionsFromConfig(cfg)
+	info, err := tlscert.InspectFile(opts)
+	if err != nil {
+		certPath, _ := opts.Paths()
+		return string(opts.Source()) + " certificate " + certPath + " (unreadable: " + err.Error() + ")"
+	}
+	return string(info.Source) + " certificate " + info.CertFile +
+		"; names " + strings.Join(info.Names(), ", ") +
+		"; expires " + info.NotAfter.Format(time.RFC3339) +
+		"; SHA-256 " + info.Fingerprint
+}
+
 // gatewayAllow explains the gateway allowlist: nil is loopback only, "*" is
 // any address, otherwise the listed networks (loopback is always allowed).
 func gatewayAllow(cidrs []string) string {
@@ -120,8 +146,7 @@ func collectNetwork(_ context.Context, cfg *config.Config, _ Environment) Sectio
 	}
 
 	pt := pairs("Origins and proxies",
-		row("TLS", "not enabled (HTTPS is not implemented yet; use a TLS reverse proxy for remote access)"),
-		row("WebUI allowed origins", joinOr(cfg.Channels.WebUI.AllowOrigins, "(none configured: same-origin only)")),
+		row("TLS", tlsSummary(cfg)),
 		row("Device gateway allowed origins", joinOr(cfg.Channels.Device.AllowOrigins, "(none configured)")),
 		row("Web tools proxy", orValue(redactURL(cfg.Tools.Web.Proxy), none)),
 	)

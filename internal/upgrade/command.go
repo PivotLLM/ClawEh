@@ -1,6 +1,7 @@
 // Package upgrade provides the `claw upgrade` subcommand, which downloads
-// the latest release binary from GitHub, verifies its SHA256 checksum,
-// atomically updates the running executable, and restarts any active background service.
+// the latest release binary from GitHub, verifies it against the release's
+// minisign-signed checksum list (see pubkey.go), atomically updates the
+// running executable, and restarts any active background service.
 package upgrade
 
 import (
@@ -37,6 +38,10 @@ const (
 	repoName    = "ClawEh"
 	apiBaseURL  = "https://api.github.com/repos/" + repoOwner + "/" + repoName
 	httpTimeout = 60 * time.Second
+
+	// Every release ships one signed checksum list covering all its archives.
+	checksumsAssetName = "checksums.txt"
+	signatureAssetName = checksumsAssetName + ".minisig"
 )
 
 // GitHubRelease represents the GitHub releases API response.
@@ -67,8 +72,10 @@ func NewUpgradeCommand() *cobra.Command {
 		Aliases: []string{"update"},
 		Short:   "Download the latest release binary from GitHub and install it",
 		Long: "Checks for the latest release on GitHub (" + repoOwner + "/" + repoName + "),\n" +
-			"verifies the SHA256 checksum of the archive, atomically replaces the currently\n" +
-			"running binary, and restarts the background service if one is active.",
+			"verifies the release's signed checksum list (" + signatureAssetName + ") with the\n" +
+			"publisher key built into this binary, checks the archive against it, atomically\n" +
+			"replaces the currently running binary, and restarts the background service if\n" +
+			"one is active. A release without a valid signature is refused.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -114,23 +121,10 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 		return nil
 	}
 
-	// Match archive and checksum assets
 	archiveName := fmt.Sprintf("claw-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
-	checksumName := archiveName + ".sha256"
-
-	var archiveAsset, checksumAsset *GitHubAsset
-	for i := range release.Assets {
-		asset := &release.Assets[i]
-		switch asset.Name {
-		case archiveName:
-			archiveAsset = asset
-		case checksumName:
-			checksumAsset = asset
-		}
-	}
-
-	if archiveAsset == nil {
-		return fmt.Errorf("no release binary found for platform %s/%s (%s)", runtime.GOOS, runtime.GOARCH, archiveName)
+	assets, err := findReleaseAssets(release, archiveName)
+	if err != nil {
+		return err
 	}
 
 	// Locate running executable
@@ -174,7 +168,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	fmt.Printf("\n%s Upgrade Summary:\n", app.Name())
 	fmt.Printf("  Current Version: v%s\n", currentVer)
 	fmt.Printf("  Target Version:  v%s (tag: %s)\n", latestVer, release.TagName)
-	fmt.Printf("  Release Asset:   %s\n", archiveAsset.Name)
+	fmt.Printf("  Release Asset:   %s\n", assets.archive.Name)
 	fmt.Printf("  Target Binary:   %s\n", exePath)
 	if existing != nil && existing.ClawHome != "" {
 		fmt.Printf("  Data Directory:  %s\n", existing.ClawHome)
@@ -211,36 +205,27 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 
 	// Download archive
 	archivePath := filepath.Join(tmpDir, archiveName)
-	fmt.Printf("Downloading %s...\n", archiveAsset.Name)
-	if dlErr := downloadFile(archiveAsset.BrowserDownloadURL, archivePath); dlErr != nil {
-		return fmt.Errorf("downloading %s: %w", archiveAsset.Name, dlErr)
+	fmt.Printf("Downloading %s...\n", assets.archive.Name)
+	if dlErr := downloadFile(assets.archive.BrowserDownloadURL, archivePath); dlErr != nil {
+		return fmt.Errorf("downloading %s: %w", assets.archive.Name, dlErr)
 	}
 
-	// Verify checksum if sha256 asset is available
-	if checksumAsset != nil {
-		fmt.Printf("Verifying SHA256 checksum...\n")
-		checksumPath := filepath.Join(tmpDir, checksumName)
-		if dlErr := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath); dlErr != nil {
-			return fmt.Errorf("downloading checksum: %w", dlErr)
-		}
-
-		expectedHash, csErr := readExpectedChecksum(checksumPath)
-		if csErr != nil {
-			return fmt.Errorf("reading checksum file: %w", csErr)
-		}
-
-		actualHash, csErr := computeSHA256(archivePath)
-		if csErr != nil {
-			return fmt.Errorf("calculating archive checksum: %w", csErr)
-		}
-
-		if !strings.EqualFold(expectedHash, actualHash) {
-			return fmt.Errorf("SHA256 checksum mismatch!\n  Expected: %s\n  Actual:   %s\nThe download may be corrupted or incomplete", expectedHash, actualHash)
-		}
-		fmt.Println("Checksum verified.")
-	} else {
-		fmt.Println("Warning: No .sha256 asset found in release; skipping checksum verification.")
+	// Verify the signed checksum list, then the archive against it. Both the
+	// list and its signature are mandatory: a checksum from the same untrusted
+	// download location proves nothing on its own.
+	fmt.Println("Verifying release signature and SHA256 checksum...")
+	checksums, err := downloadBytes(assets.checksums.BrowserDownloadURL)
+	if err != nil {
+		return fmt.Errorf("downloading %s: %w", checksumsAssetName, err)
 	}
+	signature, err := downloadBytes(assets.signature.BrowserDownloadURL)
+	if err != nil {
+		return fmt.Errorf("downloading %s: %w", signatureAssetName, err)
+	}
+	if err = verifySignedArchive(releasePublicKey, checksums, signature, archiveName, archivePath); err != nil {
+		return fmt.Errorf("release verification failed: %w", err)
+	}
+	fmt.Println("Signature and checksum verified.")
 
 	// Extract binary from tar.gz
 	fmt.Println("Extracting binary...")
@@ -271,6 +256,38 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	restartActiveService()
 
 	return nil
+}
+
+// releaseAssets are the three assets an upgrade needs from a release.
+type releaseAssets struct {
+	archive   *GitHubAsset
+	checksums *GitHubAsset
+	signature *GitHubAsset
+}
+
+// findReleaseAssets picks the platform archive, the checksum list and its
+// signature out of a release. All three must be present; a release missing
+// the signed list cannot be verified and is not installable.
+func findReleaseAssets(release *GitHubRelease, archiveName string) (*releaseAssets, error) {
+	var found releaseAssets
+	for i := range release.Assets {
+		asset := &release.Assets[i]
+		switch asset.Name {
+		case archiveName:
+			found.archive = asset
+		case checksumsAssetName:
+			found.checksums = asset
+		case signatureAssetName:
+			found.signature = asset
+		}
+	}
+	if found.archive == nil {
+		return nil, fmt.Errorf("no release binary found for platform %s/%s (%s)", runtime.GOOS, runtime.GOARCH, archiveName)
+	}
+	if found.checksums == nil || found.signature == nil {
+		return nil, fmt.Errorf("release %s does not ship %s and %s; refusing to install an unverifiable release", release.TagName, checksumsAssetName, signatureAssetName)
+	}
+	return &found, nil
 }
 
 func fetchRelease(version string) (*GitHubRelease, error) {
@@ -359,6 +376,28 @@ func downloadFile(url, dstPath string) error {
 	return out.Close()
 }
 
+// downloadBytes fetches a small release asset (the checksum list and its
+// signature) into memory.
+func downloadBytes(url string) ([]byte, error) {
+	client := &http.Client{Timeout: httpTimeout}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "ClawEh/"+app.SemVer())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
 func computeSHA256(filePath string) (string, error) {
 	f, err := os.Open(filePath) //nolint:gosec // file inside the upgrader's own temp dir
 	if err != nil {
@@ -371,18 +410,6 @@ func computeSHA256(filePath string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func readExpectedChecksum(checksumFilePath string) (string, error) {
-	data, err := os.ReadFile(checksumFilePath) //nolint:gosec // file inside the upgrader's own temp dir
-	if err != nil {
-		return "", err
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return "", fmt.Errorf("checksum file %s is empty", checksumFilePath)
-	}
-	return fields[0], nil
 }
 
 func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth bool, err error) {
@@ -416,7 +443,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 			if err != nil {
 				return false, err
 			}
-			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
+			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball whose SHA-256 was verified against the minisign-signed checksum list
 				utils.CloseQuietly(out)
 				return false, err
 			}
@@ -429,7 +456,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 			if err != nil {
 				return false, err
 			}
-			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
+			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball whose SHA-256 was verified against the minisign-signed checksum list
 				utils.CloseQuietly(out)
 				return false, err
 			}

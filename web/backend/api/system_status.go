@@ -90,7 +90,7 @@ func (h *Handler) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// Config counts are best-effort: an unreadable config should still leave a
 	// page that answers "is it up, and how big".
-	if cfg, err := config.LoadConfig(h.configPath); err == nil {
+	if cfg, err := h.currentConfig(); err == nil {
 		resp.Agents = len(cfg.Agents.List)
 		for i := range cfg.Providers {
 			if providerReady(&cfg.Providers[i]) {

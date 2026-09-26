@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -157,8 +158,7 @@ func (al *AgentLoop) runAgentLoop(
 		}
 		seq, err := cm.AddUserMessage(ctx, userMsg)
 		if err != nil {
-			logger.WarnCF("agent", "Failed to add user message to context manager",
-				map[string]any{"error": err.Error(), "session": opts.SessionKey})
+			return "", al.sessionStoreWriteFailed(agent, opts.SessionKey, "user message", err)
 		}
 		mem.Observe(ctx, seq, userMsg.Role, userMsg.Content)
 	}
@@ -187,11 +187,13 @@ func (al *AgentLoop) runAgentLoop(
 		logger.WarnCF("agent", "Failed to set pending turn flag",
 			map[string]any{"error": setErr.Error(), "session": opts.SessionKey})
 	}
+	al.recordPendingTurnSource(agent, opts)
 	defer func() {
 		if clrErr := agent.Sessions.ClearPendingTurn(opts.SessionKey); clrErr != nil {
 			logger.WarnCF("agent", "Failed to clear pending turn flag",
 				map[string]any{"error": clrErr.Error(), "session": opts.SessionKey})
 		}
+		al.clearPendingTurnSource(agent.ID, opts.SessionKey)
 	}()
 
 	// 4. Run LLM iteration loop
@@ -261,12 +263,11 @@ func (al *AgentLoop) runAgentLoop(
 	// 6. Save final assistant message to session (skip system error strings)
 	if !isSystemError {
 		finalMsg := providers.Message{Role: "assistant", Content: finalContent}
-		if seq, err := cm.AddAssistantMessage(ctx, finalMsg); err == nil {
-			mem.Observe(ctx, seq, finalMsg.Role, finalMsg.Content)
-		} else {
-			logger.WarnCF("agent", "Failed to add assistant message to context manager",
-				map[string]any{"error": err.Error(), "session": opts.SessionKey})
+		seq, err := cm.AddAssistantMessage(ctx, finalMsg)
+		if err != nil {
+			return "", al.sessionStoreWriteFailed(agent, opts.SessionKey, "assistant reply", err)
 		}
+		mem.Observe(ctx, seq, finalMsg.Role, finalMsg.Content)
 		if err := agent.Sessions.Save(opts.SessionKey); err != nil {
 			logger.WarnCF("agent", "Failed to save session",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
@@ -669,6 +670,10 @@ func (al *AgentLoop) runLLMIteration(
 		// steering messages and already-resolved media — so only a changed
 		// assembly replaces it. Tool-schema cost rides on the request so every
 		// trigger measures the real request and not stored history alone.
+		// promptEstimate is the engine's own token estimate of this dispatch's
+		// request; the provider's reported prompt tokens are fed back against
+		// it after the call so the estimate calibrates to the model in use.
+		promptEstimate := 0
 		if asm, aerr := cm.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts, providerToolDefs)); aerr != nil {
 			logger.WarnCF("agent", "assemble failed (continuing with current slice)", map[string]any{
 				"agent_id": agent.ID,
@@ -676,6 +681,7 @@ func (al *AgentLoop) runLLMIteration(
 			})
 		} else {
 			evictedThisTurn = append(evictedThisTurn, asm.Evictions...)
+			promptEstimate = asm.PromptTokenEstimate
 			if asm.Changed() {
 				messages = asm.Messages
 			}
@@ -861,36 +867,16 @@ func (al *AgentLoop) runLLMIteration(
 			emitLLMFinishEvent(agent.ID, iteration, activeProvider, activeModel, dispatchStart, response, err)
 			if err == nil {
 				addTurnUsage(opts.UsageOut, response, activeProvider, activeModel)
+				if promptEstimate > 0 && response != nil && response.Usage != nil && response.Usage.PromptTokens > 0 {
+					cm.ObserveUsage(promptEstimate, response.Usage.PromptTokens)
+				}
 				break
 			}
 
-			errMsg := strings.ToLower(err.Error())
-
-			// Check if this is a network/HTTP timeout — not a context window error.
-			isTimeoutError := errors.Is(err, context.DeadlineExceeded) ||
-				strings.Contains(errMsg, "deadline exceeded") ||
-				strings.Contains(errMsg, "client.timeout") ||
-				strings.Contains(errMsg, "timed out") ||
-				strings.Contains(errMsg, "timeout exceeded")
-
-			// Detect real context window / token limit errors, excluding network timeouts.
-			isContextError := !isTimeoutError && (strings.Contains(errMsg, "context_length_exceeded") ||
-				strings.Contains(errMsg, "context window") ||
-				strings.Contains(errMsg, "maximum context length") ||
-				strings.Contains(errMsg, "token limit") ||
-				strings.Contains(errMsg, "too many tokens") ||
-				strings.Contains(errMsg, "max_tokens") ||
-				strings.Contains(errMsg, "invalidparameter") ||
-				strings.Contains(errMsg, "prompt is too long") ||
-				strings.Contains(errMsg, "request too large"))
-
-			var exhausted *providers.FallbackExhaustedError
-			if errors.As(err, &exhausted) && exhausted.AllContextLimit() {
-				isContextError = true
-			}
+			isTimeoutError, isContextError := classifyLLMError(err, activeProvider, activeModel)
 
 			if isTimeoutError && retry < maxRetries {
-				backoff := time.Duration(retry+1) * 5 * time.Second
+				backoff := withJitter(time.Duration(retry+1) * 5 * time.Second)
 				logger.WarnCF("agent", "Timeout error, retrying after backoff", map[string]any{
 					"error":   err.Error(),
 					"retry":   retry,
@@ -934,6 +920,7 @@ func (al *AgentLoop) runLLMIteration(
 				}
 				if asm, berr := comprMgr.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts, providerToolDefs)); berr == nil {
 					messages = asm.Messages
+					promptEstimate = asm.PromptTokenEstimate
 				}
 
 				// If compression didn't reduce message count, history is already minimal.
@@ -1110,13 +1097,13 @@ func (al *AgentLoop) runLLMIteration(
 		// model's "let me also check…" play-by-play.
 		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
 			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
-			if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+			if pubErr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
 				ChatID:  opts.ChatID,
 				Content: response.Content,
-			}); err != nil {
+			}); pubErr != nil {
 				logger.WarnCF("agent", "Failed to publish inter-tool narration",
-					map[string]any{"error": err.Error(), "channel": opts.Channel})
+					map[string]any{"error": pubErr.Error(), "channel": opts.Channel})
 			}
 			pubCancel()
 		}
@@ -1165,14 +1152,11 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Save assistant message with tool calls through the context manager so
 		// that msgCount is incremented and the message is written to the archive.
-		if seq, err := cm.AddToolCallMessage(ctx, assistantMsg); err != nil {
-			logger.WarnCF("agent", "AddToolCallMessage failed", map[string]any{
-				"agent_id": agent.ID,
-				"error":    err.Error(),
-			})
-		} else {
-			mem.Observe(ctx, seq, assistantMsg.Role, assistantMsg.Content)
+		seq, err := cm.AddToolCallMessage(ctx, assistantMsg)
+		if err != nil {
+			return "", false, false, "", iteration, al.sessionStoreWriteFailed(agent, opts.SessionKey, "tool call message", err)
 		}
+		mem.Observe(ctx, seq, assistantMsg.Role, assistantMsg.Content)
 
 		// Execute tool calls in parallel
 		type indexedAgentResult struct {
@@ -1233,11 +1217,11 @@ func (al *AgentLoop) runLLMIteration(
 				// Tool arguments are intentionally NOT logged: they routinely carry
 				// memory content, file contents, and other user data.
 				logger.InfoCF("agent", "Tool call dispatched",
-					map[string]any{
+					turnFields(ctx, map[string]any{
 						"agent_id":  agent.ID,
 						"tool":      tc.Name,
 						"iteration": iteration,
-					})
+					}))
 
 				// Create async callback for tools that implement AsyncExecutor.
 				// When the background work completes, this publishes the result
@@ -1274,6 +1258,7 @@ func (al *AgentLoop) runLLMIteration(
 					if content == "" {
 						return
 					}
+					content = capToolResult(content, result.IsError, agent.ContextWindow)
 
 					logger.InfoCF("agent", "Async tool completed, publishing result",
 						map[string]any{
@@ -1308,6 +1293,7 @@ func (al *AgentLoop) runLLMIteration(
 					defer toolCancel()
 				}
 
+				toolStart := time.Now()
 				toolResult := agent.Tools.ExecuteWithContext(
 					execCtx,
 					tc.Name,
@@ -1317,6 +1303,7 @@ func (al *AgentLoop) runLLMIteration(
 					asyncCallback,
 				)
 				agentResults[idx].result = toolResult
+				recordToolCallAudit(ctx, agent.ID, opts, tc, toolResult, time.Since(toolStart))
 			}(i, tc)
 		}
 		wg.Wait()
@@ -1395,6 +1382,15 @@ func (al *AgentLoop) runLLMIteration(
 			if contentForLLM == "" && r.result.Err != nil {
 				contentForLLM = r.result.Err.Error()
 			}
+			if capped := capToolResult(contentForLLM, r.result.IsError, agent.ContextWindow); len(capped) != len(contentForLLM) {
+				logger.WarnCF("agent", "Tool result truncated for context", map[string]any{
+					"agent_id":     agent.ID,
+					"tool":         r.tc.Name,
+					"original_len": len(contentForLLM),
+					"kept_len":     len(capped),
+				})
+				contentForLLM = capped
+			}
 
 			toolResultMsg := providers.Message{
 				Role:       "tool",
@@ -1428,14 +1424,11 @@ func (al *AgentLoop) runLLMIteration(
 
 			// Save tool result message through the context manager so that
 			// msgCount is incremented and the message is written to the archive.
-			if seq, err := cm.AddToolResult(ctx, toolResultMsg); err != nil {
-				logger.WarnCF("agent", "AddToolResult failed", map[string]any{
-					"agent_id": agent.ID,
-					"error":    err.Error(),
-				})
-			} else {
-				mem.Observe(ctx, seq, toolResultMsg.Role, toolResultMsg.Content)
+			seq, err := cm.AddToolResult(ctx, toolResultMsg)
+			if err != nil {
+				return "", false, false, "", iteration, al.sessionStoreWriteFailed(agent, opts.SessionKey, "tool result", err)
 			}
+			mem.Observe(ctx, seq, toolResultMsg.Role, toolResultMsg.Content)
 		}
 
 		// VisionUserMessage mode: images can't ride on a tool message on Chat
@@ -1447,12 +1440,11 @@ func (al *AgentLoop) runLLMIteration(
 				Media:   toolImages,
 			}
 			messages = append(messages, imgMsg)
-			if seq, err := cm.AddUserMessage(ctx, imgMsg); err != nil {
-				logger.WarnCF("agent", "failed to persist tool image message",
-					map[string]any{"agent_id": agent.ID, "error": err.Error()})
-			} else {
-				mem.Observe(ctx, seq, imgMsg.Role, imgMsg.Content)
+			seq, err := cm.AddUserMessage(ctx, imgMsg)
+			if err != nil {
+				return "", false, false, "", iteration, al.sessionStoreWriteFailed(agent, opts.SessionKey, "tool image message", err)
 			}
+			mem.Observe(ctx, seq, imgMsg.Role, imgMsg.Content)
 			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
 		}
@@ -1474,12 +1466,11 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			descMsg := providers.Message{Role: "user", Content: content}
 			messages = append(messages, descMsg)
-			if seq, err := cm.AddUserMessage(ctx, descMsg); err != nil {
-				logger.WarnCF("agent", "failed to persist vision-describe message",
-					map[string]any{"agent_id": agent.ID, "error": err.Error()})
-			} else {
-				mem.Observe(ctx, seq, descMsg.Role, descMsg.Content)
+			seq, err := cm.AddUserMessage(ctx, descMsg)
+			if err != nil {
+				return "", false, false, "", iteration, al.sessionStoreWriteFailed(agent, opts.SessionKey, "vision description message", err)
 			}
+			mem.Observe(ctx, seq, descMsg.Role, descMsg.Content)
 			logger.InfoCF("agent", "injected vision description for non-vision model",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(offImages), "described": ok})
 		}
@@ -1863,4 +1854,71 @@ func (al *AgentLoop) dumpAll(
 			"iteration":     iteration,
 			"dump_base":     basename,
 		})
+}
+
+// backoffJitterFraction spreads a retry backoff by ±20% so concurrent turns
+// retrying the same provider do not land on it in lockstep.
+const backoffJitterFraction = 0.2
+
+// withJitter returns d scaled by a random factor in [1-jitter, 1+jitter].
+func withJitter(d time.Duration) time.Duration {
+	f := 1 + backoffJitterFraction*(2*rand.Float64()-1) //nolint:gosec // retry spread, not security-relevant
+	return time.Duration(float64(d) * f)
+}
+
+// localContextLimitPatterns are context-window/token-limit markers that
+// spawnllm's ClassifyError does not recognise. Candidates for upstreaming;
+// remove each one here once spawnllm classifies it.
+var localContextLimitPatterns = []string{
+	"context window",
+	"token limit",
+	"max_tokens",
+	"invalidparameter",
+}
+
+// classifyLLMError sorts a dispatch error into the two retry buckets the turn
+// acts on: a transient timeout (retry after backoff) or a context-window
+// overflow (compress and retry). spawnllm's classifier is the source of
+// truth; the local patterns cover only what it does not classify.
+// sessionStoreWriteFailed handles a message the session store refused to
+// record: it logs at error level, raises the operator alert, and returns the
+// error that fails the turn. The turn is abandoned rather than continued,
+// because a reply built on a history the store did not accept would be
+// invisible to the next turn and to a restart replay. what names the message
+// kind for the log, the alert and the error text.
+func (al *AgentLoop) sessionStoreWriteFailed(agent *AgentInstance, sessionKey, what string, err error) error {
+	logger.ErrorCF("agent", "Session store write failed", map[string]any{
+		"agent_id":    agent.ID,
+		"session_key": sessionKey,
+		"message":     what,
+		"error":       err.Error(),
+	})
+	al.Alerter().Send(alerter.Alert{
+		Title:       "Session store write failed",
+		Description: "a " + what + " could not be written to the session store and the turn was abandoned (disk full or unwritable?)",
+		Details:     err.Error(),
+		EventID:     "session-store",
+	})
+	return fmt.Errorf("session store rejected the %s, so the turn was abandoned: %w", what, err)
+}
+
+func classifyLLMError(err error, provider, model string) (isTimeout, isContext bool) {
+	cls := providers.ClassifyError(err, provider, model)
+	if errors.Is(err, context.DeadlineExceeded) || (cls != nil && cls.Reason == providers.FailoverTimeout) {
+		return true, false
+	}
+	if cls != nil && cls.Reason == providers.FailoverContextLimit {
+		return false, true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, p := range localContextLimitPatterns {
+		if strings.Contains(msg, p) {
+			return false, true
+		}
+	}
+	var exhausted *providers.FallbackExhaustedError
+	if errors.As(err, &exhausted) && exhausted.AllContextLimit() {
+		return false, true
+	}
+	return false, false
 }

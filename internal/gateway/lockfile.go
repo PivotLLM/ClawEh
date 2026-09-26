@@ -20,11 +20,11 @@ func acquireLock(baseDir string) (*os.File, error) {
 	lockPath := filepath.Join(baseDir, lockFileName)
 
 	// Ensure the base directory exists before attempting to create the lock file.
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cannot create base directory %q: %w", baseDir, err)
 	}
 
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // lock file under the configured data directory
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // lock file under the configured data directory
 	if err != nil {
 		return nil, fmt.Errorf("cannot open lock file %q: %w", lockPath, err)
 	}

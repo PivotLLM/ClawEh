@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -54,7 +55,7 @@ type modelResponse struct {
 //
 //	GET /api/models
 func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -135,28 +136,24 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
+	index := -1
+	err = h.updateConfig(func(cfg *config.Config) error {
+		if _, perr := cfg.GetProvider(mc.Provider); perr != nil {
+			return badRequest("Validation error: %v", perr)
+		}
+		cfg.Models = append(cfg.Models, mc)
+		index = len(cfg.Models) - 1
+		return nil
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if _, err = cfg.GetProvider(mc.Provider); err != nil {
-		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	cfg.Models = append(cfg.Models, mc)
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		writeUpdateError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]any{
 		"status": "ok",
-		"index":  len(cfg.Models) - 1,
+		"index":  index,
 	})
 }
 
@@ -180,54 +177,45 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer utils.CloseQuietly(r.Body)
 
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
+	err = h.updateConfig(func(cfg *config.Config) error {
+		if idx < 0 || idx >= len(cfg.Models) {
+			return notFound("Index %d out of range (0-%d)", idx, len(cfg.Models)-1)
+		}
 
-	if idx < 0 || idx >= len(cfg.Models) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
-		return
-	}
+		// Start from the existing entry so fields not present in the request body
+		// (e.g. enabled, extra_args, strict_compat) keep their current values.
+		mc := cfg.Models[idx]
+		oldName := mc.ModelName
+		if decErr := json.Unmarshal(body, &mc); decErr != nil {
+			return badRequest("Invalid JSON: %v", decErr)
+		}
 
-	// Start from the existing entry so fields not present in the request body
-	// (e.g. enabled, extra_args, strict_compat) keep their current values.
-	mc := cfg.Models[idx]
-	oldName := mc.ModelName
-	if err = json.Unmarshal(body, &mc); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if err = mc.Validate(); err != nil {
-		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
-		return
-	}
-	if _, err = cfg.GetProvider(mc.Provider); err != nil {
-		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
-		return
-	}
-	// Reject a model_name that collides with a different model.
-	if mc.ModelName != oldName {
-		for i := range cfg.Models {
-			if i != idx && cfg.Models[i].ModelName == mc.ModelName {
-				http.Error(w, fmt.Sprintf("Validation error: model name %q already in use", mc.ModelName), http.StatusBadRequest)
-				return
+		if verr := mc.Validate(); verr != nil {
+			return badRequest("Validation error: %v", verr)
+		}
+		if _, perr := cfg.GetProvider(mc.Provider); perr != nil {
+			return badRequest("Validation error: %v", perr)
+		}
+		// Reject a model_name that collides with a different model.
+		if mc.ModelName != oldName {
+			for i := range cfg.Models {
+				if i != idx && cfg.Models[i].ModelName == mc.ModelName {
+					return badRequest("Validation error: model name %q already in use", mc.ModelName)
+				}
 			}
 		}
-	}
 
-	cfg.Models[idx] = mc
+		cfg.Models[idx] = mc
 
-	// If the alias was renamed, repoint every reference (agent defaults,
-	// per-agent chains, routing, image models, summarization) so nothing orphans.
-	if mc.ModelName != oldName {
-		cfg.RenameModelReferences(oldName, mc.ModelName)
-	}
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		// If the alias was renamed, repoint every reference (agent defaults,
+		// per-agent chains, routing, image models, summarization) so nothing orphans.
+		if mc.ModelName != oldName {
+			cfg.RenameModelReferences(oldName, mc.ModelName)
+		}
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 
@@ -245,28 +233,26 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
+	err = h.updateConfig(func(cfg *config.Config) error {
+		if idx < 0 || idx >= len(cfg.Models) {
+			return notFound("Index %d out of range (0-%d)", idx, len(cfg.Models)-1)
+		}
+
+		deletedModelName := cfg.Models[idx].ModelName
+
+		// A referenced model cannot be deleted: silently dropping it would
+		// leave an agent sending the alias as a model id on every turn. The
+		// operator repoints the references first.
+		if refs := cfg.ModelReferences(deletedModelName); len(refs) > 0 {
+			return conflict("model %q is still referenced by: %s. Repoint those first.",
+				deletedModelName, strings.Join(refs, ", "))
+		}
+
+		cfg.Models = append(cfg.Models[:idx], cfg.Models[idx+1:]...)
+		return nil
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if idx < 0 || idx >= len(cfg.Models) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
-		return
-	}
-
-	deletedModelName := cfg.Models[idx].ModelName
-
-	cfg.Models = append(cfg.Models[:idx], cfg.Models[idx+1:]...)
-
-	// If the deleted model was the default, clear it.
-	if cfg.Agents.Defaults.DefaultModelName() == deletedModelName {
-		cfg.Agents.Defaults.SetDefaultModel("")
-	}
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		writeUpdateError(w, err)
 		return
 	}
 
@@ -302,33 +288,27 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Verify the model_name exists in models and is enabled
-	found := false
-	for _, m := range cfg.Models {
-		if m.ModelName == req.ModelName {
-			if !m.Enabled {
-				http.Error(w, fmt.Sprintf("Model %q is disabled; enable it before setting as default", req.ModelName), http.StatusBadRequest)
-				return
+	err = h.updateConfig(func(cfg *config.Config) error {
+		// Verify the model_name exists in models and is enabled
+		found := false
+		for _, m := range cfg.Models {
+			if m.ModelName == req.ModelName {
+				if !m.Enabled {
+					return badRequest("Model %q is disabled; enable it before setting as default", req.ModelName)
+				}
+				found = true
+				break
 			}
-			found = true
-			break
 		}
-	}
-	if !found {
-		http.Error(w, fmt.Sprintf("Model %q not found in models", req.ModelName), http.StatusNotFound)
-		return
-	}
+		if !found {
+			return notFound("Model %q not found in models", req.ModelName)
+		}
 
-	cfg.Agents.Defaults.SetDefaultModel(req.ModelName)
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		cfg.Agents.Defaults.SetDefaultModel(req.ModelName)
+		return nil
+	})
+	if err != nil {
+		writeUpdateError(w, err)
 		return
 	}
 
@@ -347,9 +327,11 @@ func maskAPIKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	if len(key) <= 8 {
+	// Anything shorter than 12 is masked whole: revealing 7 of 11 characters
+	// would leave too little hidden.
+	if len(key) < 12 {
 		return "****"
 	}
-	// Show first 3 chars and last 4 chars
+	// Show first 3 chars and last 4 chars — never more than 7 in total.
 	return key[:3] + "****" + key[len(key)-4:]
 }

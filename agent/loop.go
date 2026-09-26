@@ -62,17 +62,23 @@ type AgentLoop struct {
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
 	namedTokens *msgtoken.NamedStore
 	agentStates map[string]*state.Manager // agentID -> per-agent state manager
-	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
-	// The scope key is resolved via resolveMessageRoute before locking so that
-	// multiple channel:chatID pairs that map to the same agent session share one
-	// mutex and never process concurrently. Entries are never evicted; for typical
-	// deployments with a bounded number of active sessions the cost is negligible
-	// (one *sync.Mutex per session key).
-	sessionMus          sync.Map
-	sessionCancelStates sync.Map // scope key → *sessionCancelState
-	lastSelfClear       sync.Map // session key → time.Time, rate-limits session_clear
-	dumpsDir            string
-	startedAt           time.Time
+	// sessions holds the per-session dispatch state (session scope key →
+	// *sessionState): the goroutine running the session's turns, the messages
+	// queued behind it and the /cancel bookkeeping. The scope key is resolved via
+	// resolveMessageRoute before dispatch so that multiple channel:chatID pairs
+	// that map to the same agent session share one entry and never process
+	// concurrently. sessionsMu guards the map and every entry's refs/lastUsed;
+	// pruneSessions drops entries idle for sessionIdleTTL with no holder.
+	sessionsMu sync.Mutex
+	sessions   map[string]*sessionState
+	// turnSem bounds the turns running at once across all sessions
+	// (agents.defaults.max_concurrent_turns); nil = unlimited.
+	turnSem chan struct{}
+	// spend sums dispatch cost per UTC day for the daily-spend alert.
+	spend         dailySpend
+	lastSelfClear sync.Map // session key → time.Time, rate-limits session_clear
+	dumpsDir      string
+	startedAt     time.Time
 
 	// activeModelIdx caches the per-session active model index (write-through to
 	// the session store's CompactionState). Key = agent.ID + "\x00" + sessionKey.
@@ -228,6 +234,7 @@ func NewAgentLoop(
 		agentStates:           agentStates,
 		messageManagers:       messageManagers,
 		namedTokens:           namedTokens,
+		sessions:              make(map[string]*sessionState),
 		startedAt:             time.Now(),
 		evictStop:             make(chan struct{}),
 		mcpRetryStop:          make(chan struct{}),
@@ -239,6 +246,9 @@ func NewAgentLoop(
 		taskLive:              toolsagents.NewLiveSet(),
 		spawnManagers:         make(map[string]*toolsagents.SubagentManager),
 		superStop:             make(chan struct{}),
+	}
+	if n := cfg.Agents.Defaults.MaxConcurrentTurns; n > 0 {
+		al.turnSem = make(chan struct{}, n)
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -257,6 +267,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Start the background context-manager eviction goroutine.
 	go al.evictContextManagers() //nolint:contextcheck // idle eviction closes managers on a fresh context so the archive flush completes regardless of the run context
+
+	// Drop dispatch state for sessions that have been idle for an hour.
+	go al.pruneSessions()
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).

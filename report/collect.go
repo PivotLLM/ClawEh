@@ -5,7 +5,6 @@ package report
 
 import (
 	"context"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
@@ -33,19 +32,12 @@ var collectors = []collector{
 // Collect builds the report. It never fails: a store that is missing or
 // unreadable becomes an "unavailable: <reason>" row in its section.
 func Collect(ctx context.Context, cfg *config.Config, env Environment) *Report {
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
-	now := env.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	env.Now = now
+	cfg, env = normalize(cfg, env)
 	r := &Report{
 		Product:     app.Name(),
 		TagLine:     app.TagLine(),
 		Version:     orValue(env.Version, app.Version()),
-		GeneratedAt: now,
+		GeneratedAt: env.Now,
 	}
 	sections := make([]Section, 0, len(collectors)+1)
 	for _, c := range collectors {

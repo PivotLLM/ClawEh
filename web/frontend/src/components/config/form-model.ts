@@ -57,6 +57,7 @@ export interface CoreConfigForm {
   backupEnabled: boolean
   backupAt: string
   backupRetainDays: string
+  backupDest: string
 }
 
 export const SESSION_MODE_OPTIONS = [
@@ -140,6 +141,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   backupEnabled: true,
   backupAt: "03:00",
   backupRetainDays: "30",
+  backupDest: "",
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -329,6 +331,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       asRecord(root.backup).retain_days,
       EMPTY_FORM.backupRetainDays,
     ),
+    backupDest: asString(asRecord(root.backup).dest),
   }
 }
 

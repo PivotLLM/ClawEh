@@ -610,28 +610,29 @@ func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 
 func TestResolveCandidatesWithLookup_DeduplicateAfterLookup(t *testing.T) {
 	cfg := ModelConfig{
-		Models: []string{"step-3.5-flash", "openrouter/stepfun/step-3.5-flash:free"},
+		Models: []string{"step-3.5-flash", "step-free"},
 	}
 
+	// Two models entries (distinct aliases) that reach the same wire model.
 	lookup := func(raw string) (alias, model, provider string, ok bool) {
-		if raw == "step-3.5-flash" {
-			return "step-3.5-flash", "stepfun/step-3.5-flash:free", "openrouter", true
+		switch raw {
+		case "step-3.5-flash", "step-free":
+			return raw, "stepfun/step-3.5-flash:free", "openrouter", true
 		}
 		return "", "", "", false
 	}
 
 	candidates := ResolveCandidatesWithLookup(cfg, "", lookup)
-	// Two entries: the primary resolves with alias "step-3.5-flash"; the
-	// fallback resolves with no alias (no lookup match). Both target the
-	// same wire model but carry distinct alias state, so dedup keeps both.
+	// Both target the same wire model but carry distinct alias state (the
+	// dispatcher keys on the alias), so dedup keeps both.
 	if len(candidates) != 2 {
 		t.Fatalf("candidates = %d, want 2 (distinct aliases)", len(candidates))
 	}
 	if candidates[0].Alias != "step-3.5-flash" {
 		t.Fatalf("candidates[0].Alias = %q, want step-3.5-flash", candidates[0].Alias)
 	}
-	if candidates[1].Alias != "" {
-		t.Fatalf("candidates[1].Alias = %q, want empty", candidates[1].Alias)
+	if candidates[1].Alias != "step-free" {
+		t.Fatalf("candidates[1].Alias = %q, want step-free", candidates[1].Alias)
 	}
 }
 
@@ -773,5 +774,31 @@ func TestFallback_SkipCarriesTrackerReason(t *testing.T) {
 	}
 	if got := result.Attempts[0].Reason; got != FailoverBilling {
 		t.Fatalf("skip reason = %q, want %q", got, FailoverBilling)
+	}
+}
+
+func TestResolveCandidatesWithLookup_UnresolvedAliasIsDropped(t *testing.T) {
+	cfg := ModelConfig{
+		Models: []string{"ghost", "glm-5"},
+	}
+
+	lookup := func(raw string) (alias, model, provider string, ok bool) {
+		if raw == "glm-5" {
+			return "glm-5", "glm-5-turbo", "openai", true
+		}
+		return "", "", "", false
+	}
+
+	candidates := ResolveCandidatesWithLookup(cfg, "", lookup)
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %+v, want exactly one", candidates)
+	}
+	if candidates[0].Provider != "openai" || candidates[0].Alias != "glm-5" {
+		t.Fatalf("candidate = %+v, want openai/glm-5-turbo alias glm-5", candidates[0])
+	}
+	for _, c := range candidates {
+		if c.Provider == "" {
+			t.Fatalf("candidate %+v has an empty provider; a dangling alias must be dropped, not parsed", c)
+		}
 	}
 }

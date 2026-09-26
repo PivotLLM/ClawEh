@@ -1,7 +1,6 @@
 import { toast } from "sonner"
 
 import { getSessionHistory } from "@/api/sessions"
-import { getWebUIToken } from "@/api/webui"
 import i18n from "@/i18n"
 import {
   clearStoredSessionId,
@@ -10,10 +9,6 @@ import {
   readStoredSessionId,
 } from "@/lib/claw-chat-state"
 import { type ChatMessage, getChatState, updateChatStore } from "@/store/chat"
-
-// TOKEN_SUBPROTOCOL must match channels/webui.TokenSubprotocol. It marks the
-// second offered subprotocol as the channel token.
-const TOKEN_SUBPROTOCOL = "claw-token"
 
 interface WebUIMessage {
   type: string
@@ -154,44 +149,10 @@ export async function connectChat() {
   updateChatStore({ connectionState: "connecting" })
 
   try {
-    const { token, ws_url } = await getWebUIToken()
-
-    if (generation !== connectionGeneration) {
-      return
-    }
-
-    if (!token) {
-      console.error("No webui token available")
-      updateChatStore({ connectionState: "error" })
-      isConnecting = false
-      return
-    }
-
-    let finalWsUrl = ws_url
-    try {
-      const parsedUrl = new URL(ws_url)
-      const isLocalHost =
-        parsedUrl.hostname === "localhost" ||
-        parsedUrl.hostname === "127.0.0.1" ||
-        parsedUrl.hostname === "0.0.0.0"
-      const isBrowserLocal =
-        window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1"
-
-      if (isLocalHost && !isBrowserLocal) {
-        parsedUrl.hostname = window.location.hostname
-        finalWsUrl = parsedUrl.toString()
-      }
-    } catch (error) {
-      console.warn("Could not parse ws_url:", error)
-    }
-
-    // The token travels as a WebSocket subprotocol rather than a query parameter:
-    // the browser WebSocket API cannot set an Authorization header, and a token in
-    // the URL is captured by access logs, Referer headers and browser history. The
-    // server echoes only the "claw-token" marker, never the token itself.
-    const url = `${finalWsUrl}?session_id=${encodeURIComponent(activeSessionIdRef)}`
-    const socket = new WebSocket(url, [TOKEN_SUBPROTOCOL, token])
+    // The socket is same-origin and authenticated by the login session cookie,
+    // which the browser attaches on its own. No token is fetched or sent: the
+    // WebUI channel token stays on the server for non-browser clients.
+    const socket = new WebSocket(chatSocketUrl(activeSessionIdRef))
 
     if (generation !== connectionGeneration) {
       socket.close()
@@ -248,10 +209,17 @@ export async function connectChat() {
     console.error("Failed to connect to webui:", error)
     updateChatStore({ connectionState: "error" })
     isConnecting = false
-    // The attempt failed before a socket existed (token fetch / construction),
-    // so there's no onclose to retry for us — schedule one here.
+    // The attempt failed before a socket existed (construction threw), so
+    // there's no onclose to retry for us — schedule one here.
     scheduleReconnect()
   }
+}
+
+// chatSocketUrl is the WebUI channel's WebSocket on the origin the page was
+// served from: wss: behind TLS, ws: otherwise. Exported for the test.
+export function chatSocketUrl(sessionId: string): string {
+  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:"
+  return `${scheme}//${window.location.host}/webui/ws?session_id=${encodeURIComponent(sessionId)}`
 }
 
 export function disconnectChat() {

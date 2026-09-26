@@ -8,11 +8,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // --- sessionTokenStore unit tests ---
+
+// TestSyncServiceTokens_HashedValuesResolveByPlaintext is the shape the gateway
+// actually syncs: servicetoken.Load hands over hashes, the client presents the
+// token. The hash string itself must not authenticate.
+func TestSyncServiceTokens_HashedValuesResolveByPlaintext(t *testing.T) {
+	s := newSessionTokenStore()
+	plain := "SST" + strings.Repeat("ab", 32)
+	hashed := tokenhash.Hash(plain)
+
+	s.SyncServiceTokens(map[string]string{"amber": hashed}, func(string) string { return "/ws/sessions" })
+
+	rec, ok := s.Resolve(plain)
+	if !ok || rec.agentID != "amber" {
+		t.Fatalf("Resolve(plaintext) = (%+v,%v), want amber's service record", rec, ok)
+	}
+	if _, ok := s.Resolve(hashed); ok {
+		t.Error("presenting the stored hash must not authenticate")
+	}
+
+	// Revocation by re-sync still works on the hashed key.
+	s.SyncServiceTokens(map[string]string{}, func(string) string { return "/ws/sessions" })
+	if _, ok := s.Resolve(plain); ok {
+		t.Error("service token should be revoked after removal from the set")
+	}
+}
 
 // TestRegisterService_UnifiedBindsMainSession verifies the default (unified)
 // contract: a service token drives the agent's MAIN session, so an external

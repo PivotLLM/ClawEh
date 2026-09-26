@@ -178,6 +178,13 @@ Use it only for small services/servers — a large group can exceed `visible_bud
     - `command` is set → `stdio`
 - `http` and `sse` both use `url` + optional `headers`.
 - `env` and `env_file` are only applied to `stdio` servers.
+- A `stdio` server does **not** inherit the gateway's environment. It starts
+  from an allowlist (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`,
+  `LC_*`, `TERM`, `TMPDIR`, `TZ`, `XDG_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, the
+  proxy variables, and the `NODE_*`/`NVM_*`/`npm_config_*` variables `npx`
+  needs); `CLAW_*` and `ALERTER_*` never reach it. Anything else the server
+  needs — an API token, for example — must be set in its `env` or `env_file`.
+  The same allowlist applies to `shell_exec` commands.
 
 ### Configuration Examples
 
@@ -316,9 +323,13 @@ The skills tool configures skill discovery and installation via registries like 
 
 ## Per-Agent Tool Allowlist
 
-ClawEh enforces a **deny-by-default** tool allowlist for each named agent. If an agent in `agents.list` does not have a `tools` field configured, it receives **no tools** — regardless of what is enabled in the global `tools` section.
+Each named agent has a tool allowlist. An agent in `agents.list` with no `tools`
+key receives the install defaults (`agents.defaults.tools`, which the gateway
+seeds from the enabled tool providers); an agent with `"tools": []` receives no
+tools at all.
 
-This is an intentional security boundary: the global `tools` section controls which tools are available to the system, but each agent must explicitly opt in to the tools it is permitted to use.
+The global `tools` section controls which tools exist in the system; each
+agent's list controls which of them that agent may use.
 
 ### Allowlist values
 
@@ -327,7 +338,8 @@ This is an intentional security boundary: the global `tools` section controls wh
 | `["*"]` | Allow all tools that are globally enabled |
 | `["read_file", "exec"]` | Allow only the listed tools |
 | `["read_*"]` | Allow all tools whose names start with `read_` (case-insensitive prefix match) |
-| _(absent or empty)_ | Deny all tools |
+| `[]` (present but empty) | Deny all tools |
+| _(absent)_ | Use the install defaults |
 
 ### Configuration example
 
@@ -350,7 +362,36 @@ This is an intentional security boundary: the global `tools` section controls wh
 
 In this example, Alice can use any globally-enabled tool, while Bob is restricted to three specific tools.
 
-> **Note:** This applies only to agents defined in `agents.list`. When no agents are configured, a single default agent is created implicitly, and it also receives no tools unless explicitly configured.
+### Denying specific tools (`deny_tools`)
+
+`tools` and `mcp_tools` are allow lists that match by prefix, and the suite
+toggles (`fusion`, `maestro`, `cogmem`) grant a whole suite at once, so a grant
+such as `"fusion": true` or `"mcp_tools": ["google"]` admits every Google tool,
+including destructive ones. `deny_tools` lists the tools the agent may never
+call. It is evaluated after every grant and deny always wins, however the tool
+arrived; an empty or absent list denies nothing.
+
+Internal and suite tools match case-insensitively by exact published name or by
+prefix with a trailing `*` (`shell_exec`, `google_calendar_event_delete`,
+`google_drive_*`, `maestro_task_*`). MCP-client tools match `<server>_<tool>` by
+equality or prefix with underscore runs collapsed, without the `mcp_` prefix
+(`google_drive_file_share`, or `google_calendar` for the whole group). A denied
+tool is not registered for the agent and is refused if called anyway, on every
+turn the agent runs — cron jobs and sub-agents spawned by `agent_spawn` or
+Maestro share the agent's tool set and inherit the denial.
+
+```json
+{
+  "id": "assistant",
+  "tools": ["*"],
+  "fusion": true,
+  "mcp_tools": ["google"],
+  "deny_tools": ["shell_exec", "google_drive_file_share", "google_calendar_event_delete"]
+}
+```
+
+The same list is edited on the Agents page under Tools → "Denied tools", and
+the configuration report shows it in the agent's Settings table.
 
 ---
 

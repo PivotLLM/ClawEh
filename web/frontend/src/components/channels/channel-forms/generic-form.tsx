@@ -42,7 +42,6 @@ const OBJECT_FIELDS = new Set([
   "group_trigger",
   "typing",
   "placeholder",
-  "allow_token_query",
   "allow_from",
   "allow_origins",
 ])
@@ -141,7 +140,6 @@ export function GenericForm({
       reply_timeout: t("channels.form.desc.replyTimeout"),
       max_steps: t("channels.form.desc.maxSteps"),
       welcome_message: t("channels.form.desc.welcomeMessage"),
-      allow_token_query: t("channels.form.desc.allowTokenQuery"),
       ping_interval: t("channels.form.desc.pingInterval"),
       read_timeout: t("channels.form.desc.readTimeout"),
       write_timeout: t("channels.form.desc.writeTimeout"),
@@ -294,19 +292,6 @@ export function GenericForm({
               placeholder={t("channels.field.allowOriginsPlaceholder")}
             />
           </Field>
-        )}
-
-      {config.allow_token_query !== undefined &&
-        !hiddenFieldSet.has("allow_token_query") && (
-          <SwitchCardField
-            label={formatLabel("allow_token_query")}
-            hint={buildHint("allow_token_query")}
-            checked={asBool(config.allow_token_query)}
-            onCheckedChange={(checked) =>
-              onChange("allow_token_query", checked)
-            }
-            ariaLabel={formatLabel("allow_token_query")}
-          />
         )}
 
       {config.group_trigger !== undefined &&

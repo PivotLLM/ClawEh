@@ -12,7 +12,7 @@ import (
 // and a rejected list leaves the running one in place rather than failing open
 // or silently dropping to loopback.
 func TestHTTPHostSetAllowlist(t *testing.T) {
-	h, err := newHTTPHost("127.0.0.1:0", nil)
+	h, err := newHTTPHost(hostOptions{})
 	if err != nil {
 		t.Fatalf("newHTTPHost() error = %v", err)
 	}
@@ -24,7 +24,8 @@ func TestHTTPHostSetAllowlist(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "192.168.1.50:5000"
-		h.server.Handler.ServeHTTP(rec, req)
+		req.Host = "127.0.0.1"
+		h.handler.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
@@ -52,7 +53,7 @@ func TestHTTPHostSetAllowlist(t *testing.T) {
 // swappable mux — over a real TCP connection, so nothing here depends on
 // calling the handler directly.
 func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
-	h, err := newHTTPHost("127.0.0.1:0", nil)
+	h, err := newHTTPHost(hostOptions{})
 	if err != nil {
 		t.Fatalf("newHTTPHost() error = %v", err)
 	}
@@ -60,7 +61,7 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	h.SetMux(mux)
 
-	srv := httptest.NewServer(h.server.Handler)
+	srv := httptest.NewServer(h.handler)
 	defer srv.Close()
 
 	// The test client connects over loopback, which is always allowed, so this
@@ -94,7 +95,7 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 // gateway: the allowlist is replaced while requests are being served. Run under
 // -race this is the guard against ever going back to a mutable shared allowlist.
 func TestHTTPHostSetAllowlistConcurrent(t *testing.T) {
-	h, err := newHTTPHost("127.0.0.1:0", nil)
+	h, err := newHTTPHost(hostOptions{})
 	if err != nil {
 		t.Fatalf("newHTTPHost() error = %v", err)
 	}
@@ -126,7 +127,8 @@ func TestHTTPHostSetAllowlistConcurrent(t *testing.T) {
 				rec := httptest.NewRecorder()
 				req := httptest.NewRequest(http.MethodGet, "/", nil)
 				req.RemoteAddr = "192.168.1.50:5000"
-				h.server.Handler.ServeHTTP(rec, req)
+				req.Host = "127.0.0.1"
+				h.handler.ServeHTTP(rec, req)
 				if rec.Code != http.StatusOK && rec.Code != http.StatusForbidden {
 					t.Errorf("unexpected status %d during a reload", rec.Code)
 					return

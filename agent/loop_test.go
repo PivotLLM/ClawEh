@@ -651,7 +651,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 	if defaultAgent == nil {
 		t.Fatal("No default agent found")
 	}
-	defaultAgent.Sessions.SetHistory(sessionKey, history)
+	setHistory(t, defaultAgent.Sessions, sessionKey, history)
 
 	// Call ProcessDirectWithChannel
 	// Note: ProcessDirectWithChannel calls processMessage which will execute runLLMIteration
@@ -1200,10 +1200,11 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
-	// contextWindow=400 tokens, safetyPercent=80 → threshold = 320 tokens.
-	// Each padded message is ~160 tokens (640 chars / 4). The current turn
-	// group (user3, 160 tokens) fits. Adding ass2 (160 tokens) would hit 320
-	// tokens = 80%, which is NOT < 80%, so only user3 is kept. That gives us
+	// contextWindow=400 tokens, safetyPercent=80 → threshold = 320 tokens, with
+	// the request overhead zeroed so only the messages count. Each padded
+	// message is ~187 tokens (651 chars / 4 × the 1.15 estimate margin). The
+	// current turn group (user3, ~3 tokens) fits; adding the (user2, ass2)
+	// group would exceed the threshold, so only user3 is kept. That gives us
 	// sys + user3 = 2 messages, down from 6.
 	pad := strings.Repeat("x", 640)
 	sessionKey := "test-compress-sys"
@@ -1215,11 +1216,12 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
-	agent.Sessions.SetHistory(sessionKey, history)
+	setHistory(t, agent.Sessions, sessionKey, history)
 
 	mgr := ctxengine.New(sessionKey, agent.Sessions,
 		ctxengine.WithContextWindow(400),
 		ctxengine.WithSafetyPercent(80),
+		ctxengine.WithOverheadTokens(0),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
@@ -1262,11 +1264,12 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
-	agent.Sessions.SetHistory(sessionKey, history)
+	setHistory(t, agent.Sessions, sessionKey, history)
 
 	mgr := ctxengine.New(sessionKey, agent.Sessions,
 		ctxengine.WithContextWindow(400),
 		ctxengine.WithSafetyPercent(80),
+		ctxengine.WithOverheadTokens(0),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
@@ -1871,8 +1874,8 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 	// Populate a session with enough messages to survive forceCompression.
 	const sessionKey = "ctx-window-retry"
 	for range 6 {
-		agent.Sessions.AddMessage(sessionKey, "user", "old user msg")
-		agent.Sessions.AddMessage(sessionKey, "assistant", "old assistant reply")
+		addMessage(t, agent.Sessions, sessionKey, "user", "old user msg")
+		addMessage(t, agent.Sessions, sessionKey, "assistant", "old assistant reply")
 	}
 
 	const successContent = "recovered after context error"

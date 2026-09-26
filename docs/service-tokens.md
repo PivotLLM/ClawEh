@@ -52,7 +52,11 @@ uses) on a stable footing.
 
 ## Persistence & activation
 - Stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`), as
-  `{"<agentID>": "<SST token>"}`.
+  `{"<agentID>": "sha256:<hex>"}` — the SHA-256 of the token, not the token.
+  `claw token issue` prints the plaintext once; it cannot be recovered later
+  (issue a new one). A presented token is hashed for lookup. A file from an
+  older version holding plaintext values is rewritten with hashes the first
+  time it is loaded.
 - Loaded into the token store in `startMCPServer` (boot + every config reload),
   **and** a file watcher on `service-tokens.json` re-syncs the live store within
   the poll interval — so `claw token issue|revoke` takes effect **without a

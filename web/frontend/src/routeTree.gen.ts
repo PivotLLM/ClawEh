@@ -12,9 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as DevicesRouteImport } from './routes/devices'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as MemoryRouteImport } from './routes/memory'
@@ -47,6 +49,11 @@ const AgentsRoute = AgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuditRoute = AuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
   id: '/channels',
   path: '/channels',
@@ -60,6 +67,11 @@ const ConfigRoute = ConfigRouteImport.update({
 const DevicesRoute = DevicesRouteImport.update({
   id: '/devices',
   path: '/devices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsRoute = LogsRouteImport.update({
@@ -148,8 +160,10 @@ export interface FileRoutesByFullPath {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
@@ -172,8 +186,10 @@ export interface FileRoutesByTo {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
@@ -197,8 +213,10 @@ export interface FileRoutesById {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
@@ -223,8 +241,10 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -247,8 +267,10 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -271,8 +293,10 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -296,8 +320,10 @@ export interface RootRouteChildren {
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
   AgentRoute: typeof AgentRouteWithChildren
   AgentsRoute: typeof AgentsRoute
+  AuditRoute: typeof AuditRoute
   ConfigRoute: typeof ConfigRouteWithChildren
   DevicesRoute: typeof DevicesRoute
+  LoginRoute: typeof LoginRoute
   LogsRoute: typeof LogsRoute
   McpRoute: typeof McpRouteWithChildren
   MemoryRoute: typeof MemoryRoute
@@ -332,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/audit': {
+      id: '/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/channels': {
       id: '/channels'
       path: '/channels'
@@ -351,6 +384,13 @@ declare module '@tanstack/react-router' {
       path: '/devices'
       fullPath: '/devices'
       preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs': {
@@ -522,8 +562,10 @@ const rootRouteChildren: RootRouteChildren = {
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
   AgentRoute: AgentRouteWithChildren,
   AgentsRoute: AgentsRoute,
+  AuditRoute: AuditRoute,
   ConfigRoute: ConfigRouteWithChildren,
   DevicesRoute: DevicesRoute,
+  LoginRoute: LoginRoute,
   LogsRoute: LogsRoute,
   McpRoute: McpRouteWithChildren,
   MemoryRoute: MemoryRoute,

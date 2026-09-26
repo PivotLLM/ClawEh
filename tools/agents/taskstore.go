@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -92,21 +93,15 @@ func statusPath(dir, uuid string) string  { return filepath.Join(dir, uuid+statu
 func resultsPath(dir, uuid string) string { return filepath.Join(dir, uuid+resultsSuf) }
 func runPath(dir, uuid string) string     { return filepath.Join(dir, uuid+runSuf) }
 
-// writeJSONAtomic writes v as indented JSON to path via a temp file + rename so
-// a crash never leaves a half-written file.
+// writeJSONAtomic writes v as indented JSON to path via fileutil.WriteFileAtomic
+// (temp file in the same dir + fsync + rename) so a crash never leaves a
+// half-written file.
 func writeJSONAtomic(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteFileAtomic(path, data, 0o600)
 }
 
 // writeStatus persists a task record.
@@ -134,10 +129,7 @@ func writeResults(dir string, res *TaskResults) error {
 
 // markRun creates the <uuid>.run liveness marker.
 func markRun(dir, uuid string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(runPath(dir, uuid), []byte(""), 0o644)
+	return fileutil.WriteFileAtomic(runPath(dir, uuid), nil, 0o600)
 }
 
 // clearRun deletes the <uuid>.run marker (idempotent).

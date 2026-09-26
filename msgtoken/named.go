@@ -18,6 +18,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -131,6 +132,14 @@ func NewNamedStore(path string) (*NamedStore, error) {
 			return s, nil
 		}
 		return nil, fmt.Errorf("msgtoken: read %s: %w", path, err)
+	}
+	// The file holds the tokens themselves — the WebUI must be able to show
+	// them again — so it has to stay private. Tighten one left loose by an
+	// earlier release or a copy; a failure is logged, not fatal, since the
+	// store still works.
+	if permErr := perms.EnsurePrivateFile(path); permErr != nil {
+		logger.WarnCF("msgtoken", "Could not tighten token store permissions",
+			map[string]any{"path": path, "error": permErr.Error()})
 	}
 	if err := json.Unmarshal(data, &s.tokens); err != nil || s.tokens == nil {
 		s.tokens = map[string][]NamedToken{}

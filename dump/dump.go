@@ -34,7 +34,7 @@ func Write(dumpsDir, reason string, metadata map[string]any, input, output json.
 		return "", nil
 	}
 
-	if err := os.MkdirAll(dumpsDir, 0o755); err != nil {
+	if err := os.MkdirAll(dumpsDir, 0o700); err != nil {
 		return "", fmt.Errorf("dump: create dir: %w", err)
 	}
 
@@ -61,13 +61,13 @@ func Write(dumpsDir, reason string, metadata map[string]any, input, output json.
 	if err := enc.Encode(doc); err != nil {
 		return "", fmt.Errorf("dump: marshal json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), 0o600); err != nil {
 		return "", fmt.Errorf("dump: write json: %w", err)
 	}
 
 	// --- .txt file ---
 	txt := buildTxt(reason, meta, input, output)
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), 0o600); err != nil {
 		return "", fmt.Errorf("dump: write txt: %w", err)
 	}
 

@@ -32,10 +32,6 @@ func TestCollectCredentials_FreshInstall(t *testing.T) {
 	if word[1] != "set" {
 		t.Errorf("word token = %q", word[1])
 	}
-	_, web := findRow(t, tb, "WebUI token accepted")
-	if web[1] != "no" {
-		t.Errorf("token query = %q", web[1])
-	}
 }
 
 func TestCollectCredentials_StoresCountedNotShown(t *testing.T) {

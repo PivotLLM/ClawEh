@@ -108,7 +108,7 @@ func messageEndpointBase(r *http.Request) string {
 
 func (h *Handler) resolveAgentID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	agentID := routing.NormalizeAgentID(r.PathValue("id"))
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return "", false

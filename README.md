@@ -294,6 +294,12 @@ Environment overrides:
   ~/claw-test/bin/claw version
   ```
 
+Every release ships `checksums.txt` and its minisign signature
+`checksums.txt.minisig`, plus a CycloneDX `sbom.json`. `claw upgrade` downloads
+the release, verifies the signature with the publisher key embedded in the
+running binary, and then checks the archive's SHA-256 against the signed list;
+a release without a valid signature is refused.
+
 If you'd like a platform that isn't listed, please open an issue — or build it
 yourself (see [Building](#building)).
 
@@ -451,9 +457,13 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ## Security Considerations
 
-ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, and therefore should not be exposed to untrusted networks. We strongly recommend running it on `localhost` only. We are aware that many people wish to run a "claw" application on a headless computer and are considering the right path forward.
+ClawEh is intended to function as a personal or small-team assistant that runs on a computer the operator controls. It is not designed or intended to provide any kind of public service.
 
-The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and the IP allowlist, which are two independent gates: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port.
+The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback only; when `gateway.host` is set to a network address the gateway serves HTTPS on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and there is no way to serve plain HTTP off-box (see [docs/tls.md](docs/tls.md)). Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. The gateway answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
+
+Every tool call, configuration change and login is recorded in the audit log ([docs/audit.md](docs/audit.md)).
+
+**Keeping secrets out of config.json.** Any credential field in `config.json` — a provider `api_key` or `api_keys` list, a channel `token`, a `*_secret` or `*password` field, the `env` and `headers` values of an MCP server or CLI model, or a `proxy` URL with a password — may hold a reference instead of the value: `"api_key": "env:OPENAI_API_KEY"` reads the environment variable when the gateway starts (add it to the service unit's `Environment=` or an `EnvironmentFile=`), and `"token": "file:/etc/claw/telegram.token"` reads the file's contents (surrounding whitespace trimmed). The file must be readable only by its owner (`chmod 600`) and the path must be absolute. References are resolved when the configuration loads and written back unchanged whenever the configuration is saved, including saves from the web console, so the secret never appears in `config.json`. The web console shows a reference as written rather than masked; typing a new value into a referenced field replaces the reference with that literal. A reference that cannot be resolved — an unset variable, a missing file, or a file that group or other can read — stops the gateway from starting, or is rejected by the web console, with a message naming the config key. CLI providers run without their vendor's permission prompts only when *Bypass CLI restrictions* is ticked for that CLI; with it on, the CLI can run commands and modify files anywhere the service user can. The configuration report (**Report** in the web console) lists every such setting and marks the ones that need attention.
 
 In general, Claw should be operated as a local, user-controlled tool, not as an internet-facing application.
 
@@ -566,25 +576,24 @@ to **Alerts**, and `GET /api/gateway/alerts` returns it. All ClawEh alerts
 are normal priority. Every alert is listed in `ALERTS.md`, and the record
 format is in [docs/alerts.md](docs/alerts.md).
 
-## Configuration backup
+## Backup and restore
 
-ClawEh takes a nightly **configuration backup** — **on by default**. It snapshots `config.json` and the cron jobs file (`jobs.json`) into `$CLAW_HOME/backup/YYYYMMDD/`, with each file timestamped (e.g. `config.json.20260622-030000`) so repeated runs in a day don't overwrite. Day-folders older than the retention window are pruned.
+ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `state/` token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs and per-agent `tmp/` are excluded.
 
-This is **configuration only** — it does **not** include agent workspaces, session archives, cognitive-memory databases, or the `state/` token files. It's a safety net for your settings and schedules, not a full data backup.
-
-Manage it in the web console under **Config → Configuration backup**, or in `config.json`:
+Manage it in the web console under **Config → Backup**, or in `config.json`:
 
 ```json
-"backup": { "enabled": true, "at": "03:00", "retain_days": 30 }
+"backup": { "enabled": true, "at": "03:00", "retain_days": 30, "dest": "" }
 ```
 
 | Field | Default | Description |
 |---|---|---|
 | `enabled` | `true` | Set `false` to turn the nightly backup off. |
 | `at` | `03:00` | Local time of day (`HH:MM`) to run. |
-| `retain_days` | `30` | Delete backup folders older than this. |
+| `retain_days` | `30` | Delete archives older than this. |
+| `dest` | `$CLAW_HOME/backup` | Directory to write archives to (an off-host mount, for example). |
 
-The scheduler re-reads config every minute, so changes take effect without a restart. The **Back up now** button (or `POST /api/backup`) runs a backup immediately, regardless of the nightly toggle.
+`claw backup [--dest DIR]` runs the same backup on demand, and `claw restore <archive>` restores one (the gateway must be stopped; the files it replaces are kept in `restore-backup-<timestamp>/`). The **Back up now** button (or `POST /api/backup`) runs a backup immediately. See [docs/backup.md](docs/backup.md).
 
 ## Diagnostic dumps
 
@@ -677,6 +686,9 @@ Compaction itself is configured under a `compression` block, split by what each 
 | `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
 | `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
+| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only isolated sessions (per-user, per-platform, per-account, group, device) are affected; the agent's `main` conversation and its `service` session are never deleted (use `archive_days` to trim messages inside them). A session with a turn in flight, or one the gateway still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
+
+**Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every session Alice or Bob hold for that chat id on Telegram (direct, group, per-account and identity-linked per-user keys) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. Under the default `unified` scope the sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
 | `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
 | `summary_retention_days` | `0` (unlimited) | Permanently delete context summaries older than *n* days. `0` = no age limit. |
 | `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |

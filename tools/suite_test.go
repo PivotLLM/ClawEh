@@ -71,6 +71,38 @@ func TestSuiteDefaults(t *testing.T) {
 type denyAllChecker struct{}
 
 func (denyAllChecker) IsToolAllowed(string) bool { return false }
+func (denyAllChecker) IsToolDenied(string) bool  { return false }
+
+// TestRegisterSuite_DenyListStillApplies verifies the deny half of the checker
+// reaches a suite-registered tool: the allow-side exemption stands, but an
+// explicit deny_tools entry refuses the call.
+func TestRegisterSuite_DenyListStillApplies(t *testing.T) {
+	r := NewToolRegistry()
+	denied := &mockContextAwareTool{mockRegistryTool: *newMockTool("google_calendar_event_delete", "suite tool")}
+	kept := &mockContextAwareTool{mockRegistryTool: *newMockTool("google_calendar_events_list", "suite tool")}
+	r.RegisterSuite(denied)
+	r.RegisterSuite(kept)
+
+	ctx := WithToolAllowChecker(context.Background(), mockAllowChecker{
+		denied: map[string]bool{"google_calendar_event_delete": true},
+	})
+
+	res := r.ExecuteWithContext(ctx, "google_calendar_event_delete", nil, "", "", nil)
+	if res == nil || !res.IsError {
+		t.Fatalf("denied suite tool should be refused, got %+v", res)
+	}
+	if denied.lastCtx != nil {
+		t.Error("denied suite tool ran despite deny_tools")
+	}
+
+	ok := r.ExecuteWithContext(ctx, "google_calendar_events_list", nil, "", "", nil)
+	if ok == nil || ok.IsError {
+		t.Fatalf("undenied suite tool should still bypass the allow list, got %+v", ok)
+	}
+	if kept.lastCtx == nil {
+		t.Error("undenied suite tool was not executed")
+	}
+}
 
 // TestRegisterSuite_BypassesExecutionAllowlist verifies a suite-registered tool
 // executes even when the context allowlist denies it, while a normally-registered

@@ -12,6 +12,7 @@ import {
   type SkillInfo,
   settingsCardClass,
 } from "@/components/agents/agent-model"
+import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
 import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
@@ -49,6 +50,8 @@ export interface AgentCardProps {
   onMountsChange?: (mounts: MountEntry[]) => void
   mcpTools?: string[]
   onMCPToolsChange?: (mcpTools: string[]) => void
+  denyTools?: string[]
+  onDenyToolsChange?: (denyTools: string[]) => void
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
@@ -96,6 +99,8 @@ export function AgentCard({
   onMountsChange = undefined,
   mcpTools = [],
   onMCPToolsChange = undefined,
+  denyTools = [],
+  onDenyToolsChange = undefined,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
@@ -219,7 +224,9 @@ export function AgentCard({
         </div>
       )}
 
-      {(onMCPToolsChange !== undefined || availableTools.tools.length > 0) && (
+      {(onMCPToolsChange !== undefined ||
+        onDenyToolsChange !== undefined ||
+        availableTools.tools.length > 0) && (
         <div className={settingsCardClass}>
           <p className="text-foreground text-sm font-semibold">Tools</p>
 
@@ -257,6 +264,18 @@ export function AgentCard({
                 catalog={availableTools}
                 onChange={onToolsChange}
               />
+            </div>
+          )}
+
+          {onDenyToolsChange !== undefined && (
+            <div className="space-y-1.5">
+              <p className="text-foreground text-xs font-semibold">
+                {t("agents.denyTools")}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {t("agents.denyToolsHint")}
+              </p>
+              <DenyToolsEditor value={denyTools} onChange={onDenyToolsChange} />
             </div>
           )}
         </div>

@@ -18,7 +18,7 @@ import (
 // brand-new (uninitialized) workspace, so deleting one sticks and a personalized
 // agent is not disturbed on restart.
 func Populate(workspace string) {
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		logger.WarnCF("workspace", "Failed to create workspace directory",
 			map[string]any{"dir": workspace, "error": err.Error()})
 		return
@@ -27,7 +27,7 @@ func Populate(workspace string) {
 	// The agent's writable area is <workspace>/files (the read-only-workspace
 	// default; see AgentDefaults.WorkspaceWriteSubdir). Ensure it always exists
 	// so the agent has somewhere to write from first run.
-	if err := os.MkdirAll(filepath.Join(workspace, "files"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(workspace, "files"), 0o700); err != nil {
 		logger.WarnCF("workspace", "Failed to create workspace files directory",
 			map[string]any{"dir": filepath.Join(workspace, "files"), "error": err.Error()})
 	}
@@ -48,7 +48,7 @@ func Populate(workspace string) {
 			return err
 		}
 		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(workspace, path), 0o755)
+			return os.MkdirAll(filepath.Join(workspace, path), 0o700)
 		}
 		if seedOnce[path] && initialized {
 			return nil
@@ -61,10 +61,10 @@ func Populate(workspace string) {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 			return err
 		}
-		return os.WriteFile(dest, data, 0o644)
+		return os.WriteFile(dest, data, 0o600)
 	})
 	if err != nil {
 		logger.WarnCF("workspace", "Failed to populate workspace templates",

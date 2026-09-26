@@ -23,6 +23,7 @@ var cliModelSentinels = map[string][]string{
 // cliLaunch is the command line a CLI model runs as, built the way
 // providers/factory_provider.go and spawnllm build it: the provider's command
 // (or the protocol's binary on PATH), the protocol's base arguments, the
+// bypass flags (only when the provider's bypass_restrictions is on) and
 // required arguments plus the model's extra_args, the model flag unless the id
 // is the CLI's sentinel, the working directory for codex, then the trailing
 // stdin marker.
@@ -36,7 +37,7 @@ func cliLaunch(prov *config.Provider, m *config.ModelConfig) (command, workdir s
 		return orValue(prov.Command, prov.Protocol) + " " + strings.Join(m.ExtraArgs, " "), workdir, sortedKeys(m.Env)
 	}
 	args := append([]string{}, agent.BaseArgs...)
-	args = append(args, config.CLIArgs(prov.Protocol, m.ExtraArgs)...)
+	args = append(args, config.CLIArgs(prov.Protocol, prov.BypassRestrictions, m.ExtraArgs)...)
 	if m.Model != "" && !slices.Contains(cliModelSentinels[agent.Protocol], m.Model) {
 		flag := "--model"
 		if agent.Protocol == "codex-cli" {
@@ -100,7 +101,7 @@ func modelsFor(cfg *config.Config, provider string) []*config.ModelConfig {
 func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Section {
 	api := Table{Caption: "API providers", Columns: []string{"Provider", "Protocol", "Base URL", "API key", "Proxy"}}
 	models := Table{Caption: "Enabled models", Columns: []string{"Alias", "Provider", "Model id", "Settings"}}
-	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names"}}
+	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names", "Bypass CLI restrictions"}}
 	var idle []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -123,7 +124,7 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 				if wd == "." {
 					wd = "process working directory"
 				}
-				cli.Rows = append(cli.Rows, row(m.ModelName+" ("+p.Name+")", cmd, wd, joinOr(envNames, none)))
+				cli.Rows = append(cli.Rows, row(m.ModelName+" ("+p.Name+")", cmd, wd, joinOr(envNames, none), onOff(p.BypassRestrictions)))
 			}
 			continue
 		}
@@ -136,7 +137,7 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 		models.Rows = append(models.Rows, row(none, "", "", ""))
 	}
 	if len(cli.Rows) == 0 {
-		cli.Rows = append(cli.Rows, row(none, "", "", ""))
+		cli.Rows = append(cli.Rows, row(none, "", "", "", ""))
 	}
 	notes := []string{"Only providers with at least one enabled model are listed; a provider whose models are all disabled sends nothing."}
 	if len(idle) > 0 {
@@ -164,7 +165,9 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 				Title: "CLI providers",
 				Notes: []string{"A CLI provider runs as its own program with its own configuration on this host; " +
 					"ClawEh's file sandbox applies to ClawEh's tools, not to what the CLI does on its own behalf. " +
-					"\"process working directory\" is where the ClawEh service was started, not the agent's workspace."},
+					"\"process working directory\" is where the ClawEh service was started, not the agent's workspace. " +
+					"\"Bypass CLI restrictions\" on means the CLI's skip-permissions / sandbox-bypass flag is passed, " +
+					"so it runs commands and edits files without asking."},
 				Tables: []Table{cli},
 			},
 			{Title: "Model roles", Tables: []Table{roles}},

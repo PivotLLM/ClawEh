@@ -419,15 +419,11 @@ func (c *LINEChannel) isBotMentioned(msg lineMessage) bool {
 		// The bot IS likely mentioned (LINE includes mention struct when bot is @-ed),
 		// so check if any mentionee overlaps with bot display name in text.
 		if c.botDisplayName != "" {
+			runes := []rune(msg.Text)
 			for _, m := range msg.Mention.Mentionees {
-				if m.Index >= 0 && m.Length > 0 {
-					runes := []rune(msg.Text)
-					end := m.Index + m.Length
-					if end <= len(runes) {
-						mentionText := string(runes[m.Index:end])
-						if strings.Contains(mentionText, c.botDisplayName) {
-							return true
-						}
+				if start, end, ok := mentionRange(m, len(runes)); ok {
+					if strings.Contains(string(runes[start:end]), c.botDisplayName) {
+						return true
 					}
 				}
 			}
@@ -442,6 +438,19 @@ func (c *LINEChannel) isBotMentioned(msg lineMessage) bool {
 	return false
 }
 
+// mentionRange returns the [start, end) rune range a mentionee covers in a
+// text of n runes, or ok=false when the webhook's index/length do not describe
+// a range inside the text. index and length come straight from the JSON, so
+// they are checked before any arithmetic: index+length could otherwise
+// overflow to a negative end that passes an end <= n test and panics on the
+// slice.
+func mentionRange(m lineMentionee, n int) (start, end int, ok bool) {
+	if m.Index < 0 || m.Length <= 0 || m.Index > n || m.Length > n-m.Index {
+		return 0, 0, false
+	}
+	return m.Index, m.Index + m.Length, true
+}
+
 // stripBotMention removes the @BotName mention text from the message.
 func (c *LINEChannel) stripBotMention(text string, msg lineMessage) string {
 	stripped := false
@@ -451,25 +460,19 @@ func (c *LINEChannel) stripBotMention(text string, msg lineMessage) string {
 		runes := []rune(text)
 		for _, m := range slices.Backward(msg.Mention.Mentionees) {
 			// Strip if userId matches OR if the mention text contains the bot display name
+			start, end, ok := mentionRange(m, len(runes))
+			if !ok {
+				continue
+			}
 			shouldStrip := false
 			if c.botUserID != "" && m.UserID == c.botUserID {
 				shouldStrip = true
-			} else if c.botDisplayName != "" && m.Index >= 0 && m.Length > 0 {
-				end := m.Index + m.Length
-				if end <= len(runes) {
-					mentionText := string(runes[m.Index:end])
-					if strings.Contains(mentionText, c.botDisplayName) {
-						shouldStrip = true
-					}
-				}
+			} else if c.botDisplayName != "" && strings.Contains(string(runes[start:end]), c.botDisplayName) {
+				shouldStrip = true
 			}
 			if shouldStrip {
-				start := m.Index
-				end := m.Index + m.Length
-				if start >= 0 && end <= len(runes) {
-					runes = append(runes[:start], runes[end:]...)
-					stripped = true
-				}
+				runes = append(runes[:start], runes[end:]...)
+				stripped = true
 			}
 		}
 		if stripped {

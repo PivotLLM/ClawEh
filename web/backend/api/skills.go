@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/skills"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -41,7 +41,7 @@ func (h *Handler) registerSkillRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleListSkills(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -56,7 +56,7 @@ func (h *Handler) handleListSkills(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleGetSkill(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -92,7 +92,7 @@ func (h *Handler) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -135,11 +135,11 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := os.MkdirAll(skillDir, 0o755); err != nil { //nolint:gosec // skills directory browsed by the user; existing mode kept
+	if err := os.MkdirAll(skillDir, 0o700); err != nil { //nolint:gosec // skillName validated by normalizeImportedSkillName (^[a-z0-9]+(-[a-z0-9]+)*$)
 		http.Error(w, fmt.Sprintf("Failed to create skill directory: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(skillFile, content, 0o644); err != nil { //nolint:gosec // SKILL.md is user-editable skill content; existing mode kept
+	if err := fileutil.WriteFileAtomic(skillFile, content, 0o600); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save skill: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -161,7 +161,7 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return

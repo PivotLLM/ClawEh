@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -29,7 +30,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/channels/secmsg"
 	_ "github.com/PivotLLM/ClawEh/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/channels/telegram"
-	_ "github.com/PivotLLM/ClawEh/channels/webui"
+	"github.com/PivotLLM/ClawEh/channels/webui"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
@@ -37,7 +38,11 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/admin"
+	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 	"github.com/PivotLLM/ClawEh/media"
@@ -52,6 +57,7 @@ import (
 	"github.com/PivotLLM/ClawEh/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 	webapi "github.com/PivotLLM/ClawEh/web/backend/api"
+	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // Timeout constants for service operations
@@ -62,21 +68,39 @@ const (
 	gracefulShutdownTimeout = 15 * time.Second
 )
 
+// runtimeConfig returns the private copy of the live configuration the
+// gateway runs on: invalid providers/models (a stale/unknown protocol, a model
+// pointing at a missing provider) are dropped with a WARN and the rest is
+// kept, rather than failing over one bad entry. The store's own config is left
+// untouched so the entries can be repaired via the WebUI.
+func runtimeConfig(live *config.Config) (*config.Config, error) {
+	cfg, err := live.Clone()
+	if err != nil {
+		return nil, err
+	}
+	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
+		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
+			"providers_dropped": dp,
+			"models_dropped":    dm,
+		})
+	}
+	return cfg, nil
+}
+
 // newMergedWebServer constructs the in-process WebUI server bundle (API
-// handler + embedded SPA) configured against the active config file and the
-// merged binary's actual listen settings. The gateway host/port and IP
-// allowlist in cfg.Gateway are the single source of truth.
-func newMergedWebServer(configPath string, cfg *config.Config) *webserver.Server {
-	publicBind := cfg != nil && cfg.Gateway.Host == "0.0.0.0"
+// handler + embedded SPA) on the gateway's live config store and the merged
+// binary's actual listen settings. The gateway host/port and IP allowlist in
+// cfg.Gateway are the single source of truth.
+func newMergedWebServer(store *config.Store, cfg *config.Config) *webserver.Server {
+	// Public: the gateway is reachable off-box, i.e. the HTTPS listener is on,
+	// so the API advertises the request's own host rather than the bind host.
+	publicBind := cfg != nil && cfg.Gateway.HTTPSEnabled()
 	port := 0
 	if cfg != nil {
-		port = cfg.Gateway.Port
-	}
-	if port == 0 {
-		port = config.DefaultGatewayPort
+		port = cfg.Gateway.EffectivePort()
 	}
 	srv := webserver.New(webserver.Options{
-		ConfigPath: configPath,
+		Store:      store,
 		ListenPort: port,
 		Public:     publicBind,
 	})
@@ -110,7 +134,20 @@ type gatewayServices struct {
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
 	HTTPHost       *httpHost
-	CogmemManager  *consolidate.Manager
+	// TLSCerts is the HTTPS listener's certificate (nil on a loopback-only
+	// gateway). Like HTTPHost it lives for the whole process; stopTLSWatch
+	// ends its file watcher at shutdown.
+	TLSCerts      *tlscert.Manager
+	stopTLSWatch  context.CancelFunc
+	CogmemManager *consolidate.Manager
+	// AuthStore holds the WebUI login sessions and the admin credentials;
+	// stopAuthWatch ends its credentials-file poller at shutdown.
+	AuthStore     *middleware.AuthStore
+	stopAuthWatch context.CancelFunc
+	// fatal is the fail-fast path a dying core service reports to.
+	fatal *fatalNotifier
+	// store is the live configuration, shared with the WebUI API.
+	store *config.Store
 }
 
 func gatewayCmd(debug bool) error {
@@ -140,20 +177,35 @@ func gatewayCmd(debug bool) error {
 	logger.InfoCF("gateway", "Starting", map[string]any{"app": app.Name(), "version": app.Version()})
 
 	configPath := internal.GetConfigPath()
-	cfg, err := internal.LoadConfig()
+	if permErr := enforceDataDirPerms(baseDir, configPath); permErr != nil {
+		return permErr
+	}
+	// internal.LoadConfig seeds a default config.json on first run; the store
+	// is the live configuration from here on, shared with the WebUI API so a
+	// save through it and the gateway's own reads never disagree.
+	if _, loadErr := internal.LoadConfig(); loadErr != nil {
+		return fmt.Errorf("error loading config: %w", loadErr)
+	}
+	store, err := config.NewStore(configPath)
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
 	}
-
-	// Drop invalid providers/models (e.g. a stale/unknown protocol, or a model
-	// pointing at a missing provider) with a WARN and continue on the survivors,
-	// rather than failing startup over one bad entry. The on-disk config is left
-	// untouched so it can be repaired via the WebUI.
-	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
-		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
-			"providers_dropped": dp,
-			"models_dropped":    dm,
-		})
+	// The runtime works on a pruned private copy; the store keeps the full
+	// on-disk config so invalid entries can be repaired through the WebUI.
+	cfg, err := runtimeConfig(store.Current())
+	if err != nil {
+		return fmt.Errorf("error loading config: %w", err)
+	}
+	// Likewise drop references to models that do not exist (deleted, or just
+	// pruned above for a bad provider) so no agent sends a dead alias as a
+	// model id; disabled models are kept and only warned about.
+	for _, ref := range cfg.PruneDanglingModelReferences() {
+		logger.WarnCF("gateway", "removed reference to unknown model", map[string]any{"site": ref.Site, "model": ref.Alias})
+	}
+	if _, warnings := cfg.ValidateModelReferences(); len(warnings) > 0 {
+		for _, w := range warnings {
+			logger.WarnCF("gateway", "reference to disabled model", map[string]any{"detail": w})
+		}
 	}
 
 	// Re-apply logging config (debug flag overrides level).
@@ -199,6 +251,10 @@ func gatewayCmd(debug bool) error {
 	// give up, failed jobs and reloads. Closed in shutdownGateway.
 	operatorAlerter, alertsPath := newAlerter(baseDir)
 	alerts.Set(operatorAlerter)
+	openAuditLog(baseDir)
+	// A core service that dies after startup takes the process down through
+	// here, so the service manager restarts it; see fatal.go.
+	fatal := newFatalNotifier(operatorAlerter)
 	msgBus := bus.NewMessageBus()
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 	if err != nil {
@@ -241,7 +297,7 @@ func gatewayCmd(debug bool) error {
 	defer pidfile.Remove(cfg.DataDir())
 
 	// Setup and start all services
-	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath)
+	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath, store, fatal)
 	if err != nil {
 		return err
 	}
@@ -260,20 +316,14 @@ func gatewayCmd(debug bool) error {
 
 	go func() {
 		if runErr := agentLoop.Run(ctx); runErr != nil {
-			logger.ErrorCF("agent", "Agent loop exited with error", map[string]any{"error": runErr.Error()})
-			agentLoop.Alerter().Send(alerter.Alert{
-				Title:       "Agent loop stopped",
-				Description: "no inbound messages are processed until the gateway is restarted",
-				Details:     runErr.Error(),
-				EventID:     "agent-loop",
-			})
+			fatal.fatalService("agent-loop", runErr)
 		}
 	}()
 
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(configPath, reloadInterval,
+	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(store, reloadInterval,
 		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter())
 	defer stopWatch()
 
@@ -316,6 +366,14 @@ func gatewayCmd(debug bool) error {
 			shutdownGateway(services, agentLoop, provider, true)
 			return nil
 
+		case failure := <-fatal.failed:
+			// Same shutdown as SIGTERM; the failure becomes the exit reason and
+			// NewGatewayCommand exits non-zero on it. fatalService has armed a
+			// timer that exits regardless should this hang.
+			logger.Info("Shutting down after a core service stopped...")
+			shutdownGateway(services, agentLoop, provider, true)
+			return failure
+
 		case newCfg := <-configReloadChan:
 			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if err != nil {
@@ -330,9 +388,14 @@ func gatewayCmd(debug bool) error {
 
 		case done := <-forceReload:
 			logger.Info("Forced config reload requested via API")
-			newCfg, lerr := config.LoadConfig(configPath)
+			live, lerr := store.Reload()
 			if lerr != nil {
 				done <- lerr
+				break
+			}
+			newCfg, cerr := runtimeConfig(live)
+			if cerr != nil {
+				done <- cerr
 				break
 			}
 			rerr := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
@@ -386,13 +449,15 @@ func setupAndStartServices(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	configPath string,
+	store *config.Store,
+	fatal *fatalNotifier,
 ) (*gatewayServices, error) {
-	services := &gatewayServices{}
+	services := &gatewayServices{fatal: fatal, store: store}
 
 	// Ensure the shared "common" directory exists so the common_* tools have a
 	// place to read/write. Idempotent.
 	if commonDir := cfg.ResolveCommonDir(); commonDir != "" {
-		if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		if err := os.MkdirAll(commonDir, 0o700); err != nil {
 			logger.WarnCF("gateway", "Failed to create common directory", map[string]any{"path": commonDir, "error": err.Error()})
 		}
 	}
@@ -441,6 +506,18 @@ func setupAndStartServices(
 		fms.Start()
 	}
 
+	// The HTTPS listener's certificate, when the gateway is bound off-box.
+	// Loaded (a self-signed pair generated or renewed) BEFORE the channels are
+	// built: the device channel reads the certificate's names for its own Host
+	// allowlist (tlscert.NamesForConfig), so the file has to be current first.
+	if cfg.Gateway.HTTPSEnabled() {
+		var err error
+		services.TLSCerts, err = tlscert.Load(tlsOptions(cfg, agentLoop.Alerter()))
+		if err != nil {
+			return nil, fmt.Errorf("HTTPS listener certificate: %w", err)
+		}
+	}
+
 	// Create channel manager
 	var err error
 	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore)
@@ -473,16 +550,18 @@ func setupAndStartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup shared HTTP listener. The listener is owned by httpHost and stays
-	// up across config reloads; only the handler mux is swapped on reload, so
-	// WebUI WebSocket connections and channel webhooks survive a Manager
-	// rebuild. See rebuildSharedHTTPServer for the swap seam.
-	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	services.WebServer = newMergedWebServer(configPath, cfg)
+	// Setup the shared listeners: plain HTTP on loopback, always, and HTTPS on
+	// gateway.host:tls_port when the gateway is bound off-box. They are owned by
+	// httpHost and stay up across config reloads; only the handler mux is
+	// swapped on reload, so WebUI WebSocket connections and channel webhooks
+	// survive a Manager rebuild. See rebuildSharedHTTPServer for the swap seam.
+	services.WebServer = newMergedWebServer(store, cfg)
 	// Share the agent loop's named message-token store with the WebUI API so
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
+	// DELETE /api/sessions/{key} releases the live session and its archive.
+	services.WebServer.APIHandler().SetSessionReleaser(agentLoop.ReleaseSession)
 	// Expose the live outbound-MCP connection state to the WebUI MCP page. Reads the
 	// same manager the agent loop owns (reused in place across reloads).
 	services.WebServer.APIHandler().SetMCPStatusLoop(agentLoop)
@@ -505,15 +584,45 @@ func setupAndStartServices(
 	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
 	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
-	httpHost, hostErr := newHTTPHost(addr, allowedCIDRs)
+	hostOpts := hostOptions{Port: cfg.Gateway.EffectivePort(), AllowedCIDRs: allowedCIDRs}
+	if services.TLSCerts != nil {
+		hostOpts.TLSHost = cfg.Gateway.Host
+		hostOpts.TLSPort = cfg.Gateway.EffectiveTLSPort()
+		hostOpts.TLSConfig = services.TLSCerts.TLSConfig()
+		hostOpts.HSTS = services.TLSCerts.UserSupplied()
+	}
+	httpHost, hostErr := newHTTPHost(hostOpts)
 	if hostErr != nil {
 		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
 	logAllowlist(allowedCIDRs, cfg.Gateway.Host)
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
-	services.HTTPHost.alerter = agentLoop.Alerter()
-	services.HTTPHost.Start()
+	if services.TLSCerts != nil {
+		services.HTTPHost.SetCertificateNames(services.TLSCerts.Info().Names())
+	}
+	if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+		return nil, err
+	}
+	// WebUI login: one session store shared by the Auth middleware on the
+	// listener, the login endpoints and the WebUI channel's WebSocket
+	// handshake. Created once, like the listener; the poller picks up `claw
+	// admin` changes to the credentials file for the life of the process.
+	authStore := middleware.NewAuthStore(admin.Path(cfg.DataDir()))
+	services.AuthStore = authStore
+	services.HTTPHost.SetAuth(authStore)
+	services.WebServer.APIHandler().SetAuth(authStore)
+	webui.SetSessionValidator(authStore.HasSession)
+	authCtx, stopAuthWatch := context.WithCancel(context.Background())
+	services.stopAuthWatch = stopAuthWatch
+	go authStore.Watch(authCtx, middleware.CredentialsPollInterval)
+	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, agentLoop)
+	services.HTTPHost.onFatal = fatal.fatalService
+	if err := services.HTTPHost.Start(); err != nil {
+		return nil, err
+	}
+	if services.TLSCerts != nil {
+		startTLSWatch(services, agentLoop)
+	}
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -527,7 +636,15 @@ func setupAndStartServices(
 	// for the entire life of the process.
 	markReady(services, true)
 
-	logger.InfoF("Health endpoints available", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health", "ready": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/ready"})
+	endpoints := map[string]any{
+		"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health",
+		"ready":  "http://" + services.HTTPHost.LoopbackAddr() + "/ready",
+	}
+	if https := services.HTTPHost.HTTPSAddr(); https != "" {
+		endpoints["https"] = "https://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.EffectiveTLSPort()))
+		endpoints["external_url"] = cfg.Gateway.EffectiveExternalURL()
+	}
+	logger.InfoF("Health endpoints available", endpoints)
 
 	// Setup state manager and device service
 	stateManager := state.NewManager(cfg.WorkspacePath())
@@ -565,6 +682,9 @@ func setupAndStartServices(
 	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
 	// effect without restarting the loop. Inert until backup.enabled is set.
 	startBackupScheduler(agentLoop.GetConfig, configPath, agentLoop.Alerter())
+	// Nightly session retention (session.retention_days) and cogmem snapshot
+	// pruning; boot-only like the backup, reads live config each pass.
+	agentLoop.StartRetention()
 
 	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
 	// those older than 24h, so a crashed worker's artefacts can be inspected first.
@@ -626,6 +746,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
 		mcpserver.WithSessionMode(cfg.Session.Mode),
 		mcpserver.WithAlerter(agentLoop.Alerter()),
+		mcpserver.WithOnServeError(services.fatal.handlerFor("mcpserver")),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)
@@ -764,6 +885,12 @@ func shutdownGateway(
 
 	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout)
 
+	if services.stopTLSWatch != nil {
+		services.stopTLSWatch()
+	}
+	if services.stopAuthWatch != nil {
+		services.stopAuthWatch()
+	}
 	if services.HTTPHost != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 		if err := services.HTTPHost.Stop(shutdownCtx); err != nil {
@@ -774,6 +901,9 @@ func shutdownGateway(
 
 	agentLoop.Stop()
 	agentLoop.Close()
+	if err := audit.Close(); err != nil {
+		logger.WarnCF("gateway", "audit log close failed", map[string]any{"error": err.Error()})
+	}
 
 	logger.Info("✓ Gateway stopped")
 	if fullShutdown {
@@ -941,7 +1071,8 @@ func restartServices(
 	// and swap it into the long-lived httpHost. The listener is NOT recreated
 	// — keeping it alive is what lets WebUI WebSocket connections survive a
 	// config reload (investigation 7a5377d9, option #1).
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
+	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
+	warnListenerConfigChanged(services, cfg.Gateway)
 
 	// Re-apply the IP allowlist on the live listener. This is what makes
 	// `claw network` a recovery path: an operator locked out by an empty
@@ -955,6 +1086,12 @@ func restartServices(
 		} else {
 			logAllowlist(allowedCIDRs, cfg.Gateway.Host)
 		}
+		// Same for the Host and cross-origin policy: external_url and the LINE
+		// webhook path can change on reload, and a bad external_url keeps the
+		// previous policy rather than dropping to loopback-only.
+		if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+			logger.WarnF("Invalid gateway.external_url in reloaded config; keeping the previous host policy", map[string]any{"error": err.Error()})
+		}
 	}
 
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
@@ -963,7 +1100,7 @@ func restartServices(
 	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
 	// not-ready, so readiness is re-asserted after every reload.
 	markReady(services, true)
-	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health"})
+	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
 
 	// Re-create device service with new config
 	stateManager := state.NewManager(cfg.WorkspacePath())
@@ -1003,12 +1140,14 @@ func restartServices(
 	return nil
 }
 
-// setupConfigWatcherPolling sets up a simple polling-based config file watcher.
-// interval controls how often the file is polled; callers should pass
-// cfg.ConfigReloadInterval() so the value honours the config override and
-// MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
-// and a stop function.
-func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool, a alerter.Alerter) (chan *config.Config, func(), func()) {
+// setupConfigWatcherPolling sets up a simple polling-based watcher on the
+// store's config file; a change is re-read into the store and a pruned copy
+// (runtimeConfig) is emitted for the reload. interval controls how often the
+// file is polled; callers should pass cfg.ConfigReloadInterval() so the value
+// honours the config override and MinConfigReloadIntervalSeconds floor.
+// Returns a channel for config updates and a stop function.
+func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter) (chan *config.Config, func(), func()) {
+	configPath := store.Path()
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
@@ -1064,11 +1203,17 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					continue
 				}
 
-				newCfg, err := config.LoadConfig(configPath)
+				live, err := store.Reload()
 				if err != nil {
 					logger.Errorf("⚠ Error loading new config: %v", err)
 					logger.Warn("  Using previous valid config")
 					alertConfigFileInvalid(a, configPath, err)
+					continue
+				}
+				newCfg, err := runtimeConfig(live)
+				if err != nil {
+					logger.Errorf("⚠ Error copying new config: %v", err)
+					logger.Warn("  Using previous valid config")
 					continue
 				}
 				if err := newCfg.ValidateModels(); err != nil {
@@ -1076,6 +1221,17 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("  Using previous valid config")
 					alertConfigFileInvalid(a, configPath, err)
 					continue
+				}
+				refErrs, refWarnings := newCfg.ValidateModelReferences()
+				if len(refErrs) > 0 {
+					err := errors.Join(refErrs...)
+					logger.Errorf("  ⚠ New config model reference validation failed: %v", err)
+					logger.Warn("  Using previous valid config")
+					alertConfigFileInvalid(a, configPath, err)
+					continue
+				}
+				for _, w := range refWarnings {
+					logger.WarnCF("gateway", "reference to disabled model", map[string]any{"detail": w})
 				}
 				if err := newCfg.ValidateBindings(); err != nil {
 					logger.Errorf("  ⚠ New config binding validation failed: %v", err)
@@ -1245,6 +1401,86 @@ func logAllowlist(allowedCIDRs []string, host string) {
 		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
 		"A running gateway applies the change on its next config reload, about 15 seconds.",
 		map[string]any{"host": host})
+}
+
+// tlsOptions maps the gateway config onto the certificate manager's options,
+// with the gateway's alerter for reload and expiry alerts.
+func tlsOptions(cfg *config.Config, a alerter.Alerter) tlscert.Options {
+	opts := tlscert.OptionsFromConfig(cfg)
+	opts.Alerter = a
+	return opts
+}
+
+// startTLSWatch logs the certificate in use and starts the manager's file
+// watcher (poll every minute, expiry check daily). A swapped-in certificate
+// re-applies the Host policy so the new names are answered to; the device
+// gateway's own Host allowlist follows on the next config reload.
+func startTLSWatch(services *gatewayServices, agentLoop *agent.AgentLoop) {
+	info := services.TLSCerts.Info()
+	logger.InfoCF("gateway", "HTTPS listener certificate", map[string]any{
+		"source":      string(info.Source),
+		"cert_file":   info.CertFile,
+		"names":       info.Names(),
+		"not_after":   info.NotAfter.Format(time.RFC3339),
+		"fingerprint": info.Fingerprint,
+		"hsts":        services.TLSCerts.UserSupplied(),
+	})
+	services.TLSCerts.OnChange(func(info tlscert.Info) {
+		if services.AuthStore != nil {
+			services.AuthStore.Reload()
+		}
+		services.HTTPHost.SetCertificateNames(info.Names())
+		if err := services.HTTPHost.ApplyPolicy(agentLoop.GetConfig().Gateway, services.ChannelManager); err != nil {
+			logger.WarnCF("gateway", "Host policy not re-applied after certificate change", map[string]any{"error": err.Error()})
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	services.stopTLSWatch = cancel
+	services.TLSCerts.Watch(ctx, tlscert.DefaultPollInterval)
+}
+
+// warnListenerConfigChanged says so when a reloaded config would bind the
+// listeners differently. They are created once at boot, so the change waits
+// for a restart; without this line the operator sees the edit accepted and
+// nothing happen.
+func warnListenerConfigChanged(services *gatewayServices, gw config.GatewayConfig) {
+	if services.HTTPHost == nil {
+		return
+	}
+	running := services.HTTPHost.opts
+	changed := gw.EffectivePort() != running.Port
+	if gw.HTTPSEnabled() != (running.TLSHost != "") ||
+		(gw.HTTPSEnabled() && (gw.Host != running.TLSHost || gw.EffectiveTLSPort() != running.TLSPort)) {
+		changed = true
+	}
+	if services.TLSCerts != nil {
+		have := services.TLSCerts.Info()
+		if gw.TLS.UserSupplied() != services.TLSCerts.UserSupplied() ||
+			(gw.TLS.UserSupplied() && (strings.TrimSpace(gw.TLS.CertFile) != have.CertFile || strings.TrimSpace(gw.TLS.KeyFile) != have.KeyFile)) {
+			changed = true
+		}
+	}
+	if changed {
+		logger.WarnCF("gateway", "gateway.host, port, tls_port or tls changed; the listeners are bound at start, so restart "+internal.BinaryName+" to apply", nil)
+	}
+}
+
+// enforceDataDirPerms makes CLAW_HOME private before anything in it is read:
+// the directory and its secret-bearing files are tightened, and a config file
+// other users can read is a refusal to start, with the chmod that fixes it.
+func enforceDataDirPerms(baseDir, configPath string) error {
+	if err := perms.Enforce(baseDir, configPath, func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) }); err != nil {
+		return fmt.Errorf("startup aborted: %w", err)
+	}
+	return nil
+}
+
+// openAuditLog opens <CLAW_HOME>/audit.db as the process-wide audit store. A
+// gateway that cannot open it still serves, without an audit trail.
+func openAuditLog(baseDir string) {
+	if err := audit.Init(baseDir); err != nil {
+		logger.WarnCF("gateway", "audit log disabled", map[string]any{"error": err.Error()})
+	}
 }
 
 // alertConfigFileInvalid reports a config file the watcher could not apply.

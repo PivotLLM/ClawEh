@@ -33,6 +33,8 @@ export interface AgentEntry {
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]
+  /** Tools the agent may never call, even when tools / mcp_tools admit them. */
+  deny_tools?: string[]
 }
 
 export interface MountEntry {
@@ -146,6 +148,7 @@ export function parseAgent(value: unknown): AgentEntry {
       .filter(Boolean)
       .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
+    deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
     message:
       cbMins > 0
         ? {

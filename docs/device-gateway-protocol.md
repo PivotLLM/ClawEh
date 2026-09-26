@@ -84,6 +84,28 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
    Unpaired devices get a `NOT_PAIRED` error with a `requestId`; an operator approves via the
    WebUI/CLI, after which the device reconnects and is accepted.
 
+   **Device tokens are stored hashed** (SHA-256) and cannot be read back, so
+   `auth.deviceToken` is: the token the device connected with, when it
+   authenticated with one of its own device tokens; or a **freshly issued**
+   token when it connected with the shared `token`/`word_token` (including the
+   first connect after approval) — issuing fresh tokens revokes the device's
+   previous ones. Clients should persist `auth.deviceToken` and present it on
+   later connects; a client that always connects on the shared secret works, but
+   gets a new token each time.
+
+   **Failed authentication is throttled per client address:** 5 failures in 10
+   minutes lock the address out for 1 minute, doubling on each further lockout
+   up to 1 hour; a locked client's `connect` is answered `INVALID_REQUEST` with
+   `details.code = AUTH_RATE_LIMITED`, `retryable: true` and `retryAfterMs`.
+   A device that keeps reconnecting with a revoked token trips this after five
+   attempts; re-pair from that address once the lockout expires. Before the
+   handshake completes a connection may send at most 64 KiB per frame
+   (`maxPayload` applies afterwards), at most 32 connections may sit in the
+   handshake at once, and the listener answers `421` to requests whose `Host`
+   is not one of its own names (localhost, its bind host, the hosts of
+   `channels.device.external_url` / `gateway.external_url`, the TLS
+   certificate's names, or any IP literal).
+
 ## Methods (post-handshake requests)
 
 | Method | Purpose |

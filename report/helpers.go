@@ -231,8 +231,11 @@ func effectiveTools(a *config.AgentConfig) []string {
 	return a.Tools
 }
 
+// agentHasTool reports whether the agent can call the named internal tool, as
+// IsToolAllowed decides it: the allow list (or the install defaults) minus
+// deny_tools.
 func agentHasTool(a *config.AgentConfig, name string) bool {
-	return config.MatchToolPattern(effectiveTools(a), name)
+	return a.IsToolAllowed(name)
 }
 
 // mcpEntryReach describes which tools on server an mcp_tools entry admits,

@@ -99,7 +99,8 @@ func issue(arg string) error {
 	if err != nil {
 		return err
 	}
-	tokens[agentID] = tok
+	// Only the hash goes to disk; the plaintext below is the one time it is shown.
+	tokens[agentID] = servicetoken.Hash(tok)
 	if err := servicetoken.Save(path, tokens); err != nil {
 		return err
 	}

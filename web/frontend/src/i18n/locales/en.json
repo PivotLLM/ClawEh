@@ -3,6 +3,11 @@
     "summarizationModels": "Memory models (optional)",
     "summarizationModelsAdd": "Add memory model…",
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
+    "denyTools": "Denied tools",
+    "denyToolsHint": "Tools the agent may never call, even if allowed above. Same matching as the allow lists (e.g. google_calendar_event_delete, shell_exec).",
+    "denyToolsPlaceholder": "tool name (e.g. shell_exec)",
+    "denyToolsAdd": "Add denied tool",
+    "denyToolsRemove": "remove denied tool",
     "shareCommon": "Share common directory",
     "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it.",
     "globalCron": "Global cron",
@@ -51,7 +56,8 @@
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
-    "report": "Report"
+    "report": "Report",
+    "audit": "Audit"
   },
   "chat": {
     "welcome": "How can I help you today?",
@@ -142,7 +148,8 @@
     "delete": {
       "title": "Delete Model?",
       "description": "\"{{name}}\" will be permanently removed from your model list. This cannot be undone.",
-      "confirm": "Delete"
+      "confirm": "Delete",
+      "error": "Failed to delete model"
     },
     "advanced": {
       "toggle": "Advanced options"
@@ -280,7 +287,6 @@
         "replyTimeout": "Reply timeout in seconds.",
         "maxSteps": "Maximum number of processing steps.",
         "welcomeMessage": "Welcome message content for new sessions.",
-        "allowTokenQuery": "Allow token in URL query parameters.",
         "pingInterval": "Connection heartbeat interval in seconds.",
         "readTimeout": "Read timeout in seconds.",
         "writeTimeout": "Write timeout in seconds.",
@@ -459,7 +465,7 @@
         "runtime": "Runtime",
         "service": "Service",
         "devices": "Devices",
-        "backup": "Configuration backup"
+        "backup": "Backup"
       },
       "open_raw": "Raw config",
       "back_to_visual": "Visual config",
@@ -477,13 +483,16 @@
       "unsaved_changes": "You have unsaved changes.",
       "log_retention_days": "Log retention (days)",
       "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever.",
-      "backup_desc": "Nightly configuration backup: snapshot config.json and the cron jobs file into backup/YYYYMMDD/. Configuration only — not workspaces, sessions, or memory. On by default.",
+      "backup_desc": "Nightly backup: config.json, the cron jobs file, credentials, TLS material, state and every SQLite database (sessions, memory) written as one claw-backup-<timestamp>.tar.gz archive. Agent workspace files are not included. On by default.",
       "backup_enabled": "Nightly backup",
-      "backup_enabled_hint": "When on, copy config.json and the cron jobs file into <data dir>/backup/YYYYMMDD/ once a day.",
+      "backup_enabled_hint": "When on, write a claw-backup-<timestamp>.tar.gz archive to the destination directory once a day.",
       "backup_at": "Backup time",
       "backup_at_hint": "Local time of day to run the nightly backup (default 03:00).",
       "backup_retain_days": "Keep backups (days)",
-      "backup_retain_days_hint": "Delete backup folders older than this many days (default 30).",
+      "backup_retain_days_hint": "Delete backup archives older than this many days (default 30).",
+      "backup_dest": "Destination directory",
+      "backup_dest_hint": "Where the archives are written, e.g. an off-host mount. Leave blank for <CLAW_HOME>/backup.",
+      "backup_dest_placeholder": "<CLAW_HOME>/backup",
       "backup_now": "Back up now",
       "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
       "backup_now_running": "Backing up…",
@@ -498,6 +507,31 @@
       "source": "Log",
       "source_log": "Gateway log",
       "source_alerts": "Alerts"
+    },
+    "audit": {
+      "filter_kind": "Kind",
+      "all_kinds": "All kinds",
+      "filter_agent": "Agent",
+      "refresh": "Refresh",
+      "empty": "No audit events",
+      "loading": "Loading...",
+      "load_more": "Load more",
+      "dropped_one": "{{count}} event was dropped because the audit write queue was full; the trail has a gap.",
+      "dropped_other": "{{count}} events were dropped because the audit write queue was full; the trail has gaps.",
+      "kind": {
+        "tool_call": "Tool call",
+        "config_write": "Config write",
+        "auth": "Auth"
+      },
+      "col": {
+        "time": "Time",
+        "kind": "Kind",
+        "who": "Actor / agent",
+        "channel": "Channel",
+        "what": "Tool / summary",
+        "outcome": "Outcome",
+        "duration": "Duration"
+      }
     },
     "mcp": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
@@ -640,6 +674,21 @@
       "environment": "Environment",
       "mcp_host": "MCP host",
       "cli_providers": "CLI providers"
+    },
+    "report": {
+      "title": "Configuration report",
+      "load_error": "Failed to load the security assessment.",
+      "build": "build",
+      "legend": "Rows marked with a warning need action; the others are for awareness. The full report below covers listeners, providers, channels, agents and every folder each agent can reach. Keys and tokens appear only as set or not set.",
+      "col": {
+        "action": "Action",
+        "item": "Item",
+        "status": "Status"
+      },
+      "action_needed": "Action recommended",
+      "no_action": "No action needed",
+      "download": "Download full report",
+      "download_hint": "Opens the full configuration report as a PDF in a new tab."
     }
   },
   "providers": {
@@ -656,7 +705,9 @@
       "args": "Args: {{args}}",
       "modelCount": "{{enabled}} of {{count}} model on",
       "modelCount_other": "{{enabled}} of {{count}} models on",
-      "toggleError": "Failed to change the CLI agent"
+      "toggleError": "Failed to change the CLI agent",
+      "bypass": "Bypass CLI restrictions",
+      "bypassHint": "Passes the CLI's skip-permissions / sandbox-bypass flag. The CLI can then run commands and edit files anywhere the service user can, without asking."
     },
     "status": {
       "configured": "Configured",
@@ -783,5 +834,27 @@
       "title": "Review and finish",
       "body": "Here's what will be configured. Go back to make changes, or finish to apply."
     }
+  },
+  "auth": {
+    "login": {
+      "title": "Sign in",
+      "subtitle": "Use the admin account created on the server.",
+      "checking": "Checking the server...",
+      "unreachable": "The server could not be reached. Is the gateway running?",
+      "username": "Username",
+      "password": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in...",
+      "invalid": "Invalid username or password.",
+      "locked": "Too many failed sign-ins. Try again in {{seconds}} seconds.",
+      "failed": "Sign-in failed: {{message}}"
+    },
+    "noAdmin": {
+      "title": "No admin account",
+      "body": "On the server run:",
+      "hint": "Then check again. The gateway picks the account up within a minute.",
+      "retry": "Check again"
+    },
+    "logout": "Sign out"
   }
 }

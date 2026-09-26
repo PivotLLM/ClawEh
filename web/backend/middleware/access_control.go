@@ -89,7 +89,7 @@ func IPAllowlist(current func() *Allowlist, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		rejectByPolicy(w, r)
+		reject(w, r, http.StatusForbidden, "access denied by network policy")
 	})
 }
 
@@ -101,14 +101,16 @@ func clientIPFromRemoteAddr(remoteAddr string) net.IP {
 	return net.ParseIP(host)
 }
 
-func rejectByPolicy(w http.ResponseWriter, r *http.Request) {
+// reject writes a policy refusal: JSON under /api/ (what the WebUI client
+// parses), plain text elsewhere.
+func reject(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		if _, err := w.Write([]byte(`{"error":"access denied by network policy"}`)); err != nil {
+		w.WriteHeader(status)
+		if _, err := w.Write([]byte(`{"error":"` + msg + `"}`)); err != nil {
 			logger.DebugCF("http", "response write failed", map[string]any{"error": err.Error()})
 		}
 		return
 	}
-	http.Error(w, "Forbidden", http.StatusForbidden)
+	http.Error(w, http.StatusText(status), status)
 }

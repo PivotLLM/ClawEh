@@ -126,14 +126,20 @@ func ResolveCandidatesWithLookup(
 			return
 		}
 		if lookup != nil {
-			if alias, model, provider, ok := lookup(original); ok {
-				add(provider, model, alias)
+			alias, model, provider, ok := lookup(original)
+			if !ok {
+				// The alias names no enabled model (deleted or disabled).
+				// Parsing it as a bare model id would send the alias to the
+				// default provider and fail every turn, so drop it.
+				logger.WarnCF("providers", "fallback alias dropped (not enabled in models)",
+					map[string]any{"alias": original})
 				return
 			}
+			add(provider, model, alias)
+			return
 		}
-		// No models match: parse the bare string as a last resort so
-		// no-lookup callers (ResolveCandidates) and unconfigured inputs still
-		// produce a candidate.
+		// No lookup (ResolveCandidates): parse the bare string so
+		// unconfigured inputs still produce a candidate.
 		ref := ParseModelRef(original, defaultProvider)
 		if ref == nil {
 			logger.WarnCF("providers", "fallback alias dropped (not enabled in models)",

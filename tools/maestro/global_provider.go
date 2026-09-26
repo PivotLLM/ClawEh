@@ -75,7 +75,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 
 	// Make sure the base dir exists before Maestro touches it (defensive: Prepare
 	// also creates the subdirs, but never hand Maestro a missing base).
-	if err := os.MkdirAll(base, 0o755); err != nil {
+	if err := os.MkdirAll(base, 0o700); err != nil {
 		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
 		alertMaestroDisabled(deps.AgentID, base, err)

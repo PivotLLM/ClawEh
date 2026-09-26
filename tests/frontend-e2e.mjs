@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // ClawEh WebUI regression suite.
 //
-// Executes docs/frontend-test-plan.md. Every check here maps to a numbered step
+// Executes docs/webui-test-plan.md. Every check here maps to a numbered step
 // in that document; keep the two in step.
 //
 //   node tests/frontend-e2e.mjs                     # against http://127.0.0.1:8077
 //   node tests/frontend-e2e.mjs --base http://host:port
 //   node tests/frontend-e2e.mjs --only C,F          # run selected groups
+//
+// The WebUI and /api/* sit behind the admin login, so the suite signs in first
+// and every page and API probe carries that session. Create the account on the
+// dev instance with `claw admin` and export CLAW_E2E_USER / CLAW_E2E_PASSWORD.
 //
 // Requires Playwright and a Chromium build. Both come with the playwright-mcp
 // install; override with PLAYWRIGHT_MODULE / CHROME_PATH if they live elsewhere.
@@ -48,12 +52,27 @@ if (!existsSync(CHROME)) {
   console.error(`Chromium not found at ${CHROME}. Set CHROME_PATH.`)
   process.exit(2)
 }
+
+const USER = process.env.CLAW_E2E_USER ?? ""
+const PASSWORD = process.env.CLAW_E2E_PASSWORD ?? ""
+if (!USER || !PASSWORD) {
+  console.error(
+    "CLAW_E2E_USER and CLAW_E2E_PASSWORD are not set.\n" +
+      "The WebUI requires an admin login. On the dev instance run `claw admin` to create\n" +
+      "the account, then export CLAW_E2E_USER and CLAW_E2E_PASSWORD before running this suite.",
+  )
+  process.exit(2)
+}
 const { chromium } = await import(PW)
 
 // ---------------------------------------------------------------- harness ---
 
 const results = []
 let browser
+// The one signed-in BrowserContext. Every page the suite opens and every API
+// probe it makes goes through it, so the session cookie from the login carries
+// to both — the same way a browser tab and its fetches share one session.
+let ctx
 let group = ""
 
 function useGroup(id, title) {
@@ -80,7 +99,29 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
-async function api(path, init) {
+// api calls the gateway as the signed-in operator. It goes through the browser
+// context's request client, which shares the session cookie with the pages, so
+// a probe here sees exactly what the page's own fetch would. `using` selects
+// another context (a second login, for the sign-out check).
+async function api(path, init = {}, using = ctx) {
+  const res = await using.request.fetch(BASE + path, {
+    method: init.method ?? "GET",
+    headers: init.headers,
+    data: init.body,
+  })
+  const text = await res.text()
+  let json
+  try {
+    json = JSON.parse(text)
+  } catch {
+    /* not json */
+  }
+  return { status: res.status(), text, json, headers: res.headers() }
+}
+
+// apiAnonymous calls the gateway with no session at all — for the probes and
+// the login-page checks that must see what an unauthenticated peer sees.
+async function apiAnonymous(path, init) {
   const res = await fetch(BASE + path, init)
   const text = await res.text()
   let json
@@ -90,6 +131,51 @@ async function api(path, init) {
     /* not json */
   }
   return { status: res.status, text, json }
+}
+
+// login opens a session in `context` with the operator credentials. Returns the
+// login response so the caller can decide what a refusal means.
+async function login(context, username = USER, password = PASSWORD) {
+  return api(
+    "/api/auth/login",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    },
+    context,
+  )
+}
+
+// signIn is the harness prerequisite: wait for the gateway, then log the shared
+// context in. Fails fast with what the operator has to do — every check after
+// this needs the session, so running on without it would fail them all for the
+// same reason.
+async function signIn() {
+  const deadline = Date.now() + 30000
+  for (;;) {
+    const r = await apiAnonymous("/ready")
+    if (r.status === 200) break
+    if (Date.now() > deadline) {
+      console.error(`Gateway at ${BASE} is not ready (/ready = ${r.status}); cannot sign in.`)
+      await browser.close()
+      process.exit(2)
+    }
+    await new Promise((res) => setTimeout(res, 500))
+  }
+  const r = await login(ctx)
+  if (r.status === 204) return
+  const hint =
+    r.json?.error === "no admin account"
+      ? "The dev instance has no admin account. Run `claw admin` on it, then export CLAW_E2E_USER / CLAW_E2E_PASSWORD."
+      : r.status === 401
+        ? `The gateway refused CLAW_E2E_USER=${JSON.stringify(USER)}. Run \`claw admin\` on the dev instance and export the credentials it creates.`
+        : r.status === 429
+          ? `Login is locked out (${r.json?.error ?? "too many failures"}). Wait, then retry.`
+          : r.text.slice(0, 200)
+  console.error(`Sign-in failed: POST /api/auth/login → ${r.status}\n${hint}`)
+  await browser.close()
+  process.exit(2)
 }
 
 async function config() {
@@ -117,10 +203,11 @@ async function settleAfterConfigWrites() {
   }
 }
 
-// Opens a page with console/error capture attached.
-async function open(path, { wait = "networkidle" } = {}) {
-  const ctx = await browser.newContext()
-  const page = await ctx.newPage()
+// Opens a page in the signed-in context with console/error capture attached.
+// `context` swaps in another BrowserContext (a fresh one for the login-page
+// checks). close() closes the page only; the context lives for the whole run.
+async function open(path, { wait = "networkidle", context = ctx } = {}) {
+  const page = await context.newPage()
   const problems = []
   page.on("console", (m) => {
     if (m.type() === "error") problems.push(m.text())
@@ -128,12 +215,18 @@ async function open(path, { wait = "networkidle" } = {}) {
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message))
   await page.goto(BASE + path, { waitUntil: wait, timeout: 20000 })
   await page.waitForTimeout(500)
-  return { ctx, page, problems, text: () => page.locator("body").innerText() }
+  return {
+    close: () => page.close(),
+    page,
+    problems,
+    text: () => page.locator("body").innerText(),
+  }
 }
 
 const ROUTES = [
   "/",
   "/agents",
+  "/audit",
   "/agent/bindings",
   "/agent/tools",
   "/agent/skills",
@@ -159,7 +252,10 @@ const I18N_KEY =
 // ------------------------------------------------------------------ suite ---
 
 browser = await chromium.launch({ executablePath: CHROME })
+ctx = await browser.newContext()
 console.log(`ClawEh WebUI regression suite — ${BASE}`)
+await signIn()
+console.log(`   signed in as ${USER}`)
 
 // A. Preconditions
 if (useGroup("A", "Preconditions")) {
@@ -194,6 +290,90 @@ if (useGroup("A", "Preconditions")) {
   })
 }
 
+// P. Authentication — the login page, the refusals, the session, sign-out.
+// These run in contexts of their own: the shared one stays signed in for the
+// rest of the suite.
+if (useGroup("P", "Authentication")) {
+  const anon = await browser.newContext()
+
+  await check(1, "a visitor without a session lands on the login page", async () => {
+    const { close, page, problems } = await open("/agents", { context: anon })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    const url = new URL(page.url())
+    const fields = await page.locator("#login-username, #login-password").count()
+    const submit = await page.getByRole("button", { name: "Sign in" }).count()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // The frontend gate sends the visitor to /login and remembers where they
+    // were going, so a bookmark still works after signing in.
+    assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
+    assert(url.searchParams.get("next") === "/agents", `next = ${url.searchParams.get("next")}`)
+    assert(fields === 2, `${fields} of 2 credential fields rendered`)
+    assert(submit === 1, "no Sign in button")
+    return url.pathname + url.search
+  })
+
+  await check(2, "a wrong password shows the generic error and opens no session", async () => {
+    const { close, page } = await open("/login", { context: anon })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    await page.locator("#login-username").fill(USER)
+    await page.locator("#login-password").fill(`${PASSWORD}-wrong-${Date.now()}`)
+    await page.getByRole("button", { name: "Sign in" }).click()
+    const error = page.locator("[data-testid=login-error]")
+    await error.waitFor({ state: "visible", timeout: 10000 })
+    const message = (await error.innerText()).trim()
+    const path = new URL(page.url()).pathname
+    await close()
+    // One message for a bad username and a bad password alike, so the form
+    // never confirms which half was right.
+    assert(message === "Invalid username or password.", `error reads ${JSON.stringify(message)}`)
+    assert(path === "/login", `left the login page for ${path}`)
+    const st = await api("/api/auth/status", {}, anon)
+    assert(st.json?.authenticated === false, `status after refusal: ${st.text}`)
+  })
+
+  await check(3, "GET /api/config without a session is 401", async () => {
+    const r = await apiAnonymous("/api/config")
+    assert(r.status === 401, `status = ${r.status}, want 401`)
+    assert(typeof r.json?.error === "string", `body = ${r.text.slice(0, 120)}`)
+    assert(!r.text.includes("agents"), "the refusal leaked configuration")
+    return r.json.error
+  })
+
+  await check(4, "the signed-in session is reported by /api/auth/status", async () => {
+    const r = await api("/api/auth/status")
+    assert(r.status === 200, `status = ${r.status}`)
+    assert(r.json?.configured === true, "configured should be true")
+    assert(r.json?.authenticated === true, `authenticated = ${r.json?.authenticated}`)
+    assert(r.json?.username === USER, `username = ${r.json?.username}, want ${USER}`)
+    return r.json.username
+  })
+
+  await check(5, "Sign out ends the session and returns to the login page", async () => {
+    // A second login of its own: signing the shared context out would take the
+    // rest of the suite down with it.
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `second login: ${l.status} ${l.text}`)
+    const { close, page, problems } = await open("/agents", { context: other })
+    const button = page.locator("[data-testid=nav-logout]")
+    await button.waitFor({ state: "visible", timeout: 10000 })
+    await button.click()
+    await page.waitForURL(/\/login(\?|$)/, { timeout: 10000 })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    await close()
+    const st = await api("/api/auth/status", {}, other)
+    const cfg = await api("/api/config", {}, other)
+    await other.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // Ended on the server, not just forgotten by the browser.
+    assert(st.json?.authenticated === false, `still authenticated after sign-out: ${st.text}`)
+    assert(cfg.status === 401, `GET /api/config after sign-out = ${cfg.status}, want 401`)
+  })
+
+  await anon.close()
+}
+
 // B. Every route renders
 if (useGroup("B", "Route smoke — every page renders, console clean")) {
   for (const route of ROUTES) {
@@ -201,9 +381,9 @@ if (useGroup("B", "Route smoke — every page renders, console clean")) {
       ROUTES.indexOf(route) + 1,
       `GET ${route}`,
       async () => {
-        const { ctx, problems, text } = await open(route)
+        const { close, problems, text } = await open(route)
         const body = await text()
-        await ctx.close()
+        await close()
         assert(body.trim().length > 40, `page nearly empty (${body.length} chars)`)
         assert(problems.length === 0, `console errors: ${problems[0]}`)
         return `${body.length} chars`
@@ -215,23 +395,23 @@ if (useGroup("B", "Route smoke — every page renders, console clean")) {
 // C. Shell and navigation
 if (useGroup("C", "Shell and navigation")) {
   await check(1, "sidebar exposes the primary sections", async () => {
-    const { ctx, text } = await open("/agents")
+    const { close, text } = await open("/agents")
     const body = await text()
-    await ctx.close()
+    await close()
     for (const item of ["Chat", "Agents", "Models", "Channels", "Services"]) {
       assert(body.includes(item), `sidebar missing "${item}"`)
     }
   })
   await check(2, "sidebar shows the running version", async () => {
-    const { ctx, text } = await open("/agents")
+    const { close, text } = await open("/agents")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/ClawEh v\d+\.\d+\.\d+/.test(body), "version not shown in sidebar")
   })
   await check(3, "sidebar groups expand and their links navigate client-side", async () => {
     // The top-level sidebar entries are collapsible GROUPS (aria-expanded),
     // not links — clicking one reveals the routes beneath it.
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     const group = page.getByRole("button", { name: "Models", exact: true })
     assert(
       (await group.getAttribute("aria-expanded")) !== null,
@@ -246,7 +426,7 @@ if (useGroup("C", "Shell and navigation")) {
     await page.locator('a[href="/models"]').first().click()
     await page.waitForTimeout(800)
     const url = page.url()
-    await ctx.close()
+    await close()
     assert(url.endsWith("/models"), `expected /models, got ${url}`)
   })
   await check(4, "unknown route renders the app, not a server error", async () => {
@@ -260,9 +440,9 @@ if (useGroup("D", "i18n integrity")) {
   await check(1, "no untranslated keys on any route", async () => {
     const leaked = []
     for (const route of ROUTES) {
-      const { ctx, text } = await open(route)
+      const { close, text } = await open(route)
       const body = await text()
-      await ctx.close()
+      await close()
       const hits = [...new Set(body.match(I18N_KEY) || [])]
       if (hits.length) leaked.push(`${route}: ${hits.join(", ")}`)
     }
@@ -270,57 +450,63 @@ if (useGroup("D", "i18n integrity")) {
     return `${ROUTES.length} routes clean`
   })
   await check(2, "tool categories all have labels", async () => {
-    const { ctx, text } = await open("/agent/tools")
+    const { close, text } = await open("/agent/tools")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(!/categories\./.test(body), "a raw category key is rendered")
   })
 }
 
-// E. Chat and the WebSocket token
+// E. Chat and the WebSocket session
 if (useGroup("E", "Chat and WebSocket auth")) {
-  await check(1, "token endpoint issues a token and a ws url", async () => {
+  await check(1, "the WebUI token endpoint is gone", async () => {
+    // GET /api/webui/token handed the chat token to any peer inside the CIDR
+    // allowlist, which made the /webui/ws gate no gate at all. The socket now
+    // rides the login session cookie; the endpoint must not come back.
     const r = await api("/api/webui/token")
-    assert(r.status === 200, `expected 200, got ${r.status}`)
-    assert(r.json?.token, "no token issued")
-    assert(/^wss?:\/\//.test(r.json?.ws_url ?? ""), "ws_url malformed")
+    assert(r.status === 404, `expected 404, got ${r.status}`)
   })
-  await check(2, "chat opens its socket with the token as a SUBPROTOCOL, never in the URL", async () => {
-    const ctx = await browser.newContext()
+  await check(2, "chat opens its socket on the page origin with the session cookie, no token", async () => {
     const page = await ctx.newPage()
-    const sockets = []
     await page.addInitScript(() => {
       const Real = window.WebSocket
       window.__sockets = []
       // @ts-ignore
       window.WebSocket = function (url, protocols) {
         window.__sockets.push({ url: String(url), protocols })
-        return new Real(url, protocols)
+        return protocols === undefined ? new Real(url) : new Real(url, protocols)
       }
       window.WebSocket.prototype = Real.prototype
       Object.assign(window.WebSocket, Real)
     })
     await page.goto(BASE + "/", { waitUntil: "networkidle", timeout: 20000 })
     await page.waitForTimeout(2500)
-    const seen = await page.evaluate(() => window.__sockets ?? [])
-    sockets.push(...seen)
-    const { token } = (await api("/api/webui/token")).json ?? {}
-    await ctx.close()
+    const sockets = await page.evaluate(() => window.__sockets ?? [])
+    await page.close()
     assert(sockets.length > 0, "chat opened no WebSocket")
     const s = sockets[0]
-    assert(!/[?&]token=/.test(s.url), `token found in URL: ${s.url}`)
-    if (token) assert(!s.url.includes(token), "token value present in URL")
+    const host = new URL(BASE).host.replace(/[.]/g, "\\.")
     assert(
-      Array.isArray(s.protocols) && s.protocols[0] === "claw-token",
-      `expected claw-token subprotocol, got ${JSON.stringify(s.protocols)}`,
+      new RegExp(`^wss?://${host}/webui/ws\\?session_id=`).test(s.url),
+      `unexpected socket url: ${s.url}`,
     )
-    return `subprotocols ${JSON.stringify(s.protocols?.[0])}`
+    // A token in a query string is recorded by proxies, access logs, Referer
+    // headers and browser history; the cookie is HttpOnly and never in a URL.
+    assert(!/[?&]token=/.test(s.url), `token found in URL: ${s.url}`)
+    assert(
+      s.protocols === undefined || s.protocols === null || s.protocols.length === 0,
+      `expected no subprotocols, got ${JSON.stringify(s.protocols)}`,
+    )
+    // The cookie is the gate: the same path with no session is refused.
+    const anon = await apiAnonymous("/webui/ws")
+    assert(anon.status === 401, `anonymous GET /webui/ws = ${anon.status}, want 401`)
+    return s.url.replace(/session_id=.*$/, "session_id=…")
   })
   await check(3, "chat reaches connected state", async () => {
-    const { ctx, page, text } = await open("/")
+    const { close, page, text } = await open("/")
     await page.waitForTimeout(2500)
     const body = await text()
-    await ctx.close()
+    await close()
     assert(!/disconnected|connection error/i.test(body), "chat reports disconnected")
   })
 }
@@ -331,32 +517,32 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
   let created = false
 
   await check(1, "create an agent through the UI", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: "Add Agent" }).click()
     await page.waitForTimeout(400)
     await page.getByRole("textbox", { name: /Agent ID/i }).fill(PROBE)
     await page.getByRole("button", { name: "Add", exact: true }).click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
     const c = await config()
     created = (c.agents.list ?? []).some((a) => a.id === PROBE)
     assert(created, `${PROBE} not present in config after Add`)
   })
 
   await check(2, "edit a field and confirm the debounced autosave persists it", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     await page.locator('input[type=number][placeholder="default"]').first().fill("0.77")
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
     assert(a?.temperature === 0.77, `temperature = ${a?.temperature}, expected 0.77`)
   })
 
   await check(3, "a second field on the same agent also persists (no clobber)", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     // A second, unrelated field on the same card: the time_now internal tool.
@@ -364,7 +550,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const was = await box.isChecked()
     await box.click()
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
     // The toggle must persist an explicit tools list (a default-only agent has
@@ -384,7 +570,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     // labelled "Claw".
     const rail = (c.agents.list ?? []).map((a) => a.name || a.id)
     assert(rail.length >= 2, "need at least two agents for this check")
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(500)
     const probeTemp = await page
@@ -398,7 +584,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       .locator('input[type=number][placeholder="default"]')
       .first()
       .inputValue()
-    await ctx.close()
+    await close()
     assert(probeTemp === "0.77", `probe showed ${probeTemp}`)
     assert(otherTemp !== "0.77", `"${other}" showed the probe's value (${otherTemp})`)
     return `${PROBE}=0.77, ${other}=${otherTemp || "unset"}`
@@ -406,7 +592,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
 
   await check(5, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     page.on("dialog", (d) => d.accept())
@@ -418,7 +604,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert((await trash.count()) > 0, "no labelled delete control on the agent card")
     await trash.click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
     const c = await config()
     const still = (c.agents.list ?? []).some((a) => a.id === PROBE)
     if (still) {
@@ -439,9 +625,9 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
 if (useGroup("G", "Config page — load, edit, persist, restore")) {
   let original
   await check(1, "config page renders its sections", async () => {
-    const { ctx, text } = await open("/config")
+    const { close, text } = await open("/config")
     const body = await text()
-    await ctx.close()
+    await close()
     for (const s of ["Service", "Runtime", "Backup", "Devices"]) {
       assert(body.includes(s), `missing section "${s}"`)
     }
@@ -449,11 +635,11 @@ if (useGroup("G", "Config page — load, edit, persist, restore")) {
   await check(2, "an edited field autosaves", async () => {
     const c = await config()
     original = c?.gateway?.external_url ?? ""
-    const { ctx, page } = await open("/config")
+    const { close, page } = await open("/config")
     const field = page.locator('input[placeholder^="http"]').first()
     await field.fill("http://e2e-probe.invalid:9999")
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const after = await config()
     assert(
       after?.gateway?.external_url === "http://e2e-probe.invalid:9999",
@@ -461,11 +647,11 @@ if (useGroup("G", "Config page — load, edit, persist, restore")) {
     )
   })
   await check(3, "restore the original value", async () => {
-    const { ctx, page } = await open("/config")
+    const { close, page } = await open("/config")
     const field = page.locator('input[placeholder^="http"]').first()
     await field.fill(original)
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const after = await config()
     assert(
       (after?.gateway?.external_url ?? "") === original,
@@ -474,9 +660,9 @@ if (useGroup("G", "Config page — load, edit, persist, restore")) {
     return `restored to "${original}"`
   })
   await check(4, "raw config view returns the document", async () => {
-    const { ctx, text } = await open("/config/raw")
+    const { close, text } = await open("/config/raw")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(body.length > 100, "raw config appears empty")
   })
 }
@@ -489,27 +675,27 @@ if (!ONLY.length || ONLY.includes("F") || ONLY.includes("G")) {
 // H. Channels
 if (useGroup("H", "Channels — config form and allow_from typing")) {
   await check(1, "channel list renders the known channels", async () => {
-    const { ctx, text } = await open("/channels")
+    const { close, text } = await open("/channels")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/web/i.test(body), "channel list looks empty")
   })
   await check(2, "a channel config page loads for its param", async () => {
-    const { ctx, text } = await open("/channels/slack")
+    const { close, text } = await open("/channels/slack")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/slack/i.test(body), "slack page did not render its channel")
     assert(!/not found/i.test(body), "slack page reported not found")
   })
   await check(3, "a different param renders a different channel", async () => {
-    const { ctx, text } = await open("/channels/telegram")
+    const { close, text } = await open("/channels/telegram")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/telegram/i.test(body), "telegram page did not render")
     assert(!/slack/i.test(body), "telegram page leaked slack content")
   })
   await check(4, "typing a trailing separator in allow_from is not eaten", async () => {
-    const { ctx, page } = await open("/channels/discord")
+    const { close, page } = await open("/channels/discord")
     const field = page.locator('input').filter({ hasNot: page.locator('[type=number]') })
     const allow = page
       .locator("input")
@@ -525,7 +711,7 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
       if (/allow|user id|\*/i.test(ph)) target = i
     }
     if (!target) {
-      await ctx.close()
+      await close()
       return "skipped: allow_from field not found on this channel"
     }
     const before = await target.inputValue()
@@ -534,7 +720,7 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
     const after = await target.inputValue()
     await target.fill(before)
     await page.waitForTimeout(900)
-    await ctx.close()
+    await close()
     assert(after === "111,", `trailing comma was eaten: field shows "${after}"`)
   })
 }
@@ -542,41 +728,41 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
 // I. Models and providers
 if (useGroup("I", "Models and providers")) {
   await check(1, "models page lists configured models", async () => {
-    const { ctx, text } = await open("/models")
+    const { close, text } = await open("/models")
     const body = await text()
-    await ctx.close()
+    await close()
     const r = await api("/api/models")
     const first = r.json?.models?.[0]?.model_name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
   })
   await check(2, "providers page lists configured providers", async () => {
-    const { ctx, text } = await open("/providers")
+    const { close, text } = await open("/providers")
     const body = await text()
-    await ctx.close()
+    await close()
     const r = await api("/api/providers")
     const first = r.json?.providers?.[0]?.name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
   })
   await check(3, "the add-model sheet opens and closes without error", async () => {
-    const { ctx, page, problems } = await open("/models")
+    const { close, page, problems } = await open("/models")
     await page.getByRole("button", { name: /Add Model/i }).click()
     await page.waitForTimeout(700)
     const open1 = await page.locator("text=/Provider/i").count()
     await page.keyboard.press("Escape")
     await page.waitForTimeout(400)
-    await ctx.close()
+    await close()
     assert(open1 > 0, "sheet did not open")
     assert(problems.length === 0, `console errors: ${problems[0]}`)
   })
   await check(4, "every provider card says whether it is configured", async () => {
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.getByText(/Configured|Not configured/).first().waitFor({
       state: "visible",
       timeout: 10000,
     })
     const labels = await page.getByText(/^(Configured|Not configured)$/).count()
     const cards = await page.locator("[data-testid=provider-card]").count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // Every card says what it is. The label is the backend's `ready`, so it
@@ -587,7 +773,7 @@ if (useGroup("I", "Models and providers")) {
     return `${labels} labelled`
   })
   await check(5, "the wire-protocol picker leaves CLIs to their own section", async () => {
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.getByRole("button", { name: /Add Provider/i }).first().click()
     await page.waitForTimeout(700)
     // Radix renders the options into a portal only once the trigger is opened.
@@ -595,7 +781,7 @@ if (useGroup("I", "Models and providers")) {
     await page.waitForTimeout(500)
     const options = await page.locator("[role=option]").allInnerTexts()
     await page.keyboard.press("Escape")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     assert(options.length > 0, "the protocol picker is empty")
@@ -609,7 +795,7 @@ if (useGroup("I", "Models and providers")) {
 
   await check(6, "every supported CLI has a row, installed or not", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     const rows = await page.locator("[data-testid^=cli-row-]").count()
     const switches = await page.locator("[data-testid^=cli-switch-]").count()
@@ -629,18 +815,18 @@ if (useGroup("I", "Models and providers")) {
         `${c.protocol} row shows no model count: ${JSON.stringify(row)}`,
       )
     }
-    await ctx.close()
+    await close()
     return `${rows} CLIs, ${clis.filter((c) => c.installed).length} installed`
   })
 
   await check(7, "CLI providers appear in the section, not in the grid", async () => {
     const providers = (await api("/api/providers")).json?.providers ?? []
     const cliProviders = providers.filter((p) => p.protocol.endsWith("-cli"))
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.waitForTimeout(500)
     const cards = await page.locator("[data-testid=provider-card]").count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // One CLI is one thing to the person using it; showing it twice under two
@@ -655,12 +841,12 @@ if (useGroup("I", "Models and providers")) {
   await check(8, "a CLI row shows the whole command line", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const withArgs = clis.find((c) => (c.required_args ?? []).length > 0)
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     const row = await page
       .locator(`[data-testid=cli-row-${withArgs.protocol}]`)
       .innerText()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // The provider's own flags as well as the configured ones: an operator
@@ -684,13 +870,13 @@ if (useGroup("I", "Models and providers")) {
   await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const configured = clis.find((c) => c.configured)
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()
     await page.waitForTimeout(700)
     const sheet = await page.locator("[data-slot=sheet-content]").innerText()
     await page.keyboard.press("Escape")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // strict_compat, require_reasoning_content, no_parallel_tool_calls,
@@ -710,9 +896,9 @@ if (useGroup("I", "Models and providers")) {
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
   await check(1, "devices page renders", async () => {
-    const { ctx, text, problems } = await open("/devices")
+    const { close, text, problems } = await open("/devices")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/device/i.test(body), "devices page looks empty")
     assert(problems.length === 0, `console errors: ${problems[0]}`)
   })
@@ -737,47 +923,60 @@ if (useGroup("J", "Devices")) {
 // K. Remaining pages with live data
 if (useGroup("K", "Logs, MCP, memory, voice, report")) {
   await check(1, "logs page shows log lines", async () => {
-    const { ctx, text } = await open("/logs")
+    const { close, text } = await open("/logs")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(body.length > 500, `logs page thin (${body.length} chars)`)
   })
   await check(2, "mcp config and servers pages render", async () => {
     for (const p of ["/mcp", "/mcp/servers"]) {
-      const { ctx, text, problems } = await open(p)
+      const { close, text, problems } = await open(p)
       const body = await text()
-      await ctx.close()
+      await close()
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
   })
   await check(3, "memory and voice pages render", async () => {
     for (const p of ["/memory", "/voice"]) {
-      const { ctx, text, problems } = await open(p)
+      const { close, text, problems } = await open(p)
       const body = await text()
-      await ctx.close()
+      await close()
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
   })
 
-  await check(4, "the report page renders and the sidebar links to it", async () => {
-    const { ctx, page, problems } = await open("/agents")
+  await check(4, "the report page shows the identity line, the assessment table and the PDF button", async () => {
+    const { close, page, problems } = await open("/agents")
     await page.getByTestId("nav-report").click()
     await page.waitForURL(/\/report$/)
-    await page.getByRole("link", { name: /Open report/ }).waitFor()
-    await ctx.close()
+    const download = page.getByTestId("report-download")
+    await download.waitFor()
+    const identity = (await page.getByTestId("report-identity").innerText()).trim()
+    const headers = await page.locator('[data-testid="report-table"] thead th').allInnerTexts()
+    const rows = await page.getByTestId("report-row").count()
+    const href = await download.getAttribute("href")
+    const label = (await download.innerText()).trim()
+    await close()
+    assert(/^ClawEh \d+\.\d+\.\d+/.test(identity), `identity line = ${JSON.stringify(identity)}`)
+    assert(identity.includes(" on "), `identity line names no platform: ${identity}`)
+    assert(headers.join("|") === "Action|Item|Status", `table headers = ${headers.join("|")}`)
+    assert(rows > 0, "the assessment table has no rows")
+    assert(href === "/api/report/pdf", `download href = ${href}`)
+    assert(label === "Download full report", `download label = ${JSON.stringify(label)}`)
     assert(problems.length === 0, `/report console: ${problems[0]}`)
+    return `${rows} rows`
   })
 
   await check(5, "the configuration report is a PDF served inline", async () => {
-    const res = await fetch(BASE + "/api/report/pdf")
-    assert(res.status === 200, `status = ${res.status}`)
-    const ct = res.headers.get("content-type") ?? ""
+    const res = await ctx.request.get(BASE + "/api/report/pdf")
+    assert(res.status() === 200, `status = ${res.status()}`)
+    const ct = res.headers()["content-type"] ?? ""
     assert(ct.startsWith("application/pdf"), `content-type = ${ct}`)
-    const cd = res.headers.get("content-disposition") ?? ""
+    const cd = res.headers()["content-disposition"] ?? ""
     assert(cd.startsWith("inline;"), `content-disposition = ${cd}`)
-    const head = Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()
+    const head = (await res.body()).subarray(0, 5).toString()
     assert(head === "%PDF-", `body starts with ${JSON.stringify(head)}`)
   })
 
@@ -791,6 +990,117 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     const { status, json } = await api("/api/gateway/alerts?lines=10")
     assert(status === 200, `status = ${status}`)
     assert(Array.isArray(json?.logs), `body = ${JSON.stringify(json)}`)
+  })
+
+  await check(8, "the assessment JSON carries the identity and the PDF's rows, and no secret", async () => {
+    const { status, json, text, headers } = await api("/api/report/assessment")
+    assert(status === 200, `status = ${status}`)
+    assert(headers["cache-control"] === "no-store", `cache-control = ${headers["cache-control"]}`)
+    const id = json?.identity ?? {}
+    for (const k of ["name", "version", "build", "platform", "generated_at"]) {
+      assert(k in id, `identity.${k} missing: ${JSON.stringify(id)}`)
+    }
+    assert(id.name === "ClawEh", `identity.name = ${id.name}`)
+    assert(Array.isArray(json.assessment) && json.assessment.length > 0, "no assessment rows")
+    for (const row of json.assessment) {
+      assert(typeof row.action === "boolean", `row.action = ${JSON.stringify(row)}`)
+      assert(typeof row.item === "string" && row.item, `row.item = ${JSON.stringify(row)}`)
+      assert(typeof row.status === "string" && row.status, `row.status = ${JSON.stringify(row)}`)
+    }
+    // Tokens are reported as set/not set; a credential-shaped value is a leak.
+    assert(!/sk-[A-Za-z0-9]{8}|xoxb-|xapp-/.test(text), "credential-shaped value in the assessment JSON")
+    return `${json.assessment.length} rows`
+  })
+}
+
+// Q. Audit page
+if (useGroup("Q", "Audit page")) {
+  const HEADERS = ["Time", "Kind", "Actor / agent", "Channel", "Tool / summary", "Outcome", "Duration"]
+
+  await check(1, "the sidebar links to the audit page under Services", async () => {
+    const { close, page, problems } = await open("/agents")
+    const group = page.getByRole("button", { name: "Services", exact: true })
+    if ((await group.getAttribute("aria-expanded")) !== "true") {
+      await group.click()
+      await page.waitForTimeout(400)
+    }
+    const link = page.locator('a[href="/audit"]').first()
+    assert((await link.count()) > 0, "no Audit entry under Services")
+    await link.click()
+    await page.waitForURL(/\/audit$/, { timeout: 10000 })
+    await page.waitForTimeout(800)
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/audit", `clicking Audit went to ${path}`)
+  })
+
+  await check(2, "the audit page renders the table and its headers", async () => {
+    const { close, page, problems, text } = await open("/audit")
+    // The suite's own login is an auth event, so the trail is never empty by
+    // the time this runs; an empty state here means events are not recorded.
+    const headers = page.locator("thead th")
+    await headers.first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {})
+    const got = (await headers.allInnerTexts()).map((h) => h.trim())
+    const body = await text()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(got.length > 0, `no table rendered — page reads: ${body.slice(0, 160)}`)
+    for (const h of HEADERS) assert(got.includes(h), `missing column ${JSON.stringify(h)} in ${JSON.stringify(got)}`)
+    return `${got.length} columns`
+  })
+
+  await check(3, "the kind filter is sent to the API and narrows the rows", async () => {
+    const page = await ctx.newPage()
+    const requests = []
+    page.on("request", (r) => {
+      if (r.url().includes("/api/audit")) requests.push(r.url())
+    })
+    await page.goto(BASE + "/audit", { waitUntil: "networkidle", timeout: 20000 })
+    await page.waitForTimeout(500)
+    const before = requests.length
+    // Radix renders the options into a portal only once the trigger is opened.
+    await page.locator('button[role=combobox][aria-label="Kind"]').click()
+    await page.locator('[role=option]:has-text("Auth")').first().click()
+    const isAuth = (u) => /[?&]kind=auth\b/.test(u)
+    const deadline = Date.now() + 10000
+    while (!requests.slice(before).some(isAuth) && Date.now() < deadline) {
+      await page.waitForTimeout(200)
+    }
+    await page.waitForTimeout(800)
+    const kinds = await page.locator("tbody tr td:nth-child(2)").allInnerTexts()
+    await page.close()
+    assert(
+      requests.slice(before).some(isAuth),
+      `no /api/audit request carried kind=auth; saw ${JSON.stringify(requests)}`,
+    )
+    // Every row shown is the kind asked for — the filter is applied by the
+    // server, not by hiding rows on the page.
+    assert(kinds.length > 0, "no rows after filtering to Auth (the suite's login is one)")
+    const other = kinds.map((k) => k.trim()).filter((k) => k !== "Auth")
+    assert(other.length === 0, `rows of other kinds shown: ${JSON.stringify(other)}`)
+    return `${kinds.length} auth rows`
+  })
+
+  await check(4, "Load more appears exactly when an older page exists", async () => {
+    // The page asks for 100 rows and offers Load more only when it got a full
+    // page and a cursor. next_before_id is 0 on a fresh instance, so the
+    // assertion is presence-or-absence against the API, not presence.
+    const r = await api("/api/audit?limit=100")
+    assert(r.status === 200, `GET /api/audit = ${r.status} ${r.text.slice(0, 120)}`)
+    const events = r.json?.events ?? []
+    const expectMore = events.length === 100 && r.json.next_before_id > 0
+    const { close, page, problems } = await open("/audit")
+    await page.locator("thead th").first().waitFor({ state: "visible", timeout: 10000 })
+    await page.waitForTimeout(500)
+    const buttons = await page.getByRole("button", { name: "Load more" }).count()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(
+      (buttons > 0) === expectMore,
+      `Load more ${buttons > 0 ? "shown" : "absent"} with ${events.length} events and next_before_id=${r.json.next_before_id}`,
+    )
+    return `${events.length} events, next_before_id=${r.json.next_before_id}, Load more ${expectMore ? "shown" : "absent"}`
   })
 }
 
@@ -831,7 +1141,7 @@ if (useGroup("O", "Status page")) {
   })
 
   await check(3, "the sidebar links to it from the bottom", async () => {
-    const { ctx, page, problems } = await open("/")
+    const { close, page, problems } = await open("/")
     const link = page.locator("[data-testid=nav-status]")
     await link.waitFor({ state: "visible", timeout: 10000 });
     // It sits in the footer, below the collapsible groups — reachable without
@@ -842,21 +1152,21 @@ if (useGroup("O", "Status page")) {
     await link.click()
     await page.waitForTimeout(1500)
     const path = new URL(page.url()).pathname
-    await ctx.close()
+    await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(inFooter, "the Status link is not in the sidebar footer")
     assert(path === "/status", `clicking Status went to ${path}`)
   })
 
   await check(4, "the page renders live figures", async () => {
-    const { ctx, page, problems } = await open("/status")
+    const { close, page, problems } = await open("/status")
     await page.locator("[data-testid=status-grid]").waitFor({ state: "visible", timeout: 10000 })
     const read = async (id) =>
       (await page.locator(`[data-testid=${id}]`).innerText()).trim()
     const memory = await read("status-memory")
     const assistants = await read("status-assistants")
     const uptime = await read("status-uptime")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(/\d+(\.\d+)?\s*(KB|MB|GB)/.test(memory), `memory tile reads ${JSON.stringify(memory)}`)
@@ -866,14 +1176,14 @@ if (useGroup("O", "Status page")) {
   })
 
   await check(5, "the detail box identifies the build and the host", async () => {
-    const { ctx, page, problems } = await open("/status")
+    const { close, page, problems } = await open("/status")
     const detail = page.locator("[data-testid=status-detail]")
     await detail.waitFor({ state: "visible", timeout: 10000 })
     const text = (await detail.innerText()).replace(/\s+/g, " ").trim()
     const memory = (await page
       .locator("[data-testid=status-memory]")
       .innerText()).trim()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     // "Compiler go1.27.1" and "Environment Ubuntu 24.04.4 LTS on amd64" — the
@@ -1051,22 +1361,22 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(10, "export downloads a YAML document that import can read", async () => {
-    const res = await fetch(`${BASE}/api/memory/${store}/export`)
-    assert(res.status === 200, `export: ${res.status}`)
-    const ct = res.headers.get("content-type") ?? ""
+    const res = await ctx.request.get(`${BASE}/api/memory/${store}/export`)
+    assert(res.status() === 200, `export: ${res.status()}`)
+    const ct = res.headers()["content-type"] ?? ""
     assert(ct.includes("yaml"), `content-type = ${ct}`)
     const body = await res.text()
     assert(body.includes("format_version"), "no format_version in the export")
     assert(body.includes("e2e probe fact"), "the export is missing a memory that exists")
 
     // Merge-importing what was just exported must change nothing.
-    const back = await fetch(`${BASE}/api/memory/${store}/import?mode=merge`, {
+    const back = await api(`/api/memory/${store}/import?mode=merge`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body,
     })
     assert(back.status === 200, `import: ${back.status}`)
-    const result = await back.json()
+    const result = back.json
     assert(result.memories_created === 0,
       `re-importing created ${result.memories_created} duplicates, want none`)
     return `${body.length} bytes, ${result.memories_skipped} already present`
@@ -1099,16 +1409,16 @@ if (useGroup("N", "Memory curation")) {
   }
 
   await check(11, "the memory page renders the probe domain", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const rows = await card.locator("[data-testid=memory-row]").count()
-    await ctx.close()
+    await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(rows === 3, `${rows} rows in the probe domain, want 3`)
     return `${rows} rows`
   })
 
   await check(12, "retype a memory from the dropdown on its row", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const row = card.locator("[data-testid=memory-row]").first()
     const id = await row.getAttribute("data-memory-id")
 
@@ -1116,7 +1426,7 @@ if (useGroup("N", "Memory curation")) {
     await page.locator('[role=option]:has-text("preference")').first().click()
     // The row re-renders from the refetch, so wait on the stored value.
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     const got = await typeOf(id)
@@ -1125,7 +1435,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(13, "select the whole domain from its header, then retype it", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     assert(
       (await page.locator("[data-testid=bulk-bar]").count()) === 0,
       "the bulk bar is visible with nothing selected",
@@ -1147,7 +1457,7 @@ if (useGroup("N", "Memory curation")) {
     await bar.locator("button[role=combobox]").click()
     await page.locator('[role=option]:has-text("event")').first().click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     for (const id of ids) {
@@ -1158,7 +1468,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(14, "add a memory through the page, tagged origin=user", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     await card.getByRole("button", { name: /Add a memory to e2e-probe/i }).click()
     const form = page.locator("[data-testid=add-memory-form]")
     await form.waitFor({ state: "visible", timeout: 5000 })
@@ -1166,7 +1476,7 @@ if (useGroup("N", "Memory curation")) {
     await form.locator("textarea").fill("written from the browser")
     await form.getByRole("button", { name: "Add", exact: true }).click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     const doc = await api(`/api/memory/${store}`)
@@ -1178,7 +1488,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(15, "retire from the row, then reveal it with show-retired", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const row = card.locator("[data-testid=memory-row]").first()
     const id = await row.getAttribute("data-memory-id")
     await row.getByRole("button", { name: /Retire this memory/i }).click()
@@ -1194,7 +1504,7 @@ if (useGroup("N", "Memory curation")) {
     await page.getByRole("button", { name: /Show retired/i }).click()
     await page.waitForTimeout(1500)
     visible = await page.locator(`[data-memory-id="${id}"]`).count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(visible === 1, "show-retired did not reveal the retired memory")
@@ -1218,7 +1528,7 @@ if (useGroup("N", "Memory curation")) {
 // L. Setup wizard
 if (useGroup("L", "Setup wizard")) {
   await check(1, "wizard walks all six steps and reflects the choices", async () => {
-    const { ctx, page } = await open("/setup")
+    const { close, page } = await open("/setup")
     const body0 = await page.locator("body").innerText()
     assert(/Welcome/i.test(body0), "welcome step not shown")
 
@@ -1262,7 +1572,7 @@ if (useGroup("L", "Setup wizard")) {
     await page.waitForTimeout(600)
 
     const review = await page.locator("body").innerText()
-    await ctx.close()
+    await close()
     assert(/Review/i.test(review), "review step not reached")
     assert(review.includes("Alice"), "review did not carry the agent name")
     assert(/CLI/i.test(review), "review did not carry the provider")
@@ -1288,7 +1598,7 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
     ["/api/skills", 200],
     ["/api/devices", 200],
     ["/api/devices/pending", 200],
-    ["/api/webui/token", 200],
+    ["/api/auth/status", 200],
     ["/health", 200],
     ["/ready", 200],
   ]

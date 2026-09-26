@@ -7,15 +7,34 @@ import (
 	"time"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // validConfigJSON is the minimal config the watcher's LoadConfig+ValidateModels
-// accepts. An empty models is valid (validation only rejects malformed lists).
-const validConfigJSON = `{"models":[]}`
+// accepts. An empty models is valid (validation only rejects malformed lists),
+// but agents.defaults.models must then be empty too: left out, it would inherit
+// the template's CLI aliases, which reference models this file does not have.
+const validConfigJSON = `{"models":[],"agents":{"defaults":{"models":[]}}}`
+
+// seedStore writes validConfigJSON to a fresh config.json and opens the store
+// the watcher polls; it returns the store and the file's path.
+func seedStore(t *testing.T) (*config.Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	store, err := config.NewStore(path)
+	if err != nil {
+		t.Fatalf("config.NewStore: %v", err)
+	}
+	return store, path
+}
 
 func writeConfig(t *testing.T, path, extra string) {
 	t.Helper()
-	body := `{"models":[],"_marker":"` + extra + `"}`
+	body := `{"models":[],"agents":{"defaults":{"models":[]}},"_marker":"` + extra + `"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -25,15 +44,11 @@ func writeConfig(t *testing.T, path, extra string) {
 // writes within the debounce window collapses into exactly one reload, and that
 // each write resets the quiet timer (no reload until the file goes quiet).
 func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
+	store, path := seedStore(t)
 
 	interval := 10 * time.Millisecond
 	debounce := 120 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	// Burst of three writes, each spaced under the debounce window so each resets
@@ -70,15 +85,11 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 // watcher advances its baseline and does NOT fire a redundant reload — the
 // double-reload that was tearing down an active chat after the setup wizard.
 func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
+	store, path := seedStore(t)
 
 	interval := 10 * time.Millisecond
 	debounce := 80 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	time.Sleep(3 * interval) // let the watcher capture its baseline
@@ -110,15 +121,11 @@ func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 // guards the bug where the applied marker advanced on a dropped send, so
 // enabling an agent's tool suite silently required a restart.
 func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
+	store, path := seedStore(t)
 
 	interval := 10 * time.Millisecond
 	debounce := 60 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	// Let the watcher capture its baseline against the seed file before the first

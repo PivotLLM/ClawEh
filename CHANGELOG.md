@@ -12,6 +12,172 @@ observe does not need an entry.
 
 ## [0.6.0]
 
+### Security
+
+- **BREAKING: the WebUI and its HTTP API now require a login.** There is no
+  default account and no way to create one from the browser: run `claw admin`
+  on the server. It asks for a username and a password (twice, no echo, at
+  least 12 characters) and writes `<CLAW_HOME>/credentials.json` (mode 0600,
+  argon2id). Until that file exists the WebUI shows "No admin account. On the
+  server run: claw admin" and every `/api/*` request answers 401
+  `{"error":"no admin account","hint":"run: claw admin"}`; channels keep
+  working. A running gateway notices the file within a minute and signs
+  everyone out when it changes. Sessions are cookies (`claw_session`, or
+  `__Host-claw_session` over HTTPS), idle 12 h, absolute 7 days, kept in memory
+  (a restart signs everyone out). Five failed logins from one address lock it
+  for 1 minute, doubling to 1 hour; 100 failures in 10 minutes from anywhere
+  lock all logins for 60 seconds; the first lockout per address raises the
+  "WebUI login locked out" alert. Exempt from login: `/health`, `/ready`,
+  `/ping`, the MCPFusion OAuth API under `/api/v1/`, `POST /api/message/{token}`,
+  the signed LINE webhook, and the login endpoints themselves. Loopback is
+  **not** exempt. A credentials file readable by group or others is ignored
+  (logged with the `chmod 600` fix) and counts as no account. See
+  `docs/webui-auth.md`.
+- **BREAKING: the gateway no longer serves plain HTTP off-box.** Plain HTTP is
+  served on loopback only (`127.0.0.1:18790` and `[::1]:18790`). When
+  `gateway.host` is not a loopback address the gateway additionally serves
+  HTTPS on `gateway.host:gateway.tls_port` (new key, default `18443`); there is
+  no opt-out. Installs with a non-loopback `gateway.host` move from
+  `http://<host>:18790` to `https://<host>:18443`: browse to the new URL and
+  accept the self-signed certificate (verify its fingerprint with `claw tls`),
+  or install your own with `gateway.tls.cert_file` / `gateway.tls.key_file`.
+  Reverse-proxy users point the proxy at `http://127.0.0.1:18790` and set
+  `gateway.external_url`. `gateway.external_url` now defaults to
+  `https://<hostname>:<tls_port>` when the HTTPS listener is on. New
+  `gateway.tls` block: `cert_file` + `key_file` (PEM, both or neither — one
+  alone is a config error) and `extra_names` (additional DNS names / IPs for
+  the self-signed certificate). Without a pair, a self-signed ECDSA P-256
+  certificate is generated in `<CLAW_HOME>/tls/` (key 0600), valid one year,
+  for the host name, its FQDN, every non-loopback interface address, the host
+  of `external_url` and `extra_names`; it is regenerated when under 30 days
+  from expiry or when those names change. Both sources are hot-reloaded from
+  disk within a minute; a pair that fails to load keeps the previous
+  certificate serving and raises an alert. TLS 1.2 minimum. HSTS is sent only
+  with an operator-supplied certificate. New `claw tls` command prints the
+  certificate in use (source, names, expiry, SHA-256 fingerprint);
+  `claw tls --regenerate` replaces the self-signed pair. `mcp_host.listen` must
+  be a loopback address; the gateway refuses to start otherwise. See
+  `docs/tls.md`.
+- **BREAKING:** the shared HTTP listener (WebUI, `/api/*`, `/webui/ws`,
+  `/health`, `/ready`, channel webhooks) now answers only to known host names
+  and rejects everything else with `421 Misdirected Request`. Allowed are
+  `localhost`, `127.0.0.1`, `::1`, the `gateway.host` bind address, the
+  certificate's names and the host of the advertised external URL
+  (`gateway.external_url` when set; otherwise the bind address, or the primary
+  LAN IP for a `0.0.0.0` bind). This stops DNS-rebinding attacks that reach a
+  loopback listener through an attacker-controlled name. **Migration:** if you
+  reach ClawEh through any other hostname or IP (a reverse proxy name, a second
+  interface, an `/etc/hosts` alias, a monitoring probe by hostname), set
+  `gateway.external_url` to that URL and reload; the change takes effect
+  without a restart. The device gateway listener applies the same check (IP
+  literals are always accepted there, since the pairing QR advertises them).
+- Cross-site request forgery protection on the shared listener: state-changing
+  requests (POST/PUT/PATCH/DELETE) that a browser marks as coming from another
+  site are rejected with `403`, so a web page open in the same browser can no
+  longer drive `/api/*`. Same-origin requests, non-browser clients (curl,
+  scripts, claw-auth) and the origin of `gateway.external_url` are allowed. The
+  signed LINE webhook and the token-gated `POST /api/message/{token}` are
+  exempt because they authenticate each request themselves. Every response now
+  carries `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
+  `/api/*` responses are `Cache-Control: no-store`.
+- **BREAKING:** `GET /api/webui/token` and `POST /api/webui/token` are removed,
+  and with them `channels.webui.allow_token_query` and
+  `channels.webui.allow_origins` — delete both keys from `config.json`. The
+  browser now opens `/webui/ws` with its login session cookie; the WebSocket
+  origin check is always same-origin. The WebUI channel token remains only for
+  non-browser clients (`Authorization: Bearer <token>` or the `claw-token`
+  subprotocol) and is never accepted from the URL. `POST /api/webui/setup` no
+  longer returns `token` or `ws_url`.
+- **Device gateway hardening.** The device listener now enforces the payload
+  limits it advertises: an unauthenticated connection may send at most 64 KiB
+  before the handshake completes, and 25 MiB (`maxPayload`) after it; a larger
+  frame closes the connection. Repeated failed authentications from one client
+  address (5 within 10 minutes) lock that address out — `connect` is answered
+  `AUTH_RATE_LIMITED` with `retryAfterMs` — for 1 minute, doubling on each
+  further lockout up to 1 hour; the first lockout for an address raises the
+  "Device authentication locked out" alert. At most 32 connections may sit in
+  the handshake at once; further upgrades get 503 until one finishes.
+  Thresholds are in `channels/tuning.go`. An inbound WebUI socket message is
+  capped at 1 MiB.
+- Device gateway: hello-ok now echoes the device token the device connected
+  with; connecting on the shared `token`/`word_token` (including the first
+  connect after approval) issues fresh device tokens and revokes the device's
+  previous ones.
+- Service tokens (`state/service-tokens.json`) and device-gateway tokens
+  (`gateway.db`) are now stored as SHA-256 hashes instead of plaintext; a
+  presented token is hashed for lookup. **On first start after upgrading, both
+  stores are rewritten in place once** (the JSON file atomically at 0600, the
+  SQLite rows in one transaction); existing issued tokens keep working, and
+  `claw token list`/the report are unaffected. Named message-API tokens stay
+  readable in the WebUI by design and their store is forced to 0600 on load.
+- `GET /api/config` now masks search-provider `api_keys` lists, every MCP
+  server `env` and `headers` value, every CLI model `env` value, and the
+  credentials embedded in `proxy` URLs (`scheme://****@host`);
+  `GET /api/providers` masks proxy credentials too. Masked values are never
+  shown as more than 7 characters, and values shorter than 12 are hidden
+  entirely. PUT/PATCH `/api/config` and `PUT /api/providers/{index}` restore
+  masked values from disk, so a read-edit-write round trip cannot overwrite a
+  secret with its mask.
+- The gateway now enforces data-directory permissions at startup: `CLAW_HOME`
+  is made `0700`, and every database (`*.db`, `*.db-wal`, `*.db-shm`,
+  `*.sqlite*`), `credentials.json`, `state/*.json`, `tokens/*`, `tls/*.key` and
+  any file whose name contains `token` or `secret` under it is tightened to
+  owner-only, with each change logged. Symlinks are left alone and the
+  `media/` and `logs/` trees are not scanned. **Startup now refuses to run when
+  `config.json` is readable by other users** (any group/other permission bit),
+  since it holds provider keys and tokens. The error names the fix:
+  `chmod 600 <path>`. Installs whose config was created by ClawEh are already
+  `0600`; a config copied or edited by hand may need the command once. The
+  device pairing database (`state/gateway.db`) and the Fusion OAuth token store
+  (`state/fusion-tokens.db`) are now created `0600` from the first write,
+  including their SQLite `-wal`/`-shm` side files. Directories and files
+  ClawEh creates under `CLAW_HOME` (agent workspaces, logs, dumps, sub-agent
+  task files, skills, common files) are now created owner-only (0700/0600)
+  instead of world-readable.
+- Child processes no longer inherit the service environment. `shell_exec`
+  commands and stdio MCP servers now start from an allowlisted environment
+  (PATH, HOME, USER, LOGNAME, SHELL, LANG, LC_*, TERM, TMPDIR, TZ, XDG_*,
+  SSL_CERT_FILE/SSL_CERT_DIR, proxy variables, and the Node/nvm/npm variables
+  `npx`-based servers need); everything else, in particular `CLAW_*`
+  configuration and `ALERTER_*` credentials, stays in the gateway process. An
+  MCP server that relied on a variable inherited from the service (an API
+  token, for example) must now receive it through that server's `env` or
+  `env_file`. CLI providers (claude-cli, codex-cli, antigravity-cli,
+  cursor-cli) receive the same allowlist plus their own login and API-key
+  variables (`ANTHROPIC_*`, `OPENAI_*`, `GOOGLE_*`, `GEMINI_*`, `CLAUDE_*`,
+  `CODEX_*`, `CURSOR_*`, `AGY_*`, `ANTIGRAVITY_*`).
+- `web_fetch`, `web_search`, and every external MCP tool now hand their output
+  to the model wrapped in untrusted-content markers: a one-line notice that the
+  text is data, not instructions, then `<<<UNTRUSTED_CONTENT id=…>>>` …
+  `<<<END_UNTRUSTED_CONTENT id=…>>>` with a random per-call id so retrieved
+  text cannot forge the end of the block. Model control tokens inside the
+  content (`<|im_start|>`, `<|endoftext|>`, `[INST]`, `<<SYS>>`, any `<|…|>`
+  token, and the markers themselves) are replaced with `[removed-token]`. What
+  is shown to the user is unchanged; the default AGENTS.md template explains
+  the markers.
+- `web_fetch` SSRF guard now also blocks 192.0.0.0/24, 198.18.0.0/15,
+  240.0.0.0/4, and the NAT64 prefix 64:ff9b::/96 (including IPv4-mapped forms).
+  When `proxy` is configured, the target hostname is resolved and checked
+  before the request is sent (and on each redirect), since the connect-time
+  guard only sees the proxy address in that mode.
+- The systemd unit written by `claw install` (system mode) and the shipped
+  `claw.service` now set `NoNewPrivileges=yes` and `PrivateTmp=yes`; the
+  user-mode unit sets `NoNewPrivileges=yes`. Existing installs pick this up by
+  running `claw install` again. Under `NoNewPrivileges`, commands the agent
+  runs cannot escalate via `sudo` or setuid binaries.
+- **BREAKING (release process):** `claw upgrade` now verifies releases with a
+  publisher signature. Every release must ship `checksums.txt` and
+  `checksums.txt.minisig` (minisign, signed with the key embedded in the
+  binary); a release without them, or with a signature from another key, is
+  refused. The per-archive `.sha256` files are no longer consulted by
+  `claw upgrade` (they are still produced for the install scripts). A build
+  with no embedded key refuses to upgrade at all. Release maintainers:
+  `make release-sign MINISIGN_KEY=...`, see `internal/upgrade/pubkey.go`.
+  `make test` now runs `govulncheck` and fails on a known vulnerability
+  reachable from the code.
+
+
 ### Added
 
 - **Configuration report.** A new Report page (after Services in the WebUI
@@ -50,6 +216,108 @@ observe does not need an entry.
   `docs/alerts.md`. Alerts are also delivered to any channel configured
   through `ALERTER_*` environment variables or `~/.alerter` (Pushover, SMS,
   SMTP mail, webhook). All ClawEh alerts are normal priority.
+
+- `claw admin [username]`: create or replace the WebUI admin account. Writes
+  the credentials file in the service's `CLAW_HOME` (the `CLAW_HOME` variable,
+  else the installed unit's, else `~/.claw`) and, when run as root, hands it to
+  the service account. New endpoints `GET /api/auth/status`,
+  `POST /api/auth/login`, `POST /api/auth/logout`.
+- **Audit log.** ClawEh now keeps an append-only record of who did what in
+  `<CLAW_HOME>/audit.db` (SQLite, mode 0600): every agent tool call (agent,
+  session, channel, sender, tool, redacted argument digest, outcome,
+  duration), every configuration save through the WebUI (operator, client IP,
+  and which top-level config sections changed — never the values), and WebUI
+  login/logout/lockout events. Rows are kept for 90 days. Read it in the new
+  **Audit** page (Services → Audit) or via
+  `GET /api/audit?since=&until=&kind=&agent=&session=&limit=&before_id=`.
+  Recording never blocks a turn: if the write queue is full the event is
+  dropped and counted, and the page shows the count. Every agent turn also
+  gets a short random `turn_id` (8 hex) carried on its inbound, routing,
+  tool-dispatch and outbound log lines and on its audit rows, so one turn's
+  activity can be pulled together across `claw.log` and the audit log. See
+  `docs/audit.md`.
+- **Full backup and restore.** The nightly backup now writes one archive,
+  `claw-backup-<timestamp>.tar.gz` (0600, in a 0700 directory), containing
+  `config.json`, the cron jobs file, `state/` (service and integration tokens,
+  the device pairing database, the fusion OAuth token store),
+  `credentials.json` and `tls/` when present, and every SQLite database under
+  `CLAW_HOME` — session archives and cognitive memory included. Databases are
+  checked with `PRAGMA quick_check` and copied with SQLite's `VACUUM INTO`, so
+  a live store is captured consistently, WAL included; a database that fails
+  the check is left out and raises the alert "Database failed integrity check"
+  while the rest of the backup completes. Media caches, logs and per-agent
+  `tmp/` are excluded. New config key `backup.dest` chooses the destination
+  directory (an off-host mount, for example); `retain_days` now prunes
+  archives and the old `YYYYMMDD` folders alike. New commands:
+  `claw backup [--dest DIR]` runs the same backup on demand and prints what was
+  written; `claw restore <archive> [--yes]` restores one, refusing while the
+  gateway runs, listing every file it will replace, moving the current files to
+  `restore-backup-<timestamp>/` and aborting before any change if a restored
+  database fails its integrity check. `POST /api/backup` additionally returns
+  `archive`, `bytes` and `skipped`. See `docs/backup.md`.
+- `agents.list[].deny_tools`: a per-agent list of tools the agent may never
+  call, evaluated after every grant and always winning — over `tools`, over
+  `mcp_tools`, and over the suite toggles (`fusion`, `maestro`, `cogmem`, the
+  discovery meta tools). Internal and suite tools match by case-insensitive
+  name or a `*`-suffixed prefix (`shell_exec`, `google_calendar_event_delete`,
+  `google_drive_*`); MCP-client tools match `<server>_<tool>` by equality or
+  prefix without the `mcp_` prefix (`google_drive_file_share`,
+  `google_calendar`). A denied tool is neither advertised to the model nor
+  executable, for interactive, cron and sub-agent turns alike. Editable on the
+  Agents page ("Denied tools") and listed in the configuration report.
+- **Inbound flood control.** Messages that arrive while a session is already
+  answering are no longer each given their own turn. They queue, and when the
+  running turn finishes all queued messages from the same chat run as one
+  turn, their texts joined in arrival order (newline-separated) with the reply
+  addressed to the last of them; messages from different chats that share a
+  session are never merged, and a command always runs on its own. New
+  `agents.defaults.max_concurrent_turns` (default 8; `0` = unlimited, read at
+  startup) caps how many turns run at once across all sessions; further turns
+  wait for a free slot.
+- **Daily spend alert.** New `agents.defaults.daily_spend_alert_usd` (default
+  `0` = off): the first time the day's (UTC) summed model cost, as reported by
+  the providers, reaches this amount an operator alert is raised (once per
+  day). Sub-agent worker turns and compaction calls are not counted.
+- CI workflow (`.github/workflows/ci.yml`: `make test` on Ubuntu, build and
+  test on macOS), `make sbom` (CycloneDX `build/sbom.json`),
+  `make release-checksums` and `make release-sign`.
+
+- **Secret references in `config.json`.** Any credential field (`api_key`,
+  `*_token`, `*_secret`, `*password`, `api_keys` entries, MCP/CLI `env` and
+  `headers` values, `proxy` URLs) may be written as `env:NAME` to read an
+  environment variable or `file:/absolute/path` to read a private (0600) file.
+  The value is resolved when the config loads and the reference is written back
+  on every save, so the WebUI can edit the config without the secret ever
+  landing in `config.json`. `GET /api/config` shows the reference as written. A
+  missing variable, an unreadable file or a file readable by group/other is a
+  load error naming the config key and the `chmod 600` fix.
+- `session.retention_days` (default `0`, keep forever): a nightly job (03:45
+  local) deletes any session archive whose last activity is older than that
+  many days. An agent's `main` and `service` sessions, sessions with a turn
+  pending, and sessions the running loop still holds open are never deleted;
+  `archive_days` remains the per-message trim for the shared session. The same
+  job removes cogmem pre-migration snapshots (`cogmem.db.pre-vN.db`) older than
+  30 days. Failures raise the "Session retention failed" alert.
+- `claw sessions erase --channel <ch> --chat <id> [--all]` and
+  `DELETE /api/sessions?channel=&chat_id=[&all=true]` (login required) delete
+  every session belonging to one sender on one channel across all agents and
+  print exactly what was erased. Under the default `unified` scope a sender's
+  messages live in the agent's shared `main` session, which has no per-sender
+  column: it is reported and only deleted with `--all`. Cognitive memories are
+  not touched, because cogmem records no per-sender provenance. The CLI refuses
+  to run while the gateway is up; use the API then.
+- Config page → Backup: a **Destination directory** field for `backup.dest`
+  (blank = `<CLAW_HOME>/backup`). Saving from the Config page previously
+  dropped an existing `backup.dest`.
+
+- The Report page now shows the security assessment inline: a product
+  identification line (name, version, build, platform), the assessment table
+  with rows needing action marked, and a **Download full report** button for
+  the PDF. New endpoint `GET /api/report/assessment` returns the identity and
+  the assessment rows as JSON
+  (`{"identity":{name,version,build,platform,generated_at},"assessment":[{action,item,status}]}`)
+  — the same rows the PDF renders, never a secret value, behind the same login
+  as the rest of `/api/`.
 
 ### Changed
 
@@ -112,6 +380,117 @@ observe does not need an entry.
   regrouped into Skills, Tools (MCP access first, then the native tool list,
   now titled "Internal tools" rather than "Always-On Tools") and Mounts.
 
+- **BREAKING:** CLI providers no longer pass skip-permissions /
+  sandbox-bypass flags by default; tick *Bypass CLI restrictions* on the CLI
+  (or set `bypass_restrictions: true` on its provider) to restore the previous
+  behaviour. A bypass flag left in a model's `extra_args` is ignored (with a
+  warning) unless the provider setting is on; with it off, a CLI that refuses a
+  tool call now returns a clear error naming the setting instead of an empty
+  reply, and that message survives a failed model fallback chain.
+  `GET /api/system/clis` reports `bypass_args` and `bypass_restrictions`;
+  `PUT /api/system/clis/{protocol}` accepts `bypass_restrictions`. The
+  configuration report shows the setting per CLI provider and lists each CLI
+  with it on in the security assessment.
+- **`/cancel` stops the running request.** It now cancels the turn in progress
+  for the session as well as dropping the messages queued behind it, without
+  waiting for the turn to finish. The reply says which it did: "Cancelled the
+  current request and N pending message(s).", "Cancelled the current
+  request.", "Cancelled N pending message(s).", or "No pending messages to
+  cancel."; the interrupted turn replies "⚠️ Cancelled by /cancel. Some steps
+  may have completed — ask me to continue if needed." rather than a time-limit
+  message. Messages sent after the `/cancel` are answered normally.
+- Tool results are capped before they enter the model's context: one result
+  may occupy at most 25% of the model's context window (4 chars/token, floor
+  16 KiB, ceiling 512 KiB). The head is kept and a marker
+  `[output truncated: kept N of M characters. Use the tool's paging/range
+  options or a narrower query to see more.]` is appended; error text is never
+  cut below 4 KiB. The cap also applies to async sub-agent (`agent_spawn`)
+  results that arrive later as a system message. Previously a multi-megabyte
+  tool result could not be compacted away and made the turn fail after
+  repeated `max_tokens` halving.
+- Context-overflow and timeout detection for the LLM retry loop now uses the
+  shared spawnllm error classifier, so an HTTP 413 or "payload too large" also
+  triggers history compression, and transient 5xx/parse failures are retried
+  with backoff instead of failing the turn immediately. Retry backoffs (LLM
+  timeout retries, channel start retries, outbound send retries) now carry
+  ±20% jitter so concurrent retries do not hit a provider in lockstep.
+- Inbound messages redelivered by a platform (Slack event retries, repeated
+  updates) are dropped when the same chat + message id was seen in the last 30
+  minutes (1024 most recent per channel), so a redelivery no longer runs the
+  message twice. Messages without a platform id are never deduplicated.
+- Per-session dispatch state is released after an hour idle instead of being
+  kept for the life of the process.
+- Binaries are built with `-trimpath`; setting `SOURCE_DATE_EPOCH` makes a
+  rebuild of the same commit bit-identical.
+- Configuration report: the security assessment table gains rows for data
+  directory permissions (files under `CLAW_HOME` readable by other users, with
+  the first offender and the chmod fix), device auto-approve
+  (`channels.device.auto_approve`), the HTTPS certificate (self-signed
+  fingerprint to verify with `claw tls`, or a user certificate expiring within
+  14 days), the audit log (`<CLAW_HOME>/audit.db`, 90-day retention, flagged
+  when missing), a per-agent reminder that `shell_exec` is not confined by
+  `restrict_to_workspace`, and the "Operator authentication" row now reports
+  whether an admin account exists. The Network section lists both gateway
+  listeners and the certificate.
+
+- The gateway and the WebUI API now share one in-memory configuration. API
+  handlers read the running config instead of re-parsing `config.json` on every
+  request, and every save takes a lock, so two concurrent saves can no longer
+  overwrite each other. Saves through the API are validated with the same
+  listener checks the gateway applies at startup (a certificate without its
+  key, or `mcp_host.listen` off loopback, is rejected with 400 instead of being
+  written and refused on the next start). Unknown keys in `config.json` are now
+  reported at startup as `unknown config key: <path>` (a typo previously took
+  effect silently); loading still succeeds.
+- The gateway now exits with status 3 after a clean shutdown when a core
+  service dies after startup (the HTTP listener on any of its addresses, the
+  MCP host server, or the agent loop), instead of staying up half-dead;
+  systemd's `Restart=on-failure` restarts it. The existing "HTTP listener
+  stopped", "MCP host server stopped" and "Agent loop stopped" alerts are still
+  raised first. A shutdown that hangs is cut off after 20 s.
+- Every request body on the gateway listener is capped: 1 MiB by default (413
+  when Content-Length exceeds it), 32 MiB under `/api/memory/` (memory import)
+  and 4 MiB for `POST /api/skills/import`.
+- A session-store write failure (user message, assistant reply, tool call or
+  result) now fails the turn with a clear error and raises the "Session store
+  write failed" alert, instead of continuing on a history the store did not
+  accept. Context compaction raises "Context compaction breaker tripped" when
+  three automatic compactions fail in a row.
+- Context handling (ctxengine): when the automatic-compaction breaker was
+  tripped, the emergency pass reported success without running, so an
+  oversized request could reach the provider — the safety net now bypasses the
+  breaker. A restart between an assistant's tool calls and their results no
+  longer hides that the tools ran: the unanswered calls get an "interrupted —
+  outcome unknown" result so the model does not re-run them. Compaction writes
+  the new window, summary and checkpoint in one SQLite transaction. Conversation
+  summaries can no longer carry instructions: tool output is delimited before
+  summarization, quoted instructions are accepted only from user messages, and
+  the summary is rendered as a marked data block at the end of the system
+  prompt. Token estimates carry a 15% safety margin and calibrate themselves
+  from the token counts providers report. Eviction runs in batches and per-turn
+  memory injections are appended as a trailing message, so the cached prompt
+  prefix survives between turns; eviction placeholders name the archive message
+  number and the `session_messages` tool. The session archive keeps up to 256 KB
+  of each tool result (was 4 KB).
+- CLI providers (claude-cli, codex-cli, antigravity-cli, cursor-cli) now run as
+  a process group: a timeout or cancel terminates the CLI and every process it
+  spawned (MCP servers, shells), and a lingering pipe can no longer hold the
+  turn past the timeout (+5 s). Captured CLI output is capped at 64 MiB.
+
+- `DELETE /api/models/{index}` now answers 409 Conflict while any agent model
+  list, `agents.defaults` chain (models, image, vision), `summarization.models`
+  or `subagents.models` still references the model; the body names every
+  referencing site, and the WebUI delete dialog shows it. Repoint them first,
+  then delete. Saving the configuration (`PUT`/`PATCH /api/config`) and a
+  config-file reload now reject a config that references a model that does not
+  exist in `models` (the reload keeps the previous config and raises the
+  config-file-invalid alert); startup instead drops such references with a
+  `removed reference to unknown model` warning and continues without rewriting
+  `config.json`. A reference to a model that exists but is disabled is allowed
+  and logged as a warning. Note: a config that omits `agents.defaults.models`
+  inherits the default `Claude CLI` / `Codex CLI` aliases, so if those models
+  were removed, set a default model before the next save.
+
 ### Removed
 
 - **`launcher-config.json` is no longer read.** The retired launcher's
@@ -166,6 +545,63 @@ observe does not need an entry.
   removed from every agent before the current list is registered, and the MCP
   host catalogue follows, so stale names no longer linger in either place. See
   `docs/mcp.md`, "Tool list refresh".
+
+- A turn interrupted by a restart is now replayed on the channel and chat it
+  came from, so the user receives the answer; previously the replay ran on an
+  internal channel whose reply was silently discarded (and tool side effects
+  ran with no visible result). The user first sees "I was restarted while
+  working on your last request — here is the result; resend it if anything is
+  missing." Recovery replays a given message at most twice; after that it
+  stops and sends "I was restarted while working on your last request and
+  could not finish it. Please resend it if it still matters.", so a message
+  that crashes the process can no longer crash-loop it. If the originating
+  channel has been removed from the config the interrupted turn is dropped and
+  logged. The source is kept in each agent's `state/state.json`
+  (`pending_turns`).
+- A channel whose start kept failing (bad token, service unreachable, port in
+  use) was abandoned after 10 retries until a gateway restart or config
+  reload. The channel manager now keeps retrying indefinitely, backing off
+  from 5 seconds to a 5-minute ceiling (`StartRetryMin`/`StartRetryMax` in
+  `channels/tuning.go`); the "Channel failed to start" alert is still raised
+  once, on the 10th failed retry, and the channel comes up on its own when the
+  cause clears.
+- The device gateway listener was never restarted if it failed: devices could
+  not connect until the gateway was restarted. It now re-listens with backoff
+  (2 seconds to 1 minute), including when the port is temporarily in use,
+  raises "Channel receive loop stopped" once per outage, and logs "Device
+  gateway listener restored" when it is back.
+- LINE: a webhook message whose mention `index`/`length` values were out of
+  range or overflowed could crash the gateway; such mentions are now ignored.
+- Two messages arriving for a brand-new session at the same moment could leave
+  the session with a revoked MCP session token (session-scoped tools then
+  failed until the session was cleared). Creation is now serialised per
+  session so exactly one token is issued.
+- `busy_timeout`, `synchronous` and `foreign_keys` were set on only the first
+  SQLite connection of the device pairing store and the Fusion token store;
+  connections the pool opened later under load ran without them and could fail
+  a contended write immediately with `database is locked` instead of waiting.
+  The settings now travel in the connection string so every connection gets
+  them.
+- Sub-agent task status/result files and imported SKILL.md files are written
+  atomically (temp file + fsync + rename), so a crash mid-write can no longer
+  leave a truncated file.
+
+- A context-window overflow reported by OpenAI-compatible endpoints as HTTP 400
+  `context_length_exceeded` (or by Anthropic as "prompt is too long") was
+  treated as a bad-request error and the turn failed with "All models failed";
+  it is now recognised as a context-limit error, so the history is compressed
+  and the request retried as it already was for HTTP 413.
+- The Backup section of the Config page no longer describes per-day folders or
+  configuration-only snapshots.
+
+- Deleting a model in the WebUI left agents still referencing it. Such an agent
+  then sent the alias itself as the model id on every turn and got a 400 (for
+  example OpenRouter's "is not a valid model ID") before falling back to the
+  next model; the visible sign was `/model` listing an entry with no provider.
+  Unresolvable aliases are now dropped from the fallback chain with a
+  `fallback alias dropped` log line, renaming a model also repoints
+  `subagents.models`, and clearing the default model removes the slot instead
+  of leaving an empty entry.
 
 ## [0.5.6]
 

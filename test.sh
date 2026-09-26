@@ -660,6 +660,8 @@ PY
   }
 }
 EOF
+                # The gateway refuses a config.json readable by other users.
+                chmod 600 "$INTEG_HOME/config.json"
 
                 # Pre-seed a long-lived service token for the default agent so the
                 # gateway loads it at boot (exercises loadServiceTokens + the

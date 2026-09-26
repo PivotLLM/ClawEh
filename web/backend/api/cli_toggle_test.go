@@ -277,11 +277,89 @@ func TestListCLIs_DoesNotRepeatAFlagTheProtocolAlreadySupplies(t *testing.T) {
 		// What the row renders must match what the process is actually run
 		// with, which is the one thing this display exists to tell the user.
 		shown := append(append([]string{}, c.RequiredArgs...), c.ExtraArgs...)
-		want := config.CLIArgs("cursor-cli", []string{"--yolo", "--verbose"})
+		want := config.CLIArgs("cursor-cli", false, []string{"--yolo", "--verbose"})
 		if !slices.Equal(shown, want) {
 			t.Errorf("row shows %v, invocation uses %v", shown, want)
+		}
+		// The bypass flag is reported separately, for the row to show only when
+		// the provider's setting is on.
+		if !slices.Equal(c.BypassArgs, []string{"--yolo"}) || c.BypassRestrictions {
+			t.Errorf("bypass_args = %v, bypass_restrictions = %v; want [--yolo] and off", c.BypassArgs, c.BypassRestrictions)
 		}
 		return
 	}
 	t.Fatal("no cursor-cli row")
+}
+
+func putCLI(t *testing.T, h *Handler, protocol string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/system/clis/"+protocol, bytes.NewReader(raw))
+	req.SetPathValue("protocol", protocol)
+	rec := httptest.NewRecorder()
+	h.handleSetCLIEnabled(rec, req)
+	return rec
+}
+
+func listCLI(t *testing.T, h *Handler, protocol string) cliInfo {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.handleListCLIs(rec, httptest.NewRequest(http.MethodGet, "/api/system/clis", nil))
+	var got []cliInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if c.Protocol == protocol {
+			return c
+		}
+	}
+	t.Fatalf("no %s row", protocol)
+	return cliInfo{}
+}
+
+// Enabling a CLI must not turn the bypass on: those are two decisions, and the
+// second is the one with consequences outside ClawEh. The setting round-trips
+// through PUT, the saved config, and the listing.
+func TestSetCLI_BypassRestrictionsRoundTrip(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"}}
+	cfg.Models = nil
+	h, path := writeConfig(t, cfg)
+
+	// Not configured yet: nothing to write the setting to.
+	if rec := putCLI(t, h, "codex-cli", map[string]any{"bypass_restrictions": true}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bypass on an unconfigured CLI: status = %d, want 400", rec.Code)
+	}
+
+	if rec := setCLI(t, h, "codex-cli", true); rec.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body)
+	}
+	if c := listCLI(t, h, "codex-cli"); !c.Enabled || c.BypassRestrictions {
+		t.Fatalf("after enabling: %+v; want enabled with bypass still off", c)
+	}
+
+	if rec := putCLI(t, h, "codex-cli", map[string]any{"bypass_restrictions": true}); rec.Code != http.StatusOK {
+		t.Fatalf("bypass on: %d %s", rec.Code, rec.Body)
+	}
+	if got := reload(t, path); !got.Providers[1].BypassRestrictions {
+		t.Errorf("saved provider = %+v, want bypass_restrictions true", got.Providers[1])
+	}
+	if c := listCLI(t, h, "codex-cli"); !c.BypassRestrictions {
+		t.Errorf("listing = %+v, want bypass_restrictions true", c)
+	}
+
+	if rec := putCLI(t, h, "codex-cli", map[string]any{"bypass_restrictions": false}); rec.Code != http.StatusOK {
+		t.Fatalf("bypass off: %d %s", rec.Code, rec.Body)
+	}
+	if got := reload(t, path); got.Providers[1].BypassRestrictions {
+		t.Error("bypass_restrictions still on after turning it off")
+	}
+
+	if rec := putCLI(t, h, "codex-cli", map[string]any{}); rec.Code != http.StatusBadRequest {
+		t.Errorf("empty body: status = %d, want 400", rec.Code)
+	}
 }

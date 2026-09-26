@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/PivotLLM/ClawEh/tools/untrusted"
 )
 
 // MCPManager defines the interface for MCP manager operations
@@ -228,11 +230,12 @@ func (t *MCPTool) Execute(ctx context.Context, args map[string]any) *ToolResult 
 
 	// Extract text + any image content. Images are carried on Images (data URIs)
 	// for a vision model to see; the text keeps an "[Image: …]" marker so a
-	// non-vision model still knows an image was returned.
+	// non-vision model still knows an image was returned. The text came from an
+	// external server, so it is marked untrusted before the model sees it.
 	output, images := extractContent(result.Content)
 
 	return &ToolResult{
-		ForLLM:  output,
+		ForLLM:  untrusted.Wrap(output),
 		Images:  images,
 		IsError: false,
 	}

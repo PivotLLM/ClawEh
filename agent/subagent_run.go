@@ -62,7 +62,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	src := cogmemstore.DBPath(cogmemhost.Dir(agent.Workspace))
 	dstDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if _, statErr := os.Stat(src); statErr == nil {
-		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		if err := os.MkdirAll(dstDir, 0o700); err != nil {
 			logger.WarnCF("agent", "subagent cogmem snapshot dir failed", map[string]any{
 				"agent": agentID, "error": err.Error(),
 			})

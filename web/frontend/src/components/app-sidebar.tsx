@@ -6,7 +6,9 @@ import {
   IconBrain,
   IconCpu,
   IconDeviceMobile,
+  IconHistory,
   IconListDetails,
+  IconLogout,
   IconMessageCircle,
   IconMessages,
   IconMicrophone,
@@ -23,6 +25,7 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
+import { logout } from "@/api/auth"
 import { getVersion } from "@/api/system"
 import {
   Collapsible,
@@ -42,6 +45,8 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { useSidebarChannels } from "@/hooks/use-sidebar-channels"
+import { LOGIN_PATH } from "@/lib/auth-redirect"
+import { teardownChatStore } from "@/lib/claw-chat-controller"
 
 interface NavSubItem {
   title: string
@@ -103,6 +108,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     getVersion()
       .then(setVersion)
       .catch(() => {})
+  }, [])
+
+  // Sign out: end the server session, drop the chat socket, and load the
+  // login page fresh so no authenticated state lingers in memory.
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await logout()
+    } catch {
+      // On failure the session may still be live; the login page reports
+      // that through /api/auth/status and sends the user back in.
+    }
+    teardownChatStore()
+    window.location.assign(LOGIN_PATH)
   }, [])
 
   const navGroups: NavGroup[] = React.useMemo(() => {
@@ -226,6 +244,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.logs",
             url: "/logs",
             icon: IconListDetails,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.audit",
+            url: "/audit",
+            icon: IconHistory,
             translateTitle: true,
           },
         ],
@@ -401,8 +425,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <div className="text-muted-foreground px-3 pb-2 text-xs">
-          ClawEh{version ? ` v${version}` : ""}
+        <div className="text-muted-foreground flex items-center justify-between px-3 pb-2 text-xs">
+          <span>ClawEh{version ? ` v${version}` : ""}</span>
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            title={t("auth.logout")}
+            data-testid="nav-logout"
+            className="hover:text-foreground flex items-center gap-1 rounded px-1 py-0.5 transition-colors"
+          >
+            <IconLogout className="size-3.5" />
+            <span>{t("auth.logout")}</span>
+          </button>
         </div>
       </SidebarFooter>
       <SidebarRail />

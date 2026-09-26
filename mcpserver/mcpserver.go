@@ -65,8 +65,15 @@ const InternalEndpointPath = "/internal"
 // the token in the call body resolves to an agent identity, the per-agent
 // ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
-	// alerter hears when the listener dies after startup; nothing restarts it.
-	alerter         alerter.Alerter
+	// alerter hears when the listener dies after startup and no onServeError
+	// handler is installed; nothing restarts it.
+	alerter alerter.Alerter
+	// onServeError, when set, is handed a Serve error after startup instead of
+	// the alerter: the gateway uses it to shut the process down. serving is
+	// set once Start has returned success, so a failure inside Start's own
+	// window is still returned by Start rather than handed off.
+	onServeError    func(error)
+	serving         atomic.Bool
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	internalAllow   []string                       // tools/list visibility filter for /internal
 	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
@@ -216,6 +223,14 @@ func WithToolActivityNotifier(n ToolActivityNotifier) Option {
 // WithAlerter routes a listener death after startup to an alerter.
 func WithAlerter(a alerter.Alerter) Option {
 	return func(m *MCPServer) { m.alerter = a }
+}
+
+// WithOnServeError hands a listener death after startup to fn instead of the
+// alerter. The error names the listen address. The gateway installs its
+// fail-fast path here so a dead MCP host takes the process down for the
+// service manager to restart.
+func WithOnServeError(fn func(error)) Option {
+	return func(m *MCPServer) { m.onServeError = fn }
 }
 
 // WithSessionMode tells the server which session scope is configured. Under the
@@ -373,6 +388,11 @@ func (m *MCPServer) Start() error {
 	errCh := make(chan error, 1)
 	go func() {
 		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if m.serving.Load() && m.onServeError != nil {
+				m.onServeError(fmt.Errorf("%s: %w", m.listen, err))
+				errCh <- err
+				return
+			}
 			logger.ErrorCF("mcpserver", "MCP server exited",
 				map[string]any{"error": err.Error()})
 			if m.alerter != nil {
@@ -397,6 +417,7 @@ func (m *MCPServer) Start() error {
 		}
 		return nil
 	case <-time.After(150 * time.Millisecond):
+		m.serving.Store(true)
 		return nil
 	}
 }

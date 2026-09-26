@@ -34,24 +34,6 @@ func TestCompareSemVer(t *testing.T) {
 	}
 }
 
-func TestReadExpectedChecksum(t *testing.T) {
-	dir := t.TempDir()
-	checksumFile := filepath.Join(dir, "test.sha256")
-	content := "a52739a41368d1afbb8339d638d0c3722e2e576888bb4dac320e60a8f03ec20f  claw-linux-amd64.tar.gz\n"
-	if err := os.WriteFile(checksumFile, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := readExpectedChecksum(checksumFile)
-	if err != nil {
-		t.Fatalf("readExpectedChecksum error = %v", err)
-	}
-	want := "a52739a41368d1afbb8339d638d0c3722e2e576888bb4dac320e60a8f03ec20f"
-	if got != want {
-		t.Errorf("readExpectedChecksum = %q, want %q", got, want)
-	}
-}
-
 func TestComputeSHA256(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "data.bin")

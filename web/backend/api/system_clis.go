@@ -51,12 +51,18 @@ type cliInfo struct {
 	Models        int `json:"models"`
 	ModelsEnabled int `json:"models_enabled"`
 	// BaseArgs are the arguments the provider always passes — headless mode,
-	// JSON output, read from stdin. RequiredArgs are the permission flags.
-	// Both are reported so the row can show the whole command line: an operator
-	// asking what ClawEh runs on their machine is owed all of it, not the part
-	// that happens to live in config.
+	// JSON output, read from stdin. RequiredArgs are the non-security flags the
+	// CLI needs to run headless; BypassArgs are its permission-bypass flags,
+	// passed only when BypassRestrictions is on. All are reported so the row
+	// can show the whole command line: an operator asking what ClawEh runs on
+	// their machine is owed all of it, not the part that happens to live in
+	// config.
 	BaseArgs     []string `json:"base_args"`
 	RequiredArgs []string `json:"required_args"`
+	BypassArgs   []string `json:"bypass_args"`
+	// BypassRestrictions is the CLI provider's bypass_restrictions setting
+	// ("Bypass CLI restrictions"). False when there is no provider yet.
+	BypassRestrictions bool `json:"bypass_restrictions"`
 	// ExtraArgs are what the CLI's models add on top, deduplicated across them.
 	ExtraArgs []string `json:"extra_args,omitempty"`
 	// TrailingArgs come last, after the model flag — the stdin marker.
@@ -73,7 +79,7 @@ func (h *Handler) registerSystemCLIRoutes(mux *http.ServeMux) {
 //
 //	GET /api/system/clis
 func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
@@ -88,6 +94,7 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 			ProviderIndex: -1,
 			BaseArgs:      c.BaseArgs,
 			RequiredArgs:  c.RequiredArgs,
+			BypassArgs:    c.BypassArgs,
 			TrailingArgs:  c.TrailingArgs,
 		}
 		if p, err := exec.LookPath(c.Binary); err == nil {
@@ -95,13 +102,17 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 			info.Path = p
 			info.Version = cliVersion(r.Context(), c.Binary)
 		}
-		// Seeded with the required arguments: a model that lists a flag the
+		// Seeded with the catalogue's arguments: a model that lists a flag the
 		// protocol already supplies is not adding anything, and reporting it
-		// again printed "--yolo --yolo". The invocation itself was always
-		// correct — config.CLIArgs deduplicates — so this was the display
-		// disagreeing with the command line.
-		seenExtra := make(map[string]struct{}, len(c.RequiredArgs))
+		// again printed "--yolo --yolo". A bypass flag in extra_args is either
+		// deduplicated (bypass on) or stripped (bypass off) by config.CLIArgs,
+		// so it is never an extra either. The invocation itself was always
+		// correct; this keeps the display agreeing with the command line.
+		seenExtra := make(map[string]struct{}, len(c.RequiredArgs)+len(c.BypassArgs))
 		for _, a := range c.RequiredArgs {
+			seenExtra[a] = struct{}{}
+		}
+		for _, a := range c.BypassArgs {
 			seenExtra[a] = struct{}{}
 		}
 		for _, m := range cliModels(cfg, c.Protocol) {
@@ -122,24 +133,32 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 		if idx := cliProviderIndex(cfg, c.Protocol); idx >= 0 {
 			info.Configured = true
 			info.ProviderIndex = idx
+			info.BypassRestrictions = cfg.Providers[idx].BypassRestrictions
 		}
 		out = append(out, info)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleSetCLIEnabled turns a CLI agent on or off.
+// handleSetCLIEnabled turns a CLI agent on or off, and sets its
+// bypass_restrictions.
 //
 //	PUT /api/system/clis/{protocol}   {"enabled": true}
+//	PUT /api/system/clis/{protocol}   {"bypass_restrictions": true}
 //
 // On: creates the provider and a sentinel model if they are missing, and
 // enables the sentinel. The sentinel model's id is the protocol name, which the
 // providers recognise as "pass no --model flag and let the CLI choose" — the
 // right default for someone who has just switched a CLI on and named nothing.
+// Enabling never turns bypass_restrictions on.
 //
 // Off: disables every model reaching this CLI, rather than only the sentinel.
 // A switch labelled with the CLI's name has to mean the CLI, or turning it off
 // would leave an agent still routing to it through a second model.
+//
+// bypass_restrictions is written to the CLI's provider, which must exist; both
+// fields may be sent together, in which case the provider enabling creates is
+// the one the setting lands on.
 //
 // Nothing is deleted either way, so the switch is reversible: turning it back
 // on finds the entries it left behind.
@@ -152,35 +171,47 @@ func (h *Handler) handleSetCLIEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Enabled *bool `json:"enabled"`
+		Enabled            *bool `json:"enabled"`
+		BypassRestrictions *bool `json:"bypass_restrictions"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-	if body.Enabled == nil {
-		http.Error(w, "enabled is required", http.StatusBadRequest)
+	if body.Enabled == nil && body.BypassRestrictions == nil {
+		http.Error(w, "enabled or bypass_restrictions is required", http.StatusBadRequest)
 		return
 	}
 
-	cfg, err := config.LoadConfig(h.configPath)
+	err := h.updateConfig(func(cfg *config.Config) error {
+		if body.Enabled != nil {
+			if !*body.Enabled {
+				disableCLIModels(cfg, agent.Protocol)
+			} else if err := enableCLI(cfg, agent); err != nil {
+				return badRequest("%s", err.Error())
+			}
+		}
+		if body.BypassRestrictions != nil {
+			prov := cliProviders(cfg, agent.Protocol)
+			if prov == nil {
+				return badRequest("%s is not configured; enable it first", agent.Label)
+			}
+			prov.BypassRestrictions = *body.BypassRestrictions
+		}
+		return nil
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		writeUpdateError(w, err)
 		return
 	}
-
-	if !*body.Enabled {
-		disableCLIModels(cfg, agent.Protocol)
-	} else if err := enableCLI(cfg, agent); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	out := map[string]any{"status": "ok"}
+	if body.Enabled != nil {
+		out["enabled"] = *body.Enabled
 	}
-
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
-		return
+	if body.BypassRestrictions != nil {
+		out["bypass_restrictions"] = *body.BypassRestrictions
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "enabled": *body.Enabled})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // enableCLI makes a CLI usable, creating whatever is missing.

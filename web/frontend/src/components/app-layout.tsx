@@ -10,9 +10,10 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 export function AppLayout({ children }: { children: ReactNode }) {
   // The setup wizard is a focused, full-screen onboarding flow — it renders
   // without the sidebar/header chrome so first-run users aren't distracted by
-  // navigation into a not-yet-configured app.
+  // navigation into a not-yet-configured app. The login page likewise: there
+  // is nothing to navigate to without a session.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  if (pathname === "/setup") {
+  if (pathname === "/setup" || pathname === "/login") {
     return (
       <TooltipProvider>
         <div className="bg-background h-dvh overflow-y-auto">{children}</div>

@@ -13,7 +13,7 @@ import (
 
 // startBackupScheduler runs the optional nightly backup. It ticks once a minute
 // and, when backup is enabled and the local clock reaches the configured HH:MM,
-// snapshots config.json + the cron jobs file (once per day). getConfig is read
+// writes the backup archive (once per day). getConfig is read
 // live each tick so toggling the feature, the time, or retention takes effect
 // without a restart. Returns a stop function.
 func startBackupScheduler(getConfig func() *config.Config, configPath string, a alerter.Alerter) func() {
@@ -40,18 +40,20 @@ func startBackupScheduler(getConfig func() *config.Config, configPath string, a 
 					continue
 				}
 				lastRunDay = day
-				dir, copied, err := backup.RunForConfig(cfg, configPath, now)
+				res, err := backup.RunForConfig(cfg, configPath, now, backup.Options{Alerter: a}) //nolint:contextcheck // same code path as `claw backup`, which has no context; the quick_check inside runs on its own busy_timeout-bounded connection
 				if err != nil {
 					logger.ErrorCF("backup", "nightly backup failed", map[string]any{"error": err.Error()})
 					a.Send(alerter.Alert{
 						Title:       "Nightly backup failed",
-						Description: "the configuration backup did not run; nothing retries before tomorrow",
+						Description: "the backup archive was not written; nothing retries before tomorrow",
 						Details:     err.Error(),
 						EventID:     "backup",
 					})
 					continue
 				}
-				logger.InfoCF("backup", "nightly backup complete", map[string]any{"folder": dir, "files": copied})
+				logger.InfoCF("backup", "nightly backup complete", map[string]any{
+					"archive": res.Archive, "bytes": res.Bytes, "files": res.Files, "skipped": len(res.Skipped),
+				})
 			}
 		}
 	}()

@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help require-golangci-lint test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help require-golangci-lint require-govulncheck govulncheck test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt fmt-check lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all release-checksums release-sign sbom
 
 # Binary names
 BINARY_NAME=claw
@@ -13,7 +13,6 @@ MAIN_GO=main.go
 # to make `claw version` report the last tag plus a commit count while the rest
 # of the app reported the constant.
 GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
-BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
 # BUILD_NUMBER orders builds; GIT_COMMIT identifies their source. The commit
 # cannot answer "is the copy I am running newer than the one I just built?" —
@@ -22,9 +21,26 @@ GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
 # newer build would sort older. Assigned with := so one `make build-all`
 # stamps ONE number across every platform: with a recursive `=` the shell
 # re-runs per expansion and each target would land a second or two apart.
+#
+# Reproducible builds: the two timestamps are the only thing that differs
+# between two builds of one commit (-trimpath removes the paths). When
+# SOURCE_DATE_EPOCH is set (the reproducible-builds.org convention; for a
+# release use the commit time, `git log -1 --format=%ct`) both are derived
+# from it instead of the clock, so anyone can rebuild the release and get the
+# identical binary. `date -d @N` is GNU, `date -r N` is BSD/macOS.
+ifdef SOURCE_DATE_EPOCH
+BUILD_TIME:=$(shell date -u -d @$(SOURCE_DATE_EPOCH) +%FT%T%z 2>/dev/null || date -u -r $(SOURCE_DATE_EPOCH) +%FT%T%z)
+BUILD_NUMBER:=$(shell date -u -d @$(SOURCE_DATE_EPOCH) +%Y%m%d%H%M%S 2>/dev/null || date -u -r $(SOURCE_DATE_EPOCH) +%Y%m%d%H%M%S)
+else
+BUILD_TIME=$(shell date +%FT%T%z)
 BUILD_NUMBER:=$(shell date -u +%Y%m%d%H%M%S)
+endif
 APP_PKG=github.com/PivotLLM/ClawEh/app
 LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -X $(APP_PKG).buildNumber=$(BUILD_NUMBER) -s -w"
+# -trimpath keeps the build machine's directory layout out of the binary
+# (panic traces and the SBOM then match between machines) and is what makes
+# a rebuild reproducible. Every `go build` below takes it.
+BUILD_FLAGS=-trimpath
 
 # Go variables
 GO?=CGO_ENABLED=0 go
@@ -58,6 +74,21 @@ endef
 # golangci-lint: on PATH if present, otherwise the Go bin directory (go install
 # puts it there, which is not on everyone's PATH). Override with GOLANGCI_LINT=.
 GOLANGCI_LINT?=$(shell command -v golangci-lint 2>/dev/null || echo "$$(go env GOPATH)/bin/golangci-lint")
+
+# Pinned Go tools, installed into the repo's own bin/ (gitignored) on first use
+# so every machine and CI run scans with the same version. Override the
+# binary path (GOVULNCHECK=, CYCLONEDX_GOMOD=) to use another copy.
+TOOLS_BIN=$(CURDIR)/bin
+GOVULNCHECK_VERSION=v1.8.0
+GOVULNCHECK?=$(TOOLS_BIN)/govulncheck
+CYCLONEDX_GOMOD_VERSION=v1.12.0
+CYCLONEDX_GOMOD?=$(TOOLS_BIN)/cyclonedx-gomod
+# minisign (https://jedisct1.github.io/minisign/; `brew install minisign`) signs
+# the release checksum list. MINISIGN_KEY is the secret key file.
+MINISIGN?=minisign
+MINISIGN_KEY?=
+# The release version, read from the single source of truth in app/app.go.
+VERSION=$(shell awk -F'"' '/^[[:space:]]*version = "/{print $$2}' app/app.go)
 
 # Installation
 INSTALL_PREFIX?=$(HOME)/.local
@@ -152,11 +183,11 @@ all: test build
 build: $(EMBED_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
+	@$(BUILD_ENV) $(GO) build $(BUILD_FLAGS) $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(notdir $(BINARY_PATH)) $(BUILD_DIR)/$(BINARY_NAME)$(EXE)
 	@echo "Building $(CLAW_AUTH_NAME) for $(PLATFORM)/$(ARCH)..."
-	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
+	@$(BUILD_ENV) $(GO) build $(BUILD_FLAGS) $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
 	@echo "Build complete: $(CLAW_AUTH_PATH)"
 	@ln -sf $(notdir $(CLAW_AUTH_PATH)) $(BUILD_DIR)/$(CLAW_AUTH_NAME)$(EXE)
 
@@ -164,7 +195,7 @@ build: $(EMBED_INDEX) generate
 claw-auth:
 	@echo "Building $(CLAW_AUTH_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
+	@$(BUILD_ENV) $(GO) build $(BUILD_FLAGS) $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
 	@echo "Build complete: $(CLAW_AUTH_PATH)"
 	@ln -sf $(notdir $(CLAW_AUTH_PATH)) $(BUILD_DIR)/$(CLAW_AUTH_NAME)$(EXE)
 
@@ -224,21 +255,21 @@ generate:
 build-linux-arm: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm (GOARM=7)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm"
 
 ## build-linux-arm64: Build for Linux ARM64 (e.g. Raspberry Pi Zero 2 W 64-bit)
 build-linux-arm64: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm64..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=arm64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64"
 
 ## build-linux-mipsle: Build for Linux MIPS32 LE
 build-linux-mipsle: $(EMBED_INDEX) generate
 	@echo "Building for linux/mipsle (softfloat)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
 	$(call PATCH_MIPS_FLAGS,$(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle"
 
@@ -250,19 +281,47 @@ build-pi-zero: build-linux-arm build-linux-arm64
 build-all: $(EMBED_INDEX) generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=loong64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-loong64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=riscv64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-riscv64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
+	GOOS=linux GOARCH=arm64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=loong64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-loong64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=riscv64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-riscv64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
 	$(call PATCH_MIPS_FLAGS,$(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle)
-	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-armv7 ./$(CMD_DIR)
-	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
-	GOOS=netbsd GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-amd64 ./$(CMD_DIR)
-	GOOS=netbsd GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-armv7 ./$(CMD_DIR)
+	GOOS=darwin GOARCH=arm64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
+	GOOS=windows GOARCH=amd64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
+	GOOS=netbsd GOARCH=amd64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-amd64 ./$(CMD_DIR)
+	GOOS=netbsd GOARCH=arm64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
 	@echo "All builds complete"
+
+## release-checksums: Write build/checksums.txt (SHA-256 of every release archive and sbom.json) plus a .sha256 per archive for the install scripts.
+release-checksums:
+	@cd $(BUILD_DIR) && ls *.tar.gz >/dev/null 2>&1 || { echo "ERROR: no *.tar.gz release archives in $(BUILD_DIR)"; exit 1; }
+	@cd $(BUILD_DIR) && \
+	  if command -v sha256sum >/dev/null 2>&1; then SUM="sha256sum"; else SUM="shasum -a 256"; fi; \
+	  for f in *.tar.gz; do $$SUM "$$f" > "$$f.sha256"; done; \
+	  $$SUM *.tar.gz $$(ls sbom.json 2>/dev/null) > checksums.txt
+	@echo "Wrote $(BUILD_DIR)/checksums.txt:"
+	@cat $(BUILD_DIR)/checksums.txt
+
+## release-sign: Sign build/checksums.txt with minisign (MINISIGN_KEY=path to the secret key) -> checksums.txt.minisig, which `claw upgrade` requires.
+release-sign: release-checksums
+	@test -n "$(MINISIGN_KEY)" || { echo "ERROR: set MINISIGN_KEY=/path/to/minisign.key (generate once with: minisign -G -p minisign.pub -s minisign.key)"; exit 1; }
+	@command -v $(MINISIGN) >/dev/null 2>&1 || { echo "ERROR: $(MINISIGN) not found (brew install minisign / apt install minisign)"; exit 1; }
+	@rm -f $(BUILD_DIR)/checksums.txt.minisig
+	@$(MINISIGN) -S -s $(MINISIGN_KEY) -m $(BUILD_DIR)/checksums.txt -t "ClawEh v$(VERSION) $(GIT_COMMIT)"
+	@echo "Signed: $(BUILD_DIR)/checksums.txt.minisig"
+
+## sbom: Write a CycloneDX SBOM of the claw binary's Go modules to build/sbom.json (cyclonedx-gomod, pinned; installed into bin/ when missing).
+sbom:
+	@command -v "$(CYCLONEDX_GOMOD)" >/dev/null 2>&1 || { \
+	  echo "Installing cyclonedx-gomod $(CYCLONEDX_GOMOD_VERSION) into $(TOOLS_BIN)..."; \
+	  GOBIN=$(TOOLS_BIN) go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@$(CYCLONEDX_GOMOD_VERSION); }
+	@mkdir -p $(BUILD_DIR)
+	@echo "Generating SBOM..."
+	@CGO_ENABLED=0 $(CYCLONEDX_GOMOD) app -json -licenses -output $(BUILD_DIR)/sbom.json .
+	@echo "Wrote $(BUILD_DIR)/sbom.json"
 
 ## clean: Remove all build artifacts (Go binaries, frontend dist, embedded SPA)
 clean:
@@ -278,14 +337,25 @@ clean:
 vet: generate
 	@$(GO) vet ./...
 
-## test: The one gate. Format check and vet (lint temporarily excluded, see below), then test.sh: Go tests with the
+## test: The one gate. Format check, vet, lint and govulncheck, then test.sh: Go tests with the
 ## race detector and coverage, frontend typecheck and unit tests, and the
 ## probe-driven MCP integration suite. Exits non-zero on any failure and ends
 ## with a pass/fail summary. Needs probe on PATH (test.sh names it if missing).
 ## test-maestro-host and check-webui stay separate: they bind ports or need a
 ## running instance.
-test: generate fmt-check vet lint
+test: generate fmt-check vet lint govulncheck
 	@./test.sh
+
+## govulncheck: Fail on a known vulnerability reachable from the code (golang.org/x/vuln, pinned; needs network for the vulnerability database).
+govulncheck: require-govulncheck
+	@echo "Scanning for known vulnerabilities (govulncheck)..."
+	@$(GOVULNCHECK) ./...
+
+## require-govulncheck: install the pinned govulncheck into bin/ when the configured binary is missing.
+require-govulncheck:
+	@command -v "$(GOVULNCHECK)" >/dev/null 2>&1 || { \
+	  echo "Installing govulncheck $(GOVULNCHECK_VERSION) into $(TOOLS_BIN)..."; \
+	  GOBIN=$(TOOLS_BIN) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); }
 
 ## frontend-typecheck: Typecheck the SPA (tsc)
 frontend-typecheck: $(FRONTEND_NODE_MODULES)
@@ -444,6 +514,11 @@ help:
 	@echo "  make build PLATFORM=linux ARCH=arm GOARM=7 # Linux ARMv7"
 	@echo "  make build PLATFORM=windows ARCH=amd64     # Windows x86-64"
 	@echo "  make build PLATFORM=darwin ARCH=arm64      # macOS Apple Silicon"
+	@echo ""
+	@echo "Release (after the archives are in $(BUILD_DIR)):"
+	@echo "  make sbom                                            # build/sbom.json"
+	@echo "  make release-sign MINISIGN_KEY=~/.minisign/claweh.key # checksums.txt + checksums.txt.minisig"
+	@echo "  SOURCE_DATE_EPOCH=\$$(git log -1 --format=%ct) make build-all  # reproducible timestamps"
 	@echo ""
 	@echo "Environment Variables:"
 	@echo "  PLATFORM                # Target GOOS (default: host, $(PLATFORM))"

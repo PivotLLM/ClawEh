@@ -1,13 +1,64 @@
 package agent
 
 import (
+	"fmt"
+	"sync"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
 const finishEventMaxErrLen = 500
+
+// dailySpend sums dispatch cost per UTC day and remembers whether the day's
+// spend alert has fired. Resets when the day changes.
+type dailySpend struct {
+	mu      sync.Mutex
+	day     string
+	total   float64
+	alerted bool
+}
+
+// add records cost at now and reports the day (UTC, yyyy-mm-dd), the day's
+// running total and whether that total reached threshold for the first time
+// today. A threshold <= 0 never fires.
+func (s *dailySpend) add(cost, threshold float64, now time.Time) (day string, total float64, crossed bool) {
+	day = now.UTC().Format(time.DateOnly)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if day != s.day {
+		s.day, s.total, s.alerted = day, 0, false
+	}
+	s.total += cost
+	if threshold <= 0 || s.alerted || s.total < threshold {
+		return day, s.total, false
+	}
+	s.alerted = true
+	return day, s.total, true
+}
+
+// recordSpend folds one turn's cost into the day's total and raises the
+// daily-spend alert the first time it reaches
+// agents.defaults.daily_spend_alert_usd (0 = off).
+func (al *AgentLoop) recordSpend(costUSD float64) {
+	cfg := al.GetConfig()
+	if costUSD <= 0 || cfg == nil {
+		return
+	}
+	threshold := cfg.Agents.Defaults.DailySpendAlertUSD
+	day, total, crossed := al.spend.add(costUSD, threshold, time.Now())
+	if !crossed {
+		return
+	}
+	al.Alerter().Send(alerter.Alert{
+		Title:       "Daily model spend over threshold",
+		Description: fmt.Sprintf("Model spend on %s (UTC) is $%.2f, over the daily_spend_alert_usd threshold of $%.2f", day, total, threshold),
+		EventID:     "spend:" + day,
+	})
+}
 
 // emitLLMFinishEvent writes a single "LLM finish" INFO record at the agent loop
 // call site. It is invoked for both success and error returns from callLLM so

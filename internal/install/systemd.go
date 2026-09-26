@@ -18,7 +18,8 @@ const (
 
 // buildSystemUnit renders the systemd system unit for running at machine boot.
 // It explicitly sets User, Group, WorkingDirectory, TimeoutStopSec=60, PATH, and
-// CLAW_HOME so that ClawEh executes strictly as the target user.
+// CLAW_HOME so that ClawEh executes strictly as the target user, and hardens the
+// service with NoNewPrivileges= and PrivateTmp=.
 func buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
@@ -38,6 +39,13 @@ func buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome string
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("KillMode=control-group\n")
 	b.WriteString("TimeoutStopSec=60\n")
+	// Hardening: the process (and anything it spawns) can never gain privileges
+	// via setuid/setgid/capabilities, and it gets a /tmp of its own. Nothing
+	// ClawEh runs shares a /tmp path with processes outside the unit: media
+	// staging, CLI history and child processes (CLI providers, MCP servers)
+	// all stay inside it.
+	b.WriteString("NoNewPrivileges=yes\n")
+	b.WriteString("PrivateTmp=yes\n")
 	if homeDir != "" {
 		b.WriteString("Environment=HOME=" + homeDir + "\n")
 	}
@@ -69,6 +77,11 @@ func buildUserUnit(execPath, homeDir, binDir, clawHome string) string {
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("KillMode=control-group\n")
 	b.WriteString("TimeoutStopSec=60\n")
+	// Hardening: no privilege gain via setuid/setgid/capabilities. PrivateTmp=
+	// is deliberately omitted here: in a per-user service manager it needs
+	// unprivileged user namespaces, which many hosts disable, and the unit
+	// would then fail to start.
+	b.WriteString("NoNewPrivileges=yes\n")
 	if homeDir != "" {
 		b.WriteString("Environment=HOME=" + homeDir + "\n")
 	}

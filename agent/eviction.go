@@ -25,10 +25,13 @@ const (
 // cmEntry wraps a ContextManager with lifecycle metadata used by the eviction
 // goroutine. The sync.Map in AgentLoop stores *cmEntry values.
 type cmEntry struct {
-	cm           ctxengine.ContextManager
-	sessionKey   string               // used by the eviction pass to revoke session tokens
-	store        session.SessionStore // used on eviction to drop per-session in-memory caches
-	lastAccessed time.Time
+	cm         ctxengine.ContextManager
+	sessionKey string               // used by the eviction pass to revoke session tokens
+	store      session.SessionStore // used on eviction to drop per-session in-memory caches
+	// lastAccessed is the UnixNano of the most recent access. Atomic because
+	// concurrent callers of the same session (and the eviction pass) touch it
+	// without any other synchronisation.
+	lastAccessed atomic.Int64
 	refcount     atomic.Int32
 	// mem is the session's cognitive-memory view; nil for non-cognitive agents.
 	// Closed on eviction/drain to release the per-session store handle.
@@ -38,6 +41,14 @@ type cmEntry struct {
 	// reset; "" when no issuer is wired. Guarded by tokenMu.
 	tokenMu sync.RWMutex
 	token   string
+}
+
+// touch records an access now.
+func (e *cmEntry) touch() { e.lastAccessed.Store(time.Now().UnixNano()) }
+
+// idle returns how long the entry has gone unaccessed as of now.
+func (e *cmEntry) idle(now time.Time) time.Duration {
+	return now.Sub(time.Unix(0, e.lastAccessed.Load()))
 }
 
 // setToken records the current session token.
@@ -163,7 +174,7 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 		if entry.refcount.Load() > 0 {
 			return true // in use — skip
 		}
-		if now.Sub(entry.lastAccessed) < ttl {
+		if entry.idle(now) < ttl {
 			return true // not idle long enough
 		}
 
@@ -187,7 +198,7 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 		entry.mem.Close()
 		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
 			"key":      key,
-			"idle_min": now.Sub(entry.lastAccessed).Minutes(),
+			"idle_min": entry.idle(now).Minutes(),
 		})
 		return true
 	})

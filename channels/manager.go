@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,11 +38,16 @@ const (
 	typingStopTTL   = 5 * time.Minute
 	placeholderTTL  = 10 * time.Minute
 
-	// Channel start retry constants
-	startRetryBase     = 5 * time.Second
-	startRetryMax      = 5 * time.Minute
-	startRetryMaxCount = 10
+	// backoffJitter spreads retry delays by ±20% so channels that failed
+	// together do not retry in lockstep.
+	backoffJitter = 0.2
 )
+
+// jitter returns d varied by up to ±backoffJitter.
+func jitter(d time.Duration) time.Duration {
+	f := 1 + backoffJitter*(2*rand.Float64()-1) //nolint:gosec // retry spread, not security-relevant
+	return time.Duration(float64(d) * f)
+}
 
 // typingEntry wraps a typing stop function with a creation timestamp for TTL eviction.
 type typingEntry struct {
@@ -647,16 +653,23 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	return nil
 }
 
-// retryChannelStart retries channel.Start in the background using exponential backoff.
+// startRetryAfter is time.After; tests replace it to run the retry loop
+// without waiting.
+var startRetryAfter = time.After
+
+// retryChannelStart retries channel.Start in the background with exponential
+// backoff (StartRetryMin doubling to StartRetryMax) until it succeeds or
+// dispatchCtx is cancelled. A "Channel failed to start" alert is raised once,
+// on the StartRetryAlertAfter-th failure; retries continue at the ceiling.
 // On success it creates a worker and starts runWorker/runMediaWorker goroutines.
 // dispatchCtx must be the cancellable context created in StartAll.
 func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, channel Channel) {
-	backoff := startRetryBase
-	for attempt := 1; attempt <= startRetryMaxCount; attempt++ {
+	backoff := StartRetryMin
+	for attempt := 1; ; attempt++ {
 		select {
 		case <-dispatchCtx.Done():
 			return
-		case <-time.After(backoff):
+		case <-startRetryAfter(jitter(backoff)):
 		}
 
 		logger.InfoCF("channels", "Retrying channel start", map[string]any{
@@ -664,46 +677,46 @@ func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, ch
 			"attempt": attempt,
 		})
 
-		if err := channel.Start(dispatchCtx); err != nil {
-			logger.WarnCF("channels", "Channel start retry failed", map[string]any{
-				"channel": name,
-				"attempt": attempt,
-				"error":   err.Error(),
+		err := channel.Start(dispatchCtx)
+		if err == nil {
+			// Channel started — create and register the worker.
+			w := newChannelWorker(name, channel)
+			m.mu.Lock()
+			m.workers[name] = w
+			m.mu.Unlock()
+
+			go m.runWorker(dispatchCtx, name, w)
+			go m.runMediaWorker(dispatchCtx, name, w)
+
+			logger.InfoCF("channels", "Channel started after retries", map[string]any{
+				"channel":  name,
+				"attempts": attempt,
 			})
-			if attempt == startRetryMaxCount {
-				logger.ErrorCF("channels", "Channel permanently failed to start after max retries", map[string]any{
-					"channel": name,
-					"retries": startRetryMaxCount,
-				})
-				m.alert(alerter.Alert{
-					Title:       "Channel failed to start",
-					Description: name + " gave up after " + strconv.Itoa(startRetryMaxCount) + " retries",
-					Details:     err.Error(),
-					EventID:     name,
-				})
-				return
-			}
-			backoff *= 2
-			if backoff > startRetryMax {
-				backoff = startRetryMax
-			}
-			continue
+			return
+		}
+		if dispatchCtx.Err() != nil {
+			// Start failed because we are shutting down; not a fault.
+			return
 		}
 
-		// Channel started — create and register the worker.
-		w := newChannelWorker(name, channel)
-		m.mu.Lock()
-		m.workers[name] = w
-		m.mu.Unlock()
-
-		go m.runWorker(dispatchCtx, name, w)
-		go m.runMediaWorker(dispatchCtx, name, w)
-
-		logger.InfoCF("channels", "Channel started successfully after retry", map[string]any{
-			"channel": name,
-			"attempt": attempt,
-		})
-		return
+		backoff = min(backoff*2, StartRetryMax)
+		fields := map[string]any{
+			"channel":  name,
+			"attempt":  attempt,
+			"error":    err.Error(),
+			"retry_in": backoff.String(),
+		}
+		if attempt == StartRetryAlertAfter {
+			logger.ErrorCF("channels", "Channel still failing to start; alerting and continuing to retry", fields)
+			m.alert(alerter.Alert{
+				Title:       "Channel failed to start",
+				Description: name + " has failed to start " + strconv.Itoa(attempt) + " times; retrying every " + StartRetryMax.String() + " until it starts",
+				Details:     err.Error(),
+				EventID:     name,
+			})
+			continue
+		}
+		logger.WarnCF("channels", "Channel start retry failed", fields)
 	}
 }
 
@@ -884,7 +897,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		// ErrTemporary or unknown error — exponential backoff
 		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
 		select {
-		case <-time.After(backoff):
+		case <-time.After(jitter(backoff)):
 		case <-ctx.Done():
 			return
 		}
@@ -1063,7 +1076,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		// ErrTemporary or unknown error — exponential backoff
 		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
 		select {
-		case <-time.After(backoff):
+		case <-time.After(jitter(backoff)):
 		case <-ctx.Done():
 			return
 		}
