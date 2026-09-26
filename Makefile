@@ -83,10 +83,11 @@ GOVULNCHECK_VERSION=v1.8.0
 GOVULNCHECK?=$(TOOLS_BIN)/govulncheck
 CYCLONEDX_GOMOD_VERSION=v1.12.0
 CYCLONEDX_GOMOD?=$(TOOLS_BIN)/cyclonedx-gomod
-# minisign (https://jedisct1.github.io/minisign/; `brew install minisign`) signs
-# the release checksum list. MINISIGN_KEY is the secret key file.
+# minisign (https://jedisct1.github.io/minisign/; `brew install minisign` /
+# `apt install minisign`) signs the release checksum list. MINISIGN_KEY is the
+# secret key file; the default is where `minisign -G` puts it.
 MINISIGN?=minisign
-MINISIGN_KEY?=
+MINISIGN_KEY?=$(HOME)/.minisign/minisign.key
 # The release version, read from the single source of truth in app/app.go.
 VERSION=$(shell awk -F'"' '/^[[:space:]]*version = "/{print $$2}' app/app.go)
 
@@ -305,9 +306,9 @@ release-checksums:
 	@echo "Wrote $(BUILD_DIR)/checksums.txt:"
 	@cat $(BUILD_DIR)/checksums.txt
 
-## release-sign: Sign build/checksums.txt with minisign (MINISIGN_KEY=path to the secret key) -> checksums.txt.minisig, which `claw upgrade` requires.
+## release-sign: Sign build/checksums.txt with minisign (secret key: ~/.minisign/minisign.key, or MINISIGN_KEY=path) -> checksums.txt.minisig, which `claw upgrade` requires.
 release-sign: release-checksums
-	@test -n "$(MINISIGN_KEY)" || { echo "ERROR: set MINISIGN_KEY=/path/to/minisign.key (generate once with: minisign -G -p minisign.pub -s minisign.key)"; exit 1; }
+	@test -f "$(MINISIGN_KEY)" || { echo "ERROR: minisign secret key $(MINISIGN_KEY) not found (generate once with: minisign -G; or set MINISIGN_KEY=/path/to/key)"; exit 1; }
 	@command -v $(MINISIGN) >/dev/null 2>&1 || { echo "ERROR: $(MINISIGN) not found (brew install minisign / apt install minisign)"; exit 1; }
 	@rm -f $(BUILD_DIR)/checksums.txt.minisig
 	@$(MINISIGN) -S -s $(MINISIGN_KEY) -m $(BUILD_DIR)/checksums.txt -t "ClawEh v$(VERSION) $(GIT_COMMIT)"
@@ -517,7 +518,7 @@ help:
 	@echo ""
 	@echo "Release (after the archives are in $(BUILD_DIR)):"
 	@echo "  make sbom                                            # build/sbom.json"
-	@echo "  make release-sign MINISIGN_KEY=~/.minisign/claweh.key # checksums.txt + checksums.txt.minisig"
+	@echo "  make release-sign                # checksums.txt + checksums.txt.minisig (key: ~/.minisign/minisign.key)"
 	@echo "  SOURCE_DATE_EPOCH=\$$(git log -1 --format=%ct) make build-all  # reproducible timestamps"
 	@echo ""
 	@echo "Environment Variables:"

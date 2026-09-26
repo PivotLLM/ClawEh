@@ -42,6 +42,10 @@ const (
 // signing key. Nothing downloaded can be trusted then, so upgrading refuses.
 var errNoReleaseKey = errors.New("no release signing key is embedded in this build; refusing to upgrade")
 
+// errUntrustedKey is returned when the signature names a key ID that none of
+// the embedded keys carries.
+var errUntrustedKey = errors.New("signature was made with a key this build does not trust")
+
 // minisignPublicKey is a parsed minisign public key.
 type minisignPublicKey struct {
 	keyID [minisignKeyIDLen]byte
@@ -78,10 +82,30 @@ func parseMinisignPublicKey(s string) (*minisignPublicKey, error) {
 	return pk, nil
 }
 
+// parseReleaseKeys parses every non-empty key; none set is errNoReleaseKey.
+func parseReleaseKeys(keys []string) ([]*minisignPublicKey, error) {
+	var out []*minisignPublicKey
+	for _, k := range keys {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		pk, err := parseMinisignPublicKey(k)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pk)
+	}
+	if len(out) == 0 {
+		return nil, errNoReleaseKey
+	}
+	return out, nil
+}
+
 // verifyMinisign checks that sigFile (the contents of a .minisig file) is a
-// valid signature over message by pk. Any deviation from the format is an
-// error; there is no partial success.
-func verifyMinisign(pk *minisignPublicKey, message, sigFile []byte) error {
+// valid signature over message by one of keys, chosen by the key ID the
+// signature names. Any deviation from the format is an error; there is no
+// partial success.
+func verifyMinisign(keys []*minisignPublicKey, message, sigFile []byte) error {
 	lines := strings.Split(strings.TrimRight(string(sigFile), "\r\n"), "\n")
 	if len(lines) != 4 {
 		return fmt.Errorf("signature file has %d lines, want 4", len(lines))
@@ -116,8 +140,15 @@ func verifyMinisign(pk *minisignPublicKey, message, sigFile []byte) error {
 	if alg != minisignPrehashedAlg {
 		return fmt.Errorf("signature algorithm %q is not supported (want %q)", alg, minisignPrehashedAlg)
 	}
-	if !bytes.Equal(sigBlob[2:2+minisignKeyIDLen], pk.keyID[:]) {
-		return errors.New("signature was made with a different key than the embedded release key")
+	var pk *minisignPublicKey
+	for _, k := range keys {
+		if bytes.Equal(sigBlob[2:2+minisignKeyIDLen], k.keyID[:]) {
+			pk = k
+			break
+		}
+	}
+	if pk == nil {
+		return errUntrustedKey
 	}
 	sig := sigBlob[2+minisignKeyIDLen:]
 
@@ -149,13 +180,13 @@ func lookupChecksum(checksums []byte, name string) (string, error) {
 
 // verifySignedArchive verifies that archivePath's SHA-256 matches the entry
 // for archiveName in checksums, after verifying that checksums itself carries a
-// valid minisign signature (sigFile) from the embedded release key.
-func verifySignedArchive(releaseKey string, checksums, sigFile []byte, archiveName, archivePath string) error {
-	pk, err := parseMinisignPublicKey(releaseKey)
+// valid minisign signature (sigFile) from one of the embedded release keys.
+func verifySignedArchive(releaseKeys []string, checksums, sigFile []byte, archiveName, archivePath string) error {
+	keys, err := parseReleaseKeys(releaseKeys)
 	if err != nil {
 		return err
 	}
-	if err = verifyMinisign(pk, checksums, sigFile); err != nil {
+	if err = verifyMinisign(keys, checksums, sigFile); err != nil {
 		return fmt.Errorf("checksums.txt signature: %w", err)
 	}
 	expected, err := lookupChecksum(checksums, archiveName)

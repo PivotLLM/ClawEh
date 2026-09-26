@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,7 +110,7 @@ func TestVerifyMinisign(t *testing.T) {
 	msg := []byte("abc123  claw-linux-amd64.tar.gz\n")
 	good := s.sign(msg, "timestamp:1700000000\tfile:checksums.txt\thashed")
 
-	if err := verifyMinisign(pk, msg, good); err != nil {
+	if err := verifyMinisign([]*minisignPublicKey{pk}, msg, good); err != nil {
 		t.Fatalf("valid signature rejected: %v", err)
 	}
 
@@ -143,7 +144,7 @@ func TestVerifyMinisign(t *testing.T) {
 		{"garbage global", msg, []byte(strings.Join([]string{lines[0], lines[1], lines[2], "!!!"}, "\n"))},
 	}
 	for _, tc := range cases {
-		if err := verifyMinisign(pk, tc.msg, tc.sig); err == nil {
+		if err := verifyMinisign([]*minisignPublicKey{pk}, tc.msg, tc.sig); err == nil {
 			t.Errorf("%s: expected verification to fail", tc.name)
 		}
 	}
@@ -184,18 +185,18 @@ func TestVerifySignedArchive(t *testing.T) {
 		strings.Repeat("0", 64) + "  claw-darwin-arm64.tar.gz\n")
 	sig := s.sign(checksums, "ClawEh v0.6.0")
 
-	if err := verifySignedArchive(s.publicKeyLine(), checksums, sig, "claw-linux-amd64.tar.gz", archive); err != nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, checksums, sig, "claw-linux-amd64.tar.gz", archive); err != nil {
 		t.Fatalf("valid release rejected: %v", err)
 	}
 
 	// Attacker edits a checksum line after signing.
 	tampered := []byte(strings.Replace(string(checksums), hex.EncodeToString(sum[:]), strings.Repeat("f", 64), 1))
-	if err := verifySignedArchive(s.publicKeyLine(), tampered, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, tampered, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
 		t.Error("tampered checksums.txt accepted")
 	}
 
 	// Attacker re-signs the tampered list with their own key.
-	if err := verifySignedArchive(s.publicKeyLine(), tampered, newTestSigner(t).sign(tampered, ""), "claw-linux-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, tampered, newTestSigner(t).sign(tampered, ""), "claw-linux-amd64.tar.gz", archive); err == nil {
 		t.Error("checksums.txt signed by a foreign key accepted")
 	}
 
@@ -203,37 +204,80 @@ func TestVerifySignedArchive(t *testing.T) {
 	if err := os.WriteFile(archive, []byte("something else"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifySignedArchive(s.publicKeyLine(), checksums, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, checksums, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
 		t.Error("archive that does not match its signed checksum accepted")
 	}
 
 	// Archive not listed.
-	if err := verifySignedArchive(s.publicKeyLine(), checksums, sig, "claw-netbsd-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, checksums, sig, "claw-netbsd-amd64.tar.gz", archive); err == nil {
 		t.Error("unlisted archive accepted")
 	}
 
 	// Missing signature / no embedded key: both fatal.
-	if err := verifySignedArchive(s.publicKeyLine(), checksums, nil, "claw-linux-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{s.publicKeyLine()}, checksums, nil, "claw-linux-amd64.tar.gz", archive); err == nil {
 		t.Error("missing signature accepted")
 	}
-	if err := verifySignedArchive("", checksums, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
+	if err := verifySignedArchive([]string{"", ""}, checksums, sig, "claw-linux-amd64.tar.gz", archive); err == nil {
 		t.Error("verification without an embedded key succeeded")
 	}
 }
 
-// TestReleasePublicKey pins the embedded key's state: either unset (upgrades
-// fail closed) or a well-formed minisign public key.
-func TestReleasePublicKey(t *testing.T) {
-	pk, err := parseMinisignPublicKey(releasePublicKey)
+// Two embedded keys: a signature from either is accepted, chosen by key ID;
+// an empty slot is ignored; a third key is refused.
+func TestVerifySignedArchive_TwoKeys(t *testing.T) {
+	current, next, stranger := newTestSigner(t), newTestSigner(t), newTestSigner(t)
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "claw-linux-amd64.tar.gz")
+	content := []byte("pretend this is a tarball")
+	if err := os.WriteFile(archive, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  claw-linux-amd64.tar.gz\n")
+	keys := []string{current.publicKeyLine(), next.publicKeyFile()}
+
+	if err := verifySignedArchive(keys, checksums, current.sign(checksums, "v1"), "claw-linux-amd64.tar.gz", archive); err != nil {
+		t.Errorf("signature from the current key rejected: %v", err)
+	}
+	if err := verifySignedArchive(keys, checksums, next.sign(checksums, "v2"), "claw-linux-amd64.tar.gz", archive); err != nil {
+		t.Errorf("signature from the next key rejected: %v", err)
+	}
+	err := verifySignedArchive(keys, checksums, stranger.sign(checksums, "v3"), "claw-linux-amd64.tar.gz", archive)
+	if !errors.Is(err, errUntrustedKey) {
+		t.Errorf("signature from a third key: error = %v, want errUntrustedKey", err)
+	}
+	// Only one slot filled (the usual state between rotations).
+	if err := verifySignedArchive([]string{"", next.publicKeyLine()}, checksums, next.sign(checksums, "v2"), "claw-linux-amd64.tar.gz", archive); err != nil {
+		t.Errorf("single filled slot rejected: %v", err)
+	}
+	// A malformed slot is a build error, not something to skip past.
+	if err := verifySignedArchive([]string{current.publicKeyLine(), "not a key"}, checksums, current.sign(checksums, "v1"), "claw-linux-amd64.tar.gz", archive); err == nil {
+		t.Error("malformed embedded key ignored")
+	}
+}
+
+// TestReleasePublicKeys pins the embedded keys' state: either all unset
+// (upgrades fail closed) or every filled slot a well-formed minisign public key.
+func TestReleasePublicKeys(t *testing.T) {
+	if len(releasePublicKeys) != 2 {
+		t.Fatalf("releasePublicKeys has %d slots, want 2 (current and next)", len(releasePublicKeys))
+	}
+	keys, err := parseReleaseKeys(releasePublicKeys)
+	allEmpty := true
+	for _, k := range releasePublicKeys {
+		if strings.TrimSpace(k) != "" {
+			allEmpty = false
+		}
+	}
 	switch {
-	case releasePublicKey == "":
-		if err != errNoReleaseKey { //nolint:errorlint // sentinel returned directly
-			t.Fatalf("unset key: error = %v, want errNoReleaseKey", err)
+	case allEmpty:
+		if !errors.Is(err, errNoReleaseKey) {
+			t.Fatalf("unset keys: error = %v, want errNoReleaseKey", err)
 		}
 	case err != nil:
 		t.Fatalf("embedded release key does not parse: %v", err)
-	case pk == nil:
-		t.Fatal("embedded release key parsed to nil")
+	case len(keys) == 0:
+		t.Fatal("embedded release keys parsed to nothing")
 	}
 }
 

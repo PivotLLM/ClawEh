@@ -207,12 +207,15 @@ observe does not need an entry.
   runs cannot escalate via `sudo` or setuid binaries.
 - **BREAKING (release process):** `claw upgrade` now verifies releases with a
   publisher signature. Every release must ship `checksums.txt` and
-  `checksums.txt.minisig` (minisign, signed with the key embedded in the
-  binary); a release without them, or with a signature from another key, is
-  refused. The per-archive `.sha256` files are no longer consulted by
-  `claw upgrade` (they are still produced for the install scripts). A build
-  with no embedded key refuses to upgrade at all. Release maintainers:
-  `make release-sign MINISIGN_KEY=...`, see `internal/upgrade/pubkey.go`.
+  `checksums.txt.minisig` (minisign, signed with one of the two keys embedded
+  in the binary — a current key and a next key, so the signing key can be
+  rolled without stranding installed copies); a release without them, or with
+  a signature from any other key, is refused. The per-archive `.sha256` files
+  are no longer consulted by `claw upgrade` (they are still produced for the
+  install scripts). A build with no embedded key refuses to upgrade at all.
+  Release maintainers: `make release-sign` (signs with
+  `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`); the rotation steps
+  are in `internal/upgrade/pubkey.go`.
   `make test` now runs `govulncheck` and fails on a known vulnerability
   reachable from the code.
 
