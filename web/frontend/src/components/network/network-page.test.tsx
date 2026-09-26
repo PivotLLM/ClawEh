@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { TLSStatus } from "@/api/tls"
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { NetworkPage } from "./network-page"
 
@@ -121,9 +122,11 @@ function renderPage() {
   })
   return render(
     <QueryClientProvider client={qc}>
-      <SidebarProvider>
-        <NetworkPage />
-      </SidebarProvider>
+      <TooltipProvider>
+        <SidebarProvider>
+          <NetworkPage />
+        </SidebarProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   )
 }
@@ -339,6 +342,29 @@ describe("NetworkPage", () => {
     )
     expect(value("network-external-url")).toBe("https://other.example.com")
     expect(screen.queryByTestId("network-restart-banner")).toBe(null)
+  })
+
+  it("marks each plain-HTTP network address with a warning icon", async () => {
+    stubFetch({
+      tlsStatus: () => ({
+        ...tls,
+        urls: {
+          ...tls.urls,
+          http: ["http://10.0.0.5:18790/", "http://192.168.1.5:18790/"],
+        },
+      }),
+    })
+    renderPage()
+
+    await screen.findByText("http://10.0.0.5:18790/")
+    const marks = screen.getAllByTestId("network-http-warning")
+    expect(marks.length).toBe(2)
+    // The warning text lives only inside each mark (read by screen readers and
+    // shown on hover), not as a sentence under the list.
+    expect(marks[0].textContent).toBe("pages.network.urls.http_warning")
+    expect(screen.getAllByText("pages.network.urls.http_warning").length).toBe(
+      2,
+    )
   })
 
   it("says so when no certificate has been generated yet", async () => {

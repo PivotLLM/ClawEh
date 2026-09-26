@@ -292,3 +292,54 @@ func TestNetworkHosts_ExpandsWildcard(t *testing.T) {
 		t.Errorf("specific bind = %v, want [10.0.0.5]", got)
 	}
 }
+
+// Docker's interfaces are recognised by the names Docker gives them; real
+// NICs and other bridges are not.
+func TestIsContainerInterface(t *testing.T) {
+	for name, want := range map[string]bool{
+		"docker0":          true,
+		"docker_gwbridge":  true,
+		"br-a1672a2308d0":  true,
+		"veth3f2a1b0":      true,
+		"eth0":             false,
+		"enp4s0":           false,
+		"wlp3s0":           false,
+		"br0":              false, // a hand-made bridge, not a Docker network
+		"bridge0":          false,
+		"lo":               false,
+		"tailscale0":       false,
+		"virbr0":           false,
+		"docker-not-a-nic": true,
+	} {
+		if got := isContainerInterface(name); got != want {
+			t.Errorf("isContainerInterface(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// The advertised list is the network list minus container bridge addresses,
+// never empty, and untouched for a specific bind.
+func TestAdvertisedHosts_DropsContainerBridges(t *testing.T) {
+	all := NetworkHosts("0.0.0.0")
+	adv := AdvertisedHosts("0.0.0.0")
+	if len(adv) == 0 {
+		t.Fatal("advertised list is empty")
+	}
+	for _, h := range adv {
+		if !slices.Contains(all, h) {
+			t.Errorf("advertised %q is not a network host (%v)", h, all)
+		}
+	}
+	if hidden := containerAddrs(); len(adv) < len(all) || len(hidden) == 0 {
+		// Only when something was dropped can a bridge address be absent; on
+		// a machine without Docker the two lists are the same.
+		for _, h := range adv {
+			if hidden[h] && len(adv) != len(all) {
+				t.Errorf("container address %q advertised: %v", h, adv)
+			}
+		}
+	}
+	if got := AdvertisedHosts("172.17.0.1"); len(got) != 1 || got[0] != "172.17.0.1" {
+		t.Errorf("specific bind = %v, want [172.17.0.1]", got)
+	}
+}

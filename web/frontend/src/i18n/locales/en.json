@@ -366,7 +366,7 @@
         "desc": "Where this ClawEh can be opened right now, from the listeners that are actually running.",
         "localhost": "On this host",
         "http": "On the network (plain HTTP)",
-        "http_warning": "Not encrypted. Anyone on the path can read the session cookie; prefer the HTTPS address.",
+        "http_warning": "Plain-text HTTP exposed to network.",
         "https": "On the network (HTTPS)",
         "none": "HTTPS is off — ClawEh is reachable from this host only.",
         "unavailable": "The listener status could not be read: {{message}}"

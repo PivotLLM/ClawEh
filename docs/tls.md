@@ -40,7 +40,9 @@ effect after a restart (the WebUI says so).
 
 ## Reaching it by a host name
 
-Browse to `https://<address>:18443/` (`claw status` prints the addresses), or
+Browse to `https://<address>:18443/` (`claw status` and the WebUI's Network
+page print the addresses; Docker's bridge interfaces — `docker0`, `br-…` —
+are left out, since only containers on the machine can reach those), or
 give the machine a name: set `gateway.external_url` to the URL you type, for
 example `https://claw.lan:18443`. Its host is added to the self-signed
 certificate and to the names the gateway answers to (anything else gets

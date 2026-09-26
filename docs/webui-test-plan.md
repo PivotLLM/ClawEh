@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-126 checks in all; the runner prints the same tally at the end.
+128 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -74,11 +74,11 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 21 routes in a browser with the console open:
+**Process.** Load each of the 22 routes in a browser with the console open:
 `/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/tools`, `/agent/skills`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
-`/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/system`,
-`/voice`, `/setup`, `/status`.
+`/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/report`,
+`/system`, `/voice`, `/setup`, `/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -96,7 +96,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 21 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 22 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 | D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
@@ -156,7 +156,7 @@ own buttons. R8 and R10 write (see *Before you start*); R8 needs HTTPS on.
 | R6 | Click *Self-signed (default)*, then *External certificate* | Under Self-signed: no path inputs, a **Regenerate certificate** button. Under External: **Certificate file** and **Private key file** inputs and a **Save certificate** button, no Regenerate |
 | R7 | Under External, enter `/nonexistent/e2e-probe/fullchain.pem` and `/nonexistent/e2e-probe/privkey.pem`, **Save certificate** | An inline error with the server's reason (`POST /api/tls/validate` answered 400). `GET /api/config` → `gateway` is byte-for-byte what it was before: nothing was saved |
 | R8 | With a self-signed certificate and HTTPS on, click **Regenerate certificate** (skip with a note otherwise) | The fingerprint shown changes, and `GET /api/tls` reports the new one |
-| R9 | Read the **Addresses** card | Lists `urls.localhost` and every `urls.https[]` from `GET /api/tls` — exactly what to open. With HTTPS off it says ClawEh is reachable from this host only |
+| R9 | Read the **Addresses** card | Lists `urls.localhost`, every `urls.http[]` and every `urls.https[]` from `GET /api/tls` — exactly what to open. Each plain-HTTP network address, and nothing else, carries a warning triangle whose hover text is *Plain-text HTTP exposed to network.* No Docker bridge address (`172.17–31.x.0.1`) is listed. With HTTPS off it says ClawEh is reachable from this host only |
 | R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number, **Save**; then set it back and **Save** | After the first save a **Restart required to apply listener changes** banner appears and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
 | R11 | Compare **Allowed network CIDRs** with `gateway.allowed_cidrs` | One entry per line, in order (empty for loopback only) |
 | R12 | Compare the **Device gateway** section with `channels.device` | Scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the external URL field shows `external_url` |
@@ -185,6 +185,7 @@ own buttons. R8 and R10 write (see *Before you start*); R8 needs HTTPS on.
 | I8 | Load `/providers` and read a CLI row | **Args:** lists the whole command line in invocation order — the provider's own flags (`-p --output-format json`), the permission flags (`--dangerously-skip-permissions`, `--yolo`), whatever the models add, then the stdin marker. Not just the configured part: someone asking what ClawEh runs on their machine is owed all of it, and some of it auto-approves tool use |
 | I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
 | I10 | With a CLI provider configured (`GET /api/system/clis` has a `configured` row; skip with a note otherwise), load `/providers` and `/models` | Both render with the CLI row present, no console errors and no error boundary. A CLI row carries argument lists the server encodes as `null` when empty (`required_args`, `bypass_args`, `extra_args`); spreading one used to throw *Spread syntax requires …iterable* straight into the boundary |
+| I11 | With a CLI provider configured (skip with a note otherwise), load `/providers` and find the **Bypass CLI restrictions** checkbox on every configured CLI row | The checkbox is present for each configured CLI and its state equals that provider's `bypass_restrictions` from `GET /api/system/clis` — off unless the operator ticked it. It is the only control that lets a CLI run with its permission-bypass flag, so it must never be missing or show the wrong state |
 
 ## J. Devices
 

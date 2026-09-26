@@ -21,7 +21,10 @@ export function LogsPanel({ logs, emptyText }: LogsPanelProps) {
   }, [logs])
 
   return (
-    <div className="relative flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-100">
+    <div
+      role="log"
+      className="relative flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-100"
+    >
       <ScrollArea className="h-full">
         <div className="relative p-4 font-mono text-sm leading-relaxed">
           {logs.length === 0 ? (

@@ -243,6 +243,7 @@ const ROUTES = [
   "/models",
   "/network",
   "/providers",
+  "/report",
   "/system",
   "/voice",
   "/setup",
@@ -452,8 +453,15 @@ if (useGroup("D", "i18n integrity")) {
   await check(1, "no untranslated keys on any route", async () => {
     const leaked = []
     for (const route of ROUTES) {
-      const { close, text } = await open(route)
-      const body = await text()
+      const { close, page } = await open(route)
+      // The log viewer (role="log") shows raw log lines, and those name
+      // config keys such as agents.defaults.models that share a prefix with
+      // the locale namespaces. Only the UI around it is scanned.
+      const body = await page.evaluate(() => {
+        const clone = document.body.cloneNode(true)
+        for (const el of clone.querySelectorAll('[role="log"]')) el.remove()
+        return clone.innerText ?? clone.textContent ?? ""
+      })
       await close()
       const hits = [...new Set(body.match(I18N_KEY) || [])]
       if (hits.length) leaked.push(`${route}: ${hits.join(", ")}`)
@@ -873,11 +881,19 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     const urls = page.locator("[data-testid=network-urls]")
     await urls.waitFor({ timeout: 10000 })
     const body = await urls.innerText()
+    const marks = await urls.locator("[data-testid=network-http-warning]").count()
     await close()
     assert(t.urls?.localhost, `GET /api/tls has no urls.localhost: ${JSON.stringify(t.urls)}`)
     assert(body.includes(t.urls.localhost), `localhost URL ${t.urls.localhost} not listed: ${body}`)
+    for (const u of t.urls.http ?? []) assert(body.includes(u), `HTTP URL ${u} not listed: ${body}`)
     for (const u of t.urls.https ?? []) assert(body.includes(u), `HTTPS URL ${u} not listed: ${body}`)
-    return [t.urls.localhost, ...(t.urls.https ?? [])].join(" ")
+    const http = t.urls.http ?? []
+    assert(marks === http.length, `${marks} warning marks for ${http.length} plain-HTTP network addresses`)
+    for (const u of [...http, ...(t.urls.https ?? [])]) {
+      const host = new URL(u).hostname
+      assert(!/^172\.(1[7-9]|2\d|3[01])\.0\.1$/.test(host), `Docker bridge address advertised: ${u}`)
+    }
+    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked)`
   })
 
   await check(10, "changing the HTTPS port shows the restart banner; then restore it", async () => {
@@ -1208,6 +1224,26 @@ if (useGroup("I", "Models and providers")) {
       assert(problems.length === 0, `${route} console: ${problems[0]}`)
     }
     return cli.protocol
+  })
+  await check(11, "a configured CLI offers Bypass CLI restrictions, reflecting the provider", async () => {
+    // The checkbox is the only way to grant a CLI its permission-bypass flag.
+    // It must be there for every configured CLI, and what it shows must be
+    // what the provider actually has (off unless the operator turned it on).
+    const clis = (await api("/api/system/clis")).json ?? []
+    const configured = clis.filter((c) => c.configured)
+    if (configured.length === 0) return "skipped: no CLI provider configured on this instance"
+    const { close, page } = await open("/providers")
+    const seen = []
+    for (const cli of configured) {
+      const box = page.locator(`[data-testid=cli-bypass-${cli.protocol}]`)
+      await box.waitFor({ timeout: 10000 })
+      const state = await box.getAttribute("aria-checked")
+      const want = cli.bypass_restrictions ? "true" : "false"
+      assert(state === want, `${cli.protocol}: checkbox ${state}, provider bypass_restrictions=${cli.bypass_restrictions}`)
+      seen.push(`${cli.protocol}=${cli.bypass_restrictions ? "on" : "off"}`)
+    }
+    await close()
+    return seen.join(", ")
   })
 }
 

@@ -24,6 +24,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 type SaveStatus = "saving" | "saved" | "error" | null
 
@@ -354,19 +359,38 @@ export function NetworkPage() {
                           <dd>
                             <ul className="space-y-1">
                               {tls.urls.http.map((u) => (
-                                <li key={u}>
+                                <li
+                                  key={u}
+                                  className="flex items-center gap-1.5"
+                                >
                                   <a
                                     className="font-mono text-xs underline"
                                     href={u}
                                   >
                                     {u}
                                   </a>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span
+                                        className="text-amber-600 dark:text-amber-400"
+                                        data-testid="network-http-warning"
+                                      >
+                                        <IconAlertTriangle
+                                          className="size-3.5"
+                                          aria-hidden
+                                        />
+                                        <span className="sr-only">
+                                          {t("pages.network.urls.http_warning")}
+                                        </span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      {t("pages.network.urls.http_warning")}
+                                    </TooltipContent>
+                                  </Tooltip>
                                 </li>
                               ))}
                             </ul>
-                            <p className="text-xs text-amber-600 dark:text-amber-400">
-                              {t("pages.network.urls.http_warning")}
-                            </p>
                           </dd>
                         </>
                       )}

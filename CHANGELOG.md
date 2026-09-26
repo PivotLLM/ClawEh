@@ -389,6 +389,15 @@ observe does not need an entry.
 
 ### Changed
 
+- The address lists on the Network page, in `claw status` and in `GET /api/tls`
+  no longer include Docker's bridge interfaces (`docker0`, `br-<id>`, `veth*`):
+  those addresses reach only containers on the machine, so they are not
+  addresses to open and listing them made a plain-HTTP listener look more
+  exposed than it is. The listener still binds them and the Host check still
+  accepts them, so a container can keep calling the API through its bridge.
+  On the Network page each plain-HTTP network address now carries a warning
+  triangle (hover: *Plain-text HTTP exposed to network.*) in place of the
+  sentence under the list.
 - **Fix for MacOS.** Fixed two tools/maestro tests that failed on macOS because they compared raw t.TempDir() paths against symlink-resolved roots (/var vs /private/var); the import gate itself was correct. test.sh now re-prints failing Go test output, lists each failed Go test and MCP integration check by name in the final summary with rerun commands, and saves details to .test-failures.log; a startup-template check that could not fail the run now does.
 - **Colour fix.** Fix colour on text produced by test.sh and
   tests/test_mcpserver.sh: the scripts printed the escape codes literally

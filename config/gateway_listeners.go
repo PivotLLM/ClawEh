@@ -101,6 +101,66 @@ func NetworkHosts(bind string) []string {
 	return hosts
 }
 
+// AdvertisedHosts is NetworkHosts without the addresses of container bridges
+// (docker0, the br-<id> of each Docker network, veth ends): those reach only
+// containers on this machine, so they are not addresses anyone opens, and
+// listing them would make a plain-HTTP listener look exposed when it is not.
+// The Host allowlist keeps using NetworkHosts, so a container can still call
+// the API through its bridge address.
+func AdvertisedHosts(bind string) []string {
+	hosts := NetworkHosts(bind)
+	if !isWildcardHost(bind) {
+		return hosts
+	}
+	hidden := containerAddrs()
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if !hidden[h] {
+			out = append(out, h)
+		}
+	}
+	if len(out) == 0 {
+		// A machine whose only addresses are bridges still needs one to open.
+		return hosts
+	}
+	return out
+}
+
+// containerAddrs collects the IPv4 addresses of every container interface.
+func containerAddrs() map[string]bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	hidden := map[string]bool{}
+	for _, ifc := range ifaces {
+		if !isContainerInterface(ifc.Name) {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				if ip4 := ipn.IP.To4(); ip4 != nil {
+					hidden[ip4.String()] = true
+				}
+			}
+		}
+	}
+	return hidden
+}
+
+// isContainerInterface reports whether name is one Docker creates on Linux:
+// docker0 (and docker_gwbridge under swarm), the br-<id> bridge of a
+// user-defined network, or a container's veth end.
+func isContainerInterface(name string) bool {
+	return strings.HasPrefix(name, "docker") ||
+		strings.HasPrefix(name, "br-") ||
+		strings.HasPrefix(name, "veth")
+}
+
 // baseURL renders scheme://host:port/.
 func baseURL(scheme, host string, port int) string {
 	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/"
@@ -118,7 +178,7 @@ func (g GatewayConfig) NetworkHTTPURLs() []string {
 		return nil
 	}
 	var out []string
-	for _, h := range NetworkHosts(g.Host) {
+	for _, h := range AdvertisedHosts(g.Host) {
 		out = append(out, baseURL("http", h, g.EffectivePort()))
 	}
 	return out
@@ -129,7 +189,7 @@ func (g GatewayConfig) NetworkHTTPURLs() []string {
 func (g GatewayConfig) HTTPSURLs() []string {
 	switch g.TLS.EffectiveMode() {
 	case TLSModeAll:
-		hosts := NetworkHosts("0.0.0.0")
+		hosts := AdvertisedHosts("0.0.0.0")
 		out := make([]string, 0, len(hosts))
 		for _, h := range hosts {
 			out = append(out, baseURL("https", h, g.EffectiveTLSPort()))
