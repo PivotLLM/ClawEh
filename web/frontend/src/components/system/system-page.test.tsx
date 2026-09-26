@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { patchAppConfig } from "@/api/channels"
 import { SidebarProvider } from "@/components/ui/sidebar"
 
-import { ConfigPage } from "./config-page"
+import { SystemPage } from "./system-page"
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -49,7 +49,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <SidebarProvider>
-        <ConfigPage />
+        <SystemPage />
       </SidebarProvider>
     </QueryClientProvider>,
   )
@@ -67,7 +67,7 @@ afterEach(() => {
   patched.mockClear()
 })
 
-describe("ConfigPage backup block", () => {
+describe("SystemPage backup block", () => {
   // The page rebuilds `backup` from its form fields on every save. A field the
   // form does not carry is silently dropped from the config the moment any
   // other field is edited — which is what happened to backup.dest.
@@ -93,6 +93,20 @@ describe("ConfigPage backup block", () => {
 
   // Clearing the field must reach the server: the PATCH is a merge, so a key
   // left out is a key left alone.
+  // The listeners belong to the Network page; a patch from here that carried
+  // gateway.* would overwrite what was saved there.
+  it("never writes gateway settings", async () => {
+    renderPage()
+    const dest = await screen.findByTestId("backup-dest")
+    fireEvent.change(dest, { target: { value: "/mnt/other" } })
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    })
+    const patch = patched.mock.calls.at(-1)?.[0] as Record<string, unknown>
+    expect(patch).not.toHaveProperty("gateway")
+    expect(patch).not.toHaveProperty("channels")
+  })
+
   it("sends an empty dest so the field can be cleared", async () => {
     renderPage()
     const dest = await screen.findByTestId("backup-dest")

@@ -16,9 +16,11 @@
 // install; override with PLAYWRIGHT_MODULE / CHROME_PATH if they live elsewhere.
 //
 // SAFETY: this mutates configuration, so point it at a DEV instance. Every
-// mutation is reverted — the agent it creates is deleted, and every field it
-// edits is restored to the value read beforehand. It refuses to run against the
-// production port (18790) unless --allow-prod is passed.
+// mutation is reverted — the agent it creates is deleted, every field it edits
+// is restored to the value read beforehand, and the certificate it regenerates
+// (group R, only when the instance already uses a self-signed one) is replaced
+// by another self-signed one. It refuses to run against the production port
+// (18790) unless --allow-prod is passed.
 
 import { existsSync } from "node:fs"
 
@@ -183,7 +185,7 @@ async function config() {
   return json
 }
 
-// Groups F and G write configuration, which the gateway picks up on a debounced
+// Groups F, G and R write configuration, which the gateway picks up on a debounced
 // reload (~15s later) that briefly stops the channels. Anything loading a page
 // during that window sees the chat WebSocket handshake fail with 503 and logs a
 // console error — a real effect of a reload, not a defect, but it makes later
@@ -239,7 +241,9 @@ const ROUTES = [
   "/mcp/servers",
   "/memory",
   "/models",
+  "/network",
   "/providers",
+  "/system",
   "/voice",
   "/setup",
   "/status",
@@ -302,6 +306,8 @@ if (useGroup("P", "Authentication")) {
     const url = new URL(page.url())
     const fields = await page.locator("#login-username, #login-password").count()
     const submit = await page.getByRole("button", { name: "Sign in" }).count()
+    const heading = (await page.locator("h1").first().innerText()).trim()
+    const body = await page.locator("body").innerText()
     await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
     // The frontend gate sends the visitor to /login and remembers where they
@@ -310,6 +316,12 @@ if (useGroup("P", "Authentication")) {
     assert(url.searchParams.get("next") === "/agents", `next = ${url.searchParams.get("next")}`)
     assert(fields === 2, `${fields} of 2 credential fields rendered`)
     assert(submit === 1, "no Sign in button")
+    // The card is headed by the product name; the button still says Sign in.
+    assert(heading === "ClawEh", `heading reads ${JSON.stringify(heading)}, want ClawEh`)
+    assert(
+      !/Use the admin account created on the server/.test(body),
+      "the removed 'Use the admin account…' line is back",
+    )
     return url.pathname + url.search
   })
 
@@ -621,41 +633,45 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
   })
 }
 
-// G. Config page
-if (useGroup("G", "Config page — load, edit, persist, restore")) {
+// G. System page (the old Config page minus the listeners, which are group R)
+if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
   let original
-  await check(1, "config page renders its sections", async () => {
-    const { close, text } = await open("/config")
+  await check(1, "system page renders the moved sections", async () => {
+    const { close, text, problems } = await open("/system")
     const body = await text()
     await close()
-    for (const s of ["Service", "Runtime", "Backup", "Devices"]) {
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    for (const s of ["Agent defaults", "Context management", "Runtime", "Backup", "Devices"]) {
       assert(body.includes(s), `missing section "${s}"`)
     }
+    // The listeners moved to /network; a Service card here would be a second
+    // writer of gateway.* fighting the Network page.
+    assert(!body.includes("Allowed network CIDRs"), "the listener settings are still on /system")
   })
   await check(2, "an edited field autosaves", async () => {
     const c = await config()
-    original = c?.gateway?.external_url ?? ""
-    const { close, page } = await open("/config")
-    const field = page.locator('input[placeholder^="http"]').first()
-    await field.fill("http://e2e-probe.invalid:9999")
+    original = c?.backup?.dest ?? ""
+    const { close, page } = await open("/system")
+    const field = page.locator("[data-testid=backup-dest]")
+    await field.fill("/tmp/e2e-probe-backup")
     await page.waitForTimeout(2000)
     await close()
     const after = await config()
     assert(
-      after?.gateway?.external_url === "http://e2e-probe.invalid:9999",
-      `external_url = ${after?.gateway?.external_url}`,
+      after?.backup?.dest === "/tmp/e2e-probe-backup",
+      `backup.dest = ${after?.backup?.dest}`,
     )
   })
   await check(3, "restore the original value", async () => {
-    const { close, page } = await open("/config")
-    const field = page.locator('input[placeholder^="http"]').first()
+    const { close, page } = await open("/system")
+    const field = page.locator("[data-testid=backup-dest]")
     await field.fill(original)
     await page.waitForTimeout(2000)
     await close()
     const after = await config()
     assert(
-      (after?.gateway?.external_url ?? "") === original,
-      `external_url = ${after?.gateway?.external_url}, expected ${original}`,
+      (after?.backup?.dest ?? "") === original,
+      `backup.dest = ${after?.backup?.dest}, expected ${original}`,
     )
     return `restored to "${original}"`
   })
@@ -665,10 +681,283 @@ if (useGroup("G", "Config page — load, edit, persist, restore")) {
     await close()
     assert(body.length > 100, "raw config appears empty")
   })
+  await check(5, "/config redirects to /system", async () => {
+    const { close, page, problems, text } = await open("/config")
+    await page.waitForURL(/\/system$/, { timeout: 10000 })
+    const body = await text()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(body.includes("Backup"), "the System page did not render after the redirect")
+  })
 }
 
-// Settle the reload caused by F and G before the read-only groups below.
-if (!ONLY.length || ONLY.includes("F") || ONLY.includes("G")) {
+// R. Network page — listeners, HTTPS and the certificate. Writes: R10 changes
+// the HTTPS port and puts it back; R8 regenerates the self-signed certificate
+// (a new self-signed one replaces it — nothing to restore, and it is skipped
+// when the instance uses its own certificate or has HTTPS off).
+if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
+  const radioChecked = async (page, id) =>
+    (await page.locator(`#${id}`).getAttribute("aria-checked")) === "true"
+
+  await check(1, "every listener control is present", async () => {
+    const { close, page, problems, text } = await open("/network")
+    await page.locator("[data-testid=network-save]").waitFor({ state: "visible", timeout: 10000 })
+    const body = await text()
+    const ids = [
+      "network-http-port",
+      "network-http-scope",
+      "network-https-mode",
+      "network-tls-port",
+      "network-external-url",
+      "network-extra-names",
+      "cert-current",
+      "cert-source",
+      "network-allowed-cidrs",
+      "network-device-scope",
+      "network-device-port",
+      "network-device-external-url",
+      "network-device-cidrs",
+      "network-mcp-listen",
+      "network-urls",
+      "network-save",
+    ]
+    const missing = []
+    for (const id of ids) {
+      if ((await page.locator(`[data-testid=${id}]`).count()) !== 1) missing.push(id)
+    }
+    const radios = await page.getByRole("radio").count()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(missing.length === 0, `controls missing: ${missing.join(", ")}`)
+    for (const label of [
+      "Localhost only (default)",
+      "Network",
+      "All interfaces (default)",
+      "Off",
+      "Self-signed (default)",
+      "External certificate",
+      "Auto-approve pairings",
+    ]) {
+      assert(body.includes(label), `missing label "${label}"`)
+    }
+    // HTTP scope (2) + HTTPS mode (3) + certificate source (2) + device scope (2).
+    assert(radios === 9, `${radios} radios, want 9`)
+    return `${ids.length} controls, ${radios} radios`
+  })
+
+  await check(2, "the HTTP scope radio reflects gateway.host", async () => {
+    const c = await config()
+    const host = (c?.gateway?.host ?? "").toLowerCase()
+    const loopback = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-http-scope]").waitFor({ timeout: 10000 })
+    const localhostOn = await radioChecked(page, "network-http-scope-localhost")
+    const networkOn = await radioChecked(page, "network-http-scope-network")
+    const port = await page.locator("[data-testid=network-http-port]").inputValue()
+    await close()
+    assert(localhostOn === loopback && networkOn === !loopback, `host=${JSON.stringify(host)} but localhost=${localhostOn} network=${networkOn}`)
+    assert(port === String(c?.gateway?.port ?? 18790), `HTTP port field = ${port}`)
+    return `${loopback ? "Localhost only" : "Network"}, port ${port}`
+  })
+
+  await check(3, "the HTTPS mode and port reflect gateway.tls", async () => {
+    const c = await config()
+    const mode = c?.gateway?.tls?.mode ?? "all"
+    const tlsPort = String(c?.gateway?.tls_port ?? 18443)
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-https-mode]").waitFor({ timeout: 10000 })
+    const on = {}
+    for (const m of ["all", "localhost", "off"]) on[m] = await radioChecked(page, `network-https-mode-${m}`)
+    const port = await page.locator("[data-testid=network-tls-port]").inputValue()
+    await close()
+    for (const m of ["all", "localhost", "off"]) {
+      assert(on[m] === (m === mode), `mode ${mode}: radio ${m} checked=${on[m]}`)
+    }
+    assert(port === tlsPort, `HTTPS port field = ${port}, config ${tlsPort}`)
+    return `${mode}, port ${port}`
+  })
+
+  await check(4, "the hostname field reflects gateway.external_url", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-external-url]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    assert(v === (c?.gateway?.external_url ?? ""), `field = ${JSON.stringify(v)}, config ${JSON.stringify(c?.gateway?.external_url)}`)
+    return v || "(blank)"
+  })
+
+  await check(5, "the certificate card shows the fingerprint, or says none is generated", async () => {
+    const t = await api("/api/tls")
+    assert(t.status === 200, `GET /api/tls = ${t.status}`)
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-current]").waitFor({ timeout: 10000 })
+    const fp = await page.locator("[data-testid=cert-fingerprint]").count()
+    const none = await page.locator("[data-testid=cert-none]").count()
+    const shown = fp ? (await page.locator("[data-testid=cert-fingerprint]").innerText()).trim() : ""
+    await close()
+    const cert = t.json?.certificate
+    if (cert?.present) {
+      assert(fp === 1 && none === 0, `certificate present but fingerprint=${fp} none=${none}`)
+      assert(shown === cert.fingerprint, `page shows ${shown}, API says ${cert.fingerprint}`)
+      return shown
+    }
+    assert(fp === 0 && none === 1, `no certificate but fingerprint=${fp} none=${none}`)
+    return "not generated"
+  })
+
+  await check(6, "Self-signed ↔ External reveals the path inputs only under External", async () => {
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-source]").waitFor({ timeout: 10000 })
+    await page.locator("#cert-source-self-signed").click()
+    await page.waitForTimeout(200)
+    const selfPaths = await page.locator("[data-testid=cert-file], [data-testid=cert-key-file]").count()
+    const selfRegen = await page.locator("[data-testid=cert-regenerate]").count()
+    await page.locator("#cert-source-file").click()
+    await page.waitForTimeout(200)
+    const filePaths = await page.locator("[data-testid=cert-file], [data-testid=cert-key-file]").count()
+    const fileRegen = await page.locator("[data-testid=cert-regenerate]").count()
+    const saveBtn = await page.locator("[data-testid=cert-save]").count()
+    await close()
+    assert(selfPaths === 0 && selfRegen === 1, `self-signed: ${selfPaths} path inputs, ${selfRegen} regenerate`)
+    assert(filePaths === 2 && fileRegen === 0 && saveBtn === 1, `external: ${filePaths} path inputs, ${fileRegen} regenerate, ${saveBtn} save`)
+  })
+
+  await check(7, "Save certificate with a bogus path is refused and changes nothing", async () => {
+    const before = await config()
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-source]").waitFor({ timeout: 10000 })
+    await page.locator("#cert-source-file").click()
+    await page.locator("[data-testid=cert-file]").fill("/nonexistent/e2e-probe/fullchain.pem")
+    await page.locator("[data-testid=cert-key-file]").fill("/nonexistent/e2e-probe/privkey.pem")
+    await page.locator("[data-testid=cert-save]").click()
+    const err = page.locator("[data-testid=cert-error]")
+    await err.waitFor({ state: "visible", timeout: 10000 })
+    const message = (await err.innerText()).trim()
+    await close()
+    const after = await config()
+    assert(message.length > 0, "the validation error is empty")
+    assert(
+      JSON.stringify(after?.gateway) === JSON.stringify(before?.gateway),
+      `gateway config changed: ${JSON.stringify(after?.gateway?.tls)}`,
+    )
+    return message
+  })
+
+  await check(8, "Regenerate changes the self-signed certificate's fingerprint", async () => {
+    const t = (await api("/api/tls")).json ?? {}
+    if (t.source !== "self-signed") return "skipped: the instance uses its own certificate"
+    if (t.mode === "off") return "skipped: HTTPS is off (gateway.tls.mode)"
+    if (!t.certificate?.present) return "skipped: no certificate yet (enable HTTPS and restart)"
+    const before = t.certificate.fingerprint
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-regenerate]").waitFor({ timeout: 10000 })
+    await page.locator("[data-testid=cert-regenerate]").click()
+    await page.waitForFunction(
+      (prev) => document.querySelector("[data-testid=cert-fingerprint]")?.textContent?.trim() !== prev,
+      before,
+      { timeout: 15000 },
+    )
+    const shown = (await page.locator("[data-testid=cert-fingerprint]").innerText()).trim()
+    await close()
+    const after = (await api("/api/tls")).json?.certificate?.fingerprint
+    assert(after && after !== before, `API fingerprint unchanged: ${after}`)
+    assert(shown === after, `page shows ${shown}, API says ${after}`)
+    return `${before.slice(0, 11)}… → ${after.slice(0, 11)}…`
+  })
+
+  await check(9, "the address list shows what to open", async () => {
+    const t = (await api("/api/tls")).json ?? {}
+    const { close, page } = await open("/network")
+    const urls = page.locator("[data-testid=network-urls]")
+    await urls.waitFor({ timeout: 10000 })
+    const body = await urls.innerText()
+    await close()
+    assert(t.urls?.localhost, `GET /api/tls has no urls.localhost: ${JSON.stringify(t.urls)}`)
+    assert(body.includes(t.urls.localhost), `localhost URL ${t.urls.localhost} not listed: ${body}`)
+    for (const u of t.urls.https ?? []) assert(body.includes(u), `HTTPS URL ${u} not listed: ${body}`)
+    return [t.urls.localhost, ...(t.urls.https ?? [])].join(" ")
+  })
+
+  await check(10, "changing the HTTPS port shows the restart banner; then restore it", async () => {
+    const c = await config()
+    const original = c?.gateway?.tls_port ?? 18443
+    const httpPort = c?.gateway?.port ?? 18790
+    let probe = original + 1
+    if (probe === httpPort) probe += 1
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-tls-port]")
+    await field.waitFor({ timeout: 10000 })
+    assert(
+      (await page.locator("[data-testid=network-restart-banner]").count()) === 0,
+      "the restart banner is already showing before any change (restart the dev instance)",
+    )
+    await field.fill(String(probe))
+    await page.locator("[data-testid=network-save]").click()
+    await page.locator("[data-testid=network-restart-banner]").waitFor({ state: "visible", timeout: 10000 })
+    const mid = await config()
+    assert(mid?.gateway?.tls_port === probe, `tls_port after save = ${mid?.gateway?.tls_port}, want ${probe}`)
+    // Restore on the same page: Save is enabled again once the field differs
+    // from what was just saved.
+    await field.fill(String(original))
+    await page.locator("[data-testid=network-save]").click()
+    await page.getByText("Saved ✓").waitFor({ timeout: 10000 })
+    await close()
+    const after = await config()
+    assert(
+      (after?.gateway?.tls_port ?? 18443) === original,
+      `tls_port = ${after?.gateway?.tls_port}, expected ${original}`,
+    )
+    return `18443-style probe ${probe}, restored ${original}`
+  })
+
+  await check(11, "the allowed-networks editor reflects gateway.allowed_cidrs", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-allowed-cidrs]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.allowed_cidrs ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(loopback only)"
+  })
+
+  await check(12, "the device gateway section reflects channels.device", async () => {
+    const c = await config()
+    const d = c?.channels?.device ?? {}
+    const host = (d.host ?? "").toLowerCase()
+    const loopback = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-device-scope]").waitFor({ timeout: 10000 })
+    const localhostOn = await radioChecked(page, "network-device-scope-localhost")
+    const port = await page.locator("[data-testid=network-device-port]").inputValue()
+    const ext = await page.locator("[data-testid=network-device-external-url]").inputValue()
+    await close()
+    assert(localhostOn === loopback, `device host=${JSON.stringify(host)} but localhost radio=${localhostOn}`)
+    assert(port === String(d.port || 18791), `device port field = ${port}`)
+    assert(ext === (d.external_url ?? ""), `device external URL field = ${JSON.stringify(ext)}`)
+    return `${loopback ? "Localhost only" : "Network"}, port ${port}`
+  })
+
+  await check(13, "the MCP host address is shown read-only", async () => {
+    const c = await config()
+    const want = c?.mcp_host?.listen || "127.0.0.1:5911"
+    const { close, page } = await open("/network")
+    const el = page.locator("[data-testid=network-mcp-listen]")
+    await el.waitFor({ timeout: 10000 })
+    const shown = (await el.innerText()).trim()
+    const tag = await el.evaluate((n) => n.tagName.toLowerCase())
+    await close()
+    assert(shown === want, `shows ${shown}, config ${want}`)
+    assert(tag !== "input" && tag !== "textarea", `rendered as an editable <${tag}>`)
+    return shown
+  })
+}
+
+// Settle the reload caused by F, G and R before the read-only groups below.
+if (!ONLY.length || ONLY.includes("F") || ONLY.includes("G") || ONLY.includes("R")) {
   await settleAfterConfigWrites()
 }
 
@@ -727,18 +1016,27 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
 
 // I. Models and providers
 if (useGroup("I", "Models and providers")) {
+  // A page that threw during render shows the route error boundary, whose
+  // only fixed text is its "Show error" button.
+  const noBoundary = (body, route) =>
+    assert(!/Show error/i.test(body), `${route} rendered the error boundary`)
+
   await check(1, "models page lists configured models", async () => {
-    const { close, text } = await open("/models")
+    const { close, text, problems } = await open("/models")
     const body = await text()
     await close()
+    noBoundary(body, "/models")
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
     const r = await api("/api/models")
     const first = r.json?.models?.[0]?.model_name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
   })
   await check(2, "providers page lists configured providers", async () => {
-    const { close, text } = await open("/providers")
+    const { close, text, problems } = await open("/providers")
     const body = await text()
     await close()
+    noBoundary(body, "/providers")
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
     const r = await api("/api/providers")
     const first = r.json?.providers?.[0]?.name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
@@ -891,6 +1189,26 @@ if (useGroup("I", "Models and providers")) {
     assert(/Command/i.test(sheet), "the CLI edit sheet lost its Command field")
     return configured.protocol
   })
+
+  await check(10, "both pages render with a CLI provider present, no error boundary", async () => {
+    // A CLI row carries argument lists the server encodes as null when empty
+    // (no bypass flags, no extra_args); spreading one of those threw straight
+    // into the error boundary. The page must survive whatever the API returns.
+    const clis = (await api("/api/system/clis")).json ?? []
+    const cli = clis.find((c) => c.configured)
+    if (!cli) return "skipped: no CLI provider configured on this instance"
+    for (const route of ["/providers", "/models"]) {
+      const { close, page, text, problems } = await open(route)
+      if (route === "/providers") {
+        await page.locator(`[data-testid=cli-row-${cli.protocol}]`).waitFor({ timeout: 10000 })
+      }
+      const body = await text()
+      await close()
+      noBoundary(body, route)
+      assert(problems.length === 0, `${route} console: ${problems[0]}`)
+    }
+    return cli.protocol
+  })
 }
 
 // J. Devices — the store-open regression
@@ -1010,6 +1328,30 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     // Tokens are reported as set/not set; a credential-shaped value is a leak.
     assert(!/sk-[A-Za-z0-9]{8}|xoxb-|xapp-/.test(text), "credential-shaped value in the assessment JSON")
     return `${json.assessment.length} rows`
+  })
+
+  await check(9, "the Speech page lists the configured backends on first load", async () => {
+    // Before any click. The page used to seed its rows from an empty list when
+    // the query was already cached, said nothing was configured, and the first
+    // "Add backend" then saved that empty list over the real configuration.
+    const stt = (await api("/api/voice/stt")).json?.stt ?? []
+    const { close, page, problems } = await open("/voice")
+    await page.getByText("Transcription backends").waitFor({ timeout: 10000 })
+    const selects = page.locator("select[id^=stt-provider-]")
+    if (stt.length > 0) {
+      await selects.first().waitFor({ state: "visible", timeout: 10000 })
+    }
+    const rows = await selects.count()
+    const providers = rows ? await selects.evaluateAll((els) => els.map((e) => e.value)) : []
+    const empty = await page.getByText(/No transcription backends configured/).count()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(rows === stt.length, `${rows} backend rows for ${stt.length} configured`)
+    assert(empty === (stt.length === 0 ? 1 : 0), `empty-state shown ${empty} times with ${stt.length} configured`)
+    for (let i = 0; i < stt.length; i++) {
+      assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
+    }
+    return rows ? providers.join(", ") : "none configured — empty state shown"
   })
 }
 

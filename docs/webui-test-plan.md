@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-108 checks in all; the runner prints the same tally at the end.
+126 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -14,13 +14,23 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 ## Before you start
 
-**Run it against a dev instance, never production.** Groups F, G and N write.
-All three revert what they change — the agent created in F is deleted, the field
-edited in G is restored to the value read beforehand, and the memory domain N
-creates is deleted at the end — but a crash mid-run would leave the change
-behind. N only ever touches the `e2e-probe` domain it created, so an agent's
-real memory is not at risk, but it is still a write. The runner refuses port
-18790 unless `--allow-prod` is passed.
+**Run it against a dev instance, never production.** Groups F, G, N and R
+write. All four revert what they change — the agent created in F is deleted, the
+field edited in G and the HTTPS port edited in R are restored to the values read
+beforehand, and the memory domain N creates is deleted at the end — but a crash
+mid-run would leave the change behind. N only ever touches the `e2e-probe`
+domain it created, so an agent's real memory is not at risk, but it is still a
+write. R8 regenerates the self-signed certificate (a new self-signed one takes
+its place; browsers that accepted the old one warn again) and is skipped with a
+note when the instance uses its own certificate or has HTTPS off. The runner
+refuses port 18790 unless `--allow-prod` is passed.
+
+**HTTPS on the dev instance.** Group R reads the certificate through
+`GET /api/tls` whatever the listener state, but R8 (regenerate) only runs with
+HTTPS on (`gateway.tls.mode` not `off`, a self-signed certificate, and the
+listener started at least once so a certificate exists). R5 and R9 report what
+is there either way. R10 expects no restart to be pending when it starts, so
+restart the dev instance after changing listener settings by hand.
 
 | Requirement | Notes |
 |---|---|
@@ -64,11 +74,11 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 19 routes in a browser with the console open:
+**Process.** Load each of the 21 routes in a browser with the console open:
 `/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/tools`, `/agent/skills`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
-`/mcp/servers`, `/memory`, `/models`, `/providers`, `/voice`, `/setup`,
-`/status`.
+`/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/system`,
+`/voice`, `/setup`, `/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -86,7 +96,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 19 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 21 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 | D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
@@ -112,14 +122,45 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
-## G. Config page
+## G. System page
+
+The Config page was split: listeners are on **Network** (group R), everything
+else is on **System**. `/config` still works and lands on `/system`;
+`/config/raw` is unchanged.
 
 | ID | Process | Expected |
 |---|---|---|
-| G1 | Load `/config` | Sections Service, Runtime, Backup and Devices all render |
-| G2 | Note the current **External URL**, change it, wait ~2s | The new value is in `gateway.external_url` |
-| G3 | Restore the original value, wait ~2s | `gateway.external_url` matches what G2 recorded |
+| G1 | Load `/system` | Sections Agent defaults, Context management, Runtime, Backup and Devices all render; there is **no** listener section (no *Allowed network CIDRs*) — a second writer of `gateway.*` here would fight the Network page. No console errors |
+| G2 | Note the current **Backup destination**, change it to `/tmp/e2e-probe-backup`, wait ~2s | The new value is in `backup.dest` |
+| G3 | Restore the original value, wait ~2s | `backup.dest` matches what G2 recorded |
 | G4 | Load `/config/raw` | The configuration document renders |
+| G5 | Load `/config` | The browser lands on `/system` and the System page renders (Backup section present), no console errors |
+
+## R. Network page
+
+Everything about listeners: the WebUI's HTTP and HTTPS listeners, the
+certificate, the IP allowlist, the device gateway's listener and the read-only
+MCP host address. `GET /api/tls` reports the listener and certificate state;
+`POST /api/tls/validate` loads a certificate/key pair without saving it;
+`POST /api/tls/regenerate` replaces the self-signed certificate. General fields
+save on the **Save** button as one `PATCH /api/config`; the certificate has its
+own buttons. R8 and R10 write (see *Before you start*); R8 needs HTTPS on.
+
+| ID | Process | Expected |
+|---|---|---|
+| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs**, the device gateway's scope radios, port, external URL, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address**, the address list and the **Save** button. Nine radios in all. No console errors |
+| R2 | Compare the HTTP **Scope** radio and **Port** with `gateway.host` / `gateway.port` | *Network* is selected when the host is `0.0.0.0` (or any non-loopback address), *Localhost only* otherwise; the port field shows `gateway.port` (18790 by default). A warning line under *Network* says plain HTTP on the network is not encrypted |
+| R3 | Compare the HTTPS **Listen on** radio and **HTTPS port** with `gateway.tls.mode` / `gateway.tls_port` | Exactly the configured mode is selected (`all` when unset); the port field shows `gateway.tls_port` (18443 by default) |
+| R4 | Compare **Hostname / external URL** with `gateway.external_url` | Equal (blank when unset) |
+| R5 | `curl -b jar $BASE/api/tls`, then read the certificate card | With `certificate.present`, the card shows source, subject, names, expiry and the **SHA-256 fingerprint**, equal to the API's; otherwise it reads *Certificate not generated* and shows no fingerprint |
+| R6 | Click *Self-signed (default)*, then *External certificate* | Under Self-signed: no path inputs, a **Regenerate certificate** button. Under External: **Certificate file** and **Private key file** inputs and a **Save certificate** button, no Regenerate |
+| R7 | Under External, enter `/nonexistent/e2e-probe/fullchain.pem` and `/nonexistent/e2e-probe/privkey.pem`, **Save certificate** | An inline error with the server's reason (`POST /api/tls/validate` answered 400). `GET /api/config` → `gateway` is byte-for-byte what it was before: nothing was saved |
+| R8 | With a self-signed certificate and HTTPS on, click **Regenerate certificate** (skip with a note otherwise) | The fingerprint shown changes, and `GET /api/tls` reports the new one |
+| R9 | Read the **Addresses** card | Lists `urls.localhost` and every `urls.https[]` from `GET /api/tls` — exactly what to open. With HTTPS off it says ClawEh is reachable from this host only |
+| R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number, **Save**; then set it back and **Save** | After the first save a **Restart required to apply listener changes** banner appears and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
+| R11 | Compare **Allowed network CIDRs** with `gateway.allowed_cidrs` | One entry per line, in order (empty for loopback only) |
+| R12 | Compare the **Device gateway** section with `channels.device` | Scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the external URL field shows `external_url` |
+| R13 | Read the **MCP host** section | The listen address equals `mcp_host.listen` (`127.0.0.1:5911` by default) and is rendered as text, not an input: the gateway refuses any non-loopback address, so there is nothing to edit here |
 
 ## H. Channels
 
@@ -134,8 +175,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 
 | ID | Process | Expected |
 |---|---|---|
-| I1 | Load `/models` | Lists the models from `GET /api/models` |
-| I2 | Load `/providers` | Lists the providers from `GET /api/providers` |
+| I1 | Load `/models` | Lists the models from `GET /api/models`; no console errors and **no error boundary** (the boundary's only fixed text is its **Show error** button) |
+| I2 | Load `/providers` | Lists the providers from `GET /api/providers`; no console errors, no error boundary |
 | I3 | `/models` → **Add Model**, then Escape | The sheet opens and closes with no console error |
 | I4 | Load `/providers` and count the **Configured** / **Not configured** labels | Every card in the API grid carries one. "Configured" is the backend's answer, not a guess from the config: an API key for an HTTP provider, and for a CLI a binary that actually resolves — so a stale path reads *Not configured* and a blank one that resolves reads *Configured* |
 | I5 | `/providers` → **Add Provider** → open the wire-protocol picker | No `*-cli` protocol is offered. A CLI is added by its switch in the **Local CLI agents** section; building one by hand here would produce a provider the section does not show and the grid filters out |
@@ -143,6 +184,7 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | I7 | Compare the provider cards against `GET /api/providers` | The grid holds only the non-CLI providers. CLI providers appear in the section above and nowhere else: one CLI is one thing to the person using it, and showing it twice under two controls is what made it confusing |
 | I8 | Load `/providers` and read a CLI row | **Args:** lists the whole command line in invocation order — the provider's own flags (`-p --output-format json`), the permission flags (`--dangerously-skip-permissions`, `--yolo`), whatever the models add, then the stdin marker. Not just the configured part: someone asking what ClawEh runs on their machine is owed all of it, and some of it auto-approves tool use |
 | I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
+| I10 | With a CLI provider configured (`GET /api/system/clis` has a `configured` row; skip with a note otherwise), load `/providers` and `/models` | Both render with the CLI row present, no console errors and no error boundary. A CLI row carries argument lists the server encodes as `null` when empty (`required_args`, `bypass_args`, `extra_args`); spreading one used to throw *Spread syntax requires …iterable* straight into the boundary |
 
 ## J. Devices
 
@@ -163,6 +205,7 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 | K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
+| K9 | `curl -b jar $BASE/api/voice/stt`, then load `/voice` and read it **before clicking anything** | One backend row per `stt[]` entry, each with its provider selected, and no *No transcription backends configured* line; with none configured, that line and no rows. The page used to seed its rows from an empty list when the query was already cached, said nothing was configured, and the first **Add backend** then saved that empty list over the real configuration |
 
 ## L. Setup wizard
 
@@ -221,7 +264,7 @@ one failed login, which the limiter forgets on the next success (P5).
 
 | ID | Process | Expected |
 |---|---|---|
-| P1 | In a fresh browser (no session), load `/agents` | Redirected to `/login?next=%2Fagents`. The page shows the **Username** and **Password** fields and a **Sign in** button, with no console errors. The frontend gate remembers where the visitor was going, so a bookmark still works after signing in. (With no admin account the same page instead reads **No admin account** and tells you to run `claw admin` on the server) |
+| P1 | In a fresh browser (no session), load `/agents` | Redirected to `/login?next=%2Fagents`. The card is headed **ClawEh** (the product name, not "Sign in"), shows the **Username** and **Password** fields and a **Sign in** button, and does **not** carry the line *Use the admin account created on the server*; no console errors. The frontend gate remembers where the visitor was going, so a bookmark still works after signing in. (With no admin account the same page instead reads **No admin account** and tells you to run `claw admin` on the server) |
 | P2 | On `/login`, enter the right username with a wrong password, **Sign in** | The form stays on `/login` and shows **Invalid username or password.** — one message for a bad username and a bad password alike, so the form never confirms which half was right. `GET /api/auth/status` from that browser still says `authenticated: false` |
 | P3 | **anonymous** `curl -i $BASE/api/config` | `401` with a JSON `error` (`authentication required`, or `no admin account` with a `claw admin` hint) and **no configuration in the body** |
 | P4 | `curl -b jar $BASE/api/auth/status` | `{"configured":true,"authenticated":true,"username":"<admin>"}` — the username is the one that signed in |

@@ -11,6 +11,28 @@
 #   CLAW_VERSION   Version/tag to install (e.g. 0.5.4); default: latest
 #   CLAW_PACKAGE   Path to a local tar.gz archive (for offline/test use)
 #
+# Admin account:
+#   The WebUI requires an admin login, and the installer will not start the
+#   service without one. When <CLAW_HOME>/credentials.json does not exist yet,
+#   `claw install` asks for a username and a password (twice, not echoed, at
+#   least 12 characters). Under `curl … | bash` stdin is this script, so the
+#   prompt is read from the terminal (/dev/tty) instead. An existing account is
+#   kept as it is.
+#
+#   Unattended install (no terminal): export both variables in the same shell,
+#   run the installer, then unset them. Do not put them on the command line in
+#   front of `curl` — they would only reach curl, and the password would land in
+#   your shell history:
+#     read -r CLAW_ADMIN_USER; read -rs CLAW_ADMIN_PASSWORD
+#     export CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+#     curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
+#     unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+#   With `sudo bash`, keep them across sudo:
+#     … | sudo --preserve-env=CLAW_ADMIN_USER,CLAW_ADMIN_PASSWORD bash
+#
+#   CLAW_ADMIN_USER      Admin username (no whitespace, at most 64 characters)
+#   CLAW_ADMIN_PASSWORD  Admin password (at least 12 characters)
+#
 set -euo pipefail
 
 REPO="PivotLLM/ClawEh"
@@ -133,17 +155,30 @@ elif "$bin" install --help 2>&1 | grep -q -- "--yes"; then
 fi
 
 # --- run installation ---
+# stdin is left alone: `claw install` never reads it for the admin account
+# prompt when it is not a terminal (here it is this script), and opens
+# /dev/tty instead. stdout goes through tee only to capture the URLs below;
+# the prompts are written to the terminal. CLAW_ADMIN_USER and
+# CLAW_ADMIN_PASSWORD, when exported, reach `claw install` through the
+# environment.
 echo "==> Installing ClawEh service..."
 install_log="$tmpdir/install.log"
 if ! "$bin" install "${install_args[@]}" "$@" 2>&1 | tee "$install_log"; then
-    echo "Error: Installation failed. Check output above for details." >&2
+    unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+    echo "Error: Installation failed; the service was not started. See the message above for how to proceed." >&2
     exit 1
 fi
+unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
 
-# --- resolve web UI URL ---
-web_url="$(grep -E "(Web interface is at:|Open:|Browse to:)" "$install_log" 2>/dev/null | grep -o 'http[s]*://[^ ]*' | tail -n 1 || true)"
+# --- resolve web UI URLs ---
+# `claw install` ends with the same listener summary `claw status` prints,
+# derived from the installed config: the loopback HTTP URL, the network HTTP
+# URLs when --host is not loopback, and the HTTPS URLs (every interface by
+# default). Take them from there rather than guessing a port.
+web_urls="$(grep -E '^(WebUI on |HTTPS on this machine|      https?://)' "$install_log" 2>/dev/null | grep -oE 'https?://[^ ]+' || true)"
+web_url="$(grep -E '^WebUI on this machine:' "$install_log" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -n 1 || true)"
 if [ -z "$web_url" ]; then
-    web_url="http://localhost:18790"
+    web_url="$(printf '%s\n' "$web_urls" | head -n 1)"
 fi
 
 # --- attempt to open web browser for setup wizard ---
@@ -171,10 +206,14 @@ open_browser() {
 
 echo ""
 echo "==> Setup Wizard"
-if open_browser "$web_url"; then
+if [ -z "$web_url" ]; then
+    echo "Run \`claw status\` to see the WebUI URLs, then sign in with the admin account."
+elif open_browser "$web_url"; then
     echo "Opened setup wizard in your browser: ${web_url}"
+    echo "Sign in with the admin account created above."
 else
     echo "Could not launch a web browser automatically (running in a terminal or headless session)."
-    echo "Point your browser to the following URL to complete the setup wizard:"
-    echo "  ${web_url}"
+    echo "Point your browser to one of these URLs, sign in with the admin account created above,"
+    echo "and complete the setup wizard:"
+    printf '%s\n' "$web_urls" | sed 's/^/  /'
 fi

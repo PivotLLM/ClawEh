@@ -54,8 +54,20 @@ export interface CLIInfo {
 // its binary is installed, and how it is currently configured. Rows come back
 // for CLIs that are not installed too — the Providers page greys those out, and
 // the setup wizard offers only the installed ones.
+//
+// Every argument list is normalised to an array here: Go encodes a nil slice as
+// null (a CLI with no bypass flags, a model with no extra_args), and the rows
+// spread them.
 export async function listCLIs(): Promise<CLIInfo[]> {
-  return request<CLIInfo[]>("/api/system/clis")
+  const rows = await request<CLIInfo[] | null>("/api/system/clis")
+  return (rows ?? []).map((cli) => ({
+    ...cli,
+    base_args: cli.base_args ?? [],
+    required_args: cli.required_args ?? [],
+    bypass_args: cli.bypass_args ?? [],
+    extra_args: cli.extra_args ?? [],
+    trailing_args: cli.trailing_args ?? [],
+  }))
 }
 
 // setCLIEnabled turns a CLI agent on or off. On creates the provider and model

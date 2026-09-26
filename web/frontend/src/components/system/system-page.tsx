@@ -10,7 +10,6 @@ import {
   EMPTY_FORM,
   buildFormFromConfig,
   nullableInts,
-  parseCIDRText,
   parseIntField,
   parseOptionalIntField,
 } from "@/components/config/form-model"
@@ -20,13 +19,16 @@ import { BackupSection } from "@/components/config/sections/backup-section"
 import { ContextManagementSection } from "@/components/config/sections/context-management-section"
 import { DevicesSection } from "@/components/config/sections/devices-section"
 import { RuntimeSection } from "@/components/config/sections/runtime-section"
-import { ServiceSection } from "@/components/config/sections/service-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
 type SaveStatus = "saving" | "saved" | "error" | null
 
-export function ConfigPage() {
+// SystemPage is everything about the running system that is not a listener:
+// agent defaults, context management, runtime, logging, backup and hardware
+// devices. Listeners (ports, HTTPS, allowlists, the device gateway) are on the
+// Network page. Fields autosave on a debounce, as a JSON merge patch.
+export function SystemPage() {
   const { t } = useTranslation()
   const [form, setForm] = useState<CoreConfigForm>(EMPTY_FORM)
   const [status, setStatus] = useState<SaveStatus>(null)
@@ -53,11 +55,6 @@ export function ConfigPage() {
     undefined,
   )
 
-  // The address the user is currently reaching the WebUI on. Inherently
-  // reachable from their own machine (where claw-auth runs), so it is the
-  // external-URL default/placeholder for the Service card.
-  const externalUrlPlaceholder = `${window.location.protocol}//${window.location.host}`
-
   const { data, isLoading, error } = useQuery({
     queryKey: ["config"],
     queryFn: async () => {
@@ -81,12 +78,6 @@ export function ConfigPage() {
   if (data && data !== syncedData) {
     setSyncedData(data)
     const parsed = buildFormFromConfig(data)
-    // Seed the external URL with how the user is currently reaching the WebUI so
-    // an unset value persists a reachable default on save (rather than leaving it
-    // to server-side host:port derivation).
-    if (!parsed.gatewayExternalUrl) {
-      parsed.gatewayExternalUrl = externalUrlPlaceholder
-    }
     setForm(parsed)
     setBaseline(parsed)
   }
@@ -311,18 +302,9 @@ export function ConfigPage() {
             })
           : undefined
 
-        const gatewayPort = parseIntField(form.gatewayPort, "Web port", {
-          min: 1,
-          max: 65535,
-        })
-
+        // No gateway.* here: the listeners are the Network page's, and a
+        // second writer would overwrite what was saved there.
         patch = {
-          gateway: {
-            host: form.gatewayHost,
-            port: gatewayPort,
-            external_url: form.gatewayExternalUrl.trim(),
-            allowed_cidrs: parseCIDRText(form.allowedCIDRsText),
-          },
           agents: {
             base_dir: baseDir,
             common_dir: form.commonDir.trim(),
@@ -427,7 +409,7 @@ export function ConfigPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={t("navigation.config")}>
+      <PageHeader title={t("navigation.system")}>
         <div className="flex items-center gap-3">
           {status && (
             <span
@@ -465,12 +447,6 @@ export function ConfigPage() {
                   {saveError}
                 </div>
               )}
-
-              <ServiceSection
-                form={form}
-                onFieldChange={updateField}
-                externalUrlPlaceholder={externalUrlPlaceholder}
-              />
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
 

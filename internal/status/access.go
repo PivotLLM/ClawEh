@@ -6,7 +6,6 @@ package status
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 
@@ -26,15 +25,28 @@ func accessReport(cfg *config.Config) string {
 
 	gw := cfg.Gateway
 	line("Access:")
-	line("  WebUI (this host):  http://127.0.0.1:%d/", gw.EffectivePort())
-	if gw.HTTPSEnabled() {
-		for _, h := range networkHosts(gw.Host) {
-			line("  WebUI (network):    https://%s:%d/", h, gw.EffectiveTLSPort())
+	line("  WebUI (localhost):  %s", gw.LocalHTTPURL())
+	for _, u := range gw.NetworkHTTPURLs() {
+		line("  WebUI (network):    %s  (plain HTTP, unencrypted)", u)
+	}
+	switch gw.TLS.EffectiveMode() {
+	case config.TLSModeAll:
+		for _, u := range gw.HTTPSURLs() {
+			line("  WebUI (network):    %s", u)
 		}
+	case config.TLSModeLocalhost:
+		for _, u := range gw.HTTPSURLs() {
+			line("  WebUI (localhost):  %s", u)
+		}
+	default:
+		line("  HTTPS:              off (gateway.tls.mode \"off\")")
+	}
+	if !gw.ReachableOffBox() {
+		line("  WebUI (network):    not served — plain HTTP is on localhost only and HTTPS is")
+		line("                      %s; set gateway.tls.mode to \"all\" to serve it", httpsScope(gw))
+	}
+	if gw.HTTPSEnabled() {
 		certificateLines(&b, cfg)
-	} else {
-		line("  WebUI (network):    not served — gateway.host is loopback; set it to a")
-		line("                      network address to serve HTTPS on gateway.tls_port")
 	}
 	if gw.ExternalURL != "" {
 		line("  External URL:       %s", gw.ExternalURL)
@@ -54,31 +66,12 @@ func accessReport(cfg *config.Config) string {
 	return b.String()
 }
 
-// networkHosts turns the configured bind host into the addresses a browser on
-// the network would use: a wildcard bind is expanded to every non-loopback
-// IPv4 interface address, a specific address is returned as is.
-func networkHosts(bind string) []string {
-	if bind != "0.0.0.0" && bind != "::" && bind != "[::]" {
-		return []string{bind}
+// httpsScope says where HTTPS is served, for the "not served" line.
+func httpsScope(gw config.GatewayConfig) string {
+	if gw.HTTPSEnabled() {
+		return "on localhost only"
 	}
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return []string{bind}
-	}
-	var hosts []string
-	for _, a := range addrs {
-		ipNet, ok := a.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
-			continue
-		}
-		if ip4 := ipNet.IP.To4(); ip4 != nil {
-			hosts = append(hosts, ip4.String())
-		}
-	}
-	if len(hosts) == 0 {
-		return []string{bind}
-	}
-	return hosts
+	return "off"
 }
 
 // certificateLines names the certificate the HTTPS listener serves so the

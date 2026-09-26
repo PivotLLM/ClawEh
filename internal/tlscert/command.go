@@ -24,10 +24,11 @@ func NewTLSCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tls",
 		Short: "Show the HTTPS listener's certificate (source, names, expiry, fingerprint)",
-		Long: "The gateway serves plain HTTP on loopback only. When gateway.host is not a loopback\n" +
-			"address it also serves HTTPS on gateway.host:gateway.tls_port (default 18443) with\n" +
-			"either the operator's certificate (gateway.tls.cert_file and key_file) or a\n" +
-			"self-signed one it generates under <CLAW_HOME>/tls and renews itself.\n\n" +
+		Long: "The gateway serves plain HTTP on gateway.host:gateway.port (loopback by default) and\n" +
+			"HTTPS on gateway.tls_port (default 18443) where gateway.tls.mode says: \"all\" interfaces\n" +
+			"(the default), \"localhost\" only, or \"off\". HTTPS presents either the operator's\n" +
+			"certificate (gateway.tls.cert_file and key_file) or a self-signed one it generates\n" +
+			"under <CLAW_HOME>/tls and renews itself.\n\n" +
 			"This prints that certificate. Compare the SHA-256 fingerprint with the one your\n" +
 			"browser shows before accepting a self-signed certificate.\n\n" +
 			"--regenerate replaces the self-signed certificate now, for example after adding\n" +
@@ -68,9 +69,13 @@ func runShow(cmd *cobra.Command, regenerate bool) error {
 	var b strings.Builder
 	gw := cfg.Gateway
 	if gw.HTTPSEnabled() {
-		fmt.Fprintf(&b, "HTTPS listener: %s (gateway.host %q)\n", net.JoinHostPort(gw.Host, strconv.Itoa(gw.EffectiveTLSPort())), gw.Host)
+		addrs := make([]string, 0, 2)
+		for _, h := range gw.HTTPSBindHosts() {
+			addrs = append(addrs, net.JoinHostPort(h, strconv.Itoa(gw.EffectiveTLSPort())))
+		}
+		fmt.Fprintf(&b, "HTTPS listener: %s (gateway.tls.mode %q)\n", strings.Join(addrs, ", "), gw.TLS.EffectiveMode())
 	} else {
-		fmt.Fprintf(&b, "HTTPS listener: off (gateway.host %q is loopback; set it to a LAN address or 0.0.0.0 to enable)\n", gw.Host)
+		b.WriteString("HTTPS listener: off (gateway.tls.mode \"off\"; set it to \"all\" or \"localhost\" to enable)\n")
 	}
 	fmt.Fprintf(&b, "Source:         %s\n", info.Source)
 	fmt.Fprintf(&b, "Certificate:    %s\n", info.CertFile)

@@ -1,4 +1,5 @@
-// API client for the external-device gateway (pairing + network settings).
+// API client for the external-device gateway (pairing). The listener settings
+// are edited on the Network page through PATCH /api/config.
 
 export interface DeviceStatus {
   payload: string
@@ -74,14 +75,6 @@ export const getDeviceStatus = () => request<DeviceStatus>("/api/devices/pair")
 // rendered QR.
 export const generateDevicePairing = () =>
   request<DeviceStatus>("/api/devices/pair", { method: "POST" })
-
-export interface DeviceSettings {
-  listen_lan?: boolean
-  external_url?: string
-  enabled?: boolean
-}
-export const saveDeviceSettings = (s: DeviceSettings) =>
-  request<DeviceStatus>("/api/devices/settings", jsonPost(s))
 
 // regenerateWordToken mints a fresh typeable passphrase (the long QR token is
 // unchanged) and returns the refreshed status.

@@ -82,22 +82,24 @@ func limitBody(next http.Handler) http.Handler {
 
 // hostOptions says what the gateway's listeners bind and serve.
 type hostOptions struct {
-	// Port is the loopback HTTP port, bound on 127.0.0.1 and [::1]. Zero
-	// takes an ephemeral port (tests).
-	Port int
+	// HTTPHosts are the plain-HTTP bind addresses on Port
+	// (config.GatewayConfig.HTTPBindHosts); empty means 127.0.0.1 and ::1.
+	// Port zero takes an ephemeral port (tests), shared by every address.
+	HTTPHosts []string
+	Port      int
 	// AllowedCIDRs is the client IP allowlist; loopback is always allowed.
 	AllowedCIDRs []string
-	// TLSHost, when set, opens the HTTPS listener on TLSHost:TLSPort with
-	// TLSConfig. Empty means no HTTPS listener (a loopback-only gateway).
-	TLSHost   string
+	// TLSHosts are the HTTPS bind addresses on TLSPort
+	// (config.GatewayConfig.HTTPSBindHosts); empty means no HTTPS listener.
+	TLSHosts  []string
 	TLSPort   int
 	TLSConfig *tls.Config
 	// HSTS adds Strict-Transport-Security to HTTPS responses.
 	HSTS bool
 }
 
-// httpHost owns the gateway's listeners: plain HTTP on loopback, always, and
-// HTTPS on the configured host when the gateway is bound off-box. Both serve
+// httpHost owns the gateway's listeners: plain HTTP on gateway.host (loopback
+// by default) and HTTPS where gateway.tls.mode places it. Both serve
 // one handler chain and one mux. The listeners are started once at gateway
 // boot and stay up across config reloads; on reload the handler mux is swapped
 // atomically via SetMux, the IP allowlist via SetAllowlist, and the Host and
@@ -123,14 +125,16 @@ type httpHost struct {
 	auth       atomic.Pointer[middleware.AuthStore]
 	authExempt atomic.Pointer[middleware.AuthExempt]
 
-	// httpServer serves the loopback listeners, tlsServer the HTTPS one (nil
-	// when off). Set by Start.
+	// httpServer serves the plain-HTTP listeners, tlsServer the HTTPS ones
+	// (nil when off). Set by Start.
 	httpServer *http.Server
 	tlsServer  *http.Server
-	// loopbackAddr and httpsAddr are the bound addresses after Start, for logs
-	// and tests; httpsAddr is "" when the HTTPS listener is off.
+	// loopbackAddr is 127.0.0.1:<bound HTTP port> after Start; httpAddrs and
+	// httpsAddrs are every bound address, for logs and tests (httpsAddrs is
+	// empty when the HTTPS listener is off).
 	loopbackAddr string
-	httpsAddr    string
+	httpAddrs    []string
+	httpsAddrs   []string
 	// onFatal hears when a listener dies after Start, with the service name
 	// "http" and an error naming the address. The gateway installs its
 	// fail-fast path here; nil only logs.
@@ -214,7 +218,8 @@ func (h *httpHost) SetCrossOrigin(trustedOrigins, bypassPatterns []string) error
 // and on every config reload, since external_url and the LINE webhook path can
 // change, and after a certificate change.
 //
-// Allowed hosts are the bind host, the host of the effective external URL
+// Allowed hosts are the bind addresses (a wildcard expanded to the interface
+// addresses), the host of the effective external URL
 // (gateway.external_url when set, otherwise the advertised listener URL), the
 // TLS certificate's names (SetCertificateNames) and the always-allowed
 // loopback names. Anything else — a DNS-rebinding name, a hostname nobody told
@@ -235,7 +240,13 @@ func (h *httpHost) ApplyPolicy(gw config.GatewayConfig, cm *channels.Manager) er
 	// Signed webhooks authenticate their own requests, so they need no login.
 	h.authExempt.Store(middleware.CompileAuthExempt(signedWebhookPaths(cm)...))
 
-	hosts := []string{gw.Host}
+	// Every address a listener binds, a wildcard expanded to the interface
+	// addresses: an IP literal is not a DNS-rebinding vector, and it is what
+	// an operator on the network types.
+	var hosts []string
+	for _, bind := range append(gw.HTTPBindHosts(), gw.HTTPSBindHosts()...) {
+		hosts = append(hosts, config.NetworkHosts(bind)...)
+	}
 	if u, err := url.Parse(gw.EffectiveExternalURL()); err == nil {
 		hosts = append(hosts, u.Hostname())
 	}
@@ -282,51 +293,106 @@ func (h *httpHost) serveMux(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// LoopbackAddr is the bound IPv4 loopback address after Start.
+// LoopbackAddr is 127.0.0.1:<port> of the plain-HTTP listener after Start;
+// it answers there whether the bind is loopback or a wildcard.
 func (h *httpHost) LoopbackAddr() string { return h.loopbackAddr }
 
-// HTTPSAddr is the bound HTTPS address after Start, or "" when the HTTPS
-// listener is off.
-func (h *httpHost) HTTPSAddr() string { return h.httpsAddr }
+// HTTPAddrs are the bound plain-HTTP addresses after Start.
+func (h *httpHost) HTTPAddrs() []string { return h.httpAddrs }
 
-// Start binds the listeners and serves them in the background. The IPv4
-// loopback and HTTPS binds are required and their failure is returned; an
-// unavailable [::1] is logged and skipped, since not every host has IPv6.
+// HTTPSAddr is the first bound HTTPS address after Start, or "" when the
+// HTTPS listener is off.
+func (h *httpHost) HTTPSAddr() string {
+	if len(h.httpsAddrs) == 0 {
+		return ""
+	}
+	return h.httpsAddrs[0]
+}
+
+// HTTPSAddrs are every bound HTTPS address after Start.
+func (h *httpHost) HTTPSAddrs() []string { return h.httpsAddrs }
+
+// optionalBind reports whether a failure to bind host may be skipped: the
+// IPv6 loopback, which not every machine has. Every other address the
+// operator asked for is required.
+func optionalBind(host string) bool { return host == "::1" }
+
+// bindAll listens on every host at port. With port zero the first bind picks
+// an ephemeral port and the rest reuse it. A required bind that fails closes
+// what was opened and returns the error; an optional one is logged and
+// skipped.
+func bindAll(what string, hosts []string, port int) ([]net.Listener, int, error) {
+	var out []net.Listener
+	closeAll := func() {
+		for _, l := range out {
+			utils.CloseQuietly(l)
+		}
+	}
+	for _, host := range hosts {
+		addr := net.JoinHostPort(host, strconv.Itoa(port))
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			if optionalBind(host) && len(out) > 0 {
+				logger.WarnCF("gateway", what+" listener on IPv6 loopback unavailable; skipping it", map[string]any{
+					"addr": addr, "error": err.Error(),
+				})
+				continue
+			}
+			closeAll()
+			return nil, 0, fmt.Errorf("bind %s listener on %s: %w", what, addr, err)
+		}
+		out = append(out, ln)
+		if port == 0 {
+			tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+			if !ok {
+				closeAll()
+				return nil, 0, fmt.Errorf("bind %s listener: unexpected address %q", what, ln.Addr())
+			}
+			port = tcpAddr.Port
+		}
+	}
+	return out, port, nil
+}
+
+func listenerAddrs(lns []net.Listener) []string {
+	out := make([]string, 0, len(lns))
+	for _, ln := range lns {
+		out = append(out, ln.Addr().String())
+	}
+	return out
+}
+
+// Start binds the listeners and serves them in the background. Every bind
+// is required and its failure returned, except an unavailable [::1], which
+// is logged and skipped since not every host has IPv6.
 func (h *httpHost) Start() error {
-	ln4, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(h.opts.Port)))
+	httpHosts := h.opts.HTTPHosts
+	if len(httpHosts) == 0 {
+		httpHosts = []string{"127.0.0.1", "::1"}
+	}
+	httpLns, port, err := bindAll("HTTP", httpHosts, h.opts.Port)
 	if err != nil {
-		return fmt.Errorf("bind loopback HTTP listener: %w", err)
+		return err
 	}
-	h.loopbackAddr = ln4.Addr().String()
-	listeners := []net.Listener{ln4}
-	tcpAddr, ok := ln4.Addr().(*net.TCPAddr)
-	if !ok {
-		utils.CloseQuietly(ln4)
-		return fmt.Errorf("bind loopback HTTP listener: unexpected address %q", ln4.Addr())
+	var tlsLns []net.Listener
+	if len(h.opts.TLSHosts) > 0 {
+		if tlsLns, _, err = bindAll("HTTPS", h.opts.TLSHosts, h.opts.TLSPort); err != nil {
+			for _, ln := range httpLns {
+				utils.CloseQuietly(ln)
+			}
+			return err
+		}
 	}
-	port := strconv.Itoa(tcpAddr.Port)
-	if ln6, err := net.Listen("tcp", net.JoinHostPort("::1", port)); err != nil {
-		logger.WarnCF("gateway", "IPv6 loopback listener unavailable; serving IPv4 loopback only", map[string]any{
-			"addr": "[::1]:" + port, "error": err.Error(),
-		})
-	} else {
-		listeners = append(listeners, ln6)
-	}
+	h.loopbackAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	h.httpAddrs = listenerAddrs(httpLns)
+	h.httpsAddrs = listenerAddrs(tlsLns)
 
 	h.httpServer = &http.Server{
 		Handler:      h.handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
-	if h.opts.TLSHost != "" {
-		lnTLS, err := net.Listen("tcp", net.JoinHostPort(h.opts.TLSHost, strconv.Itoa(h.opts.TLSPort)))
-		if err != nil {
-			for _, ln := range listeners {
-				utils.CloseQuietly(ln)
-			}
-			return fmt.Errorf("bind HTTPS listener: %w", err)
-		}
-		h.httpsAddr = lnTLS.Addr().String()
+	if len(tlsLns) > 0 {
 		handler := h.handler
 		if h.opts.HSTS {
 			handler = hsts(handler)
@@ -337,20 +403,20 @@ func (h *httpHost) Start() error {
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
 		}
-		logger.InfoCF("gateway", "HTTPS listener bound", map[string]any{"addr": h.httpsAddr, "hsts": h.opts.HSTS})
-		go h.serve(h.tlsServer, lnTLS, true)
+		logger.InfoCF("gateway", "HTTPS listener bound", map[string]any{"addrs": h.httpsAddrs, "hsts": h.opts.HSTS})
+		for _, ln := range tlsLns {
+			go h.serve(h.tlsServer, ln, true)
+		}
 	}
-	addrs := make([]string, 0, len(listeners))
-	for _, ln := range listeners {
-		addrs = append(addrs, ln.Addr().String())
+	for _, ln := range httpLns {
 		go h.serve(h.httpServer, ln, false)
 	}
-	logger.InfoCF("gateway", "Loopback HTTP listener bound", map[string]any{"addrs": addrs})
+	logger.InfoCF("gateway", "HTTP listener bound", map[string]any{"addrs": h.httpAddrs})
 	return nil
 }
 
 // serve runs one listener to completion and hands a listener that dies to
-// onFatal. Any of the three listeners (IPv4 loopback, [::1], HTTPS) counts.
+// onFatal. Any listener, HTTP or HTTPS, counts.
 func (h *httpHost) serve(srv *http.Server, ln net.Listener, useTLS bool) {
 	var err error
 	if useTLS {

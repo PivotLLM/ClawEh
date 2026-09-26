@@ -169,7 +169,7 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	cfg.Tools.Skills.Registries.ClawHub.AuthToken = secretClawHub
 	cfg.Voice.STT = []config.STTProvider{{Provider: "groq", Enabled: true, APIKey: secretSTT}}
 
-	cfg.Gateway = config.GatewayConfig{Host: "0.0.0.0", Port: 18790, AllowedCIDRs: []string{"192.168.1.0/24"}}
+	cfg.Gateway = config.GatewayConfig{Host: "127.0.0.1", Port: 18790, AllowedCIDRs: []string{"192.168.1.0/24"}}
 	cfg.Channels.Telegram = []config.TelegramBotConfig{{ID: "bob", Enabled: true, Token: secretTelegram, AllowFrom: []string{"*"}}}
 	cfg.Channels.Discord = config.DiscordConfig{Enabled: true, Token: secretDiscord, AllowFrom: []string{"1234"}}
 	cfg.Channels.Slack = config.SlackConfig{Enabled: true, BotToken: secretSlackBot, AppToken: secretSlackApp}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,40 +29,160 @@ const certExpiryWarn = 14 * 24 * time.Hour
 // words.
 const actionMark = "*"
 
-// exposedListeners names the enabled listeners bound to something other than
-// a loopback address: traffic to them can leave or enter the host.
-func exposedListeners(cfg *config.Config) []string {
-	var out []string
-	for _, l := range listeners(cfg) {
-		if l.Enabled && !loopbackAddr(l.Addr) {
-			out = append(out, l.Name+" on "+l.Addr)
-		}
-	}
-	return out
+// Item names of the per-listener assessment rows, in table order.
+const (
+	itemWebHTTP     = "WebUI/API HTTP"
+	itemWebHTTPS    = "WebUI/API HTTPS"
+	itemDeviceHTTP  = "Device Gateway HTTP"
+	itemDeviceHTTPS = "Device Gateway HTTPS"
+	itemMCPHost     = "MCP host (local tools)"
+	itemLINE        = "LINE webhook"
+)
+
+// Status phrases of the per-listener rows, written for a reader who does not
+// know what a bind address is.
+const (
+	enabledLocal   = "Enabled for localhost"
+	enabledNetwork = "Enabled for network access"
+	disabledStatus = "Disabled."
+)
+
+// assessRow is one assessment table row before rendering.
+type assessRow struct {
+	action       bool
+	item, status string
 }
 
-// loopbackAddr reports whether a bind address as bindAddr renders it stays on
-// this host. The gateway row lists two listeners ("127.0.0.1:18790 (HTTP),
-// 0.0.0.0:18443 (HTTPS)"); it is loopback only if every one of them is.
-func loopbackAddr(addr string) bool {
-	if parts := strings.Split(addr, ", "); len(parts) > 1 {
-		for _, p := range parts {
-			if !loopbackAddr(p) {
-				return false
-			}
+// listenerRows is one row per listener, in a fixed order: the WebUI/API over
+// HTTP and HTTPS, the Device Gateway over HTTP and HTTPS, the MCP host, and
+// the LINE webhook when that channel is on. Only two conditions are marked:
+// plain HTTP open to the network, and HTTPS off while it is. A self-signed
+// certificate is stated, never marked: on a LAN there is usually no
+// alternative. Raw bind addresses are left to the Network section.
+func listenerRows(cfg *config.Config, now time.Time) []assessRow {
+	gw := cfg.Gateway
+	webAllow := webAllowPhrase(gw.EffectiveAllowedCIDRs())
+	var rows []assessRow
+
+	if gw.HTTPOnNetwork() {
+		rows = append(rows, assessRow{
+			true, itemWebHTTP,
+			enabledNetwork + ": unencrypted — prefer HTTPS, or restrict HTTP to localhost" + webAllow + ".",
+		})
+	} else {
+		rows = append(rows, assessRow{false, itemWebHTTP, enabledLocal + "."})
+	}
+
+	switch gw.TLS.EffectiveMode() {
+	case config.TLSModeAll:
+		rows = append(rows, assessRow{false, itemWebHTTPS, enabledNetwork + certificatePhrase(cfg, now) + webAllow + "."})
+	case config.TLSModeLocalhost:
+		rows = append(rows, assessRow{false, itemWebHTTPS, enabledLocal + certificatePhrase(cfg, now) + "."})
+	default:
+		if gw.HTTPOnNetwork() {
+			rows = append(rows, assessRow{true, itemWebHTTPS, "Disabled, while the WebUI/API is open to the network over unencrypted HTTP."})
+		} else {
+			rows = append(rows, assessRow{false, itemWebHTTPS, disabledStatus})
 		}
-		return true
 	}
-	host := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(addr, " (HTTP)"), " (HTTPS)"))
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		host = host[:i]
+
+	dev := cfg.Channels.Device
+	switch {
+	case !dev.Enabled:
+		rows = append(rows, assessRow{false, itemDeviceHTTP, disabledStatus})
+	case isLoopback(orValue(dev.Host, "127.0.0.1")):
+		rows = append(rows, assessRow{false, itemDeviceHTTP, enabledLocal + "."})
+	default:
+		rows = append(rows, assessRow{
+			false, itemDeviceHTTP,
+			enabledNetwork + "; " + deviceAllowPhrase(dev.AllowedCIDRs) + " (device token and pairing required).",
+		})
 	}
-	host = strings.Trim(strings.TrimSpace(host), "[]")
-	switch strings.ToLower(host) {
-	case "127.0.0.1", "::1", "localhost":
-		return true
+	rows = append(rows, assessRow{
+		false, itemDeviceHTTPS,
+		"Not available in this version (plain WebSocket, protected by the device token and pairing).",
+	})
+
+	if cfg.MCPHostEffectivelyEnabled() {
+		// config.ValidateMCPHostListen refuses anything but loopback.
+		rows = append(rows, assessRow{false, itemMCPHost, enabledLocal + "."})
+	} else {
+		rows = append(rows, assessRow{false, itemMCPHost, disabledStatus})
 	}
-	return strings.HasPrefix(host, "127.")
+
+	if line := cfg.Channels.LINE; line.Enabled {
+		if isLoopback(line.WebhookHost) {
+			rows = append(rows, assessRow{false, itemLINE, enabledLocal + "."})
+		} else {
+			rows = append(rows, assessRow{false, itemLINE, enabledNetwork + "; every request must carry LINE's signature."})
+		}
+	}
+	return rows
+}
+
+// webAllowPhrase is the WebUI/API client allowlist as a trailing clause.
+// Empty means no network is allowed, only this machine.
+func webAllowPhrase(cidrs []string) string {
+	switch {
+	case len(cidrs) == 0:
+		return "; no networks allowed yet (this machine only)"
+	case slices.Contains(cidrs, config.AllowAnyAddress):
+		return "; allowed from any address"
+	default:
+		return "; allowed networks: " + strings.Join(cidrs, ", ")
+	}
+}
+
+// deviceAllowPhrase is the Device Gateway allowlist; empty means any address.
+func deviceAllowPhrase(cidrs []string) string {
+	if len(cidrs) == 0 || slices.Contains(cidrs, config.AllowAnyAddress) {
+		return "allowed from any address"
+	}
+	return "allowed networks: " + strings.Join(cidrs, ", ")
+}
+
+// certificatePhrase names the HTTPS certificate as a clause: self-signed, or
+// user-provided with its expiry date.
+func certificatePhrase(cfg *config.Config, now time.Time) string {
+	opts := tlscert.OptionsFromConfig(cfg)
+	if opts.Source() == tlscert.SourceSelfSigned {
+		return ", self-signed certificate"
+	}
+	info, err := tlscert.InspectFile(opts)
+	if err != nil {
+		return ", user-provided certificate (unreadable)"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	date := info.NotAfter.Format("2006-01-02")
+	if now.After(info.NotAfter) {
+		return ", user-provided certificate (expired " + date + ")"
+	}
+	return ", user-provided certificate (expires " + date + ")"
+}
+
+// reachSentence names the listeners other machines can connect to, for the
+// operator authentication row.
+func reachSentence(cfg *config.Config) string {
+	gw := cfg.Gateway
+	var open []string
+	if gw.HTTPOnNetwork() {
+		open = append(open, itemWebHTTP)
+	}
+	if gw.HTTPSOnNetwork() {
+		open = append(open, itemWebHTTPS)
+	}
+	if dev := cfg.Channels.Device; dev.Enabled && !isLoopback(orValue(dev.Host, "127.0.0.1")) {
+		open = append(open, "Device Gateway")
+	}
+	if line := cfg.Channels.LINE; line.Enabled && !isLoopback(line.WebhookHost) {
+		open = append(open, itemLINE)
+	}
+	if len(open) == 0 {
+		return "Everything listens on localhost only, so nothing is reachable from other machines."
+	}
+	return "Reachable from other machines: " + strings.Join(open, ", ") + "."
 }
 
 func mark(action bool) string {
@@ -73,79 +194,37 @@ func mark(action bool) string {
 
 // collectAssessment is the table a reviewer reads first: the items that most
 // often need attention, each with the fact and, where action is recommended,
-// a mark. The gateway is HTTPS whenever it is bound off-box, so the HTTPS row
-// is marked only when a plain-HTTP listener (the device gateway, the LINE
-// webhook) is reachable from other hosts; operator authentication is marked
-// whenever no usable admin account exists, since without one the WebUI is
-// locked.
+// a mark. It opens with one row per listener (see listenerRows); operator
+// authentication is marked whenever no usable admin account exists, since
+// without one the WebUI is locked.
 func collectAssessment(_ context.Context, cfg *config.Config, env Environment) Section {
-	exposed := exposedListeners(cfg)
-	reach := "All listeners are loopback only, so traffic stays on this host."
-	if len(exposed) > 0 {
-		reach = "Reachable from other hosts: " + strings.Join(exposed, "; ") + "."
-	}
 	t := Table{Columns: []string{"Action", "Item", "Status"}}
 	add := func(action bool, item, status string) {
 		t.Rows = append(t.Rows, row(mark(action), item, status))
 	}
 
-	gw := cfg.Gateway
-	var plain []string // exposed listeners that speak plain HTTP
-	for _, e := range exposed {
-		if !gw.HTTPSEnabled() || !strings.HasPrefix(e, "Gateway ") {
-			plain = append(plain, e)
-		}
+	for _, r := range listenerRows(cfg, env.Now) {
+		add(r.action, r.item, r.status)
 	}
-	httpsStatus := "The gateway is loopback only: plain HTTP on this host, no HTTPS listener (set gateway.host to a LAN address or 0.0.0.0 for HTTPS on gateway.tls_port)."
-	if gw.HTTPSEnabled() {
-		httpsStatus = "HTTPS on " + bindAddr(gw.Host, gw.EffectiveTLSPort()) + " with a " + string(tlscert.OptionsFromConfig(cfg).Source()) +
-			" certificate (`claw tls` shows it); plain HTTP is served on loopback only."
-	}
-	add(len(plain) > 0, "Transport encryption (HTTPS)",
-		httpsStatus+" "+reach+
-			ifStr(len(plain) > 0, " Plain-HTTP listeners reachable from other hosts: "+strings.Join(plain, "; ")+"; put them behind a TLS reverse proxy.", ""))
-	if gw.HTTPSEnabled() {
-		if action, item, status := certificateRow(cfg, env.Now); item != "" {
+	if cfg.Gateway.HTTPSEnabled() {
+		if action, item, status := certificateExpiryRow(cfg, env.Now); item != "" {
 			add(action, item, status)
 		}
 	}
 	dd := dataDir(cfg, env)
 	credPath := admin.Path(dd)
 	_, credErr := admin.Load(credPath)
-	add(credErr != nil, "Operator authentication (WebUI and API)", adminAccountStatus(credErr, credPath)+" "+reach)
+	add(credErr != nil, "Operator authentication (WebUI and API)", adminAccountStatus(credErr, credPath)+" "+reachSentence(cfg))
 
 	findings, permErr := perms.Check(dd, env.ConfigPath)
 	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr))
-
-	gwExposed := !loopbackAddr(bindAddr(gw.Host, gw.Port))
-	anyAddr := false
-	for _, c := range gw.AllowedCIDRs {
-		if strings.TrimSpace(c) == "*" {
-			anyAddr = true
-		}
-	}
-	add(gwExposed && anyAddr, "WebUI and API reachability",
-		"Gateway on "+bindAddr(gw.Host, gw.Port)+"; client allowlist: "+gatewayAllow(gw.AllowedCIDRs)+".")
 
 	wu := cfg.Channels.WebUI
 	add(wu.Enabled && wu.Token == "", "WebUI chat token",
 		ifStr(!wu.Enabled, "WebUI channel disabled.",
 			"Token "+setOrNot(wu.Token)+" (non-browser clients only; the browser uses its login session)."))
 
-	dev := cfg.Channels.Device
-	if !dev.Enabled {
-		add(false, "Device gateway", "Disabled.")
-	} else {
-		devAddr := bindAddr(dev.Host, dev.Port)
-		devAny := len(dev.AllowedCIDRs) == 0
-		for _, c := range dev.AllowedCIDRs {
-			if strings.TrimSpace(c) == "*" {
-				devAny = true
-			}
-		}
-		add(!loopbackAddr(devAddr) && devAny, "Device gateway",
-			"On "+devAddr+"; client allowlist: "+ifStr(devAny, "any address (device token required)", strings.Join(dev.AllowedCIDRs, ", "))+
-				"; word token "+setOrNot(dev.WordToken)+".")
+	if dev := cfg.Channels.Device; dev.Enabled {
 		add(dev.AutoApprove, "Device auto-approve",
 			ifStr(dev.AutoApprove, "New devices are paired without approval; any client with the shared token joins.", "Devices need approval."))
 	}
@@ -222,7 +301,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	_, auditErr := os.Stat(auditPath)
 	add(auditErr != nil, "Audit log",
 		ifStr(auditErr == nil, "Audit log at "+auditPath+" ("+itoa(audit.RetentionDays)+"-day retention).",
-			"Audit log not initialised: "+auditPath+" is missing; the gateway creates it at start."))
+			"Audit log not initialised: "+auditPath+" is missing; ClawEh creates it at start."))
 
 	var stdio []string
 	for _, name := range sortedKeys(cfg.Tools.MCP.Servers) {
@@ -242,7 +321,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 }
 
-// adminAccountStatus describes the credentials file the gateway authenticates
+// adminAccountStatus describes the credentials file the WebUI/API authenticates
 // against, from the error admin.Load returned (nil when it is usable).
 func adminAccountStatus(err error, path string) string {
 	var perr *admin.PermissionError
@@ -274,7 +353,7 @@ func permsStatus(findings []perms.Finding, err error) string {
 			noun = "file under CLAW_HOME is"
 		}
 		s = fmt.Sprintf("%d %s readable by other users (first: %s %04o); "+
-			"the gateway tightens them at start — run it, or chmod 700/600.", len(findings), noun, f.Path, f.Mode)
+			"ClawEh tightens them at start — run it, or chmod 700/600.", len(findings), noun, f.Path, f.Mode)
 	}
 	if errors.Is(err, perms.ErrTruncated) {
 		s += " The check was truncated at the entry cap, so files beyond it were not examined."
@@ -282,21 +361,15 @@ func permsStatus(findings []perms.Finding, err error) string {
 	return s
 }
 
-// certificateRow is the assessment row for the HTTPS certificate: an
-// awareness row for a self-signed one (browsers warn until its fingerprint is
-// verified), an action row for a user-supplied one about to expire. Item is
-// "" when there is nothing to say.
-func certificateRow(cfg *config.Config, now time.Time) (action bool, item, status string) {
+// certificateExpiryRow is the marked row for a user-supplied certificate
+// within 14 days of expiry, or past it. Item is "" otherwise (a self-signed
+// certificate renews itself).
+func certificateExpiryRow(cfg *config.Config, now time.Time) (action bool, item, status string) {
 	opts := tlscert.OptionsFromConfig(cfg)
-	info, err := tlscert.InspectFile(opts)
 	if opts.Source() == tlscert.SourceSelfSigned {
-		id := "SHA-256 " + info.Fingerprint
-		if err != nil {
-			id = "not yet generated: " + err.Error()
-		}
-		return false, "Self-signed certificate",
-			"HTTPS uses a self-signed certificate (" + id + "); browsers warn once — verify the fingerprint with `claw tls`, or install your own with gateway.tls."
+		return false, "", ""
 	}
+	info, err := tlscert.InspectFile(opts)
 	if err != nil {
 		return false, "", ""
 	}

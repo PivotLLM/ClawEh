@@ -4,18 +4,14 @@
 package admincmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/user"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/install"
@@ -31,7 +27,8 @@ func NewAdminCommand() *cobra.Command {
 			"account; running the command again overwrites it. The password is asked for twice\n" +
 			"without echo and must be at least " + strconv.Itoa(admin.MinPasswordLength) + " characters. The result is written to\n" +
 			"<CLAW_HOME>/credentials.json (mode 0600); a running gateway picks it up within a\n" +
-			"minute and signs everyone out.",
+			"minute and signs everyone out. When stdin is not a terminal (a piped installer) the\n" +
+			"prompts use /dev/tty; the password is never read from a pipe.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			username := ""
@@ -43,41 +40,26 @@ func NewAdminCommand() *cobra.Command {
 	}
 }
 
-func run(out io.Writer, username string) error {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return errors.New("claw admin needs an interactive terminal to read the password")
-	}
-	reader := bufio.NewReader(os.Stdin)
+// openTerminal is replaced in tests.
+var openTerminal = admin.OpenTerminal
 
-	username = strings.TrimSpace(username)
-	if username == "" {
-		if _, err := fmt.Fprint(out, "Username: "); err != nil {
-			return err
+func run(out io.Writer, username string) (err error) {
+	t, err := openTerminal(out)
+	if err != nil {
+		if errors.Is(err, admin.ErrNoTerminal) {
+			return fmt.Errorf("claw admin needs an interactive terminal to read the password (%w)", err)
 		}
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("read username: %w", err)
-		}
-		username = strings.TrimSpace(line)
-	}
-	if err := validateUsername(username); err != nil {
 		return err
 	}
+	defer func() {
+		if cerr := t.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close terminal: %w", cerr)
+		}
+	}()
 
-	password, err := readPassword(out, fd, "Password: ")
+	username, password, err := admin.PromptAccount(t, username)
 	if err != nil {
 		return err
-	}
-	if utf8.RuneCountInString(password) < admin.MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", admin.MinPasswordLength)
-	}
-	again, err := readPassword(out, fd, "Confirm password: ")
-	if err != nil {
-		return err
-	}
-	if password != again {
-		return errors.New("passwords do not match")
 	}
 
 	home, inst := ResolveHome()
@@ -90,34 +72,6 @@ func run(out io.Writer, username string) error {
 	}
 	_, err = fmt.Fprintf(out, "Admin account %q written to %s\n", username, path)
 	return err
-}
-
-func validateUsername(username string) error {
-	if username == "" {
-		return errors.New("username is required")
-	}
-	if utf8.RuneCountInString(username) > 64 {
-		return errors.New("username must be at most 64 characters")
-	}
-	if strings.ContainsAny(username, " \t\r\n") {
-		return errors.New("username must not contain whitespace")
-	}
-	return nil
-}
-
-func readPassword(out io.Writer, fd int, prompt string) (string, error) {
-	if _, err := fmt.Fprint(out, prompt); err != nil {
-		return "", err
-	}
-	b, err := term.ReadPassword(fd)
-	_, werr := fmt.Fprintln(out)
-	if err != nil {
-		return "", fmt.Errorf("read password: %w", err)
-	}
-	if werr != nil {
-		return "", werr
-	}
-	return string(b), nil
 }
 
 // chownToService hands the file to the service account when root wrote it, so

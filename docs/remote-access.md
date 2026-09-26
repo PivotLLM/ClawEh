@@ -1,10 +1,10 @@
 # Remote access
 
-ClawEh has **two separate listeners**, both bound to localhost by default:
+ClawEh has **two separate services**:
 
 | Listener | Default | Serves | Authentication |
 |---|---|---|---|
-| **Gateway** (`gateway.port`, plain HTTP on loopback only; `gateway.tls_port` HTTPS when `gateway.host` is not loopback) | `18790` / `18443` | WebUI, `/api/*`, the WebUI chat WebSocket, the LINE webhook | Admin login (`claw admin`, see `docs/webui-auth.md`) |
+| **WebUI/API** (`gateway.port` plain HTTP on `gateway.host`, loopback by default; `gateway.tls_port` HTTPS where `gateway.tls.mode` says, all interfaces by default) | `18790` / `18443` | WebUI, `/api/*`, the WebUI chat WebSocket, the LINE webhook | Admin login (`claw admin`, see `docs/webui-auth.md`) |
 | **Device gateway port** (`channels.device.port`) | `18791` | The OpenClaw Gateway WebSocket for paired devices (Rabbit R1, Claw to Talk) | Shared or per-device token + Ed25519 pairing |
 
 They are **independent listeners** — publishing one does not publish the other.
@@ -19,11 +19,13 @@ Three common approaches are below. All of them work because both surfaces are
 ordinary HTTP + WebSocket; you are just publishing a port.
 
 > **Security note:** The WebUI and API require the admin login created with
-> `claw admin` (loopback included). Off-box the gateway serves **HTTPS only**,
-> on `gateway.tls_port` (default 18443) with a self-signed or your own
-> certificate (see `docs/tls.md`); plain HTTP stays on loopback. Network access
+> `claw admin` (loopback included). By default the WebUI/API is served off-box
+> over **HTTPS** only, on `gateway.tls_port` (default 18443) with a self-signed
+> or your own certificate (see `docs/tls.md`); plain HTTP stays on loopback
+> unless you set `gateway.host` to a network address, which the configuration
+> report marks as unencrypted. Network access
 > is further gated by `gateway.allowed_cidrs`, empty by default meaning
-> **loopback only**: binding to `0.0.0.0` alone will not serve a network client,
+> **loopback only**: listening on every interface alone will not serve a network client,
 > and you must add the networks you want to reach it from — a subnet such as
 > `192.168.1.0/24`, or `*` for any address. Use `*` rather than `0.0.0.0/0` when
 > you mean "everything": that is an IPv4 prefix, so it still refuses IPv6
@@ -40,14 +42,16 @@ a proxy on the same host, `18791` for the device gateway — throughout.
 ## Behind a reverse proxy (any of the methods below)
 
 Keep `gateway.host` at `127.0.0.1` so ClawEh serves plain HTTP on loopback only,
-terminate TLS at the proxy, and point it at `http://127.0.0.1:18790`. Set
+terminate TLS at the proxy, and point it at `http://127.0.0.1:18790`
+(`gateway.tls.mode` can be `"localhost"` or `"off"` if you do not want ClawEh's
+own HTTPS listener on the network). Set
 `gateway.external_url` to the public URL (for example
 `https://claw.example.com`) so links, the Host check and cross-origin trust use
 it. ClawEh's IP allowlist matches the TCP peer, so with a proxy on the same box
 every request arrives from loopback — enforce network access control at the
-proxy; the admin login still applies to every request. Without a proxy, set
-`gateway.host` to a LAN address or `0.0.0.0`, add your networks with
-`claw network`, and use `https://<host>:18443` (see `docs/tls.md`).
+proxy; the admin login still applies to every request. Without a proxy, add
+your networks with `claw network` and use `https://<host>:18443` — HTTPS is on
+every interface by default (see `docs/tls.md`).
 
 ---
 

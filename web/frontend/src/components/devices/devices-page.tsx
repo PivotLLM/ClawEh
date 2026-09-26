@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { Link } from "@tanstack/react-router"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -13,7 +14,6 @@ import {
   regenerateWordToken,
   rejectDevice,
   removeDevice,
-  saveDeviceSettings,
 } from "@/api/devices"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -24,9 +24,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 
 // copyToClipboard works in both secure and insecure contexts. navigator.clipboard
 // is undefined when the WebUI is served over plain HTTP on a non-localhost host, so
@@ -73,110 +71,12 @@ export function DevicesPage() {
     queryFn: listPairedDevices,
   })
 
-  const [lan, setLan] = useState(false)
-  const [extHost, setExtHost] = useState("")
-  const [extPort, setExtPort] = useState("")
-  const [extTls, setExtTls] = useState(false)
   const [qr, setQr] = useState<DeviceStatus | null>(null)
-
-  // Auto-save state for the Network card. Refs mirror the fields so the debounced
-  // save reads current values; timers drive the "Saving… / Saved ✓" hint. Refs are
-  // synced in an effect (not during render) to satisfy react-hooks/refs.
-  type SaveStatus = "saving" | "saved" | "error" | null
-  const [netStatus, setNetStatus] = useState<SaveStatus>(null)
-  const lanRef = useRef(lan)
-  const extHostRef = useRef(extHost)
-  const extPortRef = useRef(extPort)
-  const extTlsRef = useRef(extTls)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  )
-
-  useEffect(() => {
-    lanRef.current = lan
-    extHostRef.current = extHost
-    extPortRef.current = extPort
-    extTlsRef.current = extTls
-  }, [lan, extHost, extPort, extTls])
-
-  useEffect(
-    () => () => {
-      clearTimeout(saveTimer.current)
-      clearTimeout(savedTimer.current)
-    },
-    [],
-  )
-
-  // Seed the editable fields when a status fetch lands. Adjusted during render
-  // rather than in an effect so the form is never painted with the previous
-  // values for a frame, and it fires only for a genuinely new result.
-  const [syncedStatus, setSyncedStatus] = useState(status.data)
-  if (status.data && status.data !== syncedStatus) {
-    setSyncedStatus(status.data)
-    setLan(status.data.listen_lan)
-    const url = status.data.external_url
-    if (!url) {
-      setExtHost("")
-      setExtPort("")
-      setExtTls(false)
-    } else {
-      try {
-        const u = new URL(url)
-        setExtHost(u.hostname)
-        setExtPort(u.port)
-        setExtTls(u.protocol === "https:" || u.protocol === "wss:")
-      } catch {
-        setExtHost(url)
-        setExtPort("")
-        setExtTls(false)
-      }
-    }
-  }
-
-  // Compose the stored external_url from the current host/port/TLS values (read via
-  // refs so the debounced save sees the latest). Empty host means "direct LAN"
-  // (auto-detect), so external_url is cleared.
-  const buildExternalURL = () => {
-    const host = extHostRef.current.trim()
-    if (host === "") return ""
-    const scheme = extTlsRef.current ? "https" : "http"
-    const port = extPortRef.current.trim()
-    return port ? `${scheme}://${host}:${port}` : `${scheme}://${host}`
-  }
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["device-status"] })
     void qc.invalidateQueries({ queryKey: ["device-paired"] })
     void qc.invalidateQueries({ queryKey: ["device-pending"] })
-  }
-
-  // doSave persists the Network card. It does NOT refetch device-status, so a host
-  // being typed is not reverted mid-edit; the "currently listening" line refreshes
-  // on the next navigation.
-  const doSave = async () => {
-    setNetStatus("saving")
-    try {
-      await saveDeviceSettings({
-        listen_lan: lanRef.current,
-        external_url: buildExternalURL(),
-      })
-      setNetStatus("saved")
-      clearTimeout(savedTimer.current)
-      savedTimer.current = setTimeout(() => setNetStatus(null), 2000)
-    } catch (e) {
-      setNetStatus("error")
-      toast.error(e instanceof Error ? e.message : "Save failed")
-    }
-  }
-  const doSaveRef = useRef(doSave)
-  useEffect(() => {
-    doSaveRef.current = doSave
-  })
-
-  const scheduleNetSave = () => {
-    clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => void doSaveRef.current(), 600)
   }
 
   const genMut = useMutation({
@@ -237,102 +137,35 @@ export function DevicesPage() {
 
   return (
     <>
-      <PageHeader title="Devices">
-        {netStatus && (
-          <span
-            className={`text-xs ${netStatus === "error" ? "text-destructive" : netStatus === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
-          >
-            {netStatus === "saving"
-              ? "Saving…"
-              : netStatus === "saved"
-                ? "Saved ✓"
-                : "Save failed"}
-          </span>
-        )}
-      </PageHeader>
+      <PageHeader title="Devices" />
       <div className="space-y-6 overflow-y-auto px-6 pb-8">
-        {/* Network */}
+        {/* Pair. The listener itself (scope, port, external URL, allowlist,
+            auto-approve) is configured on the Network page with the other
+            listeners; this page is pairing and the paired devices. */}
         <Card>
           <CardHeader>
-            <CardTitle>Network</CardTitle>
+            <CardTitle>Pair a device</CardTitle>
             <CardDescription>
-              The device gateway listens on its own port, separate from the
-              WebUI.
+              Generate a QR code, then scan it with your device. The first
+              connection appears below for approval.
               {s && (
                 <>
                   {" "}
-                  Currently listening on{" "}
+                  The device gateway is listening on{" "}
                   <code className="text-foreground">
                     {s.listen_host}:{s.listen_port}
                   </code>{" "}
-                  ({s.listen_lan ? "local network" : "loopback only"}).
+                  ({s.listen_lan ? "local network" : "loopback only"}); change
+                  that on the{" "}
+                  <Link to="/network" className="underline">
+                    Network page
+                  </Link>
+                  .
                 </>
               )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <Label htmlFor="lan-switch">
-                  Listen for local network connections
-                </Label>
-                <p className="text-muted-foreground text-sm">
-                  Off = loopback only (127.0.0.1). On = reachable from your LAN
-                  (0.0.0.0).
-                </p>
-              </div>
-              <Switch
-                id="lan-switch"
-                checked={lan}
-                onCheckedChange={(v) => {
-                  setLan(v)
-                  scheduleNetSave()
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>External address (reverse proxy / tunnel)</Label>
-              <div className="flex gap-2">
-                <Input
-                  className="flex-1"
-                  placeholder="host or IP (blank = direct LAN)"
-                  value={extHost}
-                  onChange={(e) => {
-                    setExtHost(e.target.value)
-                    scheduleNetSave()
-                  }}
-                />
-                <Input
-                  className="w-28"
-                  placeholder="port"
-                  inputMode="numeric"
-                  value={extPort}
-                  onChange={(e) => {
-                    setExtPort(e.target.value)
-                    scheduleNetSave()
-                  }}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="tls-switch"
-                  checked={extTls}
-                  onCheckedChange={(v) => {
-                    setExtTls(v)
-                    scheduleNetSave()
-                  }}
-                />
-                <Label htmlFor="tls-switch">
-                  Use TLS (secure wss connection)
-                </Label>
-              </div>
-              <p className="text-muted-foreground text-sm">
-                What devices are told to connect to. Leave host blank for direct
-                LAN access (auto-detected). Set these when a reverse proxy or
-                tunnel fronts the gateway — with TLS on, the host must match the
-                proxy's certificate.
-              </p>
-            </div>
             {s?.warnings?.length ? (
               <ul className="text-sm text-amber-600 dark:text-amber-400">
                 {s.warnings.map((w) => (
@@ -340,27 +173,6 @@ export function DevicesPage() {
                 ))}
               </ul>
             ) : null}
-            <div className="flex items-center gap-3">
-              <a
-                href="/config"
-                className="text-muted-foreground text-sm underline"
-              >
-                Advanced config
-              </a>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Pair */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Pair a device</CardTitle>
-            <CardDescription>
-              Generate a QR code, then scan it with your device. The first
-              connection appears below for approval.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
             <Button onClick={() => genMut.mutate()} disabled={genMut.isPending}>
               {qr ? "Regenerate pairing QR" : "Generate pairing QR"}
             </Button>

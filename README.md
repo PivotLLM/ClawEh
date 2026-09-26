@@ -59,6 +59,21 @@ make build
 ```
 Then point your web browser to **http://localhost:18790** to complete the setup wizard.
 
+### Admin account
+
+The WebUI requires an admin login, and both `claw install` and the one-line installer create the account before they start the service: they ask for a username and a password (twice, not echoed, at least 12 characters). The prompt works under `curl … | bash` too — it reads from your terminal, not from the pipe. An account that already exists (`<CLAW_HOME>/credentials.json`) is kept; replace it any time with `claw admin`. `--yes` skips only the confirmation question, never the account. If there is no account and no terminal to ask on, the installer stops without starting the service and says how to proceed.
+
+For an unattended install, export `CLAW_ADMIN_USER` and `CLAW_ADMIN_PASSWORD` in the same shell, run the installer, then unset them. Do not write them in front of the command, where the password lands in your shell history (and, before `curl … |`, reaches only `curl`):
+
+```bash
+read -r CLAW_ADMIN_USER; read -rs CLAW_ADMIN_PASSWORD
+export CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash   # or: ./claw install
+unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+```
+
+With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,CLAW_ADMIN_PASSWORD ./claw install`. See [docs/webui-auth.md](docs/webui-auth.md).
+
 ---
 
 **Latest Changes:**
@@ -121,7 +136,7 @@ claw install --host 0.0.0.0 --allowed-cidrs private          # all RFC1918 priva
 claw install --host 0.0.0.0 --allowed-cidrs any              # any address — see the warning below
 ```
 
-`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Config → Service**, with `gateway.allowed_cidrs`, or — if the allowlist is what is keeping you out of the web UI — with `claw network` on the host itself:
+`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Network → Allowed networks**, with `gateway.allowed_cidrs`, or — if the allowlist is what is keeping you out of the web UI — with `claw network` on the host itself:
 
 ```bash
 claw network --show             # what is allowed right now
@@ -132,13 +147,13 @@ claw network none               # back to loopback only
 
 `claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart.
 
-> Prefer the narrowest range that works. Until operator authentication and TLS land, anyone inside the allowlist can read and change your configuration — put ClawEh behind a VPN or reverse proxy with its own auth if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
+> Prefer the narrowest range that works. Anyone inside the allowlist reaches the login page, so the admin password is all that stands between them and your configuration — put ClawEh behind a VPN or reverse proxy if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 
 > Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
 
 ### 3. Open the web UI and finish setup
 
-Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Antigravity, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
+Browse to **http://localhost:18790** (or one of the HTTPS URLs the installer and `claw status` print) and sign in with the admin account created during install. On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Antigravity, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
 
 ## Features
 
@@ -280,7 +295,7 @@ Alternatively, to install **only the bare binary** without registering a backgro
 curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
 ```
 
-This downloads the `claw` binary for your platform and installs it to `/usr/local/bin` (falling back to `~/.local/bin`), together with the license and third-party notices. It installs **only the binary** — it never touches your data directory (`~/.claw`), so it is safe to re-run to upgrade.
+This downloads the `claw` binary for your platform and installs it to `/usr/local/bin` (falling back to `~/.local/bin`), together with the license and third-party notices. It installs **only the binary** — it never touches your data directory (`~/.claw`), so it is safe to re-run to upgrade. It creates no admin account: `claw install` does that when it sets up the service (see [Admin account](#admin-account)), or run `claw admin` before starting `claw` yourself.
 
 Environment overrides:
 
@@ -459,7 +474,7 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ClawEh is intended to function as a personal or small-team assistant that runs on a computer the operator controls. It is not designed or intended to provide any kind of public service.
 
-The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback only; when `gateway.host` is set to a network address the gateway serves HTTPS on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and there is no way to serve plain HTTP off-box (see [docs/tls.md](docs/tls.md)). Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. The gateway answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
+The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback by default (`gateway.host`); HTTPS is served on every interface on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and `gateway.tls.mode` restricts it to `localhost` or turns it `off` (see [docs/tls.md](docs/tls.md)). Setting `gateway.host` to a network address serves plain, unencrypted HTTP there too; the configuration report marks it. Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. The gateway answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
 
 Every tool call, configuration change and login is recorded in the audit log ([docs/audit.md](docs/audit.md)).
 
@@ -522,7 +537,7 @@ Retention is a single setting, `logging.retention_days`. After each roll,
 date-stamped archives older than that many days are deleted; **`0` keeps logs
 forever**. The default is `30`. It can also be set via the
 `CLAW_LOGGING_RETENTION_DAYS` environment variable, and is editable in the WebUI
-under **Config → Runtime → Log retention (days)** (changes apply on the next
+under **System → Runtime → Log retention (days)** (changes apply on the next
 gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
 `claw.log` / `error.log` and the `dumps/` directory are never touched.
 

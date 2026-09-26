@@ -41,32 +41,41 @@ appear in the output.
   directory, the user and group the process runs as, and when the report was
   generated.
 - **Security assessment**: a short table of the items a reviewer checks
-  first: transport encryption (HTTPS) and, when it is on, the certificate (a
-  self-signed one is listed with its SHA-256 fingerprint for the browser
-  warning; a user-supplied one is flagged within 14 days of expiry), operator
-  authentication, data directory permissions (files under `CLAW_HOME` that
-  other users can read), WebUI and API reachability, the WebUI chat token, the
-  device gateway and whether new devices are auto-approved, file confinement,
-  shell access, and for each confined agent that can run `shell_exec` a
-  reminder that the shell is not confined, CLI providers with *Bypass CLI
-  restrictions* on, channels accepting any sender, message content in logs,
-  the audit log (`<CLAW_HOME>/audit.db`, 90-day retention), MCP servers
-  running local programs, and sub-agent spawning. The first column holds `*`
-  where action is recommended and is blank otherwise; awareness rows
-  (self-signed certificate, shell not confined, bypass restrictions) are never
-  marked. HTTPS is marked only when a plain-HTTP listener (device gateway) is
-  reachable from other hosts, since loopback-only traffic never leaves the
-  machine; operator authentication is marked whenever no usable admin account
-  exists.
+  first, written for a reader who is not a network specialist. It opens with
+  one row per listener, in this order: **WebUI/API HTTP**, **WebUI/API
+  HTTPS**, **Device Gateway HTTP**, **Device Gateway HTTPS**, **MCP host
+  (local tools)** and, when the LINE channel is on, **LINE webhook**. Each
+  says "Enabled for localhost", "Enabled for network access" or "Disabled";
+  the HTTPS row adds the certificate ("self-signed certificate", or
+  "user-provided certificate (expires YYYY-MM-DD)") and a network row adds
+  who may connect ("allowed networks: 10.0.0.0/8", "allowed from any
+  address"). The Device Gateway has no HTTPS in this version; its row says so.
+  Bind addresses are left to the Network section. Then: a user-supplied
+  certificate within 14 days of expiry, operator authentication (with the
+  listeners reachable from other machines), data directory permissions (files
+  under `CLAW_HOME` that other users can read), the WebUI chat token, whether
+  new devices are auto-approved, file confinement, shell access, and for each
+  confined agent that can run `shell_exec` a reminder that the shell is not
+  confined, CLI providers with *Bypass CLI restrictions* on, channels
+  accepting any sender, message content in logs, the audit log
+  (`<CLAW_HOME>/audit.db`, 90-day retention), MCP servers running local
+  programs, and sub-agent spawning. The first column holds `*` where action is
+  recommended and is blank otherwise. Among the listener rows only two
+  conditions are marked: WebUI/API HTTP open to the network (unencrypted), and
+  WebUI/API HTTPS disabled while HTTP is open to the network. A self-signed
+  certificate is never marked. Operator authentication is marked whenever no
+  usable admin account exists; awareness rows (shell not confined, bypass
+  restrictions) are never marked.
 - **Summary**: one table of what Claw can access, by area: files, shell,
   outbound network, inbound listeners, messaging channels, devices, external
   execution. Each cell names the agents or services concerned. The Files row
   is the one to read first: it says whether agents are confined to their
   workspaces and mounts, or whether one of them can read anything the named
   user can read.
-- **Network**: every listener (WebUI/API/MCP host, device gateway, LINE
-  webhook) with its bind address, whether it is reachable from other hosts,
-  and its allowlist; proxies.
+- **Network**: every listener (WebUI/API over HTTP and HTTPS, MCP host,
+  device gateway, LINE webhook) with its bind addresses, whether it is
+  reachable from other hosts, and its allowlist; the TLS certificate;
+  proxies.
 - **Providers and models**: API providers grouped by protocol with base URL,
   key set or not, and their models as `alias → model id` with the flags that
   change capability; CLI providers with the exact command line each model is

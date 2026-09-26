@@ -74,15 +74,22 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Module: `github.com/PivotLLM/ClawEh`
 - Binary: `claw` (main.go at repo root) — the gateway, the WebUI HTTP layer, the session
   API, and the embedded frontend all share one process and one HTTP mux. The mux is
-  served on **two listeners** (`internal/gateway/httphost.go`): plain HTTP on loopback
-  only (`127.0.0.1` and `[::1]` on `cfg.Gateway.Port`, default `18790`) and, when
-  `gateway.host` is not loopback, HTTPS on `gateway.host:gateway.tls_port` (default
-  `18443`) with a self-signed or operator-supplied certificate managed by
-  `internal/tlscert` (`claw tls` inspects it; see `docs/tls.md`). Plain HTTP is never
-  served off-box. There is no longer a separate `claw-launcher` / `claw-web` binary.
+  served on **two listeners** (`internal/gateway/httphost.go`): plain HTTP on
+  `gateway.host:gateway.port` (default loopback, `127.0.0.1` and `[::1]` on `18790`; a
+  network host is allowed but unencrypted and marked by the report) and HTTPS on
+  `gateway.tls_port` (default `18443`) placed by `gateway.tls.mode` — `all` (default,
+  every interface), `localhost` or `off` — with a self-signed or operator-supplied
+  certificate managed by `internal/tlscert` (`claw tls` inspects it; the WebUI uses
+  `GET /api/tls`, `POST /api/tls/validate`, `POST /api/tls/regenerate`; see
+  `docs/tls.md`). Where each binds is defined once in `config/gateway_listeners.go`
+  (`HTTPBindHosts`, `HTTPSBindHosts`, the URL helpers) and shared by the gateway,
+  `claw status`, the API and the report. There is no longer a separate
+  `claw-launcher` / `claw-web` binary.
 - **Operator login:** every `/api/*` request and `/webui/ws` require the admin
-  account created by `claw admin` (`internal/admincmd`; credentials, argon2id and
-  the file format in `internal/admin`; sessions and the middleware in
+  account created by `claw install` before it starts the service, or by
+  `claw admin` (`internal/admincmd`; credentials, argon2id, the file format and
+  the shared prompt/`CLAW_ADMIN_USER`+`CLAW_ADMIN_PASSWORD` logic,
+  `admin.EnsureAccount`, in `internal/admin`; sessions and the middleware in
   `web/backend/middleware/auth*.go`). Loopback is not exempt. `<CLAW_HOME>/credentials.json`
   is the only account; there is no default and no WebUI path to create one. See
   `docs/webui-auth.md`. The handler chain on the listener is IP allowlist → Host
@@ -235,7 +242,7 @@ exported; it exits 2 with a hint otherwise.
 Stop the service before copying: the running binary makes the copy fail with
 "Text file busy", and a restart then silently brings the old build back.
 
-- **The plan is `docs/webui-test-plan.md`** — 108 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 126 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

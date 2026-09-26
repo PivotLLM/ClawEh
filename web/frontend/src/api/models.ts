@@ -68,8 +68,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// getModels normalises the list at the boundary: Go encodes an empty slice as
+// null, and the page spreads and sorts `models` as an array.
 export async function getModels(): Promise<ModelsListResponse> {
-  return request<ModelsListResponse>("/api/models")
+  const data = await request<Partial<ModelsListResponse>>("/api/models")
+  const models = data.models ?? []
+  return {
+    models,
+    total: data.total ?? models.length,
+    default_model: data.default_model ?? "",
+  }
 }
 
 export async function addModel(

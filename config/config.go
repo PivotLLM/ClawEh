@@ -1890,27 +1890,29 @@ func (c *ModelConfig) Validate() error {
 }
 
 type GatewayConfig struct {
-	// Host selects the listeners. Loopback ("", 127.0.0.1, localhost, ::1)
-	// means the plain-HTTP loopback listener only. Anything else — a LAN
-	// address, a hostname or 0.0.0.0 — additionally opens an HTTPS listener on
-	// Host:TLSPort; the loopback HTTP listener stays on 127.0.0.1/[::1]:Port
-	// regardless. Plain HTTP is never served off-box. See HTTPSEnabled.
+	// Host is the plain-HTTP listener's bind address. Loopback ("",
+	// 127.0.0.1, localhost, ::1) — the default — binds 127.0.0.1 and [::1]
+	// only. Anything else (a LAN address, a hostname, 0.0.0.0) serves plain
+	// HTTP on the network too; that is allowed but unencrypted, and the
+	// configuration report marks it. The HTTPS listener does not follow Host:
+	// it is placed by TLS.Mode. See HTTPBindHosts and HTTPSBindHosts.
 	Host string `json:"host" env:"CLAW_GATEWAY_HOST"`
-	// Port is the loopback HTTP listener's port (default 18790).
+	// Port is the plain-HTTP listener's port (default 18790).
 	Port int `json:"port" env:"CLAW_GATEWAY_PORT"`
 	// TLSPort is the HTTPS listener's port (default 18443). It is separate from
-	// Port because a wildcard bind on Port would include loopback and serve
-	// plain HTTP there; the two listeners share one handler chain.
+	// Port because the two listeners bind different addresses; they share one
+	// handler chain.
 	TLSPort int `json:"tls_port,omitempty" env:"CLAW_GATEWAY_TLS_PORT"`
-	// TLS names the certificate the HTTPS listener presents. Empty means a
-	// self-signed certificate is generated under <CLAW_HOME>/tls.
+	// TLS places the HTTPS listener (Mode) and names the certificate it
+	// presents. Empty means HTTPS on all interfaces with a self-signed
+	// certificate generated under <CLAW_HOME>/tls.
 	TLS TLSConfig `json:"tls,omitempty"`
 	// ExternalURL is the base URL advertised to external clients (e.g. the
-	// claw-auth OAuth utility) for reaching this gateway's HTTP API. Empty
-	// derives it from the listeners (https://<hostname>:<tls_port> when the
-	// HTTPS listener is on, else http://127.0.0.1:<port>); set it to e.g.
-	// https://claw.example.com when a reverse proxy / TLS terminator sits in
-	// front. See EffectiveExternalURL.
+	// claw-auth OAuth utility) for reaching this gateway's HTTP API, and the
+	// name the operator browses to. Empty derives it from the listeners (see
+	// EffectiveExternalURL); set it to e.g. https://claw.example.com:18443 to
+	// reach the WebUI by a host name, or to a reverse proxy's URL. Its host is
+	// added to the self-signed certificate and to the accepted Host names.
 	ExternalURL string `json:"external_url,omitempty" env:"CLAW_GATEWAY_EXTERNAL_URL"`
 	// AllowedCIDRs is the IP allowlist for the shared HTTP server (WebUI/API +
 	// health). Empty means loopback only: the WebUI and /api/* have no operator
@@ -1926,13 +1928,18 @@ type GatewayConfig struct {
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
 }
 
-// TLSConfig is the HTTPS listener's certificate. CertFile and KeyFile are PEM
-// paths (anywhere on disk) and go together: setting one without the other is a
-// config error. With neither set the gateway generates and maintains a
-// self-signed certificate under <CLAW_HOME>/tls whose names are the host name,
-// its FQDN, every non-loopback interface address, the host of external_url and
-// ExtraNames.
+// TLSConfig is the HTTPS listener's placement and certificate. Mode says
+// where HTTPS is served (TLSModeAll, the default; TLSModeLocalhost;
+// TLSModeOff). CertFile and KeyFile are PEM paths (anywhere on disk) and go
+// together: setting one without the other is a config error. With neither set
+// the gateway generates and maintains a self-signed certificate under
+// <CLAW_HOME>/tls whose names are localhost, the loopback addresses, the host
+// name, its FQDN, every non-loopback interface address, the host of
+// external_url and ExtraNames.
 type TLSConfig struct {
+	// Mode is "all" (HTTPS on every interface; empty means this), "localhost"
+	// (127.0.0.1 and [::1] only) or "off" (no HTTPS listener).
+	Mode     string `json:"mode,omitempty" env:"CLAW_GATEWAY_TLS_MODE"`
 	CertFile string `json:"cert_file,omitempty" env:"CLAW_GATEWAY_TLS_CERT_FILE"`
 	KeyFile  string `json:"key_file,omitempty"  env:"CLAW_GATEWAY_TLS_KEY_FILE"`
 	// ExtraNames are additional DNS names or IP addresses for the self-signed
@@ -1940,13 +1947,35 @@ type TLSConfig struct {
 	ExtraNames []string `json:"extra_names,omitempty"`
 }
 
+// HTTPS listener placements, the values of gateway.tls.mode.
+const (
+	TLSModeAll       = "all"
+	TLSModeLocalhost = "localhost"
+	TLSModeOff       = "off"
+)
+
+// EffectiveMode is Mode with the default applied: empty means TLSModeAll.
+// An unknown value is returned as is; Validate rejects it.
+func (t TLSConfig) EffectiveMode() string {
+	m := strings.ToLower(strings.TrimSpace(t.Mode))
+	if m == "" {
+		return TLSModeAll
+	}
+	return m
+}
+
 // UserSupplied reports whether the operator provides the certificate.
 func (t TLSConfig) UserSupplied() bool {
 	return t.CertFile != "" && t.KeyFile != ""
 }
 
-// Validate rejects a half-configured certificate.
+// Validate rejects an unknown mode and a half-configured certificate.
 func (t TLSConfig) Validate() error {
+	switch t.EffectiveMode() {
+	case TLSModeAll, TLSModeLocalhost, TLSModeOff:
+	default:
+		return fmt.Errorf("gateway.tls.mode %q: must be %q, %q or %q", t.Mode, TLSModeAll, TLSModeLocalhost, TLSModeOff)
+	}
 	if (t.CertFile == "") != (t.KeyFile == "") {
 		return errors.New("gateway.tls.cert_file and gateway.tls.key_file must be set together (or both left empty for a self-signed certificate)")
 	}
@@ -1957,8 +1986,7 @@ func (t TLSConfig) Validate() error {
 // (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
 const DefaultGatewayPort = 18790
 
-// DefaultGatewayTLSPort is the default port of the HTTPS listener, which is
-// on whenever gateway.host is not a loopback address.
+// DefaultGatewayTLSPort is the default port of the HTTPS listener.
 const DefaultGatewayTLSPort = 18443
 
 // IsLoopbackHost reports whether host names the local host only. Empty is
@@ -1972,10 +2000,10 @@ func IsLoopbackHost(host string) bool {
 	}
 }
 
-// HTTPSEnabled reports whether the HTTPS listener is on: it is whenever Host
-// is not loopback. There is no opt-out; plain HTTP is served on loopback only.
+// HTTPSEnabled reports whether the HTTPS listener is on: it is unless
+// gateway.tls.mode is "off".
 func (g GatewayConfig) HTTPSEnabled() bool {
-	return !IsLoopbackHost(g.Host)
+	return g.TLS.EffectiveMode() != TLSModeOff
 }
 
 // EffectivePort is the loopback HTTP port, defaulting to DefaultGatewayPort.
@@ -1998,6 +2026,14 @@ func (g GatewayConfig) EffectiveTLSPort() int {
 func (g GatewayConfig) Validate() error {
 	if err := g.TLS.Validate(); err != nil {
 		return err
+	}
+	for _, p := range []struct {
+		key  string
+		port int
+	}{{"gateway.port", g.Port}, {"gateway.tls_port", g.TLSPort}} {
+		if p.port < 0 || p.port > 65535 {
+			return fmt.Errorf("%s %d is out of valid range (1-65535)", p.key, p.port)
+		}
 	}
 	if g.HTTPSEnabled() && g.EffectiveTLSPort() == g.EffectivePort() {
 		return fmt.Errorf("gateway.tls_port %d must differ from gateway.port", g.EffectiveTLSPort())
@@ -2078,23 +2114,31 @@ func ValidateAllowedCIDRs(cidrs []string) error {
 
 // EffectiveExternalURL returns the base URL external clients should use to reach
 // the gateway HTTP API. A non-empty ExternalURL is returned verbatim (operators
-// may point it at an https proxy). Otherwise it follows the listeners: with the
-// HTTPS listener on it is https://<host>:<tls_port>, where a wildcard bind
-// (0.0.0.0, ::) is replaced by the machine's host name — the self-signed
-// certificate carries it — or, when that is unknown, the primary LAN IP; a
-// loopback-only gateway is http://127.0.0.1:<port>.
+// may point it at a host name or an https proxy). Otherwise it follows the
+// listeners: with HTTPS on all interfaces it is https://<host name>:<tls_port>
+// (the self-signed certificate carries the host name; when that is unknown,
+// the primary LAN IP); with HTTPS on localhost only it is
+// https://127.0.0.1:<tls_port>; with HTTPS off it is the plain-HTTP listener,
+// http://<host>:<port>, where a wildcard bind is replaced by the host name as
+// above and a loopback one is 127.0.0.1.
 func (g GatewayConfig) EffectiveExternalURL() string {
 	if g.ExternalURL != "" {
 		return g.ExternalURL
 	}
-	if !g.HTTPSEnabled() {
-		return "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(g.EffectivePort()))
+	switch g.TLS.EffectiveMode() {
+	case TLSModeAll:
+		return "https://" + net.JoinHostPort(advertisedHostName(), strconv.Itoa(g.EffectiveTLSPort()))
+	case TLSModeLocalhost:
+		return "https://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(g.EffectiveTLSPort()))
 	}
-	host := strings.TrimSpace(g.Host)
-	if host == "0.0.0.0" || host == "::" || host == "[::]" {
+	host := strings.Trim(strings.TrimSpace(g.Host), "[]")
+	switch {
+	case IsLoopbackHost(host):
+		host = "127.0.0.1"
+	case isWildcardHost(host):
 		host = advertisedHostName()
 	}
-	return "https://" + net.JoinHostPort(host, strconv.Itoa(g.EffectiveTLSPort()))
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(g.EffectivePort()))
 }
 
 // advertisedHostName is the name a wildcard-bound gateway advertises: the

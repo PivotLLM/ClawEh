@@ -14,7 +14,6 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/perms"
-	"github.com/PivotLLM/ClawEh/internal/tlscert"
 )
 
 // TestAssessment_BypassCLIRestrictions: one unmarked awareness row per CLI
@@ -55,31 +54,104 @@ func assessmentRow(t *testing.T, s Section, item string) []string {
 	return nil
 }
 
-// TestAssessment_TransportAndAuth: the gateway is HTTPS off-box, so the HTTPS
-// row is marked only while a plain-HTTP listener (device gateway, LINE) is
-// reachable from other hosts; operator authentication is marked while no
-// admin account exists, whatever the bind.
-func TestAssessment_TransportAndAuth(t *testing.T) {
+// TestAssessment_ListenerRows: one row per listener, in order, in plain
+// words. The fixture is the default install: HTTP on localhost, HTTPS on the
+// network with a self-signed certificate, the Device Gateway and the LINE
+// webhook on the network. Nothing there earns a mark.
+func TestAssessment_ListenerRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
-	https := assessmentRow(t, s, "Transport encryption (HTTPS)")
-	if https[0] != "*" {
-		t.Errorf("HTTPS mark = %q, want * (device gateway and LINE webhook are plain HTTP off-box)", https[0])
+	want := [][]string{
+		{"", "WebUI/API HTTP", "Enabled for localhost."},
+		{"", "WebUI/API HTTPS", "Enabled for network access, self-signed certificate; allowed networks: 192.168.1.0/24."},
+		{"", "Device Gateway HTTP", "Enabled for network access; allowed from any address (device token and pairing required)."},
+		{"", "Device Gateway HTTPS", "Not available in this version (plain WebSocket, protected by the device token and pairing)."},
+		{"", "MCP host (local tools)", "Enabled for localhost."},
+		{"", "LINE webhook", "Enabled for network access; every request must carry LINE's signature."},
 	}
-	contains(t, https[2], "HTTPS on 0.0.0.0:18443 with a self-signed certificate", "https status")
-	contains(t, https[2], "Reachable from other hosts: Gateway (WebUI and HTTP API) on 127.0.0.1:18790 (HTTP), 0.0.0.0:18443 (HTTPS)", "https exposure")
-	contains(t, https[2], "Plain-HTTP listeners reachable from other hosts: Device gateway on 0.0.0.0:18791; LINE webhook on 0.0.0.0:18792/webhook/line", "plain listeners")
-	if strings.Contains(https[2], "Gateway (WebUI and HTTP API) on 127.0.0.1:18790 (HTTP), 0.0.0.0:18443 (HTTPS); LINE") {
-		t.Error("the HTTPS gateway must not be listed as a plain-HTTP listener")
+	rows := s.Tables[0].Rows
+	if len(rows) < len(want) {
+		t.Fatalf("only %d rows", len(rows))
+	}
+	for i, w := range want {
+		if strings.Join(rows[i], " | ") != strings.Join(w, " | ") {
+			t.Errorf("row %d = %q\nwant   %q", i, rows[i], w)
+		}
+	}
+	// No listener row names the process "gateway", mentions a proxy, the
+	// tls command or a wildcard address: those are for the Network section.
+	for _, r := range rows[:len(want)] {
+		for _, banned := range []string{"gateway ", "proxy", "claw tls", "0.0.0.0", "18443"} {
+			if strings.Contains(r[2], banned) {
+				t.Errorf("row %q mentions %q: %q", r[1], banned, r[2])
+			}
+		}
 	}
 
-	// Gateway off-box but every other listener loopback: HTTPS row is not marked.
-	cfg.Channels.Device.Host = "127.0.0.1"
-	cfg.Channels.LINE.WebhookHost = "127.0.0.1"
+	// Plain HTTP on the network is marked, HTTPS still on is not.
+	cfg.Gateway.Host = "0.0.0.0"
 	s = collectAssessment(t.Context(), cfg, env)
-	if https = assessmentRow(t, s, "Transport encryption (HTTPS)"); https[0] != "" {
-		t.Errorf("HTTPS mark = %q, want blank when the only off-box listener is HTTPS", https[0])
+	r := assessmentRow(t, s, "WebUI/API HTTP")
+	if r[0] != "*" || r[2] != "Enabled for network access: unencrypted — prefer HTTPS, or restrict HTTP to localhost; allowed networks: 192.168.1.0/24." {
+		t.Errorf("network HTTP row = %q", r)
 	}
+	if r = assessmentRow(t, s, "WebUI/API HTTPS"); r[0] != "" {
+		t.Errorf("HTTPS row marked while on: %q", r)
+	}
+
+	// HTTPS off while HTTP is on the network: both marked.
+	cfg.Gateway.TLS.Mode = config.TLSModeOff
+	s = collectAssessment(t.Context(), cfg, env)
+	if r = assessmentRow(t, s, "WebUI/API HTTPS"); r[0] != "*" || !strings.HasPrefix(r[2], "Disabled") {
+		t.Errorf("HTTPS off with network HTTP = %q, want marked Disabled", r)
+	}
+
+	// HTTPS off, HTTP on localhost: nothing reachable, nothing marked.
+	cfg.Gateway.Host = "127.0.0.1"
+	s = collectAssessment(t.Context(), cfg, env)
+	if r = assessmentRow(t, s, "WebUI/API HTTPS"); r[0] != "" || r[2] != "Disabled." {
+		t.Errorf("HTTPS off, HTTP local = %q", r)
+	}
+
+	// HTTPS on localhost only; any-address allowlists; device on loopback;
+	// MCP host and LINE off.
+	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
+	cfg.Gateway.AllowedCIDRs = []string{"*"}
+	cfg.Channels.Device.Host = "127.0.0.1"
+	cfg.MCPHost.Enabled, cfg.MCPHost.AutoEnable = false, false
+	cfg.Channels.LINE.Enabled = false
+	s = collectAssessment(t.Context(), cfg, env)
+	for item, status := range map[string]string{
+		"WebUI/API HTTPS":        "Enabled for localhost, self-signed certificate.",
+		"Device Gateway HTTP":    "Enabled for localhost.",
+		"MCP host (local tools)": "Disabled.",
+	} {
+		if r = assessmentRow(t, s, item); r[0] != "" || r[2] != status {
+			t.Errorf("%s = %q, want %q", item, r, status)
+		}
+	}
+	for _, row := range s.Tables[0].Rows {
+		if row[1] == "LINE webhook" {
+			t.Errorf("LINE row with the channel off: %q", row)
+		}
+	}
+	cfg.Gateway.TLS.Mode = config.TLSModeAll
+	s = collectAssessment(t.Context(), cfg, env)
+	if r = assessmentRow(t, s, "WebUI/API HTTPS"); !strings.HasSuffix(r[2], "; allowed from any address.") {
+		t.Errorf("any-address HTTPS = %q", r)
+	}
+	cfg.Channels.Device.Enabled = false
+	s = collectAssessment(t.Context(), cfg, env)
+	if r = assessmentRow(t, s, "Device Gateway HTTP"); r[2] != "Disabled." {
+		t.Errorf("device off = %q", r)
+	}
+}
+
+// TestAssessment_OperatorAuth: operator authentication is marked while no
+// admin account exists, whatever the listeners.
+func TestAssessment_OperatorAuth(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	s := collectAssessment(t.Context(), cfg, env)
 	auth := assessmentRow(t, s, "Operator authentication (WebUI and API)")
 	if auth[0] != "*" {
 		t.Errorf("auth mark = %q, want * (no admin account)", auth[0])
@@ -87,16 +159,15 @@ func TestAssessment_TransportAndAuth(t *testing.T) {
 	contains(t, auth[2], "No admin account", "auth status")
 	contains(t, auth[2], "claw admin", "auth fix")
 
-	// Loopback everywhere: the facts stay, the marks go.
-	cfg.Gateway.Host = "127.0.0.1"
+	contains(t, auth[2], "Reachable from other machines: WebUI/API HTTPS, Device Gateway, LINE webhook.", "auth reach")
+
+	// Loopback everywhere: the reach sentence says so.
+	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
 	cfg.Channels.Device.Host = "127.0.0.1"
 	cfg.Channels.LINE.WebhookHost = "127.0.0.1"
 	s = collectAssessment(t.Context(), cfg, env)
-	https = assessmentRow(t, s, "Transport encryption (HTTPS)")
-	if https[0] != "" {
-		t.Errorf("HTTPS mark = %q, want blank when every listener is loopback", https[0])
-	}
-	contains(t, https[2], "All listeners are loopback only", "https loopback")
+	contains(t, assessmentRow(t, s, "Operator authentication (WebUI and API)")[2],
+		"Everything listens on localhost only", "auth loopback")
 	// Loopback does not excuse a missing account: the WebUI is locked either way.
 	if loopAuth := assessmentRow(t, s, "Operator authentication (WebUI and API)"); loopAuth[0] != "*" {
 		t.Errorf("auth mark = %q, want * on loopback too", loopAuth[0])
@@ -190,7 +261,7 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 		t.Errorf("loose permissions mark = %q, want *", r[0])
 	}
 	contains(t, r[2], "1 file under CLAW_HOME is readable by other users (first: "+loosePath+" 0644)", "loose status")
-	contains(t, r[2], "the gateway tightens them at start", "loose fix")
+	contains(t, r[2], "ClawEh tightens them at start", "loose fix")
 
 	// A loose data directory itself counts too and comes first.
 	if err := os.Chmod(env.DataDir, 0o755); err != nil {
@@ -280,46 +351,34 @@ func TestAssessment_FileConfinementVsShell(t *testing.T) {
 	}
 }
 
-// TestAssessment_Certificate: the self-signed row is awareness (unmarked) and
-// carries the fingerprint once the pair exists; a user-supplied certificate
-// earns a marked row only within 14 days of expiry; nothing when HTTPS is off.
+// TestAssessment_Certificate: the HTTPS row names the certificate — a
+// self-signed one never earns a mark or a warning; a user-supplied one is
+// dated, and earns a marked expiry row only within 14 days of expiry;
+// nothing when HTTPS is off.
 func TestAssessment_Certificate(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	// Fixture: HTTPS on, self-signed, not yet generated.
 	s := collectAssessment(t.Context(), cfg, env)
-	r := assessmentRow(t, s, "Self-signed certificate")
-	if r[0] != "" {
-		t.Errorf("self-signed mark = %q, want blank", r[0])
+	r := assessmentRow(t, s, "WebUI/API HTTPS")
+	if r[0] != "" || !strings.Contains(r[2], ", self-signed certificate;") {
+		t.Errorf("self-signed HTTPS row = %q", r)
 	}
-	contains(t, r[2], "HTTPS uses a self-signed certificate (not yet generated:", "ungenerated self-signed")
-	contains(t, r[2], "verify the fingerprint with `claw tls`, or install your own with gateway.tls", "self-signed advice")
-
-	certPath := filepath.Join(env.DataDir, tlscert.DirName, tlscert.SelfSignedCertFile)
-	writeTestCert(t, certPath, env.Now.Add(300*24*time.Hour))
-	info, err := tlscert.InspectFile(tlscert.Options{DataDir: env.DataDir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s = collectAssessment(t.Context(), cfg, env)
-	r = assessmentRow(t, s, "Self-signed certificate")
-	if r[0] != "" {
-		t.Errorf("self-signed mark = %q, want blank", r[0])
-	}
-	if r[2] != "HTTPS uses a self-signed certificate (SHA-256 "+info.Fingerprint+"); browsers warn once — verify the fingerprint with `claw tls`, or install your own with gateway.tls." {
-		t.Errorf("self-signed status = %q", r[2])
-	}
-	if !strings.Contains(info.Fingerprint, ":") || len(info.Fingerprint) != 95 {
-		t.Errorf("fingerprint %q is not colon-separated SHA-256", info.Fingerprint)
+	for _, row := range s.Tables[0].Rows {
+		if row[1] == "TLS certificate expiry" {
+			t.Errorf("expiry row for a self-signed certificate: %v", row)
+		}
 	}
 
-	// User-supplied, far from expiry: no certificate row at all.
+	// User-supplied, far from expiry: dated in the HTTPS row, no expiry row.
 	userCert := filepath.Join(env.DataDir, "user.crt")
 	writeTestCert(t, userCert, env.Now.Add(100*24*time.Hour))
 	cfg.Gateway.TLS = config.TLSConfig{CertFile: userCert, KeyFile: filepath.Join(env.DataDir, "user.key")}
 	s = collectAssessment(t.Context(), cfg, env)
+	if r = assessmentRow(t, s, "WebUI/API HTTPS"); r[2] != "Enabled for network access, user-provided certificate (expires 2026-12-30); allowed networks: 192.168.1.0/24." {
+		t.Errorf("user certificate HTTPS row = %q", r[2])
+	}
 	for _, row := range s.Tables[0].Rows {
-		if row[1] == "Self-signed certificate" || row[1] == "TLS certificate expiry" {
-			t.Errorf("certificate row for a valid user certificate: %v", row)
+		if row[1] == "TLS certificate expiry" {
+			t.Errorf("expiry row for a valid user certificate: %v", row)
 		}
 	}
 
@@ -334,19 +393,20 @@ func TestAssessment_Certificate(t *testing.T) {
 		t.Errorf("expiry status = %q", r[2])
 	}
 
-	// Already expired: still marked, says so.
+	// Already expired: still marked, says so, and the HTTPS row too.
 	writeTestCert(t, userCert, env.Now.Add(-2*24*time.Hour))
 	s = collectAssessment(t.Context(), cfg, env)
 	r = assessmentRow(t, s, "TLS certificate expiry")
 	if r[0] != "*" || r[2] != "TLS certificate expired on 2026-09-19 (2 days ago)." {
 		t.Errorf("expired row = %v", r)
 	}
+	contains(t, assessmentRow(t, s, "WebUI/API HTTPS")[2], "user-provided certificate (expired 2026-09-19)", "expired HTTPS row")
 
-	// Loopback gateway: no HTTPS listener, no certificate rows.
-	cfg.Gateway.Host = "127.0.0.1"
+	// HTTPS off: no certificate rows.
+	cfg.Gateway.TLS.Mode = config.TLSModeOff
 	s = collectAssessment(t.Context(), cfg, env)
 	for _, row := range s.Tables[0].Rows {
-		if row[1] == "Self-signed certificate" || row[1] == "TLS certificate expiry" {
+		if row[1] == "TLS certificate expiry" {
 			t.Errorf("certificate row with HTTPS off: %v", row)
 		}
 	}
@@ -362,7 +422,7 @@ func TestAssessment_AuditLog(t *testing.T) {
 	if r[0] != "*" {
 		t.Errorf("missing audit mark = %q, want *", r[0])
 	}
-	if r[2] != "Audit log not initialised: "+auditPath+" is missing; the gateway creates it at start." {
+	if r[2] != "Audit log not initialised: "+auditPath+" is missing; ClawEh creates it at start." {
 		t.Errorf("missing audit status = %q", r[2])
 	}
 

@@ -14,8 +14,8 @@ func TestCollectNetwork_Listeners(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	tb := findTable(t, collectNetwork(t.Context(), cfg, env), "Listeners")
 
-	_, gw := findRow(t, tb, "Gateway")
-	if gw[1] != "127.0.0.1:18790 (HTTP), 0.0.0.0:18443 (HTTPS)" {
+	_, gw := findRow(t, tb, "WebUI/API")
+	if gw[1] != "127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 0.0.0.0:18443 (HTTPS)" {
 		t.Errorf("gateway bind = %q", gw[1])
 	}
 	contains(t, gw[2], "192.168.1.0/24", "gateway allowlist")
@@ -61,11 +61,16 @@ func TestGatewayAllow(t *testing.T) {
 func TestCollectNetwork_LoopbackHasNoOffHostNote(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Gateway.Host = "127.0.0.1"
+	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
 	cfg.Gateway.AllowedCIDRs = nil
 	cfg.MCPHost.Enabled = false
 	cfg.MCPHost.AutoEnable = false
 	tb := findTable(t, collectNetwork(t.Context(), cfg, env), "Listeners")
-	_, gw := findRow(t, tb, "Gateway")
+	_, gw := findRow(t, tb, "WebUI/API")
+	if gw[1] != "127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 127.0.0.1:18443 (HTTPS), [::1]:18443 (HTTPS)" {
+		t.Errorf("localhost-only bind = %q", gw[1])
+	}
+	contains(t, gw[3], "HTTPS on localhost only", "localhost mode note")
 	if strings.Contains(gw[3], "reachable from other hosts") {
 		t.Errorf("loopback gateway must not carry the off-host note: %q", gw[3])
 	}
@@ -74,4 +79,21 @@ func TestCollectNetwork_LoopbackHasNoOffHostNote(t *testing.T) {
 	if mcp[1] != disabled {
 		t.Errorf("MCP host should be disabled, got %q", mcp[1])
 	}
+}
+
+// TestCollectNetwork_ListenerModes: plain HTTP on the network and HTTPS off
+// are both visible in the listener row and the TLS line.
+func TestCollectNetwork_ListenerModes(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Gateway.Host = "0.0.0.0"
+	cfg.Gateway.TLS.Mode = config.TLSModeOff
+	s := collectNetwork(t.Context(), cfg, env)
+	_, gw := findRow(t, findTable(t, s, "Listeners"), "WebUI/API")
+	if gw[1] != "0.0.0.0:18790 (HTTP)" {
+		t.Errorf("bind = %q", gw[1])
+	}
+	contains(t, gw[3], "plain HTTP on the network", "network HTTP note")
+	contains(t, gw[3], "HTTPS off", "https off note")
+	_, tlsRow := findRow(t, findTable(t, s, "Origins and proxies"), "TLS")
+	contains(t, tlsRow[1], "off (gateway.tls.mode is \"off\"", "tls summary")
 }

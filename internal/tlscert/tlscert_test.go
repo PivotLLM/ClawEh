@@ -355,12 +355,16 @@ func TestExpectedNames_Dedupes(t *testing.T) {
 	if c := countOf(n.dns, "a.example"); c != 1 {
 		t.Errorf("a.example appears %d times in %v", c, n.dns)
 	}
-	if slices.Contains(n.dns, "localhost") {
-		t.Errorf("loopback names must be skipped: %v", n.dns)
+	if countOf(n.dns, "localhost") != 1 {
+		t.Errorf("localhost must appear once: %v", n.dns)
 	}
 	ips := ipStrings(n.ips)
-	if countOf(ips, "2001:db8::1") != 1 || slices.Contains(ips, "127.0.0.1") {
+	if countOf(ips, "2001:db8::1") != 1 || countOf(ips, "127.0.0.1") != 1 || countOf(ips, "::1") != 1 {
 		t.Errorf("ips = %v", ips)
+	}
+	// The host name, not localhost, is the subject: loopback names come last.
+	if hn, err := os.Hostname(); err == nil && hn != "" && hn != "localhost" && n.dns[0] == "localhost" {
+		t.Errorf("localhost must not be the first DNS name: %v", n.dns)
 	}
 }
 
@@ -387,4 +391,68 @@ func countOf(list []string, s string) int {
 		}
 	}
 	return n
+}
+
+// ValidatePair accepts a readable, matching, current pair and names what is
+// wrong with anything else.
+func TestValidatePair(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	certPath, keyPath := writePair(t, dir, certNames{dns: []string{"ok.example"}}, now)
+	otherDir := t.TempDir()
+	_, otherKey := writePair(t, otherDir, certNames{dns: []string{"other.example"}}, now)
+	oldDir := t.TempDir()
+	oldCert, oldKey := writePair(t, oldDir, certNames{dns: []string{"old.example"}}, now.Add(-2*365*day))
+	garbage := filepath.Join(dir, "garbage.key")
+	if err := os.WriteFile(garbage, []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := ValidatePair(certPath, keyPath, now)
+	if err != nil {
+		t.Fatalf("good pair: %v", err)
+	}
+	if info.Source != SourceFile || !slices.Contains(info.Names(), "ok.example") || !info.SelfSigned || info.Fingerprint == "" {
+		t.Errorf("info = %+v", info)
+	}
+
+	for _, c := range []struct {
+		name, cert, key, want string
+	}{
+		{"missing cert", "", keyPath, "cert_file is required"},
+		{"missing key", certPath, "", "key_file is required"},
+		{"relative", "user.crt", keyPath, "must be an absolute path"},
+		{"key file absent", certPath, filepath.Join(dir, "nope.key"), "key_file " + filepath.Join(dir, "nope.key") + " cannot be read"},
+		{"cert file absent", filepath.Join(dir, "nope.crt"), keyPath, "cert_file " + filepath.Join(dir, "nope.crt") + " cannot be read"},
+		{"key is not PEM", certPath, garbage, "key_file " + garbage + " is not PEM"},
+		{"mismatched", certPath, otherKey, "do not form a pair"},
+		{"expired", oldCert, oldKey, "expired"},
+		{"swapped", keyPath, certPath, "do not form a pair"},
+	} {
+		if _, err := ValidatePair(c.cert, c.key, now); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to contain %q", c.name, err, c.want)
+		}
+	}
+}
+
+// UpdateNames reaches the next regeneration: names saved after start are
+// covered without a restart.
+func TestManager_UpdateNamesThenRegenerate(t *testing.T) {
+	m, err := Load(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.UpdateNames([]string{"added.example"}, "ext.example")
+	if err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	names := m.Info().Names()
+	for _, want := range []string{"added.example", "ext.example", "localhost", "127.0.0.1"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("names %v lack %q", names, want)
+		}
+	}
+	if !m.Info().SelfSigned {
+		t.Error("generated certificate must report SelfSigned")
+	}
 }

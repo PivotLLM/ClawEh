@@ -132,6 +132,10 @@ type Info struct {
 	NotAfter          time.Time
 	// Fingerprint is the SHA-256 of the DER certificate, colon-separated.
 	Fingerprint string
+	// SelfSigned is true when the certificate is its own issuer (the generated
+	// pair, or an operator file that is self-signed): browsers warn about it
+	// until it is accepted by hand.
+	SelfSigned bool
 }
 
 // Names are every DNS name and IP address the certificate is valid for, in
@@ -181,6 +185,16 @@ func Load(opts Options) (*Manager, error) {
 	}
 	m.current.Store(l)
 	return m, nil
+}
+
+// UpdateNames replaces the configured names a self-signed certificate is
+// issued for (gateway.tls.extra_names and the host of external_url), so a
+// later Regenerate or renewal covers names saved after the gateway started.
+func (m *Manager) UpdateNames(extraNames []string, externalHost string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opts.ExtraNames = append([]string(nil), extraNames...)
+	m.opts.ExternalHost = externalHost
 }
 
 // Info describes the certificate currently served.

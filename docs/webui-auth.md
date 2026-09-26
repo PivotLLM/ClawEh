@@ -1,7 +1,45 @@
 # WebUI authentication
 
 The WebUI and everything under `/api/*` require a login. There is one admin
-account, and it is created on the server:
+account, and it is created on the server — by the installer, or with
+`claw admin`.
+
+## Created by the installer
+
+`claw install` and the one-line installer (`claw-online-install.sh`) make sure
+the account exists before they register and start the service. After the
+config is written, when `<CLAW_HOME>/credentials.json` does not exist:
+
+1. If `CLAW_ADMIN_USER` and `CLAW_ADMIN_PASSWORD` are both set, the account is
+   created from them (same rules as below). Setting only one is an error.
+2. Otherwise the installer prompts for the username and the password on the
+   terminal. When stdin is not a terminal — under `curl … | bash` stdin is the
+   script — it opens `/dev/tty` instead; the password is never read from a pipe.
+3. With neither, it stops with `no admin account and no terminal to create one:
+   export CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD, or run `claw admin` on the
+   server, then rerun the installer` and does not register or start the
+   service. Rerunning the installer is safe.
+
+An existing file is never changed; one that exists but cannot be used (wrong
+permissions, damaged) stops the install with the fix. `--yes` skips only the
+confirmation question, not the account. Run as root, the installer hands the
+file to the service account. The summary ends with
+`Admin account: <username> (<CLAW_HOME>/credentials.json)`.
+
+For an unattended install, export the two variables in the same shell and
+unset them afterwards; do not put them on the command line, where the password
+lands in the shell history (and, in front of `curl … |`, reaches only `curl`).
+Across `sudo`, keep them with
+`sudo --preserve-env=CLAW_ADMIN_USER,CLAW_ADMIN_PASSWORD`.
+
+```
+read -r CLAW_ADMIN_USER; read -rs CLAW_ADMIN_PASSWORD
+export CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+claw install          # or the curl … | bash one-liner
+unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
+```
+
+## `claw admin`
 
 ```
 claw admin            # prompts for the username and the password
@@ -9,7 +47,10 @@ claw admin alice      # username given, prompts for the password
 ```
 
 The password is asked for twice without echo and must be at least 12
-characters. The result is `<CLAW_HOME>/credentials.json`:
+characters; a prompted username or password that is rejected is asked for
+again, up to three times. Like the installer, `claw admin` prompts on
+`/dev/tty` when stdin is not a terminal, and refuses when there is no terminal
+at all. The result is `<CLAW_HOME>/credentials.json`:
 `{"username","password_hash","updated"}` with an argon2id hash
 (`$argon2id$v=19$m=65536,t=3,p=1$…`), mode 0600. `CLAW_HOME` is resolved the
 way the service resolves it: the `CLAW_HOME` environment variable, else the

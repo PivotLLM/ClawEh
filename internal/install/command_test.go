@@ -97,44 +97,35 @@ func TestApplyAllowlist_WritesCIDRs(t *testing.T) {
 	}
 }
 
-func TestAccessURL(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv(global.EnvVarHome, dir)
-	write := func(host string, port int) {
-		cfg := config.DefaultConfig()
-		cfg.Gateway.Host = host
-		cfg.Gateway.Port = port
-		if err := config.SaveConfig(internal.GetConfigPath(), cfg); err != nil {
-			t.Fatalf("SaveConfig: %v", err)
+func TestPrintListenerSummary(t *testing.T) {
+	var b strings.Builder
+	printListenerSummary(&b, config.GatewayConfig{Host: "127.0.0.1", Port: 18790})
+	got := b.String()
+	for _, want := range []string{"WebUI on this machine: http://127.0.0.1:18790/", `HTTPS on every interface (gateway.tls.mode "all"`, "gateway.external_url", "claw admin"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("default summary missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "plain HTTP (unencrypted)") {
+		t.Errorf("loopback HTTP reported as network HTTP:\n%s", got)
 	}
 
-	write("127.0.0.1", 18790)
-	if got := accessURL(); got != "http://localhost:18790" {
-		t.Errorf("loopback URL = %q, want http://localhost:18790", got)
+	b.Reset()
+	printListenerSummary(&b, config.GatewayConfig{Host: "192.168.1.5", Port: 9000, TLS: config.TLSConfig{Mode: config.TLSModeOff}})
+	got = b.String()
+	for _, want := range []string{"plain HTTP (unencrypted): http://192.168.1.5:9000/", `HTTPS: off (gateway.tls.mode "off")`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("network HTTP summary missing %q:\n%s", want, got)
+		}
 	}
-	write("192.168.1.5", 9000)
-	if got := accessURL(); got != "http://192.168.1.5:9000" {
-		t.Errorf("specific-host URL = %q, want http://192.168.1.5:9000", got)
+	if strings.Contains(got, "self-signed") {
+		t.Errorf("certificate advice with HTTPS off:\n%s", got)
 	}
-	// All-interfaces: resolves to a LAN IP (or the <server-ip> placeholder), but
-	// always carries the right scheme and port.
-	write("0.0.0.0", 8080)
-	if got := accessURL(); !strings.HasPrefix(got, "http://") || !strings.HasSuffix(got, ":8080") {
-		t.Errorf("all-interfaces URL = %q, want http://…:8080", got)
-	}
-}
 
-func TestIsPublicBind(t *testing.T) {
-	for _, h := range []string{"", "127.0.0.1", "localhost", "::1"} {
-		if isPublicBind(h) {
-			t.Errorf("isPublicBind(%q) = true, want false", h)
-		}
-	}
-	for _, h := range []string{"0.0.0.0", "192.168.1.10", "::"} {
-		if !isPublicBind(h) {
-			t.Errorf("isPublicBind(%q) = false, want true", h)
-		}
+	b.Reset()
+	printListenerSummary(&b, config.GatewayConfig{TLSPort: 9443, TLS: config.TLSConfig{Mode: config.TLSModeLocalhost}})
+	if got = b.String(); !strings.Contains(got, "https://127.0.0.1:9443/") {
+		t.Errorf("localhost HTTPS summary:\n%s", got)
 	}
 }
 

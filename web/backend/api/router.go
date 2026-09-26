@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
@@ -61,6 +62,11 @@ type Handler struct {
 	// loginLimiter applies the failed-login backoff. Owned by the handler for
 	// its lifetime; safe for concurrent use.
 	loginLimiter *middleware.LoginLimiter
+	// bootListeners and tlsManager are the running gateway's listener
+	// settings and HTTPS certificate manager (SetBootListeners,
+	// SetTLSManager; see tls.go). Guarded by reloadMu.
+	bootListeners *config.ListenerSettings
+	tlsManager    *tlscert.Manager
 
 	// deviceStore caches the pairing DB handle. It used to be opened and closed
 	// per request, which re-ran the WAL pragma, the schema and a failing
@@ -271,4 +277,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Speech-to-text (voice transcription) backends
 	h.registerVoiceRoutes(mux)
+
+	// HTTP/HTTPS listener settings, certificate check and regeneration
+	h.registerTLSRoutes(mux)
 }

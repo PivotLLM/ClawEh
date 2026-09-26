@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -92,9 +89,9 @@ func runtimeConfig(live *config.Config) (*config.Config, error) {
 // binary's actual listen settings. The gateway host/port and IP allowlist in
 // cfg.Gateway are the single source of truth.
 func newMergedWebServer(store *config.Store, cfg *config.Config) *webserver.Server {
-	// Public: the gateway is reachable off-box, i.e. the HTTPS listener is on,
-	// so the API advertises the request's own host rather than the bind host.
-	publicBind := cfg != nil && cfg.Gateway.HTTPSEnabled()
+	// Public: a listener is reachable off-box, so the API advertises the
+	// request's own host rather than the bind host.
+	publicBind := cfg != nil && cfg.Gateway.ReachableOffBox()
 	port := 0
 	if cfg != nil {
 		port = cfg.Gateway.EffectivePort()
@@ -134,11 +131,16 @@ type gatewayServices struct {
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
 	HTTPHost       *httpHost
-	// TLSCerts is the HTTPS listener's certificate (nil on a loopback-only
-	// gateway). Like HTTPHost it lives for the whole process; stopTLSWatch
+	// TLSCerts is the HTTPS listener's certificate (nil when gateway.tls.mode
+	// is "off"). Like HTTPHost it lives for the whole process; stopTLSWatch
 	// ends its file watcher at shutdown.
-	TLSCerts      *tlscert.Manager
-	stopTLSWatch  context.CancelFunc
+	TLSCerts     *tlscert.Manager
+	stopTLSWatch context.CancelFunc
+	// bootListeners are the listener settings the process bound at start;
+	// a saved config that differs needs a restart (warnListenerConfigChanged,
+	// GET /api/tls restart_required).
+	bootListeners config.ListenerSettings
+
 	CogmemManager *consolidate.Manager
 	// AuthStore holds the WebUI login sessions and the admin credentials;
 	// stopAuthWatch ends its credentials-file poller at shutdown.
@@ -305,7 +307,7 @@ func gatewayCmd(debug bool) error {
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())
 
-	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
+	logger.InfoF("Gateway started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -506,7 +508,7 @@ func setupAndStartServices(
 		fms.Start()
 	}
 
-	// The HTTPS listener's certificate, when the gateway is bound off-box.
+	// The HTTPS listener's certificate, unless gateway.tls.mode is "off".
 	// Loaded (a self-signed pair generated or renewed) BEFORE the channels are
 	// built: the device channel reads the certificate's names for its own Host
 	// allowlist (tlscert.NamesForConfig), so the file has to be current first.
@@ -550,8 +552,8 @@ func setupAndStartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup the shared listeners: plain HTTP on loopback, always, and HTTPS on
-	// gateway.host:tls_port when the gateway is bound off-box. They are owned by
+	// Setup the shared listeners: plain HTTP on gateway.host (loopback by
+	// default) and HTTPS where gateway.tls.mode places it. They are owned by
 	// httpHost and stay up across config reloads; only the handler mux is
 	// swapped on reload, so WebUI WebSocket connections and channel webhooks
 	// survive a Manager rebuild. See rebuildSharedHTTPServer for the swap seam.
@@ -584,9 +586,13 @@ func setupAndStartServices(
 	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
 	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
-	hostOpts := hostOptions{Port: cfg.Gateway.EffectivePort(), AllowedCIDRs: allowedCIDRs}
+	hostOpts := hostOptions{
+		HTTPHosts:    cfg.Gateway.HTTPBindHosts(),
+		Port:         cfg.Gateway.EffectivePort(),
+		AllowedCIDRs: allowedCIDRs,
+	}
 	if services.TLSCerts != nil {
-		hostOpts.TLSHost = cfg.Gateway.Host
+		hostOpts.TLSHosts = cfg.Gateway.HTTPSBindHosts()
 		hostOpts.TLSPort = cfg.Gateway.EffectiveTLSPort()
 		hostOpts.TLSConfig = services.TLSCerts.TLSConfig()
 		hostOpts.HSTS = services.TLSCerts.UserSupplied()
@@ -623,6 +629,11 @@ func setupAndStartServices(
 	if services.TLSCerts != nil {
 		startTLSWatch(services, agentLoop)
 	}
+	// The TLS API (GET /api/tls, regenerate) reads what this process bound
+	// and drives the running certificate manager.
+	services.bootListeners = cfg.Gateway.Listeners()
+	services.WebServer.APIHandler().SetBootListeners(services.bootListeners)
+	services.WebServer.APIHandler().SetTLSManager(services.TLSCerts)
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -640,10 +651,13 @@ func setupAndStartServices(
 		"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health",
 		"ready":  "http://" + services.HTTPHost.LoopbackAddr() + "/ready",
 	}
-	if https := services.HTTPHost.HTTPSAddr(); https != "" {
-		endpoints["https"] = "https://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.EffectiveTLSPort()))
-		endpoints["external_url"] = cfg.Gateway.EffectiveExternalURL()
+	if urls := cfg.Gateway.NetworkHTTPURLs(); len(urls) > 0 {
+		endpoints["http_network"] = urls
 	}
+	if urls := cfg.Gateway.HTTPSURLs(); len(urls) > 0 {
+		endpoints["https"] = urls
+	}
+	endpoints["external_url"] = cfg.Gateway.EffectiveExternalURL()
 	logger.InfoF("Health endpoints available", endpoints)
 
 	// Setup state manager and device service
@@ -1073,6 +1087,12 @@ func restartServices(
 	// config reload (investigation 7a5377d9, option #1).
 	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
 	warnListenerConfigChanged(services, cfg.Gateway)
+	// Names saved since start (extra_names, external_url) reach the running
+	// certificate manager, so a regeneration or renewal covers them.
+	if services.TLSCerts != nil {
+		opts := tlscert.OptionsFromConfig(cfg)
+		services.TLSCerts.UpdateNames(opts.ExtraNames, opts.ExternalHost)
+	}
 
 	// Re-apply the IP allowlist on the live listener. This is what makes
 	// `claw network` a recovery path: an operator locked out by an empty
@@ -1447,21 +1467,8 @@ func warnListenerConfigChanged(services *gatewayServices, gw config.GatewayConfi
 	if services.HTTPHost == nil {
 		return
 	}
-	running := services.HTTPHost.opts
-	changed := gw.EffectivePort() != running.Port
-	if gw.HTTPSEnabled() != (running.TLSHost != "") ||
-		(gw.HTTPSEnabled() && (gw.Host != running.TLSHost || gw.EffectiveTLSPort() != running.TLSPort)) {
-		changed = true
-	}
-	if services.TLSCerts != nil {
-		have := services.TLSCerts.Info()
-		if gw.TLS.UserSupplied() != services.TLSCerts.UserSupplied() ||
-			(gw.TLS.UserSupplied() && (strings.TrimSpace(gw.TLS.CertFile) != have.CertFile || strings.TrimSpace(gw.TLS.KeyFile) != have.KeyFile)) {
-			changed = true
-		}
-	}
-	if changed {
-		logger.WarnCF("gateway", "gateway.host, port, tls_port or tls changed; the listeners are bound at start, so restart "+internal.BinaryName+" to apply", nil)
+	if gw.Listeners() != services.bootListeners {
+		logger.WarnCF("gateway", "gateway.host, port, tls_port, tls.mode or the certificate files changed; the listeners are bound at start, so restart "+internal.BinaryName+" to apply", nil)
 	}
 }
 

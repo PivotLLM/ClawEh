@@ -21,10 +21,12 @@ import { Route as LogsRouteImport } from './routes/logs'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as NetworkRouteImport } from './routes/network'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as ReportRouteImport } from './routes/report'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StatusRouteImport } from './routes/status'
+import { Route as SystemRouteImport } from './routes/system'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
@@ -94,6 +96,11 @@ const ModelsRoute = ModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NetworkRoute = NetworkRouteImport.update({
+  id: '/network',
+  path: '/network',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -112,6 +119,11 @@ const SetupRoute = SetupRouteImport.update({
 const StatusRoute = StatusRouteImport.update({
   id: '/status',
   path: '/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemRoute = SystemRouteImport.update({
+  id: '/system',
+  path: '/system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VoiceRoute = VoiceRouteImport.update({
@@ -168,10 +180,12 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -194,10 +208,12 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -221,10 +237,12 @@ export interface FileRoutesById {
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -249,10 +267,12 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -275,10 +295,12 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -301,10 +323,12 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -328,10 +352,12 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRouteWithChildren
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
+  NetworkRoute: typeof NetworkRoute
   ProvidersRoute: typeof ProvidersRoute
   ReportRoute: typeof ReportRoute
   SetupRoute: typeof SetupRoute
   StatusRoute: typeof StatusRoute
+  SystemRoute: typeof SystemRoute
   VoiceRoute: typeof VoiceRoute
 }
 
@@ -421,6 +447,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/network': {
+      id: '/network'
+      path: '/network'
+      fullPath: '/network'
+      preLoaderRoute: typeof NetworkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/providers': {
       id: '/providers'
       path: '/providers'
@@ -447,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/status'
       fullPath: '/status'
       preLoaderRoute: typeof StatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/system': {
+      id: '/system'
+      path: '/system'
+      fullPath: '/system'
+      preLoaderRoute: typeof SystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/voice': {
@@ -570,10 +610,12 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRouteWithChildren,
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
+  NetworkRoute: NetworkRoute,
   ProvidersRoute: ProvidersRoute,
   ReportRoute: ReportRoute,
   SetupRoute: SetupRoute,
   StatusRoute: StatusRoute,
+  SystemRoute: SystemRoute,
   VoiceRoute: VoiceRoute,
 }
 export const routeTree = rootRouteImport

@@ -33,38 +33,70 @@ observe does not need an entry.
   **not** exempt. A credentials file readable by group or others is ignored
   (logged with the `chmod 600` fix) and counts as no account. See
   `docs/webui-auth.md`.
-- **BREAKING: the gateway no longer serves plain HTTP off-box.** Plain HTTP is
-  served on loopback only (`127.0.0.1:18790` and `[::1]:18790`). When
-  `gateway.host` is not a loopback address the gateway additionally serves
-  HTTPS on `gateway.host:gateway.tls_port` (new key, default `18443`); there is
-  no opt-out. Installs with a non-loopback `gateway.host` move from
-  `http://<host>:18790` to `https://<host>:18443`: browse to the new URL and
-  accept the self-signed certificate (verify its fingerprint with `claw tls`),
-  or install your own with `gateway.tls.cert_file` / `gateway.tls.key_file`.
-  Reverse-proxy users point the proxy at `http://127.0.0.1:18790` and set
-  `gateway.external_url`. `gateway.external_url` now defaults to
-  `https://<hostname>:<tls_port>` when the HTTPS listener is on. New
-  `gateway.tls` block: `cert_file` + `key_file` (PEM, both or neither — one
-  alone is a config error) and `extra_names` (additional DNS names / IPs for
-  the self-signed certificate). Without a pair, a self-signed ECDSA P-256
-  certificate is generated in `<CLAW_HOME>/tls/` (key 0600), valid one year,
-  for the host name, its FQDN, every non-loopback interface address, the host
-  of `external_url` and `extra_names`; it is regenerated when under 30 days
-  from expiry or when those names change. Both sources are hot-reloaded from
-  disk within a minute; a pair that fails to load keeps the previous
-  certificate serving and raises an alert. TLS 1.2 minimum. HSTS is sent only
-  with an operator-supplied certificate. New `claw tls` command prints the
+- **`claw install` and the one-line installer create the admin account and
+  will not start the service without one.** When
+  `<CLAW_HOME>/credentials.json` does not exist, the installer asks for the
+  username and password (twice, no echo, at least 12 characters) before it
+  registers and starts the service — on `/dev/tty` when stdin is not a
+  terminal, so `curl … | bash` prompts too. For an unattended install, export
+  the new `CLAW_ADMIN_USER` and `CLAW_ADMIN_PASSWORD` variables in the same
+  shell (not on the command line, where the password lands in shell history)
+  and unset them afterwards. With neither a terminal nor the variables the
+  install stops, without registering or starting the service, with: "no admin
+  account and no terminal to create one: export CLAW_ADMIN_USER and
+  CLAW_ADMIN_PASSWORD, or run `claw admin` on the server, then rerun the
+  installer". An existing account is never changed; a credentials file that
+  exists but cannot be used stops the install with the fix. `--yes` does not
+  skip the account. Run as root, the installer hands the file (and a
+  `CLAW_HOME` it created) to the service account. The summary ends with
+  `Admin account: <username> (<path>)`, and the one-line installer now lists
+  the WebUI URLs the install printed (loopback HTTP, network HTTP, HTTPS)
+  instead of assuming `http://localhost:18790`.
+- **HTTPS for the WebUI and API, on by default; new `gateway.tls` block.**
+  The WebUI/API is now served on two listeners that share one handler (login,
+  IP allowlist, Host check): plain HTTP on `gateway.host:gateway.port` as
+  before, and HTTPS on `gateway.tls_port` (new key, default `18443`) placed by
+  the new `gateway.tls.mode`: `"all"` (default; every interface, IPv4 and
+  IPv6), `"localhost"` (`127.0.0.1` and `[::1]` only) or `"off"`. An absent
+  key means `"all"`, so **after upgrading every install also listens on
+  `0.0.0.0:18443`**; off-box clients are still refused until their network is
+  in `gateway.allowed_cidrs` (empty by default = loopback only), and every
+  request needs the admin login. To keep the old footprint set
+  `"gateway": {"tls": {"mode": "off"}}` (or `"localhost"`). `gateway.host`
+  now places plain HTTP only: loopback (`127.0.0.1`, the default) binds
+  `127.0.0.1` and `[::1]`; a LAN address or `0.0.0.0` also serves the WebUI
+  over **unencrypted** HTTP on the network — allowed, and marked in the
+  configuration report; loopback is always bound, so
+  `http://127.0.0.1:<port>` keeps working. Reverse-proxy users point the proxy
+  at `http://127.0.0.1:18790` and set `gateway.external_url`.
+  `gateway.external_url` now defaults to `https://<hostname>:<tls_port>` with
+  mode `"all"`, `https://127.0.0.1:<tls_port>` with `"localhost"`, and the
+  plain-HTTP URL with `"off"`; set it to browse by a host name (its host joins
+  the certificate and the accepted Host names). `gateway.tls` also takes
+  `cert_file` + `key_file` (PEM, both or neither — one alone is a config
+  error) and `extra_names` (additional DNS names / IPs for the self-signed
+  certificate). Without a pair, a self-signed ECDSA P-256 certificate is
+  generated in `<CLAW_HOME>/tls/` (key 0600), valid one year, for the host
+  name, its FQDN, every non-loopback interface address, the host of
+  `external_url`, `extra_names`, and `localhost`/`127.0.0.1`/`::1`; it is
+  regenerated when under 30 days from expiry or when those names change. Both
+  sources are hot-reloaded from disk within a minute; a pair that fails to
+  load keeps the previous certificate serving and raises an alert. TLS 1.2
+  minimum. HSTS is sent only with an operator-supplied certificate. An unknown
+  `gateway.tls.mode`, a port outside 1–65535, or `tls_port` equal to `port`
+  while HTTPS is on is a config error. New `claw tls` command prints the
   certificate in use (source, names, expiry, SHA-256 fingerprint);
   `claw tls --regenerate` replaces the self-signed pair. `mcp_host.listen` must
-  be a loopback address; the gateway refuses to start otherwise. See
-  `docs/tls.md`.
+  be a loopback address; the gateway refuses to start otherwise. Changing
+  `gateway.host`, `port`, `tls_port`, `tls.mode` or the certificate files
+  needs a restart (the gateway logs a warning on reload). See `docs/tls.md`.
 - **BREAKING:** the shared HTTP listener (WebUI, `/api/*`, `/webui/ws`,
   `/health`, `/ready`, channel webhooks) now answers only to known host names
   and rejects everything else with `421 Misdirected Request`. Allowed are
-  `localhost`, `127.0.0.1`, `::1`, the `gateway.host` bind address, the
-  certificate's names and the host of the advertised external URL
-  (`gateway.external_url` when set; otherwise the bind address, or the primary
-  LAN IP for a `0.0.0.0` bind). This stops DNS-rebinding attacks that reach a
+  `localhost`, `127.0.0.1`, `::1`, every address the listeners bind (an
+  all-interfaces bind counts as each interface address), the certificate's
+  names and the host of the advertised external URL (`gateway.external_url`
+  when set; otherwise the host name, see above). This stops DNS-rebinding attacks that reach a
   loopback listener through an attacker-controlled name. **Migration:** if you
   reach ClawEh through any other hostname or IP (a reverse proxy name, a second
   interface, an `/etc/hosts` alias, a monitoring probe by hostname), set
@@ -181,11 +213,10 @@ observe does not need an entry.
 ### Added
 
 - **Configuration report.** A new Report page (after Services in the WebUI
-  menu) opens a PDF, the ClawEh Configuration Report, describing what this
-  install can do: identity and the user it runs as, a security assessment
-  table with a mark on each item where action is recommended (HTTPS and
-  operator authentication are not implemented yet and are flagged when a
-  listener is reachable from other hosts), a summary of what Claw can access,
+  menu) shows the security assessment inline and offers a PDF, the ClawEh
+  Configuration Report, describing what this install can do: identity and the
+  user it runs as, a security assessment table with one row per listener and
+  a mark on each item where action is recommended, a summary of what Claw can access,
   every listener, providers and models (CLI providers with the exact command
   line they are launched with), credentials as set or not set, channels and
   who may use them, each agent's tools, MCP access and every folder it can
@@ -222,6 +253,10 @@ observe does not need an entry.
   else the installed unit's, else `~/.claw`) and, when run as root, hands it to
   the service account. New endpoints `GET /api/auth/status`,
   `POST /api/auth/login`, `POST /api/auth/logout`.
+- `claw admin` prompts on `/dev/tty` when stdin is not a terminal (a piped
+  script), and re-asks a prompted username or a password that is too short or
+  not repeated exactly, up to three times. It still never reads the password
+  from a pipe, and refuses when there is no terminal at all.
 - **Audit log.** ClawEh now keeps an append-only record of who did what in
   `<CLAW_HOME>/audit.db` (SQLite, mode 0600): every agent tool call (agent,
   session, channel, sender, tool, redacted argument digest, outcome,
@@ -318,6 +353,39 @@ observe does not need an entry.
   (`{"identity":{name,version,build,platform,generated_at},"assessment":[{action,item,status}]}`)
   — the same rows the PDF renders, never a secret value, behind the same login
   as the rest of `/api/`.
+- TLS endpoints for the WebUI, behind the login: `GET /api/tls` returns the
+  saved listener settings (`mode`, `source`, `cert_file`, `key_file`,
+  `extra_names`, `tls_port`, `http_host`, `http_port`, `external_url`), the
+  URLs they give (`urls.localhost`, `urls.http`, `urls.https`), the
+  certificate (`present`, `subject`, `names`, `not_after`, `fingerprint`,
+  `self_signed`) and `restart_required` (saved listener settings differ from
+  the ones the running gateway bound). `POST /api/tls/validate`
+  `{"cert_file","key_file"}` checks a certificate pair without saving it —
+  absolute paths readable by the service user, key matching, currently valid
+  — and answers 200 with the certificate or 400 naming the problem.
+  `POST /api/tls/regenerate` replaces the self-signed certificate on the
+  running listener for the saved names (409 with your own certificate, 503
+  when no HTTPS listener runs). `PUT`/`PATCH /api/config` now refuse a change
+  of `gateway.tls.cert_file`/`key_file`/`mode` whose certificate pair fails
+  the same check, so the WebUI cannot save paths the gateway would not start
+  on; an unchanged pair is not re-checked.
+
+- WebUI: the Config page is now two pages. **Network** (`/network`) holds
+  every listener setting — HTTP port and scope (`gateway.host`/`port`), HTTPS
+  mode and port (`gateway.tls.mode`, `gateway.tls_port`), hostname
+  (`gateway.external_url`), extra certificate names
+  (`gateway.tls.extra_names`), the allowlist (`gateway.allowed_cidrs`), the
+  device gateway listener (`channels.device.host/port/external_url/allowed_cidrs/auto_approve`,
+  moved from the Devices page) and the read-only MCP host address — with the
+  current certificate, the URLs to open and a "restart required" banner from
+  `GET /api/tls`. **System** (`/system`) holds the rest (agent defaults,
+  context, runtime, logging, backup, hardware devices); `/config` redirects to
+  `/system`.
+- WebUI: **Save certificate** on the Network page validates an operator
+  certificate/key pair through `POST /api/tls/validate` before the paths are
+  written to `gateway.tls.cert_file`/`key_file`; a pair the server cannot load
+  is reported inline and nothing is saved. **Regenerate certificate** calls
+  `POST /api/tls/regenerate`.
 
 ### Changed
 
@@ -422,16 +490,26 @@ observe does not need an entry.
   kept for the life of the process.
 - Binaries are built with `-trimpath`; setting `SOURCE_DATE_EPOCH` makes a
   rebuild of the same commit bit-identical.
-- Configuration report: the security assessment table gains rows for data
+- Configuration report: the security assessment table now opens with one
+  plain-language row per listener — **WebUI/API HTTP**, **WebUI/API HTTPS**,
+  **Device Gateway HTTP**, **Device Gateway HTTPS** (not available in this
+  version), **MCP host (local tools)** and, when enabled, **LINE webhook** —
+  each "Enabled for localhost", "Enabled for network access" or "Disabled",
+  with the certificate on the HTTPS row ("self-signed certificate" or
+  "user-provided certificate (expires …)") and the allowed networks where
+  they apply. They replace the "Transport encryption (HTTPS)", "WebUI and API
+  reachability", "Device gateway" and "Self-signed certificate" rows. Only two
+  listener conditions are marked `*`: WebUI/API HTTP open to the network
+  (unencrypted), and WebUI/API HTTPS disabled while it is; a self-signed
+  certificate is never marked. The table also gains rows for data
   directory permissions (files under `CLAW_HOME` readable by other users, with
   the first offender and the chmod fix), device auto-approve
-  (`channels.device.auto_approve`), the HTTPS certificate (self-signed
-  fingerprint to verify with `claw tls`, or a user certificate expiring within
-  14 days), the audit log (`<CLAW_HOME>/audit.db`, 90-day retention, flagged
+  (`channels.device.auto_approve`), a user certificate expiring within
+  14 days, the audit log (`<CLAW_HOME>/audit.db`, 90-day retention, flagged
   when missing), a per-agent reminder that `shell_exec` is not confined by
   `restrict_to_workspace`, and the "Operator authentication" row now reports
-  whether an admin account exists. The Network section lists both gateway
-  listeners and the certificate.
+  whether an admin account exists. The Network section lists every
+  WebUI/API bind address (HTTP and HTTPS) and the certificate.
 
 - The gateway and the WebUI API now share one in-memory configuration. API
   handlers read the running config instead of re-parsing `config.json` on every
@@ -491,14 +569,17 @@ observe does not need an entry.
   inherits the default `Claude CLI` / `Codex CLI` aliases, so if those models
   were removed, set a default model before the next save.
 
-- `claw status` gains an **Access** section: the WebUI URL on this host
-  (`http://127.0.0.1:<port>/`), the HTTPS URL(s) on the network
-  (`https://<address>:<tls_port>/`, one per interface for a wildcard bind),
+- `claw status` gains an **Access** section: "WebUI (localhost)"
+  (`http://127.0.0.1:<port>/`), "WebUI (network)" for plain HTTP when
+  `gateway.host` is not loopback (marked unencrypted), the HTTPS URL(s) per
+  `gateway.tls.mode` (`https://<address>:<tls_port>/`, one per interface for
+  `"all"`; `https://127.0.0.1:<tls_port>/` for `"localhost"`; "off"),
   the certificate in use with its expiry and SHA-256 fingerprint (so the
   browser's warning can be checked), the external URL and device gateway
   address when set, and whether an admin account exists (with `claw admin` as
-  the fix). `claw install` prints the same URLs and the reminder to run
-  `claw admin` instead of the old "no WebUI authentication" note.
+  the fix). `claw install` prints the same URLs, how to restrict or turn off
+  HTTPS and browse by a host name, and the admin account it created or kept,
+  instead of the old "no WebUI authentication" note.
 
 ### Removed
 
@@ -611,6 +692,16 @@ observe does not need an entry.
   `fallback alias dropped` log line, renaming a model also repoints
   `subagents.models`, and clearing the default model removes the slot instead
   of leaving an empty entry.
+
+- WebUI Speech page: revisiting the page showed "No transcription backends
+  configured" although backends were set, and the next "Add backend" saved
+  that empty list over the configuration.
+- WebUI Models and Providers pages crashed with "Spread syntax requires
+  …iterable" when a CLI provider was configured (the API's null argument
+  lists); empty model and provider lists are handled too. A page error is now
+  shown in the normal text colour and is selectable, instead of red on black.
+- WebUI login page is headed "ClawEh" and no longer says "Use the admin
+  account created on the server".
 
 ## [0.5.6]
 

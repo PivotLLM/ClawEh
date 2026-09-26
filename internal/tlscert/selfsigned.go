@@ -38,7 +38,9 @@ type certNames struct {
 
 // expectedNames is what the self-signed certificate must cover today: the
 // host name, its FQDN when resolvable, every non-loopback interface address,
-// the host of external_url and the configured extra names.
+// the host of external_url, the configured extra names and, last, localhost
+// and the loopback addresses (HTTPS may be served on localhost only, and a
+// browser checks the name there too).
 func expectedNames(opts Options) certNames {
 	var n certNames
 	if hostname, err := os.Hostname(); err == nil {
@@ -63,21 +65,20 @@ func expectedNames(opts Options) certNames {
 	for _, extra := range opts.ExtraNames {
 		n.add(extra)
 	}
+	for _, loopback := range []string{"localhost", "127.0.0.1", "::1"} {
+		n.add(loopback)
+	}
 	return n
 }
 
-// add files name as an IP or a DNS name; empty and loopback names are skipped
-// (the HTTPS listener is never loopback-only, and browsers accept loopback
-// without a certificate name anyway).
+// add files name as an IP or a DNS name; empty names are skipped.
 func (n *certNames) add(name string) {
 	name = strings.ToLower(strings.TrimSpace(strings.Trim(name, "[]")))
-	if name == "" || name == "localhost" {
+	if name == "" {
 		return
 	}
 	if ip := net.ParseIP(name); ip != nil {
-		if !ip.IsLoopback() {
-			n.addIP(ip)
-		}
+		n.addIP(ip)
 		return
 	}
 	if !slices.Contains(n.dns, name) {

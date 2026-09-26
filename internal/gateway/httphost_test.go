@@ -186,7 +186,7 @@ func TestHTTPHostLoopbackOnly(t *testing.T) {
 // on a second port; plain HTTP is refused there; loopback stays plain HTTP.
 func TestHTTPHostHTTPSListener(t *testing.T) {
 	m := selfSignedTLS(t)
-	host := startHost(t, hostOptions{TLSHost: "127.0.0.1", TLSConfig: m.TLSConfig()}, "secure")
+	host := startHost(t, hostOptions{TLSHosts: []string{"127.0.0.1"}, TLSConfig: m.TLSConfig()}, "secure")
 	if host.HTTPSAddr() == "" {
 		t.Fatal("no HTTPS listener bound")
 	}
@@ -232,7 +232,7 @@ func TestHTTPHostHTTPSListener(t *testing.T) {
 // never on the loopback HTTP listener.
 func TestHTTPHostHSTSOnlyWithUserCertificate(t *testing.T) {
 	m := selfSignedTLS(t)
-	host := startHost(t, hostOptions{TLSHost: "127.0.0.1", TLSConfig: m.TLSConfig(), HSTS: true}, "ok")
+	host := startHost(t, hostOptions{TLSHosts: []string{"127.0.0.1"}, TLSConfig: m.TLSConfig(), HSTS: true}, "ok")
 	resp := fetch(t, tlsClient(t, m), "https://"+host.HTTPSAddr()+"/ping")
 	if got := resp.header.Get("Strict-Transport-Security"); got != hstsHeader {
 		t.Errorf("HTTPS HSTS = %q, want %q", got, hstsHeader)
@@ -247,7 +247,7 @@ func TestHTTPHostHSTSOnlyWithUserCertificate(t *testing.T) {
 // reaches the live listener without restarting it.
 func TestHTTPHostCertificateReloadServesNewCert(t *testing.T) {
 	m := selfSignedTLS(t)
-	host := startHost(t, hostOptions{TLSHost: "127.0.0.1", TLSConfig: m.TLSConfig()}, "ok")
+	host := startHost(t, hostOptions{TLSHosts: []string{"127.0.0.1"}, TLSConfig: m.TLSConfig()}, "ok")
 	before := m.Info().Fingerprint
 	if err := m.Regenerate(); err != nil {
 		t.Fatal(err)

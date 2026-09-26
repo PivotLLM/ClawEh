@@ -550,7 +550,8 @@ PY
   },
   "gateway": {
     "host": "127.0.0.1",
-    "port": $GATEWAY_PORT
+    "port": $GATEWAY_PORT,
+    "tls": { "mode": "off" }
   },
   "tools": {
     "web": {

@@ -1,15 +1,8 @@
 export type JsonRecord = Record<string, unknown>
 
+// CoreConfigForm is the System page's form. The listeners (gateway.* and
+// channels.device.*) are the Network page's — see network/network-form.ts.
 export interface CoreConfigForm {
-  // Service (gateway.*) — bind host doubles as the network-access toggle
-  // ("0.0.0.0" = on, "127.0.0.1" = off), and is the runtime source of truth for
-  // the WebUI/API listener. Saved via /api/config.
-  gatewayHost: string
-  gatewayPort: string
-  gatewayExternalUrl: string
-  // IP allowlist (gateway.allowed_cidrs), one CIDR per line or comma-separated.
-  // Empty = the private-network default enforced by the backend.
-  allowedCIDRsText: string
   baseDir: string
   commonDir: string
   restrictToWorkspace: boolean
@@ -93,10 +86,6 @@ export const SESSION_MODE_OPTIONS = [
 ] as const
 
 export const EMPTY_FORM: CoreConfigForm = {
-  gatewayHost: "127.0.0.1",
-  gatewayPort: "18790",
-  gatewayExternalUrl: "",
-  allowedCIDRsText: "",
   baseDir: "",
   commonDir: "",
   restrictToWorkspace: true,
@@ -178,7 +167,6 @@ function asNumberString(value: unknown, fallback: string): string {
 
 export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const root = asRecord(config)
-  const gateway = asRecord(root.gateway)
   const agents = asRecord(root.agents)
   const defaults = asRecord(agents.defaults)
   // agents.defaults.compression.{trigger,retain}; the flat compress_* keys this
@@ -202,10 +190,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   )
 
   return {
-    gatewayHost: asString(gateway.host) || EMPTY_FORM.gatewayHost,
-    gatewayPort: asNumberString(gateway.port, EMPTY_FORM.gatewayPort),
-    gatewayExternalUrl: asString(gateway.external_url),
-    allowedCIDRsText: asStringArray(gateway.allowed_cidrs).join("\n"),
     baseDir: asString(agents.base_dir),
     commonDir: asString(agents.common_dir),
     restrictToWorkspace:

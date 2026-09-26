@@ -127,8 +127,13 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) saveValidatedConfig(w http.ResponseWriter, mutate func(*config.Config)) bool {
 	var errs []string
 	err := h.updateConfig(func(c *config.Config) error {
+		before := c.Gateway.Listeners()
 		mutate(c)
-		if errs = validateConfig(c); len(errs) > 0 {
+		errs = validateConfig(c)
+		if msg := validateCertificateChange(before, c.Gateway.Listeners()); msg != "" {
+			errs = append(errs, msg)
+		}
+		if len(errs) > 0 {
 			return errValidation
 		}
 		return nil
@@ -266,14 +271,10 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, err.Error())
 	}
 
-	// Gateway port range
-	if cfg.Gateway.Port != 0 && (cfg.Gateway.Port < 1 || cfg.Gateway.Port > 65535) {
-		errs = append(errs, fmt.Sprintf("gateway.port %d is out of valid range (1-65535)", cfg.Gateway.Port))
-	}
-
-	// Listener settings LoadConfig refuses (a half-configured certificate, an
-	// off-box MCP host) must be refused here too, or a WebUI save could write a
-	// config the gateway then cannot start on.
+	// Listener settings LoadConfig refuses (a port out of range, an unknown
+	// gateway.tls.mode, tls_port equal to port, a half-configured certificate,
+	// an off-box MCP host) must be refused here too, or a WebUI save could
+	// write a config the gateway then cannot start on.
 	if err := cfg.Gateway.Validate(); err != nil {
 		errs = append(errs, err.Error())
 	}

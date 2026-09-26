@@ -5,6 +5,7 @@ package report
 
 import (
 	"context"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -27,22 +28,25 @@ type listener struct {
 func listeners(cfg *config.Config) []listener {
 	gw := cfg.Gateway
 	gwNotes := []string{}
-	if !isLoopback(gw.Host) {
+	if gw.ReachableOffBox() {
 		gwNotes = append(gwNotes, offHostNote)
+	}
+	if gw.HTTPOnNetwork() {
+		gwNotes = append(gwNotes, "plain HTTP on the network (gateway.host)")
+	}
+	switch gw.TLS.EffectiveMode() {
+	case config.TLSModeLocalhost:
+		gwNotes = append(gwNotes, "HTTPS on localhost only (gateway.tls.mode \"localhost\")")
+	case config.TLSModeOff:
+		gwNotes = append(gwNotes, "HTTPS off (gateway.tls.mode \"off\")")
 	}
 	if gw.ExternalURL != "" {
 		gwNotes = append(gwNotes, "external_url "+gw.ExternalURL)
 	}
-	// Plain HTTP is loopback-only; an off-box gateway.host adds the HTTPS
-	// listener on tls_port.
-	gwAddr := bindAddr("127.0.0.1", gw.EffectivePort()) + " (HTTP)"
-	if gw.HTTPSEnabled() {
-		gwAddr += ", " + bindAddr(gw.Host, gw.EffectiveTLSPort()) + " (HTTPS)"
-	}
 	out := make([]listener, 0, 4)
 	out = append(out, listener{
-		Name:    "Gateway (WebUI and HTTP API)",
-		Addr:    gwAddr,
+		Name:    webAPIName,
+		Addr:    gatewayAddrs(gw),
 		Allow:   gatewayAllow(gw.EffectiveAllowedCIDRs()),
 		Notes:   strings.Join(gwNotes, "; "),
 		Enabled: true,
@@ -105,11 +109,30 @@ func listeners(cfg *config.Config) []listener {
 	return out
 }
 
+// webAPIName is the WebUI and HTTP API listener pair, named for a reader who
+// knows the product, not its process layout.
+const webAPIName = "WebUI/API"
+
+// gatewayAddrs lists every address the WebUI/API binds, each tagged with
+// its protocol: "127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 0.0.0.0:18443
+// (HTTPS)".
+func gatewayAddrs(gw config.GatewayConfig) string {
+	httpHosts, httpsHosts := gw.HTTPBindHosts(), gw.HTTPSBindHosts()
+	addrs := make([]string, 0, len(httpHosts)+len(httpsHosts))
+	for _, h := range httpHosts {
+		addrs = append(addrs, net.JoinHostPort(h, itoa(gw.EffectivePort()))+" (HTTP)")
+	}
+	for _, h := range httpsHosts {
+		addrs = append(addrs, net.JoinHostPort(h, itoa(gw.EffectiveTLSPort()))+" (HTTPS)")
+	}
+	return strings.Join(addrs, ", ")
+}
+
 // tlsSummary describes the HTTPS listener's certificate: its source, names,
 // expiry and fingerprint, read from the certificate file the gateway uses.
 func tlsSummary(cfg *config.Config) string {
 	if !cfg.Gateway.HTTPSEnabled() {
-		return "not enabled (gateway.host is loopback: the WebUI and API are plain HTTP on this host only)"
+		return "off (gateway.tls.mode is \"off\": the WebUI/API is plain HTTP only)"
 	}
 	opts := tlscert.OptionsFromConfig(cfg)
 	info, err := tlscert.InspectFile(opts)
@@ -167,8 +190,9 @@ func collectNetwork(_ context.Context, cfg *config.Config, _ Environment) Sectio
 	return Section{
 		Title: "Network",
 		Notes: []string{
-			"The WebUI and the HTTP API share one gateway listener; the MCP host and the device " +
-				"gateway each bind their own. A listener on a loopback address is reachable only from this host. " +
+			"The WebUI and the HTTP API (WebUI/API) are served on two listeners: plain HTTP where gateway.host " +
+				"says (loopback by default) and HTTPS where gateway.tls.mode says (all interfaces by default). " +
+				"The MCP host and the device gateway each bind their own. A listener on a loopback address is reachable only from this host. " +
 				"The gateway allowlist (gateway.allowed_cidrs) is a second gate independent of the bind address: " +
 				"empty means loopback only, * means any address.",
 		},
