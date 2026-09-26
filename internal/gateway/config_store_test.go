@@ -36,7 +36,7 @@ func storeFixture(t *testing.T) (*config.Store, *http.ServeMux) {
 	if err != nil {
 		t.Fatalf("config.NewStore: %v", err)
 	}
-	cfg, _, err := runtimeConfig(store.Current())
+	cfg, _, err := runtimeConfig(store)
 	if err != nil {
 		t.Fatalf("runtimeConfig: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestConfigStore_APISaveIsVisibleToGateway(t *testing.T) {
 	if live.Logging.Level != "warn" || store.Current().Logging.Level != "warn" {
 		t.Fatalf("after Reload: returned %q, current %q, want warn", live.Logging.Level, store.Current().Logging.Level)
 	}
-	runtime, _, err := runtimeConfig(store.Current())
+	runtime, _, err := runtimeConfig(store)
 	if err != nil {
 		t.Fatal(err)
 	}

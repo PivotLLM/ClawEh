@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,12 +194,16 @@ func waitReload(t *testing.T, ch <-chan *config.Config) *config.Config {
 	}
 }
 
-// TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected: an old
-// reference to a deleted model must not block an unrelated change. The reload
-// is applied with the reference pruned from the runtime copy (the agent falls
-// through to its next model), one alert is raised for it, a further reload
-// does not raise it again, and the file on disk is not rewritten.
-func TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected(t *testing.T) {
+// amberRemovedDesc is the alert description for Amber's removed reference.
+const amberRemovedDesc = `Amber listed model "DeepSeek 4 Pro", which no longer exists; it was removed from Amber's model list and the next model in the list is now used. Nothing else to do — check Amber's models on the Agents page if you want a different one.`
+
+// TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile: an old reference
+// to a deleted model must not block an unrelated change. The reload is applied
+// with the reference removed from config.json as well as the runtime copy (the
+// agent falls through to its next model) and one alert is raised for it. The
+// watcher's own rewrite is not reloaded again: no second reload, no second
+// alert, no second write.
+func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	rec := testalerts.Install(t)
 	store, path := seedStore(t)
 
@@ -208,21 +213,27 @@ func TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected(t *testing.T) 
 	defer stop()
 	time.Sleep(3 * interval) // let the watcher capture its baseline
 
-	first := danglingRefConfigJSON("first")
-	if err := os.WriteFile(path, []byte(first), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(danglingRefConfigJSON("first")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := waitReload(t, ch)
 
-	agent := cfg.Agents.List[0]
-	if !slices.Equal(agent.Models, []string{"good"}) {
-		t.Fatalf("runtime agent models = %q, want [good] (dangling entry pruned, next model first)", agent.Models)
+	if got := cfg.Agents.List[0].Models; !slices.Equal(got, []string{"good"}) {
+		t.Fatalf("runtime agent models = %q, want [good] (dangling entry removed, next model first)", got)
 	}
-	if got := store.Current().Agents.List[0].Models; !slices.Equal(got, []string{"DeepSeek 4 Pro", "good"}) {
-		t.Fatalf("store models = %q, want the on-disk list untouched", got)
+	if got := store.Current().Agents.List[0].Models; !slices.Equal(got, []string{"good"}) {
+		t.Fatalf("store models = %q, want [good]", got)
 	}
-	if onDisk, err := os.ReadFile(path); err != nil || string(onDisk) != first {
-		t.Fatalf("config file was rewritten by the reload (err=%v)", err)
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(onDisk), "DeepSeek 4 Pro") {
+		t.Fatalf("config file still names the missing model:\n%s", onDisk)
+	}
+	fixed, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	const wantEvent = "model-ref:agents.list[Amber].models"
@@ -233,13 +244,37 @@ func TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected(t *testing.T) 
 	if got[0].EventID != wantEvent || got[0].Title != "Agent references a missing model" {
 		t.Fatalf("alert = %+v, want EventID %q and the missing-model title", got[0], wantEvent)
 	}
+	if got[0].Description != amberRemovedDesc {
+		t.Fatalf("description = %q, want %q", got[0].Description, amberRemovedDesc)
+	}
 	if got[0].Priority != alerter.Normal {
 		t.Fatalf("alert priority = %d, want Normal", got[0].Priority)
 	}
 
-	// An unrelated edit reloads again with the same stale reference: applied,
-	// and no second alert.
-	if err := os.WriteFile(path, []byte(danglingRefConfigJSON("second-edit")), 0o600); err != nil {
+	// The watcher's own rewrite is not a change to apply.
+	select {
+	case <-ch:
+		t.Fatal("the watcher reloaded its own rewrite of the file")
+	case <-time.After(debounce + 300*time.Millisecond):
+	}
+	if n := len(rec.Alerts()); n != 1 {
+		t.Fatalf("alerts after the rewrite settled = %d, want still 1", n)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(fixed.ModTime()) {
+		t.Fatal("the config file was written again after the fix")
+	}
+
+	// An unrelated edit with nothing to remove reloads without a write or an
+	// alert.
+	if err = os.WriteFile(path, []byte(strings.Replace(string(onDisk), "first", "second-edit", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal(err)
 	}
 	cfg = waitReload(t, ch)
@@ -247,7 +282,20 @@ func TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected(t *testing.T) 
 		t.Fatalf("second reload models = %q, want [good]", cfg.Agents.List[0].Models)
 	}
 	if n := len(rec.Alerts()); n != 1 {
-		t.Fatalf("alerts after second reload = %d, want still 1", n)
+		t.Fatalf("alerts after an unrelated edit = %d, want still 1", n)
+	}
+	now, err := os.ReadFile(path)
+	if err != nil || string(now) != string(edited) {
+		t.Fatalf("an edit with nothing to remove was rewritten (err=%v)", err)
+	}
+
+	// The reference put back is removed and alerted again.
+	if err = os.WriteFile(path, []byte(danglingRefConfigJSON("third")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitReload(t, ch)
+	if n := len(rec.Alerts()); n != 2 {
+		t.Fatalf("alerts after the reference came back = %d, want 2", n)
 	}
 }
 
@@ -280,35 +328,50 @@ func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
 	}
 }
 
-// TestModelRefAlerts_OncePerReferenceUntilFixed: a reference alerts the first
-// time it is seen, not on later reloads, and again if it comes back after
-// being fixed.
-func TestModelRefAlerts_OncePerReferenceUntilFixed(t *testing.T) {
+// TestModelRefAlerts_SkippedOncePerReferenceUntilFixed: a reference skipped
+// at runtime (still in the file) alerts the first time it is seen, not on
+// later reloads, and again if it comes back after being fixed. A reference
+// removed from the file alerts every time it is removed.
+func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	rec := testalerts.Install(t)
 	m := &modelRefAlerts{}
 	amber := config.DanglingModelReference{Site: "agents.list[Amber].models", Alias: "DeepSeek 4 Pro", Agent: "Amber"}
 	defaults := config.DanglingModelReference{Site: "agents.defaults.image_model", Alias: "gone"}
+	skipped := func(refs ...config.DanglingModelReference) modelRefPrune { return modelRefPrune{skipped: refs} }
 
-	m.report(rec, []config.DanglingModelReference{amber})
-	m.report(rec, []config.DanglingModelReference{amber})
+	m.report(rec, skipped(amber))
+	m.report(rec, skipped(amber))
 	if n := len(rec.Alerts()); n != 1 {
 		t.Fatalf("after a repeat: %d alerts, want 1", n)
 	}
-	m.report(rec, []config.DanglingModelReference{amber, defaults})
+	m.report(rec, skipped(amber, defaults))
 	if n := len(rec.Alerts()); n != 2 {
 		t.Fatalf("after a new reference: %d alerts, want 2", n)
 	}
-	m.report(rec, nil) // fixed
-	m.report(rec, []config.DanglingModelReference{amber})
+	m.report(rec, modelRefPrune{}) // fixed
+	m.report(rec, skipped(amber))
 	got := rec.Alerts()
 	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[Amber].models" {
 		t.Fatalf("after fix and reappearance: %+v, want a third alert for Amber", got)
 	}
-	want := `Amber lists model "DeepSeek 4 Pro", which no longer exists; it was skipped and the next model in the list is used. Pick a model for Amber on the Agents page to clear this.`
+	want := `Amber lists model "DeepSeek 4 Pro", which is missing or unusable; it was skipped and the next model in the list is used. Pick a model for Amber on the Agents page to clear this.`
 	if got[0].Description != want {
 		t.Fatalf("description = %q, want %q", got[0].Description, want)
 	}
 	if got[1].EventID != "model-ref:agents.defaults.image_model" {
 		t.Fatalf("defaults alert EventID = %q", got[1].EventID)
+	}
+
+	m.report(rec, modelRefPrune{removed: []config.DanglingModelReference{amber, defaults}})
+	got = rec.Alerts()
+	if len(got) != 5 {
+		t.Fatalf("after a removal: %d alerts, want 5", len(got))
+	}
+	if got[3].Description != amberRemovedDesc {
+		t.Fatalf("removed description = %q, want %q", got[3].Description, amberRemovedDesc)
+	}
+	wantSite := `agents.defaults.image_model named model "gone", which no longer exists; it was removed from agents.defaults.image_model. Nothing else to do — choose an existing model there if you want one.`
+	if got[4].Description != wantSite {
+		t.Fatalf("removed site description = %q, want %q", got[4].Description, wantSite)
 	}
 }

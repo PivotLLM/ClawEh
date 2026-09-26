@@ -294,3 +294,89 @@ func TestStore_UpdateKeepsPreExistingDanglingModelReference(t *testing.T) {
 		t.Fatalf("fixing save refused: %v", err)
 	}
 }
+
+// TestStore_UpdateAcceptsPruneOnlyChange: the gateway removes missing-model
+// references from the file through Update. A change that only removes
+// references must pass the new-dangling-reference guard and be written, and
+// with nothing left to remove the same callback is a no-op that leaves the
+// file alone.
+func TestStore_UpdateAcceptsPruneOnlyChange(t *testing.T) {
+	s := newTestStore(t)
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agents.Defaults.Models = []string{"m"} // not the template's CLI aliases
+	cfg.Agents.List[0].Models = []string{"DeepSeek 4 Pro", "m"}
+	cfg.Agents.Defaults.ImageModel = "gone"
+	if err = SaveConfig(s.Path(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	prune := func(removed *[]DanglingModelReference) func(c *Config) error {
+		return func(c *Config) error {
+			*removed = c.PruneDanglingModelReferences()
+			if len(*removed) == 0 {
+				return ErrUnchanged
+			}
+			return nil
+		}
+	}
+	var removed []DanglingModelReference
+	if err = s.Update(prune(&removed)); err != nil {
+		t.Fatalf("prune-only Update refused: %v", err)
+	}
+	if len(removed) != 2 {
+		t.Fatalf("removed = %+v, want 2 references", removed)
+	}
+	fromDisk, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fromDisk.Agents.List[0].Models; len(got) != 1 || got[0] != "m" {
+		t.Fatalf("on-disk models = %q, want [m]", got)
+	}
+	if fromDisk.Agents.Defaults.ImageModel != "" {
+		t.Fatalf("on-disk image_model = %q, want it cleared", fromDisk.Agents.Defaults.ImageModel)
+	}
+
+	info, err := os.Stat(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := s.Current()
+	if err = s.Update(prune(&removed)); err != nil {
+		t.Fatalf("second prune: %v", err)
+	}
+	if len(removed) != 0 || s.Current() != before {
+		t.Fatalf("second prune changed something: removed=%+v", removed)
+	}
+	after, err := os.Stat(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(info.ModTime()) {
+		t.Fatal("a prune with nothing to remove rewrote the file")
+	}
+}
+
+// TestStore_EmptiedDefaultModelsStayEmpty: agents.defaults.models is filled
+// from the template when the key is absent, so a save that empties it must
+// write the empty list; otherwise the next load brings back models the
+// operator (or the missing-model prune) removed.
+func TestStore_EmptiedDefaultModelsStayEmpty(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Update(func(c *Config) error { c.Agents.Defaults.Models = []string{}; return nil }); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	fromDisk, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fromDisk.Agents.Defaults.Models; len(got) != 0 {
+		t.Fatalf("agents.defaults.models after reload = %q, want empty", got)
+	}
+}

@@ -1134,9 +1134,11 @@ type AgentDefaults struct {
 	// (legacy), which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the
 	// agent already receives in its prompt or should never read.
 	WorkspaceReadSubdirs []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
-	Models               []string `json:"models,omitempty"`
-	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks  []string `json:"image_model_fallbacks,omitempty"`
+	// Models is not omitempty: the defaults template fills it, so an emptied
+	// list must be written out or the next load would bring the template back.
+	Models              []string `json:"models"`
+	ImageModel          string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks []string `json:"image_model_fallbacks,omitempty"`
 	// VisionModel is the side-model used to describe images for a text-only
 	// primary model (vision off): when the active model can't see images, they
 	// are dispatched to this model for a one-shot text description that is then

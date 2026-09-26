@@ -29,9 +29,10 @@ package. The race detector is on by default, and overall coverage must be at
 least 50% (`COVERAGE_MIN` in `test.sh`).
 
 **Frontend.** For the SPA under `web/frontend`: TypeScript typecheck
-(`tsc -b --noEmit`), unit tests (`pnpm run test`), and `oxlint`. Skipped, not
-failed, when `pnpm` or `node_modules` are missing, so a Go-only checkout still
-passes. A missing `oxlint` skips only the lint step.
+(`tsc -b --noEmit`), unit tests (`pnpm run test`), and `oxlint`. A missing
+`pnpm` or `node_modules` fails the stage (and the run), naming the fix: `make
+frontend-deps`, or `pnpm install --frozen-lockfile` in `web/frontend`; the gate
+does not install them itself. A missing `oxlint` skips only the lint step.
 
 **MCP integration.** Builds the binary, starts a real gateway in a temporary
 `CLAW_HOME` with the MCP host enabled, drives it with the `probe` tool

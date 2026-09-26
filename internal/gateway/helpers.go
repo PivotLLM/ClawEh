@@ -65,19 +65,31 @@ const (
 	gracefulShutdownTimeout = 15 * time.Second
 )
 
-// runtimeConfig returns the private copy of the live configuration the
-// gateway runs on: invalid providers/models (a stale/unknown protocol, a model
-// pointing at a missing provider) are dropped with a WARN and the rest is
-// kept, rather than failing over one bad entry. References to models that do
-// not exist are then dropped too (pruneModelReferences) and returned, so the
-// caller can alert on them through modelRefAlerts. The store's own config is
-// left untouched so the entries can be repaired via the WebUI. Boot, the
-// config watcher and the forced reload all build their runtime copy here, so
-// they cannot drift apart.
-func runtimeConfig(live *config.Config) (*config.Config, []config.DanglingModelReference, error) {
-	cfg, err := live.Clone()
+// runtimeConfig returns the private copy of the store's configuration the
+// gateway runs on. References to models that do not exist are first removed
+// from config.json through the store (pruneStoredModelReferences); if that
+// write fails the reason is logged at WARN and they are dropped from the
+// running copy only, never aborting startup or a reload. Invalid
+// providers/models (a stale/unknown protocol, a model pointing at a missing
+// provider) are then dropped from the copy with a WARN and the rest is kept,
+// rather than failing over one bad entry; those stay in the file so they can
+// be repaired via the WebUI, and a reference to such a model is skipped in the
+// copy only. What was removed or skipped is returned for modelRefAlerts. Boot,
+// the config watcher and the forced reload all build their runtime copy here,
+// so they cannot drift apart.
+func runtimeConfig(store *config.Store) (*config.Config, modelRefPrune, error) {
+	var prune modelRefPrune
+	removed, perr := pruneStoredModelReferences(store)
+	if perr != nil {
+		logger.WarnCF("gateway", "could not remove references to unknown models from the config file; skipping them in the running config only", map[string]any{
+			"path":  store.Path(),
+			"error": perr.Error(),
+		})
+	}
+	prune.removed = removed
+	cfg, err := store.Current().Clone()
 	if err != nil {
-		return nil, nil, err
+		return nil, modelRefPrune{}, err
 	}
 	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
 		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
@@ -85,7 +97,8 @@ func runtimeConfig(live *config.Config) (*config.Config, []config.DanglingModelR
 			"models_dropped":    dm,
 		})
 	}
-	return cfg, pruneModelReferences(cfg), nil
+	prune.skipped = pruneModelReferences(cfg)
+	return cfg, prune, nil
 }
 
 // newMergedWebServer constructs the in-process WebUI server bundle (API
@@ -198,7 +211,8 @@ func gatewayCmd(debug bool) error {
 	}
 	// The runtime works on a pruned private copy; the store keeps the full
 	// on-disk config so invalid entries can be repaired through the WebUI.
-	cfg, bootDanglingRefs, err := runtimeConfig(store.Current())
+	// References to models that no longer exist are removed from the file.
+	cfg, bootDanglingRefs, err := runtimeConfig(store)
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
 	}
@@ -387,12 +401,11 @@ func gatewayCmd(debug bool) error {
 
 		case done := <-forceReload:
 			logger.Info("Forced config reload requested via API")
-			live, lerr := store.Reload()
-			if lerr != nil {
+			if _, lerr := store.Reload(); lerr != nil {
 				done <- lerr
 				break
 			}
-			newCfg, dangling, cerr := runtimeConfig(live)
+			newCfg, dangling, cerr := runtimeConfig(store)
 			if cerr != nil {
 				done <- cerr
 				break
@@ -1161,8 +1174,9 @@ func restartServices(
 // setupConfigWatcherPolling sets up a simple polling-based watcher on the
 // store's config file; a change is re-read into the store and a pruned copy
 // (runtimeConfig) is emitted for the reload. A reference to a model that does
-// not exist does not reject the reload: runtimeConfig drops it and refAlerts
-// raises one alert for it. interval controls how often the
+// not exist does not reject the reload: runtimeConfig removes it from the file
+// and refAlerts raises one alert for it; the watcher takes that rewrite as
+// already applied, so it does not reload for it again. interval controls how often the
 // file is polled; callers should pass cfg.ConfigReloadInterval() so the value
 // honours the config override and MinConfigReloadIntervalSeconds floor.
 // Returns a channel for config updates and a stop function.
@@ -1223,18 +1237,27 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 					continue
 				}
 
-				live, err := store.Reload()
-				if err != nil {
+				if _, err := store.Reload(); err != nil {
 					logger.Errorf("⚠ Error loading new config: %v", err)
 					logger.Warn("  Using previous valid config")
 					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
-				newCfg, dangling, err := runtimeConfig(live)
+				newCfg, dangling, err := runtimeConfig(store)
 				if err != nil {
 					logger.Errorf("⚠ Error copying new config: %v", err)
 					logger.Warn("  Using previous valid config")
 					continue
+				}
+				if dangling.persisted() {
+					// runtimeConfig just rewrote the file to drop missing-model
+					// references. What it wrote is what is being applied, so
+					// take it as the baseline: our own write must not trigger
+					// another reload.
+					currentModTime = getFileModTime(configPath)
+					currentSize = getFileSize(configPath)
+					observedModTime = currentModTime
+					observedSize = currentSize
 				}
 				if err := newCfg.ValidateModels(); err != nil {
 					logger.Errorf("  ⚠ New config validation failed: %v", err)

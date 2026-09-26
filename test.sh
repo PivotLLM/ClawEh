@@ -389,11 +389,12 @@ integ_fail() {
 # --deny-warnings: oxlint exits 0 on warnings by default, so without it this
 # check could never fail and would be decorative.
 #
-# Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
-# must still be able to run this suite.
+# Failed, not skipped, when pnpm or node_modules are absent: the gate covers
+# the whole suite, and a skipped section would let it pass untested. The gate
+# does not install them itself; the message names the command that does.
 FRONTEND_RAN=false
 FRONTEND_PASSED=true
-FRONTEND_SKIP_REASON=""
+FRONTEND_MISSING=""
 LINT_STATUS="not run"
 FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
 
@@ -404,13 +405,14 @@ echo "${BOLD}============================================${NC}"
 echo ""
 
 if ! command -v pnpm >/dev/null 2>&1; then
-    FRONTEND_SKIP_REASON="pnpm not on PATH"
+    FRONTEND_MISSING="pnpm not on PATH; install pnpm, then run: make frontend-deps"
 elif [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-    FRONTEND_SKIP_REASON="node_modules missing (run: make frontend-deps)"
+    FRONTEND_MISSING="node_modules missing; run: make frontend-deps (or pnpm install --frozen-lockfile in web/frontend)"
 fi
 
-if [ -n "$FRONTEND_SKIP_REASON" ]; then
-    echo "${DIM}Skipped: ${FRONTEND_SKIP_REASON}${NC}"
+if [ -n "$FRONTEND_MISSING" ]; then
+    echo "${RED}ERROR: frontend checks cannot run: ${FRONTEND_MISSING}${NC}"
+    FRONTEND_PASSED=false
 else
     FRONTEND_RAN=true
     if (cd "$FRONTEND_DIR" && pnpm exec tsc -b --noEmit); then
@@ -437,8 +439,11 @@ else
             FRONTEND_PASSED=false
         fi
     else
-        echo "${DIM}  lint skipped: oxlint not installed (npm i -g oxlint)${NC}"
-        LINT_STATUS="skipped"
+        # A missing linter fails the gate: a run that skipped a stage cannot be
+        # reported as passing.
+        echo "${RED}  lint FAILED: oxlint not installed (npm i -g oxlint)${NC}"
+        LINT_STATUS="failed"
+        FRONTEND_PASSED=false
     fi
 fi
 
@@ -901,13 +906,10 @@ if $RUN_RACE; then
 fi
 
 if ! $FRONTEND_RAN; then
-    echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
+    echo "Frontend:    ${RED}failed (${FRONTEND_MISSING})${NC}"
+    OVERALL_PASS=false
 elif $FRONTEND_PASSED; then
-    if [ "$LINT_STATUS" = "skipped" ]; then
-        echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests) ${DIM}— lint skipped: oxlint not installed${NC}"
-    else
-        echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
-    fi
+    echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
 else
     echo "Frontend:    ${RED}failed${NC}"
     OVERALL_PASS=false

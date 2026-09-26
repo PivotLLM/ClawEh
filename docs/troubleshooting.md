@@ -63,11 +63,12 @@ Get your key at [OpenRouter Keys](https://openrouter.ai/keys).
 `fallback alias dropped (not enabled in models)`.** An agent's model list
 (`agents.list[].models`, or a default, summarization or subagent chain) names a
 model that has since been deleted or disabled. At startup and on every config
-reload the gateway skips a reference to a deleted model: the agent uses the
-next model in its list, the log says `removed reference to unknown model`, and
-one "Agent references a missing model" alert is raised for it (not again on
-later reloads while it stays; `config.json` is not rewritten). The rest of the
-change is still applied. A save that would add a new reference to a missing
+reload the gateway removes a reference to a deleted model from `config.json`:
+the agent uses the next model in its list, the log says `removed reference to
+unknown model from config file`, and one "Agent references a missing model"
+alert is raised for it (if the file cannot be written the reference is only
+skipped in the running config, and the alert repeats once per restart). The
+rest of the change is still applied. A save that would add a new reference to a missing
 model is refused and names it; an existing one never blocks a save. Fix it in
 the agent's model list (WebUI Agents page) by pointing the slot at a model that
 exists and is enabled; the alert clears once the reference is gone.

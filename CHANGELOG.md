@@ -564,11 +564,13 @@ observe does not need an entry.
   a reference to a model that does not exist in `models`, naming the site
   (`agents.list[bob].models: model "ghost" does not exist`); a reference that
   was already missing, for example left by a model deleted before this guard
-  existed, never blocks a save. Startup and config-file reload skip such a
-  reference instead of refusing the config: the agent uses the next model in
-  its list, a `removed reference to unknown model` warning is logged,
-  `config.json` is not rewritten, and one "Agent references a missing model"
-  alert is raised per reference (not again on later reloads while it stays).
+  existed, never blocks a save. Startup, forced reload and config-file reload
+  remove such a reference from `config.json` (atomically, through the same save
+  path) instead of refusing the config: the agent uses the next model in its
+  list, a `removed reference to unknown model from config file` warning is
+  logged, and one "Agent references a missing model" alert is raised per
+  reference (if the file cannot be written, the reference is skipped in the
+  running config only, the write error is logged, and startup continues).
   Previously a reload refused the whole file over an old missing reference, so
   an unrelated WebUI change never took effect. A reference to a model that exists but is disabled is allowed
   and logged as a warning. Note: a config that omits `agents.defaults.models`
@@ -605,6 +607,10 @@ observe does not need an entry.
 
 ### Fixed
 
+- **An emptied default model list stays empty.** Saving `agents.defaults.models`
+  as an empty list used to drop the key from `config.json`, so the next load
+  brought back the `Claude CLI` / `Codex CLI` template aliases; the empty list
+  is now written out.
 - **Channels reconnect on their own instead of stopping.** A dropped Slack
   Socket Mode connection, or a Matrix sync that ended, used to stop that
   channel receiving until the gateway was restarted. Both now restart with
