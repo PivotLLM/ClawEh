@@ -922,8 +922,8 @@ trip people up:
 
 ClawEh sends any keys in a model's `extra_body` verbatim at the top level of
 the request for the `openai-chat` and `openai-responses` protocols, so the
-`provider` block goes there. The WebUI exposes it as the "extra body" JSON
-field on the add and edit model sheets. For example, to pin Grok to xAI's
+`provider` block goes there. The WebUI exposes it as the "Extra Request Body"
+JSON field on the add and edit model sheets. For example, to pin Grok to xAI's
 zero-data-retention endpoint and refuse any other:
 
 ```json
