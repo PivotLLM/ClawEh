@@ -19,6 +19,8 @@ file to the service account. Running `claw admin` again replaces the account.
 There is no default password and no way to create or change the account from
 the browser.
 
+`claw status` shows whether an account exists and the URLs to open.
+
 ## Without an account
 
 The gateway starts and every channel works, but the WebUI shows "No admin

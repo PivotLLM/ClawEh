@@ -29,6 +29,9 @@ func statusCmd() {
 	printProcess(cfg.DataDir())
 	fmt.Println()
 
+	fmt.Print(accessReport(cfg))
+	fmt.Println()
+
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Println("Config:", configPath, "✓")
 	} else {

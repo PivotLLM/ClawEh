@@ -491,6 +491,15 @@ observe does not need an entry.
   inherits the default `Claude CLI` / `Codex CLI` aliases, so if those models
   were removed, set a default model before the next save.
 
+- `claw status` gains an **Access** section: the WebUI URL on this host
+  (`http://127.0.0.1:<port>/`), the HTTPS URL(s) on the network
+  (`https://<address>:<tls_port>/`, one per interface for a wildcard bind),
+  the certificate in use with its expiry and SHA-256 fingerprint (so the
+  browser's warning can be checked), the external URL and device gateway
+  address when set, and whether an admin account exists (with `claw admin` as
+  the fix). `claw install` prints the same URLs and the reminder to run
+  `claw admin` instead of the old "no WebUI authentication" note.
+
 ### Removed
 
 - **`launcher-config.json` is no longer read.** The retired launcher's

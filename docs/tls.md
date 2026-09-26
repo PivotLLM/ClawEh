@@ -61,7 +61,9 @@ self-signed install.
 
 ## Inspecting
 
-`claw tls` prints the certificate in use: source (self-signed or file),
+`claw status` prints the URLs to open (loopback HTTP, network HTTPS), the
+certificate's expiry and fingerprint, and whether an admin account exists.
+`claw tls` prints the certificate in full: source (self-signed or file),
 subject, names, expiry and SHA-256 fingerprint. The fingerprint is also logged
 at startup and shown in the configuration report.
 

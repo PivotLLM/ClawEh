@@ -573,11 +573,16 @@ func applyServerSettings(host string, port int, optionalClawHome ...string) erro
 		return err
 	}
 	fmt.Printf("Server bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
+	fmt.Printf("WebUI on this host: http://127.0.0.1:%d/\n", cfg.Gateway.EffectivePort())
 	if isPublicBind(cfg.Gateway.Host) {
-		fmt.Printf("Note: %s has no WebUI authentication. Access is restricted to loopback +\n", app.Name())
-		fmt.Println("      the private-network IP allowlist (RFC1918). If you widen the allowlist to")
-		fmt.Println("      public ranges, put it behind a firewall or an authenticated reverse proxy.")
+		fmt.Printf("WebUI on the network: https://%s:%d/ (HTTPS only; plain HTTP stays on loopback)\n",
+			cfg.Gateway.Host, cfg.Gateway.EffectiveTLSPort())
+		fmt.Println("      A self-signed certificate is generated on first start unless gateway.tls")
+		fmt.Println("      names your own; the browser warns once. Network access is limited to the")
+		fmt.Println("      IP allowlist (gateway.allowed_cidrs).")
 	}
+	fmt.Printf("The WebUI needs an admin login: run `%s admin` to create it. `%s status` shows the URLs.\n",
+		app.Name(), app.Name())
 	return nil
 }
 
