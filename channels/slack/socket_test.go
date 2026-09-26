@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -54,7 +55,9 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // A rejected token alerts at once; the channel keeps its loop running.
 func TestRunSocket_RejectedTokenAlerts(t *testing.T) {
 	_, rec := startAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"ok":false,"error":"invalid_auth"}`)
+		if _, err := io.WriteString(w, `{"ok":false,"error":"invalid_auth"}`); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 	waitFor(t, "credentials alert", func() bool { return len(rec.Alerts()) > 0 })
 	a := rec.Alerts()[0]

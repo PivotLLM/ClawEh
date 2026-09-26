@@ -2,7 +2,7 @@ package matrix
 
 import (
 	"context"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,8 +34,19 @@ func startSyncAgainst(t *testing.T, h http.HandlerFunc) (*MatrixChannel, *testal
 	if err := c.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Stop(context.Background()) })
+	t.Cleanup(func() {
+		if err := c.Stop(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	return c, rec
+}
+
+func reply(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := io.WriteString(w, body); err != nil {
+		t.Errorf("write response: %v", err)
+	}
 }
 
 func waitFor(t *testing.T, what string, within time.Duration, cond func() bool) {
@@ -53,7 +64,7 @@ func waitFor(t *testing.T, what string, within time.Duration, cond func() bool) 
 func TestRunSync_RevokedTokenAlerts(t *testing.T) {
 	_, rec := startSyncAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"errcode":"M_UNKNOWN_TOKEN","error":"Invalid access token"}`)
+		reply(t, w, `{"errcode":"M_UNKNOWN_TOKEN","error":"Invalid access token"}`)
 	})
 	waitFor(t, "credentials alert", 3*time.Second, func() bool { return len(rec.Alerts()) > 0 })
 	a := rec.Alerts()[0]
@@ -73,11 +84,11 @@ func TestRunSync_ServerErrorTrackedThenRecovers(t *testing.T) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/filter") {
-			fmt.Fprint(w, `{"filter_id":"1"}`)
+			reply(t, w, `{"filter_id":"1"}`)
 			return
 		}
 		time.Sleep(20 * time.Millisecond) // stand in for the long poll
-		fmt.Fprint(w, `{"next_batch":"s1"}`)
+		reply(t, w, `{"next_batch":"s1"}`)
 	})
 
 	waitFor(t, "outage report", 3*time.Second, func() bool { return !c.ConnDownSince().IsZero() })

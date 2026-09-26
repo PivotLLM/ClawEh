@@ -103,12 +103,10 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 func (c *SlackChannel) runSocket() {
 	var backoff time.Duration
 	for {
+		// RunContext only ever returns an error.
 		err := c.socketClient.RunContext(c.ctx)
 		if c.ctx.Err() != nil {
 			return
-		}
-		if err == nil {
-			err = errors.New("socket mode stopped")
 		}
 		if isSlackAuthError(err) {
 			backoff = channels.ConnRetryMax

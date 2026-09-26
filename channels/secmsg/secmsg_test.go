@@ -183,11 +183,18 @@ func TestRun_UnreachableDaemonReportsOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := ch.(*SecMsgChannel)
+	c, ok := ch.(*SecMsgChannel)
+	if !ok {
+		t.Fatalf("NewFromConfig returned %T", ch)
+	}
 	if err := c.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Stop(context.Background()) })
+	t.Cleanup(func() {
+		if err := c.Stop(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for c.ConnDownSince().IsZero() {

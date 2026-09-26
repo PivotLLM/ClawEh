@@ -32,9 +32,11 @@ observe does not need an entry.
   record per alert with its priority: a model parked for an
   authentication or billing failure (a CLI logged out, a key revoked), a
   model parked after repeated failures, an unreachable MCP server, a channel
-  that failed to start, stopped receiving (Slack, Matrix, device gateway,
-  Telegram token revoked) or could not deliver a message, SecMsg with no
-  accounts, a scheduled job that failed or could not be delivered, an
+  that failed to start, could not deliver a message, had its token rejected
+  (Telegram, Slack, Matrix), has had no working connection for ten minutes
+  despite retrying (Telegram, Slack, Discord, Matrix, SecMsg; the threshold is
+  `ConnDownAlertAfter` in `channels/tuning.go`) or whose device gateway
+  listener stopped, SecMsg with no accounts, a scheduled job that failed or could not be delivered, an
   unreadable or unwritable cron store, a session that could not be saved,
   service tokens that could not be loaded, an invalid config edit or a failed
   reload, a failed nightly backup or log rotation, and the WebUI/API listener,
@@ -128,6 +130,19 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Channels reconnect on their own instead of stopping.** A dropped Slack
+  Socket Mode connection, or a Matrix sync that ended, used to stop that
+  channel receiving until the gateway was restarted. Both now restart with
+  backoff (2s doubling to 60s) for as long as the channel runs. Telegram, Slack,
+  Discord, Matrix and SecMsg report their connection state, and an operator is
+  alerted only when retrying cannot help: a rejected token (at once), or no
+  working connection for ten minutes ("Channel connection down").
+- **Telegram waits as long as Telegram asks.** On a `429 Too Many Requests`
+  the bot now waits the `retry_after` Telegram gives plus one second, instead
+  of retrying every two seconds, which could prolong the rate limit. Other poll
+  failures back off from 2s to 60s. A 429 or a 5xx no longer raises a
+  "Telegram polling failed" alert; that alert now means only that Telegram
+  rejected the bot token (401).
 - **The WebUI picks up a new deploy on the next reload.** The embedded
   frontend was served with no cache headers, so a browser could keep an old
   `index.html`, and the old page chunks it names, after an upgrade. The SPA
