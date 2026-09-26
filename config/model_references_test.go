@@ -137,9 +137,9 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 
 	want := []DanglingModelReference{
 		{Site: "agents.defaults.image_model", Alias: "ghost"},
-		{Site: "agents.list[alice].models", Alias: "ghost"},
-		{Site: "agents.list[alice].models", Alias: "phantom"},
-		{Site: "agents.list[alice].subagents.models", Alias: "ghost"},
+		{Site: "agents.list[alice].models", Alias: "ghost", Agent: "alice"},
+		{Site: "agents.list[alice].models", Alias: "phantom", Agent: "alice"},
+		{Site: "agents.list[alice].subagents.models", Alias: "ghost", Agent: "alice"},
 	}
 	if !reflect.DeepEqual(removed, want) {
 		t.Fatalf("removed = %v\nwant %v", removed, want)

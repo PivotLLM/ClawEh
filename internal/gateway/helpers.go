@@ -68,12 +68,16 @@ const (
 // runtimeConfig returns the private copy of the live configuration the
 // gateway runs on: invalid providers/models (a stale/unknown protocol, a model
 // pointing at a missing provider) are dropped with a WARN and the rest is
-// kept, rather than failing over one bad entry. The store's own config is left
-// untouched so the entries can be repaired via the WebUI.
-func runtimeConfig(live *config.Config) (*config.Config, error) {
+// kept, rather than failing over one bad entry. References to models that do
+// not exist are then dropped too (pruneModelReferences) and returned, so the
+// caller can alert on them through modelRefAlerts. The store's own config is
+// left untouched so the entries can be repaired via the WebUI. Boot, the
+// config watcher and the forced reload all build their runtime copy here, so
+// they cannot drift apart.
+func runtimeConfig(live *config.Config) (*config.Config, []config.DanglingModelReference, error) {
 	cfg, err := live.Clone()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
 		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
@@ -81,7 +85,7 @@ func runtimeConfig(live *config.Config) (*config.Config, error) {
 			"models_dropped":    dm,
 		})
 	}
-	return cfg, nil
+	return cfg, pruneModelReferences(cfg), nil
 }
 
 // newMergedWebServer constructs the in-process WebUI server bundle (API
@@ -194,21 +198,13 @@ func gatewayCmd(debug bool) error {
 	}
 	// The runtime works on a pruned private copy; the store keeps the full
 	// on-disk config so invalid entries can be repaired through the WebUI.
-	cfg, err := runtimeConfig(store.Current())
+	cfg, bootDanglingRefs, err := runtimeConfig(store.Current())
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
 	}
-	// Likewise drop references to models that do not exist (deleted, or just
-	// pruned above for a bad provider) so no agent sends a dead alias as a
-	// model id; disabled models are kept and only warned about.
-	for _, ref := range cfg.PruneDanglingModelReferences() {
-		logger.WarnCF("gateway", "removed reference to unknown model", map[string]any{"site": ref.Site, "model": ref.Alias})
-	}
-	if _, warnings := cfg.ValidateModelReferences(); len(warnings) > 0 {
-		for _, w := range warnings {
-			logger.WarnCF("gateway", "reference to disabled model", map[string]any{"detail": w})
-		}
-	}
+	// Shared by boot, the watcher and the forced reload so a missing-model
+	// reference alerts once per process, not once per reload.
+	refAlerts := &modelRefAlerts{}
 
 	// Re-apply logging config (debug flag overrides level).
 	if cfg.Logging.File {
@@ -253,6 +249,7 @@ func gatewayCmd(debug bool) error {
 	// give up, failed jobs and reloads. Closed in shutdownGateway.
 	operatorAlerter, alertsPath := newAlerter(baseDir)
 	alerts.Set(operatorAlerter)
+	refAlerts.report(operatorAlerter, bootDanglingRefs)
 	openAuditLog(baseDir)
 	// A core service that dies after startup takes the process down through
 	// here, so the service manager restarts it; see fatal.go.
@@ -326,7 +323,7 @@ func gatewayCmd(debug bool) error {
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
 	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(store, reloadInterval,
-		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter())
+		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter(), refAlerts)
 	defer stopWatch()
 
 	// Force-reload channel: lets POST /api/gateway/reload apply config changes
@@ -395,11 +392,12 @@ func gatewayCmd(debug bool) error {
 				done <- lerr
 				break
 			}
-			newCfg, cerr := runtimeConfig(live)
+			newCfg, dangling, cerr := runtimeConfig(live)
 			if cerr != nil {
 				done <- cerr
 				break
 			}
+			refAlerts.report(agentLoop.Alerter(), dangling)
 			rerr := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if rerr == nil {
 				// Tell the watcher we've applied the current file so it doesn't
@@ -1162,11 +1160,13 @@ func restartServices(
 
 // setupConfigWatcherPolling sets up a simple polling-based watcher on the
 // store's config file; a change is re-read into the store and a pruned copy
-// (runtimeConfig) is emitted for the reload. interval controls how often the
+// (runtimeConfig) is emitted for the reload. A reference to a model that does
+// not exist does not reject the reload: runtimeConfig drops it and refAlerts
+// raises one alert for it. interval controls how often the
 // file is polled; callers should pass cfg.ConfigReloadInterval() so the value
 // honours the config override and MinConfigReloadIntervalSeconds floor.
 // Returns a channel for config updates and a stop function.
-func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter) (chan *config.Config, func(), func()) {
+func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) (chan *config.Config, func(), func()) {
 	configPath := store.Path()
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
@@ -1230,7 +1230,7 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
-				newCfg, err := runtimeConfig(live)
+				newCfg, dangling, err := runtimeConfig(live)
 				if err != nil {
 					logger.Errorf("⚠ Error copying new config: %v", err)
 					logger.Warn("  Using previous valid config")
@@ -1242,23 +1242,13 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
-				refErrs, refWarnings := newCfg.ValidateModelReferences()
-				if len(refErrs) > 0 {
-					err := errors.Join(refErrs...)
-					logger.Errorf("  ⚠ New config model reference validation failed: %v", err)
-					logger.Warn("  Using previous valid config")
-					alertConfigFileInvalid(a, configPath, err)
-					continue
-				}
-				for _, w := range refWarnings {
-					logger.WarnCF("gateway", "reference to disabled model", map[string]any{"detail": w})
-				}
 				if err := newCfg.ValidateBindings(); err != nil {
 					logger.Errorf("  ⚠ New config binding validation failed: %v", err)
 					logger.Warn("  Using previous valid config")
 					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
+				refAlerts.report(a, dangling)
 
 				// Only mark the change applied once it has actually been handed to
 				// the reload consumer. If the consumer is still busy with a previous

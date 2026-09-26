@@ -24,7 +24,8 @@ type Store struct {
 }
 
 // ValidationError is returned by Update when the mutated config would be
-// refused by LoadConfig. Callers use errors.As to report it as a client
+// refused by LoadConfig, or would add a reference to a model that does not
+// exist. Callers use errors.As to report it as a client
 // error rather than a failure to save.
 type ValidationError struct {
 	Err error
@@ -70,6 +71,9 @@ func (s *Store) Current() *Config {
 // A secret reference that fn leaves in a field as a literal ("env:NAME", as
 // submitted through the WebUI) is resolved before the config becomes current,
 // and remembered so the save writes the reference.
+//
+// Every save path goes through here, so this is where a new reference to a
+// model that does not exist is refused; see newDanglingModelReferences.
 func (s *Store) Update(fn func(cfg *Config) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,6 +93,13 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	next.dataDir = s.cur.dataDir
 	if next.secretRefs == nil {
 		next.secretRefs = s.cur.secretRefs
+	}
+
+	// A reference to a model that does not exist is refused only when this
+	// update introduces it: one already in the file (left by an older release)
+	// must not block an unrelated save, including the one that fixes it.
+	if errs := newDanglingModelReferences(s.cur, next); len(errs) > 0 {
+		return &ValidationError{Err: errors.Join(errs...)}
 	}
 
 	resolved, err := resolveConfigSecrets(next)

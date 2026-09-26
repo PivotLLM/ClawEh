@@ -559,12 +559,18 @@ observe does not need an entry.
   list, `agents.defaults` chain (models, image, vision), `summarization.models`
   or `subagents.models` still references the model; the body names every
   referencing site, and the WebUI delete dialog shows it. Repoint them first,
-  then delete. Saving the configuration (`PUT`/`PATCH /api/config`) and a
-  config-file reload now reject a config that references a model that does not
-  exist in `models` (the reload keeps the previous config and raises the
-  config-file-invalid alert); startup instead drops such references with a
-  `removed reference to unknown model` warning and continues without rewriting
-  `config.json`. A reference to a model that exists but is disabled is allowed
+  then delete. Every configuration save (the Providers, Models and Agents
+  pages as well as `PUT`/`PATCH /api/config`) now refuses one that introduces
+  a reference to a model that does not exist in `models`, naming the site
+  (`agents.list[bob].models: model "ghost" does not exist`); a reference that
+  was already missing, for example left by a model deleted before this guard
+  existed, never blocks a save. Startup and config-file reload skip such a
+  reference instead of refusing the config: the agent uses the next model in
+  its list, a `removed reference to unknown model` warning is logged,
+  `config.json` is not rewritten, and one "Agent references a missing model"
+  alert is raised per reference (not again on later reloads while it stays).
+  Previously a reload refused the whole file over an old missing reference, so
+  an unrelated WebUI change never took effect. A reference to a model that exists but is disabled is allowed
   and logged as a warning. Note: a config that omits `agents.defaults.models`
   inherits the default `Claude CLI` / `Codex CLI` aliases, so if those models
   were removed, set a default model before the next save.

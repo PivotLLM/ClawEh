@@ -254,14 +254,11 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, err.Error())
 	}
 
-	// Every agent, default, summarization and subagent chain must name a model
-	// that exists. A reference to a disabled model is allowed (disabling is a
-	// legitimate temporary action) but has no channel back to the client, so it
-	// is logged instead.
-	refErrs, refWarnings := cfg.ValidateModelReferences()
-	for _, err := range refErrs {
-		errs = append(errs, err.Error())
-	}
+	// A new reference to a model that does not exist is refused by
+	// config.Store.Update, on every save path. A reference to a disabled model
+	// is allowed (disabling is a legitimate temporary action) but has no
+	// channel back to the client, so it is logged instead.
+	_, refWarnings := cfg.ValidateModelReferences()
 	for _, w := range refWarnings {
 		logger.WarnCF("config", "reference to disabled model", map[string]any{"detail": w})
 	}

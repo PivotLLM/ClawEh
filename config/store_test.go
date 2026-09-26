@@ -231,3 +231,66 @@ func TestNewStore_MissingFileLoadsDefaults(t *testing.T) {
 		t.Fatal("a missing file must load as the defaults")
 	}
 }
+
+// TestStore_UpdateRejectsNewDanglingModelReference: every save path goes
+// through Update, so a save that adds a reference to a model that does not
+// exist is refused there, naming the site and the alias.
+func TestStore_UpdateRejectsNewDanglingModelReference(t *testing.T) {
+	s := newTestStore(t)
+	before := s.Current()
+	err := s.Update(func(c *Config) error {
+		c.Agents.List = append(c.Agents.List, AgentConfig{ID: "bob", Name: "Bob", Models: []string{"m", "ghost"}})
+		return nil
+	})
+	verr, ok := errors.AsType[*ValidationError](err)
+	if !ok {
+		t.Fatalf("Update error = %v, want *ValidationError", err)
+	}
+	if want := `agents.list[bob].models: model "ghost" does not exist`; verr.Error() != want {
+		t.Fatalf("error = %q, want %q", verr, want)
+	}
+	if s.Current() != before {
+		t.Fatal("rejected config became current")
+	}
+	fromDisk, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fromDisk.Agents.List) != 1 {
+		t.Fatal("rejected config was written to disk")
+	}
+}
+
+// TestStore_UpdateKeepsPreExistingDanglingModelReference: a reference left
+// dangling by an older release must not block an unrelated save (adding a
+// provider), nor the save that fixes it.
+func TestStore_UpdateKeepsPreExistingDanglingModelReference(t *testing.T) {
+	s := newTestStore(t)
+	// Simulate the old file: written directly, not through Update.
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agents.List[0].Models = []string{"DeepSeek 4 Pro", "m"}
+	if err = SaveConfig(s.Path(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.Update(func(c *Config) error {
+		c.Providers = append(c.Providers, Provider{Name: "other", Protocol: "openai-chat", BaseURL: "https://example.invalid/v1", APIKey: "k"})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unrelated save refused: %v", err)
+	}
+	if got := s.Current(); len(got.Providers) != 2 || got.Agents.List[0].Models[0] != "DeepSeek 4 Pro" {
+		t.Fatalf("save not applied as written: providers=%d models=%q", len(got.Providers), got.Agents.List[0].Models)
+	}
+
+	if err = s.Update(func(c *Config) error { c.Agents.List[0].Models = []string{"m"}; return nil }); err != nil {
+		t.Fatalf("fixing save refused: %v", err)
+	}
+}

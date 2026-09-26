@@ -3,12 +3,14 @@ package gateway
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
 // validConfigJSON is the minimal config the watcher's LoadConfig+ValidateModels
@@ -48,7 +50,7 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 120 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
 	// Burst of three writes, each spaced under the debounce window so each resets
@@ -89,7 +91,7 @@ func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 80 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
 	time.Sleep(3 * interval) // let the watcher capture its baseline
@@ -125,7 +127,7 @@ func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 60 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{})
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
 	// Let the watcher capture its baseline against the seed file before the first
@@ -161,5 +163,152 @@ func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 	case <-ch:
 	case <-time.After(2 * time.Second):
 		t.Fatal("change B was lost: watcher advanced past it without delivering")
+	}
+}
+
+// danglingRefConfigJSON has an agent whose first model was deleted before the
+// delete guard existed: "DeepSeek 4 Pro" is referenced but not defined. marker
+// varies the file so an unrelated edit can be written.
+func danglingRefConfigJSON(marker string) string {
+	return `{
+		"providers": [{"name": "p", "protocol": "openai-chat", "base_url": "https://example.invalid/v1", "api_key": "k"}],
+		"models": [{"model_name": "good", "model": "gpt-4o", "provider": "p", "enabled": true}],
+		"agents": {
+			"defaults": {"models": []},
+			"list": [{"id": "Amber", "name": "Amber", "default": true, "models": ["DeepSeek 4 Pro", "good"]}]
+		},
+		"_marker": "` + marker + `"
+	}`
+}
+
+// waitReload returns the next reloaded config, failing the test if none comes.
+func waitReload(t *testing.T, ch <-chan *config.Config) *config.Config {
+	t.Helper()
+	select {
+	case cfg := <-ch:
+		return cfg
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected a reload; got none")
+		return nil
+	}
+}
+
+// TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected: an old
+// reference to a deleted model must not block an unrelated change. The reload
+// is applied with the reference pruned from the runtime copy (the agent falls
+// through to its next model), one alert is raised for it, a further reload
+// does not raise it again, and the file on disk is not rewritten.
+func TestConfigWatcher_DanglingModelReferenceIsSkippedNotRejected(t *testing.T) {
+	rec := testalerts.Install(t)
+	store, path := seedStore(t)
+
+	interval := 10 * time.Millisecond
+	debounce := 50 * time.Millisecond
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
+	defer stop()
+	time.Sleep(3 * interval) // let the watcher capture its baseline
+
+	first := danglingRefConfigJSON("first")
+	if err := os.WriteFile(path, []byte(first), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := waitReload(t, ch)
+
+	agent := cfg.Agents.List[0]
+	if !slices.Equal(agent.Models, []string{"good"}) {
+		t.Fatalf("runtime agent models = %q, want [good] (dangling entry pruned, next model first)", agent.Models)
+	}
+	if got := store.Current().Agents.List[0].Models; !slices.Equal(got, []string{"DeepSeek 4 Pro", "good"}) {
+		t.Fatalf("store models = %q, want the on-disk list untouched", got)
+	}
+	if onDisk, err := os.ReadFile(path); err != nil || string(onDisk) != first {
+		t.Fatalf("config file was rewritten by the reload (err=%v)", err)
+	}
+
+	const wantEvent = "model-ref:agents.list[Amber].models"
+	got := rec.Alerts()
+	if len(got) != 1 {
+		t.Fatalf("alerts = %+v, want exactly one", got)
+	}
+	if got[0].EventID != wantEvent || got[0].Title != "Agent references a missing model" {
+		t.Fatalf("alert = %+v, want EventID %q and the missing-model title", got[0], wantEvent)
+	}
+	if got[0].Priority != alerter.Normal {
+		t.Fatalf("alert priority = %d, want Normal", got[0].Priority)
+	}
+
+	// An unrelated edit reloads again with the same stale reference: applied,
+	// and no second alert.
+	if err := os.WriteFile(path, []byte(danglingRefConfigJSON("second-edit")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg = waitReload(t, ch)
+	if !slices.Equal(cfg.Agents.List[0].Models, []string{"good"}) {
+		t.Fatalf("second reload models = %q, want [good]", cfg.Agents.List[0].Models)
+	}
+	if n := len(rec.Alerts()); n != 1 {
+		t.Fatalf("alerts after second reload = %d, want still 1", n)
+	}
+}
+
+// TestConfigWatcher_InvalidBindingStillRejected: a file that is genuinely
+// invalid is still refused, with the previous config kept and a
+// "Config file invalid" alert.
+func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
+	rec := testalerts.Install(t)
+	store, path := seedStore(t)
+
+	interval := 10 * time.Millisecond
+	debounce := 50 * time.Millisecond
+	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
+	defer stop()
+	time.Sleep(3 * interval)
+
+	body := `{"models":[],"agents":{"defaults":{"models":[]}},
+		"bindings":[{"agent_id":"main","default":true,"match":{"channel":""}}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ch:
+		t.Fatal("a config with an invalid default binding was applied")
+	case <-time.After(debounce + 300*time.Millisecond):
+	}
+	got := rec.Alerts()
+	if len(got) != 1 || got[0].EventID != "config" || got[0].Title != "Config file invalid" {
+		t.Fatalf("alerts = %+v, want one Config file invalid alert", got)
+	}
+}
+
+// TestModelRefAlerts_OncePerReferenceUntilFixed: a reference alerts the first
+// time it is seen, not on later reloads, and again if it comes back after
+// being fixed.
+func TestModelRefAlerts_OncePerReferenceUntilFixed(t *testing.T) {
+	rec := testalerts.Install(t)
+	m := &modelRefAlerts{}
+	amber := config.DanglingModelReference{Site: "agents.list[Amber].models", Alias: "DeepSeek 4 Pro", Agent: "Amber"}
+	defaults := config.DanglingModelReference{Site: "agents.defaults.image_model", Alias: "gone"}
+
+	m.report(rec, []config.DanglingModelReference{amber})
+	m.report(rec, []config.DanglingModelReference{amber})
+	if n := len(rec.Alerts()); n != 1 {
+		t.Fatalf("after a repeat: %d alerts, want 1", n)
+	}
+	m.report(rec, []config.DanglingModelReference{amber, defaults})
+	if n := len(rec.Alerts()); n != 2 {
+		t.Fatalf("after a new reference: %d alerts, want 2", n)
+	}
+	m.report(rec, nil) // fixed
+	m.report(rec, []config.DanglingModelReference{amber})
+	got := rec.Alerts()
+	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[Amber].models" {
+		t.Fatalf("after fix and reappearance: %+v, want a third alert for Amber", got)
+	}
+	want := `Amber lists model "DeepSeek 4 Pro", which no longer exists; it was skipped and the next model in the list is used. Pick a model for Amber on the Agents page to clear this.`
+	if got[0].Description != want {
+		t.Fatalf("description = %q, want %q", got[0].Description, want)
+	}
+	if got[1].EventID != "model-ref:agents.defaults.image_model" {
+		t.Fatalf("defaults alert EventID = %q", got[1].EventID)
 	}
 }

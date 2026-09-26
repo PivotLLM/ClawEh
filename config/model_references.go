@@ -9,15 +9,18 @@ import (
 // slice and scalar is set.
 type modelRef struct {
 	where  string    // human label, e.g. `agents.list[alice].models`
+	agent  string    // agent ID for a per-agent site, empty otherwise
 	slice  *[]string // set for list sites
 	scalar *string   // set for scalar sites
 }
 
-// DanglingModelReference is one reference PruneDanglingModelReferences removed:
-// the labelled site it lived at and the alias it named.
+// DanglingModelReference is one reference to a model that does not exist: the
+// labelled site it lives at, the alias it names and, for a per-agent site, the
+// agent's ID.
 type DanglingModelReference struct {
 	Site  string
 	Alias string
+	Agent string
 }
 
 // modelRefSites visits every site that references a model alias exactly once,
@@ -35,11 +38,11 @@ func (c *Config) modelRefSites() []modelRef {
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		sites = append(sites,
-			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), slice: &a.Models},
-			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), slice: &a.SummarizationModels},
+			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.ID, slice: &a.Models},
+			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.ID, slice: &a.SummarizationModels},
 		)
 		if a.Subagents != nil {
-			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), slice: &a.Subagents.Models})
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.ID, slice: &a.Subagents.Models})
 		}
 	}
 	return sites
@@ -109,7 +112,7 @@ func (c *Config) PruneDanglingModelReferences() []DanglingModelReference {
 	for _, site := range c.modelRefSites() {
 		if site.scalar != nil {
 			if v := *site.scalar; v != "" && !exists[v] {
-				removed = append(removed, DanglingModelReference{Site: site.where, Alias: v})
+				removed = append(removed, DanglingModelReference{Site: site.where, Alias: v, Agent: site.agent})
 				*site.scalar = ""
 			}
 			continue
@@ -117,7 +120,7 @@ func (c *Config) PruneDanglingModelReferences() []DanglingModelReference {
 		kept := (*site.slice)[:0]
 		for _, v := range *site.slice {
 			if v != "" && !exists[v] {
-				removed = append(removed, DanglingModelReference{Site: site.where, Alias: v})
+				removed = append(removed, DanglingModelReference{Site: site.where, Alias: v, Agent: site.agent})
 				continue
 			}
 			kept = append(kept, v)
@@ -125,4 +128,37 @@ func (c *Config) PruneDanglingModelReferences() []DanglingModelReference {
 		*site.slice = kept
 	}
 	return removed
+}
+
+// danglingModelReferences returns every reference to an alias that does not
+// exist in Models, without changing c. Empty entries are skipped.
+func (c *Config) danglingModelReferences() []DanglingModelReference {
+	exists, _ := c.modelNameSets()
+	var out []DanglingModelReference
+	for _, site := range c.modelRefSites() {
+		for _, v := range site.values() {
+			if v != "" && !exists[v] {
+				out = append(out, DanglingModelReference{Site: site.where, Alias: v, Agent: site.agent})
+			}
+		}
+	}
+	return out
+}
+
+// newDanglingModelReferences returns the missing-model references in next
+// that before does not already have (same site, same alias), as errors in the
+// form ValidateModelReferences uses. A reference that was already dangling is
+// not reported, so a save that leaves an old one alone is not blocked by it.
+func newDanglingModelReferences(before, next *Config) []error {
+	had := make(map[DanglingModelReference]bool)
+	for _, ref := range before.danglingModelReferences() {
+		had[ref] = true
+	}
+	var errs []error
+	for _, ref := range next.danglingModelReferences() {
+		if !had[ref] {
+			errs = append(errs, fmt.Errorf("%s: model %q does not exist", ref.Site, ref.Alias))
+		}
+	}
+	return errs
 }

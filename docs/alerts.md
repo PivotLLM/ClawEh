@@ -62,6 +62,7 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Session not saved | A conversation could not be written to its session store | `session-store` |
 | | Service tokens not loaded | The service-token file could not be read | `service-tokens` |
 | | Config file invalid | A config edit on disk could not be loaded or validated and was not applied | `config` |
+| | Agent references a missing model | A model list names a deleted model; it is skipped and the next model used | `model-ref:<site>` |
 | | Config reload failed | Applying a valid config failed part way; services may not all be running | `config` |
 | | Nightly backup failed | The configuration backup did not run | `backup` |
 | | Log rotation failed | The midnight log roll failed; file logging may be stopped | `logging` |

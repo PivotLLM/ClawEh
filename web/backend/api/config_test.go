@@ -161,3 +161,50 @@ func TestHandleUpdateConfig_RejectsUnknownModelReference(t *testing.T) {
 		t.Fatalf("agents.list = %+v, want the original main agent", cfg.Agents.List)
 	}
 }
+
+// TestHandleUpdateConfig_KeepsPreExistingDanglingModelReference: a reference
+// to a missing model already in the file (left by an older release) does not
+// block a PUT that keeps it and changes something else.
+func TestHandleUpdateConfig_KeepsPreExistingDanglingModelReference(t *testing.T) {
+	configPath := setupTestEnv(t)
+	old, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Agents.List[0].Models = []string{"DeepSeek 4 Pro", "custom-default"}
+	if err = config.SaveConfig(configPath, old); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
+		"agents": {
+			"defaults": {"models": ["custom-default"]},
+			"list": [{"id": "main", "name": "Main", "default": true, "models": ["DeepSeek 4 Pro", "custom-default"]}]
+		},
+		"providers": [
+			{"name": "openai", "protocol": "openai-chat", "base_url": "https://api.openai.com/v1", "api_key": "sk-default"}
+		],
+		"models": [
+			{"model_name": "custom-default", "model": "gpt-4o", "provider": "openai", "enabled": true}
+		],
+		"logging": {"level": "warn"}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Level != "warn" {
+		t.Fatalf("logging.level = %q, want warn (the save was not applied)", cfg.Logging.Level)
+	}
+}
