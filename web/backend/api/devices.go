@@ -37,6 +37,21 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
+// SetDeviceDisconnector wires the running device channel's DisconnectDevice,
+// so removing a device ends its open connections at once. The gateway resolves
+// the channel per call, which survives a channel manager rebuild.
+func (h *Handler) SetDeviceDisconnector(fn func(deviceID string)) {
+	h.reloadMu.Lock()
+	h.deviceDisconnect = fn
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) deviceDisconnector() func(deviceID string) {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	return h.deviceDisconnect
+}
+
 // deviceStoreFor returns the cached pairing-DB handle, opening it on first use.
 // The channel and this admin API share the same WAL database file.
 //
@@ -479,6 +494,10 @@ func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	if err := store.RemovePaired(r.Context(), deviceID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "remove failed"})
 		return
+	}
+	// The device's tokens are gone; end any connection it still has open.
+	if disconnect := h.deviceDisconnector(); disconnect != nil {
+		disconnect(deviceID)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

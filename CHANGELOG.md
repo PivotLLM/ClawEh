@@ -219,6 +219,47 @@ observe does not need an entry.
   rotation steps are in `app/keys.go`.
   `make test` now runs `govulncheck` and fails on a known vulnerability
   reachable from the code.
+- **Device gateway: removing a device disconnects it.** Removing a paired
+  device in the WebUI closes its open connections at once, and every request on
+  an open connection now re-checks that the device is still paired and holds a
+  valid device token; a device that is not gets `NOT_PAIRED` and is
+  disconnected (close `1008`). Before, a removed device kept chatting on its
+  open socket until it chose to disconnect.
+- **Device gateway: a device that stops reading no longer stalls replies.**
+  Frames to a device now go through a per-connection queue, and every write must
+  complete within 5 seconds; a device that misses that, or whose queue fills, is
+  disconnected. Before, one stalled device could block the agent's turn, other
+  devices' replies and eventually outbound delivery on every channel.
+- **Device gateway: a config reload closes device connections.** When the
+  device channel stops (every config reload rebuilds it) it closes each open
+  connection with a normal close (`1001`), so devices reconnect to the new
+  listener at once. Before, they stayed attached to the stopped channel, which
+  acknowledged `chat.send` and dropped it.
+- **BREAKING: device session keys are checked.** Under an isolating
+  `session.session_scope` (`per-user`, `per-platform`, `per-account`) a device
+  now always gets its own conversation, `agent:<id>:device:<deviceId>`; the only
+  agent-scoped keys it may send are `agent:<id>:main` (selects the agent) and
+  that key. Any other key (another device's session, a Telegram chat, a
+  profile key such as `agent:<id>:clawtotalk:primary`) is refused by
+  `chat.send` and `chat.history` with `INVALID_REQUEST` "session key not
+  allowed"; before, it was honoured verbatim, so a device could read and write
+  any session. Migration: a client that sends a profile key under an isolating
+  mode must send `agent:<id>:main` instead (its history then starts fresh in the
+  per-device session). The default `unified` mode is unchanged. In every mode a
+  key naming an agent that does not exist is now refused ("unknown agent")
+  instead of creating a session database for it.
+- **BREAKING: an exposed device gateway needs a secret and approval.** The
+  config is refused (at startup, on reload and on a WebUI save) when the
+  device channel is enabled on a network `channels.device.host` (anything but
+  loopback) with `channels.device.auto_approve` on, or with neither
+  `channels.device.token` nor `channels.device.word_token` set. Migration: turn
+  `auto_approve` off, set a token (the WebUI Devices page's **Pair a device**
+  does), or bind `host` to `127.0.0.1`.
+- **Device gateway: pending pairings are capped and expire.** At most 20
+  pairing requests wait for approval (the oldest are dropped first) and each
+  expires after 10 minutes. `GET /api/devices/pending` `remote_ip` is now the
+  client address without the port (behind a trusted proxy, the forwarded
+  address), so the approval list shows who asked.
 
 
 ### Added
@@ -437,6 +478,17 @@ observe does not need an entry.
   set, else `gateway.external_url`'s hostname or the first LAN address on the
   device listener port). Without `channels.device.external_url`, the pairing QR
   now lists `gateway.external_url`'s hostname before the LAN addresses.
+- **`gateway.trusted_proxies`: see the real client behind a reverse proxy.** A
+  list of IP addresses and CIDRs (same format as `gateway.lockout_exempt`;
+  default empty). A request whose TCP peer is listed is attributed to the
+  address in its `X-Real-IP` header, else the first `X-Forwarded-For` entry,
+  for the IP allowlists (`gateway.allowed_cidrs`,
+  `channels.device.allowed_cidrs`), the WebUI login and device gateway address
+  lockouts, `gateway.lockout_exempt`, logs and the audit log. From any other
+  peer the headers are ignored, and loopback is trusted only when listed. With
+  a proxy listed the allowlists judge the forwarded clients, so a proxied WebUI
+  needs `gateway.allowed_cidrs` to cover them. An invalid entry is a config
+  error; a change applies on config reload without a restart.
 
 ### Changed
 

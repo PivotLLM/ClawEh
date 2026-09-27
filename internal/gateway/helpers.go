@@ -629,14 +629,30 @@ func setupAndStartServices(
 		linker, ok := ch.(webapi.SecMsgLinker)
 		return linker, ok
 	})
+	// Removing a device in the WebUI closes its open connections on the live
+	// device channel (resolved per call, like the linker above).
+	services.WebServer.APIHandler().SetDeviceDisconnector(func(deviceID string) {
+		mgr := services.ChannelManager
+		if mgr == nil {
+			return
+		}
+		ch, ok := mgr.GetChannel("device")
+		if !ok {
+			return
+		}
+		if d, ok := ch.(interface{ DisconnectDevice(deviceID string) }); ok {
+			d.DisconnectDevice(deviceID)
+		}
+	})
 	// IP allowlist for the shared HTTP port. Empty means loopback only (see
 	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
 	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
 	hostOpts := hostOptions{
-		HTTPHosts:    cfg.Gateway.HTTPBindHosts(),
-		Port:         cfg.Gateway.EffectivePort(),
-		AllowedCIDRs: allowedCIDRs,
+		HTTPHosts:      cfg.Gateway.HTTPBindHosts(),
+		Port:           cfg.Gateway.EffectivePort(),
+		AllowedCIDRs:   allowedCIDRs,
+		TrustedProxies: cfg.Gateway.TrustedProxies,
 	}
 	if services.TLSCerts != nil {
 		hostOpts.TLSHosts = cfg.Gateway.HTTPSBindHosts()
@@ -1175,6 +1191,9 @@ func restartServices(
 			logger.WarnF("Invalid network allowlist in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
 		} else {
 			logAllowlist(allowedCIDRs, cfg.Gateway.Host)
+		}
+		if err := services.HTTPHost.SetTrustedProxies(cfg.Gateway.TrustedProxies); err != nil {
+			logger.WarnF("Invalid trusted proxy list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
 		}
 		// Same for the Host and cross-origin policy: external_url and the LINE
 		// webhook path can change on reload, and a bad external_url keeps the

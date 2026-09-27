@@ -16,12 +16,17 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		trusted, err := config.CompileTrustedProxies(cfg.Gateway.TrustedProxies)
+		if err != nil {
+			return nil, err
+		}
 		dc, err := NewDeviceChannel(cfg.Channels.Device, cfg.DataDir(), cfg.Logging.LogMessageContent, b, cfg.Gateway.ExternalURL, tlscert.NamesForConfig(cfg))
 		if err != nil {
 			return nil, err
 		}
 		// Built afresh on every config reload, so a changed list applies then.
 		dc.server.SetLockoutExempt(exempt)
+		dc.SetTrustedProxies(trusted)
 		return dc, nil
 	})
 }

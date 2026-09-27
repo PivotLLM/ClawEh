@@ -87,7 +87,11 @@ minutes; 10 failures against one username (as typed, existing or not) within
 refused with 429 and `Retry-After` and restarts the lock at its full length.
 `claw admin` (any rewrite of `credentials.json`) or a gateway restart clears
 every lock. Addresses in `gateway.lockout_exempt` (and loopback) are never
-locked by address, but the username lock still applies to them. Each lock
+locked by address, but the username lock still applies to them. Behind a
+proxy listed in `gateway.trusted_proxies`, the client address is the one the
+proxy sends in `X-Real-IP` (else the first `X-Forwarded-For` entry), so the
+address lock, the exemption, the logs and the audit log see the real client
+rather than the proxy; from any other peer those headers are ignored. Each lock
 start raises an alert. The full operator description is
 the README's [Authentication failures](../README.md#authentication-failures)
 section. Logins, failures, lockouts, refused attempts and logouts are logged
@@ -100,7 +104,8 @@ audit log (see `docs/audit.md`).
 `claw-auth`), `POST /api/message/{token}` (its own tokens), the signed LINE
 webhook, and `/api/auth/*` itself. Loopback clients are **not** exempt: a
 reverse proxy on the same host forwards to loopback, so exempting it would
-exempt the internet.
+exempt the internet. (With the proxy in `gateway.trusted_proxies` the client is
+the forwarded address, not loopback.)
 
 ## Endpoints
 

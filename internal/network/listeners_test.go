@@ -81,6 +81,7 @@ func TestCommandShowReportsListeners(t *testing.T) {
 	// this test wants the enabled shape.
 	cfg := loadSeeded(t)
 	cfg.Channels.Device.Enabled = true
+	cfg.Channels.Device.Token = "shared" // a network device gateway needs a secret
 	if err := config.SaveConfig(path, cfg); err != nil {
 		t.Fatal(err)
 	}

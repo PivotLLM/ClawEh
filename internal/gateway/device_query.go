@@ -51,10 +51,11 @@ func (q deviceAgentQuerier) SessionMode() string {
 	return cfg.Session.Mode
 }
 
-// History returns the user/assistant text turns stored for a session key.
+// History returns the user/assistant text turns stored for a session key. A
+// key whose agent is not registered returns nothing: reading it would create a
+// session database in some other agent's store.
 func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMessage {
-	reg := q.al.GetRegistry()
-	inst := agentForSessionKey(reg, sessionKey)
+	inst := agentForSessionKey(q.al.GetRegistry(), sessionKey)
 	if inst == nil || inst.Sessions == nil {
 		return nil
 	}
@@ -72,18 +73,18 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	return out
 }
 
-// agentForSessionKey resolves the agent that owns a session key of the form
-// "agent:<id>:...", falling back to the default agent.
+// agentForSessionKey resolves the registered agent that owns a session key of
+// the form "agent:<id>:...", or nil when there is none.
 func agentForSessionKey(reg *agent.AgentRegistry, sessionKey string) *agent.AgentInstance {
-	if strings.HasPrefix(sessionKey, "agent:") {
-		parts := strings.SplitN(sessionKey, ":", 3)
-		if len(parts) >= 2 {
-			if inst, ok := reg.GetAgent(parts[1]); ok {
-				return inst
-			}
-		}
+	parts := strings.SplitN(sessionKey, ":", 3)
+	if len(parts) < 2 || parts[0] != "agent" {
+		return nil
 	}
-	return reg.GetDefaultAgent()
+	inst, ok := reg.GetAgent(parts[1])
+	if !ok {
+		return nil
+	}
+	return inst
 }
 
 // injectDeviceAgentQuerier wires the agent loop into the device channel (if

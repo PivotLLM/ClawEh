@@ -89,6 +89,9 @@ type hostOptions struct {
 	Port      int
 	// AllowedCIDRs is the client IP allowlist; loopback is always allowed.
 	AllowedCIDRs []string
+	// TrustedProxies is gateway.trusted_proxies: peers whose X-Real-IP /
+	// X-Forwarded-For name the client.
+	TrustedProxies []string
 	// TLSHosts are the HTTPS bind addresses on TLSPort
 	// (config.GatewayConfig.HTTPSBindHosts); empty means no HTTPS listener.
 	TLSHosts  []string
@@ -111,6 +114,7 @@ type httpHost struct {
 	handler http.Handler // the shared chain, outermost first (see newHTTPHost)
 
 	mux         atomic.Pointer[http.ServeMux]
+	trusted     atomic.Pointer[config.TrustedProxySet]
 	allow       atomic.Pointer[middleware.Allowlist]
 	hosts       atomic.Pointer[middleware.HostAllowlist]
 	crossOrigin atomic.Pointer[http.CrossOriginProtection]
@@ -144,6 +148,9 @@ type httpHost struct {
 func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	h := &httpHost{opts: opts}
 	// The chain in front of the dynamic mux, outermost first:
+	//   Trusted proxy  — from a gateway.trusted_proxies peer, the client is
+	//                    the X-Real-IP / X-Forwarded-For address; every layer
+	//                    below sees that address as RemoteAddr.
 	//   IP allowlist   — who may connect. Loopback always; otherwise the
 	//                    configured networks, regardless of bind address.
 	//                    Matches the TCP peer (RemoteAddr), so behind a reverse
@@ -162,13 +169,29 @@ func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	if err := h.SetAllowlist(opts.AllowedCIDRs); err != nil {
 		return nil, err
 	}
-	h.handler = middleware.IPAllowlist(h.allow.Load,
-		middleware.HostCheck(h.hosts.Load,
-			middleware.CrossOrigin(h.crossOrigin.Load,
-				middleware.SecurityHeaders(
-					middleware.Auth(h.auth.Load, h.authExempt.Load,
-						limitBody(http.HandlerFunc(h.serveMux)))))))
+	if err := h.SetTrustedProxies(opts.TrustedProxies); err != nil {
+		return nil, err
+	}
+	h.handler = middleware.TrustedProxy(h.trusted.Load,
+		middleware.IPAllowlist(h.allow.Load,
+			middleware.HostCheck(h.hosts.Load,
+				middleware.CrossOrigin(h.crossOrigin.Load,
+					middleware.SecurityHeaders(
+						middleware.Auth(h.auth.Load, h.authExempt.Load,
+							limitBody(http.HandlerFunc(h.serveMux))))))))
 	return h, nil
+}
+
+// SetTrustedProxies compiles gateway.trusted_proxies and swaps the result in
+// for subsequent requests. Invalid input returns an error and leaves the
+// current set untouched.
+func (h *httpHost) SetTrustedProxies(entries []string) error {
+	set, err := config.CompileTrustedProxies(entries)
+	if err != nil {
+		return err
+	}
+	h.trusted.Store(set)
+	return nil
 }
 
 // SetAuth installs the login-session store the Auth middleware consults.

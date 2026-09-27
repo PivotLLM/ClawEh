@@ -47,9 +47,14 @@ terminate TLS at the proxy, and point it at `http://127.0.0.1:18790`
 own HTTPS listener on the network). Set
 `gateway.external_url` to the public URL (for example
 `https://claw.example.com`) so links, the Host check and cross-origin trust use
-it. ClawEh's IP allowlist matches the TCP peer, so with a proxy on the same box
-every request arrives from loopback — enforce network access control at the
-proxy; the admin login still applies to every request. Without a proxy, add
+it. By default ClawEh's IP allowlist matches the TCP peer, so with a proxy on
+the same box every request arrives from loopback — enforce network access
+control at the proxy; the admin login still applies to every request. To have
+ClawEh see the real client instead (for the allowlist, the login lockout, logs
+and the audit log), list the proxy in `gateway.trusted_proxies` (for example
+`["127.0.0.1"]`) and have it send `X-Real-IP`, as the example below does; the
+allowlist then judges the forwarded address, so set `gateway.allowed_cidrs` to
+cover your clients (`["*"]` for anyone). Without a proxy, add
 your networks with `claw network` and use `https://<host>:18443` — HTTPS is on
 every interface by default (see `docs/tls.md`).
 
@@ -240,4 +245,12 @@ Cloudflare Tunnel and Tailscale work here too — point the ingress/funnel at
 
 > `channels.device.allowed_cidrs` matches the TCP peer, which behind a reverse
 > proxy is the proxy itself. Leave it empty (the gateway authenticates every
-> client anyway) or allow the proxy's source address.
+> client anyway) or allow the proxy's source address. With the proxy listed in
+> `gateway.trusted_proxies`, the device gateway takes the client from
+> `X-Real-IP` instead, for the allowlist, the per-address lockout, the pending
+> pairing's address and the logs; without it, every Internet client shares the
+> proxy's address for all of these.
+>
+> A device gateway on a network address (anything but loopback) must have
+> `channels.device.token` or `word_token` set and `auto_approve` off; ClawEh
+> refuses to start otherwise.

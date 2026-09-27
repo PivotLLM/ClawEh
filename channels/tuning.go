@@ -56,4 +56,11 @@ const (
 	// authenticated (each holds a goroutine for up to the handshake timeout);
 	// further upgrades are refused with 503 until one completes or times out.
 	DeviceMaxPreauthConns = 32
+
+	// DevicePendingPairingsMax caps the pairing requests waiting for approval;
+	// when a new one would exceed it, the oldest are dropped. A request older
+	// than DevicePendingPairingTTL expires (a device still trying re-creates
+	// it on its next connect).
+	DevicePendingPairingsMax = 20
+	DevicePendingPairingTTL  = 10 * time.Minute
 )

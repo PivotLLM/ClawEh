@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 )
 
@@ -484,5 +486,75 @@ func TestStoreContendedWriteWaits(t *testing.T) {
 	}
 	if elapsed < hold/2 {
 		t.Fatalf("contended write returned after %v without waiting for the %v lock", elapsed, hold)
+	}
+}
+
+// Pending requests are capped at channels.DevicePendingPairingsMax; the
+// oldest go first.
+func TestPendingPairingsCapped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	base := time.Now().UnixMilli()
+	total := channels.DevicePendingPairingsMax + 5
+	for i := range total {
+		if _, err := s.CreatePending(ctx, PendingPairing{
+			DeviceID: fmt.Sprintf("dev%02d", i), PublicKey: "pk", CreatedAtMs: base + int64(i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pend, err := s.ListPending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != channels.DevicePendingPairingsMax {
+		t.Fatalf("pending = %d, want %d", len(pend), channels.DevicePendingPairingsMax)
+	}
+	kept := map[string]bool{}
+	for _, p := range pend {
+		kept[p.DeviceID] = true
+	}
+	for i := range total {
+		id := fmt.Sprintf("dev%02d", i)
+		if want := i >= total-channels.DevicePendingPairingsMax; kept[id] != want {
+			t.Errorf("%s kept = %v, want %v", id, kept[id], want)
+		}
+	}
+}
+
+// A pending request older than channels.DevicePendingPairingTTL is neither
+// listed nor approvable, and the next request removes it.
+func TestPendingPairingsExpire(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	reqID, err := s.CreatePending(ctx, PendingPairing{DeviceID: "stale", PublicKey: "pk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Age it past the TTL, as if the device had stopped retrying long ago.
+	old := time.Now().Add(-channels.DevicePendingPairingTTL - time.Minute).UnixMilli()
+	if _, execErr := s.db.ExecContext(ctx, `UPDATE pending_pairings SET created_at_ms=? WHERE request_id=?`, old, reqID); execErr != nil {
+		t.Fatal(execErr)
+	}
+	pend, err := s.ListPending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 0 {
+		t.Fatalf("expired request listed: %+v", pend)
+	}
+	if _, _, err := s.Approve(ctx, reqID, nil, nil); !errors.Is(err, ErrPendingNotFound) {
+		t.Fatalf("Approve of an expired request: err = %v, want ErrPendingNotFound", err)
+	}
+
+	if _, err := s.CreatePending(ctx, PendingPairing{DeviceID: "fresh", PublicKey: "pk"}); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pending_pairings`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("pending rows = %d, want only the fresh one", rows)
 	}
 }

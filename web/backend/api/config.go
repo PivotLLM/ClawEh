@@ -278,6 +278,11 @@ func validateConfig(cfg *config.Config) []string {
 	if err := config.ValidateMCPHostListen(cfg.MCPHost.Listen); err != nil {
 		errs = append(errs, err.Error())
 	}
+	// A device gateway on a network address must not pair or admit devices
+	// without a secret; LoadConfig refuses the same.
+	if err := cfg.Channels.Device.ValidateExposure(); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	// Gateway IP allowlist: every entry must be a valid CIDR.
 	if err := config.ValidateAllowedCIDRs(cfg.Gateway.AllowedCIDRs); err != nil {

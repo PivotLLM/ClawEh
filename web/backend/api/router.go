@@ -48,6 +48,9 @@ type Handler struct {
 	// so the WebUI QR pairing panel can reach the running channel instance
 	// (injected via SetSecMsgLinker). Guarded by reloadMu like the fields above.
 	secmsgLinker SecMsgLinkerLookup
+	// deviceDisconnect closes a removed device's open connections on the
+	// running device channel (SetDeviceDisconnector). Guarded by reloadMu.
+	deviceDisconnect func(deviceID string)
 	// mcpStatusLoop is the live AgentLoop the MCP status endpoint reads outbound
 	// connection state from (injected via SetMCPStatusLoop). Guarded by reloadMu.
 	mcpStatusLoop mcpStatusLoop

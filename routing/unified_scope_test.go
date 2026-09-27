@@ -1,6 +1,9 @@
 package routing
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // Unified is the default: an unset mode must never silently isolate anything.
 func TestIsUnified(t *testing.T) {
@@ -46,40 +49,65 @@ func TestAgentIDFromSessionKey(t *testing.T) {
 	}
 }
 
+// resolveDeviceKey calls ResolveDeviceSessionKey and fails the test on an error.
+func resolveDeviceKey(t *testing.T, mode SessionScope, requested, fallback, deviceID string) string {
+	t.Helper()
+	got, err := ResolveDeviceSessionKey(mode, requested, fallback, deviceID)
+	if err != nil {
+		t.Fatalf("ResolveDeviceSessionKey(%q, %q): %v", mode, requested, err)
+	}
+	return got
+}
+
 // Under unified every device joins the selected agent's main conversation —
 // whether the client picked an agent (operator) or not (node).
 func TestResolveDeviceSessionKeyUnified(t *testing.T) {
 	// Node client: sends the "main" sentinel, falls back to its assigned agent.
-	if got := ResolveDeviceSessionKey(SessionScopeUnified, "main", "amber", "dev1"); got != "agent:amber:main" {
+	if got := resolveDeviceKey(t, SessionScopeUnified, "main", "amber", "dev1"); got != "agent:amber:main" {
 		t.Errorf("node key = %q, want agent:amber:main", got)
 	}
 	// Operator client: picks its own agent; the profile segment is dropped.
-	if got := ResolveDeviceSessionKey(SessionScopeUnified, "agent:wendy:slack:work", "amber", "dev1"); got != "agent:wendy:main" {
+	if got := resolveDeviceKey(t, SessionScopeUnified, "agent:wendy:slack:work", "amber", "dev1"); got != "agent:wendy:main" {
 		t.Errorf("operator key = %q, want agent:wendy:main", got)
 	}
 	// Two devices on the same agent share one conversation.
-	a := ResolveDeviceSessionKey(SessionScopeUnified, "main", "amber", "dev1")
-	b := ResolveDeviceSessionKey(SessionScopeUnified, "main", "amber", "dev2")
+	a := resolveDeviceKey(t, SessionScopeUnified, "main", "amber", "dev1")
+	b := resolveDeviceKey(t, SessionScopeUnified, "main", "amber", "dev2")
 	if a != b {
 		t.Errorf("devices must share a session under unified: %q != %q", a, b)
 	}
 	// The empty mode behaves as unified.
-	if got := ResolveDeviceSessionKey("", "main", "amber", "dev1"); got != "agent:amber:main" {
+	if got := resolveDeviceKey(t, "", "main", "amber", "dev1"); got != "agent:amber:main" {
 		t.Errorf("default-mode key = %q, want agent:amber:main", got)
 	}
 }
 
-// Under an isolating mode the prior per-device / per-profile behavior stands.
+// Under an isolating mode each device gets its own session for the selected
+// agent, and a key naming any other session is refused.
 func TestResolveDeviceSessionKeyIsolating(t *testing.T) {
-	if got := ResolveDeviceSessionKey(SessionScopePerUser, "main", "amber", "dev1"); got != "agent:amber:device:dev1" {
+	if got := resolveDeviceKey(t, SessionScopePerUser, "main", "amber", "dev1"); got != "agent:amber:device:dev1" {
 		t.Errorf("node key = %q, want agent:amber:device:dev1", got)
 	}
-	if got := ResolveDeviceSessionKey(SessionScopePerUser, "agent:wendy:slack:work", "amber", "dev1"); got != "agent:wendy:slack:work" {
-		t.Errorf("operator key should be honored verbatim, got %q", got)
+	// The agent's main key selects the agent; the session is the device's own.
+	if got := resolveDeviceKey(t, SessionScopePerUser, "agent:wendy:main", "amber", "dev1"); got != "agent:wendy:device:dev1" {
+		t.Errorf("selector key = %q, want agent:wendy:device:dev1", got)
 	}
-	a := ResolveDeviceSessionKey(SessionScopePerUser, "main", "amber", "dev1")
-	b := ResolveDeviceSessionKey(SessionScopePerUser, "main", "amber", "dev2")
+	// The device's own key is accepted as is.
+	if got := resolveDeviceKey(t, SessionScopePerPlatform, "agent:wendy:device:dev1", "amber", "dev1"); got != "agent:wendy:device:dev1" {
+		t.Errorf("own key = %q, want agent:wendy:device:dev1", got)
+	}
+	a := resolveDeviceKey(t, SessionScopePerUser, "main", "amber", "dev1")
+	b := resolveDeviceKey(t, SessionScopePerUser, "main", "amber", "dev2")
 	if a == b {
 		t.Errorf("devices must not share a session when isolating: both %q", a)
+	}
+	for _, key := range []string{
+		"agent:bob:telegram:direct:123456", // someone else's chat
+		"agent:wendy:device:dev2",          // another device's session
+		"agent:wendy:slack:work",           // a profile key
+	} {
+		if got, err := ResolveDeviceSessionKey(SessionScopePerPlatform, key, "amber", "dev1"); !errors.Is(err, ErrDeviceSessionKeyNotAllowed) {
+			t.Errorf("key %q: got (%q, %v), want ErrDeviceSessionKeyNotAllowed", key, got, err)
+		}
 	}
 }

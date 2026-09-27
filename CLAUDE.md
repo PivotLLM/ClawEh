@@ -163,9 +163,13 @@ read surface in `agentquery.go`); agent-loop wiring in `internal/gateway/device_
 and HTTPS (18443) listeners; WebSocket with its own token/pairing auth, plain by
 default or TLS (`wss://`) with `channels.device.tls`, which borrows the WebUI HTTPS
 certificate from `internal/tlscert` (`injectDeviceTLS` in `internal/gateway`);
-64 KiB pre-auth read limit, per-IP auth-failure lockout, and a Host check. Device
+64 KiB pre-auth read limit, per-IP auth-failure lockout (behind a proxy listed in
+`gateway.trusted_proxies` the IP is the `X-Real-IP` one; the WebUI listener does the
+same), a Host check, a 5 s write deadline behind a per-connection send queue, and a
+refusal to run on a network host with `auto_approve` or without a token. Device
 tokens are stored hashed: a connect on the shared token issues fresh device
-tokens and revokes the old ones.
+tokens and revokes the old ones. Pairing is re-checked on every request; removing a
+device (WebUI) and stopping the channel (every reload) close open connections.
 
 Status: **working** with the Rabbit R1 (through the Rabbit agent; the gateway sees a
 `mode=node` client) and the "Claw to Talk" Android app (`com.alvin.clawtotalk`,
@@ -196,15 +200,17 @@ Hard-won learnings (don't relearn these):
   providers stream via SSE; CLI providers return the whole reply (no deltas).
 - **Auth:** a long 32-byte token (in the QR, for the R1) OR a typeable 5-word BIP39
   `word_token` passphrase (for apps), both constant-time; plus per-device Ed25519 pairing
-  approval (cryptographic — locks to that install). Removing a paired device revokes its tokens.
+  approval (cryptographic — locks to that install). Removing a paired device revokes its tokens
+  and closes its connections. Pending pairings: at most 20, each expires after 10 minutes.
 - **Agent selection / session scope:** the client encodes the selected agent as the session
   key's 2nd segment (`agent:<id>:<peer>:<profile>`); node clients send the `main` sentinel and
   use their per-device assignment (else the default agent). Which *conversation* the turn joins
   is decided by `session.session_scope`, not by the transport: under **`unified` (default) a
   device joins the selected agent's main session** (`agent:<id>:main`) — one agent, one history,
   one memory across the R1, the app, Slack, Telegram, and MCP service tokens. Isolating modes
-  keep the old behavior (operator keys verbatim; node clients per-device). `chat.history`
-  resolves through the same rule as `chat.send`. Single source of truth:
+  give every device `agent:<id>:device:<deviceID>` and refuse any other agent-scoped key
+  except the `agent:<id>:main` selector; an unknown agent id is refused in every mode.
+  `chat.history` resolves through the same rule as `chat.send`. Single source of truth:
   `routing.ResolveDeviceSessionKey` / `routing.ResolveServiceSessionKey`; mechanism:
   `metadata["session_key"]` + `metadata["preresolved_agent_id"]`. `agents.list` falls back to
   the id as the display name (clients hide name-less agents).

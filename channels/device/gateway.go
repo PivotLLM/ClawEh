@@ -46,6 +46,9 @@ type DeviceChannel struct {
 	port         int
 	allowedCIDRs []string
 	allowedHosts hostAllowlist
+	// trusted is gateway.trusted_proxies; the channel is rebuilt on every
+	// config reload, so it is fixed for the channel's life.
+	trusted *config.TrustedProxySet
 	// useTLS is channels.device.tls; tlsConfig is the gateway certificate
 	// manager's configuration, injected by SetTLSConfig before Start.
 	useTLS    bool
@@ -255,10 +258,11 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 		}
 		c.server.HandleWS(w, r)
 	})
-	wrapped, err := ipAllowlistHandler(c.allowedCIDRs, hostCheckHandler(c.allowedHosts, handler))
+	allowlisted, err := ipAllowlistHandler(c.allowedCIDRs, hostCheckHandler(c.allowedHosts, handler))
 	if err != nil {
 		return fmt.Errorf("device: %w", err)
 	}
+	wrapped := trustedProxyHandler(c.trusted, allowlisted)
 
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
 	ln, err := c.listen(addr)
@@ -346,8 +350,11 @@ func (c *DeviceChannel) serve(ln net.Listener, addr string, handler http.Handler
 	return srv.Serve(ln)
 }
 
-// Stop shuts down the device listener and store. It returns once the serve
-// loop has exited, so the port is free for a restarted channel to bind.
+// Stop shuts down the device listener, closes every open device connection
+// (http.Server.Close does not track the hijacked WebSockets, so they would
+// otherwise stay attached to a dead channel) and closes the store. It returns
+// once the serve loop has exited, so the port is free for a restarted channel
+// to bind.
 func (c *DeviceChannel) Stop(_ context.Context) error {
 	c.SetRunning(false)
 	if c.cancel != nil {
@@ -356,12 +363,21 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 	if c.loopDone != nil {
 		<-c.loopDone
 	}
+	c.server.CloseAll()
 	if c.store != nil {
 		utils.CloseQuietly(c.store)
 	}
 	logger.InfoC("device", "Device gateway stopped")
 	return nil
 }
+
+// SetTrustedProxies sets gateway.trusted_proxies: peers whose X-Real-IP /
+// X-Forwarded-For headers name the client. Call before Start.
+func (c *DeviceChannel) SetTrustedProxies(set *config.TrustedProxySet) { c.trusted = set }
+
+// DisconnectDevice closes every open connection of deviceID, at once. The
+// WebUI calls it when the device is removed.
+func (c *DeviceChannel) DisconnectDevice(deviceID string) { c.server.DisconnectDevice(deviceID) }
 
 // StreamDelta implements channels.StreamCapable — forwards a partial-assistant-
 // text delta to the connected device as incremental chat/agent stream events.
@@ -385,6 +401,21 @@ func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
 		return nil
 	}
 	return channels.ErrSendFailed
+}
+
+// trustedProxyHandler attributes a request from a trusted proxy to the client
+// named by its X-Real-IP (else first X-Forwarded-For) header by rewriting
+// r.RemoteAddr, so the allowlist, the auth lockout, lockout_exempt, the
+// pending-pairing address and logs all see that client. Headers from any other
+// peer are ignored. It must be the outermost handler.
+func trustedProxyHandler(trusted *config.TrustedProxySet, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addr := trusted.ClientAddr(r.RemoteAddr, r.Header.Get("X-Real-IP"), r.Header.Get("X-Forwarded-For"))
+		if addr != remoteHost(r) {
+			r.RemoteAddr = addr
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ipAllowlistHandler restricts the device listener to the given CIDRs (loopback

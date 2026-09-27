@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -72,31 +73,41 @@ func ResolveServiceSessionKey(mode SessionScope, agentID string) string {
 	return BuildAgentServiceSessionKey(agentID)
 }
 
+// ErrDeviceSessionKeyNotAllowed is ResolveDeviceSessionKey's refusal of a
+// client-supplied key that names a session the device may not address.
+var ErrDeviceSessionKeyNotAllowed = errors.New("session key not allowed for this device")
+
 // ResolveDeviceSessionKey returns the conversation a device-gateway turn runs in.
 //
 // Under unified sessions every device shares the selected agent's main
 // conversation — the R1, the phone app, Slack, and Telegram are the same
 // assistant with the same history and the same memory. Under an isolating mode
-// each device keeps its own conversation (two devices never share a transcript).
+// each device keeps its own conversation, agent:<id>:device:<deviceID>, so two
+// devices never share a transcript.
 //
-// requested is the client-supplied key: operator clients pick their own agent
-// (and, when isolating, their own profile), so an agent-scoped request selects
-// the agent. Node clients send the "main" sentinel and fall back to fallbackAgent
-// (their per-device assignment, else the gateway default).
-func ResolveDeviceSessionKey(mode SessionScope, requested, fallbackAgent, deviceID string) string {
+// requested is the client-supplied key. An agent-scoped request selects the
+// agent (its 2nd segment); a node client sends the "main" sentinel and falls
+// back to fallbackAgent (its per-device assignment, else the gateway default).
+// Under an isolating mode the only agent-scoped keys a device may send are the
+// agent's main key (a selector) and its own per-device key; any other key —
+// another device's session, a Telegram chat — is refused with
+// ErrDeviceSessionKeyNotAllowed rather than honoured.
+func ResolveDeviceSessionKey(mode SessionScope, requested, fallbackAgent, deviceID string) (string, error) {
 	agentID := AgentIDFromSessionKey(requested)
 	if agentID == "" {
 		agentID = fallbackAgent
 	}
 	if IsUnified(mode) {
-		return BuildAgentMainSessionKey(agentID)
+		return BuildAgentMainSessionKey(agentID), nil
 	}
-	// Honor an operator client's own key verbatim so its chat.history reads the
-	// same profile-scoped conversation it writes.
+	own := fmt.Sprintf("agent:%s:device:%s", NormalizeAgentID(agentID), deviceID)
 	if AgentIDFromSessionKey(requested) != "" {
-		return requested
+		requested = strings.TrimSpace(requested)
+		if !strings.EqualFold(requested, BuildAgentMainSessionKey(agentID)) && !strings.EqualFold(requested, own) {
+			return "", ErrDeviceSessionKeyNotAllowed
+		}
 	}
-	return fmt.Sprintf("agent:%s:device:%s", NormalizeAgentID(agentID), deviceID)
+	return own, nil
 }
 
 // AgentIDFromSessionKey extracts the agent id from an agent-scoped session key
