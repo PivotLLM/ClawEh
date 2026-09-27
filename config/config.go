@@ -1933,6 +1933,11 @@ type GatewayConfig struct {
 	// "0.0.0.0/0" is an IPv4 prefix and still refuses IPv6 clients. Loopback is
 	// always allowed.
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	// LockoutExempt lists client addresses (IPs or CIDRs) that are never
+	// locked out by a per-address lockout: the WebUI login limiter's address
+	// table and the device gateway's auth-failure lockout. Loopback is always
+	// exempt. Per-account login locks still apply. See LockoutExemptSet.
+	LockoutExempt []string `json:"lockout_exempt,omitempty"`
 }
 
 // TLSConfig is the HTTPS listener's placement and certificate. Mode says
@@ -2032,6 +2037,9 @@ func (g GatewayConfig) EffectiveTLSPort() int {
 // Validate rejects listener settings the gateway would refuse to start on.
 func (g GatewayConfig) Validate() error {
 	if err := g.TLS.Validate(); err != nil {
+		return err
+	}
+	if _, err := CompileLockoutExempt(g.LockoutExempt); err != nil {
 		return err
 	}
 	for _, p := range []struct {

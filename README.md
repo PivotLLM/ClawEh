@@ -526,6 +526,8 @@ A locked attempt is answered `429 Too Many Requests` with a `Retry-After` header
 
 To end every lock at once, run `claw admin` on the server (setting a new password, or the same one): the gateway notices the credentials file changed on the next login attempt, clears all address and account locks, and accepts the new account straight away. Restarting the gateway also clears all locks, since they are kept only in memory.
 
+`gateway.lockout_exempt` is a list of IP addresses and CIDRs (for example a reverse proxy, `["192.168.1.10", "10.0.0.0/8"]`) that are never locked out by address, neither at the WebUI login nor at the device gateway; loopback is always exempt. Account locks still apply to attempts from these addresses, so a proxy cannot be used to get around them. On the WebUI Network page the field is "Never locked out", and a change applies on the next config reload without a restart.
+
 Each lock that starts raises a Normal-priority operator alert: "WebUI login address locked out" (event id `auth-lockout-ip`, naming the address) or "WebUI login account locked out" (`auth-lockout-account`, naming the username). Attempts that only extend an existing lock do not alert again; a new lock after an earlier one has ended does. Failed logins, lock starts and refused attempts are logged with the username and client address (never the password) and recorded in the audit log. See [ALERTS.md](ALERTS.md) and [docs/audit.md](docs/audit.md).
 
 ## Running as a service (Linux)

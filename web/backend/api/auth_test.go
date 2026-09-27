@@ -351,3 +351,56 @@ func TestAuthLogin_CredentialsChangeClearsAllLocks(t *testing.T) {
 		t.Fatalf("account lock survived the credentials change: %d", rec.Code)
 	}
 }
+
+// TestAuthLogin_LockoutExempt: an address in gateway.lockout_exempt is never
+// locked by address, the account lock still applies from it, a bad list is
+// refused and keeps the previous one, and a new list replaces the old.
+func TestAuthLogin_LockoutExempt(t *testing.T) {
+	env := newAuthEnv(t, true)
+	const proxy = "192.0.2.10"
+	if err := env.h.SetLockoutExempt([]string{"192.0.2.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Many failures under different usernames: no address lock, no alert.
+	for i := range 3 * middleware.LoginIPFailures {
+		if rec := env.login(fmt.Sprintf("guess%d", i), "wrong password", proxy); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d: status = %d", i+1, rec.Code)
+		}
+	}
+	if len(env.rec.Alerts()) != 0 {
+		t.Fatalf("exempt address alerted: %v", alertIDs(env.rec))
+	}
+	if rec := env.login(authTestUser, authTestPass, proxy); rec.Code != http.StatusNoContent {
+		t.Fatalf("exempt address login = %d", rec.Code)
+	}
+
+	// The account lock still starts and applies from the exempt address.
+	for range middleware.LoginUserFailures {
+		env.login(authTestUser, "wrong password", proxy)
+	}
+	if ids := alertIDs(env.rec); len(ids) != 1 || ids[0] != "auth-lockout-account" {
+		t.Fatalf("alerts = %v, want one account lockout", ids)
+	}
+	assertLocked(t, env.login(authTestUser, authTestPass, proxy), "600")
+
+	// A bad list is refused and the previous one stays.
+	if err := env.h.SetLockoutExempt([]string{"192.0.2.0/99"}); err == nil {
+		t.Fatal("bad entry accepted")
+	}
+	for i := range 2 * middleware.LoginIPFailures {
+		env.login(fmt.Sprintf("more%d", i), "wrong password", proxy)
+	}
+	if rec := env.login("someone", "x", proxy); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("exemption lost after a rejected list: status = %d", rec.Code)
+	}
+
+	// A new list replaces the old: the proxy now locks like any address.
+	if err := env.h.SetLockoutExempt([]string{"198.51.100.1"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range middleware.LoginIPFailures {
+		env.login(fmt.Sprintf("last%d", i), "wrong password", proxy)
+	}
+	assertLocked(t, env.login("someone", "x", proxy), "300")
+}

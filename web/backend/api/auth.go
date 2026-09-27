@@ -14,6 +14,7 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
@@ -121,6 +122,17 @@ func (h *Handler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	logger.InfoCF("auth", "Login", map[string]any{"username": in.Username, "ip": ip})
 	audit.Auth("login", in.Username, ip, audit.OutcomeOK)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetLockoutExempt compiles gateway.lockout_exempt and swaps it into the login
+// limiter. Invalid input returns an error and keeps the current list.
+func (h *Handler) SetLockoutExempt(entries []string) error {
+	set, err := config.CompileLockoutExempt(entries)
+	if err != nil {
+		return err
+	}
+	h.loginLimiter.SetExempt(set)
+	return nil
 }
 
 // alertLoginLockout logs, audits and alerts a lockout that has just started.

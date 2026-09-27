@@ -13,6 +13,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -168,7 +169,7 @@ func TestPostauthReadLimit(t *testing.T) {
 // one client the next connect is refused AUTH_RATE_LIMITED with a retry hint
 // before its credentials are looked at, and the first lockout raises one alert.
 func TestAuthThrottleOnTheWire(t *testing.T) {
-	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true, SharedToken: "right"})
+	srv, _, wsURL := newTestServerFrom(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true, SharedToken: "right"}, "192.0.2.10:40000")
 	var mu sync.Mutex
 	var alerts []alerter.Alert
 	srv.SetAlerter(func(a alerter.Alert) {
@@ -196,8 +197,53 @@ func TestAuthThrottleOnTheWire(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(alerts) != 1 || alerts[0].Title != "Device authentication locked out" || alerts[0].Priority != alerter.Normal || alerts[0].EventID != "127.0.0.1" {
+	if len(alerts) != 1 || alerts[0].Title != "Device authentication locked out" || alerts[0].Priority != alerter.Normal || alerts[0].EventID != "192.0.2.10" {
 		t.Fatalf("expected one Normal lockout alert keyed by the client IP, got %+v", alerts)
+	}
+}
+
+// TestAuthThrottleOnTheWire_Exempt: a client in gateway.lockout_exempt, or on
+// loopback with an empty list, is never locked out however often it fails,
+// and raises no alert.
+func TestAuthThrottleOnTheWire_Exempt(t *testing.T) {
+	exempt, err := config.CompileLockoutExempt([]string{"192.0.2.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		remote string
+		exempt *config.LockoutExemptSet
+	}{
+		{"listed CIDR", "192.0.2.10:40000", exempt},
+		{"loopback with empty list", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, wsURL := newTestServerFrom(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true, SharedToken: "right"}, tc.remote)
+			srv.SetLockoutExempt(tc.exempt)
+			var mu sync.Mutex
+			var alerts []alerter.Alert
+			srv.SetAlerter(func(a alerter.Alert) {
+				mu.Lock()
+				alerts = append(alerts, a)
+				mu.Unlock()
+			})
+			em := newEmulator(t)
+			for i := range 3 * channels.DeviceAuthFailThreshold {
+				r := em.connect(t, wsURL, "wrong")
+				if code := detailCode(t, r.Error); code != gatewayproto.DetailAuthTokenMismatch {
+					t.Fatalf("attempt %d: detail %q, want %q", i+1, code, gatewayproto.DetailAuthTokenMismatch)
+				}
+			}
+			if r := em.connect(t, wsURL, "right"); r.Error != nil {
+				t.Fatalf("exempt client refused with the right token: %+v", r.Error)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(alerts) != 0 {
+				t.Fatalf("exempt client raised alerts: %+v", alerts)
+			}
+		})
 	}
 }
 

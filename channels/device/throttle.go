@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // authPruneInterval bounds how often the throttle sweeps forgotten IPs.
@@ -16,9 +17,13 @@ const authPruneInterval = time.Minute
 // channels.DeviceAuthFailWindow. Lockouts double from DeviceAuthLockoutMin up
 // to DeviceAuthLockoutMax while the IP keeps failing; an IP that stays quiet
 // for a window after its last failure or lockout is forgotten.
+//
+// An exempt IP (gateway.lockout_exempt, and loopback) is never counted or
+// locked out.
 type authThrottle struct {
 	mu        sync.Mutex
 	byIP      map[string]*authFailState
+	exempt    *config.LockoutExemptSet // nil exempts loopback only
 	now       func() time.Time
 	lastPrune time.Time
 }
@@ -33,10 +38,20 @@ func newAuthThrottle() *authThrottle {
 	return &authThrottle{byIP: map[string]*authFailState{}, now: time.Now}
 }
 
+// setExempt swaps in the IPs exempt from the lockout.
+func (t *authThrottle) setExempt(set *config.LockoutExemptSet) {
+	t.mu.Lock()
+	t.exempt = set
+	t.mu.Unlock()
+}
+
 // retryAfter reports how long ip stays locked out; zero when it may try.
 func (t *authThrottle) retryAfter(ip string) time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.exempt.Contains(ip) {
+		return 0
+	}
 	if st := t.byIP[ip]; st != nil {
 		if d := st.lockedUntil.Sub(t.now()); d > 0 {
 			return d
@@ -50,6 +65,9 @@ func (t *authThrottle) retryAfter(ip string) time.Duration {
 func (t *authThrottle) fail(ip string) (lockout time.Duration, first bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.exempt.Contains(ip) {
+		return 0, false
+	}
 	now := t.now()
 	t.prune(now)
 

@@ -86,7 +86,9 @@ minutes; 10 failures against one username (as typed, existing or not) within
 10 minutes lock that username for 10 minutes. Every attempt during a lock is
 refused with 429 and `Retry-After` and restarts the lock at its full length.
 `claw admin` (any rewrite of `credentials.json`) or a gateway restart clears
-every lock. Each lock start raises an alert. The full operator description is
+every lock. Addresses in `gateway.lockout_exempt` (and loopback) are never
+locked by address, but the username lock still applies to them. Each lock
+start raises an alert. The full operator description is
 the README's [Authentication failures](../README.md#authentication-failures)
 section. Logins, failures, lockouts, refused attempts and logouts are logged
 with the username and client address (never the password) and recorded in the

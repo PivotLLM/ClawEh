@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 )
 
@@ -270,5 +271,105 @@ func TestAuthStore_RefreshGeneration(t *testing.T) {
 	}
 	if s.Refresh() == next {
 		t.Fatal("generation did not move after the mtime changed")
+	}
+}
+
+func mustExempt(t *testing.T, entries ...string) *config.LockoutExemptSet {
+	t.Helper()
+	set, err := config.CompileLockoutExempt(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
+
+// TestLoginLimiter_ExemptAddress: an address in the exemption list (listed,
+// inside a listed CIDR, or loopback with an empty list) never locks however
+// often it fails; any other address locks at the threshold as before.
+func TestLoginLimiter_ExemptAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		exempt *config.LockoutExemptSet
+		ip     string
+		locks  bool
+	}{
+		{"listed IP", mustExempt(t, "203.0.113.5"), "203.0.113.5", false},
+		{"inside listed CIDR", mustExempt(t, "10.1.0.0/16"), "10.1.200.3", false},
+		{"loopback, empty list", mustExempt(t), "127.0.0.1", false},
+		{"IPv6 loopback, nil list", nil, "::1", false},
+		{"not listed", mustExempt(t, "10.1.0.0/16"), "10.2.0.1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := newClock()
+			l := NewLoginLimiter(clock.now)
+			l.SetExempt(tc.exempt)
+			started := make([]LockStart, 0, 5*LoginIPFailures)
+			for i := range 5 * LoginIPFailures {
+				// A fresh username each time, so only the address could lock.
+				started = append(started, l.Failure(tc.ip, fmt.Sprintf("user-%d", i))...)
+			}
+			locked := l.Attempt(tc.ip, "someone-new") > 0
+			if locked != tc.locks {
+				t.Fatalf("locked = %v, want %v", locked, tc.locks)
+			}
+			if !tc.locks && len(started) != 0 {
+				t.Fatalf("exempt address started locks: %+v", started)
+			}
+		})
+	}
+}
+
+// TestLoginLimiter_ExemptAddressStillLocksAccount: failures from an exempt
+// address still count against the username, and the account lock refuses the
+// exempt address too.
+func TestLoginLimiter_ExemptAddressStillLocksAccount(t *testing.T) {
+	clock := newClock()
+	l := NewLoginLimiter(clock.now)
+	l.SetExempt(mustExempt(t, "192.0.2.0/24"))
+	var started []LockStart
+	for range LoginUserFailures {
+		started = l.Failure("192.0.2.10", "alice")
+	}
+	if len(started) != 1 || !started[0].Account || started[0].Key != "alice" {
+		t.Fatalf("started = %+v, want the account lock only", started)
+	}
+	if wait := l.Attempt("192.0.2.10", "alice"); wait != LoginUserLockout {
+		t.Fatalf("account lock from exempt address wait = %v, want %v", wait, LoginUserLockout)
+	}
+	if wait := l.Attempt("192.0.2.10", "bob"); wait != 0 {
+		t.Fatalf("other account from exempt address wait = %v, want 0", wait)
+	}
+}
+
+// TestLoginLimiter_ExemptSwap: exempting a locked address lets it straight in,
+// a credentials change keeps the list, and removing the exemption makes the
+// address's failures count again.
+func TestLoginLimiter_ExemptSwap(t *testing.T) {
+	clock := newClock()
+	l := NewLoginLimiter(clock.now)
+	const ip = "198.51.100.4"
+	for i := range LoginIPFailures {
+		l.Failure(ip, fmt.Sprintf("user-%d", i))
+	}
+	if l.Attempt(ip, "x") == 0 {
+		t.Fatal("not locked at the threshold")
+	}
+	l.SetExempt(mustExempt(t, ip))
+	if wait := l.Attempt(ip, "x"); wait != 0 {
+		t.Fatalf("exempted address still locked: %v", wait)
+	}
+	l.SyncCredentials(7)
+	for i := range 2 * LoginIPFailures {
+		l.Failure(ip, fmt.Sprintf("again-%d", i))
+	}
+	if wait := l.Attempt(ip, "y"); wait != 0 {
+		t.Fatalf("exemption lost after a credentials change: %v", wait)
+	}
+	l.SetExempt(nil)
+	for i := range LoginIPFailures {
+		l.Failure(ip, fmt.Sprintf("late-%d", i))
+	}
+	if l.Attempt(ip, "z") == 0 {
+		t.Fatal("failures not counted after the exemption was removed")
 	}
 }
