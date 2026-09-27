@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { getAppConfig, patchAppConfig } from "@/api/channels"
+import { reloadPage, restartSystem, waitForRestart } from "@/api/system"
 import { getTLS } from "@/api/tls"
 import { ConfigSectionCard } from "@/components/config/sections/section-card"
 import { CertificateCard } from "@/components/network/certificate-card"
@@ -20,6 +21,7 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -31,6 +33,10 @@ import {
 } from "@/components/ui/tooltip"
 
 type SaveStatus = "saving" | "saved" | "error" | null
+
+// Text fields save this long after the last keystroke (the System page's
+// timing); a radio, switch or checkbox saves at once.
+const TEXT_SAVE_DELAY_MS = 600
 
 interface Choice<V extends string> {
   value: V
@@ -187,9 +193,10 @@ function ReadOnlyRow({
 
 // NetworkPage is everything about listeners: the WebUI's HTTP and HTTPS
 // listeners and their certificate, the IP allowlist, the device gateway's
-// listener, and the (loopback-only) MCP host address. The general fields save
-// on the Save button through PATCH /api/config; the certificate has its own
-// buttons because its files are validated by the server before they are kept.
+// listener, and the (loopback-only) MCP host address. The general fields
+// autosave through PATCH /api/config, sending only what changed; the
+// certificate has its own buttons because its files are validated by the
+// server before they are kept.
 export function NetworkPage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -201,11 +208,23 @@ export function NetworkPage() {
     retry: false,
   })
 
-  const [form, setForm] = useState<NetworkForm>(EMPTY_NETWORK_FORM)
-  const [baseline, setBaseline] = useState<NetworkForm>(EMPTY_NETWORK_FORM)
-  // Seed the form when a fetch lands. Adjusted during render rather than in an
-  // effect so the form is never painted empty for a frame, and only for a
-  // genuinely new result — never clobbering edits since.
+  // The cache may already hold the config on the first render (the page was
+  // reached from another page), in which case the "new data" sync below never
+  // fires: seed from it. Seeding from the empty form in that case once saved
+  // the defaults over the real listener settings. baseline is the form as
+  // loaded from the configuration, null until it has loaded once; saves diff
+  // against it.
+  const [form, setForm] = useState<NetworkForm>(() =>
+    configQuery.data
+      ? buildNetworkFormFromConfig(configQuery.data)
+      : EMPTY_NETWORK_FORM,
+  )
+  const [baseline, setBaseline] = useState<NetworkForm | null>(() =>
+    configQuery.data ? buildNetworkFormFromConfig(configQuery.data) : null,
+  )
+  // Sync when a fetch lands. Adjusted during render rather than in an effect
+  // so the form is never painted stale for a frame, and only for a genuinely
+  // new result — never clobbering edits since.
   const [synced, setSynced] = useState(configQuery.data)
   if (configQuery.data && configQuery.data !== synced) {
     setSynced(configQuery.data)
@@ -214,42 +233,62 @@ export function NetworkPage() {
     setBaseline(parsed)
   }
 
+  // Refs let the debounced save read the latest form and baseline; synced in
+  // an effect (not during render) to satisfy react-hooks/refs.
+  const formRef = useRef(form)
+  const baselineRef = useRef(baseline)
+  useEffect(() => {
+    formRef.current = form
+    baselineRef.current = baseline
+  })
+
   const [status, setStatus] = useState<SaveStatus>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   // Set after a save that changed a bound address or port; the server's own
   // restart_required flag covers it once GET /api/tls is refetched, but that
   // read can lag the write.
   const [restartPending, setRestartPending] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
-  useEffect(() => () => clearTimeout(savedTimer.current), [])
-
-  const update = <K extends keyof NetworkForm>(key: K, value: NetworkForm[K]) =>
-    setForm((prev) => ({ ...prev, [key]: value }))
-
-  const dirty = JSON.stringify(form) !== JSON.stringify(baseline)
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
 
   const refreshTLS = () => {
     void qc.invalidateQueries({ queryKey: ["tls"] })
     void qc.invalidateQueries({ queryKey: ["config"] })
   }
 
-  const save = async () => {
+  // doSave sends the fields that differ from the loaded configuration, and
+  // nothing else. A validation failure (a bad port) shows inline and skips the
+  // patch; nothing changed means nothing sent.
+  const doSave = async () => {
+    const current = formRef.current
+    const loaded = baselineRef.current
+    if (!loaded) return
     let patch: Record<string, unknown>
     try {
-      patch = buildNetworkPatch(form)
+      patch = buildNetworkPatch(current, loaded)
     } catch (err) {
       setStatus("error")
       setSaveError(err instanceof Error ? err.message : String(err))
       return
     }
+    if (Object.keys(patch).length === 0) return
     setSaveError(null)
     setStatus("saving")
     try {
       await patchAppConfig(patch)
-      if (listenerChanged(form, baseline)) setRestartPending(true)
-      setBaseline(form)
+      if (listenerChanged(current, loaded)) setRestartPending(true)
+      setBaseline(current)
       setStatus("saved")
       clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setStatus(null), 2000)
@@ -260,6 +299,39 @@ export function NetworkPage() {
         err instanceof Error ? err.message : t("pages.network.save_failed"),
       )
     }
+  }
+
+  const scheduleSave = (delay: number) => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSave(), delay)
+  }
+
+  const update = <K extends keyof NetworkForm>(
+    key: K,
+    value: NetworkForm[K],
+    delay = TEXT_SAVE_DELAY_MS,
+  ) => {
+    setForm((prev) => ({ ...prev, [key]: value }))
+    scheduleSave(delay)
+  }
+
+  // restartNow asks the gateway to restart, waits for it to come back and
+  // reloads the page; a refusal (not run as a service) is shown as the
+  // server's message.
+  const restartNow = async () => {
+    setRestartError(null)
+    setRestarting(true)
+    try {
+      await restartSystem()
+      if (await waitForRestart()) {
+        reloadPage()
+        return
+      }
+      setRestartError(t("pages.network.restart_timeout"))
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : String(err))
+    }
+    setRestarting(false)
   }
 
   const tls = tlsQuery.data
@@ -286,13 +358,6 @@ export function NetworkPage() {
                   : t("pages.network.save_failed")}
             </span>
           )}
-          <Button
-            onClick={() => void save()}
-            disabled={status === "saving" || !dirty}
-            data-testid="network-save"
-          >
-            {t("pages.network.save")}
-          </Button>
         </div>
       </PageHeader>
       <div className="flex-1 overflow-auto p-3 lg:p-6">
@@ -309,11 +374,32 @@ export function NetworkPage() {
             <div className="space-y-6">
               {restartRequired && (
                 <div
-                  className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+                  className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
                   data-testid="network-restart-banner"
                 >
-                  <IconAlertTriangle className="mt-0.5 size-4 shrink-0" />
-                  <span>{t("pages.network.restart_required")}</span>
+                  <IconAlertTriangle className="size-4 shrink-0" />
+                  <span className="flex-1">
+                    {restarting
+                      ? t("pages.network.restarting")
+                      : t("pages.network.restart_required")}
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={() => void restartNow()}
+                    disabled={restarting}
+                    data-testid="network-restart"
+                  >
+                    {t("pages.network.restart_now")}
+                  </Button>
+                  {restartError && (
+                    <p
+                      className="text-destructive w-full text-xs"
+                      role="alert"
+                      data-testid="network-restart-error"
+                    >
+                      {restartError}
+                    </p>
+                  )}
                 </div>
               )}
               {saveError && (
@@ -449,7 +535,7 @@ export function NetworkPage() {
                   label={t("pages.network.http.scope")}
                   hint={t("pages.network.http.scope_hint")}
                   value={form.httpScope}
-                  onChange={(v) => update("httpScope", v)}
+                  onChange={(v) => update("httpScope", v, 0)}
                   options={[
                     {
                       value: "localhost",
@@ -474,7 +560,7 @@ export function NetworkPage() {
                   label={t("pages.network.https.mode")}
                   hint={t("pages.network.https.mode_hint")}
                   value={form.httpsMode}
-                  onChange={(v) => update("httpsMode", v)}
+                  onChange={(v) => update("httpsMode", v, 0)}
                   options={[
                     {
                       value: "all",
@@ -527,7 +613,7 @@ export function NetworkPage() {
                 >
                   <TagInput
                     value={form.tlsExtraNames}
-                    onChange={(v) => update("tlsExtraNames", v)}
+                    onChange={(v) => update("tlsExtraNames", v, 0)}
                     placeholder={t(
                       "pages.network.https.extra_names_placeholder",
                     )}
@@ -571,7 +657,7 @@ export function NetworkPage() {
                   label={t("pages.network.device.scope")}
                   hint={t("pages.network.device.scope_hint")}
                   value={form.deviceScope}
-                  onChange={(v) => update("deviceScope", v)}
+                  onChange={(v) => update("deviceScope", v, 0)}
                   options={[
                     {
                       value: "localhost",
@@ -598,6 +684,29 @@ export function NetworkPage() {
                     onChange={(e) => update("devicePort", e.target.value)}
                   />
                 </Field>
+                <div className="flex flex-col gap-2 py-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-6">
+                  <div className="max-w-full space-y-1 md:max-w-[clamp(18rem,42vw,28rem)]">
+                    <Label
+                      htmlFor="network-device-tls"
+                      className="text-sm font-medium"
+                    >
+                      {t("pages.network.device.tls")}
+                    </Label>
+                    <p className="text-muted-foreground text-xs leading-normal">
+                      {t("pages.network.device.tls_hint")}
+                    </p>
+                  </div>
+                  <div className="flex items-center md:justify-self-center">
+                    <Checkbox
+                      id="network-device-tls"
+                      data-testid="network-device-tls"
+                      checked={form.deviceTLS}
+                      onCheckedChange={(v) =>
+                        update("deviceTLS", v === true, 0)
+                      }
+                    />
+                  </div>
+                </div>
                 <Field
                   label={t("pages.network.device.external_url")}
                   hint={t("pages.network.device.external_url_hint")}
@@ -634,7 +743,7 @@ export function NetworkPage() {
                   hint={t("pages.network.device.auto_approve_hint")}
                   layout="setting-row"
                   checked={form.deviceAutoApprove}
-                  onCheckedChange={(v) => update("deviceAutoApprove", v)}
+                  onCheckedChange={(v) => update("deviceAutoApprove", v, 0)}
                 />
                 <div className="py-3">
                   <Link

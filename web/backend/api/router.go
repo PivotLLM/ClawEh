@@ -67,6 +67,12 @@ type Handler struct {
 	// SetTLSManager; see tls.go). Guarded by reloadMu.
 	bootListeners *config.ListenerSettings
 	tlsManager    *tlscert.Manager
+	// restartHook is the gateway's clean-shutdown-and-exit path (SetRestart);
+	// nil until the gateway sets it. serviceManagedFn overrides the
+	// service-manager check in tests; nil means the real environment check.
+	// Both guarded by reloadMu.
+	restartHook      func()
+	serviceManagedFn func() bool
 
 	// deviceStore caches the pairing DB handle. It used to be opened and closed
 	// per request, which re-ran the WAL pragma, the schema and a failing
@@ -265,6 +271,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// CLI-agent detection (claude/codex/gemini on PATH) for the setup wizard
 	h.registerSystemCLIRoutes(mux)
 	h.registerSystemStatusRoutes(mux)
+	h.registerSystemRestartRoutes(mux)
 
 	// First-run setup status (drives the wizard redirect)
 	h.registerSetupStatusRoutes(mux)

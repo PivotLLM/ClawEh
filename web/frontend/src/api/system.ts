@@ -156,3 +156,49 @@ export async function getSystemStatus(): Promise<SystemStatus> {
   if (!res.ok) throw new Error(`Failed to fetch status: ${res.status}`)
   return res.json()
 }
+
+// restartSystem asks the gateway to restart. 202 means the service manager
+// will bring it back; anything else (409 when not run as a service) throws the
+// server's message.
+export async function restartSystem(): Promise<void> {
+  const res = await fetch("/api/system/restart", { method: "POST" })
+  if (res.status === 202) return
+  let message = `Restart failed: ${res.status}`
+  try {
+    const body = (await res.json()) as { error?: string }
+    if (typeof body.error === "string" && body.error.trim() !== "") {
+      message = body.error
+    }
+  } catch {
+    // keep fallback
+  }
+  throw new Error(message)
+}
+
+// reloadPage is what the Network page calls once the gateway is back; a
+// function of its own so a test can replace it (jsdom's location is fixed).
+export function reloadPage(): void {
+  window.location.reload()
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// waitForRestart polls /ready once a second until the gateway has gone down and
+// answers 200 again, so the page is not reloaded from the old process while
+// it is still shutting down. Resolves false when timeoutMs passes first.
+export async function waitForRestart(timeoutMs = 60_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  let wentDown = false
+  while (Date.now() < deadline) {
+    await sleep(1000)
+    let up = false
+    try {
+      up = (await fetch("/ready", { cache: "no-store" })).status === 200
+    } catch {
+      up = false
+    }
+    if (!up) wentDown = true
+    else if (wentDown) return true
+  }
+  return false
+}

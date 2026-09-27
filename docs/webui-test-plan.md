@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-128 checks in all; the runner prints the same tally at the end.
+129 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -143,13 +143,18 @@ certificate, the IP allowlist, the device gateway's listener and the read-only
 MCP host address. `GET /api/tls` reports the listener and certificate state;
 `POST /api/tls/validate` loads a certificate/key pair without saving it;
 `POST /api/tls/regenerate` replaces the self-signed certificate. General fields
-save on the **Save** button as one `PATCH /api/config`; the certificate has its
-own buttons. R8 and R10 write (see *Before you start*); R8 needs HTTPS on.
+autosave like the rest of the WebUI, each change as a `PATCH /api/config`
+carrying only the field that changed (text ~0.6 s after the last keystroke, a
+radio or checkbox at once); the certificate has its own buttons. A change to a
+bound address, port, the HTTPS mode or device TLS shows a **Restart required to
+apply changes.** banner with a **Restart now** button (`POST /api/system/restart`).
+R8 and R10 write (see *Before you start*); R8 needs HTTPS on. Nothing in this
+group clicks **Restart now**.
 
 | ID | Process | Expected |
 |---|---|---|
-| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs**, the device gateway's scope radios, port, external URL, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address**, the address list and the **Save** button. Nine radios in all. No console errors |
-| R2 | Compare the HTTP **Scope** radio and **Port** with `gateway.host` / `gateway.port` | *Network* is selected when the host is `0.0.0.0` (or any non-loopback address), *Localhost only* otherwise; the port field shows `gateway.port` (18790 by default). A warning line under *Network* says plain HTTP on the network is not encrypted |
+| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs**, the device gateway's scope radios, port, **HTTPS (wss) for devices** checkbox, external URL, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address** and the address list. There is no Save button. Nine radios in all. No console errors |
+| R2 | Compare the HTTP **Scope** radio and **Port** with `gateway.host` / `gateway.port` | *Network* is selected when the host is `0.0.0.0` (or any non-loopback address), *Localhost only* otherwise; the port field shows `gateway.port` (18790 by default). A warning line under *Network* reads *Exposing plain-text HTTP to the network is not recommended.* |
 | R3 | Compare the HTTPS **Listen on** radio and **HTTPS port** with `gateway.tls.mode` / `gateway.tls_port` | Exactly the configured mode is selected (`all` when unset); the port field shows `gateway.tls_port` (18443 by default) |
 | R4 | Compare **Hostname / external URL** with `gateway.external_url` | Equal (blank when unset) |
 | R5 | `curl -b jar $BASE/api/tls`, then read the certificate card | With `certificate.present`, the card shows source, subject, names, expiry and the **SHA-256 fingerprint**, equal to the API's; otherwise it reads *Certificate not generated* and shows no fingerprint |
@@ -157,10 +162,11 @@ own buttons. R8 and R10 write (see *Before you start*); R8 needs HTTPS on.
 | R7 | Under External, enter `/nonexistent/e2e-probe/fullchain.pem` and `/nonexistent/e2e-probe/privkey.pem`, **Save certificate** | An inline error with the server's reason (`POST /api/tls/validate` answered 400). `GET /api/config` → `gateway` is byte-for-byte what it was before: nothing was saved |
 | R8 | With a self-signed certificate and HTTPS on, click **Regenerate certificate** (skip with a note otherwise) | The fingerprint shown changes, and `GET /api/tls` reports the new one |
 | R9 | Read the **Addresses** card | Lists `urls.localhost`, every `urls.http[]` and every `urls.https[]` from `GET /api/tls` — exactly what to open. Each plain-HTTP network address, and nothing else, carries a warning triangle whose hover text is *Plain-text HTTP exposed to network.* No Docker bridge address (`172.17–31.x.0.1`) is listed. With HTTPS off it says ClawEh is reachable from this host only |
-| R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number, **Save**; then set it back and **Save** | After the first save a **Restart required to apply listener changes** banner appears and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
+| R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number and wait for *Saved ✓*; then set it back and wait for the save | After the first save a banner reading exactly **Restart required to apply changes.** appears with a **Restart now** button beside it (do **not** click it) and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
 | R11 | Compare **Allowed network CIDRs** with `gateway.allowed_cidrs` | One entry per line, in order (empty for loopback only) |
 | R12 | Compare the **Device gateway** section with `channels.device` | Scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the external URL field shows `external_url` |
 | R13 | Read the **MCP host** section | The listen address equals `mcp_host.listen` (`127.0.0.1:5911` by default) and is rendered as text, not an input: the gateway refuses any non-loopback address, so there is nothing to edit here |
+| R14 | Compare the **HTTPS (wss) for devices** checkbox with `channels.device.tls` | Checked exactly when `tls` is `true`; a missing key reads as unchecked. Its hint is the one sentence *Devices connect with wss:// using the WebUI certificate.* |
 
 ## H. Channels
 

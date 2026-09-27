@@ -61,12 +61,28 @@ func (e *serviceDiedError) Unwrap() error { return e.Err }
 // ExitCode is the process status this failure exits with.
 func (e *serviceDiedError) ExitCode() int { return exitCodeServiceDied }
 
+// restartRequestedError is the error gatewayCmd returns when the operator
+// asked for a restart (POST /api/system/restart) and the gateway shut itself
+// down; exitCode maps it to exitCodeServiceDied so the service manager starts
+// the gateway again. Not a failure: no alert is raised.
+type restartRequestedError struct{}
+
+func (*restartRequestedError) Error() string {
+	return "restart requested through the API; exiting for the service manager to start the gateway again"
+}
+
+// ExitCode is the process status this exit uses.
+func (*restartRequestedError) ExitCode() int { return exitCodeServiceDied }
+
 // exitCode is the process exit status for an error gatewayCmd returned: 1 for
 // a startup or configuration error, the failure's own code when a core
-// service died.
+// service died or the operator asked for a restart.
 func exitCode(err error) int {
 	if died, ok := errors.AsType[*serviceDiedError](err); ok {
 		return died.ExitCode()
+	}
+	if restart, ok := errors.AsType[*restartRequestedError](err); ok {
+		return restart.ExitCode()
 	}
 	return 1
 }
@@ -83,6 +99,9 @@ type fatalNotifier struct {
 	once    sync.Once
 	// failed receives the first failure; the main loop selects on it.
 	failed chan *serviceDiedError
+	// restart receives an operator's restart request (requestRestart); the
+	// main loop selects on it and runs the same shutdown as a failure.
+	restart chan *restartRequestedError
 }
 
 func newFatalNotifier(a alerter.Alerter) *fatalNotifier {
@@ -91,6 +110,26 @@ func newFatalNotifier(a alerter.Alerter) *fatalNotifier {
 		exit:    os.Exit,
 		timeout: fatalShutdownTimeout,
 		failed:  make(chan *serviceDiedError, 1),
+		restart: make(chan *restartRequestedError, 1),
+	}
+}
+
+// requestRestart asks the main loop for the same clean shutdown a dead core
+// service gets, exiting with exitCodeServiceDied so the service manager
+// starts the gateway again. No alert: the operator asked for it. A request
+// while one is already pending is dropped; the hard-exit timer is armed once.
+func (f *fatalNotifier) requestRestart() {
+	select {
+	case f.restart <- &restartRequestedError{}:
+		logger.InfoCF("gateway", "restart requested through the API; shutting down for the service manager to start the gateway again", nil)
+		time.AfterFunc(f.timeout, func() {
+			logger.ErrorCF("gateway", "graceful shutdown did not finish in time; exiting", map[string]any{
+				"timeout": f.timeout.String(), "exit_code": exitCodeServiceDied,
+			})
+			f.exit(exitCodeServiceDied)
+		})
+	default:
+		logger.WarnCF("gateway", "restart already requested", nil)
 	}
 }
 

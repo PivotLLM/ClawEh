@@ -355,15 +355,14 @@
       }
     },
     "network": {
-      "load_error": "Failed to load configuration. Please refresh and try again.",
-      "save": "Save",
+      "load_error": "Failed to load the configuration; refresh to try again.",
       "saving": "Saving…",
       "saved": "Saved ✓",
       "save_failed": "Save failed",
-      "restart_required": "Restart required to apply listener changes. Ports, scopes and the HTTPS mode are bound when the gateway starts; restart the claw service for the new values to take effect.",
+      "restart_required": "Restart required to apply changes.",
       "urls": {
         "title": "Addresses",
-        "desc": "Where this ClawEh can be opened right now, from the listeners that are actually running.",
+        "desc": "Where ClawEh can be opened right now.",
         "localhost": "On this host",
         "http": "On the network (plain HTTP)",
         "http_warning": "Plain-text HTTP exposed to network.",
@@ -373,7 +372,7 @@
       },
       "http": {
         "title": "HTTP (WebUI on this host)",
-        "desc": "The plain-HTTP listener. It serves this machine by default; other machines use HTTPS below.",
+        "desc": "The plain-HTTP listener, for this machine by default.",
         "port": "Port",
         "port_hint": "Port of the plain-HTTP listener (default 18790).",
         "scope": "Scope",
@@ -381,11 +380,11 @@
         "scope_localhost": "Localhost only (default)",
         "scope_localhost_hint": "Reachable from this machine only.",
         "scope_network": "Network",
-        "scope_network_warning": "Plain HTTP on the network is not encrypted: anyone on the path can read the session cookie and everything else. Use HTTPS below instead."
+        "scope_network_warning": "Exposing plain-text HTTP to the network is not recommended."
       },
       "https": {
         "title": "HTTPS",
-        "desc": "The encrypted listener for reaching ClawEh from other machines. Its certificate is managed below.",
+        "desc": "The encrypted listener for reaching ClawEh from other machines.",
         "mode": "Listen on",
         "mode_hint": "Which addresses the HTTPS listener binds.",
         "mode_all": "All interfaces (default)",
@@ -393,18 +392,18 @@
         "mode_localhost": "Localhost only",
         "mode_localhost_hint": "HTTPS on this machine only — for a reverse proxy on the same host.",
         "mode_off": "Off",
-        "mode_off_hint": "No HTTPS listener. ClawEh is reachable from this host only.",
+        "mode_off_hint": "No HTTPS listener; ClawEh is reachable from this host only.",
         "port": "HTTPS port",
-        "port_hint": "Port of the HTTPS listener (default 18443). Must differ from the HTTP port.",
+        "port_hint": "Port of the HTTPS listener (default 18443), different from the HTTP port.",
         "external_url": "Hostname / external URL",
-        "external_url_hint": "The address people and external tools use to reach this server, e.g. https://claw.example.com. Its host name is added to the self-signed certificate.",
+        "external_url_hint": "The address used to reach this server, e.g. https://claw.example.com; its host name is added to the self-signed certificate.",
         "extra_names": "Extra certificate names",
-        "extra_names_hint": "Additional DNS names or IP addresses for the self-signed certificate — a DNS alias, a NAT address. Press Enter after each.",
+        "extra_names_hint": "Additional DNS names or IP addresses for the self-signed certificate, Enter after each.",
         "extra_names_placeholder": "claw.home.arpa"
       },
       "certificate": {
         "title": "Certificate",
-        "desc": "What the HTTPS listener presents. Self-signed by default; supply your own PEM files to avoid the browser warning.",
+        "desc": "The certificate the HTTPS listener presents: self-signed by default, or your own PEM files.",
         "source": "Source",
         "source_self_signed": "Self-signed",
         "source_file": "From file",
@@ -412,14 +411,14 @@
         "names": "Names",
         "expires": "Expires",
         "fingerprint": "SHA-256 fingerprint",
-        "none": "Certificate not generated. It is created the first time the HTTPS listener starts.",
+        "none": "Certificate not generated yet; it is created when the HTTPS listener first starts.",
         "unreadable": "The configured certificate could not be read: {{message}}",
         "choice": "Certificate",
         "choice_hint": "Where the certificate comes from.",
         "self_signed": "Self-signed (default)",
         "external": "External certificate",
         "cert_file": "Certificate file",
-        "cert_file_hint": "PEM certificate (with its chain). The file may live anywhere the service user can read; a renewed file is picked up without a restart.",
+        "cert_file_hint": "PEM certificate with its chain; a renewed file is picked up without a restart.",
         "key_file": "Private key file",
         "key_file_hint": "PEM private key matching the certificate.",
         "save": "Save certificate",
@@ -429,41 +428,46 @@
         "use_self_signed_hint": "Drop the configured files and go back to the generated certificate.",
         "self_signed_saved": "Switched to the self-signed certificate.",
         "regenerate": "Regenerate certificate",
-        "regenerate_hint": "Issue a new self-signed certificate now. Browsers that accepted the old one will warn again.",
+        "regenerate_hint": "Issue a new self-signed certificate now.",
         "regenerated": "Certificate regenerated."
       },
       "allowed": {
         "title": "Allowed networks",
-        "desc": "Who may reach the WebUI and API from off this machine. This machine can always connect.",
+        "desc": "Network access control for WebUI and API. Localhost is always allowed to connect.",
         "cidrs": "Allowed network CIDRs",
-        "cidrs_hint": "One entry per line or comma-separated. Leave empty for loopback only — listening on the network is not enough on its own, you must list the networks here too. Use a subnet such as 192.168.1.0/24, or * for any address (0.0.0.0/0 covers IPv4 only).",
+        "cidrs_hint": "One network per line, such as 192.168.1.0/24, or * for any address; empty allows localhost only.",
         "cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)"
       },
       "device": {
         "title": "Device gateway",
-        "desc": "The listener for external devices (Rabbit R1, voice apps). Plain WebSocket with its own token and pairing authentication, on its own port.",
+        "desc": "The listener for external devices (Rabbit R1, voice apps), on its own port with its own pairing.",
         "scope": "Scope",
         "scope_hint": "Which addresses the device listener binds.",
         "scope_localhost": "Localhost only (default)",
         "scope_network": "Network",
-        "scope_network_hint": "Reachable from your LAN (0.0.0.0). Devices authenticate with the pairing token.",
+        "scope_network_hint": "Reachable from your network (0.0.0.0).",
         "port": "Port",
         "port_hint": "Port of the device listener (default 18791).",
         "external_url": "External URL",
-        "external_url_hint": "What devices are told to connect to. Leave blank for direct LAN access (auto-detected). Set it when a reverse proxy or tunnel fronts the gateway — https maps to wss, and the host must match the proxy's certificate.",
+        "external_url_hint": "The address devices are told to connect to; leave blank for direct LAN access, or set it when a proxy or tunnel fronts the gateway.",
         "cidrs": "Allowed network CIDRs",
-        "cidrs_hint": "Which client addresses may reach the device listener. Empty allows any (the gateway is authenticated); loopback is always allowed.",
+        "cidrs_hint": "Networks that may reach the device listener; empty allows any, localhost is always allowed.",
         "auto_approve": "Auto-approve pairings",
-        "auto_approve_hint": "Skip operator approval for new device pairings. For a trusted home LAN only; default off.",
+        "auto_approve_hint": "Skip approval for new device pairings (trusted home network only).",
+        "tls": "HTTPS (wss) for devices",
+        "tls_hint": "Devices connect with wss:// using the WebUI certificate.",
         "pairing_link": "Pair and manage devices on the Devices page"
       },
       "mcp": {
         "title": "MCP host",
         "desc": "The MCP server the CLI providers on this machine call for ClawEh's host-side tools.",
         "listen": "Listen address",
-        "listen_hint": "Loopback only: the gateway refuses to start on any other address. Change the port on the MCP page.",
+        "listen_hint": "Localhost only; change the port on the MCP page.",
         "link": "MCP config"
-      }
+      },
+      "restart_now": "Restart now",
+      "restarting": "Restarting…",
+      "restart_timeout": "ClawEh has not come back yet; reload the page to check."
     },
     "system": {
       "title": "System"
@@ -625,7 +629,8 @@
       "kind": {
         "tool_call": "Tool call",
         "config_write": "Config write",
-        "auth": "Auth"
+        "auth": "Auth",
+        "restart": "Restart"
       },
       "col": {
         "time": "Time",
@@ -883,14 +888,14 @@
     },
     "network": {
       "title": "Network access",
-      "body": "Choose how ClawEh can be reached. The defaults are safe — click Next to accept them, or adjust below. You can change all of this later in Settings.",
+      "body": "Choose how ClawEh can be reached; the defaults are safe and can be changed later in Settings.",
       "accessLabel": "Enable network access",
-      "accessHint": "Off (recommended): ClawEh is reachable only from this machine (localhost) — the most secure default. Turn it on only if you need to reach ClawEh — its WebUI and the claw-auth OAuth flow — from another machine on your network. TLS is not built in yet; put a reverse proxy in front for HTTPS.",
+      "accessHint": "Off (recommended): ClawEh is reachable only from this machine; turn it on to reach the WebUI from other machines on your network over HTTPS.",
       "portLabel": "Web port",
       "portHint": "HTTP port the ClawEh Web server listens on.",
       "externalLabel": "External URL",
-      "externalHint": "The URL external tools (claw-auth) use to reach this server. Defaults to how you're accessing it now; override with a proxy URL (e.g. https://…) if needed.",
-      "restartNote": "Changes to network access or the web port require a gateway restart to take effect."
+      "externalHint": "The URL external tools use to reach this server; defaults to how you are accessing it now.",
+      "restartNote": "Restart required to apply changes."
     },
     "welcome": {
       "title": "Let's get you set up",
