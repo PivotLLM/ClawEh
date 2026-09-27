@@ -47,6 +47,11 @@ Then point your web browser to **http://localhost:18790** to complete the setup 
 sudo ./claw install
 ```
 
+Re-running `claw install` (for example after an upgrade, to refresh the service
+file) must use the same privilege level as the existing service: `sudo` for a
+system service, none for a user service. The installer refuses the other one
+rather than creating a second service.
+
 ### 3. Compile from Source and Install
 
 Compile from source using Go and pnpm, then install:

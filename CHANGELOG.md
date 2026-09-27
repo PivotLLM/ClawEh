@@ -761,6 +761,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- `claw install` re-run against an existing install now follows the service it
+  finds instead of the caller's privileges: without sudo against a system
+  service it refuses and says to run `sudo claw install` (and the same the other
+  way round for a user service). It used to plan a second, user-level unit for
+  the same data directory and ports.
 - An open WebUI tab now copes with a gateway restart. Sessions live in memory,
   so a restart forgets them; the tab used to keep reopening its chat socket for
   ever, refused each time, and pages showed an error. Now, when a request or

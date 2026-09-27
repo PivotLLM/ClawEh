@@ -11,6 +11,42 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 )
 
+// An existing service decides the mode: re-running the installer at the wrong
+// privilege level is refused instead of writing a second unit of the other
+// kind for the same install.
+func TestCheckExistingMode(t *testing.T) {
+	system := &ExistingInstall{ServiceType: "systemd-system", ServicePath: "/etc/systemd/system/claw.service", User: "ai"}
+	userSvc := &ExistingInstall{ServiceType: "systemd-user", ServicePath: "/home/ai/.config/systemd/user/claw.service", User: "ai"}
+	daemon := &ExistingInstall{ServiceType: "launchd-daemon", ServicePath: "/Library/LaunchDaemons/com.pivotllm.claweh.plist"}
+	agent := &ExistingInstall{ServiceType: "launchd-agent", ServicePath: "/Users/ai/Library/LaunchAgents/com.pivotllm.claweh.plist", User: "ai"}
+	binaryOnly := &ExistingInstall{BinaryPath: "/opt/claw/claw"}
+
+	cases := []struct {
+		name     string
+		existing *ExistingInstall
+		isRoot   bool
+		wantErr  string
+	}{
+		{"system service without sudo", system, false, "run `sudo claw install`"},
+		{"system service with sudo", system, true, ""},
+		{"user service with sudo", userSvc, true, "as ai, without sudo"},
+		{"user service without sudo", userSvc, false, ""},
+		{"launchd daemon without sudo", daemon, false, "run `sudo claw install`"},
+		{"launchd agent with sudo", agent, true, "without sudo"},
+		{"binary only, either way", binaryOnly, false, ""},
+		{"nothing installed", nil, true, ""},
+	}
+	for _, c := range cases {
+		err := checkExistingMode(c.existing, c.isRoot)
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("%s: unexpected error %v", c.name, err)
+		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+			t.Errorf("%s: err = %v, want it to contain %q", c.name, err, c.wantErr)
+		}
+	}
+}
+
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 	t.Setenv(global.EnvVarHome, "") // defaults to user's .claw
 	t.Setenv("PATH", "/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/bin")

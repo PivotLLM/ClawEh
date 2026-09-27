@@ -167,6 +167,34 @@ func resolveTargetUser(explicitUser string) (*TargetUser, error) {
 	}, nil
 }
 
+// checkExistingMode refuses to install alongside a service of the other kind.
+// The mode is otherwise decided by whether the installer runs as root, and an
+// existing service must win over that: re-running `claw install` as the
+// service account against a system service would have written a second,
+// user-level unit for the same data directory and ports.
+func checkExistingMode(existing *ExistingInstall, isRoot bool) error {
+	if existing == nil || existing.ServicePath == "" {
+		return nil
+	}
+	switch existing.ServiceType {
+	case "systemd-system", "launchd-daemon":
+		if !isRoot {
+			return fmt.Errorf("%s is installed as a system service (%s); run `sudo %s install`",
+				app.Name(), existing.ServicePath, internal.BinaryName)
+		}
+	case "systemd-user", "launchd-agent":
+		if isRoot {
+			who := existing.User
+			if who == "" {
+				who = "the user it belongs to"
+			}
+			return fmt.Errorf("%s is installed as a user service (%s); run `%s install` as %s, without sudo",
+				app.Name(), existing.ServicePath, internal.BinaryName, who)
+		}
+	}
+	return nil
+}
+
 // resolveBinDir selects the destination directory for the installed binary.
 func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
 	if customDir != "" {
@@ -236,6 +264,9 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// Detect any pre-existing installation or service
 	existing := DetectExistingInstall(tu.HomeDir)
+	if err = checkExistingMode(existing, tu.IsRoot); err != nil {
+		return err
+	}
 	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
 		// Preserve user from existing service
 		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
