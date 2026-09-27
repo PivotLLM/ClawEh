@@ -67,7 +67,7 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	if gw.HTTPOnNetwork() {
 		rows = append(rows, assessRow{
 			true, itemWebHTTP,
-			enabledNetwork + ": unencrypted — prefer HTTPS, or restrict HTTP to localhost" + webAllow + ".",
+			enabledNetwork + " (unencrypted)" + webAllow + ".",
 		})
 	} else {
 		rows = append(rows, assessRow{false, itemWebHTTP, enabledLocal + "."})
