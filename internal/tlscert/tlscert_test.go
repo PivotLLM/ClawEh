@@ -86,8 +86,8 @@ func TestLoad_SelfSignedGeneratesAndReuses(t *testing.T) {
 			}
 		}
 	}
-	if left := time.Until(info.NotAfter); left < 360*day || left > 366*day {
-		t.Errorf("validity %v, want about a year", left)
+	if left := time.Until(info.NotAfter); left < selfSignedValidity-day || left > selfSignedValidity+day {
+		t.Errorf("validity %v, want about ten years", left)
 	}
 	if len(info.Fingerprint) != 95 || strings.Count(info.Fingerprint, ":") != 31 {
 		t.Errorf("fingerprint %q is not colon-separated SHA-256", info.Fingerprint)
@@ -402,7 +402,7 @@ func TestValidatePair(t *testing.T) {
 	otherDir := t.TempDir()
 	_, otherKey := writePair(t, otherDir, certNames{dns: []string{"other.example"}}, now)
 	oldDir := t.TempDir()
-	oldCert, oldKey := writePair(t, oldDir, certNames{dns: []string{"old.example"}}, now.Add(-2*365*day))
+	oldCert, oldKey := writePair(t, oldDir, certNames{dns: []string{"old.example"}}, now.Add(-2*selfSignedValidity))
 	garbage := filepath.Join(dir, "garbage.key")
 	if err := os.WriteFile(garbage, []byte("not a key"), 0o600); err != nil {
 		t.Fatal(err)

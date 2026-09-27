@@ -83,7 +83,7 @@ observe does not need an entry.
   `cert_file` + `key_file` (PEM, both or neither — one alone is a config
   error) and `extra_names` (additional DNS names / IPs for the self-signed
   certificate). Without a pair, a self-signed ECDSA P-256 certificate is
-  generated in `<CLAW_HOME>/tls/` (key 0600), valid one year, for the host
+  generated in `<CLAW_HOME>/tls/` (key 0600), valid ten years, for the host
   name, its FQDN, every non-loopback interface address, the host of
   `external_url`, `extra_names`, and `localhost`/`127.0.0.1`/`::1`; it is
   regenerated when under 30 days from expiry or when those names change. Both
@@ -399,6 +399,15 @@ observe does not need an entry.
 
 ### Changed
 
+- The self-signed certificate is now valid for ten years instead of one, so a
+  browser that accepted it is not asked again next year. It is still
+  regenerated when the machine's names change or on demand.
+- `claw network` grows `--http localhost|network`, `--https all|localhost|off`
+  and `--device localhost|network` to set where each listener binds from the
+  command line, and `--show` reports all of them with the allowlist, so an
+  operator locked out by a bad listener setting can recover on the server
+  without editing `config.json`. README gains an "If you are locked out"
+  section.
 - The address lists on the Network page, in `claw status` and in `GET /api/tls`
   no longer include Docker's bridge interfaces (`docker0`, `br-<id>`, `veth*`):
   those addresses reach only containers on the machine, so they are not

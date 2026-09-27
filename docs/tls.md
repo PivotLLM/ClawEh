@@ -54,7 +54,7 @@ for `"localhost"`, and the plain-HTTP URL when HTTPS is off.
 
 With no certificate files configured the gateway generates
 `<CLAW_HOME>/tls/self-signed.crt` and `self-signed.key` (mode 0600) the first
-time the HTTPS listener starts: ECDSA P-256, valid one year, for the machine's
+time the HTTPS listener starts: ECDSA P-256, valid ten years, for the machine's
 host name, its FQDN, every non-loopback interface address, the host of
 `gateway.external_url`, any `gateway.tls.extra_names`, and `localhost`,
 `127.0.0.1` and `::1`. It is regenerated automatically within 30 days of

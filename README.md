@@ -145,7 +145,7 @@ claw network 192.168.1.0/24     # or one subnet
 claw network none               # back to loopback only
 ```
 
-`claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart.
+`claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart. Its `--http`, `--https` and `--device` flags set where each listener binds (`localhost` or `network`; `all`, `localhost` or `off` for HTTPS); those take effect after a restart. See [If you are locked out](#if-you-are-locked-out).
 
 > Prefer the narrowest range that works. Anyone inside the allowlist reaches the login page, so the admin password is all that stands between them and your configuration — put ClawEh behind a VPN or reverse proxy if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 
@@ -495,6 +495,23 @@ ClawEh does not attempt to determine whether your deployment is appropriately se
 Users should also carefully consider the financial implications of connecting applications to LLM APIs and other metered services. A bug, a bad configuration, or accidental exposure through channels like Telegram or Slack can potentially result in large numbers of unintended requests and, in turn, unexpectedly large bills. This risk becomes especially serious when assistants are connected to paid APIs, tools, or automated workflows.
 
 To reduce the risk of financial surprises, we strongly recommend using prepaid APIs and/or subscription-based CLIs where possible. You should also ensure that appropriate cost monitoring, usage limits, budget alerts, rate limits, and other containment controls are in place. Choosing to run Claw, expose it through external services, and connect it to paid models or sensitive tools is your decision, and you bear full responsibility for the outcome.
+
+## If you are locked out
+
+Everything below is done on the server itself, as the user ClawEh runs as (on a
+system install `sudo -u <service user> CLAW_HOME=/opt/claw claw …`). Each
+command edits the config and exits; nothing here needs the WebUI.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "Forbidden" (403) from another machine, on HTTP and HTTPS alike | The allowlist (`gateway.allowed_cidrs`) no longer includes your network. Loopback is all that is served. | `claw network` (private LAN ranges) or `claw network 192.168.1.0/24`. Applied within about 15 seconds, no restart. |
+| Connection refused from another machine after a restart | The listener binds to this machine only (`gateway.host` 127.0.0.1, or `gateway.tls.mode` localhost/off). | `claw network --http network`, `claw network --https all`, `claw network --device network` as needed, then restart the service. |
+| Wrong or forgotten password | The admin account is the only login. | `claw admin` sets a new one; it also clears every login lock at once. |
+| "Too many failed logins" | An address or the account is locked (see below). | Wait it out with no further attempts, or `claw admin`, or restart the service. |
+| Settings changed that you did not touch | A bad save. | Restore `<CLAW_HOME>/backup/<date>/config.json.<timestamp>` (nightly) over `config.json`, then restart. |
+
+`claw network --show` prints where each listener binds and what the allowlist
+allows, from the config file, so you can see the state before changing it.
 
 ## Authentication failures
 

@@ -56,7 +56,7 @@ const (
 
 	// selfSignedValidity is how long a generated certificate lasts, and
 	// renewBefore how close to expiry it is regenerated.
-	selfSignedValidity = 365 * 24 * time.Hour
+	selfSignedValidity = 10 * 365 * 24 * time.Hour
 	renewBefore        = 30 * 24 * time.Hour
 
 	day = 24 * time.Hour
