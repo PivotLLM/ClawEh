@@ -2,7 +2,7 @@
 // License: MIT
 
 // Package backup writes a dated tarball of everything ClawEh needs to come back
-// on a new host — config.json, the cron jobs file, state/ (tokens and the device
+// on a new host — config.json, the cron jobs file, internal/ (tokens and the device
 // pairing database), credentials.json and tls/ when present, and every SQLite
 // database under CLAW_HOME (session archives, cognitive memory, the fusion
 // OAuth store) — and restores one. It is driven on a nightly schedule by the
@@ -31,6 +31,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -70,7 +71,7 @@ const (
 
 	credentialsFile = "credentials.json"
 	tlsDir          = "tls"
-	stateDir        = "state"
+	internalDir     = global.InternalDir
 	configFile      = "config.json"
 	cronJobsFile    = "jobs.json"
 )
@@ -299,7 +300,7 @@ func addFile(tw *tar.Writer, readPath, orig, name string) error {
 }
 
 // collect lists what to archive, in a stable order: config.json, cron/jobs.json,
-// credentials.json, tls/, state/, then every database found walking Home (and
+// credentials.json, tls/, internal/, then every database found walking Home (and
 // AgentsDir when it lies outside Home, reported by the second result). Missing
 // optional files are silently absent. dest is excluded from the walk when it is
 // under Home, so a backup never archives older backups.
@@ -340,7 +341,7 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	// sidecars are skipped: the VACUUM copy already holds what the WAL holds,
 	// and a byte copy of a live -wal is the torn copy this package exists to
 	// avoid.
-	for _, d := range []string{tlsDir, stateDir} {
+	for _, d := range []string{tlsDir, internalDir} {
 		if err := walk(filepath.Join(src.Home, d), d+"/", dest, func(path, name string) {
 			if isDBSidecar(path) {
 				return

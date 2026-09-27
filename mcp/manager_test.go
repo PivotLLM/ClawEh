@@ -194,7 +194,7 @@ SHARED_VAR=from_file`
 	}
 }
 
-func TestLoadFromMCPConfig_EmptyWorkspaceWithRelativeEnvFile(t *testing.T) {
+func TestLoadFromMCPConfig_EmptyDataDirWithRelativeEnvFile(t *testing.T) {
 	mgr := NewManager()
 
 	mcpCfg := config.MCPConfig{
@@ -210,11 +210,30 @@ func TestLoadFromMCPConfig_EmptyWorkspaceWithRelativeEnvFile(t *testing.T) {
 
 	err := mgr.LoadFromMCPConfig(context.Background(), mcpCfg, "")
 	if err == nil {
-		t.Fatal("expected error for relative env_file with empty workspace path, got nil")
+		t.Fatal("expected error for relative env_file with an empty data directory, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "workspace path is empty") {
-		t.Fatalf("expected workspace path validation error, got: %v", err)
+	if !strings.Contains(err.Error(), "data directory is empty") {
+		t.Fatalf("expected data directory validation error, got: %v", err)
+	}
+}
+
+// A relative env_file resolves against the data directory; an absolute one is
+// kept as written.
+func TestResolveServerEnvFile(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"fusion.env", "/claw-home/fusion.env"},
+		{"secrets/x.env", "/claw-home/secrets/x.env"},
+		{"/etc/x.env", "/etc/x.env"},
+		{"", ""},
+	} {
+		got, err := resolveServerEnvFile("s", config.MCPServerConfig{EnvFile: tc.in}, "/claw-home")
+		if err != nil {
+			t.Fatalf("resolveServerEnvFile(%q): %v", tc.in, err)
+		}
+		if got.EnvFile != tc.want {
+			t.Errorf("resolveServerEnvFile(%q) = %q, want %q", tc.in, got.EnvFile, tc.want)
+		}
 	}
 }
 

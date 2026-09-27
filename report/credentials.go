@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/msgtoken"
 	"github.com/PivotLLM/ClawEh/servicetoken"
 )
@@ -121,7 +122,7 @@ func collectCredentials(_ context.Context, cfg *config.Config, env Environment) 
 		Title: "Credentials and tokens",
 		Notes: []string{
 			"Values are never shown: a credential is reported as set or not set, by name, or by count. " +
-				"Token stores live under " + filepath.Join(dd, "state") + ".",
+				"Token stores live under " + filepath.Join(dd, global.InternalDir) + ".",
 		},
 		Tables: []Table{
 			t,

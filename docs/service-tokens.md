@@ -51,7 +51,7 @@ uses) on a stable footing.
   record in the shared session-token store.
 
 ## Persistence & activation
-- Stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`), as
+- Stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`), as
   `{"<agentID>": "sha256:<hex>"}` — the SHA-256 of the token, not the token.
   `claw token issue` prints the plaintext once; it cannot be recovered later
   (issue a new one). A presented token is hashed for lookup. A file from an

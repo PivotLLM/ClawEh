@@ -47,7 +47,7 @@ func (h *Handler) handleListSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loader := newSkillsLoader(cfg.WorkspacePath())
+	loader := newSkillsLoader(cfg.SkillsPath())
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, skillSupportResponse{
@@ -62,7 +62,7 @@ func (h *Handler) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loader := newSkillsLoader(cfg.WorkspacePath())
+	loader := newSkillsLoader(cfg.SkillsPath())
 	name := r.PathValue("name")
 	allSkills := loader.ListSkills()
 
@@ -144,9 +144,9 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loader := newSkillsLoader(cfg.WorkspacePath())
+	loader := newSkillsLoader(cfg.SkillsPath())
 	for _, skill := range loader.ListSkills() {
-		if skill.Path == skillFile || (skill.Name == skillName && skill.Source == "workspace") {
+		if skill.Path == skillFile {
 			w.Header().Set("Content-Type", "application/json")
 			encodeJSON(w, skill)
 			return
@@ -167,14 +167,14 @@ func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loader := newSkillsLoader(cfg.WorkspacePath())
+	loader := newSkillsLoader(cfg.SkillsPath())
 	name := r.PathValue("name")
 	for _, skill := range loader.ListSkills() {
 		if skill.Name != name {
 			continue
 		}
-		if skill.Source != "workspace" {
-			http.Error(w, "only workspace skills can be deleted", http.StatusBadRequest)
+		if skill.Source != "global" {
+			http.Error(w, "only shared skills can be deleted", http.StatusBadRequest)
 			return
 		}
 		if err := os.RemoveAll(filepath.Dir(skill.Path)); err != nil {
@@ -189,12 +189,10 @@ func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Skill not found", http.StatusNotFound)
 }
 
-func newSkillsLoader(workspace string) *skills.SkillsLoader {
-	return skills.NewSkillsLoader(
-		workspace,
-		filepath.Join(globalConfigDir(), "skills"),
-		builtinSkillsDir(),
-	)
+// newSkillsLoader lists the shared skills root (<CLAW_HOME>/skills) and the
+// builtin skills; per-agent skills are not part of this view.
+func newSkillsLoader(sharedSkills string) *skills.SkillsLoader {
+	return skills.NewSkillsLoader("", sharedSkills, builtinSkillsDir())
 }
 
 func normalizeImportedSkillName(filename string, content []byte) (string, error) {
@@ -306,17 +304,6 @@ func loadSkillContent(path string) (string, error) {
 		return "", err
 	}
 	return skillFrontmatterStripper.ReplaceAllString(string(content), ""), nil
-}
-
-func globalConfigDir() string {
-	if home := os.Getenv("CLAW_HOME"); home != "" {
-		return home
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claw")
 }
 
 func builtinSkillsDir() string {

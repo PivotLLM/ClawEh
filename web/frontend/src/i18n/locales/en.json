@@ -303,7 +303,7 @@
     "agent": {
       "load_error": "Failed to load agent support information.",
       "skills": {
-        "description": "Skills are loaded from the workspace, global ClawEh home, and builtin directories.",
+        "description": "Shared skills every agent can use; each agent can also have its own.",
         "empty": "No skills are currently available.",
         "import": "Import Skill",
         "import_success": "Skill imported.",
@@ -311,7 +311,7 @@
         "view": "View",
         "delete": "Delete",
         "delete_title": "Delete Skill?",
-        "delete_description": "\"{{name}}\" will be removed from workspace skills.",
+        "delete_description": "\"{{name}}\" will be removed from the shared skills.",
         "delete_confirm": "Delete",
         "delete_success": "Skill deleted.",
         "delete_error": "Failed to delete skill.",

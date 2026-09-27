@@ -54,11 +54,11 @@ func fixture(t *testing.T) (dir, config string) {
 }
 
 var sensitiveFiles = []string{
-	"state/gateway.db",
-	"state/gateway.db-wal",
-	"state/gateway.db-shm",
-	"state/fusion-tokens.db",
-	"state/devices.json",
+	"internal/gateway.db",
+	"internal/gateway.db-wal",
+	"internal/gateway.db-shm",
+	"internal/fusion-tokens.db",
+	"internal/devices.json",
 	"credentials.json",
 	"tokens/webui",
 	"tokens/nested/service",
@@ -69,11 +69,11 @@ var sensitiveFiles = []string{
 }
 
 var harmlessFiles = []string{
-	"media/attachment.db",   // media tree is skipped
-	"logs/token.log",        // logs tree is skipped
-	"agents/alice/notes.md", // no sensitive pattern
-	"tls/server.crt",        // certs are public
-	"state/nested/x.json",   // only state/*.json, one level
+	"media/attachment.db",    // media tree is skipped
+	"logs/token.log",         // logs tree is skipped
+	"agents/alice/notes.md",  // no sensitive pattern
+	"tls/server.crt",         // certs are public
+	"internal/nested/x.json", // only internal/*.json, one level
 	"agents/alice/logs/token.log",
 	"agents/alice/workspace/media/secret.db",
 }
@@ -157,7 +157,7 @@ func TestEnforceRefusesLooseConfig(t *testing.T) {
 				t.Errorf("error %q does not carry the fix %q", err, want)
 			}
 			// Refusal happens before the walk: nothing else was changed.
-			if got := mode(t, filepath.Join(dir, "state/gateway.db")); got != 0o644 {
+			if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
 				t.Errorf("gateway.db mode = %04o after a refused start, want 0644", got)
 			}
 			// The config itself is never chmod'ed on the operator's behalf.
@@ -217,7 +217,7 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 	if got := mode(t, dir); got != 0o755 {
 		t.Errorf("Check changed the data dir to %04o", got)
 	}
-	if got := mode(t, filepath.Join(dir, "state/gateway.db")); got != 0o644 {
+	if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
 		t.Errorf("Check changed gateway.db to %04o", got)
 	}
 }
@@ -294,24 +294,24 @@ func TestEnsurePrivateFile(t *testing.T) {
 
 func TestIsSensitive(t *testing.T) {
 	cases := map[string]bool{
-		"state/gateway.db":           true,
-		"state/gateway.db-wal":       true,
-		"state/gateway.db-shm":       true,
-		"x/y/z.sqlite":               true,
-		"x/y/z.sqlite3":              true,
-		"x/y/z.sqlite-wal":           true,
-		"credentials.json":           true,
-		"deep/credentials.json":      true,
-		"state/devices.json":         true,
-		"state/deeper/devices.json":  false,
-		"state/notes.txt":            false,
-		"tokens/anything":            true,
-		"tokens/sub/anything":        true,
-		"tls/server.key":             true,
-		"tls/server.crt":             false,
-		"agents/alice/Secret-Notes":  true,
-		"agents/alice/api_token.txt": true,
-		"agents/alice/notes.md":      false,
+		"internal/gateway.db":          true,
+		"internal/gateway.db-wal":      true,
+		"internal/gateway.db-shm":      true,
+		"x/y/z.sqlite":                 true,
+		"x/y/z.sqlite3":                true,
+		"x/y/z.sqlite-wal":             true,
+		"credentials.json":             true,
+		"deep/credentials.json":        true,
+		"internal/devices.json":        true,
+		"internal/deeper/devices.json": false,
+		"internal/notes.txt":           false,
+		"tokens/anything":              true,
+		"tokens/sub/anything":          true,
+		"tls/server.key":               true,
+		"tls/server.crt":               false,
+		"agents/alice/Secret-Notes":    true,
+		"agents/alice/api_token.txt":   true,
+		"agents/alice/notes.md":        false,
 	}
 	for rel, want := range cases {
 		if got := isSensitive(filepath.FromSlash(rel)); got != want {

@@ -56,7 +56,7 @@ type AgentLoop struct {
 	alerter         alerter.Alerter
 	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
 	// namedTokens holds the long-lived, user-named message-API tokens (one store
-	// for all agents, persisted under state/message-api-tokens.json). It is
+	// for all agents, persisted under internal/message-api-tokens.json). It is
 	// separate from the rotating messageManagers: named tokens never expire and
 	// are minted/revoked from the WebUI. The same instance is shared with the API
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.

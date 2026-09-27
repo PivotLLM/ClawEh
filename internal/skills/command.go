@@ -12,7 +12,6 @@ import (
 )
 
 type deps struct {
-	workspace    string
 	installer    *skills.SkillInstaller
 	skillsLoader *skills.SkillsLoader
 }
@@ -29,7 +28,6 @@ func NewSkillsCommand() *cobra.Command {
 				return fmt.Errorf("error loading config: %w", err)
 			}
 
-			d.workspace = cfg.WorkspacePath()
 			installer, err := skills.NewSkillInstaller(
 				cfg.DataDir(),
 				cfg.Tools.Skills.Github.Token,
@@ -42,7 +40,7 @@ func NewSkillsCommand() *cobra.Command {
 
 			// get builtin skills directory
 			builtinSkillsDir := filepath.Join(cfg.DataDir(), "claw", "skills")
-			d.skillsLoader = skills.NewSkillsLoader(d.workspace, cfg.SkillsPath(), builtinSkillsDir)
+			d.skillsLoader = skills.NewSkillsLoader("", cfg.SkillsPath(), builtinSkillsDir)
 
 			return nil
 		},

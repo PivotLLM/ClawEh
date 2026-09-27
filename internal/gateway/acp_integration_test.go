@@ -148,7 +148,7 @@ func (g *acpTestGateway) connect(t *testing.T, autoPair bool, events *eventLog) 
 
 func openDeviceStore(t *testing.T, dataDir string) *device.Store {
 	t.Helper()
-	store, err := device.OpenStore(context.Background(), filepath.Join(dataDir, "state", "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(dataDir, "internal", "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -158,7 +158,7 @@ func openDeviceStore(t *testing.T, dataDir string) *device.Store {
 
 func storedBridgeToken(t *testing.T, dataDir string) string {
 	t.Helper()
-	st, err := identity.NewStore(filepath.Join(dataDir, "state", "acp-bridge"))
+	st, err := identity.NewStore(filepath.Join(dataDir, "internal", "acp-bridge"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -160,6 +160,35 @@ claw network none               # back to loopback only
 
 Browse to **http://localhost:18790** (or one of the HTTPS URLs the installer and `claw status` print) and sign in with the admin account created during install. On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Antigravity, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
 
+## File layout
+
+Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` names another. "You" marks what you may edit by hand; "claw" marks what claw manages and you should leave alone.
+
+| Path | Who edits it | What it is |
+|---|---|---|
+| `config.json` | You | The configuration, which the web UI also edits and claw reloads when it changes. |
+| `credentials.json` | claw | The web UI admin account, changed with `claw admin`. |
+| `agents/<id>/` | — | One folder per agent, its workspace (`agents.base_dir` moves them all). |
+| `agents/<id>/AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `MEMORY.md` | You | The agent's instructions, combined into its prompt on every turn. |
+| `agents/<id>/files/` | You and the agent | The agent's working area, which it can read and write. |
+| `agents/<id>/skills/` | You | Skills for this agent only. |
+| `agents/<id>/sessions/` | claw | The agent's conversation history. |
+| `agents/<id>/cogmem/` | claw | The agent's cognitive memory. |
+| `agents/<id>/state/` | claw | The agent's own state, such as interrupted turns and its message tokens. |
+| `agents/<id>/tmp/`, `tasks/` | claw | Scratch space and background task records for the agent. |
+| `common/` | You and the agents | A shared folder agents with access can exchange files through (`agents.common_dir` moves it). |
+| `skills/` | You | Shared skills every agent can use. |
+| `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
+| `internal/` | claw | claw's own state: `state.json`, service and message tokens, the device pairing database and Fusion's OAuth tokens. |
+| `fusion/` | You | Fusion's REST-API service definitions, its env file and `fusion.log`. |
+| `tls/` | claw | The self-signed HTTPS certificate and key (`gateway.tls.cert_file` uses your own instead). |
+| `logs/` | claw | `claw.log`, `error.log`, `alerts.log`, and `dumps/` when diagnostic dumps are on. |
+| `media/` | claw | A temporary cache of files sent and received on channels. |
+| `cron/` | claw | `jobs.json`, the scheduled jobs. |
+| `backup/` | claw | The nightly backup archives. |
+| `audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
+| `claw.pid`, `claw.lock` | claw | Mark the running instance, so a second one refuses to start. |
+
 ## Features
 
 ### Maestro task orchestration
@@ -262,7 +291,7 @@ There is only ever one ClawEh instance.
 
 Because the bridge connects as a device, it uses the same credentials and pairing
 as any other client, and pairs only once: its Ed25519 identity and issued token
-persist in `$CLAW_HOME/state/acp-bridge/`, so the short-lived processes
+persist in `$CLAW_HOME/internal/acp-bridge/`, so the short-lived processes
 `rabbit-agent` spawns do not re-pair every time.
 
 Two practical consequences:
@@ -638,7 +667,7 @@ format is in [docs/alerts.md](docs/alerts.md).
 
 ## Backup and restore
 
-ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `state/` token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs and per-agent `tmp/` are excluded.
+ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `internal/` state and token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs and per-agent `tmp/` are excluded.
 
 Manage it in the web console under **Config → Backup**, or in `config.json`:
 
@@ -705,7 +734,7 @@ claw token revoke <agent>   # remove it
 claw token list             # list agents that have one (tokens are not shown)
 ```
 
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 

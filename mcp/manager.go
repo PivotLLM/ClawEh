@@ -189,20 +189,20 @@ func (m *Manager) applyTuning(mcpCfg config.MCPConfig) {
 
 // LoadFromConfig loads MCP servers from configuration
 func (m *Manager) LoadFromConfig(ctx context.Context, cfg *config.Config) error {
-	return m.LoadFromMCPConfig(ctx, cfg.Tools.MCP, cfg.WorkspacePath())
+	return m.LoadFromMCPConfig(ctx, cfg.Tools.MCP, cfg.DataDir())
 }
 
-// LoadFromMCPConfig loads MCP servers from MCP configuration and workspace path.
+// LoadFromMCPConfig loads MCP servers from MCP configuration; a relative envFile resolves against baseDir (the data directory).
 // This is the minimal dependency version that doesn't require the full Config object.
 func (m *Manager) LoadFromMCPConfig(
 	ctx context.Context,
 	mcpCfg config.MCPConfig,
-	workspacePath string,
+	baseDir string,
 ) error {
 	m.applyTuning(mcpCfg)
 	// Record the desired set up front so the background retry loop can recover any
 	// server that fails its initial connect below, without a restart.
-	m.setDesired(resolveDesired(mcpCfg, workspacePath))
+	m.setDesired(resolveDesired(mcpCfg, baseDir))
 
 	if len(mcpCfg.Servers) == 0 {
 		logger.InfoCF("mcp", "No MCP servers configured", nil)
@@ -229,11 +229,11 @@ func (m *Manager) LoadFromMCPConfig(
 
 		enabledCount++
 		wg.Add(1)
-		go func(name string, serverCfg config.MCPServerConfig, workspace string) {
+		go func(name string, serverCfg config.MCPServerConfig, baseDir string) {
 			defer wg.Done()
 
-			// Resolve relative envFile paths relative to workspace
-			resolved, err := resolveServerEnvFile(name, serverCfg, workspace)
+			// Resolve relative envFile paths against the data directory
+			resolved, err := resolveServerEnvFile(name, serverCfg, baseDir)
 			if err != nil {
 				logger.ErrorCF("mcp", "Invalid MCP server configuration",
 					map[string]any{
@@ -254,7 +254,7 @@ func (m *Manager) LoadFromMCPConfig(
 					})
 				errs <- fmt.Errorf("failed to connect to server %s: %w", name, err)
 			}
-		}(name, serverCfg, workspacePath)
+		}(name, serverCfg, baseDir)
 	}
 
 	wg.Wait()
@@ -298,24 +298,24 @@ func (m *Manager) LoadFromMCPConfig(
 }
 
 // resolveServerEnvFile returns a copy of cfg with a relative EnvFile made
-// absolute against the workspace, so stdio servers load env identically
+// absolute against baseDir (the data directory), so stdio servers load env identically
 // regardless of process CWD. The input is not mutated.
 func resolveServerEnvFile(
 	name string,
 	cfg config.MCPServerConfig,
-	workspace string,
+	baseDir string,
 ) (config.MCPServerConfig, error) {
 	if cfg.EnvFile == "" || filepath.IsAbs(cfg.EnvFile) {
 		return cfg, nil
 	}
-	if workspace == "" {
+	if baseDir == "" {
 		return cfg, fmt.Errorf(
-			"workspace path is empty while resolving relative envFile %q for server %s",
+			"data directory is empty while resolving relative envFile %q for server %s",
 			cfg.EnvFile,
 			name,
 		)
 	}
-	cfg.EnvFile = filepath.Join(workspace, cfg.EnvFile)
+	cfg.EnvFile = filepath.Join(baseDir, cfg.EnvFile)
 	return cfg, nil
 }
 
@@ -560,13 +560,13 @@ func (m *Manager) disconnect(name string) {
 // servers with their envFile resolved the same way the initial load resolves it,
 // so change-detection and reconnection compare like with like. Servers with an
 // invalid config are logged and skipped (they can never connect).
-func resolveDesired(mcpCfg config.MCPConfig, workspacePath string) map[string]config.MCPServerConfig {
+func resolveDesired(mcpCfg config.MCPConfig, baseDir string) map[string]config.MCPServerConfig {
 	desired := make(map[string]config.MCPServerConfig, len(mcpCfg.Servers))
 	for name, serverCfg := range mcpCfg.Servers {
 		if !serverCfg.Enabled {
 			continue
 		}
-		resolved, err := resolveServerEnvFile(name, serverCfg, workspacePath)
+		resolved, err := resolveServerEnvFile(name, serverCfg, baseDir)
 		if err != nil {
 			logger.ErrorCF("mcp", "Invalid MCP server configuration",
 				map[string]any{"server": name, "error": err.Error()})
@@ -640,13 +640,13 @@ func (m *Manager) RetryDisconnected(ctx context.Context) []string {
 func (m *Manager) Sync(
 	ctx context.Context,
 	mcpCfg config.MCPConfig,
-	workspacePath string,
+	baseDir string,
 ) error {
 	m.applyTuning(mcpCfg)
 
 	// Desired = enabled servers, envFile resolved the same way the initial load
 	// resolves it so change-detection compares like with like.
-	desired := resolveDesired(mcpCfg, workspacePath)
+	desired := resolveDesired(mcpCfg, baseDir)
 	m.setDesired(desired)
 
 	// Drop connections that are gone, disabled, or reconfigured.

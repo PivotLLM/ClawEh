@@ -58,7 +58,7 @@ The bridge authenticates to the gateway **as a paired device**, exactly like the
 R1:
 
 - **Ed25519 device identity**, generated and persisted under
-  `$CLAW_HOME/state/acp-bridge/` (via the library's `identity.Store`). It survives
+  `$CLAW_HOME/internal/acp-bridge/` (via the library's `identity.Store`). It survives
   the short-lived spawns `rabbit-agent` makes, so pairing happens only once.
 - **Auth token**: the configured device-channel `token` (or `word_token`) is
   presented on connect; once the gateway issues a device token at connect

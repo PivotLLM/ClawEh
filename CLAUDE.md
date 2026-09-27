@@ -110,10 +110,19 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   start, `internal/gateway/fatal.go` alerts, shuts down cleanly and exits 3 so systemd
   restarts the process.
 - **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
-  DB via `VACUUM INTO`, state, credentials, TLS); `claw backup` / `claw restore`. See
+  DB via `VACUUM INTO`, `internal/`, credentials, TLS); `claw backup` / `claw restore`. See
   `docs/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
+- Data dir layout (README "File layout"): `internal/` holds claw's own state (`state.json`,
+  token stores, `gateway.db`, fusion tokens, the ACP identity; `config.InternalPath()`,
+  `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
+  workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `common/` the
+  default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
+  against `CLAW_HOME`. There is no `agents/default` pseudo-agent: `internal/layout.Prepare`
+  creates these at every gateway start and moves the old layout (`<CLAW_HOME>/state`,
+  `agents/default`, `agents/common`) once, leaving `agents/default` alone when a configured
+  agent uses it.
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
   `app.Version()` / `app.SemVer()` / `app.Name()` / `app.TagLine()` / `app.Copyright()`).
   The two release-signing public keys are `app/keys.go` (`app.ReleasePublicKeys()`).

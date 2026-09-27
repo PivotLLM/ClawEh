@@ -40,7 +40,6 @@ func DefaultConfig() *Config {
 		homePath = filepath.Join(userHome, global.DefaultDataDir)
 	}
 	agentsBaseDir := filepath.Join(homePath, "agents")
-	workspacePath := filepath.Join(agentsBaseDir, "default")
 
 	cfg := &Config{
 		// Marks this as an auto-seeded config the user hasn't saved yet; the first
@@ -78,10 +77,9 @@ func DefaultConfig() *Config {
 			},
 			List: []AgentConfig{
 				{
-					ID:        "claw",
-					Name:      "Claw",
-					Default:   true,
-					Workspace: workspacePath,
+					ID:      "claw",
+					Name:    "Claw",
+					Default: true,
 					// Tools intentionally omitted (nil): the agent inherits the
 					// install default tool set (DefaultAgentTools, driven by each
 					// provider's DefaultEnabled flag). Using ["*"] here would grant
@@ -394,9 +392,5 @@ func DefaultConfig() *Config {
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}
 	cfg.dataDir = homePath
-	// Ensure agents/default directory exists on startup
-	if err := os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o700); err != nil { // #nosec G703 -- data dir is $CLAW_HOME or the user's home, chosen by the operator
-		logger.WarnCF("config", "failed to create default agent workspace", map[string]any{"error": err.Error()})
-	}
 	return cfg
 }

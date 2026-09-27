@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -29,7 +30,7 @@ func msTime(ms int64) string {
 // database. The database is opened only when it already exists, so a fresh
 // install is reported as unavailable rather than created by the report.
 func deviceRows(ctx context.Context, dd string) (paired, pending [][]string) {
-	path := filepath.Join(dd, "state", "gateway.db")
+	path := filepath.Join(dd, global.InternalDir, "gateway.db")
 	if _, err := os.Stat(path); err != nil {
 		msg := "unavailable: no device store at " + path
 		if !os.IsNotExist(err) {

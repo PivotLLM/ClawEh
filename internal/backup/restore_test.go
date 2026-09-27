@@ -89,10 +89,10 @@ func TestRestoreRoundTrip(t *testing.T) {
 	// including a live-looking WAL database with stale sidecars.
 	target := t.TempDir()
 	writeFileT(t, filepath.Join(target, "config.json"), `{"old":true}`, 0o644)
-	writeFileT(t, filepath.Join(target, "state", "gateway.db"), "old db bytes", 0o600)
-	writeFileT(t, filepath.Join(target, "state", "gateway.db-wal"), "stale wal", 0o600)
-	writeFileT(t, filepath.Join(target, "state", "gateway.db-shm"), "stale shm", 0o600)
-	writeFileT(t, filepath.Join(target, "state", "untouched.json"), `keep`, 0o600)
+	writeFileT(t, filepath.Join(target, "internal", "gateway.db"), "old db bytes", 0o600)
+	writeFileT(t, filepath.Join(target, "internal", "gateway.db-wal"), "stale wal", 0o600)
+	writeFileT(t, filepath.Join(target, "internal", "gateway.db-shm"), "stale shm", 0o600)
+	writeFileT(t, filepath.Join(target, "internal", "untouched.json"), `keep`, 0o600)
 
 	plan, err := PlanRestore(res.Archive, target)
 	if err != nil {
@@ -108,7 +108,7 @@ func TestRestoreRoundTrip(t *testing.T) {
 			t.Errorf("target for %s = %s, want %s", e.Name, e.Target, want)
 		}
 	}
-	if !replaces["config.json"] || !replaces["state/gateway.db"] || replaces["credentials.json"] {
+	if !replaces["config.json"] || !replaces["internal/gateway.db"] || replaces["credentials.json"] {
 		t.Fatalf("replaces = %v", replaces)
 	}
 
@@ -138,21 +138,21 @@ func TestRestoreRoundTrip(t *testing.T) {
 	if n := rowCount(t, restoredDB); n != 50 {
 		t.Errorf("restored rows = %d, want 50", n)
 	}
-	if n := rowCount(t, filepath.Join(target, "state", "gateway.db")); n != 5 {
+	if n := rowCount(t, filepath.Join(target, "internal", "gateway.db")); n != 5 {
 		t.Errorf("restored gateway.db rows = %d, want 5", n)
 	}
 	// Stale sidecars are gone from the live location...
 	for _, s := range []string{"gateway.db-wal", "gateway.db-shm"} {
-		if _, err := os.Stat(filepath.Join(target, "state", s)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(target, "internal", s)); !os.IsNotExist(err) {
 			t.Errorf("stale %s must be moved away (err=%v)", s, err)
 		}
 	}
 	// ...and parked with the replaced files.
 	for name, want := range map[string]string{
-		"config.json":          `{"old":true}`,
-		"state/gateway.db":     "old db bytes",
-		"state/gateway.db-wal": "stale wal",
-		"state/gateway.db-shm": "stale shm",
+		"config.json":             `{"old":true}`,
+		"internal/gateway.db":     "old db bytes",
+		"internal/gateway.db-wal": "stale wal",
+		"internal/gateway.db-shm": "stale shm",
 	} {
 		got, err := os.ReadFile(filepath.Join(parked, filepath.FromSlash(name)))
 		if err != nil || string(got) != want {
@@ -163,7 +163,7 @@ func TestRestoreRoundTrip(t *testing.T) {
 		t.Errorf("a file that did not exist before must not be parked (err=%v)", err)
 	}
 	// Files the archive does not mention are left alone.
-	if got, err := os.ReadFile(filepath.Join(target, "state", "untouched.json")); err != nil || string(got) != "keep" {
+	if got, err := os.ReadFile(filepath.Join(target, "internal", "untouched.json")); err != nil || string(got) != "keep" {
 		t.Errorf("untouched.json = %q (err %v)", got, err)
 	}
 	if matches, err := filepath.Glob(filepath.Join(target, ".restore-staging-*")); err != nil || len(matches) != 0 {
@@ -175,11 +175,11 @@ func TestRestoreRoundTrip(t *testing.T) {
 func corruptArchive(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "bad.tar.gz")
-	m := Manifest{Version: ManifestVersion, CreatedAt: time.Now(), Home: "/nowhere", Files: []string{"config.json", "state/gateway.db"}}
+	m := Manifest{Version: ManifestVersion, CreatedAt: time.Now(), Home: "/nowhere", Files: []string{"config.json", "internal/gateway.db"}}
 	err := writeArchive(path, m, func(tw *tar.Writer) error {
 		for name, body := range map[string]string{
-			"config.json":      `{"restored":true}`,
-			"state/gateway.db": "SQLite format 3\x00 but the rest is garbage ...............................",
+			"config.json":         `{"restored":true}`,
+			"internal/gateway.db": "SQLite format 3\x00 but the rest is garbage ...............................",
 		} {
 			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o600, Size: int64(len(body)), Format: tar.FormatPAX}); err != nil {
 				return err
@@ -200,7 +200,7 @@ func TestRestoreAbortsOnCorruptDatabase(t *testing.T) {
 	archive := corruptArchive(t, t.TempDir())
 	target := t.TempDir()
 	writeFileT(t, filepath.Join(target, "config.json"), `{"old":true}`, 0o600)
-	writeFileT(t, filepath.Join(target, "state", "gateway.db"), "old", 0o600)
+	writeFileT(t, filepath.Join(target, "internal", "gateway.db"), "old", 0o600)
 
 	plan, err := PlanRestore(archive, target)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestRestoreAbortsOnCorruptDatabase(t *testing.T) {
 	if err == nil {
 		t.Fatal("Apply must fail on a corrupt restored database")
 	}
-	for name, want := range map[string]string{"config.json": `{"old":true}`, "state/gateway.db": "old"} {
+	for name, want := range map[string]string{"config.json": `{"old":true}`, "internal/gateway.db": "old"} {
 		if got, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(name))); err != nil || string(got) != want {
 			t.Errorf("%s = %q (err %v), want unchanged %q", name, got, err, want)
 		}
@@ -250,12 +250,12 @@ func TestRestoreRejectsForeignArchives(t *testing.T) {
 func TestTargetForRejectsUnsafePaths(t *testing.T) {
 	home := "/home/x"
 	m := &Manifest{}
-	for _, bad := range []string{"../etc/passwd", "/etc/passwd", "state/../../x", ".", "external/agents/x.db"} {
+	for _, bad := range []string{"../etc/passwd", "/etc/passwd", "internal/../../x", ".", "external/agents/x.db"} {
 		if _, err := targetFor(bad, home, m); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
-	if got, err := targetFor("state/gateway.db", home, m); err != nil || got != filepath.Join(home, "state", "gateway.db") {
+	if got, err := targetFor("internal/gateway.db", home, m); err != nil || got != filepath.Join(home, "internal", "gateway.db") {
 		t.Errorf("safe path: %s %v", got, err)
 	}
 	m.AgentsDir = "/srv/agents"

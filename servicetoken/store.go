@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 )
 
@@ -31,13 +32,13 @@ import (
 // both endpoints and is covered by token redaction.
 const prefix = "SST"
 
-// fileName is the state file under the data dir's state/ directory.
+// fileName is the state file under the data dir's internal/ directory.
 const fileName = "service-tokens.json"
 
 // Path returns the absolute path to the service-token state file for the given
 // data directory (e.g. $CLAW_HOME or ~/.claw).
 func Path(dataDir string) string {
-	return filepath.Join(dataDir, "state", fileName)
+	return filepath.Join(dataDir, global.InternalDir, fileName)
 }
 
 // Generate returns a fresh service token: "SST" + 64 lowercase hex characters
@@ -92,7 +93,7 @@ func Load(path string) (map[string]string, error) {
 }
 
 // Save atomically writes the agentID→hashed-token map to path (0o600), creating
-// the parent state/ directory if needed.
+// the parent internal/ directory if needed.
 func Save(path string, tokens map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("servicetoken: mkdir %s: %w", filepath.Dir(path), err)

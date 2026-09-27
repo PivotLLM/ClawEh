@@ -156,15 +156,15 @@ type bridgeConn struct {
 
 // connectBridge connects the bridge to the device gateway at wsURL as a paired
 // node. Its Ed25519 identity and issued device token persist under
-// <dataDir>/state/acp-bridge, so pairing happens once across the short-lived
+// <dataDir>/internal/acp-bridge, so pairing happens once across the short-lived
 // spawns an ACP client makes. authToken is the shared device token (empty for
 // open loopback auth); tlsConfig is nil for ws://. With autoPair, a not-paired
 // rejection is answered by approving this device's own pending request in
-// <dataDir>/state/gateway.db and reconnecting. onEvent receives gateway events.
+// <dataDir>/internal/gateway.db and reconnecting. onEvent receives gateway events.
 func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsConfig *tls.Config, autoPair bool, onEvent func(protocol.Event)) (*bridgeConn, error) {
 	// Persisted Ed25519 device identity + issued device token (survives across the
 	// short-lived spawns rabbit-agent makes, so pairing happens only once).
-	idDir := filepath.Join(dataDir, "state", "acp-bridge")
+	idDir := filepath.Join(dataDir, global.InternalDir, "acp-bridge")
 	if mkErr := os.MkdirAll(idDir, 0o700); mkErr != nil {
 		return nil, fmt.Errorf("acp: create identity dir: %w", mkErr)
 	}
@@ -297,7 +297,7 @@ func (c *abortSessionKeyClient) ChatAbort(ctx context.Context, params protocol.C
 // bridge is a local same-user process that already owns the data dir; it only
 // approves its OWN device id, never another device's pending request.
 func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (string, error) {
-	store, err := device.OpenStore(ctx, filepath.Join(dataDir, "state", "gateway.db"))
+	store, err := device.OpenStore(ctx, filepath.Join(dataDir, global.InternalDir, "gateway.db"))
 	if err != nil {
 		return "", fmt.Errorf("open device store: %w", err)
 	}

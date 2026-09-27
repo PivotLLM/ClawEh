@@ -38,13 +38,6 @@ func statusCmd() {
 		fmt.Println("Config:", configPath, "✗")
 	}
 
-	workspace := cfg.WorkspacePath()
-	if _, err := os.Stat(workspace); err == nil {
-		fmt.Println("Workspace:", workspace, "✓")
-	} else {
-		fmt.Println("Workspace:", workspace, "✗")
-	}
-
 	if _, err := os.Stat(configPath); err == nil {
 		// Report each configured provider and whether it carries credentials.
 		fmt.Printf("\nProviders (%d):\n", len(cfg.Providers))

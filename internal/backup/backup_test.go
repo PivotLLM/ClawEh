@@ -89,13 +89,13 @@ func fixture(t *testing.T) Source {
 	writeFileT(t, filepath.Join(home, "cron", "jobs.json"), `[]`, 0o644)
 	writeFileT(t, filepath.Join(home, "credentials.json"), `{"k":"v"}`, 0o600)
 	writeFileT(t, filepath.Join(home, "tls", "server.key"), "KEY", 0o600)
-	writeFileT(t, filepath.Join(home, "state", "tokens.json"), `{"t":1}`, 0o600)
+	writeFileT(t, filepath.Join(home, "internal", "tokens.json"), `{"t":1}`, 0o600)
 	writeFileT(t, filepath.Join(home, "media", "cache.bin"), "media", 0o644)
 	writeFileT(t, filepath.Join(home, "logs", "claw.log"), "log", 0o644)
 	writeFileT(t, filepath.Join(home, "backup", "claw-backup-20200101-000000.tar.gz"), "old", 0o600)
 	writeFileT(t, filepath.Join(home, "agents", "main", "tmp", "scratch.db"), "not a db", 0o644)
 	writeFileT(t, filepath.Join(home, "agents", "main", "files", "notes.txt"), "not archived", 0o644)
-	openWAL(t, filepath.Join(home, "state", "gateway.db"), 5)
+	openWAL(t, filepath.Join(home, "internal", "gateway.db"), 5)
 	openWAL(t, filepath.Join(home, "agents", "main", "sessions", "s1.archive.db"), 50)
 	openWAL(t, filepath.Join(home, "agents", "main", "cogmem", "memory.sqlite"), 3)
 	return Source{
@@ -184,7 +184,7 @@ func TestRunArchivesLiveWALDatabases(t *testing.T) {
 	m, entries := readTar(t, res.Archive)
 	want := []string{
 		"config.json", "cron/jobs.json", "credentials.json", "tls/server.key",
-		"state/gateway.db", "state/tokens.json",
+		"internal/gateway.db", "internal/tokens.json",
 		"agents/main/cogmem/memory.sqlite", "agents/main/sessions/s1.archive.db",
 	}
 	if !slices.Equal(m.Files, want) {
@@ -199,7 +199,7 @@ func TestRunArchivesLiveWALDatabases(t *testing.T) {
 	for _, excluded := range []string{
 		"media/cache.bin", "logs/claw.log", "backup/claw-backup-20200101-000000.tar.gz",
 		"agents/main/tmp/scratch.db", "agents/main/files/notes.txt",
-		"state/gateway.db-wal", "state/gateway.db-shm",
+		"internal/gateway.db-wal", "internal/gateway.db-shm",
 	} {
 		if _, ok := entries[excluded]; ok {
 			t.Errorf("%s must not be archived", excluded)
@@ -208,8 +208,8 @@ func TestRunArchivesLiveWALDatabases(t *testing.T) {
 	if string(entries["config.json"].data) != `{"agents":{}}` {
 		t.Errorf("config.json = %q", entries["config.json"].data)
 	}
-	if string(entries["state/tokens.json"].data) != `{"t":1}` {
-		t.Errorf("state/tokens.json = %q", entries["state/tokens.json"].data)
+	if string(entries["internal/tokens.json"].data) != `{"t":1}` {
+		t.Errorf("internal/tokens.json = %q", entries["internal/tokens.json"].data)
 	}
 	if got := entries["tls/server.key"].hdr.Mode; got != 0o600 {
 		t.Errorf("tls/server.key mode = %o, want 600", got)
@@ -291,7 +291,7 @@ func TestRunSkipsCorruptDatabaseAndAlerts(t *testing.T) {
 func TestRunNilAlerterUsesProcessDefault(t *testing.T) {
 	rec := testalerts.Install(t)
 	src := fixture(t)
-	writeFileT(t, filepath.Join(src.Home, "state", "broken.db"), "garbage garbage garbage garbage garbage", 0o600)
+	writeFileT(t, filepath.Join(src.Home, "internal", "broken.db"), "garbage garbage garbage garbage garbage", 0o600)
 	if _, err := Run(src, filepath.Join(t.TempDir(), "out"), time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestExcludedDir(t *testing.T) {
 		{"restore-backup-20260101-000000", "restore-backup-20260101-000000", true},
 		{".restore-staging-20260101-000000", ".restore-staging-20260101-000000", true},
 		{"restore-backup-x", "agents/restore-backup-x", false}, // prefix rule is top-level only
-		{"state", "state", false},
+		{"internal", "internal", false},
 		{"sessions", "agents/main/sessions", false},
 	}
 	for _, c := range cases {

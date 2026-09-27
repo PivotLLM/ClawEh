@@ -39,7 +39,7 @@ Named tokens are managed **per agent** in the Web UI:
 
 Each agent can have any number of named tokens; each is a long-lived secret that
 does not expire until revoked. Tokens are stored in plaintext under the data
-directory at `state/message-api-tokens.json` so they can be displayed for copying.
+directory at `internal/message-api-tokens.json` so they can be displayed for copying.
 
 ---
 

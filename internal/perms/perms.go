@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/PivotLLM/ClawEh/global"
 )
 
 // Finding is one path whose permissions grant group or other access.
@@ -278,7 +280,7 @@ func walk(dataDir string, found func(Finding)) (bool, error) {
 
 // isSensitive decides by name and location, relative to the data directory,
 // whether a file holds secrets: SQLite databases and their WAL/shm side files
-// (*.db, *.db-wal, *.db-shm, *.sqlite*), credentials.json, state/*.json,
+// (*.db, *.db-wal, *.db-shm, *.sqlite*), credentials.json, internal/*.json,
 // anything under tokens/, tls/*.key, and any file whose name mentions a token
 // or secret.
 func isSensitive(rel string) bool {
@@ -299,7 +301,7 @@ func isSensitive(rel string) bool {
 	switch top {
 	case "tokens":
 		return rest != ""
-	case "state":
+	case global.InternalDir:
 		return !strings.Contains(rest, "/") && ext == ".json"
 	case "tls":
 		return ext == ".key"

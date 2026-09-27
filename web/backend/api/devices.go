@@ -13,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -68,7 +69,7 @@ func (h *Handler) openDeviceStore(ctx context.Context) (*device.Store, *config.C
 	if err != nil {
 		return nil, nil, err
 	}
-	stateDir := filepath.Join(cfg.DataDir(), "state")
+	stateDir := filepath.Join(cfg.DataDir(), global.InternalDir)
 	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
 		return nil, nil, mkErr
 	}

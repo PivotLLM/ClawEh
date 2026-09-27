@@ -160,15 +160,6 @@ func TestConfig_NoAgentsListInheritsDefault(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_WorkspacePath verifies workspace path is correctly set
-func TestDefaultConfig_WorkspacePath(t *testing.T) {
-	cfg := DefaultConfig()
-
-	if cfg.WorkspacePath() == "" {
-		t.Error("Workspace should not be empty")
-	}
-}
-
 // TestDefaultConfig_Retention verifies the generated config carries the
 // long-lived-memory retention day limits while leaving the count caps unlimited.
 func TestDefaultConfig_Retention(t *testing.T) {
@@ -354,9 +345,6 @@ func TestSaveConfig_FilePermissions(t *testing.T) {
 func TestConfig_Complete(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.WorkspacePath() == "" {
-		t.Error("Workspace should not be empty")
-	}
 	if len(cfg.Agents.Defaults.Models) == 0 || cfg.Agents.Defaults.Models[0] == "" {
 		t.Error("Model should be set in default config")
 	}
@@ -458,28 +446,49 @@ func TestDefaultConfig_SessionMode(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_WorkspacePath_Default(t *testing.T) {
-	// Unset to ensure we test the default
-	t.Setenv("CLAW_HOME", "")
-	// Set a known home for consistent test results
-	t.Setenv("HOME", "/tmp/home")
-
-	cfg := DefaultConfig()
-	want := filepath.Join("/tmp/home", ".claw", "agents", "default")
-
-	if cfg.WorkspacePath() != want {
-		t.Errorf("Default workspace path = %q, want %q", cfg.WorkspacePath(), want)
-	}
-}
-
-func TestDefaultConfig_WorkspacePath_WithClawHome(t *testing.T) {
+// The data-directory paths all hang off CLAW_HOME: the shared common
+// directory, claw's internal state and the CLI working directory.
+func TestDefaultConfig_DataDirPaths(t *testing.T) {
 	t.Setenv("CLAW_HOME", "/custom/claw/home")
 
 	cfg := DefaultConfig()
-	want := "/custom/claw/home/agents/default"
+	for name, got := range map[string]string{
+		"ResolveCommonDir": cfg.ResolveCommonDir(),
+		"InternalPath":     cfg.InternalPath(),
+		"CLIPath":          cfg.CLIPath(),
+		"SkillsPath":       cfg.SkillsPath(),
+		"FusionTokensPath": cfg.FusionTokensPath(),
+	} {
+		want := map[string]string{
+			"ResolveCommonDir": "/custom/claw/home/common",
+			"InternalPath":     "/custom/claw/home/internal",
+			"CLIPath":          "/custom/claw/home/cli",
+			"SkillsPath":       "/custom/claw/home/skills",
+			"FusionTokensPath": "/custom/claw/home/internal/fusion-tokens.db",
+		}[name]
+		if got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
 
-	if cfg.WorkspacePath() != want {
-		t.Errorf("Workspace path with CLAW_HOME = %q, want %q", cfg.WorkspacePath(), want)
+	cfg.Agents.CommonDir = "/elsewhere/common"
+	if got := cfg.ResolveCommonDir(); got != "/elsewhere/common" {
+		t.Errorf("ResolveCommonDir with agents.common_dir = %q, want /elsewhere/common", got)
+	}
+}
+
+// The seeded agent has no explicit workspace, so it lives under agents/claw,
+// and loading the default config creates nothing on disk.
+func TestDefaultConfig_SeedAgentWorkspace(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "claw-home")
+	t.Setenv("CLAW_HOME", home)
+
+	cfg := DefaultConfig()
+	if ws := cfg.Agents.List[0].Workspace; ws != "" {
+		t.Errorf("seeded agent workspace = %q, want empty", ws)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Errorf("DefaultConfig created %s (stat err %v)", home, err)
 	}
 }
 

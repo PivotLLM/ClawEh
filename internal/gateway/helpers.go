@@ -37,6 +37,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/layout"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
@@ -243,6 +244,10 @@ func gatewayCmd(debug bool) error {
 	// Shared by boot, the watcher and the forced reload so a missing-model
 	// reference alerts once per process, not once per reload.
 	refAlerts := &modelRefAlerts{}
+
+	// Lay out the data directory, moving an older layout, before anything
+	// below opens the files it holds.
+	layout.Prepare(cfg)
 
 	// Re-apply logging config (debug flag overrides level).
 	if cfg.Logging.File {
@@ -510,16 +515,8 @@ func setupAndStartServices(
 	}
 
 	// Setup cron tool and service
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool
-	services.CronService, cronTool = setupCronTool(
-		agentLoop,
-		msgBus,
-		cfg.WorkspacePath(),
-		cfg.Agents.Defaults.RestrictToWorkspace,
-		execTimeout,
-		cfg,
-	)
+	services.CronService, cronTool = setupCronTool(agentLoop, msgBus, cfg)
 	if cronTool != nil {
 		agentLoop.RegisterTool(cronTool)
 	}
@@ -727,7 +724,7 @@ func setupAndStartServices(
 	logger.InfoF("Health endpoints available", endpoints)
 
 	// Setup state manager and device service
-	stateManager := state.NewManager(cfg.WorkspacePath())
+	stateManager := state.NewManagerInDir(cfg.InternalPath())
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
@@ -1094,16 +1091,8 @@ func restartServices(
 
 	// Re-create and start cron service with new config, then re-register the
 	// cron tool with all agents so it is available after the registry is rebuilt.
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool
-	services.CronService, cronTool = setupCronTool( //nolint:contextcheck // cron jobs are fired by the scheduler, not by the reload; ExecuteJob runs on a detached context by design, as on the initial setup path
-		al,
-		msgBus,
-		cfg.WorkspacePath(),
-		cfg.Agents.Defaults.RestrictToWorkspace,
-		execTimeout,
-		cfg,
-	)
+	services.CronService, cronTool = setupCronTool(al, msgBus, cfg) //nolint:contextcheck // cron jobs are fired by the scheduler, not by the reload; ExecuteJob runs on a detached context by design, as on the initial setup path
 	if cronTool != nil {
 		al.RegisterTool(cronTool)
 	}
@@ -1220,7 +1209,7 @@ func restartServices(
 	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
 
 	// Re-create device service with new config
-	stateManager := state.NewManager(cfg.WorkspacePath())
+	stateManager := state.NewManagerInDir(cfg.InternalPath())
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
@@ -1431,9 +1420,6 @@ func getFileSize(path string) int64 {
 func setupCronTool(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
-	workspace string,
-	restrict bool,
-	execTimeout time.Duration,
 	cfg *config.Config,
 ) (*cron.CronService, *toolschedule.CronTool) {
 	cronStorePath := filepath.Join(cfg.CronPath(), "jobs.json")

@@ -71,6 +71,10 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 			break
 		}
 	}
+	// A model with no workspace runs its CLI in <CLAW_HOME>/cli.
+	if matched != nil && matched.Workspace == "" && cfgSnapshot.DataDir() != "" {
+		matched.Workspace = cfgSnapshot.CLIPath()
+	}
 	if matched != nil && matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
 		matched.RequestTimeout = cfgSnapshot.Agents.Defaults.RequestTimeout
 	}

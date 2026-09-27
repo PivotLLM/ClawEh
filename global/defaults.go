@@ -9,6 +9,18 @@ package global
 // The full path is filepath.Join(os.UserHomeDir(), DefaultDataDir) → ~/.claw
 const DefaultDataDir = ".claw"
 
+// InternalDir is the directory under the data directory that holds claw's own
+// state: state.json, token stores and the device database. Nobody edits it.
+const InternalDir = "internal"
+
+// CLIDir is the directory under the data directory that CLI providers run in
+// when their model sets no workspace.
+const CLIDir = "cli"
+
+// CommonDir is the default shared directory under the data directory for the
+// common_* tools (agents.common_dir overrides it).
+const CommonDir = "common"
+
 // EnvVarHome is the environment variable that overrides the default data directory.
 const EnvVarHome = "CLAW_HOME"
 

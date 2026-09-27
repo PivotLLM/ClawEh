@@ -1,7 +1,7 @@
 export interface SkillSupportItem {
   name: string
   path: string
-  source: "workspace" | "global" | "builtin" | string
+  source: "global" | "builtin" | string
   description: string
 }
 

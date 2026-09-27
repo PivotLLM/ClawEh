@@ -158,14 +158,15 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 
 type AgentsConfig struct {
 	// BaseDir is the base directory under which every agent's workspace lives:
-	// each agent resolves to <base_dir>/<agent-id> (the routing-default agent
-	// uses <base_dir>/default). A per-agent `workspace` overrides this. Empty
+	// each agent resolves to <base_dir>/<agent-id> (an agent with an empty id
+	// or the id "main" uses <base_dir>/default). A per-agent `workspace`
+	// overrides this. Empty
 	// defaults to <data_dir>/agents. Point it at another volume to relocate all
 	// agent files at once.
 	BaseDir string `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
 	// CommonDir is the global path to the shared directory that agents can read
 	// from and write to via the "common" tools. Empty defaults to
-	// <agents base>/common (see Config.ResolveCommonDir).
+	// <data_dir>/common (see Config.ResolveCommonDir).
 	CommonDir string        `json:"common_dir,omitempty" env:"CLAW_AGENTS_COMMON_DIR"`
 	Defaults  AgentDefaults `json:"defaults"`
 	List      []AgentConfig `json:"list,omitempty"`
@@ -2873,26 +2874,31 @@ func (c *Config) BaseDir() string {
 
 // ResolveCommonDir returns the global shared directory agents read/write via the
 // "common" tools. An explicit agents.common_dir wins; otherwise it defaults to
-// <agents base>/common.
+// <data_dir>/common.
 func (c *Config) ResolveCommonDir() string {
 	if c.Agents.CommonDir != "" {
 		return expandHome(c.Agents.CommonDir)
 	}
-	return filepath.Join(c.BaseDir(), "common")
+	return filepath.Join(c.dataDir, global.CommonDir)
 }
 
-// WorkspacePath returns the primary/default-agent workspace (<base_dir>/default).
-// It is used for gateway-global operations (skills view, gateway state, MCP
-// config) and as the CLI-provider working-dir fallback. Per-agent workspaces are
-// resolved by agent.resolveAgentWorkspace.
-func (c *Config) WorkspacePath() string {
-	return filepath.Join(c.BaseDir(), "default")
+// InternalPath returns the directory for claw's own state that nobody edits
+// by hand (<data_dir>/internal): state.json, token stores, the device
+// database.
+func (c *Config) InternalPath() string {
+	return filepath.Join(c.dataDir, global.InternalDir)
+}
+
+// CLIPath returns the working directory CLI providers run in when their model
+// sets no workspace (<data_dir>/cli).
+func (c *Config) CLIPath() string {
+	return filepath.Join(c.dataDir, global.CLIDir)
 }
 
 // AgentSessionDirs returns the sessions subdirectory for every configured
 // agent, deduped. This mirrors the workspace resolution logic in
 // agent/instance.go:resolveAgentWorkspace. The result is used by the
-// WebUI to enumerate sessions across all agents, not just the defaults workspace.
+// WebUI to enumerate sessions across all configured agents.
 func (c *Config) AgentSessionDirs() []string {
 	base := c.BaseDir()
 
@@ -2921,10 +2927,6 @@ func (c *Config) AgentSessionDirs() []string {
 		add(filepath.Join(base, id))
 	}
 
-	// Always include the default workspace — covers agents that were removed
-	// from config but left files on disk.
-	add(filepath.Join(base, "default"))
-
 	return dirs
 }
 
@@ -2950,9 +2952,9 @@ func (c *Config) FusionPath() string {
 }
 
 // FusionTokensPath returns the shared SQLite store for fusion OAuth tokens and
-// auth codes (~/.claw/state/fusion-tokens.db).
+// auth codes (~/.claw/internal/fusion-tokens.db).
 func (c *Config) FusionTokensPath() string {
-	return filepath.Join(c.dataDir, "state", "fusion-tokens.db")
+	return filepath.Join(c.InternalPath(), "fusion-tokens.db")
 }
 
 // BackupConfig controls the nightly configuration backup of key files

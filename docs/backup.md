@@ -15,7 +15,7 @@ relative to `CLAW_HOME`):
 | `cron/jobs.json` | Scheduled jobs. |
 | `credentials.json` | The WebUI admin account (when present). |
 | `tls/` | TLS key and certificate (when present). |
-| `state/` | Service and integration tokens, the device pairing database (`gateway.db`), the Fusion OAuth token store (`fusion-tokens.db`). |
+| `internal/` | claw's own state: `state.json`, service and integration tokens, the device pairing database (`gateway.db`), the Fusion OAuth token store (`fusion-tokens.db`). |
 | `agents/<agent>/sessions/*.archive.db` | Session archives. |
 | `agents/<agent>/cogmem/*.db` | Cognitive memory. |
 | any other `*.db` / `*.sqlite` under `CLAW_HOME` | |

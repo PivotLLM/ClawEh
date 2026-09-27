@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
@@ -58,13 +59,13 @@ type DeviceChannel struct {
 	cancel    context.CancelFunc
 }
 
-// NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
+// NewDeviceChannel opens the pairing store under <dataDir>/internal and builds the
 // gateway protocol server. logMessages enables full inbound/outbound content logs.
 // The listener answers only to Host names it is known by: localhost, its bind
 // host, the hosts of cfg.ExternalURL and gatewayExternalURL, any IP literal,
 // and extraHosts (reserved for TLS certificate names).
 func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus, gatewayExternalURL string, extraHosts []string) (*DeviceChannel, error) {
-	stateDir := filepath.Join(dataDir, "state")
+	stateDir := filepath.Join(dataDir, global.InternalDir)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
 	}

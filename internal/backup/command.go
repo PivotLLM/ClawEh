@@ -26,7 +26,7 @@ func NewBackupCommand() *cobra.Command {
 		Use:   "backup",
 		Short: "Write a backup archive of the ClawEh install",
 		Long: "Writes claw-backup-<timestamp>.tar.gz containing config.json, the cron jobs\n" +
-			"file, state/ (tokens and the device pairing database), credentials.json and\n" +
+			"file, internal/ (tokens and the device pairing database), credentials.json and\n" +
 			"tls/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
 			"cognitive memory, the fusion OAuth store), each checked with quick_check and\n" +
 			"copied with VACUUM INTO. Safe to run while the gateway is up. Archives older\n" +

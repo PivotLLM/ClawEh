@@ -191,8 +191,7 @@ func truncateRunes(s string, maxLen int) string {
 
 // sessionsDirs returns the sessions directories for every configured agent.
 // Multiple agents may have distinct workspaces; the WebUI must search all of
-// them to enumerate or locate sessions. The defaults workspace is always
-// included as a fallback for agents removed from config but with files on disk.
+// them to enumerate or locate sessions.
 func (h *Handler) sessionsDirs() ([]string, error) {
 	cfg, err := h.currentConfig()
 	if err != nil {

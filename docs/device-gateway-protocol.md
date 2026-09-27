@@ -307,7 +307,7 @@ command (`handleChatSend` intercepts it and replies as a normal turn — no agen
 - **`/agent`** (or `/agent list`) — lists configured assistants, marking the current one.
 - **`/agent <name-or-id>`** — switches this device's assigned assistant (case-insensitive match
   on id or name). Persists via `store.SetDeviceAgent` to the `paired_devices.agent_id` column
-  (`~/.claw/state/gateway.db`), the same field session-scope resolution reads — so the switch takes
+  (`~/.claw/internal/gateway.db`), the same field session-scope resolution reads — so the switch takes
   effect on the **next** turn and **survives restarts / reconnects**.
 - **`/agent default`** (or `reset`) — clears the assignment back to the gateway default.
 - **`/help`** — lists the available device commands.

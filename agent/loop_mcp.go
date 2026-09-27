@@ -165,7 +165,7 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	// Reuse the live manager: reconcile connections so unchanged servers keep
 	// running (no relaunch, no profile-lock race), then re-register tools onto the
 	// freshly-rebuilt agent registry.
-	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
+	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
 		logger.WarnCF("agent", "Some MCP servers failed to reconcile on reload",
 			map[string]any{"error": err.Error()})
 	}
@@ -211,7 +211,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		al.refreshMCPServerTools(mcpManager, server)
 	})
 
-	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
+	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
 		// A failed initial connect is NOT fatal: keep the manager alive so the
 		// background retry loop (mcpRetryLoop) can reconnect these servers without a
 		// restart. Its desired set was recorded before the connect attempts, and
@@ -234,16 +234,6 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	}
 
 	return mcpManager
-}
-
-// mcpWorkspacePath is the workspace used to resolve relative MCP envFile paths:
-// the default agent's workspace when set, otherwise the global workspace.
-func (al *AgentLoop) mcpWorkspacePath() string {
-	workspacePath := al.cfg.WorkspacePath()
-	if defaultAgent := al.registry.GetDefaultAgent(); defaultAgent != nil && defaultAgent.Workspace != "" {
-		workspacePath = defaultAgent.Workspace
-	}
-	return workspacePath
 }
 
 // registerMCPToolsFromManager registers every connected server's tools onto each

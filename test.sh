@@ -673,8 +673,8 @@ EOF
                 # gateway loads it at boot (exercises loadServiceTokens + the
                 # headless service session on /mcp + /internal).
                 TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
-                mkdir -p "$INTEG_HOME/state"
-                printf '{"main":"%s"}\n' "$TEST_SERVICE_TOKEN" > "$INTEG_HOME/state/service-tokens.json"
+                mkdir -p "$INTEG_HOME/internal"
+                printf '{"main":"%s"}\n' "$TEST_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &

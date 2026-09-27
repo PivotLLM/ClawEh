@@ -197,7 +197,7 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 		t.Errorf("tight permissions row = %v", r)
 	}
 
-	loosePath := filepath.Join(env.DataDir, "state", "tokens.json")
+	loosePath := filepath.Join(env.DataDir, "internal", "tokens.json")
 	if err := os.MkdirAll(filepath.Dir(loosePath), 0o700); err != nil {
 		t.Fatal(err)
 	}

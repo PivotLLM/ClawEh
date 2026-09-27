@@ -13,7 +13,7 @@ import (
 // request in the store and leaves the device paired.
 func TestAutoApproveLocalDevice(t *testing.T) {
 	dataDir := t.TempDir()
-	stateDir := filepath.Join(dataDir, "state")
+	stateDir := filepath.Join(dataDir, "internal")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 // approve for this device.
 func TestAutoApproveLocalDeviceNoPending(t *testing.T) {
 	dataDir := t.TempDir()
-	stateDir := filepath.Join(dataDir, "state")
+	stateDir := filepath.Join(dataDir, "internal")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

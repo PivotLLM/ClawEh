@@ -492,6 +492,31 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING: the data directory is laid out by purpose, and `agents/default`
+  is gone.** claw's own state (`state.json`, service and message tokens, the
+  device pairing database, Fusion's OAuth tokens, the ACP bridge identity) now
+  lives in `<CLAW_HOME>/internal/` instead of `<CLAW_HOME>/state/` and
+  `agents/default/state/`. The common directory defaults to
+  `<CLAW_HOME>/common` instead of `<agents base>/common` (`agents.common_dir`
+  still overrides it). `<CLAW_HOME>/skills` is the only shared skills folder:
+  the Skills page, `claw skills` and the report no longer show skills from
+  `agents/default/skills`, and the Skills page can now delete a shared skill.
+  CLI providers whose model sets no workspace run in `<CLAW_HOME>/cli/`, and a
+  relative MCP `env_file` path is relative to `<CLAW_HOME>` instead of the
+  default agent's workspace. `claw status` no longer prints a "Workspace:"
+  line, and a new install's first agent lives in `agents/claw`. The move is
+  automatic at the first start: files are moved into the new places (a file
+  already there wins, and anything left behind is named in a warning), the
+  empty `state/` directory is removed, and `agents/default` is deleted with
+  everything in it. It is left alone, with a warning, when a configured agent
+  uses it as its workspace (an agent with the id `default` or `main`, or an
+  explicit `workspace` pointing there), or when one of its skills has the same
+  name as a shared skill. The only manual step is for anything that names the
+  old paths by hand: change MCP `env_file` paths that pointed into
+  `agents/default` or were relative to the default agent's workspace, and
+  scripts that read `agents/common`, `agents/default` or `<CLAW_HOME>/state`.
+  See "File layout" in the README.
+
 - WebUI sidebar: **Chat** is now a direct link to the chat page instead of a
   group that opened to a single Chat entry, and the **Report** page is renamed
   **Check Up** (sidebar label and page heading). Its URL stays `/report` and

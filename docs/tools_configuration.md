@@ -167,7 +167,7 @@ Use it only for small services/servers — a large group can exceed `visible_bud
 | `command`  | string | stdio    | Executable command for stdio transport     |
 | `args`     | array  | no       | Command arguments for stdio transport      |
 | `env`      | object | no       | Environment variables for stdio process    |
-| `env_file` | string | no       | Path to environment file for stdio process |
+| `env_file` | string | no       | Path to environment file for stdio process; a relative path is relative to `CLAW_HOME` |
 | `url`      | string | sse/http | Endpoint URL for `sse`/`http` transport    |
 | `headers`  | object | no       | HTTP headers for `sse`/`http` transport    |
 

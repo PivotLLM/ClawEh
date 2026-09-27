@@ -35,7 +35,6 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		{ModelName: "claude-cli", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("claude-cli")
-	cfg.Agents.BaseDir = ""
 
 	provider, _, err := CreateProvider(cfg)
 	if err != nil {
@@ -46,8 +45,8 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 	if !ok {
 		t.Fatalf("returned %T, want *ClaudeCliProvider", provider)
 	}
-	if cliProvider.Workspace() != "." {
-		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), ".")
+	if cliProvider.Workspace() != cfg.CLIPath() {
+		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), cfg.CLIPath())
 	}
 }
 
@@ -122,7 +121,6 @@ func TestCreateProvider_AntigravityCliWithModel(t *testing.T) {
 
 func TestCreateProvider_AntigravityCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Agents.BaseDir = "" // clear base dir so the "." fallback is exercised
 	cfg.Providers = []config.Provider{{Name: "antigravity-cli", Protocol: "antigravity-cli"}}
 	cfg.Models = []config.ModelConfig{
 		{ModelName: "antigravity-cli", Model: "antigravity-cli", Provider: "antigravity-cli", Enabled: true},
@@ -137,8 +135,8 @@ func TestCreateProvider_AntigravityCliDefaultWorkspace(t *testing.T) {
 	if !ok {
 		t.Fatalf("returned %T, want *AntigravityCliProvider", provider)
 	}
-	if agyProvider.Workspace() != "." {
-		t.Errorf("workspace = %q, want %q (default)", agyProvider.Workspace(), ".")
+	if agyProvider.Workspace() != cfg.CLIPath() {
+		t.Errorf("workspace = %q, want %q (default)", agyProvider.Workspace(), cfg.CLIPath())
 	}
 }
 
@@ -175,6 +173,33 @@ func TestGeminiCliStillCountsAsACLIProvider(t *testing.T) {
 	for _, proto := range []string{"antigravity-cli", "gemini-cli"} {
 		if !config.IsCLIProtocol(proto) {
 			t.Errorf("IsCLIProtocol(%q) = false; the MCP host would not auto-start", proto)
+		}
+	}
+}
+
+// The dispatcher, which serves every agent turn, gives a model with no
+// workspace the same <CLAW_HOME>/cli working directory, and leaves a model's
+// own workspace alone.
+func TestProviderDispatcher_CLIWorkspace(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "claude-cli", Protocol: "claude-cli"}}
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "plain", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
+		{ModelName: "own", Model: "claude-sonnet", Provider: "claude-cli", Workspace: "/test/ws", Enabled: true},
+	}
+	d := NewProviderDispatcher(cfg)
+
+	for alias, want := range map[string]string{"plain": cfg.CLIPath(), "own": "/test/ws"} {
+		p, err := d.Get(alias)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", alias, err)
+		}
+		cli, ok := unwrapCLI(p).(*ClaudeCliProvider)
+		if !ok {
+			t.Fatalf("Get(%s) returned %T", alias, p)
+		}
+		if cli.Workspace() != want {
+			t.Errorf("%s workspace = %q, want %q", alias, cli.Workspace(), want)
 		}
 	}
 }
