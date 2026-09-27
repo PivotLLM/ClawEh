@@ -37,10 +37,16 @@ const config = {
     tls_port: 18443,
     external_url: "https://claw.example.com",
     allowed_cidrs: ["192.168.1.0/24"],
+    lockout_exempt: ["192.168.1.10"],
     tls: { mode: "all", extra_names: ["claw.home.arpa"] },
   },
   channels: {
-    device: { host: "127.0.0.1", port: 18791, auto_approve: false },
+    device: {
+      host: "127.0.0.1",
+      port: 18791,
+      auto_approve: false,
+      external_url: "https://ops42.example.com:42333",
+    },
   },
   mcp_host: { listen: "127.0.0.1:5911" },
 }
@@ -185,7 +191,10 @@ describe("NetworkPage", () => {
     expect(value("network-tls-port")).toBe("18443")
     expect(value("network-external-url")).toBe("https://claw.example.com")
     expect(value("network-allowed-cidrs")).toBe("192.168.1.0/24")
+    expect(value("network-lockout-exempt")).toBe("192.168.1.10")
     expect(value("network-device-port")).toBe("18791")
+    // The device address is shown without its scheme.
+    expect(value("network-device-external-url")).toBe("ops42.example.com:42333")
     expect(screen.getByTestId("network-mcp-listen").textContent).toBe(
       "127.0.0.1:5911",
     )
@@ -203,10 +212,12 @@ describe("NetworkPage", () => {
         .getByRole("radio", { name: "pages.network.https.mode_all" })
         .getAttribute("aria-checked"),
     ).toBe("true")
-    // channels.device.tls missing reads as off.
+    // channels.device.tls missing reads as ws.
     expect(
-      screen.getByTestId("network-device-tls").getAttribute("aria-checked"),
-    ).toBe("false")
+      screen
+        .getByRole("radio", { name: "pages.network.device.tls_ws" })
+        .getAttribute("aria-checked"),
+    ).toBe("true")
     expect(screen.getByTestId("cert-fingerprint").textContent).toBe(
       "AA:BB:CC:DD",
     )
@@ -475,7 +486,7 @@ describe("NetworkPage", () => {
     ).toBe(false)
   })
 
-  it("shows channels.device.tls as the device HTTPS checkbox and saves it as a listener change", async () => {
+  it("shows channels.device.tls as the ws/wss radio, first in its section, and saves it as a listener change", async () => {
     const calls = stubFetch({
       config: {
         ...config,
@@ -484,15 +495,92 @@ describe("NetworkPage", () => {
     })
     renderPage()
     await screen.findByTestId("cert-fingerprint")
-    const box = screen.getByTestId("network-device-tls")
-    expect(box.getAttribute("aria-checked")).toBe("true")
+    const group = screen.getByTestId("network-device-tls")
+    const wss = screen.getByRole("radio", {
+      name: "pages.network.device.tls_wss",
+    })
+    expect(wss.getAttribute("aria-checked")).toBe("true")
+    // The protocol choice comes before every other device control.
+    for (const id of [
+      "network-device-scope",
+      "network-device-port",
+      "network-device-external-url",
+      "network-device-cidrs",
+    ]) {
+      const other = screen.getByTestId(id)
+      expect(
+        group.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
 
-    fireEvent.click(box)
+    fireEvent.click(
+      screen.getByRole("radio", { name: "pages.network.device.tls_ws" }),
+    )
     await waitForPatch(calls)
     expect(patches(calls)[0]).toEqual({
       channels: { device: { tls: false } },
     })
     await screen.findByTestId("network-restart-banner")
+  })
+
+  it("saves the device external address as https://host[:port]", async () => {
+    const calls = stubFetch({})
+    renderPage()
+    await screen.findByTestId("cert-fingerprint")
+
+    fireEvent.change(screen.getByTestId("network-device-external-url"), {
+      target: { value: "claw.example.com:42333" },
+    })
+    await waitForPatch(calls)
+    expect(patches(calls)[0]).toEqual({
+      channels: { device: { external_url: "https://claw.example.com:42333" } },
+    })
+    expect(screen.queryByTestId("network-restart-banner")).toBe(null)
+  })
+
+  it("refuses a device external address with a scheme, under the field, and saves nothing", async () => {
+    const calls = stubFetch({})
+    renderPage()
+    await screen.findByTestId("cert-fingerprint")
+
+    fireEvent.change(screen.getByTestId("network-device-external-url"), {
+      target: { value: "wss://claw.example.com:42333" },
+    })
+    await screen.findByText(
+      "Enter a host name or IP address, with an optional :port.",
+    )
+    expect(screen.queryByTestId("network-save-error")).toBe(null)
+    expect(screen.getByTestId("network-save-status").textContent).toBe(
+      "pages.network.save_failed",
+    )
+    await new Promise((r) => setTimeout(r, 300))
+    expect(patches(calls)).toEqual([])
+
+    // A corrected value clears the error and saves.
+    fireEvent.change(screen.getByTestId("network-device-external-url"), {
+      target: { value: "claw.example.com:42333" },
+    })
+    await waitForPatch(calls)
+    expect(
+      screen.queryByText(
+        "Enter a host name or IP address, with an optional :port.",
+      ),
+    ).toBe(null)
+  })
+
+  it("saves the Never locked out editor as gateway.lockout_exempt", async () => {
+    const calls = stubFetch({})
+    renderPage()
+    await screen.findByTestId("cert-fingerprint")
+
+    fireEvent.change(screen.getByTestId("network-lockout-exempt"), {
+      target: { value: "192.168.1.10, 10.0.0.0/8" },
+    })
+    await waitForPatch(calls)
+    expect(patches(calls)[0]).toEqual({
+      gateway: { lockout_exempt: ["192.168.1.10", "10.0.0.0/8"] },
+    })
+    expect(screen.queryByTestId("network-restart-banner")).toBe(null)
   })
 
   it("marks each plain-HTTP network address with a warning icon", async () => {

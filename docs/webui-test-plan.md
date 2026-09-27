@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-129 checks in all; the runner prints the same tally at the end.
+131 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -148,12 +148,13 @@ carrying only the field that changed (text ~0.6 s after the last keystroke, a
 radio or checkbox at once); the certificate has its own buttons. A change to a
 bound address, port, the HTTPS mode or device TLS shows a **Restart required to
 apply changes.** banner with a **Restart now** button (`POST /api/system/restart`).
-R8 and R10 write (see *Before you start*); R8 needs HTTPS on. Nothing in this
-group clicks **Restart now**.
+R8 and R10 write (see *Before you start*); R8 needs HTTPS on. R15 types into
+a field but is refused before anything is sent. Nothing in this group clicks
+**Restart now**.
 
 | ID | Process | Expected |
 |---|---|---|
-| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs**, the device gateway's scope radios, port, **HTTPS (wss) for devices** checkbox, external URL, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address** and the address list. There is no Save button. Nine radios in all. No console errors |
+| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs** and **Never locked out**, the device gateway's **Protocol** radios (*ws (unencrypted)* / *wss (HTTPS)*), scope radios, port, **External address**, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address** and the address list. There is no Save button. Eleven radios in all. No console errors |
 | R2 | Compare the HTTP **Scope** radio and **Port** with `gateway.host` / `gateway.port` | *Network* is selected when the host is `0.0.0.0` (or any non-loopback address), *Localhost only* otherwise; the port field shows `gateway.port` (18790 by default). A warning line under *Network* reads *Exposing plain-text HTTP to the network is not recommended.* |
 | R3 | Compare the HTTPS **Listen on** radio and **HTTPS port** with `gateway.tls.mode` / `gateway.tls_port` | Exactly the configured mode is selected (`all` when unset); the port field shows `gateway.tls_port` (18443 by default) |
 | R4 | Compare **Hostname / external URL** with `gateway.external_url` | Equal (blank when unset) |
@@ -164,9 +165,11 @@ group clicks **Restart now**.
 | R9 | Read the **Addresses** card | Lists `urls.localhost`, every `urls.http[]` and every `urls.https[]` from `GET /api/tls` — exactly what to open. Each plain-HTTP network address, and nothing else, carries a warning triangle whose hover text is *Plain-text HTTP exposed to network.* No Docker bridge address (`172.17–31.x.0.1`) is listed. With HTTPS off it says ClawEh is reachable from this host only |
 | R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number and wait for *Saved ✓*; then set it back and wait for the save | After the first save a banner reading exactly **Restart required to apply changes.** appears with a **Restart now** button beside it (do **not** click it) and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
 | R11 | Compare **Allowed network CIDRs** with `gateway.allowed_cidrs` | One entry per line, in order (empty for loopback only) |
-| R12 | Compare the **Device gateway** section with `channels.device` | Scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the external URL field shows `external_url` |
+| R12 | Compare the **Device gateway** section with `channels.device` | The **Protocol** radio (*ws (unencrypted)* / *wss (HTTPS)*) is the first control of the section and shows `tls` (*wss* exactly when `true`); the scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the **External address** field shows `external_url` without its scheme |
 | R13 | Read the **MCP host** section | The listen address equals `mcp_host.listen` (`127.0.0.1:5911` by default) and is rendered as text, not an input: the gateway refuses any non-loopback address, so there is nothing to edit here |
-| R14 | Compare the **HTTPS (wss) for devices** checkbox with `channels.device.tls` | Checked exactly when `tls` is `true`; a missing key reads as unchecked. Its hint is the one sentence *Devices connect with wss:// using the WebUI certificate.* |
+| R14 | Compare the **Protocol** radio with `channels.device.tls` | Two options; *wss (HTTPS)* is selected exactly when `tls` is `true`, *ws (unencrypted)* otherwise, a missing key reading as ws. Its hint is the one sentence *Devices connect to one port, plain or with the WebUI certificate.* |
+| R15 | Compare **External address** with `channels.device.external_url`, then type `wss://e2e-probe.invalid:18791` and wait for the save delay | The field shows the stored value as `host[:port]`: no `https://`, `http://`, `wss://` or `ws://` and no trailing slash (blank when unset). The typed URL is refused under the field with *Enter a host name or IP address, with an optional :port.* and `channels.device.external_url` is unchanged: nothing was sent. Leaving the page discards the typed value |
+| R16 | Compare **Never locked out** with `gateway.lockout_exempt` | One entry per line, in order (empty when unset) |
 
 ## H. Channels
 

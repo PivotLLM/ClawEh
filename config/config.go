@@ -1933,6 +1933,8 @@ type GatewayConfig struct {
 	// "0.0.0.0/0" is an IPv4 prefix and still refuses IPv6 clients. Loopback is
 	// always allowed.
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	// LockoutExempt lists client IPs/CIDRs never locked out after failed logins.
+	LockoutExempt []string `json:"lockout_exempt,omitempty"`
 }
 
 // TLSConfig is the HTTPS listener's placement and certificate. Mode says

@@ -13,6 +13,7 @@ import {
   EMPTY_NETWORK_FORM,
   type HttpScope,
   type HttpsMode,
+  NetworkFieldError,
   type NetworkForm,
   buildNetworkFormFromConfig,
   buildNetworkPatch,
@@ -21,7 +22,6 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -244,6 +244,8 @@ export function NetworkPage() {
 
   const [status, setStatus] = useState<SaveStatus>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // A validation failure that belongs to one field, shown under it.
+  const [fieldError, setFieldError] = useState<NetworkFieldError | null>(null)
   // Set after a save that changed a bound address or port; the server's own
   // restart_required flag covers it once GET /api/tls is refetched, but that
   // read can lag the write.
@@ -279,9 +281,14 @@ export function NetworkPage() {
       patch = buildNetworkPatch(current, loaded)
     } catch (err) {
       setStatus("error")
+      if (err instanceof NetworkFieldError) {
+        setFieldError(err)
+        return
+      }
       setSaveError(err instanceof Error ? err.message : String(err))
       return
     }
+    setFieldError(null)
     if (Object.keys(patch).length === 0) return
     setSaveError(null)
     setStatus("saving")
@@ -646,12 +653,44 @@ export function NetworkPage() {
                     onChange={(e) => update("allowedCIDRsText", e.target.value)}
                   />
                 </Field>
+                <Field
+                  label={t("pages.network.allowed.lockout_exempt")}
+                  hint={t("pages.network.allowed.lockout_exempt_hint")}
+                  layout="setting-row"
+                  controlClassName="md:max-w-md"
+                >
+                  <Textarea
+                    value={form.lockoutExemptText}
+                    className="min-h-[66px]"
+                    data-testid="network-lockout-exempt"
+                    onChange={(e) =>
+                      update("lockoutExemptText", e.target.value)
+                    }
+                  />
+                </Field>
               </ConfigSectionCard>
 
               <ConfigSectionCard
                 title={t("pages.network.device.title")}
                 description={t("pages.network.device.desc")}
               >
+                <ChoiceField<"ws" | "wss">
+                  name="network-device-tls"
+                  label={t("pages.network.device.tls")}
+                  hint={t("pages.network.device.tls_hint")}
+                  value={form.deviceTLS ? "wss" : "ws"}
+                  onChange={(v) => update("deviceTLS", v === "wss", 0)}
+                  options={[
+                    {
+                      value: "ws",
+                      label: t("pages.network.device.tls_ws"),
+                    },
+                    {
+                      value: "wss",
+                      label: t("pages.network.device.tls_wss"),
+                    },
+                  ]}
+                />
                 <ChoiceField<HttpScope>
                   name="network-device-scope"
                   label={t("pages.network.device.scope")}
@@ -684,41 +723,25 @@ export function NetworkPage() {
                     onChange={(e) => update("devicePort", e.target.value)}
                   />
                 </Field>
-                <div className="flex flex-col gap-2 py-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-6">
-                  <div className="max-w-full space-y-1 md:max-w-[clamp(18rem,42vw,28rem)]">
-                    <Label
-                      htmlFor="network-device-tls"
-                      className="text-sm font-medium"
-                    >
-                      {t("pages.network.device.tls")}
-                    </Label>
-                    <p className="text-muted-foreground text-xs leading-normal">
-                      {t("pages.network.device.tls_hint")}
-                    </p>
-                  </div>
-                  <div className="flex items-center md:justify-self-center">
-                    <Checkbox
-                      id="network-device-tls"
-                      data-testid="network-device-tls"
-                      checked={form.deviceTLS}
-                      onCheckedChange={(v) =>
-                        update("deviceTLS", v === true, 0)
-                      }
-                    />
-                  </div>
-                </div>
                 <Field
-                  label={t("pages.network.device.external_url")}
-                  hint={t("pages.network.device.external_url_hint")}
+                  label={t("pages.network.device.external_address")}
+                  hint={t("pages.network.device.external_address_hint")}
                   layout="setting-row"
+                  error={
+                    fieldError?.field === "deviceExternalHost"
+                      ? fieldError.message
+                      : undefined
+                  }
                 >
                   <Input
                     type="text"
-                    value={form.deviceExternalUrl}
-                    placeholder="wss://claw.example.com"
+                    value={form.deviceExternalHost}
+                    placeholder={t(
+                      "pages.network.device.external_address_placeholder",
+                    )}
                     data-testid="network-device-external-url"
                     onChange={(e) =>
-                      update("deviceExternalUrl", e.target.value)
+                      update("deviceExternalHost", e.target.value)
                     }
                   />
                 </Field>

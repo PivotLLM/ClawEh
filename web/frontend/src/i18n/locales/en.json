@@ -436,7 +436,9 @@
         "desc": "Network access control for WebUI and API. Localhost is always allowed to connect.",
         "cidrs": "Allowed network CIDRs",
         "cidrs_hint": "One network per line, such as 192.168.1.0/24, or * for any address; empty allows localhost only.",
-        "cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)"
+        "cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)",
+        "lockout_exempt": "Never locked out",
+        "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is."
       },
       "device": {
         "title": "Device gateway",
@@ -448,14 +450,17 @@
         "scope_network_hint": "Reachable from your network (0.0.0.0).",
         "port": "Port",
         "port_hint": "Port of the device listener (default 18791).",
-        "external_url": "External URL",
-        "external_url_hint": "The address devices are told to connect to; leave blank for direct LAN access, or set it when a proxy or tunnel fronts the gateway.",
+        "external_address": "External address",
+        "external_address_hint": "Where devices connect from outside, for example through a reverse proxy.",
+        "external_address_placeholder": "host or host:port",
         "cidrs": "Allowed network CIDRs",
         "cidrs_hint": "Networks that may reach the device listener; empty allows any, localhost is always allowed.",
         "auto_approve": "Auto-approve pairings",
         "auto_approve_hint": "Skip approval for new device pairings (trusted home network only).",
-        "tls": "HTTPS (wss) for devices",
-        "tls_hint": "Devices connect with wss:// using the WebUI certificate.",
+        "tls": "Protocol",
+        "tls_hint": "Devices connect to one port, plain or with the WebUI certificate.",
+        "tls_ws": "ws (unencrypted)",
+        "tls_wss": "wss (HTTPS)",
         "pairing_link": "Pair and manage devices on the Devices page"
       },
       "mcp": {

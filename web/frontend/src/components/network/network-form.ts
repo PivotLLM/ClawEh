@@ -15,9 +15,12 @@ export interface NetworkForm {
   externalUrl: string
   tlsExtraNames: string[]
   allowedCIDRsText: string
+  /** gateway.lockout_exempt: IPs/CIDRs never locked out after failed sign-ins. */
+  lockoutExemptText: string
   deviceScope: HttpScope
   devicePort: string
-  deviceExternalUrl: string
+  /** channels.device.external_url shown as host[:port]; https:// is added on save. */
+  deviceExternalHost: string
   deviceAllowedCIDRsText: string
   deviceAutoApprove: boolean
   /** channels.device.tls: serve the device listener over wss://. */
@@ -38,9 +41,10 @@ export const EMPTY_NETWORK_FORM: NetworkForm = {
   externalUrl: "",
   tlsExtraNames: [],
   allowedCIDRsText: "",
+  lockoutExemptText: "",
   deviceScope: "localhost",
   devicePort: String(DEFAULT_DEVICE_PORT),
-  deviceExternalUrl: "",
+  deviceExternalHost: "",
   deviceAllowedCIDRsText: "",
   deviceAutoApprove: false,
   deviceTLS: false,
@@ -85,6 +89,44 @@ function asHttpsMode(value: unknown): HttpsMode {
   return value === "localhost" || value === "off" ? value : "all"
 }
 
+// deviceHostFromURL shows a stored channels.device.external_url as
+// host[:port]: the scheme (https, http, wss or ws) and a trailing slash are
+// dropped. The scheme is ours to add back on save.
+export function deviceHostFromURL(stored: string): string {
+  return stored
+    .trim()
+    .replace(/^(https?|wss?):\/\//i, "")
+    .replace(/\/+$/, "")
+}
+
+export const DEVICE_HOST_ERROR =
+  "Enter a host name or IP address, with an optional :port."
+
+// deviceURLFromHost turns the host[:port] the operator typed into the stored
+// https:// URL (the pairing QR turns https into wss); blank stays blank.
+export function deviceURLFromHost(host: string): string {
+  const h = host.trim()
+  return h === "" ? "" : `https://${h}`
+}
+
+// checkDeviceHost refuses a typed scheme or path: the operator enters only
+// the host, with an optional port.
+function checkDeviceHost(host: string): void {
+  if (host.includes("://") || host.includes("/")) {
+    throw new NetworkFieldError("deviceExternalHost", DEVICE_HOST_ERROR)
+  }
+}
+
+// NetworkFieldError is a validation failure that belongs to one field, shown
+// in that field's error slot rather than as a page-level message.
+export class NetworkFieldError extends Error {
+  field: keyof NetworkForm
+  constructor(field: keyof NetworkForm, message: string) {
+    super(message)
+    this.field = field
+  }
+}
+
 export function buildNetworkFormFromConfig(config: unknown): NetworkForm {
   const root = asRecord(config)
   const gateway = asRecord(root.gateway)
@@ -99,9 +141,10 @@ export function buildNetworkFormFromConfig(config: unknown): NetworkForm {
     externalUrl: asString(gateway.external_url),
     tlsExtraNames: asStringArray(tls.extra_names),
     allowedCIDRsText: asStringArray(gateway.allowed_cidrs).join("\n"),
+    lockoutExemptText: asStringArray(gateway.lockout_exempt).join("\n"),
     deviceScope: scopeOfHost(asString(device.host)),
     devicePort: asPortString(device.port, EMPTY_NETWORK_FORM.devicePort),
-    deviceExternalUrl: asString(device.external_url),
+    deviceExternalHost: deviceHostFromURL(asString(device.external_url)),
     deviceAllowedCIDRsText: asStringArray(device.allowed_cidrs).join("\n"),
     deviceAutoApprove: device.auto_approve === true,
     deviceTLS: device.tls === true,
@@ -132,6 +175,7 @@ function fullNetworkPatch(form: NetworkForm): JsonRecord {
       tls_port: tlsPort,
       external_url: form.externalUrl.trim(),
       allowed_cidrs: parseCIDRText(form.allowedCIDRsText),
+      lockout_exempt: parseCIDRText(form.lockoutExemptText),
       tls: {
         mode: form.httpsMode,
         extra_names: form.tlsExtraNames
@@ -143,7 +187,7 @@ function fullNetworkPatch(form: NetworkForm): JsonRecord {
       device: {
         host: hostOfScope(form.deviceScope),
         port: devicePort,
-        external_url: form.deviceExternalUrl.trim(),
+        external_url: deviceURLFromHost(form.deviceExternalHost),
         allowed_cidrs: parseCIDRText(form.deviceAllowedCIDRsText),
         auto_approve: form.deviceAutoApprove,
         tls: form.deviceTLS,
@@ -183,6 +227,12 @@ export function buildNetworkPatch(
   form: NetworkForm,
   baseline: NetworkForm,
 ): Record<string, unknown> {
+  // Only what the operator typed is checked: a stored value is displayed as
+  // it is, and both sides map to https://, so a stored http:// or ws:// URL is
+  // rewritten only once the field is edited.
+  if (form.deviceExternalHost !== baseline.deviceExternalHost) {
+    checkDeviceHost(form.deviceExternalHost.trim())
+  }
   return diffPatch(fullNetworkPatch(form), fullNetworkPatch(baseline))
 }
 

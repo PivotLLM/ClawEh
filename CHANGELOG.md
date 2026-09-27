@@ -243,6 +243,9 @@ observe does not need an entry.
   now** button that calls it, waits for `/ready` to answer again and reloads
   the page. The device gateway's `channels.device.tls` key has a checkbox on
   the Network page, **HTTPS (wss) for devices**; changing it shows the banner.
+- The Network page's Allowed networks card gains a **Never locked out** editor
+  for `gateway.lockout_exempt`: IPs or CIDRs, one per line or comma-separated,
+  autosaved like the other fields.
 - **Configuration report.** A new Report page (after Services in the WebUI
   menu) shows the security assessment inline and offers a PDF, the ClawEh
   Configuration Report, describing what this install can do: identity and the
@@ -439,6 +442,16 @@ observe does not need an entry.
   checkbox at once), sending only that field.
 - `claw status` no longer prints a "Model:" line: agents use their own model
   lists, so a single name there was misleading.
+- **Device gateway section of the Network page.** The ws/wss choice is now the
+  first control of the section, a two-option **Protocol** radio (*ws
+  (unencrypted)* / *wss (HTTPS)*) bound to `channels.device.tls`, replacing
+  the **HTTPS (wss) for devices** checkbox. The **External URL** field is now
+  **External address**: the operator enters only a host name or IP address,
+  with an optional `:port`; a value with a scheme or a path is refused under
+  the field and nothing is saved. The stored `channels.device.external_url`
+  becomes `https://<host[:port]>` (the pairing QR turns it into `wss://`). A
+  stored URL is shown without its scheme; one stored as `http://` or `ws://`
+  is rewritten to `https://` only when the field is edited.
 - The address lists on the Network page, in `claw status` and in `GET /api/tls`
   no longer include Docker's bridge interfaces (`docker0`, `br-<id>`, `veth*`):
   those addresses reach only containers on the machine, so they are not

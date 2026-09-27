@@ -721,6 +721,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       "cert-current",
       "cert-source",
       "network-allowed-cidrs",
+      "network-lockout-exempt",
       "network-device-scope",
       "network-device-port",
       "network-device-tls",
@@ -747,13 +748,16 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       "Off",
       "Self-signed (default)",
       "External certificate",
-      "HTTPS (wss) for devices",
+      "Never locked out",
+      "ws (unencrypted)",
+      "wss (HTTPS)",
       "Auto-approve pairings",
     ]) {
       assert(body.includes(label), `missing label "${label}"`)
     }
-    // HTTP scope (2) + HTTPS mode (3) + certificate source (2) + device scope (2).
-    assert(radios === 9, `${radios} radios, want 9`)
+    // HTTP scope (2) + HTTPS mode (3) + certificate source (2) + device
+    // protocol (2) + device scope (2).
+    assert(radios === 11, `${radios} radios, want 11`)
     return `${ids.length} controls, ${radios} radios`
   })
 
@@ -962,14 +966,29 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     const loopback = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
     const { close, page } = await open("/network")
     await page.locator("[data-testid=network-device-scope]").waitFor({ timeout: 10000 })
+    // The ws/wss choice is the first control of the section: it precedes
+    // every other device control in the document.
+    const tlsFirst = await page.evaluate(() => {
+      const tls = document.querySelector("[data-testid=network-device-tls]")
+      return ["scope", "port", "external-url", "cidrs"].every((k) => {
+        const other = document.querySelector(`[data-testid=network-device-${k}]`)
+        return !!tls && !!other && !!(tls.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING)
+      })
+    })
+    const wssOn = await radioChecked(page, "network-device-tls-wss")
+    const wsOn = await radioChecked(page, "network-device-tls-ws")
     const localhostOn = await radioChecked(page, "network-device-scope-localhost")
     const port = await page.locator("[data-testid=network-device-port]").inputValue()
     const ext = await page.locator("[data-testid=network-device-external-url]").inputValue()
     await close()
+    assert(tlsFirst, "the ws/wss radio is not the first control of the device section")
+    const tls = d.tls === true
+    assert(wssOn === tls && wsOn === !tls, `tls=${JSON.stringify(d.tls)} but ws=${wsOn} wss=${wssOn}`)
     assert(localhostOn === loopback, `device host=${JSON.stringify(host)} but localhost radio=${localhostOn}`)
     assert(port === String(d.port || 18791), `device port field = ${port}`)
-    assert(ext === (d.external_url ?? ""), `device external URL field = ${JSON.stringify(ext)}`)
-    return `${loopback ? "Localhost only" : "Network"}, port ${port}`
+    const wantExt = String(d.external_url ?? "").trim().replace(/^(https?|wss?):\/\//i, "").replace(/\/+$/, "")
+    assert(ext === wantExt, `device external address field = ${JSON.stringify(ext)}, want ${JSON.stringify(wantExt)}`)
+    return `${tls ? "wss" : "ws"}, ${loopback ? "Localhost only" : "Network"}, port ${port}`
   })
 
   await check(13, "the MCP host address is shown read-only", async () => {
@@ -986,21 +1005,65 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     return shown
   })
 
-  await check(14, "the device HTTPS checkbox reflects channels.device.tls", async () => {
+  await check(14, "the device ws/wss radio reflects channels.device.tls", async () => {
     const c = await config()
     const want = c?.channels?.device?.tls === true
     const { close, page, text } = await open("/network")
-    const box = page.locator("[data-testid=network-device-tls]")
-    await box.waitFor({ timeout: 10000 })
-    const checked = (await box.getAttribute("aria-checked")) === "true"
+    await page.locator("[data-testid=network-device-tls]").waitFor({ timeout: 10000 })
+    const wssOn = await radioChecked(page, "network-device-tls-wss")
+    const wsOn = await radioChecked(page, "network-device-tls-ws")
+    const radios = await page.locator("[data-testid=network-device-tls]").getByRole("radio").count()
     const body = await text()
     await close()
-    assert(checked === want, `checkbox checked=${checked}, config tls=${JSON.stringify(c?.channels?.device?.tls)}`)
+    assert(radios === 2, `${radios} protocol radios, want 2`)
+    assert(wssOn === want && wsOn === !want, `ws=${wsOn} wss=${wssOn}, config tls=${JSON.stringify(c?.channels?.device?.tls)}`)
     assert(
-      body.includes("Devices connect with wss:// using the WebUI certificate."),
+      body.includes("Devices connect to one port, plain or with the WebUI certificate."),
       "the one-sentence hint is missing",
     )
-    return want ? "on (wss)" : "off (ws)"
+    return want ? "wss (HTTPS)" : "ws (unencrypted)"
+  })
+
+  await check(15, "the device external address is shown without its scheme and refuses one", async () => {
+    const before = await config()
+    const stored = String(before?.channels?.device?.external_url ?? "")
+    const { close, page, text } = await open("/network")
+    const field = page.locator("[data-testid=network-device-external-url]")
+    await field.waitFor({ timeout: 10000 })
+    const shown = await field.inputValue()
+    // Type a URL: the page refuses it under the field and sends nothing. The
+    // page is closed without a save, so nothing needs restoring.
+    await field.fill("wss://e2e-probe.invalid:18791")
+    await page.waitForTimeout(1200)
+    const body = await text()
+    await close()
+    const after = await config()
+    assert(!/^(https?|wss?):\/\//i.test(shown), `field shows a scheme: ${JSON.stringify(shown)}`)
+    assert(
+      shown === stored.trim().replace(/^(https?|wss?):\/\//i, "").replace(/\/+$/, ""),
+      `field = ${JSON.stringify(shown)}, config ${JSON.stringify(stored)}`,
+    )
+    assert(
+      body.includes("Enter a host name or IP address, with an optional :port."),
+      "no validation message under the field",
+    )
+    assert(
+      (after?.channels?.device?.external_url ?? "") === (before?.channels?.device?.external_url ?? ""),
+      `external_url changed to ${JSON.stringify(after?.channels?.device?.external_url)}`,
+    )
+    return `${shown || "(blank)"}; wss:// refused`
+  })
+
+  await check(16, "the Never locked out editor reflects gateway.lockout_exempt", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-lockout-exempt]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.lockout_exempt ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(none)"
   })
 }
 
