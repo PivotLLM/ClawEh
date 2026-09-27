@@ -223,6 +223,15 @@ observe does not need an entry.
 
 ### Added
 
+- **`gateway.lockout_exempt`: addresses that are never locked out.** A list of
+  IP addresses and CIDRs (a bare IP means that one address) exempt from every
+  per-address lockout: the WebUI login address lock and the device gateway's
+  auth-failure lockout. Use it for a reverse proxy, so failures from others
+  behind it cannot lock everyone out. Loopback is always exempt. Account
+  (username) locks still apply to attempts from these addresses. Default empty;
+  an invalid entry is a config error; a change applies on config reload
+  without a restart. The WebUI Network page shows it as "Never locked out".
+
 - **HTTPS for the device gateway.** `channels.device.tls: true` serves the
   device listener over TLS (`wss://`) on its usual port with the same
   certificate as the WebUI HTTPS listener, self-signed or user-provided,

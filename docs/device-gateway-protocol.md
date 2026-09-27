@@ -102,7 +102,8 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
    up to 1 hour; a locked client's `connect` is answered `INVALID_REQUEST` with
    `details.code = AUTH_RATE_LIMITED`, `retryable: true` and `retryAfterMs`.
    A device that keeps reconnecting with a revoked token trips this after five
-   attempts; re-pair from that address once the lockout expires. Before the
+   attempts; re-pair from that address once the lockout expires. Addresses in
+   `gateway.lockout_exempt`, and loopback, are never throttled. Before the
    handshake completes a connection may send at most 64 KiB per frame
    (`maxPayload` applies afterwards), at most 32 connections may sit in the
    handshake at once, and the listener answers `421` to requests whose `Host`

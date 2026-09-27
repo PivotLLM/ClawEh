@@ -138,6 +138,14 @@ func (e *emulator) writeReq(t *testing.T, conn *websocket.Conn, id, method strin
 
 func newTestServer(t *testing.T, opts ServerOptions) (*Server, *Store, string) {
 	t.Helper()
+	return newTestServerFrom(t, opts, "")
+}
+
+// newTestServerFrom is newTestServer with every request's RemoteAddr set to
+// remoteAddr (host:port), so a test can present a non-loopback client. Empty
+// keeps the real loopback peer.
+func newTestServerFrom(t *testing.T, opts ServerOptions, remoteAddr string) (*Server, *Store, string) {
+	t.Helper()
 	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +156,12 @@ func newTestServer(t *testing.T, opts ServerOptions) (*Server, *Store, string) {
 		}
 	})
 	srv := NewServer(store, opts)
-	hs := httptest.NewServer(http.HandlerFunc(srv.HandleWS))
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if remoteAddr != "" {
+			r.RemoteAddr = remoteAddr
+		}
+		srv.HandleWS(w, r)
+	}))
 	t.Cleanup(hs.Close)
 	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http")
 	return srv, store, wsURL

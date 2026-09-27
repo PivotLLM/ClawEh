@@ -21,6 +21,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -135,6 +136,10 @@ func NewServer(store *Store, opts ServerOptions) *Server {
 		throttle: newAuthThrottle(),
 	}
 }
+
+// SetLockoutExempt sets the client IPs the auth-failure lockout never applies
+// to (gateway.lockout_exempt). Loopback is always exempt.
+func (s *Server) SetLockoutExempt(set *config.LockoutExemptSet) { s.throttle.setExempt(set) }
 
 // SetInbound installs the agent bridge invoked on each chat.send.
 func (s *Server) SetInbound(fn InboundFunc) { s.inbound = fn }

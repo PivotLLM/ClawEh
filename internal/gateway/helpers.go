@@ -640,6 +640,9 @@ func setupAndStartServices(
 	services.AuthStore = authStore
 	services.HTTPHost.SetAuth(authStore)
 	services.WebServer.APIHandler().SetAuth(authStore)
+	if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
+		return nil, err
+	}
 	webui.SetSessionValidator(authStore.HasSession)
 	authCtx, stopAuthWatch := context.WithCancel(context.Background())
 	services.stopAuthWatch = stopAuthWatch
@@ -1135,6 +1138,14 @@ func restartServices(
 		// previous policy rather than dropping to loopback-only.
 		if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
 			logger.WarnF("Invalid gateway.external_url in reloaded config; keeping the previous host policy", map[string]any{"error": err.Error()})
+		}
+	}
+	// The login limiter outlives the reload like the listener, so the lockout
+	// exemption list is swapped into it here. The device channel is rebuilt
+	// above and reads the list from the new config itself.
+	if services.WebServer != nil {
+		if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
+			logger.WarnF("Invalid lockout exemption list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
 		}
 	}
 

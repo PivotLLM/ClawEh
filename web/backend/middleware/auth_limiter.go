@@ -3,6 +3,8 @@ package middleware
 import (
 	"sync"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // Login lockout. Failed logins are counted per client address and per
@@ -10,6 +12,8 @@ import (
 // that address or username; while it is locked every attempt is refused and
 // restarts the lock at its full length, so a lock ends only after a full
 // lockout period with no attempts at all. There is no escalation and no cap.
+// An address in gateway.lockout_exempt (and loopback) is never counted or
+// locked by address; its attempts still count against the username.
 const (
 	// LoginIPFailures is how many failed logins from one client address
 	// inside loginFailureWindow lock that address.
@@ -103,8 +107,16 @@ type LoginLimiter struct {
 	mu        sync.Mutex
 	ips       *lockTable
 	users     *lockTable
+	exempt    *config.LockoutExemptSet // addresses the ips table ignores; nil is loopback only
 	lastPrune time.Time
 	credGen   uint64
+}
+
+// SetExempt swaps in the addresses exempt from the per-address lock.
+func (l *LoginLimiter) SetExempt(set *config.LockoutExemptSet) {
+	l.mu.Lock()
+	l.exempt = set
+	l.mu.Unlock()
 }
 
 // NewLoginLimiter creates a limiter; now is the clock (time.Now in
@@ -145,7 +157,7 @@ func (l *LoginLimiter) Attempt(ip, username string) time.Duration {
 	defer l.mu.Unlock()
 	l.pruneLocked(now)
 	var wait time.Duration
-	if l.ips.touchLocked(ip, now) {
+	if !l.exempt.Contains(ip) && l.ips.touchLocked(ip, now) {
 		wait = l.ips.lockout
 	}
 	if l.users.touchLocked(username, now) {
@@ -162,7 +174,7 @@ func (l *LoginLimiter) Failure(ip, username string) []LockStart {
 	defer l.mu.Unlock()
 	l.pruneLocked(now)
 	var started []LockStart
-	if l.ips.failure(ip, now) {
+	if !l.exempt.Contains(ip) && l.ips.failure(ip, now) {
 		started = append(started, LockStart{Key: ip, For: l.ips.lockout})
 	}
 	if l.users.failure(username, now) {

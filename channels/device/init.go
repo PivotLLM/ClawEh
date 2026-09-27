@@ -12,6 +12,16 @@ func init() {
 		// The gateway's TLS certificate names are Hosts clients reach this box
 		// by, so the device listener answers to them too (nil when the HTTPS
 		// listener is off).
-		return NewDeviceChannel(cfg.Channels.Device, cfg.DataDir(), cfg.Logging.LogMessageContent, b, cfg.Gateway.ExternalURL, tlscert.NamesForConfig(cfg))
+		exempt, err := config.CompileLockoutExempt(cfg.Gateway.LockoutExempt)
+		if err != nil {
+			return nil, err
+		}
+		dc, err := NewDeviceChannel(cfg.Channels.Device, cfg.DataDir(), cfg.Logging.LogMessageContent, b, cfg.Gateway.ExternalURL, tlscert.NamesForConfig(cfg))
+		if err != nil {
+			return nil, err
+		}
+		// Built afresh on every config reload, so a changed list applies then.
+		dc.server.SetLockoutExempt(exempt)
+		return dc, nil
 	})
 }

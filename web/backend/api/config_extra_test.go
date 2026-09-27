@@ -346,6 +346,22 @@ func TestValidateConfig_SurfacesCIDRErrors(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_SurfacesLockoutExemptErrors checks that a WebUI save
+// with a bad gateway.lockout_exempt entry is refused.
+func TestValidateConfig_SurfacesLockoutExemptErrors(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Gateway.LockoutExempt = []string{"192.0.2.1", "10.0.0.0/8", "not-an-ip"}
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "gateway.lockout_exempt") {
+		t.Fatalf("errs = %v, want an error naming gateway.lockout_exempt", errs)
+	}
+	cfg.Gateway.LockoutExempt = cfg.Gateway.LockoutExempt[:2]
+	if errs := validateConfig(cfg); anyContains(errs, "gateway.lockout_exempt") {
+		t.Fatalf("valid list rejected: %v", errs)
+	}
+}
+
 // TestValidateConfig_MCPHostListen covers the mcp_host.listen rule, including
 // that an empty value is skipped rather than rejected.
 func TestValidateConfig_MCPHostListen(t *testing.T) {
