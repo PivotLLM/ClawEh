@@ -443,7 +443,7 @@
         "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted."
       },
       "device": {
-        "title": "Device gateway",
+        "title": "Device listener",
         "desc": "The listener for external devices (Rabbit R1, voice apps), on its own port with its own pairing.",
         "scope": "Scope",
         "scope_hint": "Which addresses the device listener binds.",
@@ -620,7 +620,7 @@
       "lines": "Show",
       "refresh": "Refresh",
       "source": "Log",
-      "source_log": "Gateway log",
+      "source_log": "ClawEh log",
       "source_alerts": "Alerts"
     },
     "audit": {
@@ -960,7 +960,7 @@
     "login": {
       "title": "ClawEh",
       "checking": "Checking the server...",
-      "unreachable": "The server could not be reached. Is the gateway running?",
+      "unreachable": "The server could not be reached. Is ClawEh running?",
       "username": "Username",
       "password": "Password",
       "submit": "Sign in",
@@ -972,7 +972,7 @@
     "noAdmin": {
       "title": "No admin account",
       "body": "On the server run:",
-      "hint": "Then check again. The gateway picks the account up within a minute.",
+      "hint": "Then check again. ClawEh picks the account up within a minute.",
       "retry": "Check again"
     },
     "logout": "Sign out"

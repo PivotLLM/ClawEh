@@ -25,9 +25,9 @@ import (
 func NewDevicesCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "devices",
-		Short: "Pair and manage external gateway devices (e.g. Rabbit R1)",
+		Short: "Pair and manage external devices (e.g. Rabbit R1)",
 		Long: "Provision and print a pairing QR for external OpenClaw-protocol devices, and\n" +
-			"approve or reject pending device pairings. The QR carries the gateway URL and a\n" +
+			"approve or reject pending device pairings. The QR carries the connection URL and a\n" +
 			"shared token; scan it with the device. First connection creates a pending pairing\n" +
 			"you approve here or in the WebUI.",
 		Args: cobra.NoArgs,
@@ -56,7 +56,7 @@ func openStore() (*device.Store, *config.Config, error) {
 func newPairCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pair",
-		Short: "Provision the device gateway and print a pairing QR code",
+		Short: "Provision the device listener and print a pairing QR code",
 		Args:  cobra.NoArgs,
 		RunE:  func(_ *cobra.Command, _ []string) error { return pair() },
 	}
@@ -66,7 +66,7 @@ func pair() error {
 	configPath := internal.GetConfigPath()
 	cfg, changed, err := device.EnsureProvisioned(configPath)
 	if err != nil {
-		return fmt.Errorf("provision device gateway: %w", err)
+		return fmt.Errorf("provision device listener: %w", err)
 	}
 	dev := cfg.Channels.Device
 	devicePort := dev.Port
@@ -95,14 +95,14 @@ func pair() error {
 		fmt.Printf("  %s://%s:%d\n", payload.Protocol, host, payload.Port)
 	}
 	if changed {
-		fmt.Println("(generated a shared token and enabled the device gateway; a running gateway will pick this up within a few seconds)")
+		fmt.Println("(generated a shared token and enabled the device listener; a running claw will pick this up within a few seconds)")
 	}
 	host := dev.Host
 	if host == "" {
 		host = "127.0.0.1"
 	}
 	if device.IsLoopbackHost(host) {
-		fmt.Printf("WARNING: device gateway listens on loopback (%s); enable local-network listening in the WebUI (or set channels.device.host=0.0.0.0) so devices can connect.\n", host)
+		fmt.Printf("WARNING: the device listener is on loopback (%s); enable local-network listening in the WebUI (or set channels.device.host=0.0.0.0) so devices can connect.\n", host)
 	}
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
 		fmt.Println("WARNING: no routable LAN IPv4 address detected; set channels.device.external_url.")

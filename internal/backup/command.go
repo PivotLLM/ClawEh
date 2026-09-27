@@ -29,7 +29,7 @@ func NewBackupCommand() *cobra.Command {
 			"file, state/ (tokens and the device pairing database), credentials.json and\n" +
 			"tls/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
 			"cognitive memory, the fusion OAuth store), each checked with quick_check and\n" +
-			"copied with VACUUM INTO. Safe to run while the gateway is up. Archives older\n" +
+			"copied with VACUUM INTO. Safe to run while claw is up. Archives older\n" +
 			"than backup.retain_days are pruned from the destination.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -71,7 +71,7 @@ func NewRestoreCommand() *cobra.Command {
 		Use:   "restore <archive>",
 		Short: "Restore a backup archive into CLAW_HOME",
 		Long: "Restores a claw-backup-*.tar.gz written by `claw backup` or the nightly backup.\n" +
-			"The gateway must be stopped. Every file the archive will replace is listed and,\n" +
+			"claw must be stopped. Every file the archive will replace is listed and,\n" +
 			"after confirmation, moved to $CLAW_HOME/restore-backup-<timestamp>/ before the\n" +
 			"archived copy is put in place. Restored databases are checked with quick_check\n" +
 			"first; if any fails the restore aborts and nothing is changed.",

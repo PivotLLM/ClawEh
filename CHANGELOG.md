@@ -21,7 +21,7 @@ observe does not need an entry.
   argon2id). Until that file exists the WebUI shows "No admin account. On the
   server run: claw admin" and every `/api/*` request answers 401
   `{"error":"no admin account","hint":"run: claw admin"}`; channels keep
-  working. A running gateway notices the file within a minute and signs
+  working. A running ClawEh notices the file within a minute and signs
   everyone out when it changes. Sessions are cookies (`claw_session`, or
   `__Host-claw_session` over HTTPS), idle 12 h, absolute 7 days, kept in memory
   (a restart signs everyone out). 10 failed logins from one client address
@@ -30,7 +30,7 @@ observe does not need an entry.
   for 10 minutes; every attempt during a lock is refused with 429 and
   `Retry-After` and restarts the lock at its full length. There is no global
   lock across all addresses, so no one can lock every login at once. Running
-  `claw admin` (or restarting the gateway) clears every lock, and the new
+  `claw admin` (or restarting ClawEh) clears every lock, and the new
   account works at the next attempt. Each lock start raises "WebUI login
   address locked out" (`auth-lockout-ip`) or "WebUI login account locked out"
   (`auth-lockout-account`). See "Authentication failures" in the README.
@@ -94,9 +94,9 @@ observe does not need an entry.
   while HTTPS is on is a config error. New `claw tls` command prints the
   certificate in use (source, names, expiry, SHA-256 fingerprint);
   `claw tls --regenerate` replaces the self-signed pair. `mcp_host.listen` must
-  be a loopback address; the gateway refuses to start otherwise. Changing
+  be a loopback address; ClawEh refuses to start otherwise. Changing
   `gateway.host`, `port`, `tls_port`, `tls.mode` or the certificate files
-  needs a restart (the gateway logs a warning on reload). See `docs/tls.md`.
+  needs a restart (ClawEh logs a warning on reload). See `docs/tls.md`.
 - **BREAKING:** the shared HTTP listener (WebUI, `/api/*`, `/webui/ws`,
   `/health`, `/ready`, channel webhooks) now answers only to known host names
   and rejects everything else with `421 Misdirected Request`. Allowed are
@@ -108,7 +108,7 @@ observe does not need an entry.
   reach ClawEh through any other hostname or IP (a reverse proxy name, a second
   interface, an `/etc/hosts` alias, a monitoring probe by hostname), set
   `gateway.external_url` to that URL and reload; the change takes effect
-  without a restart. The device gateway listener applies the same check (IP
+  without a restart. The device listener applies the same check (IP
   literals are always accepted there, since the pairing QR advertises them).
 - Cross-site request forgery protection on the shared listener: state-changing
   requests (POST/PUT/PATCH/DELETE) that a browser marks as coming from another
@@ -128,7 +128,7 @@ observe does not need an entry.
   non-browser clients (`Authorization: Bearer <token>` or the `claw-token`
   subprotocol) and is never accepted from the URL. `POST /api/webui/setup` no
   longer returns `token` or `ws_url`.
-- **Device gateway hardening.** The device listener now enforces the payload
+- **Device listener hardening.** The device listener now enforces the payload
   limits it advertises: an unauthenticated connection may send at most 64 KiB
   before the handshake completes, and 25 MiB (`maxPayload`) after it; a larger
   frame closes the connection. Repeated failed authentications from one client
@@ -139,11 +139,11 @@ observe does not need an entry.
   the handshake at once; further upgrades get 503 until one finishes.
   Thresholds are in `channels/tuning.go`. An inbound WebUI socket message is
   capped at 1 MiB.
-- Device gateway: hello-ok now echoes the device token the device connected
+- Device listener: hello-ok now echoes the device token the device connected
   with; connecting on the shared `token`/`word_token` (including the first
   connect after approval) issues fresh device tokens and revokes the device's
   previous ones.
-- Service tokens (`state/service-tokens.json`) and device-gateway tokens
+- Service tokens (`state/service-tokens.json`) and device listener tokens
   (`gateway.db`) are now stored as SHA-256 hashes instead of plaintext; a
   presented token is hashed for lookup. **On first start after upgrading, both
   stores are rewritten in place once** (the JSON file atomically at 0600, the
@@ -158,7 +158,7 @@ observe does not need an entry.
   entirely. PUT/PATCH `/api/config` and `PUT /api/providers/{index}` restore
   masked values from disk, so a read-edit-write round trip cannot overwrite a
   secret with its mask.
-- The gateway now enforces data-directory permissions at startup: `CLAW_HOME`
+- ClawEh now enforces data-directory permissions at startup: `CLAW_HOME`
   is made `0700`, and every database (`*.db`, `*.db-wal`, `*.db-shm`,
   `*.sqlite*`), `credentials.json`, `state/*.json`, `tokens/*`, `tls/*.key` and
   any file whose name contains `token` or `secret` under it is tightened to
@@ -179,7 +179,7 @@ observe does not need an entry.
   (PATH, HOME, USER, LOGNAME, SHELL, LANG, LC_*, TERM, TMPDIR, TZ, XDG_*,
   SSL_CERT_FILE/SSL_CERT_DIR, proxy variables, and the Node/nvm/npm variables
   `npx`-based servers need); everything else, in particular `CLAW_*`
-  configuration and `ALERTER_*` credentials, stays in the gateway process. An
+  configuration and `ALERTER_*` credentials, stays in the ClawEh process. An
   MCP server that relied on a variable inherited from the service (an API
   token, for example) must now receive it through that server's `env` or
   `env_file`. CLI providers (claude-cli, codex-cli, antigravity-cli,
@@ -219,18 +219,18 @@ observe does not need an entry.
   rotation steps are in `app/keys.go`.
   `make test` now runs `govulncheck` and fails on a known vulnerability
   reachable from the code.
-- **Device gateway: removing a device disconnects it.** Removing a paired
+- **Device listener: removing a device disconnects it.** Removing a paired
   device in the WebUI closes its open connections at once, and every request on
   an open connection now re-checks that the device is still paired and holds a
   valid device token; a device that is not gets `NOT_PAIRED` and is
   disconnected (close `1008`). Before, a removed device kept chatting on its
   open socket until it chose to disconnect.
-- **Device gateway: a device that stops reading no longer stalls replies.**
+- **Device listener: a device that stops reading no longer stalls replies.**
   Frames to a device now go through a per-connection queue, and every write must
   complete within 5 seconds; a device that misses that, or whose queue fills, is
   disconnected. Before, one stalled device could block the agent's turn, other
   devices' replies and eventually outbound delivery on every channel.
-- **Device gateway: a config reload closes device connections.** When the
+- **Device listener: a config reload closes device connections.** When the
   device channel stops (every config reload rebuilds it) it closes each open
   connection with a normal close (`1001`), so devices reconnect to the new
   listener at once. Before, they stayed attached to the stopped channel, which
@@ -248,14 +248,14 @@ observe does not need an entry.
   per-device session). The default `unified` mode is unchanged. In every mode a
   key naming an agent that does not exist is now refused ("unknown agent")
   instead of creating a session database for it.
-- **BREAKING: an exposed device gateway needs a secret and approval.** The
+- **BREAKING: an exposed device listener needs a secret and approval.** The
   config is refused (at startup, on reload and on a WebUI save) when the
   device channel is enabled on a network `channels.device.host` (anything but
   loopback) with `channels.device.auto_approve` on, or with neither
   `channels.device.token` nor `channels.device.word_token` set. Migration: turn
   `auto_approve` off, set a token (the WebUI Devices page's **Pair a device**
   does), or bind `host` to `127.0.0.1`.
-- **Device gateway: pending pairings are capped and expire.** At most 20
+- **Device listener: pending pairings are capped and expire.** At most 20
   pairing requests wait for approval (the oldest are dropped first) and each
   expires after 10 minutes. `GET /api/devices/pending` `remote_ip` is now the
   client address without the port (behind a trusted proxy, the forwarded
@@ -266,24 +266,24 @@ observe does not need an entry.
 
 - **`gateway.lockout_exempt`: addresses that are never locked out.** A list of
   IP addresses and CIDRs (a bare IP means that one address) exempt from every
-  per-address lockout: the WebUI login address lock and the device gateway's
+  per-address lockout: the WebUI login address lock and the device listener's
   auth-failure lockout. Use it for a reverse proxy, so failures from others
   behind it cannot lock everyone out. Loopback is always exempt. Account
   (username) locks still apply to attempts from these addresses. Default empty;
   an invalid entry is a config error; a change applies on config reload
   without a restart. The WebUI Network page shows it as "Never locked out".
 
-- **HTTPS for the device gateway.** `channels.device.tls: true` serves the
+- **HTTPS for the device listener.** `channels.device.tls: true` serves the
   device listener over TLS (`wss://`) on its usual port with the same
   certificate as the WebUI HTTPS listener, self-signed or user-provided,
   following its reloads. Default off, so paired devices keep connecting over
   `ws://` until it is turned on. It needs `gateway.tls.mode` other than
   `"off"`, and config validation says so. `claw status`, the pairing QR code,
   the Devices page and `claw acp` switch to `wss://` with it. The report's
-  Device Gateway rows now read like the WebUI rows: plain WebSocket on the
+  Device listener rows now read like the WebUI rows: plain WebSocket on the
   network is "Enabled for network access (unencrypted)" and marked, and the
   HTTPS row is "Disabled" or "Enabled …, self-signed certificate".
-- **Restart from the WebUI.** `POST /api/system/restart` restarts the gateway
+- **Restart from the WebUI.** `POST /api/system/restart` restarts ClawEh
   when it runs under a service manager (systemd sets `INVOCATION_ID`): it
   answers 202 `{"status":"restarting"}`, shuts down cleanly and exits with
   status 3 so `Restart=on-failure` starts it again, and the request is recorded
@@ -291,7 +291,7 @@ observe does not need an entry.
   it answers 409 `{"error":"not running as a service; restart ClawEh by hand"}`
   and changes nothing. The Network page's restart banner now has a **Restart
   now** button that calls it, waits for `/ready` to answer again and reloads
-  the page. The device gateway's `channels.device.tls` key has a checkbox on
+  the page. The device listener's `channels.device.tls` key has a checkbox on
   the Network page, **HTTPS (wss) for devices**; changing it shows the banner.
 - The Network page's Allowed networks card gains a **Never locked out** editor
   for `gateway.lockout_exempt`: IPs or CIDRs, one per line or comma-separated,
@@ -319,7 +319,7 @@ observe does not need an entry.
   that failed to start, could not deliver a message, had its token rejected
   (Telegram, Slack, Matrix), has had no working connection for ten minutes
   despite retrying (Telegram, Slack, Discord, Matrix, SecMsg; the threshold is
-  `ConnDownAlertAfter` in `channels/tuning.go`) or whose device gateway
+  `ConnDownAlertAfter` in `channels/tuning.go`) or whose device listener
   listener stopped, SecMsg with no accounts, a scheduled job that failed or could not be delivered, an
   unreadable or unwritable cron store, a session that could not be saved,
   service tokens that could not be loaded, an invalid config edit or a failed
@@ -372,8 +372,8 @@ observe does not need an entry.
   directory (an off-host mount, for example); `retain_days` now prunes
   archives and the old `YYYYMMDD` folders alike. New commands:
   `claw backup [--dest DIR]` runs the same backup on demand and prints what was
-  written; `claw restore <archive> [--yes]` restores one, refusing while the
-  gateway runs, listing every file it will replace, moving the current files to
+  written; `claw restore <archive> [--yes]` restores one, refusing while
+  ClawEh runs, listing every file it will replace, moving the current files to
   `restore-backup-<timestamp>/` and aborting before any change if a restored
   database fails its integrity check. `POST /api/backup` additionally returns
   `archive`, `bytes` and `skipped`. See `docs/backup.md`.
@@ -426,7 +426,7 @@ observe does not need an entry.
   messages live in the agent's shared `main` session, which has no per-sender
   column: it is reported and only deleted with `--all`. Cognitive memories are
   not touched, because cogmem records no per-sender provenance. The CLI refuses
-  to run while the gateway is up; use the API then.
+  to run while ClawEh is up; use the API then.
 - Config page → Backup: a **Destination directory** field for `backup.dest`
   (blank = `<CLAW_HOME>/backup`). Saving from the Config page previously
   dropped an existing `backup.dest`.
@@ -445,7 +445,7 @@ observe does not need an entry.
   URLs they give (`urls.localhost`, `urls.http`, `urls.https`), the
   certificate (`present`, `subject`, `names`, `not_after`, `fingerprint`,
   `self_signed`) and `restart_required` (saved listener settings differ from
-  the ones the running gateway bound). `POST /api/tls/validate`
+  the ones the running ClawEh bound). `POST /api/tls/validate`
   `{"cert_file","key_file"}` checks a certificate pair without saving it —
   absolute paths readable by the service user, key matching, currently valid
   — and answers 200 with the certificate or 400 naming the problem.
@@ -453,7 +453,7 @@ observe does not need an entry.
   running listener for the saved names (409 with your own certificate, 503
   when no HTTPS listener runs). `PUT`/`PATCH /api/config` now refuse a change
   of `gateway.tls.cert_file`/`key_file`/`mode` whose certificate pair fails
-  the same check, so the WebUI cannot save paths the gateway would not start
+  the same check, so the WebUI cannot save paths ClawEh would not start
   on; an unchanged pair is not re-checked.
 
 - WebUI: the Config page is now two pages. **Network** (`/network`) holds
@@ -461,7 +461,7 @@ observe does not need an entry.
   mode and port (`gateway.tls.mode`, `gateway.tls_port`), hostname
   (`gateway.external_url`), extra certificate names
   (`gateway.tls.extra_names`), the allowlist (`gateway.allowed_cidrs`), the
-  device gateway listener (`channels.device.host/port/external_url/allowed_cidrs/auto_approve`,
+  device listener (`channels.device.host/port/external_url/allowed_cidrs/auto_approve`,
   moved from the Devices page) and the read-only MCP host address — with the
   current certificate, the URLs to open and a "restart required" banner from
   `GET /api/tls`. **System** (`/system`) holds the rest (agent defaults,
@@ -483,7 +483,7 @@ observe does not need an entry.
   default empty). A request whose TCP peer is listed is attributed to the
   address in its `X-Real-IP` header, else the first `X-Forwarded-For` entry,
   for the IP allowlists (`gateway.allowed_cidrs`,
-  `channels.device.allowed_cidrs`), the WebUI login and device gateway address
+  `channels.device.allowed_cidrs`), the WebUI login and device listener address
   lockouts, `gateway.lockout_exempt`, logs and the audit log. From any other
   peer the headers are ignored, and loopback is trusted only when listed. With
   a proxy listed the allowlists judge the forwarded clients, so a proxied WebUI
@@ -492,6 +492,13 @@ observe does not need an entry.
 
 ### Changed
 
+- User-facing text no longer calls the process "the gateway": WebUI labels,
+  CLI help and output, log lines, alert descriptions, the report and the docs
+  now say ClawEh (or claw), and the device channel is "the device listener".
+  The report rows **Device Gateway HTTP** / **Device Gateway HTTPS** are now
+  **Device HTTP** / **Device HTTPS**; `claw status` and `claw network` print
+  **Device listener:** in place of **Device gateway:**. Config keys, the
+  `claw gateway` command, `/api/gateway/*` and `CLAW_GATEWAY_*` are unchanged.
 - WebUI sidebar: **Chat** is now a direct link to the chat page instead of a
   group that opened to a single Chat entry, and the **Report** page is renamed
   **Check Up** (sidebar label and page heading). Its URL stays `/report` and
@@ -502,13 +509,13 @@ observe does not need an entry.
   "Rabbit R1 · from 203.0.113.5"), so a request that merely claims a device's
   name can be told from the real one.
 - The systemd unit `claw install` writes (and `claw.service`) now uses
-  `KillMode=mixed`: a stop sends SIGTERM to the gateway alone, which shuts
+  `KillMode=mixed`: a stop sends SIGTERM to ClawEh alone, which shuts
   down its channels, turns and MCP servers in order, and only what is left
   afterwards is killed. Existing installs keep the old unit until
   `claw install` is run again.
 - On shutdown the MCP liveness probes stop first and no MCP server is
   reconnected, so a server the stop signal killed is no longer restarted
-  while the gateway exits.
+  while ClawEh exits.
 - The self-signed certificate is now valid for ten years instead of one, so a
   browser that accepted it is not asked again next year. It is still
   regenerated when the machine's names change or on demand.
@@ -529,7 +536,7 @@ observe does not need an entry.
   checkbox at once), sending only that field.
 - `claw status` no longer prints a "Model:" line: agents use their own model
   lists, so a single name there was misleading.
-- **Device gateway section of the Network page.** The ws/wss choice is now the
+- **Device listener section of the Network page.** The ws/wss choice is now the
   first control of the section, a two-option **Protocol** radio (*ws
   (unencrypted)* / *wss (HTTPS)*) bound to `channels.device.tls`, replacing
   the **HTTPS (wss) for devices** checkbox. The **External URL** field is now
@@ -573,7 +580,7 @@ observe does not need an entry.
   errors rather than "not found"; `claw status` shows "Cognitive memory
   unavailable: <error>" instead of zero counts. gosec also runs, with the
   intentional file modes and test files excluded by config, and adds a
-  read-header timeout to the device gateway, MCP host and OAuth callback
+  read-header timeout to the device listener, MCP host and OAuth callback
   servers.
 
 - **MCP liveness probe on by default.** `tools.mcp.liveness_probe_seconds`
@@ -651,13 +658,13 @@ observe does not need an entry.
   rebuild of the same commit bit-identical.
 - Configuration report: the security assessment table now opens with one
   plain-language row per listener — **WebUI/API HTTP**, **WebUI/API HTTPS**,
-  **Device Gateway HTTP**, **Device Gateway HTTPS** (not available in this
+  **Device HTTP**, **Device HTTPS** (not available in this
   version), **MCP host (local tools)** and, when enabled, **LINE webhook** —
   each "Enabled for localhost", "Enabled for network access" or "Disabled",
   with the certificate on the HTTPS row ("self-signed certificate" or
   "user-provided certificate (expires …)") and the allowed networks where
   they apply. They replace the "Transport encryption (HTTPS)", "WebUI and API
-  reachability", "Device gateway" and "Self-signed certificate" rows. Only two
+  reachability", device listener and "Self-signed certificate" rows. Only two
   listener conditions are marked `*`: WebUI/API HTTP open to the network
   (unencrypted), and WebUI/API HTTPS disabled while it is; a self-signed
   certificate is never marked. The table also gains rows for data
@@ -670,22 +677,22 @@ observe does not need an entry.
   whether an admin account exists. The Network section lists every
   WebUI/API bind address (HTTP and HTTPS) and the certificate.
 
-- The gateway and the WebUI API now share one in-memory configuration. API
+- ClawEh and the WebUI API now share one in-memory configuration. API
   handlers read the running config instead of re-parsing `config.json` on every
   request, and every save takes a lock, so two concurrent saves can no longer
   overwrite each other. Saves through the API are validated with the same
-  listener checks the gateway applies at startup (a certificate without its
+  listener checks ClawEh applies at startup (a certificate without its
   key, or `mcp_host.listen` off loopback, is rejected with 400 instead of being
   written and refused on the next start). Unknown keys in `config.json` are now
   reported at startup as `unknown config key: <path>` (a typo previously took
   effect silently); loading still succeeds.
-- The gateway now exits with status 3 after a clean shutdown when a core
+- ClawEh now exits with status 3 after a clean shutdown when a core
   service dies after startup (the HTTP listener on any of its addresses, the
   MCP host server, or the agent loop), instead of staying up half-dead;
   systemd's `Restart=on-failure` restarts it. The existing "HTTP listener
   stopped", "MCP host server stopped" and "Agent loop stopped" alerts are still
   raised first. A shutdown that hangs is cut off after 20 s.
-- Every request body on the gateway listener is capped: 1 MiB by default (413
+- Every request body on the WebUI/API listener is capped: 1 MiB by default (413
   when Content-Length exceeds it), 32 MiB under `/api/memory/` (memory import)
   and 4 MiB for `POST /api/skills/import`.
 - A session-store write failure (user message, assistant reply, tool call or
@@ -742,7 +749,7 @@ observe does not need an entry.
   `gateway.tls.mode` (`https://<address>:<tls_port>/`, one per interface for
   `"all"`; `https://127.0.0.1:<tls_port>/` for `"localhost"`; "off"),
   the certificate in use with its expiry and SHA-256 fingerprint (so the
-  browser's warning can be checked), the external URL and device gateway
+  browser's warning can be checked), the external URL and device listener
   address when set, and whether an admin account exists (with `claw admin` as
   the fix). `claw install` prints the same URLs, how to restrict or turn off
   HTTPS and browse by a host name, and the admin account it created or kept,
@@ -759,10 +766,10 @@ observe does not need an entry.
   `claw-web` screenshot are gone from the repository.
 - **The standalone sub-agent tool loop is gone.** Sub-agents only ever ran
   through the agent's full pipeline; the lightweight fallback loop inherited
-  from the upstream project was unreachable in a running gateway. Spawning
+  from the upstream project was unreachable in a running ClawEh. Spawning
   without the full-pipeline runner now fails with the same error the
   synchronous path already returned. No behaviour change for a running
-  gateway, which always has the runner.
+  ClawEh, which always has the runner.
 
 ### Fixed
 
@@ -771,15 +778,15 @@ observe does not need an entry.
   service it refuses and says to run `sudo claw install` (and the same the other
   way round for a user service). It used to plan a second, user-level unit for
   the same data directory and ports.
-- An open WebUI tab now copes with a gateway restart. Sessions live in memory,
+- An open WebUI tab now copes with a restart of ClawEh. Sessions live in memory,
   so a restart forgets them; the tab used to keep reopening its chat socket for
   ever, refused each time, and pages showed an error. Now, when a request or
   the chat socket finds the session gone, the tab returns to the login page
-  with the current page as `next`, and while the gateway is down it shows
+  with the current page as `next`, and while ClawEh is down it shows
   "Connection lost. Reconnecting…" at the top and keeps trying (every 5 seconds
   at most) instead of an error page. This is the path after **Restart now** on
   the Network page or a restart of the service by hand.
-- Stopping the gateway no longer waits 10 seconds per Telegram bot with
+- Stopping ClawEh no longer waits 10 seconds per Telegram bot with
   "Timed out waiting for long-poll goroutine to exit": the pending long poll
   is now aborted at once.
 - Shutdown can no longer hang until systemd kills it. Closing the sessions and
@@ -789,7 +796,7 @@ observe does not need an entry.
 - Turns still running at shutdown are cancelled instead of being waited for:
   model requests, CLI subprocesses and MCP tool calls stop at once. The user
   gets no error reply and no fallback or alert fires; the turn is replayed
-  when the gateway starts again, like any interrupted turn.
+  when ClawEh starts again, like any interrupted turn.
 - `claw acp` reuses its device token across launches instead of
   re-authenticating with the shared token and rotating the device's tokens
   every time.
@@ -807,7 +814,7 @@ observe does not need an entry.
   is now written out.
 - **Channels reconnect on their own instead of stopping.** A dropped Slack
   Socket Mode connection, or a Matrix sync that ended, used to stop that
-  channel receiving until the gateway was restarted. Both now restart with
+  channel receiving until ClawEh was restarted. Both now restart with
   backoff (2s doubling to 60s) for as long as the channel runs. Telegram, Slack,
   Discord, Matrix and SecMsg report their connection state, and an operator is
   alerted only when retrying cannot help: a rejected token (at once), or no
@@ -823,16 +830,16 @@ observe does not need an entry.
   `index.html`, and the old page chunks it names, after an upgrade. The SPA
   entry and other unhashed files are now sent with `Cache-Control: no-cache`
   and the content-hashed `/assets/` files as immutable.
-- **`claw.pid` is written before the gateway starts serving.** It was written
-  after all services were up, so for a brief window a gateway that was already
+- **`claw.pid` is written before ClawEh starts serving.** It was written
+  after all services were up, so for a brief window an instance that was already
   accepting connections was invisible to `claw status` and `claw sessions`.
   The integration suite tripped over that window on macOS; it now also polls
   for the file instead of checking once.
-- **Renamed or removed tools on an external MCP server are picked up without a
-  gateway restart.** The tool list of a server under `tools.mcp.servers` was
+- **Renamed or removed tools on an external MCP server are picked up without
+  restarting ClawEh.** The tool list of a server under `tools.mcp.servers` was
   read once at connect time, so after the server was restarted with different
   tools the agents kept calling the old names, and the MCP host kept publishing
-  them, until the gateway was restarted. The list is now refreshed when the
+  them, until ClawEh was restarted. The list is now refreshed when the
   server sends `tools/list_changed`, when a liveness probe
   (`liveness_probe_seconds`) sees a different list, on any reconnect, and on
   the new **Reconnect** action on the MCP servers page
@@ -855,19 +862,19 @@ observe does not need an entry.
   logged. The source is kept in each agent's `state/state.json`
   (`pending_turns`).
 - A channel whose start kept failing (bad token, service unreachable, port in
-  use) was abandoned after 10 retries until a gateway restart or config
+  use) was abandoned after 10 retries until a restart of ClawEh or config
   reload. The channel manager now keeps retrying indefinitely, backing off
   from 5 seconds to a 5-minute ceiling (`StartRetryMin`/`StartRetryMax` in
   `channels/tuning.go`); the "Channel failed to start" alert is still raised
   once, on the 10th failed retry, and the channel comes up on its own when the
   cause clears.
-- The device gateway listener was never restarted if it failed: devices could
-  not connect until the gateway was restarted. It now re-listens with backoff
+- The device listener was never restarted if it failed: devices could
+  not connect until ClawEh was restarted. It now re-listens with backoff
   (2 seconds to 1 minute), including when the port is temporarily in use,
   raises "Channel receive loop stopped" once per outage, and logs "Device
-  gateway listener restored" when it is back.
+  channel listener restored" when it is back.
 - LINE: a webhook message whose mention `index`/`length` values were out of
-  range or overflowed could crash the gateway; such mentions are now ignored.
+  range or overflowed could crash ClawEh; such mentions are now ignored.
 - Two messages arriving for a brand-new session at the same moment could leave
   the session with a revoked MCP session token (session-scoped tools then
   failed until the session was cleared). Creation is now serialised per

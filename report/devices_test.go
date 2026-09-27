@@ -22,9 +22,9 @@ func TestCollectDevices_NoStoreIsUnavailableNotCreated(t *testing.T) {
 		t.Error("the report must not create the device store")
 	}
 	st := findTable(t, s, "Settings")
-	_, gw := findRow(t, st, "Device gateway")
+	_, gw := findRow(t, st, "Device listener")
 	if gw[1] != "on" {
-		t.Errorf("device gateway = %q", gw[1])
+		t.Errorf("device listener = %q", gw[1])
 	}
 }
 

@@ -2101,7 +2101,7 @@ func (c *Config) validateListeners() error {
 	return ValidateMCPHostListen(c.MCPHost.Listen)
 }
 
-// ValidateExposure refuses an enabled device gateway on a network address
+// ValidateExposure refuses an enabled device listener on a network address
 // (anything but loopback) that would pair or admit devices without a secret:
 // auto_approve on, or neither token nor word_token set.
 func (d DeviceChannelConfig) ValidateExposure() error {
@@ -2109,20 +2109,20 @@ func (d DeviceChannelConfig) ValidateExposure() error {
 		return nil
 	}
 	if d.AutoApprove {
-		return errors.New("channels.device.auto_approve must be off when the device gateway listens on a network address")
+		return errors.New("channels.device.auto_approve must be off when the device listener is on a network address")
 	}
 	if strings.TrimSpace(d.Token) == "" && strings.TrimSpace(d.WordToken) == "" {
-		return errors.New("channels.device.token or channels.device.word_token must be set when the device gateway listens on a network address")
+		return errors.New("channels.device.token or channels.device.word_token must be set when the device listener is on a network address")
 	}
 	return nil
 }
 
-// validateTLS refuses channels.device.tls on an enabled device gateway when
+// validateTLS refuses channels.device.tls on an enabled device listener when
 // gateway.tls.mode is "off": the device listener borrows the HTTPS listener's
 // certificate, and with HTTPS off there is none to borrow.
 func (d DeviceChannelConfig) validateTLS(gw GatewayConfig) error {
 	if d.Enabled && d.TLS && !gw.HTTPSEnabled() {
-		return errors.New(`channels.device.tls needs the gateway certificate: set gateway.tls.mode to "all" or "localhost", or turn channels.device.tls off`)
+		return errors.New(`channels.device.tls needs the HTTPS certificate: set gateway.tls.mode to "all" or "localhost", or turn channels.device.tls off`)
 	}
 	return nil
 }

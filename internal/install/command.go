@@ -82,7 +82,7 @@ func NewInstallCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Plain-HTTP bind address for the WebUI/API (default 127.0.0.1; 0.0.0.0 serves unencrypted HTTP on every interface). HTTPS is placed by gateway.tls.mode. Empty keeps the current/seeded value.")
-	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
+	cmd.Flags().IntVar(&port, "port", 0, "Plain-HTTP port for the WebUI/API. 0 keeps the current/seeded value.")
 	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
 		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
 			"Empty means loopback only. Give explicit CIDRs (192.168.1.0/24), or a shorthand: "+

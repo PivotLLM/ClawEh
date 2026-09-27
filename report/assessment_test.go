@@ -55,16 +55,16 @@ func assessmentRow(t *testing.T, s Section, item string) []string {
 
 // TestAssessment_ListenerRows: one row per listener, in order, in plain
 // words. The fixture is the default install: HTTP on localhost, HTTPS on the
-// network with a self-signed certificate, the Device Gateway and the LINE
-// webhook on the network. Only the unencrypted Device Gateway earns a mark.
+// network with a self-signed certificate, the device listener and the LINE
+// webhook on the network. Only the unencrypted device listener earns a mark.
 func TestAssessment_ListenerRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
 	want := [][]string{
 		{"", "WebUI/API HTTP", "Enabled for localhost."},
 		{"", "WebUI/API HTTPS", "Enabled for network access, self-signed certificate; allowed networks: 192.168.1.0/24."},
-		{"*", "Device Gateway HTTP", "Enabled for network access (unencrypted); allowed from any address."},
-		{"", "Device Gateway HTTPS", "Disabled."},
+		{"*", "Device HTTP", "Enabled for network access (unencrypted); allowed from any address."},
+		{"", "Device HTTPS", "Disabled."},
 		{"", "MCP host (local tools)", "Enabled for localhost."},
 		{"", "LINE webhook", "Enabled for network access; every request must carry LINE's signature."},
 	}
@@ -122,7 +122,7 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	s = collectAssessment(t.Context(), cfg, env)
 	for item, status := range map[string]string{
 		"WebUI/API HTTPS":        "Enabled for localhost, self-signed certificate.",
-		"Device Gateway HTTP":    "Enabled for localhost.",
+		"Device HTTP":            "Enabled for localhost.",
 		"MCP host (local tools)": "Disabled.",
 	} {
 		if r = assessmentRow(t, s, item); r[0] != "" || r[2] != status {
@@ -141,7 +141,7 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	}
 	cfg.Channels.Device.Enabled = false
 	s = collectAssessment(t.Context(), cfg, env)
-	if r = assessmentRow(t, s, "Device Gateway HTTP"); r[2] != "Disabled." {
+	if r = assessmentRow(t, s, "Device HTTP"); r[2] != "Disabled." {
 		t.Errorf("device off = %q", r)
 	}
 }

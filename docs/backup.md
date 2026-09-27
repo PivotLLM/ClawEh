@@ -34,7 +34,7 @@ A SQLite database in WAL mode is two files plus a lock, and a plain copy of the
 main file can miss committed rows or be torn. ClawEh never copies a database
 with file I/O. Each one is opened read-only, checked with `PRAGMA quick_check`,
 and written into the archive with `VACUUM INTO`, which takes a consistent
-snapshot that already contains everything in the WAL. The gateway keeps running
+snapshot that already contains everything in the WAL. ClawEh keeps running
 throughout. A database that fails the check is left out, logged, and reported
 through the alert "Database failed integrity check"; the rest of the backup is
 still written.
@@ -81,8 +81,8 @@ Archives are self-contained: one file is one restorable backup.
 
 ## Restore
 
-1. Stop the gateway (`systemctl stop claw` or your unit). `claw restore`
-   refuses to run while the gateway holds its lock.
+1. Stop ClawEh (`systemctl stop claw` or your unit). `claw restore`
+   refuses to run while ClawEh holds its lock.
 2. Run:
 
    ```
@@ -98,7 +98,7 @@ Archives are self-contained: one file is one restorable backup.
    database, are moved to `<CLAW_HOME>/restore-backup-<timestamp>/` before the
    archived copies are put in place. Delete that directory once you are happy
    with the result.
-5. Start the gateway.
+5. Start ClawEh.
 
 Restoring onto a new host: install ClawEh, set `CLAW_HOME` (or use the
 default), copy the archive over, and run the same command. Paths inside the

@@ -51,7 +51,7 @@ func deviceRows(ctx context.Context, dd string) (paired, pending [][]string) {
 	} else {
 		for _, d := range list {
 			paired = append(paired, row(orValue(d.DisplayName, unknown)+" ("+orValue(d.Platform, unknown)+")",
-				d.DeviceID, orValue(d.AgentID, "(gateway default)"), msTime(d.ApprovedAtMs)))
+				d.DeviceID, orValue(d.AgentID, "(default agent)"), msTime(d.ApprovedAtMs)))
 		}
 		if len(paired) == 0 {
 			paired = append(paired, row(none, "", "", ""))
@@ -81,7 +81,7 @@ func collectDevices(ctx context.Context, cfg *config.Config, env Environment) Se
 			pairs("Settings",
 				row("USB device monitor (devices.enabled)", onOff(cfg.Devices.Enabled)),
 				row("Monitor USB hot-plug", onOff(cfg.Devices.MonitorUSB)),
-				row("Device gateway (channels.device)", onOff(dev.Enabled)),
+				row("Device listener (channels.device)", onOff(dev.Enabled)),
 				row("Auto-approve pairings", onOff(dev.AutoApprove)),
 			),
 			{Caption: "Paired devices", Columns: []string{"Device", "Device ID", "Agent", "Approved"}, Rows: paired},

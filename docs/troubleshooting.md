@@ -63,7 +63,7 @@ Get your key at [OpenRouter Keys](https://openrouter.ai/keys).
 `fallback alias dropped (not enabled in models)`.** An agent's model list
 (`agents.list[].models`, or a default, summarization or subagent chain) names a
 model that has since been deleted or disabled. At startup and on every config
-reload the gateway removes a reference to a deleted model from `config.json`:
+reload ClawEh removes a reference to a deleted model from `config.json`:
 the agent uses the next model in its list, the log says `removed reference to
 unknown model from config file`, and one "Agent references a missing model"
 alert is raised for it (if the file cannot be written the reference is only

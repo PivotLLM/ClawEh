@@ -51,11 +51,11 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Model parked after repeated failures | A model reaches the settled category cooldown after the 1/3/5-minute escalation | provider/model |
 | | MCP server unreachable | A reconnect or background connect attempt failed and the server is in cooldown | server name |
 | | MCP host server stopped | ClawEh's own MCP server died after startup | `mcpserver` |
-| | HTTP listener stopped | The loopback or HTTPS listener died after start; the gateway exits so the service manager restarts it | `http` |
+| | HTTP listener stopped | The loopback or HTTPS listener died after start; ClawEh exits so the service manager restarts it | `http` |
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |
 | | Channel failed to start | A channel has failed to start ten times in a row; retries continue every five minutes | channel name |
 | | Channel send failed | An outbound message was dropped after its send retries | channel name |
-| | Channel receive loop stopped | The device gateway listener failed; it re-listens with backoff while the channel still reports running | channel name |
+| | Channel receive loop stopped | The device listener failed; it re-listens with backoff while the channel still reports running | channel name |
 | | Channel connection down | A channel has had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`) | channel name |
 | | Channel credentials rejected | Slack or Matrix rejected the channel's token | channel name |
 | | Telegram polling failed | Telegram rejected the bot token (401) | channel name |

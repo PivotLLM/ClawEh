@@ -144,7 +144,7 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 		br.mu.Unlock()
 	}()
 
-	logger.InfoCF("acp", "prompt → gateway", map[string]any{"sessionId": sessionID, "runId": runID, "chars": len(text)})
+	logger.InfoCF("acp", "prompt → claw", map[string]any{"sessionId": sessionID, "runId": runID, "chars": len(text)})
 
 	// The gateway isolates a node client's conversation per device; sessionKey
 	// "main" is what the R1 sends. The bridge is one device, so all ACP sessions
@@ -163,8 +163,8 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 	}
 	ack, err := br.client.ChatSend(ctx, params)
 	if err != nil {
-		logger.ErrorCF("acp", "gateway chat.send failed", map[string]any{"runId": runID, "error": err.Error()})
-		return nil, fmt.Errorf("gateway chat.send: %w", err)
+		logger.ErrorCF("acp", "chat.send failed", map[string]any{"runId": runID, "error": err.Error()})
+		return nil, fmt.Errorf("chat.send: %w", err)
 	}
 	// The ack's runId MUST equal our idempotency key, else the reply events (keyed
 	// by runId) will never correlate back to this prompt.
@@ -226,7 +226,7 @@ func (br *acpBridge) handleGatewayEvent(ev protocol.Event) {
 	default:
 		// Log any other event so we can see what the gateway actually delivers to
 		// the bridge connection (diagnosing the reply path).
-		logger.DebugCF("acp", "gateway event (unhandled)", map[string]any{"event": string(ev.EventName)})
+		logger.DebugCF("acp", "event (unhandled)", map[string]any{"event": string(ev.EventName)})
 	}
 }
 

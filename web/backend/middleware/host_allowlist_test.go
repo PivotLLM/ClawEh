@@ -84,7 +84,7 @@ func TestHostCheck_RejectionBody(t *testing.T) {
 		wantCT   string
 		wantBody string
 	}{
-		{"/api/config", "application/json", `{"error":"host not served by this gateway"}`},
+		{"/api/config", "application/json", `{"error":"host not served by this server"}`},
 		{"/", "text/plain", "Misdirected Request"},
 	} {
 		rec := httptest.NewRecorder()

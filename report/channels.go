@@ -35,7 +35,7 @@ func groupTrigger(g config.GroupTriggerConfig) string {
 }
 
 // senders renders an allow_from list the way channels enforce it: empty
-// refuses everyone, * admits anyone. The device gateway treats empty as *.
+// refuses everyone, * admits anyone. The device listener treats empty as *.
 func senders(allow []string, emptyIsAny bool) (string, bool) {
 	if len(allow) == 0 {
 		if emptyIsAny {
@@ -97,10 +97,10 @@ func enabledChannels(cfg *config.Config) []channelInfo {
 		add("line", "webhook "+ch.LINE.WebhookPath, ch.LINE.AllowFrom, false, groupTrigger(ch.LINE.GroupTrigger))
 	}
 	if ch.WebUI.Enabled {
-		add("webui", "browser sessions on the gateway listener", ch.WebUI.AllowFrom, false, "n/a")
+		add("webui", "browser sessions on the WebUI listener", ch.WebUI.AllowFrom, false, "n/a")
 	}
 	if ch.Device.Enabled {
-		add("device", "paired hardware devices on the device gateway", ch.Device.AllowFrom, true, "n/a")
+		add("device", "paired hardware devices on the device listener", ch.Device.AllowFrom, true, "n/a")
 	}
 	return out
 }

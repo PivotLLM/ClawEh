@@ -345,7 +345,7 @@ func gatewayCmd(debug bool) error {
 	// service manager to start the gateway again.
 	services.WebServer.APIHandler().SetRestart(fatal.requestRestart)
 
-	logger.InfoF("Gateway started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
+	logger.InfoF("claw started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -379,7 +379,7 @@ func gatewayCmd(debug bool) error {
 			case forceReload <- done:
 				return <-done
 			case <-time.After(5 * time.Second):
-				return errors.New("gateway busy; reload not accepted")
+				return errors.New("claw is busy; reload not accepted")
 			}
 		})
 	}
@@ -427,7 +427,7 @@ func gatewayCmd(debug bool) error {
 				logger.Errorf("Config reload failed: %v", err)
 				agentLoop.Alerter().Send(alerter.Alert{
 					Title:       "Config reload failed",
-					Description: "the reload was aborted part way; check the gateway log, services may not all be running",
+					Description: "the reload was aborted part way; check the claw log, services may not all be running",
 					Details:     err.Error(),
 					EventID:     "config",
 				})
@@ -1004,7 +1004,7 @@ func shutdownGateway(
 		logger.WarnCF("gateway", "audit log close failed", map[string]any{"error": err.Error()})
 	}
 
-	logger.Infof("✓ Gateway stopped in %.1fs", time.Since(begin).Seconds())
+	logger.Infof("✓ claw stopped in %.1fs", time.Since(begin).Seconds())
 	if fullShutdown {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := agentLoop.Alerter().Close(closeCtx); err != nil {
@@ -1509,11 +1509,11 @@ func logAllowlist(allowedCIDRs []string, host string) {
 	// "*" rather than 0.0.0.0/0: the latter is an IPv4 prefix and still refuses
 	// IPv6 clients, which on a dual-stack host reads as the allowlist being
 	// broken. See middleware.AllowAnyAddress.
-	logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
+	logger.WarnF("The WebUI/API is bound to a network address but the network allowlist is empty, so only loopback will be served. "+
 		"Run `"+internal.BinaryName+" network` to allow the private LAN ranges, "+
 		"`"+internal.BinaryName+" network <cidr>` for a specific subnet, or "+
 		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
-		"A running gateway applies the change on its next config reload, about 15 seconds.",
+		"A running "+internal.BinaryName+" applies the change on its next config reload, about 15 seconds.",
 		map[string]any{"host": host})
 }
 

@@ -45,14 +45,14 @@ page print the addresses; Docker's bridge interfaces — `docker0`, `br-…` —
 are left out, since only containers on the machine can reach those), or
 give the machine a name: set `gateway.external_url` to the URL you type, for
 example `https://claw.lan:18443`. Its host is added to the self-signed
-certificate and to the names the gateway answers to (anything else gets
+certificate and to the names ClawEh answers to (anything else gets
 `421 Misdirected Request`). Without `external_url` the advertised URL is
 `https://<host name>:<tls_port>` for mode `"all"`, `https://127.0.0.1:<tls_port>`
 for `"localhost"`, and the plain-HTTP URL when HTTPS is off.
 
 ## Self-signed (default)
 
-With no certificate files configured the gateway generates
+With no certificate files configured ClawEh generates
 `<CLAW_HOME>/tls/self-signed.crt` and `self-signed.key` (mode 0600) the first
 time the HTTPS listener starts: ECDSA P-256, valid ten years, for the machine's
 host name, its FQDN, every non-loopback interface address, the host of
@@ -87,8 +87,8 @@ cover a DNS alias or a NAT address, add it to `extra_names`:
 Both keys must be set (PEM, absolute paths; the files may live anywhere the
 service user can read). The WebUI checks a pair before saving it — both files
 readable by the service user, the key matching the certificate, the
-certificate currently valid — and refuses to save one the gateway could not
-start on. The gateway checks the files every minute and swaps a renewed pair
+certificate currently valid — and refuses to save one ClawEh could not
+start on. ClawEh checks the files every minute and swaps a renewed pair
 in without a restart, so a certbot or acme.sh hook only has to write the
 files; symlinks are followed. A pair that fails to load is ignored: the
 previous certificate keeps serving and the "TLS certificate reload failed"
@@ -99,9 +99,9 @@ of a self-signed install.
 
 ## Other listeners
 
-- The MCP host (`mcp_host.listen`) must stay on a loopback address; the gateway
+- The MCP host (`mcp_host.listen`) must stay on a loopback address; ClawEh
   refuses to start otherwise. The CLIs that use it connect locally.
-- The device gateway (`channels.device`, port 18791) has its own token and
+- The device listener (`channels.device`, port 18791) has its own token and
   Ed25519 pairing authentication and is plain WebSocket by default. Set
   `channels.device.tls: true` to serve `wss://` on the same port with the
   certificate described above (it needs `gateway.tls.mode` other than `"off"`);

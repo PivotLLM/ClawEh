@@ -24,7 +24,7 @@ func NewTokenCommand() *cobra.Command {
 		Short: "Manage long-lived per-agent MCP service tokens",
 		Long: "Mint, rotate, revoke, and list long-lived service tokens. A service token lets an\n" +
 			"external MCP client drive an agent's tools (e.g. Maestro) on a stable, headless\n" +
-			"credential — see docs/service-tokens.md. A running gateway picks up changes\n" +
+			"credential — see docs/service-tokens.md. A running claw picks up changes\n" +
 			"automatically within a few seconds.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
@@ -106,7 +106,7 @@ func issue(arg string) error {
 	}
 	fmt.Printf("Service token for agent %q (store it securely; it is not shown again):\n\n  %s\n\n", agentID, tok)
 	fmt.Println("Use it as an Authorization: Bearer header on /mcp, or as the session_token")
-	fmt.Println("parameter on /internal. A running gateway picks it up automatically within a few seconds.")
+	fmt.Println("parameter on /internal. A running claw picks it up automatically within a few seconds.")
 	return nil
 }
 
@@ -128,7 +128,7 @@ func revoke(arg string) error {
 	if err := servicetoken.Save(path, tokens); err != nil {
 		return err
 	}
-	fmt.Printf("Revoked service token for agent %q. A running gateway removes it automatically within a few seconds.\n", agentID)
+	fmt.Printf("Revoked service token for agent %q. A running claw removes it automatically within a few seconds.\n", agentID)
 	return nil
 }
 

@@ -160,7 +160,7 @@ export function DevicesPage() {
                   >
                     {s.connect_url}
                   </code>
-                  . The device gateway is listening on{" "}
+                  . The device listener is on{" "}
                   <code className="text-foreground">
                     {s.listen_host}:{s.listen_port}
                   </code>{" "}

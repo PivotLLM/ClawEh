@@ -38,7 +38,7 @@ func TestAssess_MatchesCollect(t *testing.T) {
 		}
 	}
 	if marked == 0 {
-		t.Error("the fixture (open telegram channel, exposed device gateway) should earn at least one action mark")
+		t.Error("the fixture (open telegram channel, exposed device listener) should earn at least one action mark")
 	}
 
 	id := a.Identity

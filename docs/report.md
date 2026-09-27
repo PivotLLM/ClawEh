@@ -43,13 +43,13 @@ appear in the output.
 - **Security assessment**: a short table of the items a reviewer checks
   first, written for a reader who is not a network specialist. It opens with
   one row per listener, in this order: **WebUI/API HTTP**, **WebUI/API
-  HTTPS**, **Device Gateway HTTP**, **Device Gateway HTTPS**, **MCP host
+  HTTPS**, **Device HTTP**, **Device HTTPS**, **MCP host
   (local tools)** and, when the LINE channel is on, **LINE webhook**. Each
   says "Enabled for localhost", "Enabled for network access" or "Disabled";
   an HTTP row on the network adds "(unencrypted)", an HTTPS row adds the
   certificate ("self-signed certificate", or "user-provided certificate
   (expires YYYY-MM-DD)") and a network row adds who may connect ("allowed
-  networks: 10.0.0.0/8", "allowed from any address"). The Device Gateway
+  networks: 10.0.0.0/8", "allowed from any address"). The Device listener
   speaks either plain WebSocket or, with `channels.device.tls`, TLS with the
   WebUI certificate, so one of its two rows is always "Disabled". Bind
   addresses are left to the Network section. Then: a user-supplied
@@ -62,11 +62,11 @@ appear in the output.
   (`<CLAW_HOME>/audit.db`, 90-day retention), MCP servers running local
   programs, and sub-agent spawning. The first column holds `*` where action is
   recommended and is blank otherwise. Among the listener rows only
-  unencrypted network access is marked: WebUI/API HTTP or Device Gateway HTTP
+  unencrypted network access is marked: WebUI/API HTTP or Device HTTP
   open to the network, and WebUI/API HTTPS disabled while its HTTP is open to
   the network. A self-signed certificate is never marked. Login is always
-  required, so there is no authentication row; the WebUI and the Device
-  Gateway never appear under "channels accepting any sender", since their
+  required, so there is no authentication row; the WebUI and the device
+  listener never appear under "channels accepting any sender", since their
   senders are authenticated. Awareness rows (shell not confined, bypass
   restrictions) are never marked.
 - **Summary**: one table of what Claw can access, by area: files, shell,
@@ -76,7 +76,7 @@ appear in the output.
   workspaces and mounts, or whether one of them can read anything the named
   user can read.
 - **Network**: every listener (WebUI/API over HTTP and HTTPS, MCP host,
-  device gateway, LINE webhook) with its bind addresses, whether it is
+  device listener, LINE webhook) with its bind addresses, whether it is
   reachable from other hosts, and its allowlist; the TLS certificate;
   proxies.
 - **Providers and models**: API providers grouped by protocol with base URL,
@@ -96,7 +96,7 @@ appear in the output.
   highlighted row says the agent can reach anything the process user can.
 - **External services**: MCP servers with transport, command or URL and
   environment names; installed skills and registries; web search providers.
-- **Devices**: the device gateway, paired and pending devices.
+- **Devices**: the device listener, paired and pending devices.
 - **Data**: logs and what they contain (message-content logging and dumps are
   called out), session archives, memory and their retention, media store,
   backups.

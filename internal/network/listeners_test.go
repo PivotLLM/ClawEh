@@ -81,7 +81,7 @@ func TestCommandShowReportsListeners(t *testing.T) {
 	// this test wants the enabled shape.
 	cfg := loadSeeded(t)
 	cfg.Channels.Device.Enabled = true
-	cfg.Channels.Device.Token = "shared" // a network device gateway needs a secret
+	cfg.Channels.Device.Token = "shared" // a network device listener needs a secret
 	if err := config.SaveConfig(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCommandShowReportsListeners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--show: %v", err)
 	}
-	for _, want := range []string{"HTTP:              network", "HTTPS:             network", "192.168.1.0/24", "Device gateway:    network"} {
+	for _, want := range []string{"HTTP:              network", "HTTPS:             network", "192.168.1.0/24", "Device listener:   network"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--show output lacks %q:\n%s", want, out)
 		}

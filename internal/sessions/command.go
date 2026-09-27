@@ -42,7 +42,7 @@ func newEraseCommand() *cobra.Command {
 			"--all. Cognitive memories are not touched: cogmem records no per-sender " +
 			"provenance.\n\n" +
 			"Run with the service stopped; the command refuses to run while the " +
-			"gateway is up (use DELETE /api/sessions?channel=&chat_id= there).",
+			"service is up (use DELETE /api/sessions?channel=&chat_id= there).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runErase(cmd, req)
@@ -86,7 +86,7 @@ func newMigrateCommand() *cobra.Command {
 			"Sources are renamed *.migrated and can be deleted once verified. " +
 			"Sessions already migrated are skipped.\n\n" +
 			"Run once, with the service stopped; the command refuses to run " +
-			"while the gateway is up.",
+			"while the service is up.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runMigrate()

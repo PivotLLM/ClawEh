@@ -32,8 +32,8 @@ const actionMark = "*"
 const (
 	itemWebHTTP     = "WebUI/API HTTP"
 	itemWebHTTPS    = "WebUI/API HTTPS"
-	itemDeviceHTTP  = "Device Gateway HTTP"
-	itemDeviceHTTPS = "Device Gateway HTTPS"
+	itemDeviceHTTP  = "Device HTTP"
+	itemDeviceHTTPS = "Device HTTPS"
 	itemMCPHost     = "MCP host (local tools)"
 	itemLINE        = "LINE webhook"
 )
@@ -53,9 +53,9 @@ type assessRow struct {
 }
 
 // listenerRows is one row per listener, in a fixed order: the WebUI/API over
-// HTTP and HTTPS, the Device Gateway over HTTP and HTTPS, the MCP host, and
+// HTTP and HTTPS, the device listener over HTTP and HTTPS, the MCP host, and
 // the LINE webhook when that channel is on. Only unencrypted network access
-// is marked: WebUI/API or Device Gateway HTTP open to the network, and
+// is marked: WebUI/API or Device HTTP open to the network, and
 // WebUI/API HTTPS off while its HTTP is. A self-signed certificate is stated,
 // never marked: on a LAN there is usually no alternative. Raw bind addresses
 // are left to the Network section.
@@ -138,7 +138,7 @@ func webAllowPhrase(cidrs []string) string {
 	}
 }
 
-// deviceAllowPhrase is the Device Gateway allowlist as a trailing clause, in
+// deviceAllowPhrase is the device listener allowlist as a trailing clause, in
 // the shape of webAllowPhrase; empty means any address.
 func deviceAllowPhrase(cidrs []string) string {
 	if len(cidrs) == 0 || slices.Contains(cidrs, config.AllowAnyAddress) {

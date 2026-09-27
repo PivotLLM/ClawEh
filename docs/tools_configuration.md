@@ -178,7 +178,7 @@ Use it only for small services/servers — a large group can exceed `visible_bud
     - `command` is set → `stdio`
 - `http` and `sse` both use `url` + optional `headers`.
 - `env` and `env_file` are only applied to `stdio` servers.
-- A `stdio` server does **not** inherit the gateway's environment. It starts
+- A `stdio` server does **not** inherit ClawEh's environment. It starts
   from an allowlist (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`,
   `LC_*`, `TERM`, `TMPDIR`, `TZ`, `XDG_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, the
   proxy variables, and the `NODE_*`/`NVM_*`/`npm_config_*` variables `npx`
@@ -324,7 +324,7 @@ The skills tool configures skill discovery and installation via registries like 
 ## Per-Agent Tool Allowlist
 
 Each named agent has a tool allowlist. An agent in `agents.list` with no `tools`
-key receives the install defaults (`agents.defaults.tools`, which the gateway
+key receives the install defaults (`agents.defaults.tools`, which ClawEh
 seeds from the enabled tool providers); an agent with `"tools": []` receives no
 tools at all.
 
@@ -425,7 +425,7 @@ is no global switch and no per-tool allowlist for it.
 | `rate_limit_requests` / `rate_limit_period` | int | `10` / `60` | At most this many task dispatches per period (seconds) |
 | `allow_parallel` | bool | `true` | Whether a parallel run may be honoured when the LLM asks for one. Runs are sequential unless requested; `false` refuses requests and runs sequentially |
 
-The retired boolean form `"maestro": true` is not honoured: the gateway logs a
+The retired boolean form `"maestro": true` is not honoured: ClawEh logs a
 warning for the agent and runs it without Maestro until the block is set. The
 WebUI agent page edits the block.
 
@@ -450,7 +450,7 @@ How the suite behaves inside ClawEh:
   visible so the model can read the guide and search for the rest; pin
   `"maestro"` in `always_shown_namespaces` to keep the whole suite visible.
 - **Testing.** `make test-maestro-host` runs Maestro's MCP regression suite
-  against a live gateway with a stub model (needs `probe`, `jq`, `zip`).
+  against a live ClawEh instance with a stub model (needs `probe`, `jq`, `zip`).
 
 ## Environment Variables
 

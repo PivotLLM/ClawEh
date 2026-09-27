@@ -28,7 +28,7 @@ const LockFileName = "claw.lock"
 
 // ErrGatewayRunning is returned when a restore is attempted while the gateway
 // holds the lock.
-var ErrGatewayRunning = errors.New("the gateway is running; stop it before restoring")
+var ErrGatewayRunning = errors.New("claw is running; stop it before restoring")
 
 // dbSidecars are the SQLite companions moved aside with a replaced database.
 // A stale -wal left beside a restored file would be replayed into it.

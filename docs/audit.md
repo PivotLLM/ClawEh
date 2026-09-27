@@ -11,7 +11,7 @@ only deletion is the daily retention prune (90 days).
 | `tool_call` | every tool an agent runs (including `agent_spawn`) | agent id; chat sender id | session, channel, tool, outcome (`ok`/`error`), duration_ms, `turn_id`, details `{"chat_id", "args"}` |
 | `config_write` | every `PUT`/`PATCH /api/config` that saves | WebUI username; client IP | summary = changed top-level keys, details `{"keys":[...]}` |
 | `auth` | WebUI login, logout, lockout, attempt refused while locked (`locked`) | username; client IP | summary = the action, outcome `ok`/`error` |
-| `restart` | every `POST /api/system/restart` the gateway acts on | WebUI username; client IP | summary = `gateway restart requested` |
+| `restart` | every `POST /api/system/restart` ClawEh acts on | WebUI username; client IP | summary = `restart requested` |
 
 Tool arguments are stored only as a redacted digest, the same redaction the
 INFO log uses: file contents, edit text and HTTP bodies become byte counts,
@@ -38,5 +38,5 @@ API: `GET /api/audit?since=&until=&kind=&agent=&session=&limit=&before_id=`
 
 Recording is asynchronous and never blocks a turn. The queue holds 1024 events;
 overflow is dropped, counted and warned about once a minute. A non-zero
-`dropped` means the trail has gaps. The store is opened at gateway start; if it
-cannot be opened the gateway logs a warning and runs without an audit log.
+`dropped` means the trail has gaps. The store is opened at ClawEh start; if it
+cannot be opened ClawEh logs a warning and runs without an audit log.

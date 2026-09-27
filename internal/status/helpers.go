@@ -67,11 +67,11 @@ func statusCmd() {
 // printProcess reports whether the instance for this data directory is running,
 // and what it is costing in RAM.
 //
-// Labelled with the application name rather than "Gateway": that word is taken.
-// `claw gateway` starts this process, but there is also a device gateway inside
-// it — a channel on its own port, which logs "Device gateway stopped" on
-// shutdown — so "Gateway: running" would be genuinely ambiguous about which one
-// is meant. What this line reports is the whole process.
+// Labelled with the application name: `claw gateway` starts this process, but
+// there is also a device channel inside it — a listener on its own port, which
+// logs "Device channel stopped" on shutdown — so a label naming one of them
+// would be ambiguous about which is meant. What this line reports is the whole
+// process.
 //
 // Until now this command could not answer either question: it reads config from
 // disk and never looks at the process, so "status" described an installation

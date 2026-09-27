@@ -21,7 +21,7 @@ func TestCollectNetwork_Listeners(t *testing.T) {
 	contains(t, gw[2], "192.168.1.0/24", "gateway allowlist")
 	contains(t, gw[3], "reachable from other hosts", "gateway off-host note")
 
-	_, dev := findRow(t, tb, "Device gateway")
+	_, dev := findRow(t, tb, "Device listener")
 	if dev[1] != "0.0.0.0:18791" {
 		t.Errorf("device bind = %q (port must default to 18791)", dev[1])
 	}

@@ -35,7 +35,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 		t.Errorf("Messaging = %q", msg[1])
 	}
 	_, dev := findRow(t, tb, "Devices")
-	if dev[1] != "Device gateway on\npaired devices unknown (store unavailable)" {
+	if dev[1] != "Device listener on\npaired devices unknown (store unavailable)" {
 		t.Errorf("Devices = %q", dev[1])
 	}
 	_, ext := findRow(t, tb, "External execution")

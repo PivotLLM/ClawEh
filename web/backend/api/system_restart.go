@@ -66,7 +66,7 @@ func (h *Handler) handleSystemRestart(w http.ResponseWriter, r *http.Request) {
 		Kind:    audit.KindRestart,
 		Actor:   audit.ActorFromContext(r.Context()),
 		Sender:  clientIP(r),
-		Summary: "gateway restart requested",
+		Summary: "restart requested",
 		Outcome: audit.OutcomeOK,
 	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
