@@ -9,6 +9,15 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 )
 
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func loadSeeded(t *testing.T) *config.Config {
 	t.Helper()
 	cfg, err := config.LoadConfig(internal.GetConfigPath())
@@ -53,13 +62,13 @@ func TestApplyListeners(t *testing.T) {
 // A bad word is refused before the file is touched.
 func TestApplyListenersRejectsBadWords(t *testing.T) {
 	path := seedConfig(t)
-	before, _ := os.ReadFile(path)
+	before := readFile(t, path)
 	for _, l := range []Listeners{{HTTP: "everyone"}, {HTTPS: "yes"}, {Device: "0.0.0.0"}} {
 		if _, err := ApplyListeners(l); err == nil {
 			t.Errorf("ApplyListeners(%+v) accepted a bad value", l)
 		}
 	}
-	after, _ := os.ReadFile(path)
+	after := readFile(t, path)
 	if string(before) != string(after) {
 		t.Error("a rejected value still rewrote the config")
 	}
@@ -81,7 +90,7 @@ func TestCommandShowReportsListeners(t *testing.T) {
 	if _, err := ApplyAllowlist(ParseAllowlist("192.168.1.0/24")); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(path)
+	before := readFile(t, path)
 
 	out, err := runCommand(t, "--show")
 	if err != nil {
@@ -92,7 +101,7 @@ func TestCommandShowReportsListeners(t *testing.T) {
 			t.Errorf("--show output lacks %q:\n%s", want, out)
 		}
 	}
-	after, _ := os.ReadFile(path)
+	after := readFile(t, path)
 	if string(before) != string(after) {
 		t.Error("--show rewrote the config")
 	}
