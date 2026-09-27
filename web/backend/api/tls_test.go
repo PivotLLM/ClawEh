@@ -177,7 +177,8 @@ func TestValidateTLS(t *testing.T) {
 	now := time.Now()
 	certPath, keyPath := selfSignedPair(t, now)
 	_, otherKey := selfSignedPair(t, now)
-	oldCert, oldKey := selfSignedPair(t, now.AddDate(-2, 0, 0))
+	// Generated eleven years ago: a self-signed certificate lasts ten.
+	oldCert, oldKey := selfSignedPair(t, now.AddDate(-11, 0, 0))
 	body := func(cert, key string) string {
 		b, err := json.Marshal(map[string]string{"cert_file": cert, "key_file": key})
 		if err != nil {
