@@ -34,8 +34,12 @@ can be exposed to the network without exposing the unauthenticated WebUI.
   - Either secret authenticates equally, so the passphrase is the security floor — but
     every device still needs cryptographic pairing **approval** behind it.
 - `token == "" && word_token == ""` ⇒ open auth (loopback/dev only).
-- TLS is **not** terminated here. Network clients connect via a reverse proxy (e.g. nginx)
-  that terminates `wss://` and forwards plain `ws://` to this port.
+- TLS: off by default (plain `ws://`). With `channels.device.tls: true` the listener
+  serves `wss://` on the same port with the WebUI HTTPS listener's certificate
+  (self-signed or user-provided, hot-reloaded with it); it needs `gateway.tls.mode`
+  other than `"off"`. The pairing QR, `claw status` and `claw acp` follow the scheme.
+  A reverse proxy that terminates `wss://` and forwards plain `ws://` still works with
+  TLS off.
 
 ## Frame envelopes
 

@@ -2,6 +2,8 @@ package device
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -44,9 +46,13 @@ type DeviceChannel struct {
 	port         int
 	allowedCIDRs []string
 	allowedHosts hostAllowlist
-	loopDone     chan struct{}
-	ctx          context.Context
-	cancel       context.CancelFunc
+	// useTLS is channels.device.tls; tlsConfig is the gateway certificate
+	// manager's configuration, injected by SetTLSConfig before Start.
+	useTLS    bool
+	tlsConfig *tls.Config
+	loopDone  chan struct{}
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
@@ -98,6 +104,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		host:         host,
 		port:         port,
 		allowedCIDRs: cfg.AllowedCIDRs,
+		useTLS:       cfg.TLS,
 		allowedHosts: newHostAllowlist(host, []string{cfg.ExternalURL, gatewayExternalURL}, extraHosts),
 	}
 	srv.SetAlerter(dc.Alert)
@@ -212,11 +219,35 @@ func extForMIME(mime string) string {
 // internal/gateway (which owns the agent loop) after the channel is built.
 func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q) }
 
+// errNoCertificate is Start's refusal when channels.device.tls is on but the
+// gateway has no certificate manager to lend (HTTPS was off at start).
+var errNoCertificate = errors.New("device: channels.device.tls is on but the gateway has no TLS certificate " +
+	"(gateway.tls.mode was \"off\" when ClawEh started); restart ClawEh after turning HTTPS on")
+
+// SetTLSConfig hands the channel the gateway certificate manager's TLS
+// configuration (tlscert.Manager.TLSConfig), so the device listener serves
+// the same certificate as the WebUI HTTPS listener and follows its reloads.
+// Used only when channels.device.tls is on; call before Start.
+func (c *DeviceChannel) SetTLSConfig(cfg *tls.Config) {
+	if cfg == nil {
+		c.tlsConfig = nil
+		return
+	}
+	cfg = cfg.Clone()
+	// gorilla/websocket upgrades HTTP/1.1 only; never negotiate h2.
+	cfg.NextProtos = []string{"http/1.1"}
+	c.tlsConfig = cfg
+}
+
 // Start launches the device gateway's own HTTP listener.
 func (c *DeviceChannel) Start(ctx context.Context) error {
+	if c.useTLS && c.tlsConfig == nil {
+		return errNoCertificate
+	}
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	// WebSocket upgrade at any path (devices connect to ws://host:port/ with no path).
+	// WebSocket upgrade at any path (devices connect to ws://host:port/, or
+	// wss:// with channels.device.tls, with no path).
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !websocket.IsWebSocketUpgrade(r) {
 			http.NotFound(w, r)
@@ -230,15 +261,24 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 	}
 
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
-	ln, err := listenTCP(addr)
+	ln, err := c.listen(addr)
 	if err != nil {
 		return fmt.Errorf("device: listen %s: %w", addr, err)
 	}
 	c.loopDone = make(chan struct{})
 	c.SetRunning(true)
 	go c.serveLoop(ln, addr, wrapped)
-	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})
+	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr, "tls": c.useTLS})
 	return nil
+}
+
+// listen binds addr, wrapped in TLS when channels.device.tls is on.
+func (c *DeviceChannel) listen(addr string) (net.Listener, error) {
+	ln, err := listenTCP(addr)
+	if err != nil || !c.useTLS {
+		return ln, err
+	}
+	return tls.NewListener(ln, c.tlsConfig), nil
 }
 
 // Test seams: listenTCP binds the listener and retryAfter waits between
@@ -277,7 +317,7 @@ func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Han
 				return
 			case <-retryAfter(backoff):
 			}
-			ln, err = listenTCP(addr)
+			ln, err = c.listen(addr)
 			if err == nil {
 				break
 			}

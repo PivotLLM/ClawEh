@@ -160,7 +160,9 @@ Code: `channels/device/` (protocol in `server.go`, listener/bus bridge in `gatew
 read surface in `agentquery.go`); agent-loop wiring in `internal/gateway/device_query.go`.
 **Full protocol + findings: `docs/device-gateway-protocol.md`.** Own listener on
 `channels.device` (default port `18791`), separate from the gateway's HTTP (18790)
-and HTTPS (18443) listeners; plain WebSocket with its own token/pairing auth,
+and HTTPS (18443) listeners; WebSocket with its own token/pairing auth, plain by
+default or TLS (`wss://`) with `channels.device.tls`, which borrows the WebUI HTTPS
+certificate from `internal/tlscert` (`injectDeviceTLS` in `internal/gateway`);
 64 KiB pre-auth read limit, per-IP auth-failure lockout, and a Host check. Device
 tokens are stored hashed: a connect on the shared token issues fresh device
 tokens and revokes the old ones.

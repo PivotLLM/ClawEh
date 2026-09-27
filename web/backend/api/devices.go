@@ -269,7 +269,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	}
 	token := dev.Token
 
-	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token)
+	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token, dev.TLS)
 	encoded := ""
 	if perr == nil {
 		encoded, perr = payload.Encode()
@@ -297,6 +297,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 		"listen_host":  host,
 		"listen_port":  devicePort,
 		"listen_lan":   !device.IsLoopbackHost(host),
+		"tls":          dev.TLS, // channels.device.tls: the listener speaks wss://
 		"external_url": dev.ExternalURL,
 		"warnings":     warnings,
 	}

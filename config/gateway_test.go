@@ -281,6 +281,43 @@ func TestLoadConfig_ListenerValidation(t *testing.T) {
 	}
 }
 
+// channels.device.tls is off by default, and on only while the HTTPS
+// listener exists to lend its certificate.
+func TestDeviceTLSRequiresHTTPS(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Channels.Device.TLS {
+		t.Fatal("channels.device.tls must default to off")
+	}
+	if cfg.Channels.Device.WebSocketScheme() != "ws" {
+		t.Errorf("scheme with tls off = %q, want ws", cfg.Channels.Device.WebSocketScheme())
+	}
+
+	cfg.Channels.Device.Enabled = true
+	cfg.Channels.Device.TLS = true
+	cfg.Gateway.TLS.Mode = TLSModeOff
+	err := cfg.validateListeners()
+	if err == nil || !strings.Contains(err.Error(), "channels.device.tls") {
+		t.Fatalf("tls on with HTTPS off: err = %v, want a channels.device.tls error", err)
+	}
+	if cfg.Channels.Device.WebSocketScheme() != "wss" {
+		t.Errorf("scheme with tls on = %q, want wss", cfg.Channels.Device.WebSocketScheme())
+	}
+
+	for _, mode := range []string{TLSModeAll, TLSModeLocalhost} {
+		cfg.Gateway.TLS.Mode = mode
+		if err := cfg.validateListeners(); err != nil {
+			t.Errorf("tls on with HTTPS %s: %v", mode, err)
+		}
+	}
+
+	// A disabled device channel is not held to it.
+	cfg.Channels.Device.Enabled = false
+	cfg.Gateway.TLS.Mode = TLSModeOff
+	if err := cfg.validateListeners(); err != nil {
+		t.Errorf("device channel off: %v", err)
+	}
+}
+
 // A wildcard bind is expanded to real interface addresses, never returned as
 // 0.0.0.0 (which no browser can open) unless the machine has no address.
 func TestNetworkHosts_ExpandsWildcard(t *testing.T) {

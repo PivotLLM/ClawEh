@@ -1671,7 +1671,12 @@ type DeviceChannelConfig struct {
 	ExternalURL string `json:"external_url,omitempty"`
 	// AutoApprove skips operator approval for fresh device pairings. Intended for
 	// trusted home-LAN setups (matches the Rabbit setup-script UX); default off.
-	AutoApprove  bool                `json:"auto_approve,omitempty"`
+	AutoApprove bool `json:"auto_approve,omitempty"`
+	// TLS serves the device listener over TLS (wss://) on the same port, with
+	// the certificate the WebUI HTTPS listener uses. Default off, so existing
+	// installs and paired devices keep connecting over ws://. Requires
+	// gateway.tls.mode other than "off" (see validateListeners).
+	TLS          bool                `json:"tls"`
 	AllowOrigins []string            `json:"allow_origins,omitempty"`
 	AllowFrom    FlexibleStringSlice `json:"allow_from"             env:"CLAW_CHANNELS_DEVICE_ALLOW_FROM"`
 }
@@ -2069,7 +2074,29 @@ func (c *Config) validateListeners() error {
 	if err := c.Gateway.Validate(); err != nil {
 		return err
 	}
+	if err := c.Channels.Device.validateTLS(c.Gateway); err != nil {
+		return err
+	}
 	return ValidateMCPHostListen(c.MCPHost.Listen)
+}
+
+// validateTLS refuses channels.device.tls on an enabled device gateway when
+// gateway.tls.mode is "off": the device listener borrows the HTTPS listener's
+// certificate, and with HTTPS off there is none to borrow.
+func (d DeviceChannelConfig) validateTLS(gw GatewayConfig) error {
+	if d.Enabled && d.TLS && !gw.HTTPSEnabled() {
+		return errors.New(`channels.device.tls needs the gateway certificate: set gateway.tls.mode to "all" or "localhost", or turn channels.device.tls off`)
+	}
+	return nil
+}
+
+// WebSocketScheme is the scheme devices use to reach the device listener
+// directly: "wss" with channels.device.tls, "ws" otherwise.
+func (d DeviceChannelConfig) WebSocketScheme() string {
+	if d.TLS {
+		return "wss"
+	}
+	return "ws"
 }
 
 // AllowAnyAddress is the Gateway.AllowedCIDRs entry meaning "any client

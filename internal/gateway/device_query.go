@@ -1,11 +1,13 @@
 package gateway
 
 import (
+	"crypto/tls"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
@@ -93,5 +95,23 @@ func injectDeviceAgentQuerier(cm *channels.Manager, al *agent.AgentLoop) {
 	}
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
+	}
+}
+
+// injectDeviceTLS lends the gateway certificate manager to the device channel
+// (if enabled), so channels.device.tls serves the WebUI HTTPS certificate and
+// follows its reloads. certs is nil when HTTPS was off at start; the channel
+// then refuses to start with channels.device.tls on. Like the querier, it is
+// re-injected after every channel manager rebuild.
+func injectDeviceTLS(cm *channels.Manager, certs *tlscert.Manager) {
+	if certs == nil {
+		return
+	}
+	ch, ok := cm.Channel("device")
+	if !ok {
+		return
+	}
+	if setter, ok := ch.(interface{ SetTLSConfig(cfg *tls.Config) }); ok {
+		setter.SetTLSConfig(certs.TLSConfig())
 	}
 }

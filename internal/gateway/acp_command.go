@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -20,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -53,7 +55,7 @@ func NewACPCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging (written to the log file, never stdout)")
-	cmd.Flags().StringVar(&url, "url", "", "Gateway WebSocket URL (default ws://127.0.0.1:<device-port>/)")
+	cmd.Flags().StringVar(&url, "url", "", "Gateway WebSocket URL (default ws://127.0.0.1:<device-port>/, wss:// with channels.device.tls)")
 	cmd.Flags().BoolVar(&noAutoPair, "no-auto-pair", false, "Require manual pairing approval instead of self-approving the local bridge")
 	return cmd
 }
@@ -91,7 +93,11 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		authToken = dev.WordToken
 	}
 	if wsURL == "" {
-		wsURL = defaultDeviceWSURL(dev.Host, dev.Port)
+		wsURL = defaultDeviceWSURL(dev.Host, dev.Port, dev.TLS)
+	}
+	var tlsConfig *tls.Config
+	if strings.HasPrefix(wsURL, "wss://") {
+		tlsConfig = pinnedGatewayTLS(tlscert.OptionsFromConfig(cfg))
 	}
 
 	// Persisted Ed25519 device identity + issued device token (survives across the
@@ -124,7 +130,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	// bridge, and the bridge needs the client — close over a late-bound pointer.
 	var br *acpBridge
 	makeClient := func(tok string) *gateway.Client {
-		return gateway.NewClient(
+		opts := []gateway.Option{
 			gateway.WithIdentity(id, tok),
 			gateway.WithToken(authToken),
 			gateway.WithRole(protocol.RoleNode),
@@ -140,7 +146,11 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 					br.handleGatewayEvent(ev)
 				}
 			}),
-		)
+		}
+		if tlsConfig != nil {
+			opts = append(opts, gateway.WithTLSConfig(tlsConfig))
+		}
+		return gateway.NewClient(opts...)
 	}
 
 	tryConnect := func(tok string) (*gateway.Client, error) {
@@ -284,16 +294,45 @@ func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (stri
 	return "", nil
 }
 
-// defaultDeviceWSURL builds the loopback WebSocket URL for the device listener.
-// A 0.0.0.0 bind is dialed on 127.0.0.1 (the bridge is always local).
-func defaultDeviceWSURL(host string, port int) string {
+// defaultDeviceWSURL builds the loopback WebSocket URL for the device listener,
+// wss:// when channels.device.tls is on. A 0.0.0.0 bind is dialed on
+// 127.0.0.1 (the bridge is always local).
+func defaultDeviceWSURL(host string, port int, useTLS bool) string {
 	if host == "" || host == "0.0.0.0" {
 		host = "127.0.0.1"
 	}
 	if port == 0 {
 		port = device.DefaultDevicePort
 	}
-	return "ws://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/"
+	scheme := "ws"
+	if useTLS {
+		scheme = "wss"
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/"
+}
+
+// pinnedGatewayTLS trusts exactly the certificate the gateway serves, read
+// from its file: the bridge dials 127.0.0.1, which a self-signed or
+// user-supplied certificate need not name, so the chain and name checks are
+// replaced by a fingerprint match against the file on this machine.
+func pinnedGatewayTLS(opts tlscert.Options) *tls.Config {
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, //nolint:gosec // verified by VerifyConnection against the local certificate file
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("acp: gateway presented no certificate")
+			}
+			want, err := tlscert.InspectFile(opts)
+			if err != nil {
+				return fmt.Errorf("acp: read the gateway certificate: %w", err)
+			}
+			if got := tlscert.Fingerprint(cs.PeerCertificates[0]); got != want.Fingerprint {
+				return fmt.Errorf("acp: gateway certificate %s does not match %s", got, want.CertFile)
+			}
+			return nil
+		},
+	}
 }
 
 // isPairingError reports whether a connect error is the gateway's not-paired

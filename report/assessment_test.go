@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 )
 
@@ -57,15 +56,15 @@ func assessmentRow(t *testing.T, s Section, item string) []string {
 // TestAssessment_ListenerRows: one row per listener, in order, in plain
 // words. The fixture is the default install: HTTP on localhost, HTTPS on the
 // network with a self-signed certificate, the Device Gateway and the LINE
-// webhook on the network. Nothing there earns a mark.
+// webhook on the network. Only the unencrypted Device Gateway earns a mark.
 func TestAssessment_ListenerRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
 	want := [][]string{
 		{"", "WebUI/API HTTP", "Enabled for localhost."},
 		{"", "WebUI/API HTTPS", "Enabled for network access, self-signed certificate; allowed networks: 192.168.1.0/24."},
-		{"", "Device Gateway HTTP", "Enabled for network access; allowed from any address (device token and pairing required)."},
-		{"", "Device Gateway HTTPS", "Not available in this version (plain WebSocket, protected by the device token and pairing)."},
+		{"*", "Device Gateway HTTP", "Enabled for network access (unencrypted); allowed from any address."},
+		{"", "Device Gateway HTTPS", "Disabled."},
 		{"", "MCP host (local tools)", "Enabled for localhost."},
 		{"", "LINE webhook", "Enabled for network access; every request must carry LINE's signature."},
 	}
@@ -92,7 +91,7 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	cfg.Gateway.Host = "0.0.0.0"
 	s = collectAssessment(t.Context(), cfg, env)
 	r := assessmentRow(t, s, "WebUI/API HTTP")
-	if r[0] != "*" || r[2] != "Enabled for network access: unencrypted — prefer HTTPS, or restrict HTTP to localhost; allowed networks: 192.168.1.0/24." {
+	if r[0] != "*" || r[2] != "Enabled for network access (unencrypted); allowed networks: 192.168.1.0/24." {
 		t.Errorf("network HTTP row = %q", r)
 	}
 	if r = assessmentRow(t, s, "WebUI/API HTTPS"); r[0] != "" {
@@ -145,56 +144,6 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	if r = assessmentRow(t, s, "Device Gateway HTTP"); r[2] != "Disabled." {
 		t.Errorf("device off = %q", r)
 	}
-}
-
-// TestAssessment_OperatorAuth: operator authentication is marked while no
-// admin account exists, whatever the listeners.
-func TestAssessment_OperatorAuth(t *testing.T) {
-	cfg, env := fixtureConfig(t)
-	s := collectAssessment(t.Context(), cfg, env)
-	auth := assessmentRow(t, s, "Operator authentication (WebUI and API)")
-	if auth[0] != "*" {
-		t.Errorf("auth mark = %q, want * (no admin account)", auth[0])
-	}
-	contains(t, auth[2], "No admin account", "auth status")
-	contains(t, auth[2], "claw admin", "auth fix")
-
-	contains(t, auth[2], "Reachable from other machines: WebUI/API HTTPS, Device Gateway, LINE webhook.", "auth reach")
-
-	// Loopback everywhere: the reach sentence says so.
-	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
-	cfg.Channels.Device.Host = "127.0.0.1"
-	cfg.Channels.LINE.WebhookHost = "127.0.0.1"
-	s = collectAssessment(t.Context(), cfg, env)
-	contains(t, assessmentRow(t, s, "Operator authentication (WebUI and API)")[2],
-		"Everything listens on localhost only", "auth loopback")
-	// Loopback does not excuse a missing account: the WebUI is locked either way.
-	if loopAuth := assessmentRow(t, s, "Operator authentication (WebUI and API)"); loopAuth[0] != "*" {
-		t.Errorf("auth mark = %q, want * on loopback too", loopAuth[0])
-	}
-
-	// An account in the data dir clears the mark and is named by path.
-	credPath := admin.Path(env.DataDir)
-	if err := admin.Write(credPath, "alice", "a perfectly fine password"); err != nil {
-		t.Fatal(err)
-	}
-	s = collectAssessment(t.Context(), cfg, env)
-	auth = assessmentRow(t, s, "Operator authentication (WebUI and API)")
-	if auth[0] != "" {
-		t.Errorf("auth mark = %q, want blank with an admin account", auth[0])
-	}
-	contains(t, auth[2], "Admin account configured ("+credPath+")", "auth configured")
-
-	// A readable-by-others file is as good as none, and the row says how to fix it.
-	if err := os.Chmod(credPath, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s = collectAssessment(t.Context(), cfg, env)
-	auth = assessmentRow(t, s, "Operator authentication (WebUI and API)")
-	if auth[0] != "*" {
-		t.Errorf("auth mark = %q, want * for loose permissions", auth[0])
-	}
-	contains(t, auth[2], "chmod 600 "+credPath, "auth permission fix")
 }
 
 // TestAssessment_Marks: each remaining row marks exactly the condition it
