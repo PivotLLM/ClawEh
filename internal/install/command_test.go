@@ -138,31 +138,47 @@ func TestPrintListenerSummary(t *testing.T) {
 	var b strings.Builder
 	printListenerSummary(&b, config.GatewayConfig{Host: "127.0.0.1", Port: 18790})
 	got := b.String()
-	for _, want := range []string{"WebUI on this machine: http://127.0.0.1:18790/", `HTTPS on every interface (gateway.tls.mode "all"`, "gateway.external_url", "claw admin"} {
+	for _, want := range []string{
+		"WebUI on this machine:  http://127.0.0.1:18790/",
+		"HTTPS on the network:   https://",
+		"Allowed networks:       localhost only",
+		"Certificate:            self-signed",
+		"Network and certificate settings can be changed in the WebUI or config.json.",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("default summary missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "plain HTTP (unencrypted)") {
+	if strings.Contains(got, "unencrypted") {
 		t.Errorf("loopback HTTP reported as network HTTP:\n%s", got)
+	}
+	// No paragraph: every line is one short labelled fact.
+	for l := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
+		if len(l) > 100 {
+			t.Errorf("summary line too long: %q", l)
+		}
 	}
 
 	b.Reset()
-	printListenerSummary(&b, config.GatewayConfig{Host: "192.168.1.5", Port: 9000, TLS: config.TLSConfig{Mode: config.TLSModeOff}})
+	printListenerSummary(&b, config.GatewayConfig{Host: "192.168.1.5", Port: 9000, AllowedCIDRs: []string{"192.168.1.0/24"}, TLS: config.TLSConfig{Mode: config.TLSModeOff}})
 	got = b.String()
-	for _, want := range []string{"plain HTTP (unencrypted): http://192.168.1.5:9000/", `HTTPS: off (gateway.tls.mode "off")`} {
+	for _, want := range []string{"WebUI on the network:   http://192.168.1.5:9000/  (HTTP, unencrypted, not recommended)", "HTTPS:                  off", "Allowed networks:       192.168.1.0/24"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("network HTTP summary missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "self-signed") {
-		t.Errorf("certificate advice with HTTPS off:\n%s", got)
+	if strings.Contains(got, "Certificate:") {
+		t.Errorf("certificate line with HTTPS off:\n%s", got)
 	}
 
 	b.Reset()
-	printListenerSummary(&b, config.GatewayConfig{TLSPort: 9443, TLS: config.TLSConfig{Mode: config.TLSModeLocalhost}})
-	if got = b.String(); !strings.Contains(got, "https://127.0.0.1:9443/") {
+	printListenerSummary(&b, config.GatewayConfig{TLSPort: 9443, TLS: config.TLSConfig{Mode: config.TLSModeLocalhost, CertFile: "/etc/claw/my.crt"}})
+	got = b.String()
+	if !strings.Contains(got, "HTTPS on this machine:  https://127.0.0.1:9443/") || !strings.Contains(got, "Certificate:            /etc/claw/my.crt") {
 		t.Errorf("localhost HTTPS summary:\n%s", got)
+	}
+	if strings.Contains(got, "Allowed networks") {
+		t.Errorf("allowlist shown with nothing on the network:\n%s", got)
 	}
 }
 

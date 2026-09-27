@@ -348,7 +348,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		return fmt.Errorf("copying binary to %s: %w", targetBin, err)
 	}
 	fixOwnership(targetBin, tu)
-	fmt.Printf("Installed binary: %s\n", targetBin)
+	fmt.Printf("\nInstalled binary: %s\n", targetBin)
 
 	// 2b. Symlink openclaw -> claw (for Rabbit R1 ACP connection)
 	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
@@ -638,32 +638,37 @@ func applyServerSettings(host string, port int, optionalClawHome ...string) erro
 func printListenerSummary(w io.Writer, gw config.GatewayConfig) {
 	var b strings.Builder
 	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
-	line("WebUI on this machine: %s", gw.LocalHTTPURL())
+	line("")
+	line("WebUI on this machine:  %s", gw.LocalHTTPURL())
 	for _, u := range gw.NetworkHTTPURLs() {
-		line("WebUI on the network over plain HTTP (unencrypted): %s", u)
-		line("      Prefer HTTPS, or set gateway.host back to 127.0.0.1.")
+		line("WebUI on the network:   %s  (HTTP, unencrypted, not recommended)", u)
 	}
 	switch gw.TLS.EffectiveMode() {
 	case config.TLSModeOff:
-		line("HTTPS: off (gateway.tls.mode \"off\"); set it to \"all\" or \"localhost\" to enable.")
+		line("HTTPS:                  off")
 	case config.TLSModeLocalhost:
-		line("HTTPS on this machine only (gateway.tls.mode \"localhost\"): https://127.0.0.1:%d/", gw.EffectiveTLSPort())
+		line("HTTPS on this machine:  https://127.0.0.1:%d/", gw.EffectiveTLSPort())
 	default:
-		line("HTTPS on every interface (gateway.tls.mode \"all\", the default):")
 		for _, u := range gw.HTTPSURLs() {
-			line("      %s", u)
+			line("HTTPS on the network:   %s", u)
 		}
-		line("      Network access is limited to the IP allowlist (gateway.allowed_cidrs).")
+	}
+	if gw.HTTPOnNetwork() || gw.HTTPSOnNetwork() {
+		allowed := "localhost only"
+		if cidrs := gw.EffectiveAllowedCIDRs(); len(cidrs) > 0 {
+			allowed = strings.Join(cidrs, ", ")
+		}
+		line("Allowed networks:       %s", allowed)
 	}
 	if gw.HTTPSEnabled() {
-		line("      A self-signed certificate is generated on first start unless gateway.tls names your")
-		line("      own; the browser warns once (compare the fingerprint `%s status` prints). To browse", internal.BinaryName)
-		line("      by a host name, set gateway.external_url (e.g. https://claw.lan:%d).", gw.EffectiveTLSPort())
+		cert := "self-signed (the browser warns once)"
+		if strings.TrimSpace(gw.TLS.CertFile) != "" {
+			cert = strings.TrimSpace(gw.TLS.CertFile)
+		}
+		line("Certificate:            %s", cert)
 	}
-	line("Change HTTP/HTTPS scope, the TLS port or the certificate in the WebUI or")
-	line("config.json: gateway.host, gateway.tls.mode (all | localhost | off), gateway.tls_port.")
-	line("Sign in with the admin account; `%s admin` replaces it. `%s status` shows the URLs.",
-		internal.BinaryName, internal.BinaryName)
+	line("")
+	line("Network and certificate settings can be changed in the WebUI or config.json.")
 	if _, err := io.WriteString(w, b.String()); err != nil {
 		return // stdout gone; nothing useful left to do
 	}
