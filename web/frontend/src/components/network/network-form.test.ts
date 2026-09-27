@@ -21,6 +21,7 @@ const loaded: NetworkForm = buildNetworkFormFromConfig({
     external_url: "https://claw.example.com",
     allowed_cidrs: ["10.0.0.0/8", "192.168.1.0/24", "172.16.0.0/12"],
     lockout_exempt: ["192.168.1.10"],
+    trusted_proxies: ["10.0.0.2"],
     tls: { mode: "all", extra_names: ["claw.home.arpa"] },
   },
   channels: {
@@ -120,6 +121,18 @@ describe("buildNetworkPatch", () => {
     ).toEqual({})
   })
 
+  it("sends gateway.trusted_proxies from the editor, parsed like the allowlist", () => {
+    expect(
+      buildNetworkPatch(
+        { ...loaded, trustedProxiesText: "10.0.0.2, 10.0.1.0/24\n" },
+        loaded,
+      ),
+    ).toEqual({ gateway: { trusted_proxies: ["10.0.0.2", "10.0.1.0/24"] } })
+    expect(
+      buildNetworkPatch({ ...loaded, trustedProxiesText: "10.0.0.2" }, loaded),
+    ).toEqual({})
+  })
+
   it("stores the device external address as https://host[:port]", () => {
     expect(
       buildNetworkPatch(
@@ -193,6 +206,7 @@ describe("buildNetworkFormFromConfig", () => {
   it("shows the device external URL as host[:port] and the exempt list one per line", () => {
     expect(loaded.deviceExternalHost).toBe("ops42.example.com:42333")
     expect(loaded.lockoutExemptText).toBe("192.168.1.10")
+    expect(loaded.trustedProxiesText).toBe("10.0.0.2")
   })
 })
 

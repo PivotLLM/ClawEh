@@ -255,6 +255,9 @@ observe does not need an entry.
 - The Network page's Allowed networks card gains a **Never locked out** editor
   for `gateway.lockout_exempt`: IPs or CIDRs, one per line or comma-separated,
   autosaved like the other fields.
+- The Network page's Allowed networks card gains a **Trusted proxies** editor
+  for `gateway.trusted_proxies`: IPs or CIDRs, one per line or comma-separated,
+  autosaved like the other fields.
 - **Configuration report.** A new Report page (after Services in the WebUI
   menu) shows the security assessment inline and offers a PDF, the ClawEh
   Configuration Report, describing what this install can do: identity and the
@@ -437,6 +440,10 @@ observe does not need an entry.
 
 ### Changed
 
+- The Devices page shows the requesting client address after each pending
+  pairing request's name (`remote_ip` from `GET /api/devices/pending`, as
+  "Rabbit R1 · from 203.0.113.5"), so a request that merely claims a device's
+  name can be told from the real one.
 - The systemd unit `claw install` writes (and `claw.service`) now uses
   `KillMode=mixed`: a stop sends SIGTERM to the gateway alone, which shuts
   down its channels, turns and MCP servers in order, and only what is left

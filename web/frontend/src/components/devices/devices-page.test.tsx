@@ -33,7 +33,18 @@ const pairStatus = {
   warnings: [],
 }
 
-function renderPage() {
+const pendingRequest = {
+  request_id: "req-1",
+  device_id: "device-0123456789abcdef",
+  display_name: "Rabbit R1",
+  platform: "android",
+  client_id: "rabbit",
+  role: "node",
+  remote_ip: "203.0.113.5",
+  created_at_ms: 1,
+}
+
+function renderPage(pending: object[] = []) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -41,7 +52,7 @@ function renderPage() {
       const body = url.endsWith("/api/devices/pair")
         ? pairStatus
         : url.endsWith("/api/devices/pending")
-          ? { pending: [] }
+          ? { pending }
           : { devices: [], agents: [] }
       return { ok: true, json: async () => body }
     }),
@@ -71,5 +82,19 @@ describe("DevicesPage", () => {
       ),
     )
     expect(screen.getByText(/pages\.devices\.connect_to/)).toBeTruthy()
+  })
+
+  it("shows the client address of a pending request next to its name", async () => {
+    renderPage([pendingRequest])
+    await screen.findByText("Rabbit R1")
+    expect(screen.getByTestId("pending-remote-ip").textContent).toBe(
+      " · from 203.0.113.5",
+    )
+  })
+
+  it("shows no address for a pending request without one", async () => {
+    renderPage([{ ...pendingRequest, remote_ip: "" }])
+    await screen.findByText("Rabbit R1")
+    expect(screen.queryByTestId("pending-remote-ip")).toBe(null)
   })
 })

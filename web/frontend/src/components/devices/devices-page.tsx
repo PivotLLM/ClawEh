@@ -272,6 +272,15 @@ export function DevicesPage() {
                     <div className="min-w-0">
                       <div className="font-medium">
                         {p.display_name || p.client_id || "Unknown device"}
+                        {p.remote_ip ? (
+                          <span
+                            className="text-muted-foreground font-normal"
+                            data-testid="pending-remote-ip"
+                          >
+                            {" "}
+                            · from {p.remote_ip}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="text-muted-foreground truncate text-xs">
                         {p.platform} · role {p.role} ·{" "}

@@ -438,7 +438,9 @@
         "cidrs_hint": "One network per line, such as 192.168.1.0/24, or * for any address; empty allows localhost only.",
         "cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)",
         "lockout_exempt": "Never locked out",
-        "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is."
+        "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is.",
+        "trusted_proxies": "Trusted proxies",
+        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted."
       },
       "device": {
         "title": "Device gateway",

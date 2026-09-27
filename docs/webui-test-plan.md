@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-133 checks in all; the runner prints the same tally at the end.
+134 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -154,7 +154,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 
 | ID | Process | Expected |
 |---|---|---|
-| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs** and **Never locked out**, the device gateway's **Protocol** radios (*ws (unencrypted)* / *wss (HTTPS)*), scope radios, port, **External address**, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address** and the address list. There is no Save button. Eleven radios in all. No console errors |
+| R1 | Load `/network` | Every control is present, once: HTTP **Port** and **Scope** radios (*Localhost only (default)* / *Network*), HTTPS **Listen on** radios (*All interfaces (default)* / *Localhost only* / *Off*), **HTTPS port**, **Hostname / external URL**, **Extra certificate names**, the certificate card with its *Self-signed (default)* / *External certificate* choice, **Allowed network CIDRs**, **Never locked out** and **Trusted proxies**, the device gateway's **Protocol** radios (*ws (unencrypted)* / *wss (HTTPS)*), scope radios, port, **External address**, CIDRs and **Auto-approve pairings** switch, the MCP **Listen address** and the address list. There is no Save button. Eleven radios in all. No console errors |
 | R2 | Compare the HTTP **Scope** radio and **Port** with `gateway.host` / `gateway.port` | *Network* is selected when the host is `0.0.0.0` (or any non-loopback address), *Localhost only* otherwise; the port field shows `gateway.port` (18790 by default). A warning line under *Network* reads *Exposing plain-text HTTP to the network is not recommended.* |
 | R3 | Compare the HTTPS **Listen on** radio and **HTTPS port** with `gateway.tls.mode` / `gateway.tls_port` | Exactly the configured mode is selected (`all` when unset); the port field shows `gateway.tls_port` (18443 by default) |
 | R4 | Compare **Hostname / external URL** with `gateway.external_url` | Equal (blank when unset) |
@@ -170,6 +170,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 | R14 | Compare the **Protocol** radio with `channels.device.tls` | Two options; *wss (HTTPS)* is selected exactly when `tls` is `true`, *ws (unencrypted)* otherwise, a missing key reading as ws. Its hint is the one sentence *Devices connect to one port, plain or with the WebUI certificate.* |
 | R15 | Compare **External address** with `channels.device.external_url`, then type `wss://e2e-probe.invalid:18791` and wait for the save delay | The field shows the stored value as `host[:port]`: no `https://`, `http://`, `wss://` or `ws://` and no trailing slash (blank when unset). The typed URL is refused under the field with *Enter a host name or IP address, with an optional :port.* and `channels.device.external_url` is unchanged: nothing was sent. Leaving the page discards the typed value |
 | R16 | Compare **Never locked out** with `gateway.lockout_exempt` | One entry per line, in order (empty when unset) |
+| R17 | Compare **Trusted proxies** with `gateway.trusted_proxies` | One entry per line, in order (empty when unset) |
 
 ## H. Channels
 
@@ -202,6 +203,11 @@ a field but is refused before anything is sent. Nothing in this group clicks
 |---|---|---|
 | J1 | Load `/devices`, and read `GET /api/devices/pair` | Renders, no console errors; the **Pair a device** card says **Devices will connect to** followed by the response's `connect_url` (for example `wss://ops42.example.com:42330`) |
 | J2 | Request `/api/devices`, `/api/devices/pending` and `/api/devices/pair` concurrently, 12 times | No `5xx`. These share one SQLite store; opening it per request used to lose a WAL-conversion race and return an intermittent 500 |
+
+The client address shown after a pending request's name (`remote_ip` from
+`GET /api/devices/pending`, rendered as `Rabbit R1 · from 203.0.113.5`) needs a
+device asking to pair, so it is not checked here; `devices-page.test.tsx`
+covers it.
 
 ## K. Logs, MCP, memory, voice, report
 

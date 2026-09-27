@@ -668,6 +668,21 @@ export function NetworkPage() {
                     }
                   />
                 </Field>
+                <Field
+                  label={t("pages.network.allowed.trusted_proxies")}
+                  hint={t("pages.network.allowed.trusted_proxies_hint")}
+                  layout="setting-row"
+                  controlClassName="md:max-w-md"
+                >
+                  <Textarea
+                    value={form.trustedProxiesText}
+                    className="min-h-[66px]"
+                    data-testid="network-trusted-proxies"
+                    onChange={(e) =>
+                      update("trustedProxiesText", e.target.value)
+                    }
+                  />
+                </Field>
               </ConfigSectionCard>
 
               <ConfigSectionCard

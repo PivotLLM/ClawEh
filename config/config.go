@@ -1938,6 +1938,8 @@ type GatewayConfig struct {
 	// table and the device gateway's auth-failure lockout. Loopback is always
 	// exempt. Per-account login locks still apply. See LockoutExemptSet.
 	LockoutExempt []string `json:"lockout_exempt,omitempty"`
+	// TrustedProxies lists reverse proxies (IPs or CIDRs) whose forwarded client address is trusted.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 }
 
 // TLSConfig is the HTTPS listener's placement and certificate. Mode says

@@ -17,6 +17,8 @@ export interface NetworkForm {
   allowedCIDRsText: string
   /** gateway.lockout_exempt: IPs/CIDRs never locked out after failed sign-ins. */
   lockoutExemptText: string
+  /** gateway.trusted_proxies: reverse proxies whose forwarded client address is trusted. */
+  trustedProxiesText: string
   deviceScope: HttpScope
   devicePort: string
   /** channels.device.external_url shown as host[:port]; https:// is added on save. */
@@ -42,6 +44,7 @@ export const EMPTY_NETWORK_FORM: NetworkForm = {
   tlsExtraNames: [],
   allowedCIDRsText: "",
   lockoutExemptText: "",
+  trustedProxiesText: "",
   deviceScope: "localhost",
   devicePort: String(DEFAULT_DEVICE_PORT),
   deviceExternalHost: "",
@@ -142,6 +145,7 @@ export function buildNetworkFormFromConfig(config: unknown): NetworkForm {
     tlsExtraNames: asStringArray(tls.extra_names),
     allowedCIDRsText: asStringArray(gateway.allowed_cidrs).join("\n"),
     lockoutExemptText: asStringArray(gateway.lockout_exempt).join("\n"),
+    trustedProxiesText: asStringArray(gateway.trusted_proxies).join("\n"),
     deviceScope: scopeOfHost(asString(device.host)),
     devicePort: asPortString(device.port, EMPTY_NETWORK_FORM.devicePort),
     deviceExternalHost: deviceHostFromURL(asString(device.external_url)),
@@ -176,6 +180,7 @@ function fullNetworkPatch(form: NetworkForm): JsonRecord {
       external_url: form.externalUrl.trim(),
       allowed_cidrs: parseCIDRText(form.allowedCIDRsText),
       lockout_exempt: parseCIDRText(form.lockoutExemptText),
+      trusted_proxies: parseCIDRText(form.trustedProxiesText),
       tls: {
         mode: form.httpsMode,
         extra_names: form.tlsExtraNames

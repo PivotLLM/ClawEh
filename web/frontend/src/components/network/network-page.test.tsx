@@ -38,6 +38,7 @@ const config = {
     external_url: "https://claw.example.com",
     allowed_cidrs: ["192.168.1.0/24"],
     lockout_exempt: ["192.168.1.10"],
+    trusted_proxies: ["10.0.0.2"],
     tls: { mode: "all", extra_names: ["claw.home.arpa"] },
   },
   channels: {
@@ -192,6 +193,7 @@ describe("NetworkPage", () => {
     expect(value("network-external-url")).toBe("https://claw.example.com")
     expect(value("network-allowed-cidrs")).toBe("192.168.1.0/24")
     expect(value("network-lockout-exempt")).toBe("192.168.1.10")
+    expect(value("network-trusted-proxies")).toBe("10.0.0.2")
     expect(value("network-device-port")).toBe("18791")
     // The device address is shown without its scheme.
     expect(value("network-device-external-url")).toBe("ops42.example.com:42333")
@@ -579,6 +581,21 @@ describe("NetworkPage", () => {
     await waitForPatch(calls)
     expect(patches(calls)[0]).toEqual({
       gateway: { lockout_exempt: ["192.168.1.10", "10.0.0.0/8"] },
+    })
+    expect(screen.queryByTestId("network-restart-banner")).toBe(null)
+  })
+
+  it("saves the Trusted proxies editor as gateway.trusted_proxies", async () => {
+    const calls = stubFetch({})
+    renderPage()
+    await screen.findByTestId("cert-fingerprint")
+
+    fireEvent.change(screen.getByTestId("network-trusted-proxies"), {
+      target: { value: "10.0.0.2, 10.0.1.0/24" },
+    })
+    await waitForPatch(calls)
+    expect(patches(calls)[0]).toEqual({
+      gateway: { trusted_proxies: ["10.0.0.2", "10.0.1.0/24"] },
     })
     expect(screen.queryByTestId("network-restart-banner")).toBe(null)
   })

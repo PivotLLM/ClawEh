@@ -799,6 +799,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       "cert-source",
       "network-allowed-cidrs",
       "network-lockout-exempt",
+      "network-trusted-proxies",
       "network-device-scope",
       "network-device-port",
       "network-device-tls",
@@ -1139,6 +1140,18 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     const v = await field.inputValue()
     await close()
     const want = (c?.gateway?.lockout_exempt ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(none)"
+  })
+
+  await check(17, "the Trusted proxies editor reflects gateway.trusted_proxies", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-trusted-proxies]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.trusted_proxies ?? []).join("\n")
     assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
     return want || "(none)"
   })
