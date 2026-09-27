@@ -403,7 +403,10 @@ if (useGroup("P", "Authentication")) {
     const errors = await page.locator("[data-testid=route-error]").count()
     await close()
     await other.close()
-    assert(problems.length === 0, `console: ${problems[0]}`)
+    // The dead session is refused with 401 by design; the browser itself
+    // reports that refused request in the console. Anything else is a defect.
+    const unexpected = problems.filter((p) => !/Failed to load resource: .*401/.test(p))
+    assert(unexpected.length === 0, `console: ${unexpected[0]}`)
     assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
     assert(url.searchParams.get("next") === "/models", `next = ${url.searchParams.get("next")}`)
     assert(errors === 0, "an error state was rendered instead of the login page")

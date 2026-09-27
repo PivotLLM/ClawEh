@@ -13,30 +13,36 @@ export function AppLayout({ children }: { children: ReactNode }) {
   // without the sidebar/header chrome so first-run users aren't distracted by
   // navigation into a not-yet-configured app. The login page likewise: there
   // is nothing to navigate to without a session.
+  //
+  // The SidebarProvider stays mounted on every route. During a navigation to
+  // /login (a session that expired while a page was open) the outgoing page,
+  // which uses the sidebar hook, can still be rendered for one frame after the
+  // path has changed; dropping the provider on that frame threw
+  // "useSidebar must be used within a SidebarProvider". Only the chrome is
+  // conditional.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  if (pathname === "/setup" || pathname === "/login") {
-    return (
-      <TooltipProvider>
-        <div className="bg-background h-dvh overflow-y-auto">{children}</div>
-        <Toaster position="bottom-center" />
-      </TooltipProvider>
-    )
-  }
+  const chromeless = pathname === "/setup" || pathname === "/login"
 
   return (
     <TooltipProvider>
       <SidebarProvider className="flex h-dvh flex-col overflow-hidden">
-        <AppHeader />
-        <ConnectionBanner />
+        {chromeless ? (
+          <div className="bg-background h-dvh overflow-y-auto">{children}</div>
+        ) : (
+          <>
+            <AppHeader />
+            <ConnectionBanner />
 
-        <div className="flex flex-1 overflow-hidden">
-          <AppSidebar />
-          <div className="flex w-full flex-col overflow-hidden">
-            <main className="flex min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden">
-              {children}
-            </main>
-          </div>
-        </div>
+            <div className="flex flex-1 overflow-hidden">
+              <AppSidebar />
+              <div className="flex w-full flex-col overflow-hidden">
+                <main className="flex min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden">
+                  {children}
+                </main>
+              </div>
+            </div>
+          </>
+        )}
         <Toaster position="bottom-center" />
       </SidebarProvider>
     </TooltipProvider>
