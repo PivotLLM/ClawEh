@@ -46,8 +46,6 @@ func statusCmd() {
 	}
 
 	if _, err := os.Stat(configPath); err == nil {
-		fmt.Printf("Model: %s\n", cfg.Agents.Defaults.DefaultModelName())
-
 		// Report each configured provider and whether it carries credentials.
 		fmt.Printf("\nProviders (%d):\n", len(cfg.Providers))
 		for i := range cfg.Providers {

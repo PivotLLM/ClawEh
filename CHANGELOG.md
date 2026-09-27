@@ -437,6 +437,8 @@ observe does not need an entry.
   Save button is gone: the page autosaves each changed field like the rest of
   the WebUI (text about half a second after the last keystroke, a radio or
   checkbox at once), sending only that field.
+- `claw status` no longer prints a "Model:" line: agents use their own model
+  lists, so a single name there was misleading.
 - The address lists on the Network page, in `claw status` and in `GET /api/tls`
   no longer include Docker's bridge interfaces (`docker0`, `br-<id>`, `veth*`):
   those addresses reach only containers on the machine, so they are not
