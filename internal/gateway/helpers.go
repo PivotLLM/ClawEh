@@ -549,6 +549,8 @@ func setupAndStartServices(
 
 	// Let the device gateway answer operator-client reads (agents.list, chat.history).
 	injectDeviceAgentQuerier(services.ChannelManager, agentLoop)
+	// Let channels.device.tls serve the HTTPS listener's certificate.
+	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
 
 	// Wire up voice transcription if a supported provider is configured.
 	if transcriber := voice.DetectTranscriberWithAlerter(cfg, agentLoop.Alerter()); transcriber != nil {
@@ -1084,6 +1086,7 @@ func restartServices(
 	// its querier after the first config reload and sessionScopeKey falls back to a
 	// bogus "main" agent id — breaking device/ACP turn routing.
 	injectDeviceAgentQuerier(services.ChannelManager, al)
+	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
 
 	enabledChannels := services.ChannelManager.GetEnabledChannels()
 	if len(enabledChannels) > 0 {

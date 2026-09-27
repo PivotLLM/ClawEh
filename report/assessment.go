@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
@@ -55,10 +54,11 @@ type assessRow struct {
 
 // listenerRows is one row per listener, in a fixed order: the WebUI/API over
 // HTTP and HTTPS, the Device Gateway over HTTP and HTTPS, the MCP host, and
-// the LINE webhook when that channel is on. Only two conditions are marked:
-// plain HTTP open to the network, and HTTPS off while it is. A self-signed
-// certificate is stated, never marked: on a LAN there is usually no
-// alternative. Raw bind addresses are left to the Network section.
+// the LINE webhook when that channel is on. Only unencrypted network access
+// is marked: WebUI/API or Device Gateway HTTP open to the network, and
+// WebUI/API HTTPS off while its HTTP is. A self-signed certificate is stated,
+// never marked: on a LAN there is usually no alternative. Raw bind addresses
+// are left to the Network section.
 func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	gw := cfg.Gateway
 	webAllow := webAllowPhrase(gw.EffectiveAllowedCIDRs())
@@ -80,28 +80,33 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 		rows = append(rows, assessRow{false, itemWebHTTPS, enabledLocal + certificatePhrase(cfg, now) + "."})
 	default:
 		if gw.HTTPOnNetwork() {
-			rows = append(rows, assessRow{true, itemWebHTTPS, "Disabled, while the WebUI/API is open to the network over unencrypted HTTP."})
+			rows = append(rows, assessRow{true, itemWebHTTPS, "Disabled, while HTTP is enabled for network access."})
 		} else {
 			rows = append(rows, assessRow{false, itemWebHTTPS, disabledStatus})
 		}
 	}
 
+	// The device listener speaks either plain WebSocket or, with
+	// channels.device.tls, TLS on the same port; the other row is Disabled.
 	dev := cfg.Channels.Device
+	devLocal := isLoopback(orValue(dev.Host, "127.0.0.1"))
+	devAllow := deviceAllowPhrase(dev.AllowedCIDRs)
 	switch {
-	case !dev.Enabled:
+	case !dev.Enabled || dev.TLS:
 		rows = append(rows, assessRow{false, itemDeviceHTTP, disabledStatus})
-	case isLoopback(orValue(dev.Host, "127.0.0.1")):
+	case devLocal:
 		rows = append(rows, assessRow{false, itemDeviceHTTP, enabledLocal + "."})
 	default:
-		rows = append(rows, assessRow{
-			false, itemDeviceHTTP,
-			enabledNetwork + "; " + deviceAllowPhrase(dev.AllowedCIDRs) + " (device token and pairing required).",
-		})
+		rows = append(rows, assessRow{true, itemDeviceHTTP, enabledNetwork + " (unencrypted)" + devAllow + "."})
 	}
-	rows = append(rows, assessRow{
-		false, itemDeviceHTTPS,
-		"Not available in this version (plain WebSocket, protected by the device token and pairing).",
-	})
+	switch {
+	case !dev.Enabled || !dev.TLS:
+		rows = append(rows, assessRow{false, itemDeviceHTTPS, disabledStatus})
+	case devLocal:
+		rows = append(rows, assessRow{false, itemDeviceHTTPS, enabledLocal + certificatePhrase(cfg, now) + "."})
+	default:
+		rows = append(rows, assessRow{false, itemDeviceHTTPS, enabledNetwork + certificatePhrase(cfg, now) + devAllow + "."})
+	}
 
 	if cfg.MCPHostEffectivelyEnabled() {
 		// config.ValidateMCPHostListen refuses anything but loopback.
@@ -133,12 +138,13 @@ func webAllowPhrase(cidrs []string) string {
 	}
 }
 
-// deviceAllowPhrase is the Device Gateway allowlist; empty means any address.
+// deviceAllowPhrase is the Device Gateway allowlist as a trailing clause, in
+// the shape of webAllowPhrase; empty means any address.
 func deviceAllowPhrase(cidrs []string) string {
 	if len(cidrs) == 0 || slices.Contains(cidrs, config.AllowAnyAddress) {
-		return "allowed from any address"
+		return "; allowed from any address"
 	}
-	return "allowed networks: " + strings.Join(cidrs, ", ")
+	return "; allowed networks: " + strings.Join(cidrs, ", ")
 }
 
 // certificatePhrase names the HTTPS certificate as a clause: self-signed, or
@@ -162,29 +168,6 @@ func certificatePhrase(cfg *config.Config, now time.Time) string {
 	return ", user-provided certificate (expires " + date + ")"
 }
 
-// reachSentence names the listeners other machines can connect to, for the
-// operator authentication row.
-func reachSentence(cfg *config.Config) string {
-	gw := cfg.Gateway
-	var open []string
-	if gw.HTTPOnNetwork() {
-		open = append(open, itemWebHTTP)
-	}
-	if gw.HTTPSOnNetwork() {
-		open = append(open, itemWebHTTPS)
-	}
-	if dev := cfg.Channels.Device; dev.Enabled && !isLoopback(orValue(dev.Host, "127.0.0.1")) {
-		open = append(open, "Device Gateway")
-	}
-	if line := cfg.Channels.LINE; line.Enabled && !isLoopback(line.WebhookHost) {
-		open = append(open, itemLINE)
-	}
-	if len(open) == 0 {
-		return "Everything listens on localhost only, so nothing is reachable from other machines."
-	}
-	return "Reachable from other machines: " + strings.Join(open, ", ") + "."
-}
-
 func mark(action bool) string {
 	if action {
 		return actionMark
@@ -194,9 +177,7 @@ func mark(action bool) string {
 
 // collectAssessment is the table a reviewer reads first: the items that most
 // often need attention, each with the fact and, where action is recommended,
-// a mark. It opens with one row per listener (see listenerRows); operator
-// authentication is marked whenever no usable admin account exists, since
-// without one the WebUI is locked.
+// a mark. It opens with one row per listener (see listenerRows).
 func collectAssessment(_ context.Context, cfg *config.Config, env Environment) Section {
 	t := Table{Columns: []string{"Action", "Item", "Status"}}
 	add := func(action bool, item, status string) {
@@ -212,9 +193,6 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 	dd := dataDir(cfg, env)
-	credPath := admin.Path(dd)
-	_, credErr := admin.Load(credPath)
-	add(credErr != nil, "Operator authentication (WebUI and API)", adminAccountStatus(credErr, credPath)+" "+reachSentence(cfg))
 
 	findings, permErr := perms.Check(dd, env.ConfigPath)
 	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr))
@@ -272,14 +250,17 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 
+	// The WebUI's one sender is the logged-in operator and every device is
+	// authenticated and paired, so allow_from says nothing about exposure
+	// there; only channels where anyone can message the bot count.
 	var open []string
 	for _, c := range enabledChannels(cfg) {
-		if c.AnyOpen {
+		if c.AnyOpen && c.Name != "webui" && c.Name != "device" {
 			open = append(open, c.Name)
 		}
 	}
 	add(len(open) > 0, "Channels accepting any sender",
-		ifStr(len(open) == 0, "None: every enabled channel restricts senders.", strings.Join(open, ", ")+" (allow_from contains *)."))
+		ifStr(len(open) == 0, "None: every messaging channel restricts senders.", strings.Join(open, ", ")+" (allow_from contains *)."))
 
 	lg := cfg.Logging
 	var flags []string
@@ -318,22 +299,6 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		Title:  "Security assessment",
 		Notes:  []string{"A " + actionMark + " in the first column means action is recommended. Details for every item are in the sections below."},
 		Tables: []Table{t},
-	}
-}
-
-// adminAccountStatus describes the credentials file the WebUI/API authenticates
-// against, from the error admin.Load returned (nil when it is usable).
-func adminAccountStatus(err error, path string) string {
-	var perr *admin.PermissionError
-	switch {
-	case err == nil:
-		return "Admin account configured (" + path + "); a login is required for the WebUI and API."
-	case errors.Is(err, admin.ErrNotConfigured):
-		return "No admin account: the WebUI and API refuse every request until `claw admin` is run on the server."
-	case errors.As(err, &perr):
-		return "Credentials file ignored because other accounts can read it; run: " + perr.Fix() + "."
-	default:
-		return "Credentials file unusable: " + err.Error() + "."
 	}
 }
 

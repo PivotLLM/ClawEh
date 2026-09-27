@@ -75,6 +75,22 @@ func TestPrintAccess_DefaultWithAdmin(t *testing.T) {
 	}
 }
 
+// The device gateway line follows channels.device.tls: ws:// or wss://.
+func TestPrintAccess_DeviceScheme(t *testing.T) {
+	cfg := accessConfig(t, "127.0.0.1", "")
+	cfg.Channels.Device.Enabled = true
+	cfg.Channels.Device.Host = "0.0.0.0"
+	cfg.Channels.Device.Port = 18791
+	wantLines(t, accessReport(cfg), "Device gateway:     ws://0.0.0.0:18791/")
+
+	cfg.Channels.Device.TLS = true
+	got := accessReport(cfg)
+	wantLines(t, got, "Device gateway:     wss://0.0.0.0:18791/")
+	if strings.Contains(got, "ws://0.0.0.0") {
+		t.Errorf("plain ws:// listed with tls on:\n%s", got)
+	}
+}
+
 // Plain HTTP on the network is listed as such, flagged unencrypted.
 func TestPrintAccess_HTTPOnNetwork(t *testing.T) {
 	got := accessReport(accessConfig(t, "10.0.0.5", config.TLSModeOff))

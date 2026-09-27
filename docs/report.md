@@ -46,13 +46,14 @@ appear in the output.
   HTTPS**, **Device Gateway HTTP**, **Device Gateway HTTPS**, **MCP host
   (local tools)** and, when the LINE channel is on, **LINE webhook**. Each
   says "Enabled for localhost", "Enabled for network access" or "Disabled";
-  the HTTPS row adds the certificate ("self-signed certificate", or
-  "user-provided certificate (expires YYYY-MM-DD)") and a network row adds
-  who may connect ("allowed networks: 10.0.0.0/8", "allowed from any
-  address"). The Device Gateway has no HTTPS in this version; its row says so.
-  Bind addresses are left to the Network section. Then: a user-supplied
-  certificate within 14 days of expiry, operator authentication (with the
-  listeners reachable from other machines), data directory permissions (files
+  an HTTP row on the network adds "(unencrypted)", an HTTPS row adds the
+  certificate ("self-signed certificate", or "user-provided certificate
+  (expires YYYY-MM-DD)") and a network row adds who may connect ("allowed
+  networks: 10.0.0.0/8", "allowed from any address"). The Device Gateway
+  speaks either plain WebSocket or, with `channels.device.tls`, TLS with the
+  WebUI certificate, so one of its two rows is always "Disabled". Bind
+  addresses are left to the Network section. Then: a user-supplied
+  certificate within 14 days of expiry, data directory permissions (files
   under `CLAW_HOME` that other users can read), the WebUI chat token, whether
   new devices are auto-approved, file confinement, shell access, and for each
   confined agent that can run `shell_exec` a reminder that the shell is not
@@ -60,11 +61,13 @@ appear in the output.
   accepting any sender, message content in logs, the audit log
   (`<CLAW_HOME>/audit.db`, 90-day retention), MCP servers running local
   programs, and sub-agent spawning. The first column holds `*` where action is
-  recommended and is blank otherwise. Among the listener rows only two
-  conditions are marked: WebUI/API HTTP open to the network (unencrypted), and
-  WebUI/API HTTPS disabled while HTTP is open to the network. A self-signed
-  certificate is never marked. Operator authentication is marked whenever no
-  usable admin account exists; awareness rows (shell not confined, bypass
+  recommended and is blank otherwise. Among the listener rows only
+  unencrypted network access is marked: WebUI/API HTTP or Device Gateway HTTP
+  open to the network, and WebUI/API HTTPS disabled while its HTTP is open to
+  the network. A self-signed certificate is never marked. Login is always
+  required, so there is no authentication row; the WebUI and the Device
+  Gateway never appear under "channels accepting any sender", since their
+  senders are authenticated. Awareness rows (shell not confined, bypass
   restrictions) are never marked.
 - **Summary**: one table of what Claw can access, by area: files, shell,
   outbound network, inbound listeners, messaging channels, devices, external

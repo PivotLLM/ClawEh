@@ -15,11 +15,16 @@ import (
 
 // BuildSetupPayload builds the device QR payload. When externalURL is set it is the
 // authoritative advertised endpoint (http->ws, https->wss); otherwise the payload
-// advertises the detected LAN IPs on the device listener port.
-func BuildSetupPayload(externalURL string, lanIPs []string, devicePort int, token string) (gatewayproto.SetupPayload, error) {
+// advertises the detected LAN IPs on the device listener port, over wss when
+// useTLS (channels.device.tls) is on and ws otherwise.
+func BuildSetupPayload(externalURL string, lanIPs []string, devicePort int, token string, useTLS bool) (gatewayproto.SetupPayload, error) {
 	externalURL = strings.TrimSpace(externalURL)
 	if externalURL == "" {
-		return gatewayproto.NewSetupPayload(lanIPs, devicePort, token, gatewayproto.SetupProtocolWS), nil
+		proto := gatewayproto.SetupProtocolWS
+		if useTLS {
+			proto = gatewayproto.SetupProtocolWSS
+		}
+		return gatewayproto.NewSetupPayload(lanIPs, devicePort, token, proto), nil
 	}
 	u, err := url.Parse(externalURL)
 	if err != nil || u.Hostname() == "" {

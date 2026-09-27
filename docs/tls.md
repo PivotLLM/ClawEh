@@ -101,8 +101,11 @@ of a self-signed install.
 
 - The MCP host (`mcp_host.listen`) must stay on a loopback address; the gateway
   refuses to start otherwise. The CLIs that use it connect locally.
-- The device gateway (`channels.device`, port 18791) is plain WebSocket with its
-  own token and Ed25519 pairing authentication.
+- The device gateway (`channels.device`, port 18791) has its own token and
+  Ed25519 pairing authentication and is plain WebSocket by default. Set
+  `channels.device.tls: true` to serve `wss://` on the same port with the
+  certificate described above (it needs `gateway.tls.mode` other than `"off"`);
+  the pairing QR code and `claw status` then advertise `wss://`.
 - The LINE webhook is a path on the WebUI/API listeners, so off-box it is
   served over HTTPS. LINE will not accept a self-signed certificate: use your
   own, or a reverse proxy (see `docs/remote-access.md`).

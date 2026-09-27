@@ -86,6 +86,11 @@ func listeners(cfg *config.Config) []listener {
 		if !isLoopback(host) {
 			notes = append(notes, offHostNote)
 		}
+		if dev.TLS {
+			notes = append(notes, "wss:// with the WebUI HTTPS certificate (channels.device.tls)")
+		} else {
+			notes = append(notes, "ws://, unencrypted")
+		}
 		if dev.ExternalURL != "" {
 			notes = append(notes, "external_url "+dev.ExternalURL)
 		}

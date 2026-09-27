@@ -223,6 +223,16 @@ observe does not need an entry.
 
 ### Added
 
+- **HTTPS for the device gateway.** `channels.device.tls: true` serves the
+  device listener over TLS (`wss://`) on its usual port with the same
+  certificate as the WebUI HTTPS listener, self-signed or user-provided,
+  following its reloads. Default off, so paired devices keep connecting over
+  `ws://` until it is turned on. It needs `gateway.tls.mode` other than
+  `"off"`, and config validation says so. `claw status`, the pairing QR code,
+  the Devices page and `claw acp` switch to `wss://` with it. The report's
+  Device Gateway rows now read like the WebUI rows: plain WebSocket on the
+  network is "Enabled for network access (unencrypted)" and marked, and the
+  HTTPS row is "Disabled" or "Enabled …, self-signed certificate".
 - **Configuration report.** A new Report page (after Services in the WebUI
   menu) shows the security assessment inline and offers a PDF, the ClawEh
   Configuration Report, describing what this install can do: identity and the

@@ -61,6 +61,23 @@ func TestEnsureProvisioned(t *testing.T) {
 	}
 }
 
+// The QR payload advertises the scheme the listener actually speaks: ws by
+// default, wss with channels.device.tls; an external URL decides on its own.
+func TestBuildSetupPayloadScheme(t *testing.T) {
+	plain, err := BuildSetupPayload("", []string{"10.0.0.5"}, 18791, "tok", false)
+	if err != nil || plain.Protocol != "ws" {
+		t.Fatalf("plain: protocol = %q, err = %v, want ws", plain.Protocol, err)
+	}
+	secure, err := BuildSetupPayload("", []string{"10.0.0.5"}, 18791, "tok", true)
+	if err != nil || secure.Protocol != "wss" || secure.Port != 18791 {
+		t.Fatalf("tls: protocol = %q port = %d, err = %v, want wss on 18791", secure.Protocol, secure.Port, err)
+	}
+	ext, err := BuildSetupPayload("https://claw.example.com:42330", nil, 18791, "tok", false)
+	if err != nil || ext.Protocol != "wss" {
+		t.Fatalf("external https: protocol = %q, err = %v, want wss", ext.Protocol, err)
+	}
+}
+
 func TestRenderQRCode(t *testing.T) {
 	content := `{"type":"clawdbot-gateway","version":1,"ips":["192.168.1.10"],"port":18790,"token":"abc","protocol":"ws"}`
 	png, err := RenderQRCodePNGDataURL(content)
