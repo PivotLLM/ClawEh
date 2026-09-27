@@ -143,7 +143,7 @@ observe does not need an entry.
   with; connecting on the shared `token`/`word_token` (including the first
   connect after approval) issues fresh device tokens and revokes the device's
   previous ones.
-- Service tokens (`state/service-tokens.json`) and device-gateway tokens
+- Service tokens (`internal/service-tokens.json`) and device-gateway tokens
   (`gateway.db`) are now stored as SHA-256 hashes instead of plaintext; a
   presented token is hashed for lookup. **On first start after upgrading, both
   stores are rewritten in place once** (the JSON file atomically at 0600, the
@@ -160,7 +160,7 @@ observe does not need an entry.
   secret with its mask.
 - The gateway now enforces data-directory permissions at startup: `CLAW_HOME`
   is made `0700`, and every database (`*.db`, `*.db-wal`, `*.db-shm`,
-  `*.sqlite*`), `credentials.json`, `state/*.json`, `tokens/*`, `tls/*.key` and
+  `*.sqlite*`), `credentials.json`, `internal/*.json`, `tokens/*`, `tls/*.key` and
   any file whose name contains `token` or `secret` under it is tightened to
   owner-only, with each change logged. Symlinks are left alone and the
   `media/` and `logs/` trees are not scanned. **Startup now refuses to run when
@@ -168,8 +168,8 @@ observe does not need an entry.
   since it holds provider keys and tokens. The error names the fix:
   `chmod 600 <path>`. Installs whose config was created by ClawEh are already
   `0600`; a config copied or edited by hand may need the command once. The
-  device pairing database (`state/gateway.db`) and the Fusion OAuth token store
-  (`state/fusion-tokens.db`) are now created `0600` from the first write,
+  device pairing database (`internal/gateway.db`) and the Fusion OAuth token store
+  (`internal/fusion-tokens.db`) are now created `0600` from the first write,
   including their SQLite `-wal`/`-shm` side files. Directories and files
   ClawEh creates under `CLAW_HOME` (agent workspaces, logs, dumps, sub-agent
   task files, skills, common files) are now created owner-only (0700/0600)
@@ -360,7 +360,7 @@ observe does not need an entry.
   `docs/audit.md`.
 - **Full backup and restore.** The nightly backup now writes one archive,
   `claw-backup-<timestamp>.tar.gz` (0600, in a 0700 directory), containing
-  `config.json`, the cron jobs file, `state/` (service and integration tokens,
+  `config.json`, the cron jobs file, `internal/` (service and integration tokens,
   the device pairing database, the fusion OAuth token store),
   `credentials.json` and `tls/` when present, and every SQLite database under
   `CLAW_HOME` — session archives and cognitive memory included. Databases are
@@ -508,10 +508,12 @@ observe does not need an entry.
   automatic at the first start: files are moved into the new places (a file
   already there wins, and anything left behind is named in a warning), the
   empty `state/` directory is removed, and `agents/default` is deleted with
-  everything in it. It is left alone, with a warning, when a configured agent
-  uses it as its workspace (an agent with the id `default` or `main`, or an
-  explicit `workspace` pointing there), or when one of its skills has the same
-  name as a shared skill. The only manual step is for anything that names the
+  everything in it. A skill there with the name of a shared skill is moved as
+  `<name>-default` (named in a warning). When a configured agent uses
+  `agents/default` as its workspace (an agent with the id `default` or
+  `main`, or an explicit `workspace` pointing there), only claw's
+  `state.json` is copied out and the rest is left alone, with a warning at
+  each start. The only manual step is for anything that names the
   old paths by hand: change MCP `env_file` paths that pointed into
   `agents/default` or were relative to the default agent's workspace, and
   scripts that read `agents/common`, `agents/default` or `<CLAW_HOME>/state`.

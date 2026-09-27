@@ -17,7 +17,7 @@
 // <agents base>/default/state, shared skills also in <agents base>/default/skills,
 // and the common directory in <agents base>/common. Prepare moves each of those
 // once, then removes <agents base>/default, unless a configured agent uses it
-// as its workspace.
+// as its workspace (then only claw's state.json is copied out).
 package layout
 
 import (
@@ -131,22 +131,28 @@ func moveLegacyCommon(cfg *config.Config) {
 }
 
 // moveLegacyDefault moves claw's state.json and the shared skills out of
-// <agents base>/default and removes that directory. When a configured agent
-// uses it as its workspace it is left alone. When a skill cannot be moved
-// because the shared root already has one by that name, the directory is kept
-// so nothing is lost, and the skills are named in a warning.
+// <agents base>/default and removes that directory. A skill whose name the
+// shared root already has is moved under a new name. When a configured agent
+// uses the directory as its workspace, only claw's state.json is copied out
+// (the agent keeps reading its own copy) and everything else is left alone.
 func moveLegacyDefault(cfg *config.Config, internalDir, skillsDir string) {
 	oldDir := filepath.Join(cfg.BaseDir(), legacyDefaultDir)
 	if !isDir(oldDir) {
 		return
 	}
+	dst := filepath.Join(internalDir, stateFile)
 	if id := agentUsing(cfg, oldDir); id != "" {
+		src := filepath.Join(oldDir, legacyStateDir, stateFile)
+		if !exists(dst) && exists(src) {
+			if err := copyAny(src, dst); err != nil {
+				logger.WarnCF("layout", "Cannot copy state.json", map[string]any{"from": src, "to": dst, "error": err.Error()})
+			}
+		}
 		logger.WarnCF("layout", "agents/default is an agent's workspace, so it was left in place",
 			map[string]any{"path": oldDir, "agent": id})
 		return
 	}
 
-	dst := filepath.Join(internalDir, stateFile)
 	for _, src := range []string{
 		filepath.Join(oldDir, legacyStateDir, stateFile),
 		filepath.Join(oldDir, stateFile), // before the state/ subdirectory existed
@@ -164,16 +170,15 @@ func moveLegacyDefault(cfg *config.Config, internalDir, skillsDir string) {
 		logger.InfoCF("layout", "Moved state.json into internal", map[string]any{"from": src, "to": dst})
 	}
 
-	kept, err := moveSkills(filepath.Join(oldDir, "skills"), skillsDir)
+	renamed, err := moveSkills(filepath.Join(oldDir, "skills"), skillsDir)
 	if err != nil {
 		logger.WarnCF("layout", "Cannot move the skills from agents/default, so it was left in place",
 			map[string]any{"path": oldDir, "error": err.Error()})
 		return
 	}
-	if len(kept) > 0 {
-		logger.WarnCF("layout", "Some skills in agents/default were not moved because the shared skills already have them; agents/default was left in place",
-			map[string]any{"path": filepath.Join(oldDir, "skills"), "skills": strings.Join(kept, ", ")})
-		return
+	if len(renamed) > 0 {
+		logger.WarnCF("layout", "Some skills from agents/default had the name of a shared skill and were renamed",
+			map[string]any{"skills": strings.Join(renamed, ", ")})
 	}
 
 	if err := os.RemoveAll(oldDir); err != nil {
@@ -183,8 +188,9 @@ func moveLegacyDefault(cfg *config.Config, internalDir, skillsDir string) {
 	logger.InfoCF("layout", "Removed agents/default, which claw no longer uses", map[string]any{"path": oldDir})
 }
 
-// moveSkills moves each entry of oldDir into newDir. An entry newDir already
-// has is left in place and returned by name.
+// moveSkills moves each entry of oldDir into newDir. An entry whose name
+// newDir already has is moved as <name>-default, or <name>-default-2 and so
+// on; those are returned as "old -> new".
 func moveSkills(oldDir, newDir string) ([]string, error) {
 	entries, err := os.ReadDir(oldDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -193,20 +199,24 @@ func moveSkills(oldDir, newDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var kept []string
+	var renamed []string
 	for _, e := range entries {
 		src := filepath.Join(oldDir, e.Name())
-		dst := filepath.Join(newDir, e.Name())
-		if exists(dst) {
-			kept = append(kept, e.Name())
-			continue
+		name := e.Name()
+		if exists(filepath.Join(newDir, name)) {
+			name = e.Name() + "-default"
+			for n := 2; exists(filepath.Join(newDir, name)); n++ {
+				name = fmt.Sprintf("%s-default-%d", e.Name(), n)
+			}
+			renamed = append(renamed, e.Name()+" -> "+name)
 		}
+		dst := filepath.Join(newDir, name)
 		if err := move(src, dst); err != nil {
-			return kept, fmt.Errorf("move %s: %w", src, err)
+			return renamed, fmt.Errorf("move %s: %w", src, err)
 		}
 		logger.InfoCF("layout", "Moved a skill into the shared skills", map[string]any{"from": src, "to": dst})
 	}
-	return kept, nil
+	return renamed, nil
 }
 
 // agentUsing returns the id of a configured agent whose workspace is dir, or

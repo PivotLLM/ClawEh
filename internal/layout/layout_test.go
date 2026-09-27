@@ -162,7 +162,10 @@ func TestPrepareLeavesAConfiguredDefaultAgentAlone(t *testing.T) {
 			} {
 				read(t, filepath.Join(home, rel))
 			}
-			assertGone(t, filepath.Join(home, "internal", "state.json"))
+			// claw's state.json is copied out; the agent keeps its own copy.
+			if got := read(t, filepath.Join(home, "internal", "state.json")); got != `{"last_channel":"telegram"}` {
+				t.Errorf("internal/state.json = %q, want the copied state", got)
+			}
 			assertGone(t, filepath.Join(home, "skills", "weather"))
 			// The rest of the move still happens.
 			if got := read(t, filepath.Join(home, "internal", "gateway.db")); got != "devices" {
@@ -200,9 +203,50 @@ func TestPrepareKeepsExistingFiles(t *testing.T) {
 	if got := read(t, filepath.Join(home, "skills", "news", "SKILL.md")); got != "news" {
 		t.Errorf("news skill = %q, want it moved", got)
 	}
-	// The colliding skill is kept, so agents/default is not removed.
-	if got := read(t, filepath.Join(home, "agents", "default", "skills", "weather", "SKILL.md")); got != "weather" {
-		t.Errorf("colliding skill = %q, want it left in place", got)
+	// The colliding skill is moved under a new name and agents/default goes.
+	if got := read(t, filepath.Join(home, "skills", "weather-default", "SKILL.md")); got != "weather" {
+		t.Errorf("renamed skill = %q, want the agents/default copy", got)
+	}
+	assertGone(t, filepath.Join(home, "agents", "default"))
+}
+
+// A renamed skill skips names that are taken as well.
+func TestPrepareRenamesCollidingSkills(t *testing.T) {
+	cfg, home := newConfig(t)
+	write(t, filepath.Join(home, "agents", "default", "skills", "weather", "SKILL.md"), "old")
+	for _, name := range []string{"weather", "weather-default", "weather-default-2"} {
+		write(t, filepath.Join(home, "skills", name, "SKILL.md"), name)
+	}
+
+	Prepare(cfg)
+
+	if got := read(t, filepath.Join(home, "skills", "weather-default-3", "SKILL.md")); got != "old" {
+		t.Errorf("weather-default-3 = %q, want old", got)
+	}
+	for _, name := range []string{"weather", "weather-default", "weather-default-2"} {
+		if got := read(t, filepath.Join(home, "skills", name, "SKILL.md")); got != name {
+			t.Errorf("%s = %q, want it untouched", name, got)
+		}
+	}
+	assertGone(t, filepath.Join(home, "agents", "default"))
+}
+
+// A second start does not overwrite internal/state.json from a real
+// agent's workspace.
+func TestPrepareConfiguredAgentStateCopiedOnce(t *testing.T) {
+	cfg, home := newConfig(t)
+	cfg.Agents.List = []config.AgentConfig{{ID: "default"}}
+	write(t, filepath.Join(home, "agents", "default", "state", "state.json"), "agent")
+
+	Prepare(cfg)
+	write(t, filepath.Join(home, "internal", "state.json"), "claw")
+	Prepare(cfg)
+
+	if got := read(t, filepath.Join(home, "internal", "state.json")); got != "claw" {
+		t.Errorf("internal/state.json = %q, want claw's own", got)
+	}
+	if got := read(t, filepath.Join(home, "agents", "default", "state", "state.json")); got != "agent" {
+		t.Errorf("agent state.json = %q, want it untouched", got)
 	}
 }
 

@@ -121,8 +121,8 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
   against `CLAW_HOME`. There is no `agents/default` pseudo-agent: `internal/layout.Prepare`
   creates these at every gateway start and moves the old layout (`<CLAW_HOME>/state`,
-  `agents/default`, `agents/common`) once, leaving `agents/default` alone when a configured
-  agent uses it.
+  `agents/default`, `agents/common`) once, renaming a colliding skill `<name>-default`; when a
+  configured agent uses `agents/default` it only copies claw's `state.json` out.
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
   `app.Version()` / `app.SemVer()` / `app.Name()` / `app.TagLine()` / `app.Copyright()`).
   The two release-signing public keys are `app/keys.go` (`app.ReleasePublicKeys()`).
