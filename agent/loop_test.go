@@ -699,7 +699,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
 	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	defer al.Close()
+	defer al.Close(context.Background())
 
 	if al.mcp.hasManager() {
 		t.Fatal("expected MCP manager to be nil before first direct processing")

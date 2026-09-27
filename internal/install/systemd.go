@@ -37,7 +37,9 @@ func buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome string
 	b.WriteString("ExecStart=" + execPath + "\n")
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=5\n")
-	b.WriteString("KillMode=control-group\n")
+	// mixed: SIGTERM reaches the gateway alone, so it stops its channels, turns
+	// and MCP servers in order; whatever is left in the unit is SIGKILLed after.
+	b.WriteString("KillMode=mixed\n")
 	b.WriteString("TimeoutStopSec=60\n")
 	// Hardening: the process (and anything it spawns) can never gain privileges
 	// via setuid/setgid/capabilities, and it gets a /tmp of its own. Nothing
@@ -75,7 +77,9 @@ func buildUserUnit(execPath, homeDir, binDir, clawHome string) string {
 	b.WriteString("ExecStart=" + execPath + "\n")
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=5\n")
-	b.WriteString("KillMode=control-group\n")
+	// mixed: SIGTERM reaches the gateway alone, so it stops its channels, turns
+	// and MCP servers in order; whatever is left in the unit is SIGKILLed after.
+	b.WriteString("KillMode=mixed\n")
 	b.WriteString("TimeoutStopSec=60\n")
 	// Hardening: no privilege gain via setuid/setgid/capabilities. PrivateTmp=
 	// is deliberately omitted here: in a per-user service manager it needs

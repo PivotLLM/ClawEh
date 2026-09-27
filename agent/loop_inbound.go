@@ -308,6 +308,13 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	msgCtx := tools.WithRoundSentFlag(turnCtx, &roundSent)
 
 	response, err := al.processMessageSafely(msgCtx, msg)
+	if err != nil && shuttingDown(turnCtx) {
+		// Interrupted, not failed: the turn stays pending and is replayed on
+		// restart, so nothing is sent now.
+		logger.InfoCF("agent", "Turn interrupted by shutdown; it is replayed on restart",
+			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
+		return
+	}
 	if err != nil {
 		if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
 			response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."

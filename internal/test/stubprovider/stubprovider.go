@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -158,6 +159,8 @@ type Server struct {
 	def      Step
 	hook     Hook
 	requests []Request
+	// hanging counts Hang requests still being held open.
+	hanging atomic.Int32
 }
 
 // New starts a stub and stops it when the test ends. It answers Reply("OK")
@@ -234,6 +237,10 @@ func (s *Server) Count() int {
 	return len(s.requests)
 }
 
+// Hanging is the number of Hang requests still held open, so a test can see
+// the client abandon one.
+func (s *Server) Hanging() int { return int(s.hanging.Load()) }
+
 // Remaining is how many scripted steps have not been consumed.
 func (s *Server) Remaining() int {
 	s.mu.Lock()
@@ -283,10 +290,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if wait <= 0 {
 			wait = time.Hour
 		}
+		s.hanging.Add(1)
 		select {
 		case <-r.Context().Done():
 		case <-time.After(wait):
 		}
+		s.hanging.Add(-1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	case step.Malformed:

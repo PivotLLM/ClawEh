@@ -166,12 +166,47 @@ func TestDrainContextManagers(t *testing.T) {
 		makeEntry(al, "agent:drain"+string(rune('0'+i)), cms[i], time.Now(), 0)
 	}
 
-	al.drainContextManagers()
+	al.drainContextManagers(context.Background())
 
 	for i, cm := range cms {
 		if !cm.closed.Load() {
 			t.Errorf("entry %d not closed after drain", i)
 		}
+	}
+}
+
+// blockingContextManager is a context manager whose Close never returns
+// until released, like one whose engine lock a stuck turn still holds.
+type blockingContextManager struct {
+	trackingContextManager
+	release chan struct{}
+}
+
+func (m *blockingContextManager) Close(context.Context) error {
+	<-m.release
+	return nil
+}
+
+// TestDrainContextManagers_BoundedByContext verifies a context manager that
+// never finishes closing cannot hold up the shutdown drain past its context,
+// and that the others are still closed.
+func TestDrainContextManagers_BoundedByContext(t *testing.T) {
+	al := &AgentLoop{evictStop: make(chan struct{})}
+	stuck := &blockingContextManager{release: make(chan struct{})}
+	defer close(stuck.release)
+	ok := &trackingContextManager{}
+	makeEntry(al, "agent:stuck", stuck, time.Now(), 1)
+	makeEntry(al, "agent:ok", ok, time.Now(), 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	al.drainContextManagers(ctx)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("drain took %v; it must stop waiting when its context ends", elapsed)
+	}
+	if !ok.closed.Load() {
+		t.Error("the idle session was not closed")
 	}
 }
 

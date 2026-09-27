@@ -188,7 +188,13 @@ func (al *AgentLoop) runAgentLoop(
 			map[string]any{"error": setErr.Error(), "session": opts.SessionKey})
 	}
 	al.recordPendingTurnSource(agent, opts)
+	// interrupted is set when shutdown cancelled the model loop; the turn is
+	// then left pending so a restart replays it.
+	interrupted := false
 	defer func() {
+		if interrupted {
+			return
+		}
 		if clrErr := agent.Sessions.ClearPendingTurn(opts.SessionKey); clrErr != nil {
 			logger.WarnCF("agent", "Failed to clear pending turn flag",
 				map[string]any{"error": clrErr.Error(), "session": opts.SessionKey})
@@ -199,6 +205,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 4. Run LLM iteration loop
 	finalContent, normal, degenerate, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm, mem)
 	if err != nil {
+		interrupted = shuttingDown(ctx)
 		return "", err
 	}
 
@@ -945,6 +952,9 @@ func (al *AgentLoop) runLLMIteration(
 			break
 		}
 
+		if err != nil && shuttingDown(ctx) {
+			return "", false, false, "", iteration, fmt.Errorf("LLM call interrupted: %w", context.Cause(ctx))
+		}
 		if err != nil {
 			logger.ErrorCF("agent", "LLM call failed",
 				map[string]any{

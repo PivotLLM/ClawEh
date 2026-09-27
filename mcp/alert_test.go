@@ -37,7 +37,7 @@ func TestRetryDisconnected_AlertsUnreachable(t *testing.T) {
 	mgr := NewManager()
 	mgr.reconnectCooldown = time.Minute
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()

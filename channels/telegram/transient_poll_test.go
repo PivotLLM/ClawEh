@@ -37,3 +37,22 @@ func TestIsTransientPollError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsCancelledPoll(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{"stop mid poll", `Execution error getUpdates: request call: http do request: Post "http://x/bot1:a/getUpdates": context canceled`, true},
+		{"other method", `Execution error sendMessage: request call: http do request: Post "http://x/bot1:a/sendMessage": context canceled`, false},
+		{"poll failure", "Execution error getUpdates: request call: internal server error: 502", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isCancelledPoll(c.msg); got != c.want {
+				t.Fatalf("isCancelledPoll(%q) = %v, want %v", c.msg, got, c.want)
+			}
+		})
+	}
+}

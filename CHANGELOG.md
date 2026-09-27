@@ -437,6 +437,14 @@ observe does not need an entry.
 
 ### Changed
 
+- The systemd unit `claw install` writes (and `claw.service`) now uses
+  `KillMode=mixed`: a stop sends SIGTERM to the gateway alone, which shuts
+  down its channels, turns and MCP servers in order, and only what is left
+  afterwards is killed. Existing installs keep the old unit until
+  `claw install` is run again.
+- On shutdown the MCP liveness probes stop first and no MCP server is
+  reconnected, so a server the stop signal killed is no longer restarted
+  while the gateway exits.
 - The self-signed certificate is now valid for ten years instead of one, so a
   browser that accepted it is not asked again next year. It is still
   regenerated when the machine's names change or on demand.
@@ -694,6 +702,17 @@ observe does not need an entry.
 
 ### Fixed
 
+- Stopping the gateway no longer waits 10 seconds per Telegram bot with
+  "Timed out waiting for long-poll goroutine to exit": the pending long poll
+  is now aborted at once.
+- Shutdown can no longer hang until systemd kills it. Closing the sessions and
+  the MCP servers shares a 10 second budget; anything still busy after it is
+  named in a warning and left behind. Each shutdown step is logged with how
+  long it took ("Shutdown: channels stopped in 0.4s").
+- Turns still running at shutdown are cancelled instead of being waited for:
+  model requests, CLI subprocesses and MCP tool calls stop at once. The user
+  gets no error reply and no fallback or alert fires; the turn is replayed
+  when the gateway starts again, like any interrupted turn.
 - `claw acp` reuses its device token across launches instead of
   re-authenticating with the shared token and rotating the device's tokens
   every time.

@@ -146,8 +146,8 @@ func isConnectionError(err error) bool {
 // a per-server cooldown after a failed attempt so a persistently-down upstream is
 // not hammered on every call. Returns nil only when a live session is restored.
 func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServerConfig) error {
-	if m.closed.Load() {
-		return errors.New("manager is closed")
+	if m.stopping() {
+		return errManagerStopping
 	}
 	if until, ok := m.reconnectCooldownUntil(name); ok {
 		return errors.New("server " + name + " is in reconnect cooldown until " + until.Format(time.RFC3339))
@@ -242,7 +242,7 @@ func (m *Manager) startProbe(name string) chan struct{} {
 			case <-stop:
 				return
 			case <-ticker.C:
-				if m.closed.Load() {
+				if m.stopping() {
 					return
 				}
 				m.probeOnce(name)

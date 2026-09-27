@@ -128,6 +128,22 @@ type AgentLoop struct {
 	spawnMu       sync.Mutex
 	spawnManagers map[string]*toolsagents.SubagentManager
 	superStop     chan struct{}
+
+	// stopRun cancels the context Run derives for every turn it starts, with
+	// errShuttingDown as the cause; set by Run, called by Stop. Guarded by
+	// runMu.
+	runMu   sync.Mutex
+	stopRun context.CancelCauseFunc
+}
+
+// errShuttingDown is the cause Stop gives the turn context. A turn ended by it
+// is an interrupted turn: no reply is sent and its pending-turn flag is kept,
+// so it is replayed when the gateway starts again.
+var errShuttingDown = errors.New("gateway shutting down")
+
+// shuttingDown reports whether ctx was cancelled by Stop.
+func shuttingDown(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errShuttingDown)
 }
 
 // SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
@@ -261,6 +277,14 @@ func NewAgentLoop(
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
+	// Every turn runs under this context, so Stop can abort the model requests,
+	// CLI subprocesses and tool calls still in flight.
+	ctx, stopRun := context.WithCancelCause(ctx)
+	defer stopRun(nil)
+	al.runMu.Lock()
+	al.stopRun = stopRun
+	al.runMu.Unlock()
+
 	if err := al.ensureMCPInitialized(ctx); err != nil {
 		return err
 	}
@@ -298,12 +322,32 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	return nil
 }
 
+// Stop ends Run and cancels the turns in flight. A cancelled turn is left
+// pending, so it is replayed on the next start.
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	al.runMu.Lock()
+	stopRun := al.stopRun
+	al.runMu.Unlock()
+	if stopRun != nil {
+		stopRun(errShuttingDown)
+	}
+}
+
+// BeginMCPShutdown stops the MCP liveness probes and refuses reconnects, so
+// servers the stop signal killed are not respawned while the gateway shuts
+// down. The first step of a shutdown; Close closes the servers.
+func (al *AgentLoop) BeginMCPShutdown() {
+	if mgr := al.mcp.peekManager(); mgr != nil {
+		mgr.BeginShutdown()
+	}
 }
 
 // Close releases resources held by agent session stores. Call after Stop.
-func (al *AgentLoop) Close() {
+// Closing the sessions and the MCP servers shares ctx as their time budget:
+// what is still busy when it ends is logged and abandoned, since the process
+// is exiting.
+func (al *AgentLoop) Close(ctx context.Context) {
 	// Signal the eviction goroutine to stop and drain all remaining managers.
 	// Use a non-blocking close in case Close() is called before Run().
 	select {
@@ -324,17 +368,19 @@ func (al *AgentLoop) Close() {
 	default:
 		close(al.superStop)
 	}
-	al.drainContextManagers()
+	start := time.Now()
+	al.drainContextManagers(ctx)
+	logger.Infof("Shutdown: sessions closed in %.1fs", time.Since(start).Seconds())
 
-	mcpManager := al.mcp.takeManager()
-
-	if mcpManager != nil {
-		if err := mcpManager.Close(); err != nil {
+	if mcpManager := al.mcp.takeManager(); mcpManager != nil {
+		start = time.Now()
+		if err := mcpManager.Close(ctx); err != nil {
 			logger.ErrorCF("agent", "Failed to close MCP manager",
 				map[string]any{
 					"error": err.Error(),
 				})
 		}
+		logger.Infof("Shutdown: MCP servers closed in %.1fs", time.Since(start).Seconds())
 	}
 
 	for _, mgr := range al.messageManagers {

@@ -547,6 +547,10 @@ sudo systemctl enable --now claw
 ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
 in the service file. See [Logging](#logging) for rotation and retention.
 
+The unit uses `KillMode=mixed`: on `systemctl stop` only the gateway gets
+SIGTERM and shuts down its channels, turns and MCP servers itself, normally
+within a few seconds; anything still running afterwards is killed.
+
 ## Logging
 
 ClawEh writes its own log files to `$CLAW_HOME/logs/` (default `~/.claw/logs/`),

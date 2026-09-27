@@ -42,7 +42,7 @@ func newMCPAgentLoop(t *testing.T, url string) *AgentLoop {
 		"svc": {Enabled: true, Type: "http", URL: url},
 	}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
-	t.Cleanup(al.Close)
+	t.Cleanup(func() { al.Close(context.Background()) })
 	if err := al.EnsureMCPInitialized(context.Background()); err != nil {
 		t.Fatalf("EnsureMCPInitialized: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestRefreshMCPServer_UnknownServer(t *testing.T) {
 // With no MCP manager at all (MCP not configured) every name is unknown.
 func TestRefreshMCPServer_NoManager(t *testing.T) {
 	al := mustNewAgentLoop(t, toolRegTestConfig(t), bus.NewMessageBus(), &mockProvider{}, nil)
-	t.Cleanup(al.Close)
+	t.Cleanup(func() { al.Close(context.Background()) })
 
 	if err := al.RefreshMCPServer(context.Background(), "svc"); !errors.Is(err, clawmcp.ErrUnknownServer) {
 		t.Fatalf("RefreshMCPServer without a manager = %v, want ErrUnknownServer", err)

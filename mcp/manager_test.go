@@ -302,10 +302,10 @@ func TestCallTool_ErrorsForClosedOrMissingServer(t *testing.T) {
 func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 	mgr := NewManager()
 
-	if err := mgr.Close(); err != nil {
+	if err := mgr.Close(context.Background()); err != nil {
 		t.Fatalf("first close should succeed, got: %v", err)
 	}
-	if err := mgr.Close(); err != nil {
+	if err := mgr.Close(context.Background()); err != nil {
 		t.Fatalf("second close should be idempotent, got: %v", err)
 	}
 }
@@ -432,7 +432,7 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -471,7 +471,7 @@ func TestReconnect_RespectsCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -516,7 +516,7 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	mgr := NewManager()
 	mgr.probeInterval = time.Second
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -548,7 +548,7 @@ func TestStatus_ReportsConnectedAndCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -595,7 +595,7 @@ func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -654,7 +654,7 @@ func TestRetryDisconnected_ConnectsDesiredServer(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -683,7 +683,7 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 	mgr := NewManager()
 	mgr.reconnectCooldown = time.Minute
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()

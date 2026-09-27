@@ -63,7 +63,31 @@ const (
 	serviceShutdownTimeout  = 30 * time.Second
 	providerReloadTimeout   = 30 * time.Second
 	gracefulShutdownTimeout = 15 * time.Second
+	// shutdownDrainBudget is shared by closing the agent sessions and the MCP
+	// servers at exit; what is still busy after it is abandoned. Keeps the
+	// whole stop well inside systemd's TimeoutStopSec.
+	shutdownDrainBudget = 10 * time.Second
 )
+
+// phaseTimer logs how long each step of a stop took, one INFO line per step.
+// A nil *phaseTimer logs nothing.
+type phaseTimer struct {
+	prefix string
+	start  time.Time
+}
+
+func newPhaseTimer(prefix string) *phaseTimer {
+	return &phaseTimer{prefix: prefix, start: time.Now()}
+}
+
+// done logs what finished and how long it took since the previous step.
+func (p *phaseTimer) done(what string) {
+	if p == nil {
+		return
+	}
+	logger.Infof("%s: %s in %.1fs", p.prefix, what, time.Since(p.start).Seconds())
+	p.start = time.Now()
+}
 
 // runtimeConfig returns the private copy of the store's configuration the
 // gateway runs on. References to models that do not exist are first removed
@@ -866,17 +890,20 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 
 // stopAndCleanupServices stops all services and cleans up resources. The agent
 // loop (nil when there is none) is unhooked from the MCP host it stops, so a
-// tool refresh between here and the host's restart is a no-op.
+// tool refresh between here and the host's restart is a no-op. phases, when
+// not nil, logs how long each step took.
 func stopAndCleanupServices(
 	services *gatewayServices,
 	agentLoop *agent.AgentLoop,
 	shutdownTimeout time.Duration,
+	phases *phaseTimer,
 ) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
 	if services.CogmemManager != nil {
 		services.CogmemManager.Stop()
+		phases.done("memory consolidation stopped")
 	}
 	if services.MCPServer != nil {
 		if agentLoop != nil {
@@ -885,15 +912,18 @@ func stopAndCleanupServices(
 		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
 		}
+		phases.done("MCP host stopped")
 	}
 	markReady(services, false)
 	if services.ChannelManager != nil {
 		if stopErr := services.ChannelManager.StopAll(shutdownCtx); stopErr != nil {
 			logger.WarnCF("channels", "Channel manager shutdown error", map[string]any{"error": stopErr.Error()})
 		}
+		phases.done("channels stopped")
 	}
 	if services.DeviceService != nil {
 		services.DeviceService.Stop()
+		phases.done("device service stopped")
 	}
 	if services.MountWatcher != nil {
 		services.MountWatcher.Stop()
@@ -903,6 +933,7 @@ func stopAndCleanupServices(
 	}
 	if services.CronService != nil {
 		services.CronService.Stop()
+		phases.done("cron stopped")
 	}
 	if services.MediaStore != nil {
 		// Stop the media store if it's a FileMediaStore with cleanup
@@ -912,18 +943,27 @@ func stopAndCleanupServices(
 	}
 }
 
-// shutdownGateway performs a complete gateway shutdown
+// shutdownGateway performs a complete gateway shutdown. MCP probes stop first,
+// so a server the stop signal killed is not respawned. Once the channels have
+// stopped delivering messages, the turns in flight are cancelled, so the
+// session and MCP close that follows is not left waiting on them.
 func shutdownGateway(
 	services *gatewayServices,
 	agentLoop *agent.AgentLoop,
 	provider providers.LLMProvider,
 	fullShutdown bool,
 ) {
+	begin := time.Now()
+	phases := newPhaseTimer("Shutdown")
+	agentLoop.BeginMCPShutdown()
+
 	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
 		cp.Close()
+		phases.done("provider closed")
 	}
 
-	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout)
+	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout, phases)
+	agentLoop.Stop()
 
 	if services.stopTLSWatch != nil {
 		services.stopTLSWatch()
@@ -937,15 +977,18 @@ func shutdownGateway(
 			logger.WarnCF("gateway", "Shared HTTP listener shutdown error", map[string]any{"error": err.Error()})
 		}
 		cancel()
+		phases.done("HTTP listeners stopped")
 	}
 
-	agentLoop.Stop()
-	agentLoop.Close()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainBudget)
+	agentLoop.Close(drainCtx)
+	drainCancel()
+	phases.done("agent loop closed")
 	if err := audit.Close(); err != nil {
 		logger.WarnCF("gateway", "audit log close failed", map[string]any{"error": err.Error()})
 	}
 
-	logger.Info("✓ Gateway stopped")
+	logger.Infof("✓ Gateway stopped in %.1fs", time.Since(begin).Seconds())
 	if fullShutdown {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := agentLoop.Alerter().Close(closeCtx); err != nil {
@@ -973,7 +1016,7 @@ func handleConfigReload(
 
 	// Stop all services before reloading
 	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(services, al, serviceShutdownTimeout) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
+	stopAndCleanupServices(services, al, serviceShutdownTimeout, nil) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
 
 	// Create new provider from updated config first to ensure validity
 	// This will use the correct API key and settings from newCfg.Models
@@ -1425,11 +1468,6 @@ func setupCronTool(
 // because the health server is nil until the shared HTTP server is first built,
 // and is replaced on every config reload.
 func markReady(services *gatewayServices, ready bool) {
-	logger.InfoF("DEBUG markReady", map[string]any{
-		"ready": ready, "services_nil": services == nil,
-		"health_nil": services == nil || services.HealthServer == nil,
-		"ptr":        fmt.Sprintf("%p", services.HealthServer),
-	})
 	if services != nil && services.HealthServer != nil {
 		services.HealthServer.SetReady(ready)
 	}

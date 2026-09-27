@@ -5,7 +5,10 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -205,12 +208,20 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 }
 
 // drainContextManagers closes all remaining context managers. Called from
-// AgentLoop.Close() after the eviction goroutine has been stopped.
-func (al *AgentLoop) drainContextManagers() {
+// AgentLoop.Close() after the eviction goroutine has been stopped. The
+// managers close concurrently; the context engine's Close does not honour a
+// context, so the wait is bounded here instead: when ctx ends first, the
+// sessions still closing are logged and left behind.
+func (al *AgentLoop) drainContextManagers(ctx context.Context) {
 	al.mu.RLock()
 	sti := al.sessionTokenIssuer
 	al.mu.RUnlock()
 
+	var (
+		mu      sync.Mutex
+		closing = make(map[string]bool)
+		wg      sync.WaitGroup
+	)
 	al.contextManagers.Range(func(key, value any) bool {
 		entry, ok := value.(*cmEntry)
 		if !ok {
@@ -220,16 +231,39 @@ func (al *AgentLoop) drainContextManagers() {
 		if sti != nil && entry.sessionKey != "" {
 			sti.Revoke(entry.sessionKey)
 		}
-		if err := entry.cm.Close(context.Background()); err != nil {
-			logger.WarnCF("agent", "shutdown drain: context manager close failed", map[string]any{
-				"key":   key,
-				"error": err.Error(),
-			})
-		}
-		forgetSessionState(entry.store, entry.sessionKey)
-		entry.mem.Close()
+		name := fmt.Sprint(key)
+		mu.Lock()
+		closing[name] = true
+		mu.Unlock()
+		wg.Go(func() {
+			if err := entry.cm.Close(context.WithoutCancel(ctx)); err != nil {
+				logger.WarnCF("agent", "shutdown drain: context manager close failed", map[string]any{
+					"key":   name,
+					"error": err.Error(),
+				})
+			}
+			forgetSessionState(entry.store, entry.sessionKey)
+			entry.mem.Close()
+			mu.Lock()
+			delete(closing, name)
+			mu.Unlock()
+		})
 		return true
 	})
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		mu.Lock()
+		busy := slices.Sorted(maps.Keys(closing))
+		mu.Unlock()
+		logger.WarnCF("agent", "Sessions still busy at shutdown; not waiting for them", map[string]any{"sessions": busy})
+	}
 }
 
 // invalidateContextManagers drops every cached ContextManager so the next access

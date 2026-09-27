@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,15 @@ type Manager struct {
 	mu      sync.RWMutex
 	closed  atomic.Bool    // changed from bool to atomic.Bool to avoid TOCTOU race
 	wg      sync.WaitGroup // tracks in-flight CallTool calls
+	// shuttingDown is set by BeginShutdown: probes stop and no server is
+	// (re)connected, while live sessions keep serving calls until Close.
+	shuttingDown atomic.Bool
+
+	// inflight counts the CallTool calls running per server, so a Close that
+	// runs out of time can say which servers were still busy. Guarded by
+	// inflightMu.
+	inflightMu sync.Mutex
+	inflight   map[string]int
 
 	// Resilience tuning (see MCPConfig). Defaults set in NewManager; overridden
 	// from config by applyTuning on load/sync.
@@ -157,6 +167,7 @@ func NewManager() *Manager {
 		cooldownUntil:     make(map[string]time.Time),
 		reconnecting:      make(map[string]bool),
 		desired:           make(map[string]config.MCPServerConfig),
+		inflight:          make(map[string]int),
 		reconnectCooldown: defaultReconnectCooldown,
 		callTimeout:       defaultCallTimeout,
 	}
@@ -470,14 +481,14 @@ func (m *Manager) ConnectServer(
 	// Store connection. Guard against a concurrent Close so a reconnect racing
 	// shutdown can't resurrect a server on a closed manager (and leak a probe).
 	m.mu.Lock()
-	if m.closed.Load() {
+	if m.stopping() {
 		m.mu.Unlock()
 		utils.CloseQuietly(c)
 		if stopListen != nil {
 			stopListen()
 		}
 		terminateStdioProcessTree(stdioCmd)
-		return errors.New("manager is closed")
+		return errManagerStopping
 	}
 	conn := &ServerConnection{
 		Name:       name,
@@ -580,7 +591,7 @@ func (m *Manager) setDesired(desired map[string]config.MCPServerConfig) {
 // mid-edit) recovers automatically without a restart — the initial-connect
 // analogue of the probe-driven reconnect that already covers drop-after-connect.
 func (m *Manager) RetryDisconnected(ctx context.Context) []string {
-	if m.closed.Load() {
+	if m.stopping() {
 		return nil
 	}
 	m.desiredMu.Lock()
@@ -698,6 +709,8 @@ func (m *Manager) CallTool(
 		return nil, fmt.Errorf("server %s not found", serverName)
 	}
 	defer m.wg.Done()
+	m.trackInflight(serverName, 1)
+	defer m.trackInflight(serverName, -1)
 
 	// Backstop: if the caller supplied no deadline, cap the call so a hung server
 	// cannot block forever. A caller-provided deadline is always honored as-is.
@@ -745,30 +758,101 @@ func (m *Manager) CallTool(
 	return result, nil
 }
 
-// Close closes all server connections
-func (m *Manager) Close() error {
-	// Use Swap to atomically set closed=true and get the previous value
-	// This prevents TOCTOU race with CallTool's closed check
-	if m.closed.Swap(true) {
-		return nil // already closed
+// errManagerStopping is returned when a connect or reconnect is refused
+// because the manager is shutting down or closed.
+var errManagerStopping = errors.New("manager is shutting down")
+
+// stopping reports whether BeginShutdown or Close has been called.
+func (m *Manager) stopping() bool {
+	return m.shuttingDown.Load() || m.closed.Load()
+}
+
+// BeginShutdown is the first step of a gateway shutdown: it stops every
+// liveness probe and refuses any further connect or reconnect, so a child the
+// stop signal killed is not respawned. Live sessions keep serving calls until
+// Close. It does not wait for a probe already mid-reconnect; Close does.
+func (m *Manager) BeginShutdown() {
+	if m.shuttingDown.Swap(true) {
+		return
 	}
+	m.stopProbes()
+}
 
-	// Wait for all in-flight CallTool calls to finish before closing sessions
-	// After closed=true is set, no new CallTool can start (they check closed first)
-	m.wg.Wait()
-
-	// Signal every liveness-probe goroutine to stop, then wait for them to exit
-	// before tearing down clients. A probe mid-reconnect sees closed==true and bails
-	// (ConnectServer/reconnect both check it), so no server is resurrected here.
+// stopProbes signals every connection's liveness probe to exit.
+func (m *Manager) stopProbes() {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, conn := range m.servers {
 		if conn.probeStop != nil {
 			close(conn.probeStop)
 			conn.probeStop = nil
 		}
 	}
-	m.mu.Unlock()
-	m.probeWg.Wait()
+}
+
+// trackInflight adjusts the running CallTool count for server by delta.
+func (m *Manager) trackInflight(server string, delta int) {
+	m.inflightMu.Lock()
+	defer m.inflightMu.Unlock()
+	m.inflight[server] += delta
+	if m.inflight[server] <= 0 {
+		delete(m.inflight, server)
+	}
+}
+
+// busyServers names the servers with a tool call or a reconnect in flight,
+// sorted, for the warning logged when Close runs out of time.
+func (m *Manager) busyServers() []string {
+	busy := make(map[string]bool)
+	m.inflightMu.Lock()
+	for name := range m.inflight {
+		busy[name] = true
+	}
+	m.inflightMu.Unlock()
+	m.cooldownMu.Lock()
+	for name := range m.reconnecting {
+		busy[name] = true
+	}
+	m.cooldownMu.Unlock()
+	return slices.Sorted(maps.Keys(busy))
+}
+
+// waitCtx waits for wg, or until ctx ends; it reports whether wg finished.
+func waitCtx(ctx context.Context, wg *sync.WaitGroup) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Close closes all server connections. It first waits, until ctx ends, for
+// in-flight tool calls and liveness probes to finish; when ctx ends first it
+// logs the servers still busy and closes every connection anyway, killing the
+// stdio children, so a hung call cannot hold up the process exit.
+func (m *Manager) Close(ctx context.Context) error {
+	// Use Swap to atomically set closed=true and get the previous value
+	// This prevents TOCTOU race with CallTool's closed check
+	if m.closed.Swap(true) {
+		return nil // already closed
+	}
+
+	// No new CallTool can start once closed is set (they check it first). Stop
+	// the liveness probes, then wait for in-flight calls and probes before
+	// tearing down clients. A probe mid-reconnect sees the manager closed and
+	// bails (ConnectServer/reconnect both check it), so no server is
+	// resurrected here.
+	m.stopProbes()
+	if !waitCtx(ctx, &m.wg) || !waitCtx(ctx, &m.probeWg) {
+		logger.WarnCF("mcp", "MCP servers still busy at shutdown; closing them anyway",
+			map[string]any{"servers": m.busyServers()})
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

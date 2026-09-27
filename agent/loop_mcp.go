@@ -142,7 +142,7 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	// MCP fully disabled now: tear down whatever is running and clear.
 	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
 		if old := al.mcp.takeManager(); old != nil {
-			if err := old.Close(); err != nil {
+			if err := old.Close(context.WithoutCancel(ctx)); err != nil {
 				logger.WarnCF("agent", "Failed to close previous MCP manager on reload",
 					map[string]any{"error": err.Error()})
 			}
@@ -172,7 +172,7 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	if err := al.registerMCPToolsFromManager(mgr); err != nil {
 		al.mcp.setInitErr(err)
 		if old := al.mcp.takeManager(); old != nil {
-			if closeErr := old.Close(); closeErr != nil {
+			if closeErr := old.Close(context.WithoutCancel(ctx)); closeErr != nil {
 				logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
 			}
 		}
@@ -227,7 +227,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	if err := al.registerMCPToolsFromManager(mcpManager); err != nil {
 		al.mcp.takeManager()
 		al.mcp.setInitErr(err)
-		if closeErr := mcpManager.Close(); closeErr != nil {
+		if closeErr := mcpManager.Close(context.WithoutCancel(ctx)); closeErr != nil {
 			logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
 		}
 		return nil

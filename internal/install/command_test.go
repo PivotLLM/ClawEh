@@ -21,6 +21,7 @@ func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 		"Group=alice",
 		"ExecStart=/home/alice/bin/claw",
 		"WantedBy=multi-user.target",
+		"KillMode=mixed",
 		"TimeoutStopSec=60",
 		"NoNewPrivileges=yes",
 		"PrivateTmp=yes",
@@ -203,6 +204,9 @@ func TestBuildUserUnit(t *testing.T) {
 	}
 	if !strings.Contains(unit, "TimeoutStopSec=60") {
 		t.Errorf("user unit missing TimeoutStopSec=60:\n%s", unit)
+	}
+	if !strings.Contains(unit, "KillMode=mixed") {
+		t.Errorf("user unit missing KillMode=mixed:\n%s", unit)
 	}
 	if !strings.Contains(unit, "NoNewPrivileges=yes") {
 		t.Errorf("user unit missing NoNewPrivileges=yes:\n%s", unit)

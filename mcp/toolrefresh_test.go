@@ -39,7 +39,7 @@ func newChangeCapturingManager(t *testing.T) (*Manager, chan string) {
 	changed := make(chan string, 8)
 	mgr.SetToolsChangedHandler(func(server string) { changed <- server })
 	t.Cleanup(func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})

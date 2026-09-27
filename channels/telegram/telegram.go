@@ -68,6 +68,10 @@ var pollExitTimeout = 10 * time.Second
 // request open for.
 const pollTimeoutSeconds = 30
 
+// httpHeaderMargin is how long past the long-poll timeout a request may wait
+// for Telegram's response headers before the transport gives up on it.
+const httpHeaderMargin = 15 * time.Second
+
 // pollBuffer is the capacity of the updates channel between the poll loop and
 // the bot handler.
 const pollBuffer = 100
@@ -111,6 +115,28 @@ func isTransientPollError(msg string) bool {
 	return false
 }
 
+// telegoLogger passes telego's log lines to ours, except that a getUpdates
+// aborted by cancellation (every Stop cuts the in-flight long poll short) is
+// logged at DEBUG: it is the expected way a poll ends, not an error.
+type telegoLogger struct {
+	*logger.Logger
+}
+
+func (l telegoLogger) Errorf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if isCancelledPoll(msg) {
+		l.Debugf("%s", msg)
+		return
+	}
+	l.Logger.Errorf("%s", msg)
+}
+
+// isCancelledPoll reports whether a telego log message is a getUpdates request
+// that ended because its context was cancelled.
+func isCancelledPoll(msg string) bool {
+	return strings.Contains(msg, "getUpdates") && strings.HasSuffix(msg, context.Canceled.Error())
+}
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -140,25 +166,27 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 	if botCfg.Token == "" {
 		return nil, errors.New("telegram bot token is required")
 	}
-	var opts []telego.BotOption
-
+	// net/http rather than telego's default fasthttp caller: fasthttp checks the
+	// context only before sending, so cancelling it could not abort the 30 s
+	// getUpdates long poll and every Stop waited out pollExitTimeout. The cloned
+	// default transport keeps HTTP(S)_PROXY support; a configured proxy replaces it.
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("default HTTP transport is not an *http.Transport")
+	}
+	transport = transport.Clone()
 	if botCfg.Proxy != "" {
 		proxyURL, parseErr := url.Parse(botCfg.Proxy)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", botCfg.Proxy, parseErr)
 		}
-		opts = append(opts, telego.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
-		}))
-	} else if os.Getenv("HTTP_PROXY") != "" || os.Getenv("HTTPS_PROXY") != "" {
-		opts = append(opts, telego.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}))
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
+	// Bounds the wait for response headers, which a long poll holds back for up
+	// to pollTimeoutSeconds. Not an overall client timeout, so a slow upload of a
+	// large file is not cut off while its body is still being sent.
+	transport.ResponseHeaderTimeout = pollTimeoutSeconds*time.Second + httpHeaderMargin
+	opts := []telego.BotOption{telego.WithHTTPClient(&http.Client{Transport: transport})}
 
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
 		opts = append(opts, telego.WithAPIServer(baseURL))
@@ -180,10 +208,10 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		chatIDs:        make(map[string]int64),
 	}
 
-	opts = append(opts, telego.WithLogger(
+	opts = append(opts, telego.WithLogger(telegoLogger{
 		logger.NewLogger("telego").WithContentSensitive().
 			WithErrorDowngrade(isTransientPollError),
-	))
+	}))
 
 	bot, err := telego.NewBot(botCfg.Token, opts...)
 	if err != nil {

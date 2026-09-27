@@ -153,7 +153,7 @@ func (l *loop) stop() {
 		case <-time.After(turnWait):
 			l.t.Error("AgentLoop.Run did not return after cancel")
 		}
-		l.al.Close()
+		l.al.Close(context.Background())
 	})
 }
 
