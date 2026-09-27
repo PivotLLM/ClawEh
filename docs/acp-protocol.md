@@ -69,7 +69,8 @@ R1:
   shared one.
 - **Pairing**: on first connect the device is unpaired → the gateway records a
   pending pairing and rejects the connect. Approve it once with `claw devices`
-  (or set `channels.device.auto_approve` for a trusted LAN), then re-run. There is
+  (or set `channels.device.auto_approve`, allowed only with the device gateway on
+  loopback), then re-run. There is
   no ACP-layer auth — the stdio pipe is the trust boundary.
 
 ## Running it

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,6 +37,13 @@ const (
 	// so the device reconnects instead of black-holing its sends.
 	devicePingInterval = 30 * time.Second
 	deviceReadTimeout  = 90 * time.Second
+	// deviceWriteTimeout bounds every write to a device socket. A write that
+	// misses it closes that connection, so a device that stops reading is
+	// dropped instead of stalling whoever writes to it.
+	deviceWriteTimeout = 5 * time.Second
+	// deviceSendQueueSize is how many frames may wait for a connection's
+	// writer. Senders never block: a connection whose queue is full is closed.
+	deviceSendQueueSize = 256
 )
 
 // ServerOptions configures a gateway protocol Server.
@@ -73,7 +81,14 @@ type Server struct {
 
 	inbound InboundFunc
 	querier AgentQuerier // optional: serves agents.list / chat.history to operator clients
-	conns   sync.Map     // chatID -> *liveConn
+	conns   sync.Map     // chatID -> *liveConn (the newest connection per device)
+
+	// live is every post-handshake connection, so a stop or a device removal
+	// can close all of them, not only the newest per device. stopped refuses
+	// connections that finish their handshake after CloseAll.
+	liveMu  sync.Mutex
+	live    map[*liveConn]struct{}
+	stopped bool
 
 	throttle *authThrottle
 	preauth  atomic.Int32        // connections upgraded but not yet authenticated
@@ -82,9 +97,13 @@ type Server struct {
 
 // liveConn is a post-handshake device connection used for conversation routing.
 type liveConn struct {
-	cw         *connWriter
-	deviceID   string
-	chatID     string
+	cw       *connWriter
+	deviceID string
+	chatID   string
+	// tokens are the device tokens this connection holds (echoed or issued in
+	// hello-ok). Every inbound request re-checks that the device is still
+	// paired and one of them is still valid.
+	tokens     []string
 	mu         sync.Mutex
 	seq        uint64
 	sessionKey string
@@ -155,34 +174,106 @@ func (s *Server) SetQuerier(q AgentQuerier) {
 	s.methods = append(s.methods, "agents.list", "chat.history")
 }
 
-// connWriter serializes writes to one websocket connection.
+// connWriter owns the write side of one websocket connection. Before the
+// handshake completes, frames are written synchronously (writeJSON); after it,
+// run drains a bounded queue that send fills without ever blocking, so nothing
+// upstream (a turn, the channel worker) waits on a slow device. Every data
+// write carries deviceWriteTimeout, and a failed or late write closes the
+// connection. Control frames (ping, close) use WriteControl, which gorilla
+// allows concurrently with the writer.
 type connWriter struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
+	conn      *websocket.Conn
+	queue     chan any
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
+func newConnWriter(conn *websocket.Conn) *connWriter {
+	return &connWriter{conn: conn, queue: make(chan any, deviceSendQueueSize), done: make(chan struct{})}
+}
+
+// queuedClose is a queue entry that closes the connection once the frames
+// queued before it are written.
+type queuedClose struct {
+	code   int
+	reason string
+}
+
+// writeJSON writes v now, under deviceWriteTimeout, and closes the connection
+// when the write fails. Only the handshake (before run starts) and run call
+// it, so data writes never overlap.
 func (w *connWriter) writeJSON(v any) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.conn.WriteJSON(v)
+	if err := w.conn.SetWriteDeadline(time.Now().Add(deviceWriteTimeout)); err != nil {
+		w.close()
+		return err
+	}
+	if err := w.conn.WriteJSON(v); err != nil {
+		logger.DebugCF("device", "websocket write failed; closing connection", map[string]any{"error": err.Error()})
+		w.close()
+		return err
+	}
+	return nil
 }
 
-// send writes v and logs at debug when the write fails: the peer is gone or
-// going, and the read loop observes that on its own.
-func (w *connWriter) send(v any) {
-	if err := w.writeJSON(v); err != nil {
-		logger.DebugCF("device", "websocket write failed", map[string]any{"error": err.Error()})
+// run writes queued frames until the connection closes.
+func (w *connWriter) run() {
+	for {
+		select {
+		case <-w.done:
+			return
+		case v := <-w.queue:
+			if c, ok := v.(queuedClose); ok {
+				w.closeWith(c.code, c.reason)
+				return
+			}
+			if w.writeJSON(v) != nil {
+				return
+			}
+		}
 	}
 }
 
+// send queues v for the writer. It never blocks: it reports false when the
+// connection is closed, and closes a connection whose queue is full (the
+// device has stopped reading).
+func (w *connWriter) send(v any) bool {
+	select {
+	case <-w.done:
+		return false
+	default:
+	}
+	select {
+	case w.queue <- v:
+		return true
+	default:
+		logger.WarnC("device", "device is not reading; closing its connection")
+		w.close()
+		return false
+	}
+}
+
+// sendClose queues a close frame behind the frames already queued.
+func (w *connWriter) sendClose(code int, reason string) {
+	if !w.send(queuedClose{code: code, reason: reason}) {
+		w.close()
+	}
+}
+
+// close ends the writer and closes the socket; safe to call more than once.
+func (w *connWriter) close() {
+	w.closeOnce.Do(func() {
+		close(w.done)
+		utils.CloseQuietly(w.conn)
+	})
+}
+
+// closeWith sends a close frame now and closes the connection.
 func (w *connWriter) closeWith(code int, reason string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if err := w.conn.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second)); err != nil {
 		logger.DebugCF("device", "close frame write failed", map[string]any{"error": err.Error()})
 	}
-	utils.CloseQuietly(w.conn)
+	w.close()
 }
 
 // setReadDeadline applies a read deadline and logs at debug when the conn
@@ -194,9 +285,81 @@ func setReadDeadline(conn *websocket.Conn, t time.Time) {
 }
 
 func (w *connWriter) ping() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+	return w.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(deviceWriteTimeout))
+}
+
+// register records a post-handshake connection; false once CloseAll has run.
+func (s *Server) register(lc *liveConn) bool {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	if s.stopped {
+		return false
+	}
+	if s.live == nil {
+		s.live = map[*liveConn]struct{}{}
+	}
+	s.live[lc] = struct{}{}
+	return true
+}
+
+func (s *Server) unregister(lc *liveConn) {
+	s.liveMu.Lock()
+	delete(s.live, lc)
+	s.liveMu.Unlock()
+}
+
+// liveConns returns the open connections that match keep.
+func (s *Server) liveConns(keep func(*liveConn) bool) []*liveConn {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	var out []*liveConn
+	for lc := range s.live {
+		if keep(lc) {
+			out = append(out, lc)
+		}
+	}
+	return out
+}
+
+// CloseAll closes every open device connection with a going-away close frame
+// and refuses connections that complete their handshake afterwards. The
+// channel calls it when it stops, so devices reconnect to its replacement at
+// once instead of staying attached to a dead channel.
+func (s *Server) CloseAll() {
+	s.liveMu.Lock()
+	s.stopped = true
+	s.liveMu.Unlock()
+	closeAll(s.liveConns(func(*liveConn) bool { return true }), websocket.CloseGoingAway, "server shutdown")
+}
+
+// closeAll closes conns in parallel, so a stuck socket's close-frame timeout
+// does not delay the others, and returns when all are closed.
+func closeAll(conns []*liveConn, code int, reason string) {
+	var wg sync.WaitGroup
+	for _, lc := range conns {
+		wg.Go(func() { lc.cw.closeWith(code, reason) })
+	}
+	wg.Wait()
+}
+
+// DisconnectDevice closes every open connection of deviceID. The WebUI calls
+// it when the device is removed.
+func (s *Server) DisconnectDevice(deviceID string) {
+	closeAll(s.liveConns(func(lc *liveConn) bool { return lc.deviceID == deviceID }), websocket.ClosePolicyViolation, "device removed")
+}
+
+// stillAuthorized reports whether lc's device is still paired and still holds
+// a valid device token. A store error counts as no.
+func (s *Server) stillAuthorized(ctx context.Context, lc *liveConn) bool {
+	if _, ok, err := s.store.GetPaired(ctx, lc.deviceID); err != nil || !ok {
+		return false
+	}
+	for _, tok := range lc.tokens {
+		if dt, ok, err := s.store.TokenByValue(ctx, tok); err == nil && ok && dt.DeviceID == lc.deviceID {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleWS upgrades an HTTP request to the gateway protocol and runs the handshake.
@@ -220,7 +383,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// The first frame is unauthenticated: cap it well below the advertised
 	// payload limit, which applies only once the handshake has succeeded.
 	conn.SetReadLimit(gatewayproto.MaxPreauthPayloadBytes)
-	cw := &connWriter{conn: conn}
+	cw := newConnWriter(conn)
 
 	connID := randomToken(16)
 	nonce := randomToken(16)
@@ -229,7 +392,6 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	challenge := gatewayproto.NewEvent(gatewayproto.EventConnectChallenge,
 		gatewayproto.ChallengePayload{Nonce: nonce, Ts: time.Now().UnixMilli()}, nil)
 	if writeErr := cw.writeJSON(challenge); writeErr != nil {
-		utils.CloseQuietly(conn)
 		return
 	}
 
@@ -245,8 +407,9 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		logger.WarnCF("device", "connect rejected", map[string]any{
 			"reason": fail.reason, "code": fail.err.Code, "message": fail.err.Message,
 		})
-		cw.send(gatewayproto.NewErrorResponse(fail.id, fail.err))
-		cw.closeWith(fail.code, fail.reason)
+		if cw.writeJSON(gatewayproto.NewErrorResponse(fail.id, fail.err)) == nil {
+			cw.closeWith(fail.code, fail.reason)
+		}
 		return
 	}
 	logger.InfoCF("device", "connect accepted", map[string]any{
@@ -256,11 +419,17 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(gatewayproto.MaxPayloadBytes)
 
 	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
-		utils.CloseQuietly(conn)
 		return
 	}
 
-	lc := &liveConn{cw: cw, deviceID: hello.deviceID, chatID: hello.chatID}
+	lc := &liveConn{cw: cw, deviceID: hello.deviceID, chatID: hello.chatID, tokens: hello.tokens}
+	if !s.register(lc) {
+		cw.closeWith(websocket.CloseGoingAway, "server shutdown")
+		return
+	}
+	defer s.unregister(lc)
+	defer cw.close()
+	go cw.run()
 	s.conns.Store(lc.chatID, lc)
 	defer func() {
 		if cur, ok := s.conns.Load(lc.chatID); ok && cur == lc {
@@ -288,6 +457,7 @@ type handshakeOK struct {
 	chatID   string
 	role     string
 	scopes   []string
+	tokens   []string // device tokens handed out in hello-ok
 }
 
 // handshake validates the first frame and returns either a hello-ok or a failure.
@@ -372,7 +542,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		reqID, perr := s.store.CreatePending(ctx, PendingPairing{
 			DeviceID: p.Device.ID, PublicKey: p.Device.PublicKey, DisplayName: p.Client.DisplayName,
 			Platform: p.Client.Platform, DeviceFamily: p.Client.DeviceFamily, ClientID: p.Client.ID,
-			ClientMode: p.Client.Mode, Role: role, Scopes: p.Scopes, RemoteIP: clientIP(r),
+			ClientMode: p.Client.Mode, Role: role, Scopes: p.Scopes, RemoteIP: remoteHost(r),
 		})
 		if perr != nil {
 			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
@@ -396,7 +566,11 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	}
 
 	hello := s.buildHelloOk(ctx, connID, paired, &p, negotiatedProtocol)
-	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes}, nil
+	tokens := make([]string, 0, len(hello.Auth.DeviceTokens))
+	for _, t := range hello.Auth.DeviceTokens {
+		tokens = append(tokens, t.DeviceToken)
+	}
+	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes, tokens: tokens}, nil
 }
 
 // presentedDeviceTokens returns the device tokens the connect request carried
@@ -608,6 +782,19 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
 			}
+			// Pairing is checked on every request, not only at the handshake:
+			// a device removed (or whose tokens were revoked) while connected
+			// can send nothing more.
+			if !s.stillAuthorized(ctx, lc) {
+				logger.WarnCF("device", "request refused: device no longer paired", map[string]any{"deviceId": lc.deviceID})
+				lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
+					gatewayproto.NewError(gatewayproto.CodeNotPaired, "device not paired", nil)))
+				lc.cw.sendClose(websocket.ClosePolicyViolation, "device not paired")
+				// Let the writer deliver the error and the close frame; its
+				// write deadline bounds the wait.
+				<-lc.cw.done
+				return
+			}
 			s.dispatch(ctx, lc, req)
 		}
 	}()
@@ -619,7 +806,7 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 		case <-done:
 			return
 		case <-tick.C:
-			if err := lc.cw.writeJSON(gatewayproto.NewEvent("tick", map[string]any{"ts": time.Now().UnixMilli()}, nil)); err != nil {
+			if !lc.cw.send(gatewayproto.NewEvent("tick", map[string]any{"ts": time.Now().UnixMilli()}, nil)) {
 				return
 			}
 		case <-ping.C:
@@ -675,6 +862,17 @@ func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewaypr
 	if runID == "" {
 		runID = randomToken(8)
 	}
+	requested := p.SessionKey
+	if requested == "" {
+		lc.mu.Lock()
+		requested = lc.sessionKey
+		lc.mu.Unlock()
+	}
+	scopeKey, err := s.sessionScopeKeyFor(ctx, lc, requested)
+	if err != nil {
+		s.refuseSessionKey(lc, req.ID, err)
+		return
+	}
 	lc.mu.Lock()
 	if p.SessionKey != "" {
 		lc.sessionKey = p.SessionKey
@@ -708,7 +906,7 @@ func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewaypr
 			go s.handleAgentCommand(ctx, lc, runID, arg)
 			return
 		case "help":
-			go s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), deviceHelpText)
+			go s.emitChatReply(lc, runID, scopeKey, deviceHelpText)
 			return
 		}
 	}
@@ -732,7 +930,7 @@ func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewaypr
 	}
 
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(ctx, lc), attachments)
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, scopeKey, attachments)
 	}
 }
 
@@ -780,34 +978,34 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 	}
 
 	if len(agents) == 0 {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "No assistants are configured.")
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "No assistants are configured.")
 		return
 	}
 	if arg == "" || strings.EqualFold(arg, "list") {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), formatAgentList(agents, current))
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), formatAgentList(agents, current))
 		return
 	}
 	if strings.EqualFold(arg, "default") || strings.EqualFold(arg, "reset") {
 		if err := s.store.SetDeviceAgent(ctx, lc.deviceID, ""); err != nil {
-			s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't reset assistant: "+err.Error())
+			s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "Couldn't reset assistant: "+err.Error())
 			return
 		}
-		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Switched to the default assistant.")
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "Switched to the default assistant.")
 		return
 	}
 
 	targetID, targetName := resolveDeviceAgent(agents, arg)
 	if targetID == "" {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc),
 			"No assistant matches \""+arg+"\".\n\n"+formatAgentList(agents, current))
 		return
 	}
 	if err := s.store.SetDeviceAgent(ctx, lc.deviceID, targetID); err != nil {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't switch assistant: "+err.Error())
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "Couldn't switch assistant: "+err.Error())
 		return
 	}
 	// Recompute the scope so the confirmation is tagged with the new assistant.
-	s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
+	s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc),
 		"Switched to "+targetName+". New messages will go to this assistant.")
 }
 
@@ -845,18 +1043,53 @@ func agentDisplayName(a DeviceAgentInfo) string {
 	return a.ID
 }
 
-// sessionScopeKey resolves the conversation session a turn runs in, from the key
-// the client declared on this connection. See sessionScopeKeyFor.
-func (s *Server) sessionScopeKey(ctx context.Context, lc *liveConn) string {
+// replyScopeKey is the session key a device-command reply is tagged with: the
+// connection's resolved session, or "" when its key is not allowed.
+func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
 	lc.mu.Unlock()
-	return s.sessionScopeKeyFor(ctx, lc, key)
+	resolved, err := s.sessionScopeKeyFor(ctx, lc, key)
+	if err != nil {
+		return ""
+	}
+	return resolved
+}
+
+// errUnknownAgent refuses a session key naming an agent that does not exist.
+var errUnknownAgent = errors.New("unknown agent")
+
+// refuseSessionKey answers a request whose session key the device may not use.
+func (s *Server) refuseSessionKey(lc *liveConn, reqID string, err error) {
+	logger.WarnCF("device", "request refused: session key not allowed", map[string]any{
+		"deviceId": lc.deviceID, "reason": err.Error(),
+	})
+	msg := "session key not allowed"
+	if errors.Is(err, errUnknownAgent) {
+		msg = "unknown agent"
+	}
+	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, msg, nil)))
+}
+
+// agentExists reports whether id names a configured agent. Without a querier
+// no agent is known.
+func (s *Server) agentExists(id string) bool {
+	if s.querier == nil {
+		return false
+	}
+	agents, _, _ := s.querier.Agents()
+	id = routing.NormalizeAgentID(id)
+	for _, a := range agents {
+		if routing.NormalizeAgentID(a.ID) == id {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
 // Both chat.send and chat.history go through it, so a device always reads the
-// transcript it writes.
+// transcript it writes, and neither can reach a session the device may not.
 //
 // Under UNIFIED sessions (the default) a device joins the selected agent's main
 // conversation: the R1, the phone app, Slack and Telegram are one assistant with
@@ -864,17 +1097,20 @@ func (s *Server) sessionScopeKey(ctx context.Context, lc *liveConn) string {
 // she knows it in Slack. Isolation is a property of the agent — to keep a device
 // separate, give it its own agent.
 //
-// Under an isolating mode the previous behavior stands: operator clients keep
-// their own agent-scoped key (agent:<id>:<peer>:<profile>, one conversation per
-// profile) and node clients get a per-device session so two devices never share
-// a transcript.
+// Under an isolating mode every device gets its own per-device session for the
+// selected agent, and a key naming any other session is refused (see
+// routing.ResolveDeviceSessionKey).
 //
 // The agent itself is chosen the same way in both modes: an operator client picks
-// it via the key's 2nd segment; a node client (e.g. the R1) has no picker, so it
-// falls back to its per-device assignment (WebUI Devices page / "/agent") and
-// then to the gateway default. The choice reaches the loop as
-// preresolved_agent_id.
-func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) string {
+// it via the key's 2nd segment, which must name a configured agent (an unknown id
+// is refused before anything touches a session store); a node client (e.g. the
+// R1) has no picker, so it falls back to its per-device assignment (WebUI Devices
+// page / "/agent") and then to the gateway default. The choice reaches the loop
+// as preresolved_agent_id.
+func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) (string, error) {
+	if id := routing.AgentIDFromSessionKey(requested); id != "" && !s.agentExists(id) {
+		return "", errUnknownAgent
+	}
 	fallback := "main"
 	mode := ""
 	if s.querier != nil {
@@ -971,7 +1207,11 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 	// Resolve through the same rule chat.send uses, so a client reads the
 	// transcript its turns are written to — under unified that is the agent's
 	// main conversation, not the key the client happens to have asked for.
-	sessionKey = s.sessionScopeKeyFor(ctx, lc, sessionKey)
+	sessionKey, err := s.sessionScopeKeyFor(ctx, lc, sessionKey)
+	if err != nil {
+		s.refuseSessionKey(lc, req.ID, err)
+		return
+	}
 	history := s.querier.History(sessionKey)
 	messages := make([]map[string]any, 0, len(history))
 	for _, m := range history {
@@ -1042,7 +1282,7 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	ts := time.Now().UnixMilli()
 
 	sendEvent := func(eventName string, p map[string]any, seq uint64) bool {
-		return lc.cw.writeJSON(gatewayproto.NewEvent(eventName, p, &seq)) == nil
+		return lc.cw.send(gatewayproto.NewEvent(eventName, p, &seq))
 	}
 
 	// "chat" delta — progressive transcript update. Mirrors the final message shape
@@ -1129,7 +1369,7 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 	}
 
 	sendEvent := func(eventName string, p map[string]any, seq uint64) bool {
-		return lc.cw.writeJSON(gatewayproto.NewEvent(eventName, p, &seq)) == nil
+		return lc.cw.send(gatewayproto.NewEvent(eventName, p, &seq))
 	}
 
 	ts := time.Now().UnixMilli()

@@ -17,15 +17,25 @@ type LockoutExemptSet struct {
 // CompileLockoutExempt parses entries, each an IP address or a CIDR. A bare
 // address is a single-address prefix (/32 or /128).
 func CompileLockoutExempt(entries []string) (*LockoutExemptSet, error) {
-	set := &LockoutExemptSet{prefixes: make([]netip.Prefix, 0, len(entries))}
+	prefixes, err := compileAddrPrefixes("gateway.lockout_exempt", entries)
+	if err != nil {
+		return nil, err
+	}
+	return &LockoutExemptSet{prefixes: prefixes}, nil
+}
+
+// compileAddrPrefixes parses entries, each an IP address or a CIDR, for the
+// config key named by key. A bare address is a single-address prefix.
+func compileAddrPrefixes(key string, entries []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(entries))
 	for _, entry := range entries {
 		p, err := parseExemptEntry(strings.TrimSpace(entry))
 		if err != nil {
-			return nil, fmt.Errorf("gateway.lockout_exempt: %q is not an IP address or CIDR", entry)
+			return nil, fmt.Errorf("%s: %q is not an IP address or CIDR", key, entry)
 		}
-		set.prefixes = append(set.prefixes, p)
+		prefixes = append(prefixes, p)
 	}
-	return set, nil
+	return prefixes, nil
 }
 
 func parseExemptEntry(entry string) (netip.Prefix, error) {

@@ -350,6 +350,47 @@ func TestNewHTTPHost_EnforcesAllowlist(t *testing.T) {
 	}
 }
 
+// TestHTTPHost_TrustedProxies: X-Real-IP from a gateway.trusted_proxies peer
+// is the client the allowlist judges, the list is swapped live on reload, and
+// an invalid list is refused without replacing the current one.
+func TestHTTPHost_TrustedProxies(t *testing.T) {
+	host, err := newHTTPHost(hostOptions{AllowedCIDRs: []string{"192.168.0.0/16"}, TrustedProxies: []string{"127.0.0.1"}})
+	if err != nil {
+		t.Fatalf("newHTTPHost: %v", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/x", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	host.SetMux(mux)
+	get := func(forwarded string) int {
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.RemoteAddr = "127.0.0.1:5000"
+		req.Host = "127.0.0.1"
+		req.Header.Set("X-Real-IP", forwarded)
+		rec := httptest.NewRecorder()
+		host.handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := get("8.8.8.8"); code != http.StatusForbidden {
+		t.Fatalf("forwarded public client via trusted proxy: status = %d, want 403", code)
+	}
+	if code := get("192.168.1.10"); code != http.StatusOK {
+		t.Fatalf("forwarded allowed client: status = %d, want 200", code)
+	}
+	if err := host.SetTrustedProxies([]string{"bad"}); err == nil {
+		t.Fatal("invalid trusted proxy list accepted")
+	}
+	if code := get("8.8.8.8"); code != http.StatusForbidden {
+		t.Fatalf("after a refused swap: status = %d, want the previous list kept (403)", code)
+	}
+	// Reload without the proxy: the header is ignored and loopback is itself.
+	if err := host.SetTrustedProxies(nil); err != nil {
+		t.Fatal(err)
+	}
+	if code := get("8.8.8.8"); code != http.StatusOK {
+		t.Fatalf("after removing the proxy: status = %d, want 200 (loopback peer)", code)
+	}
+}
+
 func TestNewHTTPHost_InvalidCIDR(t *testing.T) {
 	if _, err := newHTTPHost(hostOptions{AllowedCIDRs: []string{"not-a-cidr"}}); err == nil {
 		t.Fatal("expected error for invalid CIDR")

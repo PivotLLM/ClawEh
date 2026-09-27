@@ -1669,8 +1669,8 @@ type DeviceChannelConfig struct {
 	// http://<lan-ip>:<port>. Set to e.g. https://claw.example.com behind a reverse
 	// proxy / Cloudflare (https maps to wss).
 	ExternalURL string `json:"external_url,omitempty"`
-	// AutoApprove skips operator approval for fresh device pairings. Intended for
-	// trusted home-LAN setups (matches the Rabbit setup-script UX); default off.
+	// AutoApprove skips operator approval for fresh device pairings; default
+	// off. Allowed only with Host on loopback (see ValidateExposure).
 	AutoApprove bool `json:"auto_approve,omitempty"`
 	// TLS serves the device listener over TLS (wss://) on the same port, with
 	// the certificate the WebUI HTTPS listener uses. Default off, so existing
@@ -1938,6 +1938,13 @@ type GatewayConfig struct {
 	// table and the device gateway's auth-failure lockout. Loopback is always
 	// exempt. Per-account login locks still apply. See LockoutExemptSet.
 	LockoutExempt []string `json:"lockout_exempt,omitempty"`
+	// TrustedProxies lists reverse-proxy addresses (IPs or CIDRs). A request
+	// whose TCP peer is one of them is attributed to the address in its
+	// X-Real-IP header (else the first X-Forwarded-For entry) for the IP
+	// allowlists, the per-address lockouts, lockout_exempt, logs and the audit
+	// log, on the WebUI/API listeners and the device gateway. Those headers are
+	// ignored from anyone else. Loopback is not implied. See TrustedProxySet.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 }
 
 // TLSConfig is the HTTPS listener's placement and certificate. Mode says
@@ -2042,6 +2049,9 @@ func (g GatewayConfig) Validate() error {
 	if _, err := CompileLockoutExempt(g.LockoutExempt); err != nil {
 		return err
 	}
+	if _, err := CompileTrustedProxies(g.TrustedProxies); err != nil {
+		return err
+	}
 	for _, p := range []struct {
 		key  string
 		port int
@@ -2085,7 +2095,26 @@ func (c *Config) validateListeners() error {
 	if err := c.Channels.Device.validateTLS(c.Gateway); err != nil {
 		return err
 	}
+	if err := c.Channels.Device.ValidateExposure(); err != nil {
+		return err
+	}
 	return ValidateMCPHostListen(c.MCPHost.Listen)
+}
+
+// ValidateExposure refuses an enabled device gateway on a network address
+// (anything but loopback) that would pair or admit devices without a secret:
+// auto_approve on, or neither token nor word_token set.
+func (d DeviceChannelConfig) ValidateExposure() error {
+	if !d.Enabled || IsLoopbackHost(d.Host) {
+		return nil
+	}
+	if d.AutoApprove {
+		return errors.New("channels.device.auto_approve must be off when the device gateway listens on a network address")
+	}
+	if strings.TrimSpace(d.Token) == "" && strings.TrimSpace(d.WordToken) == "" {
+		return errors.New("channels.device.token or channels.device.word_token must be set when the device gateway listens on a network address")
+	}
+	return nil
 }
 
 // validateTLS refuses channels.device.tls on an enabled device gateway when

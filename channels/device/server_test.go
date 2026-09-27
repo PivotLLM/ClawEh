@@ -49,7 +49,13 @@ type connectResp struct {
 // request, returning the LIVE connection plus the parsed response. Caller closes.
 func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Conn, connectResp) {
 	t.Helper()
-	conn, httpResp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	return e.openWith(t, wsURL, sharedToken, nil)
+}
+
+// openWith is open with extra HTTP headers on the upgrade request.
+func (e *emulator) openWith(t *testing.T, wsURL, sharedToken string, header http.Header) (*websocket.Conn, connectResp) {
+	t.Helper()
+	conn, httpResp, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if httpResp != nil && httpResp.Body != nil {
 		if closeErr := httpResp.Body.Close(); closeErr != nil {
 			t.Errorf("close dial response body: %v", closeErr)

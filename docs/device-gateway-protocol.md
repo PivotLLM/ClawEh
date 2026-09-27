@@ -33,7 +33,15 @@ can be exposed to the network without exposing the unauthenticated WebUI.
     the WebUI Devices page. The long QR token is left untouched on regenerate.
   - Either secret authenticates equally, so the passphrase is the security floor — but
     every device still needs cryptographic pairing **approval** behind it.
-- `token == "" && word_token == ""` ⇒ open auth (loopback/dev only).
+- `token == "" && word_token == ""` ⇒ open auth, loopback only: with `host` on a
+  network address (anything but loopback) the config is refused unless `token` or
+  `word_token` is set, and `auto_approve` must be off there too.
+- Behind a reverse proxy, list it in `gateway.trusted_proxies` (IPs or CIDRs).
+  A connection from a listed peer is attributed to the address in its `X-Real-IP`
+  header (else the first `X-Forwarded-For` entry) for `allowed_cidrs`, the
+  per-address lockout, `gateway.lockout_exempt`, the pending pairing's address and
+  the logs; from any other peer those headers are ignored. Loopback is trusted
+  only if listed. Applies on the next config reload.
 - TLS: off by default (plain `ws://`). With `channels.device.tls: true` the listener
   serves `wss://` on the same port with the WebUI HTTPS listener's certificate
   (self-signed or user-provided, hot-reloaded with it); it needs `gateway.tls.mode`
@@ -86,7 +94,11 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
        "policy":{"maxPayload","maxBufferedBytes","tickIntervalMs"} } }
    ```
    Unpaired devices get a `NOT_PAIRED` error with a `requestId`; an operator approves via the
-   WebUI/CLI, after which the device reconnects and is accepted.
+   WebUI/CLI, after which the device reconnects and is accepted. At most 20 pairing
+   requests wait at once (the oldest are dropped first) and each expires after 10
+   minutes; a device that keeps connecting re-creates its request. Each request
+   records the client address, which the WebUI shows (`remote_ip` in
+   `GET /api/devices/pending`).
 
    **Device tokens are stored hashed** (SHA-256) and cannot be read back, so
    `auth.deviceToken` is: the token the device connected with, when it
@@ -110,6 +122,19 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
    is not one of its own names (localhost, its bind host, the hosts of
    `channels.device.external_url` / `gateway.external_url`, the TLS
    certificate's names, or any IP literal).
+
+## After the handshake
+
+- **Pairing is re-checked on every request.** A device that is no longer paired,
+  or whose device tokens were revoked (removed in the WebUI, or rotated by a later
+  connect on the shared secret), gets `NOT_PAIRED` and the connection is closed
+  (`1008`). Removing a device in the WebUI also closes its open connections at once.
+- **Writes have a deadline.** Frames to a device go through a per-connection queue
+  and each write must finish within 5 seconds; a device that stops reading (or
+  whose queue fills) is disconnected, and nothing else waits for it.
+- **Stop and reload close connections.** When the device channel stops (a config
+  reload rebuilds it), every connection is closed with `1001` (going away), so
+  clients reconnect to the new listener straight away.
 
 ## Methods (post-handshake requests)
 
@@ -255,12 +280,18 @@ decides **which conversation** that turn joins. The two are independent.
   memory. Tell her something on the R1 and she knows it in Slack. **Isolation is a property
   of the agent**: to keep a device separate, point it at a different agent (`/agent <name>`
   or the WebUI Devices page) rather than expecting the transport to isolate it.
-- **Isolating modes (`per-user`, `per-platform`, `per-account`)** keep the previous behavior:
-  an operator client's key is honored **verbatim** (one conversation per profile), and a node
-  client gets `agent:<agentId>:device:<deviceId>` so two devices never share a transcript.
+- **Isolating modes (`per-user`, `per-platform`, `per-account`)**: every device gets its own
+  conversation per agent, `agent:<agentId>:device:<deviceId>`, so two devices never share a
+  transcript. The only agent-scoped keys a device may send are `agent:<id>:main` (selects the
+  agent) and its own `agent:<id>:device:<deviceId>`; any other key (another device's session,
+  a Telegram chat, a profile key such as `agent:<id>:clawtotalk:primary`) is refused with
+  `INVALID_REQUEST` "session key not allowed". Profile-scoped conversations are no longer kept.
+- In every mode a key must name a configured agent: an unknown id is refused with
+  `INVALID_REQUEST` "unknown agent" before any session is read.
 - `chat.history` resolves through the **same** rule as `chat.send`, so a client always reads
   the transcript its turns are written to — under `unified` a client asking for its own
-  profile key is answered with the agent's main conversation.
+  profile key is answered with the agent's main conversation; a refused key is refused by
+  both.
 - Mechanism: `Server.sessionScopeKeyFor` → `routing.ResolveDeviceSessionKey(mode, requested,
   fallbackAgent, deviceID)`. The device channel passes the resolved key as
   `metadata["session_key"]` (honored by `BaseChannel.HandleMessage` →

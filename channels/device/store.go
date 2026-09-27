@@ -13,6 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -358,17 +359,34 @@ func (s *Store) CreatePending(ctx context.Context, p PendingPairing) (string, er
 	if err != nil {
 		return "", err
 	}
+	// Expire old requests and keep only the newest DevicePendingPairingsMax,
+	// so pending requests cannot be sprayed without bound.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE created_at_ms < ?`, pendingCutoffMs()); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE request_id IN (
+		SELECT request_id FROM pending_pairings ORDER BY created_at_ms DESC, rowid DESC LIMIT -1 OFFSET ?)`,
+		channels.DevicePendingPairingsMax); err != nil {
+		return "", err
+	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 	return p.RequestID, nil
 }
 
-// ListPending returns all pending pairing requests, newest first.
+// pendingCutoffMs is the creation time before which a pending request has
+// expired (channels.DevicePendingPairingTTL).
+func pendingCutoffMs() int64 {
+	return nowMs() - channels.DevicePendingPairingTTL.Milliseconds()
+}
+
+// ListPending returns the pending pairing requests that have not expired,
+// newest first.
 func (s *Store) ListPending(ctx context.Context) ([]PendingPairing, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT request_id, device_id, public_key, display_name,
 		platform, device_family, client_id, client_mode, role, scopes, remote_ip, created_at_ms
-		FROM pending_pairings ORDER BY created_at_ms DESC`)
+		FROM pending_pairings WHERE created_at_ms >= ? ORDER BY created_at_ms DESC`, pendingCutoffMs())
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +414,7 @@ func (s *Store) getPending(ctx context.Context, requestID string) (*PendingPairi
 	var scopes string
 	err := s.db.QueryRowContext(ctx, `SELECT request_id, device_id, public_key, display_name,
 		platform, device_family, client_id, client_mode, role, scopes, remote_ip, created_at_ms
-		FROM pending_pairings WHERE request_id=?`, requestID).Scan(
+		FROM pending_pairings WHERE request_id=? AND created_at_ms >= ?`, requestID, pendingCutoffMs()).Scan(
 		&p.RequestID, &p.DeviceID, &p.PublicKey, &p.DisplayName, &p.Platform, &p.DeviceFamily,
 		&p.ClientID, &p.ClientMode, &p.Role, &scopes, &p.RemoteIP, &p.CreatedAtMs)
 	if errors.Is(err, sql.ErrNoRows) {
