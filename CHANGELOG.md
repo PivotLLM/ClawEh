@@ -492,6 +492,11 @@ observe does not need an entry.
 
 ### Changed
 
+- WebUI sidebar: **Chat** is now a direct link to the chat page instead of a
+  group that opened to a single Chat entry, and the **Report** page is renamed
+  **Check Up** (sidebar label and page heading). Its URL stays `/report` and
+  the `/api/report/*` endpoints are unchanged, so bookmarks and integrations
+  keep working.
 - The Devices page shows the requesting client address after each pending
   pairing request's name (`remote_ip` from `GET /api/devices/pending`, as
   "Rabbit R1 · from 203.0.113.5"), so a request that merely claims a device's

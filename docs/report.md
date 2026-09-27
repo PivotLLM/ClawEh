@@ -1,6 +1,6 @@
 # Configuration report
 
-The Report page in the WebUI (after Services in the left menu) shows the
+The Check Up page in the WebUI (**Check Up**, after Services in the left menu) shows the
 security assessment inline and offers the full PDF, the ClawEh Configuration
 Report, which describes what this instance is able to do: its footprint. It is meant
 for the operator and for a security professional assessing the install. The
@@ -15,7 +15,7 @@ as which channels are connected right now, because the question it answers is
 Endpoint: `GET /api/report/pdf`, served inline (the browser renders it) and
 never cached. It sits behind the same access controls as the rest of `/api/`.
 
-The Report page does not open the PDF directly. It shows a one-line product
+The Check Up page does not open the PDF directly. It shows a one-line product
 identification (name, version with build metadata, build time, OS/architecture
 and host) and the **Security assessment** table inline, with rows that need
 action marked, and offers the full PDF through a **Download full report**

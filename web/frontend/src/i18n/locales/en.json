@@ -57,7 +57,7 @@
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
-    "report": "Report",
+    "report": "Check Up",
     "audit": "Audit"
   },
   "chat": {
@@ -792,7 +792,7 @@
       "cli_providers": "CLI providers"
     },
     "report": {
-      "title": "Configuration report",
+      "title": "Check Up",
       "load_error": "Failed to load the security assessment.",
       "build": "build",
       "legend": "Rows marked with a warning need action; the others are for awareness. The full report below covers listeners, providers, channels, agents and every folder each agent can reach. Keys and tokens appear only as set or not set.",

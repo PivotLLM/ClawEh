@@ -485,12 +485,17 @@ if (useGroup("B", "Route smoke — every page renders, console clean")) {
 // C. Shell and navigation
 if (useGroup("C", "Shell and navigation")) {
   await check(1, "sidebar exposes the primary sections", async () => {
-    const { close, text } = await open("/agents")
+    const { close, page, text } = await open("/agents")
     const body = await text()
+    // Chat is a single page: a direct link, not a disclosure group.
+    const chatLinks = await page.locator('a[href="/"]', { hasText: "Chat" }).count()
+    const chatButtons = await page.getByRole("button", { name: "Chat", exact: true }).count()
     await close()
     for (const item of ["Chat", "Agents", "Models", "Channels", "Services"]) {
       assert(body.includes(item), `sidebar missing "${item}"`)
     }
+    assert(chatLinks === 1, `Chat links to "/": ${chatLinks}`)
+    assert(chatButtons === 0, "Chat is a disclosure button, not a link")
   })
   await check(2, "sidebar shows the running version", async () => {
     const { close, text } = await open("/agents")
@@ -1494,18 +1499,23 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     }
   })
 
-  await check(4, "the report page shows the identity line, the assessment table and the PDF button", async () => {
+  await check(4, "the Check Up page shows the identity line, the assessment table and the PDF button", async () => {
     const { close, page, problems } = await open("/agents")
-    await page.getByTestId("nav-report").click()
+    const nav = page.getByTestId("nav-report")
+    const navLabel = (await nav.innerText()).trim()
+    await nav.click()
     await page.waitForURL(/\/report$/)
     const download = page.getByTestId("report-download")
     await download.waitFor()
+    const heading = (await page.locator("h2").first().innerText()).trim()
     const identity = (await page.getByTestId("report-identity").innerText()).trim()
     const headers = await page.locator('[data-testid="report-table"] thead th').allInnerTexts()
     const rows = await page.getByTestId("report-row").count()
     const href = await download.getAttribute("href")
     const label = (await download.innerText()).trim()
     await close()
+    assert(navLabel === "Check Up", `sidebar label = ${JSON.stringify(navLabel)}`)
+    assert(heading === "Check Up", `page heading = ${JSON.stringify(heading)}`)
     assert(/^ClawEh \d+\.\d+\.\d+/.test(identity), `identity line = ${JSON.stringify(identity)}`)
     assert(identity.includes(" on "), `identity line names no platform: ${identity}`)
     assert(headers.join("|") === "Action|Item|Status", `table headers = ${headers.join("|")}`)

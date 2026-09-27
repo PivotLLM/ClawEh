@@ -87,7 +87,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| C1 | Look at the sidebar | Contains Chat, Agents, Models, Channels, Services |
+| C1 | Look at the sidebar | Contains Chat, Agents, Models, Channels, Services. Chat is a direct link (`a[href="/"]`), not a disclosure button |
 | C2 | Look at the sidebar footer | Shows `ClawEh v<version>` |
 | C3 | Click the **Models** sidebar entry, then the **Models** link beneath it | The entry is a disclosure control (`aria-expanded`), not a link. It expands, and the link navigates to `/models` without a full page load |
 | C4 | `curl -o /dev/null -w '%{http_code}' $BASE/no-such-route` | `200` — unknown paths fall through to the SPA |
@@ -216,7 +216,7 @@ covers it.
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/voice` | Both render, no console errors |
-| K4 | Click **Report** in the sidebar (below the groups) | `/report` renders an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Download full report** button whose `href` is `/api/report/pdf`; no console errors |
+| K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Download full report** button whose `href` is `/api/report/pdf`; no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |

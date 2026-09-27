@@ -75,11 +75,6 @@ interface NavGroup {
 
 const baseNavGroups: Omit<NavGroup, "items">[] = [
   {
-    label: "navigation.chat",
-    icon: IconMessageCircle,
-    defaultOpen: false,
-  },
-  {
     label: "navigation.model_group",
     icon: IconCpu,
     defaultOpen: false,
@@ -127,18 +122,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navGroups: NavGroup[] = React.useMemo(() => {
     return [
       {
-        ...baseNavGroups[0],
-        items: [
-          {
-            title: "navigation.chat",
-            url: "/",
-            icon: IconMessageCircle,
-            translateTitle: true,
-          },
-        ],
-      },
-      {
-        ...baseNavGroups[2],
+        ...baseNavGroups[1],
         items: [
           {
             title: "navigation.agents",
@@ -173,7 +157,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         ],
       },
       {
-        ...baseNavGroups[1],
+        ...baseNavGroups[0],
         items: [
           {
             title: "navigation.providers",
@@ -203,7 +187,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           .sort((a, b) => a.title.localeCompare(b.title)),
       },
       {
-        ...baseNavGroups[3],
+        ...baseNavGroups[2],
         items: [
           {
             title: "Devices",
@@ -270,6 +254,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       className="bg-background border-r-border/20 border-r pt-3"
     >
       <SidebarContent className="bg-background">
+        {/* Chat is a single page, so it is a direct link rather than a
+            disclosure group with one child. */}
+        <SidebarMenu className="mb-1 px-2">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={currentPath === "/"}
+              tooltip={t("navigation.chat")}
+              className={`h-9 px-3 ${currentPath === "/" ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+            >
+              <Link to="/" data-testid="nav-chat">
+                <IconMessageCircle
+                  className={`size-4 ${currentPath === "/" ? "opacity-100" : "opacity-60"}`}
+                />
+                <span>{t("navigation.chat")}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         {navGroups.map((group) => (
           <Collapsible
             key={group.label}
