@@ -19,7 +19,7 @@ func NewGatewayCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "gateway",
 		Aliases:      []string{"g"},
-		Short:        "Start " + app.Name() + " gateway",
+		Short:        "Start " + app.Name(),
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		PreRunE: func(_ *cobra.Command, _ []string) error {

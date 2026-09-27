@@ -76,11 +76,11 @@ func HostCheck(current func() *HostAllowlist, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		logger.WarnCF("http", "Request for a host this gateway does not serve", map[string]any{
+		logger.WarnCF("http", "Request for a host this server does not serve", map[string]any{
 			"host":   r.Host,
 			"remote": r.RemoteAddr,
 			"path":   r.URL.Path,
 		})
-		reject(w, r, http.StatusMisdirectedRequest, "host not served by this gateway")
+		reject(w, r, http.StatusMisdirectedRequest, "host not served by this server")
 	})
 }

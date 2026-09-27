@@ -10,7 +10,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 )
 
-// TestAssessment_DeviceRows: the Device Gateway rows read like the WebUI
+// TestAssessment_DeviceRows: the Device HTTP/HTTPS rows read like the WebUI
 // rows. Plain WebSocket on the network is unencrypted and marked; with
 // channels.device.tls the HTTPS row takes over, never marked for a
 // self-signed certificate; one of the two is always Disabled.
@@ -65,10 +65,10 @@ func TestAssessment_DeviceRows(t *testing.T) {
 			cfg.Channels.Device.Host = c.host
 			cfg.Channels.Device.AllowedCIDRs = c.cidrs
 			s := collectAssessment(t.Context(), cfg, env)
-			if r := assessmentRow(t, s, "Device Gateway HTTP"); r[0] != c.wantHTTPMark || r[2] != c.wantHTTP {
+			if r := assessmentRow(t, s, "Device HTTP"); r[0] != c.wantHTTPMark || r[2] != c.wantHTTP {
 				t.Errorf("HTTP row = %q, want [%q _ %q]", r, c.wantHTTPMark, c.wantHTTP)
 			}
-			if r := assessmentRow(t, s, "Device Gateway HTTPS"); r[0] != c.wantHTTPSMark || r[2] != c.wantHTTPS {
+			if r := assessmentRow(t, s, "Device HTTPS"); r[0] != c.wantHTTPSMark || r[2] != c.wantHTTPS {
 				t.Errorf("HTTPS row = %q, want [%q _ %q]", r, c.wantHTTPSMark, c.wantHTTPS)
 			}
 			for _, row := range s.Tables[0].Rows {

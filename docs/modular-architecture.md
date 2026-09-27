@@ -38,7 +38,7 @@ before it starts:
   empties the window.
 - Summaries must cite seq evidence; refusals are remembered per model.
 - Eviction: only a successful write supersedes a read; arguments are evictable.
-- Device gateway event order: `agent` stream before `chat` final.
+- Device listener event order: `agent` stream before `chat` final.
 
 ---
 
@@ -256,7 +256,7 @@ func InMemory() Archive
 func ListSessions(dir string) ([]string, error)
 ```
 
-The typed API the WebUI session view and the device gateway's `chat.history`
+The typed API the WebUI session view and the device listener's `chat.history`
 call, instead of opening the archive DB by path as they do today.
 
 ### 5.3 `context`
@@ -431,7 +431,7 @@ type Runner interface {
 
 The runner owns per-session engine and memory instances with the refcount and
 TTL eviction that `agent/eviction.go` does today. The `Sink` is exactly the
-event stream the device gateway needs: deltas, tool activity, notices, final.
+event stream the device listener needs: deltas, tool activity, notices, final.
 
 ---
 

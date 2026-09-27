@@ -225,7 +225,7 @@ func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q)
 
 // errNoCertificate is Start's refusal when channels.device.tls is on but the
 // gateway has no certificate manager to lend (HTTPS was off at start).
-var errNoCertificate = errors.New("device: channels.device.tls is on but the gateway has no TLS certificate " +
+var errNoCertificate = errors.New("device: channels.device.tls is on but there is no TLS certificate " +
 	"(gateway.tls.mode was \"off\" when ClawEh started); restart ClawEh after turning HTTPS on")
 
 // SetTLSConfig hands the channel the gateway certificate manager's TLS
@@ -273,7 +273,7 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 	c.loopDone = make(chan struct{})
 	c.SetRunning(true)
 	go c.serveLoop(ln, addr, wrapped)
-	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr, "tls": c.useTLS})
+	logger.InfoCF("device", "Device channel listening", map[string]any{"addr": addr, "tls": c.useTLS})
 	return nil
 }
 
@@ -308,12 +308,12 @@ func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Han
 		// Each Serve failure opens an outage: alert once here, not on the
 		// re-bind attempts that follow.
 		backoff = channels.NextConnRetry(backoff)
-		logger.ErrorCF("device", "Device gateway listener error; re-listening", map[string]any{
+		logger.ErrorCF("device", "Device channel listener error; re-listening", map[string]any{
 			"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
 		})
 		c.Alert(alerter.Alert{
 			Title:       "Channel receive loop stopped",
-			Description: c.Name() + ": device gateway listener error; re-listening on " + addr + " with backoff until it is back",
+			Description: c.Name() + ": device listener error; re-listening on " + addr + " with backoff until it is back",
 			Details:     err.Error(),
 		})
 		for {
@@ -327,11 +327,11 @@ func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Han
 				break
 			}
 			backoff = channels.NextConnRetry(backoff)
-			logger.WarnCF("device", "Device gateway re-listen failed", map[string]any{
+			logger.WarnCF("device", "Device channel re-listen failed", map[string]any{
 				"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
 			})
 		}
-		logger.InfoCF("device", "Device gateway listener restored", map[string]any{"addr": addr})
+		logger.InfoCF("device", "Device channel listener restored", map[string]any{"addr": addr})
 		backoff = 0
 	}
 }
@@ -368,7 +368,7 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 	if c.store != nil {
 		utils.CloseQuietly(c.store)
 	}
-	logger.InfoC("device", "Device gateway stopped")
+	logger.InfoC("device", "Device channel stopped")
 	return nil
 }
 

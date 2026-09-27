@@ -70,7 +70,7 @@ func listeners(cfg *config.Config) []listener {
 	out = append(out, mcp)
 
 	dev := cfg.Channels.Device
-	dl := listener{Name: "Device gateway", Enabled: dev.Enabled}
+	dl := listener{Name: "Device listener", Enabled: dev.Enabled}
 	if dev.Enabled {
 		port := dev.Port
 		if port == 0 {
@@ -175,7 +175,7 @@ func collectNetwork(_ context.Context, cfg *config.Config, _ Environment) Sectio
 
 	pt := pairs("Origins and proxies",
 		row("TLS", tlsSummary(cfg)),
-		row("Device gateway allowed origins", joinOr(cfg.Channels.Device.AllowOrigins, "(none configured)")),
+		row("Device listener allowed origins", joinOr(cfg.Channels.Device.AllowOrigins, "(none configured)")),
 		row("Web tools proxy", orValue(redactURL(cfg.Tools.Web.Proxy), none)),
 	)
 	for _, p := range cfg.Providers {
@@ -197,8 +197,8 @@ func collectNetwork(_ context.Context, cfg *config.Config, _ Environment) Sectio
 		Notes: []string{
 			"The WebUI and the HTTP API (WebUI/API) are served on two listeners: plain HTTP where gateway.host " +
 				"says (loopback by default) and HTTPS where gateway.tls.mode says (all interfaces by default). " +
-				"The MCP host and the device gateway each bind their own. A listener on a loopback address is reachable only from this host. " +
-				"The gateway allowlist (gateway.allowed_cidrs) is a second gate independent of the bind address: " +
+				"The MCP host and the device listener each bind their own. A listener on a loopback address is reachable only from this host. " +
+				"The network allowlist (gateway.allowed_cidrs) is a second gate independent of the bind address: " +
 				"empty means loopback only, * means any address.",
 		},
 		Tables: []Table{lt, pt},

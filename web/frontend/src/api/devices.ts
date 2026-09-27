@@ -97,7 +97,7 @@ export const rejectDevice = (id: string) =>
 
 export const listPairedDevices = () =>
   request<{ devices: PairedDevice[]; agents: AgentOption[] }>("/api/devices")
-// assignDeviceAgent sets the agent a device routes to ("" = gateway default).
+// assignDeviceAgent sets the agent a device routes to ("" = default agent).
 export const assignDeviceAgent = (id: string, agentId: string) =>
   request<unknown>(
     `/api/devices/${encodeURIComponent(id)}/agent`,

@@ -24,11 +24,11 @@ func TestCollectCredentials_FreshInstall(t *testing.T) {
 	if integ[1] != "none issued" {
 		t.Errorf("integration tokens = %q", integ[1])
 	}
-	_, dev := findRow(t, tb, "Device gateway shared token")
+	_, dev := findRow(t, tb, "Device listener shared token")
 	if dev[1] != "set" {
 		t.Errorf("device token = %q", dev[1])
 	}
-	_, word := findRow(t, tb, "Device gateway word token")
+	_, word := findRow(t, tb, "Device listener word token")
 	if word[1] != "set" {
 		t.Errorf("word token = %q", word[1])
 	}
@@ -85,7 +85,7 @@ func TestChannelCredentialRows_NamesOnly(t *testing.T) {
 	contains(t, txt, "Telegram telegram-bob | token set", "telegram")
 	contains(t, txt, "Slack | bot_token set, app_token set", "slack")
 	contains(t, txt, "LINE | channel_secret set, channel_access_token set", "line")
-	contains(t, txt, "Device gateway | token set, word_token set", "device")
+	contains(t, txt, "Device listener | token set, word_token set", "device")
 	for _, s := range allSecrets {
 		if strings.Contains(txt, s) {
 			t.Errorf("secret %q leaked into channel credentials", s)

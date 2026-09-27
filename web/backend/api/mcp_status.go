@@ -72,7 +72,7 @@ func (h *Handler) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	loop := h.mcpStatusLoopRef()
 	if loop == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "gateway not running"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "claw is not running"})
 		return
 	}
 	name := r.PathValue("name")

@@ -28,9 +28,9 @@ import (
 
 // NewACPCommand builds the `claw acp` subcommand: an Agent Client Protocol (ACP)
 // agent that speaks JSON-RPC 2.0 over stdio and bridges to the ALREADY-RUNNING
-// gateway over its localhost WebSocket (the device gateway on 127.0.0.1:<port>).
+// claw over its localhost WebSocket (the device listener on 127.0.0.1:<port>).
 // It is intended to be spawned by an ACP client (e.g. rabbit-agent for the Rabbit
-// R1). The bridge holds no agent loop of its own — the one running gateway does
+// R1). The bridge holds no agent loop of its own — the one running claw does
 // the work, so there is exactly one ClawEh instance.
 func NewACPCommand() *cobra.Command {
 	var debug bool
@@ -38,12 +38,12 @@ func NewACPCommand() *cobra.Command {
 	var noAutoPair bool
 	cmd := &cobra.Command{
 		Use:   "acp",
-		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local gateway",
+		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local " + app.Name(),
 		Long: "Serve the Agent Client Protocol over stdin/stdout for an ACP client (such as\n" +
 			"rabbit-agent for the Rabbit R1) and forward prompts to the already-running\n" +
-			"gateway over its localhost WebSocket. The client spawns this process and\n" +
+			"" + app.Name() + " over its localhost WebSocket. The client spawns this process and\n" +
 			"exchanges JSON-RPC 2.0 messages on the pipe; stdin EOF shuts it down.\n\n" +
-			"The bridge authenticates to the gateway as a paired device (Ed25519 identity\n" +
+			"The bridge authenticates to " + app.Name() + " as a paired device (Ed25519 identity\n" +
 			"+ the configured device token). Because it is a local same-user process, it\n" +
 			"auto-approves its own pairing in the local store on first connect (disable\n" +
 			"with --no-auto-pair to require a manual `claw devices approve`).\n\n" +
@@ -55,7 +55,7 @@ func NewACPCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging (written to the log file, never stdout)")
-	cmd.Flags().StringVar(&url, "url", "", "Gateway WebSocket URL (default ws://127.0.0.1:<device-port>/, wss:// with channels.device.tls)")
+	cmd.Flags().StringVar(&url, "url", "", "Device listener WebSocket URL (default ws://127.0.0.1:<device-port>/, wss:// with channels.device.tls)")
 	cmd.Flags().BoolVar(&noAutoPair, "no-auto-pair", false, "Require manual pairing approval instead of self-approving the local bridge")
 	return cmd
 }
@@ -121,7 +121,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	server := acplib.NewServer(br, os.Stdin, os.Stdout)
 	br.setNotifier(server)
 
-	logger.InfoC("acp", "ACP stdio server ready (bridged to gateway)")
+	logger.InfoC("acp", "ACP stdio server ready (bridged to claw)")
 	srvInfo := ""
 	if hello := client.Hello(); hello != nil {
 		srvInfo = fmt.Sprintf(" (server %s, protocol %d)", hello.Server.Version, hello.Protocol)
@@ -140,12 +140,12 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		}
 		logger.InfoC("acp", "ACP stdio client disconnected; shutting down")
 	case <-client.Done():
-		logger.WarnC("acp", "Gateway connection closed; shutting down")
+		logger.WarnC("acp", "Connection to claw closed; shutting down")
 	}
 	return nil
 }
 
-// bridgeConn is the bridge's live, paired connection to the device gateway.
+// bridgeConn is the bridge's live, paired connection to the device listener.
 type bridgeConn struct {
 	client   *gateway.Client
 	identity *identity.Identity
@@ -154,7 +154,7 @@ type bridgeConn struct {
 	selfApproved bool
 }
 
-// connectBridge connects the bridge to the device gateway at wsURL as a paired
+// connectBridge connects the bridge to the device listener at wsURL as a paired
 // node. Its Ed25519 identity and issued device token persist under
 // <dataDir>/internal/acp-bridge, so pairing happens once across the short-lived
 // spawns an ACP client makes. authToken is the shared device token (empty for
@@ -178,12 +178,12 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	}
 	deviceToken := idStore.LoadDeviceToken()
 
-	logger.InfoCF("acp", "Starting ACP↔gateway bridge", map[string]any{
+	logger.InfoCF("acp", "Starting ACP↔claw bridge", map[string]any{
 		"app": app.Name(), "version": app.Version(), "url": wsURL, "deviceId": id.DeviceID,
 	})
 	// Human-facing progress goes to stderr — stdout is the ACP protocol wire, so it
 	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
-	fmt.Fprintf(os.Stderr, "claw acp: connecting to gateway %s (device %s)…\n", wsURL, id.DeviceID)
+	fmt.Fprintf(os.Stderr, "claw acp: connecting to %s (device %s)…\n", wsURL, id.DeviceID)
 
 	// The client sends one token. A stored device token is tried on its own: the
 	// options apply in order, so adding the shared token as well would override
@@ -266,9 +266,9 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	}
 	if connErr != nil {
 		if isPairingError(connErr) {
-			return nil, fmt.Errorf("this device (%s) is not paired with the gateway yet — approve it once with `claw devices`, then re-run: %w", id.DeviceID, connErr)
+			return nil, fmt.Errorf("this device (%s) is not paired yet — approve it once with `claw devices`, then re-run: %w", id.DeviceID, connErr)
 		}
-		return nil, fmt.Errorf("acp: connect to gateway %s: %w", wsURL, connErr)
+		return nil, fmt.Errorf("acp: connect to %s: %w", wsURL, connErr)
 	}
 
 	// Persist a freshly issued device token so future spawns skip the shared secret.
@@ -354,14 +354,14 @@ func pinnedGatewayTLS(opts tlscert.Options) *tls.Config {
 		InsecureSkipVerify: true, //nolint:gosec // verified by VerifyConnection against the local certificate file
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
-				return errors.New("acp: gateway presented no certificate")
+				return errors.New("acp: the device listener presented no certificate")
 			}
 			want, err := tlscert.InspectFile(opts)
 			if err != nil {
-				return fmt.Errorf("acp: read the gateway certificate: %w", err)
+				return fmt.Errorf("acp: read the TLS certificate: %w", err)
 			}
 			if got := tlscert.Fingerprint(cs.PeerCertificates[0]); got != want.Fingerprint {
-				return fmt.Errorf("acp: gateway certificate %s does not match %s", got, want.CertFile)
+				return fmt.Errorf("acp: certificate %s does not match %s", got, want.CertFile)
 			}
 			return nil
 		},

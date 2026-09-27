@@ -1,6 +1,6 @@
-# Device Gateway Protocol
+# Device Protocol
 
-ClawEh's **device gateway** speaks the OpenClaw Gateway WebSocket protocol so external
+ClawEh's **device listener** speaks the OpenClaw Gateway WebSocket protocol so external
 hardware/voice clients (e.g. the Rabbit R1, the "Claw to Talk" Android app) can pair and
 converse with an agent. This documents the wire protocol as ClawEh implements it, plus the
 client-compatibility findings that shaped it.
@@ -11,13 +11,13 @@ listener/bus bridge; `agentquery.go` the read surface). Agent-loop wiring:
 
 ## Listener
 
-The device gateway runs its **own** HTTP listener, separate from the WebUI/admin port, so it
+The device channel runs its **own** HTTP listener, separate from the WebUI/admin port, so it
 can be exposed to the network without exposing the unauthenticated WebUI.
 
 - Config: `channels.device` — `enabled`, `host`, `port`, `token`, `allowed_cidrs`,
   `external_url`, `auto_approve`, `allow_origins`.
 - Default port: `18791` (`DefaultDevicePort`). The test instance uses `8078`.
-- `allowed_cidrs` empty ⇒ any client IP (loopback always allowed); the gateway is itself
+- `allowed_cidrs` empty ⇒ any client IP (loopback always allowed); the listener is itself
   authenticated, so the allowlist is optional defense-in-depth.
   **Note the asymmetry with `gateway.allowed_cidrs`**, where empty means *loopback
   only*. The defaults differ because the surfaces do: this listener authenticates
@@ -152,7 +152,7 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
 ## The `chat.send` turn lifecycle
 
 This is the crux of client compatibility. A turn is **immediate ack + async stream**, exactly
-as the OpenClaw gateway does it (`server-methods/chat.ts`):
+as the OpenClaw Gateway does it (`server-methods/chat.ts`):
 
 1. **Client →** `chat.send`:
    ```jsonc
@@ -177,7 +177,7 @@ as the OpenClaw gateway does it (`server-methods/chat.ts`):
 
 ## Reply events
 
-A real OpenClaw gateway emits **two** event families per turn, and clients consume them
+A real OpenClaw Gateway emits **two** event families per turn, and clients consume them
 differently. ClawEh emits both (`emitChatReply` in `server.go`).
 
 ### Emission order matters (R1 speech)
@@ -191,14 +191,14 @@ Emit the `agent` stream **first** (assistant text, then lifecycle end), and the 
 
 If `chat`/`final` is sent **first**, the R1 treats the turn as complete, paints the transcript,
 and never feeds the trailing `agent` text to speech — the reply appears on screen but is
-**not spoken**. Sending the `agent` stream first (matching a real gateway's stream-then-finalize
+**not spoken**. Sending the `agent` stream first (matching a real OpenClaw Gateway's stream-then-finalize
 order) makes the R1 both **speak and display**. `emitChatReply` therefore sends
 `agent:assistant` → `agent:lifecycle/end` → `chat:final`.
 
 ### Partial streaming
 
 When the target channel is **streaming-capable** (implements `StreamCapable` — currently the
-device gateway), ClawEh streams partial assistant text **as the model generates it** instead of
+device listener), ClawEh streams partial assistant text **as the model generates it** instead of
 sending the whole reply at once. The agent loop coalesces provider token deltas into
 sentence/length chunks (`stream_coalescer.go`) and the device emits them incrementally
 (`Server.StreamDelta`): a `chat` `state:"delta"` event (running `message` + the new `deltaText`)
@@ -273,7 +273,7 @@ decides **which conversation** that turn joins. The two are independent.
 - The client encodes the selected agent as the **2nd segment of the session key**:
   `agent:<selectedId>:<peer>:<profile>` (the clawtotalk app uses `agent:<id>:clawtotalk:primary`,
   and the sentinel `main` when nothing is selected). A node client (the R1) has no picker and
-  sends `main`; its agent comes from the per-device assignment, else the gateway default.
+  sends `main`; its agent comes from the per-device assignment, else the default agent.
 - **`unified` (the default): the device joins the selected agent's MAIN conversation**,
   `agent:<agentId>:main`. There is no device-scoped or profile-scoped session — the R1, the
   phone app, Slack, and Telegram are one assistant with one history, one tool set, and one
@@ -309,7 +309,7 @@ command (`handleChatSend` intercepts it and replies as a normal turn — no agen
   on id or name). Persists via `store.SetDeviceAgent` to the `paired_devices.agent_id` column
   (`~/.claw/internal/gateway.db`), the same field session-scope resolution reads — so the switch takes
   effect on the **next** turn and **survives restarts / reconnects**.
-- **`/agent default`** (or `reset`) — clears the assignment back to the gateway default.
+- **`/agent default`** (or `reset`) — clears the assignment back to the default agent.
 - **`/help`** — lists the available device commands.
 
 The device is a dedicated channel, so any configured agent is reachable. The confirmation is

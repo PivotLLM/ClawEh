@@ -122,7 +122,7 @@ func (m *USBMonitor) Start(ctx context.Context) (<-chan *events.DeviceEvent, err
 			logger.ErrorCF("devices", "udevadm scan error", map[string]any{"error": err.Error()})
 			alerts.Send(alerter.Alert{
 				Title:       "USB device monitor stopped",
-				Description: "udevadm monitor ended; USB device events are not delivered until the gateway is restarted",
+				Description: "udevadm monitor ended; USB device events are not delivered until claw is restarted",
 				Details:     err.Error(),
 				EventID:     "devices:usb",
 			})

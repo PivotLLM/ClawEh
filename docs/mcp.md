@@ -112,7 +112,7 @@ ACL behavior, differing only by the `session_token` parameter.
 
 The tools an external MCP server offers are listed when ClawEh connects to it,
 registered onto every agent whose `mcp_tools` admits them, and published by the
-host catalogue above. That list is refreshed, without a gateway restart, when:
+host catalogue above. That list is refreshed, without restarting ClawEh, when:
 
 - the server sends `notifications/tools/list_changed` (on a streamable HTTP
   connection under protocol 2026-07-28 ClawEh opens a `subscriptions/listen`

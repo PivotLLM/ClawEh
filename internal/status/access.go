@@ -62,7 +62,7 @@ func accessReport(cfg *config.Config) string {
 		if host == "" {
 			host = "127.0.0.1"
 		}
-		line("  Device gateway:     %s://%s/", cfg.Channels.Device.WebSocketScheme(), net.JoinHostPort(host, strconv.Itoa(port)))
+		line("  Device listener:    %s://%s/", cfg.Channels.Device.WebSocketScheme(), net.JoinHostPort(host, strconv.Itoa(port)))
 	}
 	adminLine(&b, cfg)
 	return b.String()

@@ -160,7 +160,7 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
 	if changed {
 		if reload := h.reloadFunc(); reload != nil {
 			if reloadErr := reload(); reloadErr != nil {
-				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+				logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 			}
 		}
 	}
@@ -222,7 +222,7 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		if reload := h.reloadFunc(); reload != nil {
 			if reloadErr := reload(); reloadErr != nil {
-				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+				logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 			}
 		}
 	}
@@ -253,7 +253,7 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http
 	}
 	if reload := h.reloadFunc(); reload != nil {
 		if reloadErr := reload(); reloadErr != nil {
-			logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+			logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
@@ -294,7 +294,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 
 	warnings := []string{}
 	if device.IsLoopbackHost(host) {
-		warnings = append(warnings, "Device gateway listens on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
+		warnings = append(warnings, "The device listener is on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
 	}
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
 		warnings = append(warnings, "No routable LAN IPv4 address detected; set an External URL.")

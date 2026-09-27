@@ -18,7 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
-// A WebUI save refuses a device gateway on a network address with
+// A WebUI save refuses a device listener on a network address with
 // auto_approve on or no secret, naming the setting; loopback is allowed.
 func TestValidateConfig_DeviceExposure(t *testing.T) {
 	for _, tc := range []struct {

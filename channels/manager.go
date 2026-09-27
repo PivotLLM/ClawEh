@@ -570,7 +570,7 @@ func (m *Manager) initChannels() error {
 
 	if m.config.Channels.Device.Enabled {
 		warnEmptyAllowFrom("Device", m.config.Channels.Device.AllowFrom)
-		m.initChannel("device", "Device Gateway")
+		m.initChannel("device", "Device")
 	}
 
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{

@@ -30,17 +30,17 @@ const fatalShutdownTimeout = 20 * time.Second
 var coreFailures = map[string]alerter.Alert{
 	"http": {
 		Title:       "HTTP listener stopped",
-		Description: "the WebUI, API, health endpoint and channel webhooks on it are down; the gateway is shutting down so the service manager can restart it",
+		Description: "the WebUI, API, health endpoint and channel webhooks on it are down; claw is shutting down so the service manager can restart it",
 		EventID:     "http",
 	},
 	"mcpserver": {
 		Title:       "MCP host server stopped",
-		Description: "external MCP clients and CLI providers lose the host tools; the gateway is shutting down so the service manager can restart it",
+		Description: "external MCP clients and CLI providers lose the host tools; claw is shutting down so the service manager can restart it",
 		EventID:     "mcpserver",
 	},
 	"agent-loop": {
 		Title:       "Agent loop stopped",
-		Description: "no inbound messages are processed; the gateway is shutting down so the service manager can restart it",
+		Description: "no inbound messages are processed; claw is shutting down so the service manager can restart it",
 		EventID:     "agent-loop",
 	},
 }
@@ -68,7 +68,7 @@ func (e *serviceDiedError) ExitCode() int { return exitCodeServiceDied }
 type restartRequestedError struct{}
 
 func (*restartRequestedError) Error() string {
-	return "restart requested through the API; exiting for the service manager to start the gateway again"
+	return "restart requested through the API; exiting for the service manager to start claw again"
 }
 
 // ExitCode is the process status this exit uses.
@@ -147,7 +147,7 @@ func (f *fatalNotifier) fatalService(name string, err error) {
 		logger.ErrorCF("gateway", "core service stopped; shutting down so the service manager restarts the gateway", fields)
 		a, ok := coreFailures[name]
 		if !ok {
-			a = alerter.Alert{Title: "Core service stopped", Description: name + " died; the gateway is shutting down so the service manager can restart it", EventID: name}
+			a = alerter.Alert{Title: "Core service stopped", Description: name + " died; claw is shutting down so the service manager can restart it", EventID: name}
 		}
 		a.Details = err.Error()
 		f.alerter.Send(a)

@@ -64,11 +64,11 @@ the browser.
 
 ## Without an account
 
-The gateway starts and every channel works, but the WebUI shows "No admin
+ClawEh starts and every channel works, but the WebUI shows "No admin
 account. On the server run: claw admin", every `/api/*` request answers 401
 with `{"error":"no admin account","hint":"run: claw admin"}`, and startup logs a
 warning. A credentials file that group or others can read is refused; the log
-names the fix (`chmod 600 <path>`). The gateway re-checks the file every 60
+names the fix (`chmod 600 <path>`). ClawEh re-checks the file every 60
 seconds and signs every session out when it changes.
 
 ## Sessions
@@ -76,7 +76,7 @@ seconds and signs every session out when it changes.
 A login sets a random 256-bit session id in an `HttpOnly`, `SameSite=Strict`
 cookie: `__Host-claw_session` (`Secure`) over HTTPS, `claw_session` over
 loopback HTTP. Idle timeout 12 hours (sliding), absolute lifetime 7 days.
-Sessions live in memory, so a gateway restart signs everyone out. Sign out is
+Sessions live in memory, so a restart of ClawEh signs everyone out. Sign out is
 the button next to the version in the sidebar.
 
 ## Failed logins
@@ -85,7 +85,7 @@ the button next to the version in the sidebar.
 minutes; 10 failures against one username (as typed, existing or not) within
 10 minutes lock that username for 10 minutes. Every attempt during a lock is
 refused with 429 and `Retry-After` and restarts the lock at its full length.
-`claw admin` (any rewrite of `credentials.json`) or a gateway restart clears
+`claw admin` (any rewrite of `credentials.json`) or a restart of ClawEh clears
 every lock. Addresses in `gateway.lockout_exempt` (and loopback) are never
 locked by address, but the username lock still applies to them. Behind a
 proxy listed in `gateway.trusted_proxies`, the client address is the one the

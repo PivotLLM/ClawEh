@@ -168,7 +168,7 @@ function fullNetworkPatch(form: NetworkForm): JsonRecord {
   if (port === tlsPort) {
     throw new Error("HTTP port and HTTPS port must differ.")
   }
-  const devicePort = parseIntField(form.devicePort, "Device gateway port", {
+  const devicePort = parseIntField(form.devicePort, "Device listener port", {
     min: 1,
     max: 65535,
   })

@@ -81,12 +81,12 @@ claw token rotate <agent>   # alias for issue — replace the existing token
 claw token revoke <agent>   # remove the agent's service token
 claw token list             # list agents that have a service token (tokens NOT shown)
 ```
-Changes are written to the state file; a running gateway picks them up
+Changes are written to the state file; a running ClawEh picks them up
 automatically within a few seconds (a file watcher re-syncs the live store).
 
 ## Implementation checklist
 - [x] `servicetoken`: state-file format + `Load`/`Save`/`Generate`/`Path`,
-      no mcp-go dependency (importable by both the gateway and the CLI).
+      no mcp-go dependency (importable by both ClawEh and the CLI).
 - [x] `routing.BuildAgentServiceSessionKey(agentID)` → `agent:<id>:service`;
       confirm it is **not** classified as a subagent key.
 - [x] `routing.ResolveServiceSessionKey(mode, agentID)` → the agent's main

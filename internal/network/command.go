@@ -20,7 +20,7 @@ func NewNetworkCommand() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "network [cidrs]",
-		Short: "Show or set network access to the WebUI/API: allowlist, HTTP/HTTPS scope, device gateway",
+		Short: "Show or set network access to the WebUI/API: allowlist, HTTP/HTTPS scope, device listener",
 		Long: "Two things decide whether another machine can reach the WebUI and /api/*:\n" +
 			"where the listeners bind (this machine only, or the network) and the IP\n" +
 			"allowlist (gateway.allowed_cidrs). Loopback is always allowed. With no allowlist,\n" +
@@ -37,9 +37,9 @@ func NewNetworkCommand() *cobra.Command {
 			"The flags set where the listeners bind:\n" +
 			"  --http localhost|network     plain HTTP (gateway.host)\n" +
 			"  --https all|localhost|off    HTTPS (gateway.tls.mode)\n" +
-			"  --device localhost|network   the device gateway (channels.device.host)\n\n" +
+			"  --device localhost|network   the device listener (channels.device.host)\n\n" +
 			"This edits the config and exits, so it is safe to run while " + internal.BinaryName + " is running.\n" +
-			"A running gateway applies a new allowlist on its next config reload (about 15\n" +
+			"A running " + internal.BinaryName + " applies a new allowlist on its next config reload (about 15\n" +
 			"seconds) with no restart; the listener flags take effect after a restart.\n\n" +
 			"Examples:\n" +
 			"  " + internal.BinaryName + " network --show\n" +
@@ -71,7 +71,7 @@ func NewNetworkCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&show, "show", false, "Print the current access settings and exit without changing anything")
 	cmd.Flags().StringVar(&l.HTTP, "http", "", "Where plain HTTP listens: localhost or network")
 	cmd.Flags().StringVar(&l.HTTPS, "https", "", "Where HTTPS listens: all, localhost or off")
-	cmd.Flags().StringVar(&l.Device, "device", "", "Where the device gateway listens: localhost or network")
+	cmd.Flags().StringVar(&l.Device, "device", "", "Where the device listener listens: localhost or network")
 	return cmd
 }
 
@@ -89,9 +89,9 @@ func runShow() error {
 	fmt.Printf("Network allowlist: %s\n", Describe(a.Allowlist))
 	fmt.Printf("Loopback:          always allowed\n")
 	if a.Device == "" {
-		fmt.Printf("Device gateway:    disabled\n")
+		fmt.Printf("Device listener:   disabled\n")
 	} else {
-		fmt.Printf("Device gateway:    %s (port %d)\n", a.Device, a.DevicePort)
+		fmt.Printf("Device listener:   %s (port %d)\n", a.Device, a.DevicePort)
 	}
 	fmt.Printf("Config:            %s\n", internal.GetConfigPath())
 	return nil
@@ -133,7 +133,7 @@ func runListeners(l Listeners) error {
 		set = append(set, "HTTPS "+l.HTTPS)
 	}
 	if l.Device != "" {
-		set = append(set, "device gateway "+l.Device)
+		set = append(set, "device listener "+l.Device)
 	}
 	fmt.Printf("Listeners set: %s. Written to %s\n", strings.Join(set, ", "), path)
 	fmt.Printf("Listeners are bound at start: restart %s for this to take effect.\n", internal.BinaryName)

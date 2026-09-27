@@ -24,7 +24,7 @@ func NewTLSCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tls",
 		Short: "Show the HTTPS listener's certificate (source, names, expiry, fingerprint)",
-		Long: "The gateway serves plain HTTP on gateway.host:gateway.port (loopback by default) and\n" +
+		Long: internal.BinaryName + " serves plain HTTP on gateway.host:gateway.port (loopback by default) and\n" +
 			"HTTPS on gateway.tls_port (default 18443) where gateway.tls.mode says: \"all\" interfaces\n" +
 			"(the default), \"localhost\" only, or \"off\". HTTPS presents either the operator's\n" +
 			"certificate (gateway.tls.cert_file and key_file) or a self-signed one it generates\n" +

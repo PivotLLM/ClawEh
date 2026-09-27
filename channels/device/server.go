@@ -503,7 +503,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		}
 		if !s.authorizeGateway(r.Context(), &p) {
 			if s.opts.LogMessages {
-				logger.WarnCF("device", "gateway auth failed", map[string]any{
+				logger.WarnCF("device", "device auth failed", map[string]any{
 					"clientId":           p.Client.ID,
 					"tokenPresent":       p.Auth != nil && p.Auth.Token != "",
 					"deviceTokenPresent": p.Auth != nil && p.Auth.DeviceToken != "",
@@ -511,7 +511,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 			}
 			s.recordAuthFailure(ip)
 			detail := map[string]any{"code": gatewayproto.DetailAuthTokenMismatch}
-			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "gateway authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
+			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
 		}
 	}
 
@@ -609,7 +609,7 @@ func (s *Server) recordAuthFailure(ip string) {
 		s.alert(alerter.Alert{
 			EventID: ip,
 			Title:   "Device authentication locked out",
-			Description: fmt.Sprintf("%s failed device gateway authentication %d times within %s and is locked out for %s; each further lockout doubles, up to %s",
+			Description: fmt.Sprintf("%s failed device authentication %d times within %s and is locked out for %s; each further lockout doubles, up to %s",
 				ip, channels.DeviceAuthFailThreshold, channels.DeviceAuthFailWindow, lockout, channels.DeviceAuthLockoutMax),
 		})
 	}

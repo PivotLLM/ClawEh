@@ -288,7 +288,7 @@ instantly with nothing cannot spin the loop.
 
 ### Lifecycle
 
-Listeners are started when the gateway starts and reconciled with the job
+Listeners are started when ClawEh starts and reconciled with the job
 store every 10 seconds, so a listen job added, edited, disabled or removed
 through the tool, the CLI or a config reload takes effect within that window.
 An edited job (new tool, arguments, fields or message) restarts its listener;

@@ -398,7 +398,7 @@ func (m *MCPServer) Start() error {
 			if m.alerter != nil {
 				m.alerter.Send(alerter.Alert{
 					Title:       "MCP host server stopped",
-					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until the gateway is restarted",
+					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until claw is restarted",
 					Details:     err.Error(),
 					EventID:     "mcpserver",
 				})

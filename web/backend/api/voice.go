@@ -83,7 +83,7 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	// Reload so the running agent loop re-detects the active transcriber.
 	if reload := h.reloadFunc(); reload != nil {
 		if reloadErr := reload(); reloadErr != nil {
-			logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+			logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 		}
 	}
 

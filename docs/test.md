@@ -34,7 +34,7 @@ least 50% (`COVERAGE_MIN` in `test.sh`).
 frontend-deps`, or `pnpm install --frozen-lockfile` in `web/frontend`; the gate
 does not install them itself. A missing `oxlint` skips only the lint step.
 
-**MCP integration.** Builds the binary, starts a real gateway in a temporary
+**MCP integration.** Builds the binary, starts a real ClawEh instance in a temporary
 `CLAW_HOME` with the MCP host enabled, drives it with the `probe` tool
 (MCPProbe) and checks workspace, PID-file and restart behaviour, then tears
 everything down. `probe` must be on `PATH` (or set `PROBE_PATH`); if it is not
@@ -47,7 +47,7 @@ Useful flags:
 | `-f` | Fast: no race detector, no coverage. For quick iteration only. |
 | `-c` | Coverage only, no race detector. |
 | `-s` | Skip the MCP integration section. |
-| `-x` | Keep test artifacts (coverage file, integration home and gateway log). |
+| `-x` | Keep test artifacts (coverage file, integration home and ClawEh log). |
 | `-n` | No colour. |
 
 ## Where to look when it fails
@@ -82,7 +82,7 @@ scrolling.
 `typecheck FAILED`, `unit tests FAILED` or `lint FAILED` line.
 
 **MCP integration** failures print one `FAIL:` line per check in that section.
-The gateway's log for the run is in the temporary directory, which is deleted
+ClawEh's log for the run is in the temporary directory, which is deleted
 unless you pass `-x`; the path is printed when artifacts are kept.
 
 **Coverage** below the minimum fails the run with a one-line message in the
@@ -95,7 +95,7 @@ These are deliberately outside `make test` because they bind ports, need extra
 tools, or need a running instance:
 
 - `make test-maestro-host`: runs Maestro's MCP regression suite against a live
-  ClawEh gateway with Maestro embedded (needs `probe`, `jq`, `zip`).
+  ClawEh with Maestro embedded (needs `probe`, `jq`, `zip`).
 - `make check-webui`: the browser end-to-end plan in
   `tests/frontend-e2e.mjs`, following `docs/webui-test-plan.md`, against a
   running WebUI.

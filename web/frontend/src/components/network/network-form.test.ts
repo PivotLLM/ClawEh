@@ -192,7 +192,7 @@ describe("buildNetworkPatch", () => {
     ).toThrow("HTTP port and HTTPS port must differ.")
     expect(() =>
       buildNetworkPatch({ ...loaded, devicePort: "abc" }, loaded),
-    ).toThrow("Device gateway port")
+    ).toThrow("Device listener port")
   })
 })
 

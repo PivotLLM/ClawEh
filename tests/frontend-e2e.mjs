@@ -1042,7 +1042,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     return want || "(loopback only)"
   })
 
-  await check(12, "the device gateway section reflects channels.device", async () => {
+  await check(12, "the device listener section reflects channels.device", async () => {
     const c = await config()
     const d = c?.channels?.device ?? {}
     const host = (d.host ?? "").toLowerCase()

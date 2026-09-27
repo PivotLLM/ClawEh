@@ -92,7 +92,7 @@ func channelCredentialRows(cfg *config.Config) [][]string {
 		rows = append(rows, row("WebUI", "token "+setOrNot(ch.WebUI.Token)))
 	}
 	if ch.Device.Enabled {
-		rows = append(rows, row("Device gateway", "token "+setOrNot(ch.Device.Token)+", word_token "+setOrNot(ch.Device.WordToken)))
+		rows = append(rows, row("Device listener", "token "+setOrNot(ch.Device.Token)+", word_token "+setOrNot(ch.Device.WordToken)))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, row("(no channel enabled)", ""))
@@ -114,8 +114,8 @@ func collectCredentials(_ context.Context, cfg *config.Config, env Environment) 
 	}
 	t.Rows = append(t.Rows,
 		row("WebUI token", setOrNot(cfg.Channels.WebUI.Token)),
-		row("Device gateway shared token", setOrNot(cfg.Channels.Device.Token)),
-		row("Device gateway word token", setOrNot(cfg.Channels.Device.WordToken)),
+		row("Device listener shared token", setOrNot(cfg.Channels.Device.Token)),
+		row("Device listener word token", setOrNot(cfg.Channels.Device.WordToken)),
 	)
 
 	return Section{

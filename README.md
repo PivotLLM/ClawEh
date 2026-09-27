@@ -85,10 +85,10 @@ With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,
 
 - Refactored the context engine and memory (cogmem) into separate packages for a cleaner architecture.
 - Added command-line install, uninstall, and update commands.
-- **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
+- **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts ClawEh, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
 - Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
 - **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
-- ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** (through the Rabbit agent) and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
+- ClawEh's built-in **device listener** is tested and working with the **Rabbit R1** (through the Rabbit agent) and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device protocol notes](docs/device-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration.
 - Integrated Maestro orchestration directly into ClawEh.
 
@@ -111,7 +111,7 @@ With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,
 - **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
-- **External voice/hardware devices** — A built-in device gateway speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI. The R1 connects through the Rabbit agent, which supports voice, text, and photos; see [ACP](docs/acp-protocol.md) for how that path works.
+- **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI. The R1 connects through the Rabbit agent, which supports voice, text, and photos; see [ACP](docs/acp-protocol.md) for how that path works.
 - **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
 - **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
 - **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
@@ -150,11 +150,11 @@ claw network 192.168.1.0/24     # or one subnet
 claw network none               # back to loopback only
 ```
 
-`claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart. Its `--http`, `--https` and `--device` flags set where each listener binds (`localhost` or `network`; `all`, `localhost` or `off` for HTTPS); those take effect after a restart. See [If you are locked out](#if-you-are-locked-out).
+`claw network` writes the config and exits, so it is safe to run while ClawEh is running; ClawEh applies the new allowlist on its next config reload — about 15 seconds — without a restart. Its `--http`, `--https` and `--device` flags set where each listener binds (`localhost` or `network`; `all`, `localhost` or `off` for HTTPS); those take effect after a restart. See [If you are locked out](#if-you-are-locked-out).
 
 > Prefer the narrowest range that works. Anyone inside the allowlist reaches the login page, so the admin password is all that stands between them and your configuration — put ClawEh behind a VPN or reverse proxy if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 
-> Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
+> Not using systemd? Just run `claw` directly — it starts ClawEh and its web UI on port `18790`.
 
 ### 3. Open the web UI and finish setup
 
@@ -213,7 +213,7 @@ the assistant is told outranks its own inferences). The whole store exports and
 imports as YAML. Full details in **[docs/memory.md](docs/memory.md)**.
 
 Use **`claw memory purge`** to clear everything that isn't current active memory
-— a dry run by default; add `--confirm` to delete and vacuum. Stop the gateway
+— a dry run by default; add `--confirm` to delete and vacuum. Stop ClawEh
 first so you're not racing live agents:
 
 ```bash
@@ -248,17 +248,17 @@ Two different transports reach your agents from outside the machine. They are
 separate listeners with separate credentials, and which one a client uses is not
 a choice you make — it depends on the client.
 
-| | Device gateway | ACP bridge |
+| | Device listener | ACP bridge |
 |---|---|---|
 | Used by | ClawToTalk (Android), OpenClaw-compatible apps | Rabbit R1 |
 | Port | `channels.device.port`, default **18791** | none — stdio, no listener |
 | Protocol | OpenClaw Gateway WebSocket | Agent Client Protocol (JSON-RPC 2.0 over stdio) |
-| Auth | shared token or 5-word passphrase, then Ed25519 pairing | inherits the device gateway's, over loopback |
+| Auth | shared token or 5-word passphrase, then Ed25519 pairing | inherits the device listener's, over loopback |
 
 Neither uses the web UI's chat socket (`/webui/ws` on port 18790). That one is
 for the browser console only.
 
-### Device gateway — apps
+### Device listener — apps
 
 ClawEh speaks the **OpenClaw Gateway WebSocket protocol** on its own listener, so
 OpenClaw-compatible clients work without modification. Pair by scanning a QR code
@@ -269,7 +269,7 @@ produces them.
 `channels.device.allowed_cidrs` is empty by default here, meaning any address —
 unlike the web UI's allowlist. That is deliberate: this listener authenticates
 every client, so reachability is not the only thing standing between a stranger
-and your agents. See [the protocol notes](docs/device-gateway-protocol.md).
+and your agents. See [the protocol notes](docs/device-protocol.md).
 
 ### ACP bridge — the Rabbit R1
 
@@ -278,15 +278,15 @@ helper process and talks to it over a pipe, so ClawEh has to be something
 `rabbit-agent` can launch:
 
 ```
-rabbit-agent ──ACP over stdio──► openclaw acp ──WebSocket on 127.0.0.1:18791──► the running gateway
-                                 (a symlink to claw)                            (device gateway)
+rabbit-agent ──ACP over stdio──► openclaw acp ──WebSocket on 127.0.0.1:18791──► the running ClawEh
+                                 (a symlink to claw)                            (device listener)
 ```
 
 `rabbit-agent` is configured to spawn `openclaw acp`. Installing ClawEh creates
 an `openclaw` symlink next to the `claw` binary — `claw install` and
 `make install` both do this — so that command resolves to ClawEh. `claw acp` is a
 stateless translator: it holds no agent loop, and simply converts each ACP prompt
-into a device-gateway turn against the **already-running** gateway on loopback.
+into a device listener turn against the **already-running** ClawEh on loopback.
 There is only ever one ClawEh instance.
 
 Because the bridge connects as a device, it uses the same credentials and pairing
@@ -296,9 +296,9 @@ persist in `$CLAW_HOME/internal/acp-bridge/`, so the short-lived processes
 
 Two practical consequences:
 
-- **The gateway must already be running.** The bridge is a translator, not a
-  server; it connects to the gateway rather than starting one.
-- **Restarting the gateway drops the bridge.** Upgrading ClawEh restarts the
+- **ClawEh must already be running.** The bridge is a translator, not a
+  server; it connects to ClawEh rather than starting one.
+- **Restarting ClawEh drops the bridge.** Upgrading ClawEh restarts the
   service, so `openclaw` has to be restarted afterwards (or the host rebooted)
   before the R1 reconnects.
 
@@ -386,16 +386,16 @@ cd ClawEh
 make install
 ```
 
-This builds `claw` (gateway + WebUI + session API in one binary) and installs
+This builds `claw` (agent runtime + WebUI + session API in one binary) and installs
 it to `~/.local/bin`. The frontend bundle in `web/frontend` is built and
 embedded into the same binary, so a single `claw` invocation serves
 everything — the chat agent, the WebSocket WebUI, and the JSON config API —
-on `cfg.Gateway.Port` (default `18790`).
+on `gateway.port` (default `18790`).
 
 If you do not have Node.js and pnpm installed, you can still build the agent
 side as long as `web/backend/dist/index.html` is already present (the
 embedded asset directory is committed empty with a `.gitkeep`, so missing
-frontend assets just mean the WebUI 404s, the gateway still runs).
+frontend assets just mean the WebUI 404s, ClawEh still runs).
 
 **Available make targets:**
 
@@ -461,11 +461,11 @@ The default is `unified`.
 
 **`unified` means unified — every channel, without exception**
 
-In `unified` mode an agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device gateway (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Amber from your R1 that dinner is at six, ask her from Slack, and she answers six.
+In `unified` mode an agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device listener (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Amber from your R1 that dinner is at six, ask her from Slack, and she answers six.
 
 There is no per-channel or per-device carve-out, and no way to make one channel private by connecting through a different door. **If you want isolation, create a separate agent** and control what that agent can reach — its own workspace, its own tools, its own bindings. If an agent should not accumulate memory at all, disable cognitive memory for it (`cogmem: false`). Those are the supported ways to separate things; the transport you happen to speak through is not one.
 
-The isolating modes below divide an agent's sessions by person, platform, or account. They apply to chat channels; the device gateway keeps a per-device conversation and a service token keeps its own headless session under those modes, so two devices never share a transcript.
+The isolating modes below divide an agent's sessions by person, platform, or account. They apply to chat channels; the device listener keeps a per-device conversation and a service token keeps its own headless session under those modes, so two devices never share a transcript.
 
 **Choosing a mode**
 
@@ -508,11 +508,11 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ClawEh is intended to function as a personal or small-team assistant that runs on a computer the operator controls. It is not designed or intended to provide any kind of public service.
 
-The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback by default (`gateway.host`); HTTPS is served on every interface on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and `gateway.tls.mode` restricts it to `localhost` or turns it `off` (see [docs/tls.md](docs/tls.md)). Setting `gateway.host` to a network address serves plain, unencrypted HTTP there too; the configuration report marks it. Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. The gateway answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
+The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback by default (`gateway.host`); HTTPS is served on every interface on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and `gateway.tls.mode` restricts it to `localhost` or turns it `off` (see [docs/tls.md](docs/tls.md)). Setting `gateway.host` to a network address serves plain, unencrypted HTTP there too; the configuration report marks it. Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. ClawEh answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
 
 Every tool call, configuration change and login is recorded in the audit log ([docs/audit.md](docs/audit.md)).
 
-**Keeping secrets out of config.json.** Any credential field in `config.json` — a provider `api_key` or `api_keys` list, a channel `token`, a `*_secret` or `*password` field, the `env` and `headers` values of an MCP server or CLI model, or a `proxy` URL with a password — may hold a reference instead of the value: `"api_key": "env:OPENAI_API_KEY"` reads the environment variable when the gateway starts (add it to the service unit's `Environment=` or an `EnvironmentFile=`), and `"token": "file:/etc/claw/telegram.token"` reads the file's contents (surrounding whitespace trimmed). The file must be readable only by its owner (`chmod 600`) and the path must be absolute. References are resolved when the configuration loads and written back unchanged whenever the configuration is saved, including saves from the web console, so the secret never appears in `config.json`. The web console shows a reference as written rather than masked; typing a new value into a referenced field replaces the reference with that literal. A reference that cannot be resolved — an unset variable, a missing file, or a file that group or other can read — stops the gateway from starting, or is rejected by the web console, with a message naming the config key. CLI providers run without their vendor's permission prompts only when *Bypass CLI restrictions* is ticked for that CLI; with it on, the CLI can run commands and modify files anywhere the service user can. The configuration report (**Check Up** in the web console) lists every such setting and marks the ones that need attention.
+**Keeping secrets out of config.json.** Any credential field in `config.json` — a provider `api_key` or `api_keys` list, a channel `token`, a `*_secret` or `*password` field, the `env` and `headers` values of an MCP server or CLI model, or a `proxy` URL with a password — may hold a reference instead of the value: `"api_key": "env:OPENAI_API_KEY"` reads the environment variable when ClawEh starts (add it to the service unit's `Environment=` or an `EnvironmentFile=`), and `"token": "file:/etc/claw/telegram.token"` reads the file's contents (surrounding whitespace trimmed). The file must be readable only by its owner (`chmod 600`) and the path must be absolute. References are resolved when the configuration loads and written back unchanged whenever the configuration is saved, including saves from the web console, so the secret never appears in `config.json`. The web console shows a reference as written rather than masked; typing a new value into a referenced field replaces the reference with that literal. A reference that cannot be resolved — an unset variable, a missing file, or a file that group or other can read — stops ClawEh from starting, or is rejected by the web console, with a message naming the config key. CLI providers run without their vendor's permission prompts only when *Bypass CLI restrictions* is ticked for that CLI; with it on, the CLI can run commands and modify files anywhere the service user can. The configuration report (**Check Up** in the web console) lists every such setting and marks the ones that need attention.
 
 In general, Claw should be operated as a local, user-controlled tool, not as an internet-facing application.
 
@@ -558,18 +558,18 @@ While a lock is in force, **every** attempt it covers is refused, including one 
 
 A locked attempt is answered `429 Too Many Requests` with a `Retry-After` header (seconds) and the body `{"error":"too many failed logins","retry_after":<seconds>}`. The body is the same whether the address or the account is locked and whether the account exists; the WebUI shows "Too many failed sign-ins. Try again in N seconds." Trying again before then restarts the lock. An ordinary wrong username or password is `401` with `{"error":"invalid username or password"}`.
 
-To end every lock at once, run `claw admin` on the server (setting a new password, or the same one): the gateway notices the credentials file changed on the next login attempt, clears all address and account locks, and accepts the new account straight away. Restarting the gateway also clears all locks, since they are kept only in memory.
+To end every lock at once, run `claw admin` on the server (setting a new password, or the same one): ClawEh notices the credentials file changed on the next login attempt, clears all address and account locks, and accepts the new account straight away. Restarting ClawEh also clears all locks, since they are kept only in memory.
 
-`gateway.lockout_exempt` is a list of IP addresses and CIDRs (for example a reverse proxy, `["192.168.1.10", "10.0.0.0/8"]`) that are never locked out by address, neither at the WebUI login nor at the device gateway; loopback is always exempt. Account locks still apply to attempts from these addresses, so a proxy cannot be used to get around them. On the WebUI Network page the field is "Never locked out", and a change applies on the next config reload without a restart.
+`gateway.lockout_exempt` is a list of IP addresses and CIDRs (for example a reverse proxy, `["192.168.1.10", "10.0.0.0/8"]`) that are never locked out by address, neither at the WebUI login nor at the device listener; loopback is always exempt. Account locks still apply to attempts from these addresses, so a proxy cannot be used to get around them. On the WebUI Network page the field is "Never locked out", and a change applies on the next config reload without a restart.
 
-`gateway.trusted_proxies` lists the addresses (IPs or CIDRs) of reverse proxies you run in front of ClawEh, for example `["127.0.0.1"]` for nginx on the same host. A request whose TCP peer is one of them is treated as coming from the address in its `X-Real-IP` header, or without one from the first `X-Forwarded-For` entry. That address is what the IP allowlists, the address lockouts, `gateway.lockout_exempt`, the logs and the audit log see, on the WebUI and at the device gateway. From any other peer the headers are ignored, and loopback is trusted only if listed. Have the proxy set `X-Real-IP` to the client (nginx: `proxy_set_header X-Real-IP $remote_addr;`). With a proxy listed, the allowlists judge the real clients, so a proxied WebUI needs `gateway.allowed_cidrs` to cover them (for example `["*"]`). A change applies on the next config reload without a restart.
+`gateway.trusted_proxies` lists the addresses (IPs or CIDRs) of reverse proxies you run in front of ClawEh, for example `["127.0.0.1"]` for nginx on the same host. A request whose TCP peer is one of them is treated as coming from the address in its `X-Real-IP` header, or without one from the first `X-Forwarded-For` entry. That address is what the IP allowlists, the address lockouts, `gateway.lockout_exempt`, the logs and the audit log see, on the WebUI and at the device listener. From any other peer the headers are ignored, and loopback is trusted only if listed. Have the proxy set `X-Real-IP` to the client (nginx: `proxy_set_header X-Real-IP $remote_addr;`). With a proxy listed, the allowlists judge the real clients, so a proxied WebUI needs `gateway.allowed_cidrs` to cover them (for example `["*"]`). A change applies on the next config reload without a restart.
 
 Each lock that starts raises a Normal-priority operator alert: "WebUI login address locked out" (event id `auth-lockout-ip`, naming the address) or "WebUI login account locked out" (`auth-lockout-account`, naming the username). Attempts that only extend an existing lock do not alert again; a new lock after an earlier one has ended does. Failed logins, lock starts and refused attempts are logged with the username and client address (never the password) and recorded in the audit log. See [ALERTS.md](ALERTS.md) and [docs/audit.md](docs/audit.md).
 
 ## Running as a service (Linux)
 
 `claw.service` in the project root is a systemd unit file for running ClawEh
-as a background service on Linux. The merged binary handles the gateway, the
+as a background service on Linux. The merged binary handles the agent runtime, the
 WebUI HTTP layer, and the session API in one process — there is no longer a
 separate `claw-web` service. Replace `YOUR_USERNAME` with the user account
 the service should run under, then install with:
@@ -583,7 +583,7 @@ sudo systemctl enable --now claw
 ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
 in the service file. See [Logging](#logging) for rotation and retention.
 
-The unit uses `KillMode=mixed`: on `systemctl stop` only the gateway gets
+The unit uses `KillMode=mixed`: on `systemctl stop` only the `claw` process gets
 SIGTERM and shuts down its channels, turns and MCP servers itself, normally
 within a few seconds; anything still running afterwards is killed.
 
@@ -603,7 +603,7 @@ so the systemd unit needs no `StandardOutput`/`StandardError` redirection:
 Both files roll once per day. At local midnight the active `claw.log` / `error.log`
 are renamed to date-stamped archives — `YYYYMMDD-claw.log` and `YYYYMMDD-error.log`
 — and fresh active files are opened. The date is taken from each file's
-last-modified time, so if the gateway was not running at midnight the roll
+last-modified time, so if ClawEh was not running at midnight the roll
 happens as soon as it next starts, stamping the archive with the day the log
 actually covers.
 
@@ -612,7 +612,7 @@ date-stamped archives older than that many days are deleted; **`0` keeps logs
 forever**. The default is `30`. It can also be set via the
 `CLAW_LOGGING_RETENTION_DAYS` environment variable, and is editable in the WebUI
 under **System → Runtime → Log retention (days)** (changes apply on the next
-gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
+ClawEh start). Only `YYYYMMDD-*.log` archives are pruned — the active
 `claw.log` / `error.log` and the `dumps/` directory are never touched.
 
 ### Logging options
@@ -682,7 +682,7 @@ Manage it in the web console under **Config → Backup**, or in `config.json`:
 | `retain_days` | `30` | Delete archives older than this. |
 | `dest` | `$CLAW_HOME/backup` | Directory to write archives to (an off-host mount, for example). |
 
-`claw backup [--dest DIR]` runs the same backup on demand, and `claw restore <archive>` restores one (the gateway must be stopped; the files it replaces are kept in `restore-backup-<timestamp>/`). The **Back up now** button (or `POST /api/backup`) runs a backup immediately. See [docs/backup.md](docs/backup.md).
+`claw backup [--dest DIR]` runs the same backup on demand, and `claw restore <archive>` restores one (ClawEh must be stopped; the files it replaces are kept in `restore-backup-<timestamp>/`). The **Back up now** button (or `POST /api/backup`) runs a backup immediately. See [docs/backup.md](docs/backup.md).
 
 ## Diagnostic dumps
 
@@ -734,7 +734,7 @@ claw token revoke <agent>   # remove it
 claw token list             # list agents that have one (tokens are not shown)
 ```
 
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running ClawEh picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 
@@ -775,7 +775,7 @@ Compaction itself is configured under a `compression` block, split by what each 
 | `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
 | `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
-| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only isolated sessions (per-user, per-platform, per-account, group, device) are affected; the agent's `main` conversation and its `service` session are never deleted (use `archive_days` to trim messages inside them). A session with a turn in flight, or one the gateway still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
+| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only isolated sessions (per-user, per-platform, per-account, group, device) are affected; the agent's `main` conversation and its `service` session are never deleted (use `archive_days` to trim messages inside them). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
 
 **Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every session Alice or Bob hold for that chat id on Telegram (direct, group, per-account and identity-linked per-user keys) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. Under the default `unified` scope the sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
 | `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
@@ -985,7 +985,7 @@ For clients limited to stdio MCP transport (e.g., Claude Desktop), bridge to cla
 
 `make test` runs the whole suite. See [docs/test.md](docs/test.md) for how it is organised and where failure details are reported.
 
-The MCP server integration tests are fully self-contained. `./test.sh -i` builds a fresh claw binary, starts an ephemeral gateway in a temporary `CLAW_HOME`, runs the probe-driven test suite, then tears everything down.
+The MCP server integration tests are fully self-contained. `./test.sh -i` builds a fresh claw binary, starts an ephemeral ClawEh instance in a temporary `CLAW_HOME`, runs the probe-driven test suite, then tears everything down.
 
 ```bash
 ./test.sh -i          # unit tests + MCP integration (self-contained)
@@ -997,7 +997,7 @@ Requires [`probe`](https://github.com/PivotLLM/MCPProbe) on `PATH`.
 The test suite runs in two tiers:
 
 - **Tier 1** — always runs: tool catalogue checks (all expected tools present) and unauthenticated rejection (verifies `session_token` is enforced on every call).
-- **Tier 2** — automatically enabled by `./test.sh -i`: file operation round-trips and session tool smoke tests using a per-run `CLAW_MCP_TEST_TOKEN` generated at startup and passed to the gateway via environment variable. The token is never written to a config file.
+- **Tier 2** — automatically enabled by `./test.sh -i`: file operation round-trips and session tool smoke tests using a per-run `CLAW_MCP_TEST_TOKEN` generated at startup and passed to ClawEh via environment variable. The token is never written to a config file.
 
 To run Tier 2 against an already-running claw instance, set `SESSION_TOKEN` to the `SST<64hex>` token from an active session's system prompt:
 

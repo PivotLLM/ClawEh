@@ -26,7 +26,7 @@ func NewAdminCommand() *cobra.Command {
 		Long: "Create the operator account for the WebUI and its API, or replace it. There is one\n" +
 			"account; running the command again overwrites it. The password is asked for twice\n" +
 			"without echo and must be at least " + strconv.Itoa(admin.MinPasswordLength) + " characters. The result is written to\n" +
-			"<CLAW_HOME>/credentials.json (mode 0600); a running gateway picks it up within a\n" +
+			"<CLAW_HOME>/credentials.json (mode 0600); a running claw picks it up within a\n" +
 			"minute and signs everyone out. When stdin is not a terminal (a piped installer) the\n" +
 			"prompts use /dev/tty; the password is never read from a pipe.",
 		Args: cobra.MaximumNArgs(1),
