@@ -795,7 +795,7 @@
       "title": "Check Up",
       "load_error": "Failed to load the security assessment.",
       "build": "build",
-      "legend": "Rows marked with a warning need action; the others are for awareness. The full report below covers listeners, providers, channels, agents and every folder each agent can reach. Keys and tokens appear only as set or not set.",
+      "legend": "This is a summary of key items. For a full report, use the \"Full report\" button below.",
       "col": {
         "action": "Action",
         "item": "Item",
@@ -803,8 +803,7 @@
       },
       "action_needed": "Action recommended",
       "no_action": "No action needed",
-      "download": "Download full report",
-      "download_hint": "Opens the full configuration report as a PDF in a new tab."
+      "download": "Full report"
     },
     "devices": {
       "connect_to": "Devices will connect to"

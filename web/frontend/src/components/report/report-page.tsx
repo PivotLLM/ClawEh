@@ -122,9 +122,6 @@ export function ReportPage() {
                   {t("pages.report.download")}
                 </a>
               </Button>
-              <p className="text-muted-foreground text-xs">
-                {t("pages.report.download_hint")}
-              </p>
             </div>
           </div>
         )}

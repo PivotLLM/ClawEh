@@ -1521,7 +1521,7 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     assert(headers.join("|") === "Action|Item|Status", `table headers = ${headers.join("|")}`)
     assert(rows > 0, "the assessment table has no rows")
     assert(href === "/api/report/pdf", `download href = ${href}`)
-    assert(label === "Download full report", `download label = ${JSON.stringify(label)}`)
+    assert(label === "Full report", `download label = ${JSON.stringify(label)}`)
     assert(problems.length === 0, `/report console: ${problems[0]}`)
     return `${rows} rows`
   })

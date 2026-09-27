@@ -433,7 +433,7 @@ observe does not need an entry.
 
 - The Report page now shows the security assessment inline: a product
   identification line (name, version, build, platform), the assessment table
-  with rows needing action marked, and a **Download full report** button for
+  with rows needing action marked, and a **Full report** button for
   the PDF. New endpoint `GET /api/report/assessment` returns the identity and
   the assessment rows as JSON
   (`{"identity":{name,version,build,platform,generated_at},"assessment":[{action,item,status}]}`)

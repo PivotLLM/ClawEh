@@ -216,7 +216,7 @@ covers it.
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/voice` | Both render, no console errors |
-| K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Download full report** button whose `href` is `/api/report/pdf`; no console errors |
+| K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Full report** button whose `href` is `/api/report/pdf`; no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |

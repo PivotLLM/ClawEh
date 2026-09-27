@@ -18,7 +18,7 @@ never cached. It sits behind the same access controls as the rest of `/api/`.
 The Check Up page does not open the PDF directly. It shows a one-line product
 identification (name, version with build metadata, build time, OS/architecture
 and host) and the **Security assessment** table inline, with rows that need
-action marked, and offers the full PDF through a **Download full report**
+action marked, and offers the full PDF through a **Full report**
 button. The table comes from `GET /api/report/assessment`, which returns JSON —
 `{"identity": {"name", "version", "build", "platform", "generated_at"},
 "assessment": [{"action": bool, "item", "status"}, …]}` — built by the same
