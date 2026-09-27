@@ -384,6 +384,80 @@ if (useGroup("P", "Authentication")) {
     assert(cfg.status === 401, `GET /api/config after sign-out = ${cfg.status}, want 401`)
   })
 
+  // Sessions live in memory on the server, so a gateway restart forgets them
+  // all. Deleting the cookie in the browser context is the same thing seen from
+  // the page: its next request finds no session.
+  await check(6, "a session removed on the server sends the page to login, not an error", async () => {
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `login: ${l.status} ${l.text}`)
+    const { close, page, problems } = await open("/agents", { context: other })
+    await other.clearCookies()
+    // Navigate within the SPA: the route gate asks the server and must send
+    // the visitor to login with where they were going, not render an error.
+    await page.getByRole("button", { name: "Models", exact: true }).click()
+    await page.locator('a[href="/models"]').first().click()
+    await page.waitForURL(/\/login\?/, { timeout: 10000 })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    const url = new URL(page.url())
+    const errors = await page.locator("[data-testid=route-error]").count()
+    await close()
+    await other.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
+    assert(url.searchParams.get("next") === "/models", `next = ${url.searchParams.get("next")}`)
+    assert(errors === 0, "an error state was rendered instead of the login page")
+    return url.pathname + url.search
+  })
+
+  await check(7, "a lost session stops the chat reconnect loop at the login page", async () => {
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `login: ${l.status} ${l.text}`)
+    const page = await other.newPage()
+    const problems = []
+    page.on("console", (m) => {
+      if (m.type() === "error") problems.push(m.text())
+    })
+    page.on("pageerror", (e) => problems.push("pageerror: " + e.message))
+    let attempts = 0
+    page.on("websocket", () => {
+      attempts += 1
+    })
+    // Keep a handle on the live socket so the test can drop it, the way a
+    // restarting gateway does.
+    await page.addInitScript(() => {
+      const Real = window.WebSocket
+      window.__live = []
+      // @ts-ignore
+      window.WebSocket = function (url, protocols) {
+        const s = protocols === undefined ? new Real(url) : new Real(url, protocols)
+        window.__live.push(s)
+        return s
+      }
+      window.WebSocket.prototype = Real.prototype
+      Object.assign(window.WebSocket, Real)
+    })
+    await page.goto(BASE + "/", { waitUntil: "networkidle", timeout: 20000 })
+    await page.waitForTimeout(1500)
+    assert(attempts >= 1, "chat opened no WebSocket")
+    await other.clearCookies()
+    await page.evaluate(() => window.__live.forEach((s) => s.close()))
+    // The controller asks /api/auth/status once, learns the session is gone
+    // and leaves for the login page instead of retrying for ever.
+    await page.waitForURL(/\/login(\?|$)/, { timeout: 10000 })
+    const atRedirect = attempts
+    await page.waitForTimeout(3000)
+    const path = new URL(page.url()).pathname
+    const after = attempts
+    await page.close()
+    await other.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/login", `left the login page for ${path}`)
+    assert(after - atRedirect <= 1, `${after - atRedirect} more socket attempts after the redirect`)
+    return `${after} socket attempt(s) in all`
+  })
+
   await anon.close()
 }
 

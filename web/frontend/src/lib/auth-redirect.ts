@@ -7,6 +7,11 @@
 // as `next` so it comes back afterwards. The auth endpoints themselves are
 // excluded (a failed login is a 401 that must not bounce the login page) and
 // nothing happens while already on /login.
+//
+// The same wrapper is where the tab learns whether the gateway is reachable at
+// all (store/connection): a same-origin fetch that fails at the network level
+// marks it unreachable, and the next response of any status marks it back.
+import { isNetworkError, setGatewayReachable } from "@/store/connection"
 
 export const LOGIN_PATH = "/login"
 
@@ -56,16 +61,25 @@ export function shouldRedirectToLogin(
 
 /**
  * Wrap `original` so a 401 from a protected API path calls `onUnauthorized`
- * (once per response) before the response is handed back to the caller.
+ * (once per response) before the response is handed back to the caller, and
+ * so every same-origin request keeps the gateway's reachability current.
  */
 export function wrapFetch(
   original: typeof fetch,
   onUnauthorized: (loginTo: string) => void,
 ): typeof fetch {
   return async (input, init) => {
-    const res = await original(input, init)
+    const path = requestPath(input)
+    let res: Response
+    try {
+      res = await original(input, init)
+    } catch (error) {
+      if (path !== null && isNetworkError(error)) setGatewayReachable(false)
+      throw error
+    }
+    if (path !== null) setGatewayReachable(true)
     const current = window.location.pathname
-    if (shouldRedirectToLogin(res.status, requestPath(input), current)) {
+    if (shouldRedirectToLogin(res.status, path, current)) {
       onUnauthorized(loginHref(current + window.location.search))
     }
     return res

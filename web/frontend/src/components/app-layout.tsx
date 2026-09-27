@@ -4,6 +4,7 @@ import { Toaster } from "sonner"
 
 import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
+import { ConnectionBanner } from "@/components/connection-banner"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -26,6 +27,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <TooltipProvider>
       <SidebarProvider className="flex h-dvh flex-col overflow-hidden">
         <AppHeader />
+        <ConnectionBanner />
 
         <div className="flex flex-1 overflow-hidden">
           <AppSidebar />

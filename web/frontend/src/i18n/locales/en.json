@@ -952,6 +952,9 @@
       "body": "Here's what will be configured. Go back to make changes, or finish to apply."
     }
   },
+  "connection": {
+    "lost": "Connection lost. Reconnecting…"
+  },
   "auth": {
     "login": {
       "title": "ClawEh",

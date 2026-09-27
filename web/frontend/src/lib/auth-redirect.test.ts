@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { isGatewayReachable, setGatewayReachable } from "@/store/connection"
+
 import {
+  installAuthRedirect,
   loginHref,
   safeNext,
   shouldRedirectToLogin,
@@ -9,6 +12,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  setGatewayReachable(true)
 })
 
 describe("shouldRedirectToLogin", () => {
@@ -80,5 +84,64 @@ describe("wrapFetch", () => {
     original.mockResolvedValue({ status: 200 } as Response)
     await wrapped("/api/config")
     expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  // A restart takes the gateway away for a few seconds: the tab must know, so
+  // the shell can show the banner and the queries can wait instead of failing.
+  it("marks the gateway unreachable on a network error and reachable on the next response", async () => {
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://claw.local",
+      pathname: "/network",
+      search: "",
+    })
+    const original = vi.fn()
+    const wrapped = wrapFetch(original as unknown as typeof fetch, vi.fn())
+
+    original.mockRejectedValue(new TypeError("Failed to fetch"))
+    await expect(wrapped("/api/tls")).rejects.toThrow("Failed to fetch")
+    expect(isGatewayReachable()).toBe(false)
+
+    original.mockResolvedValue({ status: 401 } as Response)
+    await wrapped("/api/tls")
+    expect(isGatewayReachable()).toBe(true)
+  })
+
+  it("leaves reachability alone for a cross-origin request", async () => {
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://claw.local",
+      pathname: "/",
+      search: "",
+    })
+    const original = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"))
+    const wrapped = wrapFetch(original as unknown as typeof fetch, vi.fn())
+    await expect(wrapped("https://example.com/x")).rejects.toThrow(
+      "Failed to fetch",
+    )
+    expect(isGatewayReachable()).toBe(true)
+  })
+})
+
+describe("installAuthRedirect", () => {
+  it("sends the browser to the login page on a protected 401", async () => {
+    const assign = vi.fn()
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://claw.local",
+      pathname: "/models",
+      search: "?tab=2",
+      assign,
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 401 } as Response),
+    )
+
+    installAuthRedirect()
+    const res = await fetch("/api/config")
+
+    expect(res.status).toBe(401)
+    expect(assign).toHaveBeenCalledWith("/login?next=%2Fmodels%3Ftab%3D2")
   })
 })

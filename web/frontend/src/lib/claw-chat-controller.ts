@@ -2,6 +2,7 @@ import { toast } from "sonner"
 
 import { getSessionHistory } from "@/api/sessions"
 import i18n from "@/i18n"
+import { LOGIN_PATH, loginHref } from "@/lib/auth-redirect"
 import {
   clearStoredSessionId,
   generateSessionId,
@@ -27,23 +28,66 @@ let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 let reconnectAttempts = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+// The connection generation whose /api/auth/status probe is in flight, or -1.
+let probing = -1
 
-// scheduleReconnect arms a single capped-exponential-backoff (1s → 30s) retry of
-// connectChat. Used by every failure path — socket close, socket error, and a
-// failed connect attempt (token fetch / WebSocket construction) — so the chat
-// self-heals after a transient (e.g. the WebUI channel bouncing during a config
-// reload) instead of staying dead until a manual browser refresh. An intentional
-// disconnectChat() clears the timer and bumps the generation, so it won't fire.
+type SessionProbe = "ok" | "gone" | "down"
+
+// probeSession asks the server why the socket failed. The browser hides the
+// handshake status, so a refused socket (the session is gone, e.g. after a
+// gateway restart) and a gateway that is down look the same from onclose.
+async function probeSession(): Promise<SessionProbe> {
+  let res: Response
+  try {
+    res = await fetch("/api/auth/status")
+  } catch {
+    return "down"
+  }
+  if (res.status === 401) return "gone"
+  if (!res.ok) return "ok"
+  try {
+    const body = (await res.json()) as { authenticated?: boolean }
+    return body.authenticated === false ? "gone" : "ok"
+  } catch {
+    return "ok"
+  }
+}
+
+function goToLogin() {
+  const { pathname, search } = window.location
+  if (pathname.startsWith(LOGIN_PATH)) return
+  window.location.assign(loginHref(pathname + search))
+}
+
+// scheduleReconnect probes the session once per failure, then either sends the
+// browser to the login page (session gone: retrying would be refused for ever)
+// or arms a single capped-exponential-backoff retry of connectChat — 1s → 5s
+// while the gateway is unreachable, 1s → 30s otherwise (e.g. the WebUI channel
+// bouncing during a config reload). Used by every failure path — socket close,
+// socket error, and a failed WebSocket construction. An intentional
+// disconnectChat() clears the timer and bumps the generation, so a probe or
+// timer from before it is ignored.
 function scheduleReconnect() {
-  if (reconnectTimer) {
+  if (reconnectTimer || probing === connectionGeneration) {
     return
   }
-  const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
-  reconnectAttempts += 1
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    void connectChat()
-  }, delay)
+  const generation = connectionGeneration
+  probing = generation
+  void probeSession().then((result) => {
+    if (probing === generation) probing = -1
+    if (generation !== connectionGeneration) return
+    if (result === "gone") {
+      goToLogin()
+      return
+    }
+    const cap = result === "down" ? 5000 : 30000
+    const delay = Math.min(cap, 1000 * 2 ** reconnectAttempts)
+    reconnectAttempts += 1
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void connectChat()
+    }, delay)
+  })
 }
 
 async function loadSessionMessages(sessionId: string): Promise<ChatMessage[]> {

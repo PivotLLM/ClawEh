@@ -702,6 +702,14 @@ observe does not need an entry.
 
 ### Fixed
 
+- An open WebUI tab now copes with a gateway restart. Sessions live in memory,
+  so a restart forgets them; the tab used to keep reopening its chat socket for
+  ever, refused each time, and pages showed an error. Now, when a request or
+  the chat socket finds the session gone, the tab returns to the login page
+  with the current page as `next`, and while the gateway is down it shows
+  "Connection lost. Reconnecting…" at the top and keeps trying (every 5 seconds
+  at most) instead of an error page. This is the path after **Restart now** on
+  the Network page or a restart of the service by hand.
 - Stopping the gateway no longer waits 10 seconds per Telegram bot with
   "Timed out waiting for long-poll goroutine to exit": the pending long poll
   is now aborted at once.

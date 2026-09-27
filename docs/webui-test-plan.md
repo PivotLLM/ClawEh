@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-131 checks in all; the runner prints the same tally at the end.
+133 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -268,9 +268,18 @@ and deletes it at the end. Nothing outside that domain is touched.
 
 ## P. Authentication
 
-The login page, the refusals, the session, and sign-out. P1, P2 and P5 run in
-browser contexts of their own so the suite's session is untouched; P2 records
-one failed login, which the limiter forgets on the next success (P5).
+The login page, the refusals, the session, and sign-out. P1, P2, P5, P6 and P7
+run in browser contexts of their own so the suite's session is untouched; P2
+records one failed login, which the limiter forgets on the next success (P5).
+
+Sessions live in memory on the server, so a gateway restart forgets them all.
+P6 and P7 stand in for that by deleting the session cookie in the browser
+context: the page must return to the login page, not show an error, and the
+chat socket must stop reconnecting. The banner shown while the gateway itself
+is down (*Connection lost. Reconnecting…*) cannot be exercised against the live
+dev instance without stopping it; it is covered by unit tests only
+(`connection-banner.test.tsx`, `auth-redirect.test.ts` and
+`claw-chat-controller.test.ts` under `web/frontend/src`).
 
 | ID | Process | Expected |
 |---|---|---|
@@ -279,6 +288,8 @@ one failed login, which the limiter forgets on the next success (P5).
 | P3 | **anonymous** `curl -i $BASE/api/config` | `401` with a JSON `error` (`authentication required`, or `no admin account` with a `claw admin` hint) and **no configuration in the body** |
 | P4 | `curl -b jar $BASE/api/auth/status` | `{"configured":true,"authenticated":true,"username":"<admin>"}` — the username is the one that signed in |
 | P5 | Sign in in a second browser, open `/agents`, click **Sign out** in the sidebar footer | The browser lands on `/login` with the form showing. From that browser `GET /api/auth/status` is `authenticated: false` and `GET /api/config` is `401`: the session ended on the server, not just in the browser |
+| P6 | Sign in in a second browser, open `/agents`, delete the session cookie (DevTools → Application → Cookies, or `context.clearCookies()`), then open the **Models** group in the sidebar and click **Models** | The browser lands on `/login?next=%2Fmodels` with the login form showing; no error state (`data-testid=route-error`) is rendered and there are no console errors. Signing in returns to `/models` |
+| P7 | Sign in in a second browser, open `/` (chat), wait for the socket to open, delete the session cookie as in P6, then close the socket (from the console: the page's WebSocket, or restart the gateway) | The page goes to `/login` within a few seconds and stays there: at most one further `/webui/ws` attempt after the redirect, no retry storm, no console errors |
 
 ## Q. Audit page
 
