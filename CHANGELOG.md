@@ -428,6 +428,12 @@ observe does not need an entry.
   written to `gateway.tls.cert_file`/`key_file`; a pair the server cannot load
   is reported inline and nothing is saved. **Regenerate certificate** calls
   `POST /api/tls/regenerate`.
+- The Devices page's **Pair a device** card shows the address devices connect
+  to, and `GET /api/devices/pair` returns it as `connect_url`
+  (`ws://` or `wss://` host and port, from `channels.device.external_url` when
+  set, else `gateway.external_url`'s hostname or the first LAN address on the
+  device listener port). Without `channels.device.external_url`, the pairing QR
+  now lists `gateway.external_url`'s hostname before the LAN addresses.
 
 ### Changed
 
@@ -688,6 +694,9 @@ observe does not need an entry.
 
 ### Fixed
 
+- `claw acp` reuses its device token across launches instead of
+  re-authenticating with the shared token and rotating the device's tokens
+  every time.
 - **The Network page could save default listener settings over the real
   ones.** Opened from another page, with the configuration already cached in
   the browser, the form was never filled from the configuration and showed the

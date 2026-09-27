@@ -260,7 +260,14 @@ func TestACPBridgeAgainstDeviceChannel(t *testing.T) {
 			}
 			utils.CloseQuietly(conn.client)
 
-			// A second connect reuses the stored identity and device token.
+			// A second connect reuses the stored identity and authenticates with
+			// the stored device token, so the gateway echoes that token instead
+			// of issuing a new one and revoking it.
+			firstToken := storedBridgeToken(t, dataDir)
+			issued, issuedOK, issuedErr := store.TokenByValue(ctx, firstToken)
+			if issuedErr != nil || !issuedOK {
+				t.Fatalf("stored token unknown to the gateway (ok=%v err=%v)", issuedOK, issuedErr)
+			}
 			again, err := g.connect(t, true, nil)
 			if err != nil {
 				t.Fatalf("second connect: %v", err)
@@ -272,14 +279,50 @@ func TestACPBridgeAgainstDeviceChannel(t *testing.T) {
 			if again.identity.DeviceID != deviceID {
 				t.Fatalf("second connect used device %s, want %s", again.identity.DeviceID, deviceID)
 			}
-			if storedBridgeToken(t, dataDir) == "" {
-				t.Fatal("no device token stored after the second connect")
+			if hello := again.client.Hello(); hello == nil || hello.Auth == nil || hello.Auth.DeviceToken != firstToken {
+				t.Fatalf("second connect was not authenticated with the stored device token: hello = %+v", hello)
+			}
+			if got := storedBridgeToken(t, dataDir); got != firstToken {
+				t.Fatalf("second connect replaced the stored device token (%q -> %q)", firstToken, got)
+			}
+			if still, stillOK, stillErr := store.TokenByValue(ctx, firstToken); stillErr != nil || !stillOK || still.CreatedAtMs != issued.CreatedAtMs {
+				t.Fatalf("second connect rotated the device token (ok=%v err=%v got=%+v issued=%+v)", stillOK, stillErr, still, issued)
 			}
 			if pending, err := store.ListPending(ctx); err != nil || len(pending) != 0 {
 				t.Fatalf("pending after reconnect = %v (err %v), want none", pending, err)
 			}
 			if paired, err := store.ListPaired(ctx); err != nil || len(paired) != 1 {
 				t.Fatalf("paired devices = %d (err %v), want 1", len(paired), err)
+			}
+
+			// Once the gateway revokes the token (the device was removed), the
+			// third connect falls back to the shared token and pairs again.
+			if rmErr := store.RemovePaired(ctx, deviceID); rmErr != nil {
+				t.Fatalf("RemovePaired: %v", rmErr)
+			}
+			third, thirdErr := g.connect(t, true, nil)
+			if thirdErr != nil {
+				t.Fatalf("third connect after revocation: %v", thirdErr)
+			}
+			utils.CloseQuietly(third.client)
+			if !third.selfApproved {
+				t.Fatal("third connect did not re-pair after its token was revoked")
+			}
+			if third.identity.DeviceID != deviceID {
+				t.Fatalf("third connect used device %s, want %s", third.identity.DeviceID, deviceID)
+			}
+			newToken := storedBridgeToken(t, dataDir)
+			if newToken == "" || newToken == firstToken {
+				t.Fatalf("stored token after re-pairing = %q, want a fresh one", newToken)
+			}
+			if _, revokedOK, revokedErr := store.TokenByValue(ctx, firstToken); revokedErr != nil || revokedOK {
+				t.Fatalf("revoked token still accepted (ok=%v err=%v)", revokedOK, revokedErr)
+			}
+			if _, freshOK, freshErr := store.TokenByValue(ctx, newToken); freshErr != nil || !freshOK {
+				t.Fatalf("fresh token unknown to the gateway (ok=%v err=%v)", freshOK, freshErr)
+			}
+			if paired, listErr := store.ListPaired(ctx); listErr != nil || len(paired) != 1 {
+				t.Fatalf("paired devices after re-pairing = %d (err %v), want 1", len(paired), listErr)
 			}
 		})
 	}

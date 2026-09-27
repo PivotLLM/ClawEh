@@ -200,7 +200,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 
 | ID | Process | Expected |
 |---|---|---|
-| J1 | Load `/devices` | Renders, no console errors |
+| J1 | Load `/devices`, and read `GET /api/devices/pair` | Renders, no console errors; the **Pair a device** card says **Devices will connect to** followed by the response's `connect_url` (for example `wss://ops42.example.com:42330`) |
 | J2 | Request `/api/devices`, `/api/devices/pending` and `/api/devices/pair` concurrently, 12 times | No `5xx`. These share one SQLite store; opening it per request used to lose a WAL-conversion race and return an intermittent 500 |
 
 ## K. Logs, MCP, memory, voice, report

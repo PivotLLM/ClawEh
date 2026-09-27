@@ -803,6 +803,9 @@
       "no_action": "No action needed",
       "download": "Download full report",
       "download_hint": "Opens the full configuration report as a PDF in a new tab."
+    },
+    "devices": {
+      "connect_to": "Devices will connect to"
     }
   },
   "providers": {

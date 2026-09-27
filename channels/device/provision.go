@@ -15,23 +15,59 @@ import (
 
 // BuildSetupPayload builds the device QR payload. When externalURL is set it is the
 // authoritative advertised endpoint (http->ws, https->wss); otherwise the payload
-// advertises the detected LAN IPs on the device listener port, over wss when
-// useTLS (channels.device.tls) is on and ws otherwise.
-func BuildSetupPayload(externalURL string, lanIPs []string, devicePort int, token string, useTLS bool) (gatewayproto.SetupPayload, error) {
+// advertises the hostname of gatewayExternalURL (when set) followed by the detected
+// LAN IPs, on the device listener port, over wss when useTLS (channels.device.tls)
+// is on and ws otherwise.
+func BuildSetupPayload(externalURL, gatewayExternalURL string, lanIPs []string, devicePort int, token string, useTLS bool) (gatewayproto.SetupPayload, error) {
 	externalURL = strings.TrimSpace(externalURL)
 	if externalURL == "" {
 		proto := gatewayproto.SetupProtocolWS
 		if useTLS {
 			proto = gatewayproto.SetupProtocolWSS
 		}
-		return gatewayproto.NewSetupPayload(lanIPs, devicePort, token, proto), nil
+		return gatewayproto.NewSetupPayload(advertisedHosts(gatewayExternalURL, lanIPs), devicePort, token, proto), nil
 	}
-	u, err := url.Parse(externalURL)
-	if err != nil || u.Hostname() == "" {
-		return gatewayproto.SetupPayload{}, fmt.Errorf("device: invalid external_url %q", externalURL)
+	proto, host, port, err := externalEndpoint(externalURL)
+	if err != nil {
+		return gatewayproto.SetupPayload{}, err
+	}
+	return gatewayproto.NewSetupPayload([]string{host}, port, token, proto), nil
+}
+
+// ConnectURL returns the address devices connect to, as advertised by the QR:
+// <ws|wss>://<host>:<port>. It never returns an empty string: with no external
+// URL the host falls back to gateway.external_url's hostname, then the first LAN
+// IP, then 127.0.0.1.
+func ConnectURL(dev config.DeviceChannelConfig, gatewayExternalURL string, lanIPs []string) string {
+	if ext := strings.TrimSpace(dev.ExternalURL); ext != "" {
+		if proto, host, port, err := externalEndpoint(ext); err == nil {
+			return proto + "://" + net.JoinHostPort(host, strconv.Itoa(port))
+		}
 	}
 	proto := gatewayproto.SetupProtocolWS
-	port := 80
+	if dev.TLS {
+		proto = gatewayproto.SetupProtocolWSS
+	}
+	port := dev.Port
+	if port == 0 {
+		port = DefaultDevicePort
+	}
+	host := "127.0.0.1"
+	if hosts := advertisedHosts(gatewayExternalURL, lanIPs); len(hosts) > 0 {
+		host = hosts[0]
+	}
+	return proto + "://" + net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// externalEndpoint parses channels.device.external_url into the scheme the QR
+// advertises (http/ws -> ws, https/wss -> wss), its hostname and its port
+// (explicit, else 80 or 443).
+func externalEndpoint(externalURL string) (proto, host string, port int, err error) {
+	u, err := url.Parse(externalURL)
+	if err != nil || u.Hostname() == "" {
+		return "", "", 0, fmt.Errorf("device: invalid external_url %q", externalURL)
+	}
+	proto, port = gatewayproto.SetupProtocolWS, 80
 	switch strings.ToLower(u.Scheme) {
 	case "https", "wss":
 		proto, port = gatewayproto.SetupProtocolWSS, 443
@@ -41,7 +77,18 @@ func BuildSetupPayload(externalURL string, lanIPs []string, devicePort int, toke
 			port = pi
 		}
 	}
-	return gatewayproto.NewSetupPayload([]string{u.Hostname()}, port, token, proto), nil
+	return proto, u.Hostname(), port, nil
+}
+
+// advertisedHosts is the host list the QR advertises without an external URL: the
+// hostname of gateway.external_url first, when the operator set one, then the
+// LAN IPs. Clients try each entry in order.
+func advertisedHosts(gatewayExternalURL string, lanIPs []string) []string {
+	hosts := []string{}
+	if u, err := url.Parse(strings.TrimSpace(gatewayExternalURL)); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, u.Hostname())
+	}
+	return append(hosts, lanIPs...)
 }
 
 // GenerateSharedToken returns a 32-byte random hex token (matches the Rabbit

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
@@ -56,6 +57,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export function DevicesPage() {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const status = useQuery({
     queryKey: ["device-status"],
@@ -151,7 +153,14 @@ export function DevicesPage() {
               {s && (
                 <>
                   {" "}
-                  The device gateway is listening on{" "}
+                  {t("pages.devices.connect_to")}{" "}
+                  <code
+                    className="text-foreground"
+                    data-testid="devices-connect-url"
+                  >
+                    {s.connect_url}
+                  </code>
+                  . The device gateway is listening on{" "}
                   <code className="text-foreground">
                     {s.listen_host}:{s.listen_port}
                   </code>{" "}

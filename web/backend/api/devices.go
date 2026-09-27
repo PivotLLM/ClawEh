@@ -269,7 +269,8 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	}
 	token := dev.Token
 
-	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token, dev.TLS)
+	lanIPs := device.LANIPv4s()
+	payload, perr := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, lanIPs, devicePort, token, dev.TLS)
 	encoded := ""
 	if perr == nil {
 		encoded, perr = payload.Encode()
@@ -299,6 +300,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 		"listen_lan":   !device.IsLoopbackHost(host),
 		"tls":          dev.TLS, // channels.device.tls: the listener speaks wss://
 		"external_url": dev.ExternalURL,
+		"connect_url":  device.ConnectURL(dev, cfg.Gateway.ExternalURL, lanIPs), // the address devices connect to, as the QR advertises it
 		"warnings":     warnings,
 	}
 	if render && token != "" && encoded != "" {

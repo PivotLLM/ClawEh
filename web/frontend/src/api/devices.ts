@@ -13,6 +13,7 @@ export interface DeviceStatus {
   listen_port: number
   listen_lan: boolean
   external_url: string
+  connect_url: string
   warnings: string[]
   qr_png?: string
   qr_ascii?: string

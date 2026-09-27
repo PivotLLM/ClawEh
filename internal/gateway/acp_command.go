@@ -185,10 +185,17 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
 	fmt.Fprintf(os.Stderr, "claw acp: connecting to gateway %s (device %s)…\n", wsURL, id.DeviceID)
 
+	// The client sends one token. A stored device token is tried on its own: the
+	// options apply in order, so adding the shared token as well would override
+	// it, and a shared-token connect makes the gateway rotate the device's tokens
+	// on every launch. The shared token is sent only when there is no device
+	// token to try.
 	makeClient := func(tok string) *gateway.Client {
-		opts := []gateway.Option{
-			gateway.WithIdentity(id, tok),
-			gateway.WithToken(authToken),
+		opts := []gateway.Option{gateway.WithIdentity(id, tok)}
+		if tok == "" {
+			opts = append(opts, gateway.WithToken(authToken))
+		}
+		opts = append(opts,
 			gateway.WithRole(protocol.RoleNode),
 			gateway.WithClientInfo(protocol.ClientInfo{
 				ID: protocol.ClientIDGateway,
@@ -198,7 +205,7 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 				Mode:     protocol.ClientModeNode,
 			}),
 			gateway.WithOnEvent(onEvent),
-		}
+		)
 		if tlsConfig != nil {
 			opts = append(opts, gateway.WithTLSConfig(tlsConfig))
 		}
@@ -219,8 +226,7 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	// one no longer authenticates and the failure is an auth error, NOT NOT_PAIRED):
 	//   1. try the cached device token, if any;
 	//   2. on any failure, drop the cached token and retry with the shared token
-	//      (WithIdentity overrides the shared token with the device token, so a dead
-	//      token must be cleared for the shared token to take effect and re-pair);
+	//      (a dead token must be cleared so the shared token is sent and re-pairs);
 	//   3. if that says NOT_PAIRED, self-approve our own pending pairing and reconnect.
 	var client *gateway.Client
 	var connErr error

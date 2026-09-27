@@ -73,7 +73,7 @@ func pair() error {
 	if devicePort == 0 {
 		devicePort = device.DefaultDevicePort
 	}
-	payload, err := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, dev.Token, dev.TLS)
+	payload, err := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, device.LANIPv4s(), devicePort, dev.Token, dev.TLS)
 	if err != nil {
 		return fmt.Errorf("build setup payload: %w", err)
 	}

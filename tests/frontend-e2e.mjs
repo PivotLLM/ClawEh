@@ -1344,12 +1344,20 @@ if (useGroup("I", "Models and providers")) {
 
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
-  await check(1, "devices page renders", async () => {
-    const { close, text, problems } = await open("/devices")
+  await check(1, "devices page renders and shows the connect URL", async () => {
+    const pair = await api("/api/devices/pair")
+    assert(pair.status === 200, `/api/devices/pair ${pair.status}`)
+    const connectURL = pair.json?.connect_url
+    assert(typeof connectURL === "string" && /^wss?:\/\/.+:\d+$/.test(connectURL), `connect_url = ${JSON.stringify(connectURL)}`)
+    const { close, page, text, problems } = await open("/devices")
     const body = await text()
+    const shown = await page.locator("[data-testid=devices-connect-url]").innerText()
     await close()
     assert(/device/i.test(body), "devices page looks empty")
+    assert(body.includes("Devices will connect to"), "no 'Devices will connect to' line")
+    assert(shown === connectURL, `page shows ${shown}, API says ${connectURL}`)
     assert(problems.length === 0, `console errors: ${problems[0]}`)
+    return connectURL
   })
   await check(2, "/api/devices does not fail under concurrent load", async () => {
     // Regression: the handler opened its own SQLite handle per request and lost
