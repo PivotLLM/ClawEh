@@ -38,6 +38,8 @@ const (
 	KindConfigWrite = "config_write"
 	// KindAuth is a login, logout or lockout on the WebUI.
 	KindAuth = "auth"
+	// KindRestart is a gateway restart requested through the API.
+	KindRestart = "restart"
 )
 
 // Outcome values.

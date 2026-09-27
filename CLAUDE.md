@@ -243,7 +243,7 @@ exported; it exits 2 with a hint otherwise.
 Stop the service before copying: the running binary makes the copy fail with
 "Text file busy", and a restart then silently brings the old build back.
 
-- **The plan is `docs/webui-test-plan.md`** — 128 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 129 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

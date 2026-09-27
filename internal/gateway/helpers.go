@@ -317,6 +317,9 @@ func gatewayCmd(debug bool) error {
 	// The Logs page tails the alerts file the alerter writes.
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())
+	// POST /api/system/restart: a clean shutdown with a non-zero exit, for the
+	// service manager to start the gateway again.
+	services.WebServer.APIHandler().SetRestart(fatal.requestRestart)
 
 	logger.InfoF("Gateway started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
 
@@ -386,6 +389,13 @@ func gatewayCmd(debug bool) error {
 			logger.Info("Shutting down after a core service stopped...")
 			shutdownGateway(services, agentLoop, provider, true)
 			return failure
+
+		case restart := <-fatal.restart:
+			// POST /api/system/restart: the same shutdown, and a non-zero exit
+			// so the service manager starts the gateway again.
+			logger.Info("Shutting down to restart...")
+			shutdownGateway(services, agentLoop, provider, true)
+			return restart
 
 		case newCfg := <-configReloadChan:
 			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)

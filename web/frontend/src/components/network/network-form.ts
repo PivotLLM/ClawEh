@@ -20,6 +20,8 @@ export interface NetworkForm {
   deviceExternalUrl: string
   deviceAllowedCIDRsText: string
   deviceAutoApprove: boolean
+  /** channels.device.tls: serve the device listener over wss://. */
+  deviceTLS: boolean
   /** mcp_host.listen, shown read-only. */
   mcpListen: string
 }
@@ -41,6 +43,7 @@ export const EMPTY_NETWORK_FORM: NetworkForm = {
   deviceExternalUrl: "",
   deviceAllowedCIDRsText: "",
   deviceAutoApprove: false,
+  deviceTLS: false,
   mcpListen: "127.0.0.1:5911",
 }
 
@@ -101,13 +104,15 @@ export function buildNetworkFormFromConfig(config: unknown): NetworkForm {
     deviceExternalUrl: asString(device.external_url),
     deviceAllowedCIDRsText: asStringArray(device.allowed_cidrs).join("\n"),
     deviceAutoApprove: device.auto_approve === true,
+    deviceTLS: device.tls === true,
     mcpListen: asString(mcp.listen) || EMPTY_NETWORK_FORM.mcpListen,
   }
 }
 
-// buildNetworkPatch validates the form and returns the JSON merge patch for
-// PATCH /api/config. It throws a message for the operator on a bad value.
-export function buildNetworkPatch(form: NetworkForm): Record<string, unknown> {
+// fullNetworkPatch validates the form and returns every listener setting it
+// carries, in the JSON shape of the configuration. It throws a message for the
+// operator on a bad value.
+function fullNetworkPatch(form: NetworkForm): JsonRecord {
   const port = parseIntField(form.httpPort, "HTTP port", { min: 1, max: 65535 })
   const tlsPort = parseIntField(form.tlsPort, "HTTPS port", {
     min: 1,
@@ -141,9 +146,44 @@ export function buildNetworkPatch(form: NetworkForm): Record<string, unknown> {
         external_url: form.deviceExternalUrl.trim(),
         allowed_cidrs: parseCIDRText(form.deviceAllowedCIDRsText),
         auto_approve: form.deviceAutoApprove,
+        tls: form.deviceTLS,
       },
     },
   }
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+// diffPatch keeps only the leaves of next whose value differs from prev,
+// preserving the nesting; arrays are leaves. Untouched branches are dropped
+// entirely, so a merge patch built from it leaves them alone on the server.
+export function diffPatch(next: JsonRecord, prev: JsonRecord): JsonRecord {
+  const out: JsonRecord = {}
+  for (const [key, value] of Object.entries(next)) {
+    const before = prev[key]
+    if (isRecord(value) && isRecord(before)) {
+      const inner = diffPatch(value, before)
+      if (Object.keys(inner).length > 0) out[key] = inner
+    } else if (JSON.stringify(value) !== JSON.stringify(before)) {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+// buildNetworkPatch returns the JSON merge patch for PATCH /api/config carrying
+// only the settings that differ between form and baseline (the form as loaded
+// from the configuration). A form with nothing changed yields {}. Sending only
+// what changed means a field the page never showed correctly can never be
+// written back over the real value. It throws a message for the operator on a
+// bad value.
+export function buildNetworkPatch(
+  form: NetworkForm,
+  baseline: NetworkForm,
+): Record<string, unknown> {
+  return diffPatch(fullNetworkPatch(form), fullNetworkPatch(baseline))
 }
 
 // listenerChanged reports whether a save alters something the listeners are
@@ -155,6 +195,7 @@ export function listenerChanged(a: NetworkForm, b: NetworkForm): boolean {
     a.httpsMode !== b.httpsMode ||
     a.tlsPort !== b.tlsPort ||
     a.deviceScope !== b.deviceScope ||
-    a.devicePort !== b.devicePort
+    a.devicePort !== b.devicePort ||
+    a.deviceTLS !== b.deviceTLS
   )
 }

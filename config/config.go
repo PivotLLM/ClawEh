@@ -1674,6 +1674,8 @@ type DeviceChannelConfig struct {
 	AutoApprove  bool                `json:"auto_approve,omitempty"`
 	AllowOrigins []string            `json:"allow_origins,omitempty"`
 	AllowFrom    FlexibleStringSlice `json:"allow_from"             env:"CLAW_CHANNELS_DEVICE_ALLOW_FROM"`
+	// TLS serves the device listener over HTTPS (wss://) with the WebUI certificate; default off.
+	TLS bool `json:"tls,omitempty"`
 }
 
 type VoiceConfig struct {

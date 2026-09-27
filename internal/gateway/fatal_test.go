@@ -61,6 +61,40 @@ func TestFatalService_FirstFailureAlertsSignalsAndExits(t *testing.T) {
 	}
 }
 
+// TestRequestRestart: an operator's restart request reaches the main loop
+// without an alert, arms the hard-exit timer, and a second request while the
+// first is pending is dropped.
+func TestRequestRestart(t *testing.T) {
+	f, rec, exits := newTestFatal(t)
+	f.requestRestart()
+	f.requestRestart()
+
+	select {
+	case restart := <-f.restart:
+		if restart.ExitCode() != exitCodeServiceDied {
+			t.Fatalf("ExitCode() = %d, want %d", restart.ExitCode(), exitCodeServiceDied)
+		}
+	default:
+		t.Fatal("no restart handed to the main loop")
+	}
+	select {
+	case <-f.restart:
+		t.Fatal("second request was queued; want it dropped")
+	default:
+	}
+	if alerts := rec.Alerts(); len(alerts) != 0 {
+		t.Fatalf("alerts = %d, want none for an operator restart", len(alerts))
+	}
+	select {
+	case code := <-exits:
+		if code != exitCodeServiceDied {
+			t.Fatalf("exit code = %d, want %d", code, exitCodeServiceDied)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hard-exit timer did not fire")
+	}
+}
+
 // TestFatalService_SecondFailureIsLoggedOnly: a second service dying during
 // the shutdown neither alerts again nor arms a second timer.
 func TestFatalService_SecondFailureIsLoggedOnly(t *testing.T) {
@@ -118,6 +152,7 @@ func TestExitCode(t *testing.T) {
 	}{
 		{"service died", sf, exitCodeServiceDied},
 		{"wrapped service died", fmt.Errorf("gateway: %w", sf), exitCodeServiceDied},
+		{"restart requested", &restartRequestedError{}, exitCodeServiceDied},
 		{"startup error", errors.New("error loading config"), 1},
 	} {
 		if got := exitCode(tc.err); got != tc.want {

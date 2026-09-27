@@ -1,9 +1,14 @@
 // Audit log API — the append-only record of tool calls, config writes and
 // authentication events. Read-only from the WebUI: rows are never edited.
 
-export type AuditKind = "tool_call" | "config_write" | "auth"
+export type AuditKind = "tool_call" | "config_write" | "auth" | "restart"
 
-export const AUDIT_KINDS: AuditKind[] = ["tool_call", "config_write", "auth"]
+export const AUDIT_KINDS: AuditKind[] = [
+  "tool_call",
+  "config_write",
+  "auth",
+  "restart",
+]
 
 export interface AuditEvent {
   id: number

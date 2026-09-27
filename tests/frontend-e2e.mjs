@@ -709,7 +709,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
 
   await check(1, "every listener control is present", async () => {
     const { close, page, problems, text } = await open("/network")
-    await page.locator("[data-testid=network-save]").waitFor({ state: "visible", timeout: 10000 })
+    await page.locator("[data-testid=network-mcp-listen]").waitFor({ state: "visible", timeout: 10000 })
     const body = await text()
     const ids = [
       "network-http-port",
@@ -723,20 +723,23 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       "network-allowed-cidrs",
       "network-device-scope",
       "network-device-port",
+      "network-device-tls",
       "network-device-external-url",
       "network-device-cidrs",
       "network-mcp-listen",
       "network-urls",
-      "network-save",
     ]
     const missing = []
     for (const id of ids) {
       if ((await page.locator(`[data-testid=${id}]`).count()) !== 1) missing.push(id)
     }
+    // Fields autosave; a Save button here would be the old page.
+    const saveButtons = await page.locator("[data-testid=network-save]").count()
     const radios = await page.getByRole("radio").count()
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     assert(missing.length === 0, `controls missing: ${missing.join(", ")}`)
+    assert(saveButtons === 0, "a Save button is present; the page autosaves")
     for (const label of [
       "Localhost only (default)",
       "Network",
@@ -744,6 +747,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       "Off",
       "Self-signed (default)",
       "External certificate",
+      "HTTPS (wss) for devices",
       "Auto-approve pairings",
     ]) {
       assert(body.includes(label), `missing label "${label}"`)
@@ -896,7 +900,7 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked)`
   })
 
-  await check(10, "changing the HTTPS port shows the restart banner; then restore it", async () => {
+  await check(10, "changing the HTTPS port autosaves and shows the restart banner; then restore it", async () => {
     const c = await config()
     const original = c?.gateway?.tls_port ?? 18443
     const httpPort = c?.gateway?.port ?? 18790
@@ -909,23 +913,34 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
       (await page.locator("[data-testid=network-restart-banner]").count()) === 0,
       "the restart banner is already showing before any change (restart the dev instance)",
     )
+    // Autosave: the field is committed ~0.6 s after the last keystroke.
     await field.fill(String(probe))
-    await page.locator("[data-testid=network-save]").click()
-    await page.locator("[data-testid=network-restart-banner]").waitFor({ state: "visible", timeout: 10000 })
+    const banner = page.locator("[data-testid=network-restart-banner]")
+    await banner.waitFor({ state: "visible", timeout: 10000 })
+    const bannerText = (await banner.innerText()).trim()
+    const restartButtons = await page.locator("[data-testid=network-restart]").count()
     const mid = await config()
     assert(mid?.gateway?.tls_port === probe, `tls_port after save = ${mid?.gateway?.tls_port}, want ${probe}`)
-    // Restore on the same page: Save is enabled again once the field differs
-    // from what was just saved.
+    assert(
+      bannerText.startsWith("Restart required to apply changes."),
+      `banner reads ${JSON.stringify(bannerText)}`,
+    )
+    assert(restartButtons === 1, `${restartButtons} Restart now buttons, want 1`)
+    // Restore on the same page. The button is never clicked: the suite must
+    // not restart the instance it is driving.
     await field.fill(String(original))
-    await page.locator("[data-testid=network-save]").click()
-    await page.getByText("Saved ✓").waitFor({ timeout: 10000 })
+    let after
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(500)
+      after = await config()
+      if ((after?.gateway?.tls_port ?? 18443) === original) break
+    }
     await close()
-    const after = await config()
     assert(
       (after?.gateway?.tls_port ?? 18443) === original,
       `tls_port = ${after?.gateway?.tls_port}, expected ${original}`,
     )
-    return `18443-style probe ${probe}, restored ${original}`
+    return `18443-style probe ${probe}, restored ${original}; banner + Restart now present`
   })
 
   await check(11, "the allowed-networks editor reflects gateway.allowed_cidrs", async () => {
@@ -969,6 +984,23 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     assert(shown === want, `shows ${shown}, config ${want}`)
     assert(tag !== "input" && tag !== "textarea", `rendered as an editable <${tag}>`)
     return shown
+  })
+
+  await check(14, "the device HTTPS checkbox reflects channels.device.tls", async () => {
+    const c = await config()
+    const want = c?.channels?.device?.tls === true
+    const { close, page, text } = await open("/network")
+    const box = page.locator("[data-testid=network-device-tls]")
+    await box.waitFor({ timeout: 10000 })
+    const checked = (await box.getAttribute("aria-checked")) === "true"
+    const body = await text()
+    await close()
+    assert(checked === want, `checkbox checked=${checked}, config tls=${JSON.stringify(c?.channels?.device?.tls)}`)
+    assert(
+      body.includes("Devices connect with wss:// using the WebUI certificate."),
+      "the one-sentence hint is missing",
+    )
+    return want ? "on (wss)" : "off (ws)"
   })
 }
 

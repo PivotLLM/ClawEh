@@ -223,6 +223,16 @@ observe does not need an entry.
 
 ### Added
 
+- **Restart from the WebUI.** `POST /api/system/restart` restarts the gateway
+  when it runs under a service manager (systemd sets `INVOCATION_ID`): it
+  answers 202 `{"status":"restarting"}`, shuts down cleanly and exits with
+  status 3 so `Restart=on-failure` starts it again, and the request is recorded
+  in the audit log as kind `restart` (username and client address). Run by hand
+  it answers 409 `{"error":"not running as a service; restart ClawEh by hand"}`
+  and changes nothing. The Network page's restart banner now has a **Restart
+  now** button that calls it, waits for `/ready` to answer again and reloads
+  the page. The device gateway's `channels.device.tls` key has a checkbox on
+  the Network page, **HTTPS (wss) for devices**; changing it shows the banner.
 - **Configuration report.** A new Report page (after Services in the WebUI
   menu) shows the security assessment inline and offers a PDF, the ClawEh
   Configuration Report, describing what this install can do: identity and the
@@ -399,6 +409,15 @@ observe does not need an entry.
 
 ### Changed
 
+- **Network page copy and saving.** Every hint on the Network page, and the
+  setup wizard's network step, is now one short sentence: no explanations of
+  what an attacker can do, plain HTTP on the network is "not recommended", the
+  regenerate hint no longer talks about browser warnings, and the wizard no
+  longer claims TLS is not built in (it is). The restart banner reads "Restart
+  required to apply changes." with the **Restart now** button beside it. The
+  Save button is gone: the page autosaves each changed field like the rest of
+  the WebUI (text about half a second after the last keystroke, a radio or
+  checkbox at once), sending only that field.
 - The address lists on the Network page, in `claw status` and in `GET /api/tls`
   no longer include Docker's bridge interfaces (`docker0`, `br-<id>`, `veth*`):
   those addresses reach only containers on the machine, so they are not
@@ -626,6 +645,14 @@ observe does not need an entry.
 
 ### Fixed
 
+- **The Network page could save default listener settings over the real
+  ones.** Opened from another page, with the configuration already cached in
+  the browser, the form was never filled from the configuration and showed the
+  defaults; the next save then wrote those defaults — `gateway.host` back to
+  loopback and `gateway.allowed_cidrs` emptied — turning off network access and
+  clearing the allowed networks. The page now fills from the cached
+  configuration, and every save sends only the fields that changed, so an
+  unchanged setting can no longer be written back.
 - **An emptied default model list stays empty.** Saving `agents.defaults.models`
   as an empty list used to drop the key from `config.json`, so the next load
   brought back the `Claude CLI` / `Codex CLI` template aliases; the empty list
