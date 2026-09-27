@@ -213,8 +213,9 @@ observe does not need an entry.
   a signature from any other key, is refused. The per-archive `.sha256` files
   are no longer consulted by `claw upgrade` (they are still produced for the
   install scripts). A build with no embedded key refuses to upgrade at all.
-  Release maintainers: `make release-sign` (signs with
-  `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`); the keys and the
+  Release maintainers: b9 does this (`signing.minisign` in `b9.yaml`); for a
+  hand-built release, `make release-sign` (signs with
+  `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`). The keys and the
   rotation steps are in `app/keys.go`.
   `make test` now runs `govulncheck` and fails on a known vulnerability
   reachable from the code.
