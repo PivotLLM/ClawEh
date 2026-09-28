@@ -793,6 +793,10 @@ observe does not need an entry.
 
 ### Fixed
 
+- Files downloaded from Telegram no longer get a second extension
+  (`file_3.oga.ogg`, `file_1.jpg.jpg`): the name keeps Telegram's own
+  extension and the type-based one is used only when there is none. Voice
+  notes (`.oga`, `.opus`) are recognised as audio for transcription.
 - `claw install` re-run against an existing install now follows the service it
   finds instead of the caller's privileges: without sudo against a system
   service it refuses and says to run `sudo claw install` (and the same the other

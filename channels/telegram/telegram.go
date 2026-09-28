@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -893,11 +894,20 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	url := c.bot.FileDownloadURL(file.FilePath)
 	logger.DebugCF("telegram", "File URL", map[string]any{"url": url})
 
-	// Use FilePath as filename for better identification
-	filename := file.FilePath + ext
-	return utils.DownloadFile(url, filename, utils.DownloadOptions{
+	return utils.DownloadFile(url, localFilename(file.FilePath, ext), utils.DownloadOptions{
 		LoggerPrefix: "telegram",
 	})
+}
+
+// localFilename names a downloaded file after Telegram's own path, which
+// usually already carries the real extension (voice/file_3.oga,
+// photos/file_1.jpg). The caller's type-based extension is a fallback for the
+// rare path without one, not a suffix: appending it produced file_3.oga.ogg.
+func localFilename(filePath, fallbackExt string) string {
+	if filepath.Ext(filePath) != "" {
+		return filePath
+	}
+	return filePath + fallbackExt
 }
 
 func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) string {

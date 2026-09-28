@@ -20,7 +20,8 @@ import (
 
 // IsAudioFile checks if a file is an audio file based on its filename extension and content type.
 func IsAudioFile(filename, contentType string) bool {
-	audioExtensions := []string{".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma"}
+	// .oga and .opus: Telegram voice notes arrive as Ogg Opus with those names.
+	audioExtensions := []string{".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".flac", ".aac", ".wma"}
 	audioTypes := []string{"audio/", "application/ogg", "application/x-ogg"}
 
 	for _, ext := range audioExtensions {
