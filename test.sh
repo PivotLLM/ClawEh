@@ -712,11 +712,11 @@ EOF
                     # The port probe above can win a race with the write, so
                     # poll briefly rather than testing once.
                     for _ in $(seq 1 20); do
-                        [ -f "$INTEG_HOME/claw.pid" ] && break
+                        [ -f "$INTEG_HOME/internal/claw.pid" ] && break
                         sleep 0.25
                     done
-                    if [ -f "$INTEG_HOME/claw.pid" ]; then
-                        PIDFILE_CONTENT=$(cat "$INTEG_HOME/claw.pid" 2>/dev/null | tr -d ' \n')
+                    if [ -f "$INTEG_HOME/internal/claw.pid" ]; then
+                        PIDFILE_CONTENT=$(cat "$INTEG_HOME/internal/claw.pid" 2>/dev/null | tr -d ' \n')
                         if [ "$PIDFILE_CONTENT" = "$INTEG_PID" ]; then
                             echo "  ${GREEN}PASS${NC}: claw.pid written at startup (pid $PIDFILE_CONTENT)"
                             INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
@@ -800,7 +800,7 @@ EOF
                     # reaches.
                     if ! $TERM_CLEAN; then
                         integ_fail "ClawEh did not exit within 5s of SIGTERM"
-                    elif [ -f "$INTEG_HOME/claw.pid" ]; then
+                    elif [ -f "$INTEG_HOME/internal/claw.pid" ]; then
                         integ_fail "claw.pid survived SIGTERM — shutdown did not run"
                     else
                         echo "  ${GREEN}PASS${NC}: SIGTERM ran graceful shutdown (claw.pid removed)"

@@ -59,7 +59,7 @@ func collectData(_ context.Context, cfg *config.Config, env Environment) Section
 		row("Shared common directory", cfg.ResolveCommonDir(), "readable and writable by every agent that shares it"),
 		row("Skills", cfg.SkillsPath(), ""),
 		row("Cron store", filepath.Join(cfg.CronPath(), "jobs.json"), ""),
-		row("Internal state", cfg.InternalPath(), "claw's own state: state.json, service tokens, integration tokens, device pairing database"),
+		row("Internal state", cfg.InternalPath(), "claw's own state: state.json, service tokens, integration tokens, device pairing database, audit log"),
 		row("Fusion", cfg.FusionPath(), "REST-API tool definitions; OAuth tokens in "+cfg.FusionTokensPath()),
 		row("Media store", "in-process registry of tool-produced files",
 			"cleanup "+onOff(mc.Enabled)+", max age "+itoa(mc.MaxAge)+" min, every "+itoa(mc.Interval)+" min"),

@@ -3,7 +3,7 @@
 
 // Package audit is the append-only record of who did what: every agent tool
 // call, every configuration write through the WebUI, and every authentication
-// event. Rows live in <CLAW_HOME>/audit.db (SQLite, WAL, mode 0600) and are
+// event. Rows live in <CLAW_HOME>/internal/audit.db (SQLite, WAL, mode 0600) and are
 // never updated or deleted except by the retention prune.
 //
 // Recording is asynchronous: Record hands the event to a buffered channel that
@@ -49,7 +49,7 @@ const (
 )
 
 const (
-	// FileName is the database file inside the data directory.
+	// FileName is the database file inside the data directory's internal/.
 	FileName = "audit.db"
 	// RetentionDays is how long rows are kept before the daily prune removes
 	// them. Follow-up: make this the `audit.retention_days` config key.
@@ -189,7 +189,7 @@ func Open(ctx context.Context, path string, opts ...Option) (*Store, error) {
 	}
 	// Create the file ourselves so the mode is 0600 from the first byte; the
 	// chmod covers a database created by an earlier run under a laxer umask.
-	f, err := os.OpenFile(abs, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // path is <CLAW_HOME>/audit.db
+	f, err := os.OpenFile(abs, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // path is <CLAW_HOME>/internal/audit.db
 	if err != nil {
 		return nil, fmt.Errorf("audit: create %s: %w", abs, err)
 	}

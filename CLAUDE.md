@@ -104,7 +104,7 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - **Startup guards:** `internal/perms.Enforce` runs before the config loads — `CLAW_HOME`
   becomes 0700, secrets/DBs 0600, and a group/other-readable `config.json` aborts startup
   with the `chmod 600` to run. Everything ClawEh creates under `CLAW_HOME` is 0700/0600.
-- **Audit log:** `internal/audit` (`<CLAW_HOME>/audit.db`) records tool calls, config
+- **Audit log:** `internal/audit` (`<CLAW_HOME>/internal/audit.db`) records tool calls, config
   writes and logins; every turn carries a `turn_id` on its log lines. See `docs/audit.md`.
 - **Fail fast:** if the HTTP listener, the MCP host server or the agent loop dies after
   start, `internal/gateway/fatal.go` alerts, shuts down cleanly and exits 3 so systemd
@@ -115,14 +115,13 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
 - Data dir layout (README "File layout"): `internal/` holds claw's own state (`state.json`,
-  token stores, `gateway.db`, fusion tokens, the ACP identity; `config.InternalPath()`,
+  token stores, `gateway.db`, fusion tokens, the ACP identity, `audit.db`, `claw.pid`,
+  `claw.lock`; `config.InternalPath()`,
   `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
   workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `common/` the
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
-  against `CLAW_HOME`. There is no `agents/default` pseudo-agent: `internal/layout.Prepare`
-  creates these at every start and moves the old layout (`<CLAW_HOME>/state`,
-  `agents/default`, `agents/common`) once, renaming a colliding skill `<name>-default`; when a
-  configured agent uses `agents/default` it only copies claw's `state.json` out.
+  against `CLAW_HOME`. There is no `agents/default` pseudo-agent. `internal/layout.Prepare`
+  creates these directories at every start; it does not migrate an older layout.
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
   `app.Version()` / `app.SemVer()` / `app.Name()` / `app.TagLine()` / `app.Copyright()`).
   The two release-signing public keys are `app/keys.go` (`app.ReleasePublicKeys()`).

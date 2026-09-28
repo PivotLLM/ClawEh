@@ -17,7 +17,10 @@ import (
 // releases it when the test ends (or when the returned func is called).
 func holdLock(t *testing.T, home string) func() {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(home, LockFileName), os.O_CREATE|os.O_WRONLY, 0o644)
+	if err := os.MkdirAll(filepath.Join(home, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(home, "internal", LockFileName), os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}

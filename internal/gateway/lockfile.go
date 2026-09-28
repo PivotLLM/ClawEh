@@ -6,22 +6,24 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const lockFileName = "claw.lock"
 
-// acquireLock creates and exclusively locks a PID file in the given base directory.
+// acquireLock creates and exclusively locks a PID file in the base directory's internal/.
 // It returns the open file handle so the caller can defer releaseLock.
 // If another instance already holds the lock, it returns a descriptive error and the
 // caller should exit immediately — no retries, no fallback.
 func acquireLock(baseDir string) (*os.File, error) {
-	lockPath := filepath.Join(baseDir, lockFileName)
+	lockDir := filepath.Join(baseDir, global.InternalDir)
+	lockPath := filepath.Join(lockDir, lockFileName)
 
-	// Ensure the base directory exists before attempting to create the lock file.
-	if err := os.MkdirAll(baseDir, 0o700); err != nil {
-		return nil, fmt.Errorf("cannot create base directory %q: %w", baseDir, err)
+	// Ensure the directory exists before attempting to create the lock file.
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		return nil, fmt.Errorf("cannot create directory %q: %w", lockDir, err)
 	}
 
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // lock file under the configured data directory

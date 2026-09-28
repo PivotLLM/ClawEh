@@ -55,7 +55,7 @@ func TestEnforceDataDirPerms_PrivateConfigStarts(t *testing.T) {
 	}
 }
 
-// TestOpenAuditLog_CreatesDatabase: boot opens <CLAW_HOME>/audit.db, private,
+// TestOpenAuditLog_CreatesDatabase: boot opens <CLAW_HOME>/internal/audit.db, private,
 // and shutdown closes it.
 func TestOpenAuditLog_CreatesDatabase(t *testing.T) {
 	home := t.TempDir()
@@ -66,7 +66,7 @@ func TestOpenAuditLog_CreatesDatabase(t *testing.T) {
 		}
 	})
 
-	fi, err := os.Stat(filepath.Join(home, audit.FileName))
+	fi, err := os.Stat(filepath.Join(home, "internal", audit.FileName))
 	if err != nil {
 		t.Fatalf("audit.db missing after boot: %v", err)
 	}
@@ -93,7 +93,10 @@ func TestAcquireLock_PrivateModes(t *testing.T) {
 		t.Fatalf("acquireLock: %v", err)
 	}
 	t.Cleanup(func() { releaseLock(f) })
-	for path, want := range map[string]os.FileMode{home: 0o700, f.Name(): 0o600} {
+	if want := filepath.Join(home, "internal", lockFileName); f.Name() != want {
+		t.Errorf("lock file = %s, want %s", f.Name(), want)
+	}
+	for path, want := range map[string]os.FileMode{home: 0o700, filepath.Join(home, "internal"): 0o700, f.Name(): 0o600} {
 		fi, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -278,7 +277,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 
 	// The audit store is opened when the gateway boots, and the report is
 	// served by a running gateway, so a missing file means it is not recording.
-	auditPath := filepath.Join(dd, audit.FileName)
+	auditPath := audit.Path(dd)
 	_, auditErr := os.Stat(auditPath)
 	add(auditErr != nil, "Audit log",
 		ifStr(auditErr == nil, "Audit log at "+auditPath+" ("+itoa(audit.RetentionDays)+"-day retention).",

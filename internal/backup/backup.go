@@ -32,6 +32,7 @@ import (
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -340,10 +341,11 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	// Whole directories: every regular file, databases via VACUUM. SQLite
 	// sidecars are skipped: the VACUUM copy already holds what the WAL holds,
 	// and a byte copy of a live -wal is the torn copy this package exists to
-	// avoid.
+	// avoid. The running process's PID and lock files are skipped too: they
+	// describe this host's process, not state to restore.
 	for _, d := range []string{tlsDir, internalDir} {
 		if err := walk(filepath.Join(src.Home, d), d+"/", dest, func(path, name string) {
-			if isDBSidecar(path) {
+			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName {
 				return
 			}
 			add(entry{src: path, name: name, db: isDB(path)})

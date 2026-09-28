@@ -365,7 +365,7 @@ func TestAssessment_Certificate(t *testing.T) {
 // named with its retention.
 func TestAssessment_AuditLog(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	auditPath := filepath.Join(env.DataDir, "audit.db")
+	auditPath := filepath.Join(env.DataDir, "internal", "audit.db")
 	s := collectAssessment(t.Context(), cfg, env)
 	r := assessmentRow(t, s, "Audit log")
 	if r[0] != "*" {
@@ -375,6 +375,9 @@ func TestAssessment_AuditLog(t *testing.T) {
 		t.Errorf("missing audit status = %q", r[2])
 	}
 
+	if err := os.MkdirAll(filepath.Dir(auditPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(auditPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

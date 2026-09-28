@@ -37,6 +37,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 // process later inherited the number.
 func TestReadRejectsADeadProcess(t *testing.T) {
 	dir := t.TempDir()
+	mkInternal(t, dir)
 	// A pid that cannot be live: the kernel's maximum plus one.
 	if err := os.WriteFile(Path(dir), []byte("4194305\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -48,6 +49,7 @@ func TestReadRejectsADeadProcess(t *testing.T) {
 
 func TestReadHandlesMissingAndJunk(t *testing.T) {
 	dir := t.TempDir()
+	mkInternal(t, dir)
 	if pid, running := Read(dir); pid != 0 || running {
 		t.Errorf("missing file: pid=%d running=%v, want 0/false", pid, running)
 	}
@@ -104,5 +106,13 @@ func TestRSSBytesIsResidentNotVirtual(t *testing.T) {
 	}
 	if _, ok := RSSBytes(4194305); ok {
 		t.Error("RSSBytes reported a size for a pid that cannot exist")
+	}
+}
+
+// mkInternal creates the data directory's internal/, where the PID file lives.
+func mkInternal(t *testing.T, dataDir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(Path(dataDir)), 0o700); err != nil {
+		t.Fatal(err)
 	}
 }

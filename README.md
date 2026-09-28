@@ -180,14 +180,14 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `skills/` | You | Shared skills every agent can use. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
 | `internal/` | claw | claw's own state: `state.json`, service and message tokens, the device pairing database and Fusion's OAuth tokens. |
+| `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
+| `internal/claw.pid`, `internal/claw.lock` | claw | Mark the running instance, so a second one refuses to start. |
 | `fusion/` | You | Fusion's REST-API service definitions, its env file and `fusion.log`. |
 | `tls/` | claw | The self-signed HTTPS certificate and key (`gateway.tls.cert_file` uses your own instead). |
 | `logs/` | claw | `claw.log`, `error.log`, `alerts.log`, and `dumps/` when diagnostic dumps are on. |
 | `media/` | claw | A temporary cache of files sent and received on channels. |
 | `cron/` | claw | `jobs.json`, the scheduled jobs. |
 | `backup/` | claw | The nightly backup archives. |
-| `audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
-| `claw.pid`, `claw.lock` | claw | Mark the running instance, so a second one refuses to start. |
 
 ## Features
 

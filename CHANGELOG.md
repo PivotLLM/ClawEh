@@ -345,7 +345,7 @@ observe does not need an entry.
   not repeated exactly, up to three times. It still never reads the password
   from a pipe, and refuses when there is no terminal at all.
 - **Audit log.** ClawEh now keeps an append-only record of who did what in
-  `<CLAW_HOME>/audit.db` (SQLite, mode 0600): every agent tool call (agent,
+  `<CLAW_HOME>/internal/audit.db` (SQLite, mode 0600): every agent tool call (agent,
   session, channel, sender, tool, redacted argument digest, outcome,
   duration), every configuration save through the WebUI (operator, client IP,
   and which top-level config sections changed — never the values), and WebUI
@@ -493,31 +493,24 @@ observe does not need an entry.
 ### Changed
 
 - **BREAKING: the data directory is laid out by purpose, and `agents/default`
-  is gone.** claw's own state (`state.json`, service and message tokens, the
-  device pairing database, Fusion's OAuth tokens, the ACP bridge identity) now
-  lives in `<CLAW_HOME>/internal/` instead of `<CLAW_HOME>/state/` and
-  `agents/default/state/`. The common directory defaults to
-  `<CLAW_HOME>/common` instead of `<agents base>/common` (`agents.common_dir`
-  still overrides it). `<CLAW_HOME>/skills` is the only shared skills folder:
-  the Skills page, `claw skills` and the report no longer show skills from
+  is gone. There is no automatic migration.** claw's own files (`state.json`,
+  service and message tokens, the device pairing database, Fusion's OAuth
+  tokens, the ACP bridge identity, the audit log `audit.db`, `claw.pid` and
+  `claw.lock`) live in `<CLAW_HOME>/internal/`. The common directory defaults
+  to `<CLAW_HOME>/common` (`agents.common_dir` still overrides it).
+  `<CLAW_HOME>/skills` is the only shared skills folder: the Skills page,
+  `claw skills` and the report no longer show skills from
   `agents/default/skills`, and the Skills page can now delete a shared skill.
   CLI providers whose model sets no workspace run in `<CLAW_HOME>/cli/`, and a
   relative MCP `env_file` path is relative to `<CLAW_HOME>` instead of the
   default agent's workspace. `claw status` no longer prints a "Workspace:"
-  line, and a new install's first agent lives in `agents/claw`. The move is
-  automatic at the first start: files are moved into the new places (a file
-  already there wins, and anything left behind is named in a warning), the
-  empty `state/` directory is removed, and `agents/default` is deleted with
-  everything in it. A skill there with the name of a shared skill is moved as
-  `<name>-default` (named in a warning). When a configured agent uses
-  `agents/default` as its workspace (an agent with the id `default` or
-  `main`, or an explicit `workspace` pointing there), only claw's
-  `state.json` is copied out and the rest is left alone, with a warning at
-  each start. The only manual step is for anything that names the
-  old paths by hand: change MCP `env_file` paths that pointed into
-  `agents/default` or were relative to the default agent's workspace, and
-  scripts that read `agents/common`, `agents/default` or `<CLAW_HOME>/state`.
-  See "File layout" in the README.
+  line, and a new install's first agent lives in `agents/claw`. claw creates
+  `internal/`, `common/`, `skills/` and `cli/` at start and starts fresh files
+  where none exist. An older data directory's `<CLAW_HOME>/state/`,
+  `agents/common`, `agents/default` and top-level `audit.db`, `claw.pid` and
+  `claw.lock` are no longer read; move anything you want to keep by hand, and
+  change MCP `env_file` paths and scripts that name the old locations. See
+  "File layout" in the README.
 
 - User-facing text no longer calls the process "the gateway": WebUI labels,
   CLI help and output, log lines, alert descriptions, the report and the docs
@@ -698,7 +691,7 @@ observe does not need an entry.
   directory permissions (files under `CLAW_HOME` readable by other users, with
   the first offender and the chmod fix), device auto-approve
   (`channels.device.auto_approve`), a user certificate expiring within
-  14 days, the audit log (`<CLAW_HOME>/audit.db`, 90-day retention, flagged
+  14 days, the audit log (`<CLAW_HOME>/internal/audit.db`, 90-day retention, flagged
   when missing), a per-agent reminder that `shell_exec` is not confined by
   `restrict_to_workspace`, and the "Operator authentication" row now reports
   whether an admin account exists. The Network section lists every

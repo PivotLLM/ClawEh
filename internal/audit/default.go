@@ -7,6 +7,8 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+
+	"github.com/PivotLLM/ClawEh/global"
 )
 
 // actorKey is the type of ActorKey; a private type keeps the key from
@@ -41,10 +43,15 @@ var (
 	defaultStore *Store
 )
 
-// Init opens <dataDir>/audit.db and installs it as the process-wide store that
+// Path returns the audit database path for a data directory.
+func Path(dataDir string) string {
+	return filepath.Join(dataDir, global.InternalDir, FileName)
+}
+
+// Init opens <dataDir>/internal/audit.db and installs it as the process-wide store that
 // Default returns. Calling it again replaces (and closes) the previous store.
 func Init(dataDir string) error {
-	s, err := Open(context.Background(), filepath.Join(dataDir, FileName))
+	s, err := Open(context.Background(), Path(dataDir))
 	if err != nil {
 		return err
 	}

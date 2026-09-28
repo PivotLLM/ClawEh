@@ -401,7 +401,7 @@ func TestDefaultInitAuthClose(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	if Default().Path() != filepath.Join(dir, FileName) {
+	if Default().Path() != filepath.Join(dir, "internal", FileName) {
 		t.Errorf("Path = %q", Default().Path())
 	}
 

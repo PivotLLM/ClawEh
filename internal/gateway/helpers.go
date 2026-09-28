@@ -245,7 +245,7 @@ func gatewayCmd(debug bool) error {
 	// reference alerts once per process, not once per reload.
 	refAlerts := &modelRefAlerts{}
 
-	// Lay out the data directory, moving an older layout, before anything
+	// Lay out the data directory before anything
 	// below opens the files it holds.
 	layout.Prepare(cfg)
 
@@ -1562,7 +1562,7 @@ func enforceDataDirPerms(baseDir, configPath string) error {
 	return nil
 }
 
-// openAuditLog opens <CLAW_HOME>/audit.db as the process-wide audit store. A
+// openAuditLog opens <CLAW_HOME>/internal/audit.db as the process-wide audit store. A
 // gateway that cannot open it still serves, without an audit trail.
 func openAuditLog(baseDir string) {
 	if err := audit.Init(baseDir); err != nil {

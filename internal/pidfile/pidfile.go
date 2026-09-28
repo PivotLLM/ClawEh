@@ -24,14 +24,15 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// Name is the file written into the data directory.
+// Name is the file written into the data directory's internal/.
 const Name = "claw.pid"
 
 // Path returns the PID file path for a data directory.
-func Path(dataDir string) string { return filepath.Join(dataDir, Name) }
+func Path(dataDir string) string { return filepath.Join(dataDir, global.InternalDir, Name) }
 
 // Write records the current process id. A failure is returned rather than
 // fatal: the PID file is a convenience for reporting, and an instance that
@@ -40,10 +41,10 @@ func Write(dataDir string) error {
 	if dataDir == "" {
 		return errors.New("pidfile: no data directory")
 	}
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return fmt.Errorf("pidfile: create %s: %w", dataDir, err)
-	}
 	p := Path(dataDir)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return fmt.Errorf("pidfile: create %s: %w", filepath.Dir(p), err)
+	}
 	if err := os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		return fmt.Errorf("pidfile: write %s: %w", p, err)
 	}

@@ -1,7 +1,7 @@
 # Audit log
 
 ClawEh records who did what in an append-only SQLite database at
-`<CLAW_HOME>/audit.db` (WAL mode, file mode 0600). Rows are never edited; the
+`<CLAW_HOME>/internal/audit.db` (WAL mode, file mode 0600). Rows are never edited; the
 only deletion is the daily retention prune (90 days).
 
 ## What is recorded
