@@ -27,7 +27,19 @@ type SaveStatus = "saving" | "saved" | "error" | null
 // page (MCPServersPage); this page never touches tools.mcp.servers.
 export function MCPConfigPage() {
   const { t } = useTranslation()
-  const [form, setForm] = useState<MCPHostForm>(EMPTY_MCP_FORM)
+  const {
+    data: fetchedConfig,
+    isPending: loading,
+    error: loadQueryError,
+  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
+
+  // The cache may already hold the config on the first render (the page was
+  // reached from another page), in which case the "new data" sync below never
+  // fires: seed from it. Seeding from the empty form in that case once saved
+  // the defaults over the real settings.
+  const [form, setForm] = useState<MCPHostForm>(() =>
+    fetchedConfig ? buildMCPFormFromConfig(fetchedConfig) : EMPTY_MCP_FORM,
+  )
   const [status, setStatus] = useState<SaveStatus>(null)
 
   // formRef mirrors the latest form so the debounced save reads current values.
@@ -39,12 +51,6 @@ export function MCPConfigPage() {
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
-
-  const {
-    data: fetchedConfig,
-    isPending: loading,
-    error: loadQueryError,
-  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
 
   const loadError = loadQueryError
     ? loadQueryError instanceof Error

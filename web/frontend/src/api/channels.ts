@@ -137,6 +137,10 @@ export interface MCPServerStatus {
   transport?: string
   tool_count: number
   cooldown_until?: string
+  // last_error is why the last connection attempt failed and last_error_at
+  // (RFC3339) when; both absent while the server is healthy.
+  last_error?: string
+  last_error_at?: string
 }
 
 interface MCPStatusResponse {

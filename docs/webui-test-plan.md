@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-134 checks in all; the runner prints the same tally at the end.
+135 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -222,6 +222,7 @@ covers it.
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 | K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
 | K9 | `curl -b jar $BASE/api/voice/stt`, then load `/voice` and read it **before clicking anything** | One backend row per `stt[]` entry, each with its provider selected, and no *No transcription backends configured* line; with none configured, that line and no rows. The page used to seed its rows from an empty list when the query was already cached, said nothing was configured, and the first **Add backend** then saved that empty list over the real configuration |
+| K10 | Open `/agent/bindings`, then click through the sidebar: **Services** → **MCP** → **Servers**, then **Config**, then **Network**, then **System**, reading each page before clicking anything on it | `/mcp/servers` lists every server in `tools.mcp.servers` (from `GET /api/config`) and shows *No external servers configured.* only when there are none; `/mcp/config` shows `mcp_host.listen` in **Listen Address** and `mcp_host.enabled` on **Enabled**; `/system` shows `backup.dest` in the backup destination and `agents.defaults.max_tokens` in **Max tokens**. Reached this way the config query is answered from the browser cache, and the three pages used to keep their empty defaults, which the next edit then saved over the real configuration |
 
 ## L. Setup wizard
 

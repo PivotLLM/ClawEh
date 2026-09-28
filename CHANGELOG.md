@@ -489,6 +489,9 @@ observe does not need an entry.
   a proxy listed the allowlists judge the forwarded clients, so a proxied WebUI
   needs `gateway.allowed_cidrs` to cover them. An invalid entry is a config
   error; a change applies on config reload without a restart.
+- The MCP Servers page shows why a server is down: the failure reason and how
+  long ago it happened appear under the server's status (`last_error` and
+  `last_error_at` in `GET /api/mcp/status`).
 
 ### Changed
 
@@ -832,6 +835,13 @@ observe does not need an entry.
   clearing the allowed networks. The page now fills from the cached
   configuration, and every save sends only the fields that changed, so an
   unchanged setting can no longer be written back.
+- **The MCP Servers, MCP Config and System pages could save their defaults
+  over the real configuration.** Opened from another page that had already
+  loaded the configuration, they showed their empty defaults instead of the
+  saved values — the MCP Servers page said no external servers were configured
+  — and an edit on the MCP Config or System page then saved those defaults
+  over the real settings. They now show the configuration however they are
+  reached.
 - **An emptied default model list stays empty.** Saving `agents.defaults.models`
   as an empty list used to drop the key from `config.json`, so the next load
   brought back the `Claude CLI` / `Codex CLI` template aliases; the empty list
