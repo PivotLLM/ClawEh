@@ -29,12 +29,16 @@ const (
 
 // ServerStatus is a point-in-time snapshot of one server's connection health,
 // suitable for a status API. CooldownUntil is zero unless State is cooldown.
+// LastError is the latest connect failure (with the stdio child's last stderr
+// line), empty once the server connects; LastErrorAt is when it happened.
 type ServerStatus struct {
 	Name          string    `json:"name"`
 	State         string    `json:"state"`
 	Transport     string    `json:"transport,omitempty"`
 	ToolCount     int       `json:"tool_count"`
 	CooldownUntil time.Time `json:"cooldown_until,omitempty"`
+	LastError     string    `json:"last_error"`
+	LastErrorAt   time.Time `json:"last_error_at,omitzero"`
 }
 
 // Status returns the live connection state of every server the manager knows
@@ -54,6 +58,10 @@ func (m *Manager) Status() []ServerStatus {
 		}
 	}
 	m.cooldownMu.Unlock()
+	withError := func(st ServerStatus) ServerStatus {
+		st.LastError, st.LastErrorAt = m.lastError(st.Name)
+		return st
+	}
 
 	out := make([]ServerStatus, 0)
 	seen := make(map[string]bool)
@@ -69,7 +77,7 @@ func (m *Manager) Status() []ServerStatus {
 		if reconnecting[name] {
 			st.State = StateReconnecting
 		}
-		out = append(out, st)
+		out = append(out, withError(st))
 	}
 
 	// Servers not currently connected: reconnecting takes precedence over cooldown.
@@ -78,13 +86,13 @@ func (m *Manager) Status() []ServerStatus {
 			continue
 		}
 		seen[name] = true
-		out = append(out, ServerStatus{Name: name, State: StateReconnecting})
+		out = append(out, withError(ServerStatus{Name: name, State: StateReconnecting}))
 	}
 	for name, until := range cooldown {
 		if seen[name] {
 			continue
 		}
-		out = append(out, ServerStatus{Name: name, State: StateCooldown, CooldownUntil: until})
+		out = append(out, withError(ServerStatus{Name: name, State: StateCooldown, CooldownUntil: until}))
 	}
 
 	return out
@@ -143,8 +151,8 @@ func isConnectionError(err error) bool {
 }
 
 // reconnect tears down a server's dead connection and re-establishes it, honoring
-// a per-server cooldown after a failed attempt so a persistently-down upstream is
-// not hammered on every call. Returns nil only when a live session is restored.
+// a per-server cooldown (backing off per failure, see recordFailure) so a
+// persistently-down upstream is not hammered on every call. Returns nil only when a live session is restored.
 func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServerConfig) error {
 	if m.stopping() {
 		return errManagerStopping
@@ -166,17 +174,15 @@ func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServ
 
 	m.disconnect(name)
 	if err := m.ConnectServer(ctx, name, cfg); err != nil {
-		m.markReconnectFailed(name)
-		m.alertUnreachable(name, err)
+		until, _ := m.reconnectCooldownUntil(name)
 		logger.ErrorCF("mcp", "MCP reconnect failed; server in cooldown",
 			map[string]any{
 				"server":         name,
 				"error":          err.Error(),
-				"cooldown_until": m.now().Add(m.reconnectCooldown).Format(time.RFC3339),
+				"cooldown_until": until.Format(time.RFC3339),
 			})
 		return err
 	}
-	m.clearReconnectCooldown(name)
 	logger.InfoCF("mcp", "MCP server reconnected", map[string]any{"server": name})
 
 	if fresh, ok := m.GetServer(name); ok && !toolsEqual(oldTools, fresh.Tools) {
@@ -199,9 +205,9 @@ func (m *Manager) setReconnecting(name string, active bool) {
 	}
 }
 
-// now returns the current time; a single seam so the cooldown math is easy to
-// reason about (and to stub in tests if ever needed).
-func (m *Manager) now() time.Time { return time.Now() }
+// now returns the current time from the manager's clock, the seam tests use
+// to drive the cooldown and alert cadence.
+func (m *Manager) now() time.Time { return m.nowFn() }
 
 // reconnectCooldownUntil reports the cooldown expiry for name if one is active.
 func (m *Manager) reconnectCooldownUntil(name string) (time.Time, bool) {
@@ -214,14 +220,8 @@ func (m *Manager) reconnectCooldownUntil(name string) (time.Time, bool) {
 	return until, true
 }
 
-// markReconnectFailed starts a cooldown window for name.
-func (m *Manager) markReconnectFailed(name string) {
-	m.cooldownMu.Lock()
-	defer m.cooldownMu.Unlock()
-	m.cooldownUntil[name] = m.now().Add(m.reconnectCooldown)
-}
-
-// clearReconnectCooldown drops any cooldown for name after a successful reconnect.
+// clearReconnectCooldown drops any cooldown for name, so the next attempt runs
+// now. The failure count (and so the backoff) is kept until a success.
 func (m *Manager) clearReconnectCooldown(name string) {
 	m.cooldownMu.Lock()
 	defer m.cooldownMu.Unlock()
@@ -293,7 +293,7 @@ func (m *Manager) probeOnce(name string) {
 	}
 
 	logger.WarnCF("mcp", "MCP liveness probe failed; reconnecting",
-		map[string]any{"server": name, "error": err.Error()})
+		map[string]any{"server": name, "error": err.Error(), "stderr": conn.stderr.last()})
 
 	rctx, rcancel := context.WithTimeout(context.Background(), m.callTimeout)
 	if rerr := m.reconnect(rctx, name, conn.cfg); rerr != nil {

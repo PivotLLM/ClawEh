@@ -2477,9 +2477,10 @@ const DefaultMCPLivenessProbeSeconds = 60
 type MCPConfig struct {
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
-	// ReconnectCooldownSeconds is the backoff applied to a server after a failed
-	// reconnect, before another reconnect is attempted for it. Prevents hammering a
-	// dead upstream on every call. 0 uses the default (30s).
+	// ReconnectCooldownSeconds is the wait applied to a server after a failed
+	// connect, before another attempt is made for it; it doubles per further
+	// failure up to 10 minutes and resets on success. Prevents hammering a dead
+	// upstream on every call. 0 uses the default (30s).
 	ReconnectCooldownSeconds int `json:"reconnect_cooldown_seconds,omitempty"`
 	// CallTimeoutSeconds is a backstop deadline applied to a tool call only when the
 	// caller's context carries no deadline, so a hung server cannot block forever.

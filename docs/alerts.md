@@ -49,7 +49,8 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 |---|---|---|---|
 | | Model authentication or billing failure | A model is parked for an `auth` or `billing` failure (a CLI logged out, a key revoked, credit exhausted). Reported on the first failure; no retry fixes it | provider/model |
 | | Model parked after repeated failures | A model reaches the settled category cooldown after the 1/3/5-minute escalation | provider/model |
-| | MCP server unreachable | A reconnect or background connect attempt failed and the server is in cooldown | server name |
+| | MCP `<name>` down | A server goes down or its first connect fails; reminded at most hourly while down | server name |
+| | MCP `<name>` up | A server reported down has reconnected | server name + `-up` |
 | | MCP host server stopped | ClawEh's own MCP server died after startup | `mcpserver` |
 | | HTTP listener stopped | The loopback or HTTPS listener died after start; ClawEh exits so the service manager restarts it | `http` |
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |

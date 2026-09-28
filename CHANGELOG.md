@@ -264,6 +264,15 @@ observe does not need an entry.
 
 ### Added
 
+- **`GET /api/mcp/status` reports why a server is down.** Each server entry
+  gains `last_error` (the latest connect failure, empty once connected) and
+  `last_error_at` (RFC 3339, omitted when there is none). For a stdio server
+  the error ends with the child's last stderr line (`...: transport closed;
+  stderr: <line>`), so a missing config file or bad argument shows its own
+  message instead of only "transport closed"; the same line is added to the
+  connect-failure log entries. An `env_file` line that cannot be parsed is
+  now reported by line number only, without echoing its contents.
+
 - **`gateway.lockout_exempt`: addresses that are never locked out.** A list of
   IP addresses and CIDRs (a bare IP means that one address) exempt from every
   per-address lockout: the WebUI login address lock and the device listener's
@@ -491,6 +500,21 @@ observe does not need an entry.
   error; a change applies on config reload without a restart.
 
 ### Changed
+
+- **MCP server alerts are sent once per outage, not per retry.** A server that
+  goes down (or fails its first connect) raises "MCP `<name>` down" once, then at
+  most one reminder an hour ("still down since HH:MM"), and "MCP `<name>` up"
+  (alert id `<name>-up`) when it reconnects. Previously every failed retry
+  raised "MCP server unreachable", roughly every 45 seconds. The description is
+  one short line suited to SMS, preferring the server's own error message; the
+  full error and its last stderr lines are in the details. A config reload
+  keeps this state, so it does not re-alert a server already reported down.
+
+- **Failed MCP servers back off.** Retries of a server that keeps failing wait
+  `tools.mcp.reconnect_cooldown_seconds` (30 by default), then double per
+  failure up to 10 minutes; a successful connect resets the wait, and Reconnect
+  on the MCP servers page tries at once. A server whose first connect fails now
+  also waits the cooldown before the background retry.
 
 - **BREAKING: the data directory is laid out by purpose, and `agents/default`
   is gone. There is no automatic migration.** claw's own files (`state.json`,

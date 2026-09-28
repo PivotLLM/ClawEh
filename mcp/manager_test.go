@@ -379,7 +379,7 @@ func TestReconnectCooldownGating(t *testing.T) {
 		t.Fatal("no cooldown expected initially")
 	}
 
-	mgr.markReconnectFailed("svc")
+	mgr.recordFailure("svc", errors.New("connection refused"))
 	if _, ok := mgr.reconnectCooldownUntil("svc"); !ok {
 		t.Fatal("cooldown expected after a failed reconnect")
 	}
@@ -392,7 +392,7 @@ func TestReconnectCooldownGating(t *testing.T) {
 		t.Fatal("expired cooldown must not gate")
 	}
 
-	mgr.markReconnectFailed("svc")
+	mgr.recordFailure("svc", errors.New("connection refused"))
 	mgr.clearReconnectCooldown("svc")
 	if _, ok := mgr.reconnectCooldownUntil("svc"); ok {
 		t.Fatal("cooldown must clear after a successful reconnect")

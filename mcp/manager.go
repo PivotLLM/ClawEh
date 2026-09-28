@@ -54,7 +54,7 @@ func loadEnvFile(path string) (map[string]string, error) {
 		// Parse KEY=value
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid format at line %d: %s", lineNum, line)
+			return nil, fmt.Errorf("invalid format at line %d", lineNum)
 		}
 
 		key := strings.TrimSpace(parts[0])
@@ -105,6 +105,8 @@ type ServerConnection struct {
 	// tools/list_changed notifications (nil when none was opened). Called after
 	// the client is closed by disconnect or Close.
 	stopListen func()
+	// stderr keeps the tail of a stdio child's stderr (nil for sse/http).
+	stderr *stderrTail
 }
 
 // Manager manages multiple MCP server connections
@@ -130,11 +132,13 @@ type Manager struct {
 	probeInterval     time.Duration // 0 disables liveness probing
 
 	// cooldownUntil tracks, per server, the time before which a reconnect must not
-	// be re-attempted after a failed reconnect. reconnecting tracks servers with a
-	// reconnect in flight (for Status). Both guarded by cooldownMu.
+	// be re-attempted after a failed connect. reconnecting tracks servers with a
+	// reconnect in flight (for Status). health holds each failing server's
+	// backoff, alert and last-error state. All guarded by cooldownMu.
 	cooldownMu    sync.Mutex
 	cooldownUntil map[string]time.Time
 	reconnecting  map[string]bool
+	health        map[string]*serverHealth
 	probeWg       sync.WaitGroup // tracks liveness-probe goroutines
 
 	// desired is the set of servers that should be connected (enabled, envFile
@@ -149,9 +153,12 @@ type Manager struct {
 	toolsChangedMu sync.Mutex
 	toolsChanged   func(server string)
 
-	// alerter, when set, is told when a server cannot be reconnected. Guarded
-	// by mu like the connections.
+	// alerter, when set, is told when a server goes down or comes back.
+	// Guarded by mu like the connections.
 	alerter alerter.Alerter
+
+	// nowFn is the clock; tests replace it.
+	nowFn func() time.Time
 }
 
 // Default resilience tuning, used when config leaves a value at 0.
@@ -166,10 +173,12 @@ func NewManager() *Manager {
 		servers:           make(map[string]*ServerConnection),
 		cooldownUntil:     make(map[string]time.Time),
 		reconnecting:      make(map[string]bool),
+		health:            make(map[string]*serverHealth),
 		desired:           make(map[string]config.MCPServerConfig),
 		inflight:          make(map[string]int),
 		reconnectCooldown: defaultReconnectCooldown,
 		callTimeout:       defaultCallTimeout,
+		nowFn:             time.Now,
 	}
 }
 
@@ -341,8 +350,27 @@ func buildStdioEnv(cfg config.MCPServerConfig) ([]string, error) {
 	return childenv.Merge(childenv.Base(), overlay), nil
 }
 
-// ConnectServer connects to a single MCP server
+// ConnectServer connects to a single MCP server. A failure extends the
+// server's retry backoff and may alert (see recordFailure); a success resets
+// both and alerts a recovery when the server was reported down.
 func (m *Manager) ConnectServer(
+	ctx context.Context,
+	name string,
+	cfg config.MCPServerConfig,
+) error {
+	err := m.connectServer(ctx, name, cfg)
+	switch {
+	case errors.Is(err, errManagerStopping) || m.stopping():
+	case err != nil:
+		m.recordFailure(name, err)
+	default:
+		m.recordSuccess(name)
+	}
+	return err
+}
+
+// connectServer establishes the connection for ConnectServer.
+func (m *Manager) connectServer(
 	ctx context.Context,
 	name string,
 	cfg config.MCPServerConfig,
@@ -372,6 +400,9 @@ func (m *Manager) ConnectServer(
 	// stdioCmd is captured (via the stdio CommandFunc) so teardown can kill the
 	// whole child process group; it stays nil for sse/http transports.
 	var stdioCmd *exec.Cmd
+	// stderr collects the stdio child's stderr, so a failure can say what the
+	// child itself reported; nil for sse/http transports.
+	var stderr *stderrTail
 	var err error
 
 	switch transportType {
@@ -417,10 +448,14 @@ func (m *Manager) ConnectServer(
 		// process group (so a teardown kills npx -> node -> browser as a unit) and
 		// retain the *exec.Cmd for terminateStdioProcessTree. mark3labs' own Close
 		// only signals the direct child, which would orphan chromium and hold the
-		// profile lock.
+		// profile lock. Its stderr goes to a bounded tail buffer; WaitDelay keeps
+		// a grandchild holding stderr open from blocking Wait after the child exits.
+		stderr = &stderrTail{}
 		cmdFunc := func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
 			cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // stdio MCP server command comes from the operator's config
 			cmd.Env = env
+			cmd.Stderr = stderr
+			cmd.WaitDelay = time.Second
 			prepareStdioCommand(cmd)
 			stdioCmd = cmd
 			return cmd, nil
@@ -440,7 +475,7 @@ func (m *Manager) ConnectServer(
 	if err = c.Start(ctx); err != nil {
 		utils.CloseQuietly(c)
 		terminateStdioProcessTree(stdioCmd)
-		return fmt.Errorf("failed to start transport: %w", err)
+		return withStderr(fmt.Errorf("failed to start transport: %w", err), stderr)
 	}
 
 	initReq := mcp.InitializeRequest{}
@@ -452,7 +487,7 @@ func (m *Manager) ConnectServer(
 	if err != nil {
 		utils.CloseQuietly(c)
 		terminateStdioProcessTree(stdioCmd)
-		return fmt.Errorf("failed to connect: %w", err)
+		return withStderr(fmt.Errorf("failed to connect: %w", err), stderr)
 	}
 	logger.InfoCF("mcp", "Connected to MCP server",
 		map[string]any{
@@ -497,6 +532,7 @@ func (m *Manager) ConnectServer(
 		cfg:        cfg,
 		cmd:        stdioCmd,
 		stopListen: stopListen,
+		stderr:     stderr,
 	}
 	if m.probeInterval > 0 {
 		conn.probeStop = m.startProbe(name) //nolint:contextcheck // liveness probe is a background goroutine whose lifetime is probeStop/Close, not the connect context
@@ -613,17 +649,15 @@ func (m *Manager) RetryDisconnected(ctx context.Context) []string {
 		cancel()
 		m.setReconnecting(name, false)
 		if err != nil {
-			m.markReconnectFailed(name)
-			m.alertUnreachable(name, err)
+			until, _ := m.reconnectCooldownUntil(name)
 			logger.WarnCF("mcp", "MCP background connect failed; server in cooldown",
 				map[string]any{
 					"server":         name,
 					"error":          err.Error(),
-					"cooldown_until": m.now().Add(m.reconnectCooldown).Format(time.RFC3339),
+					"cooldown_until": until.Format(time.RFC3339),
 				})
 			continue
 		}
-		m.clearReconnectCooldown(name)
 		logger.InfoCF("mcp", "MCP server connected on retry", map[string]any{"server": name})
 		connected = append(connected, name)
 	}
@@ -648,6 +682,11 @@ func (m *Manager) Sync(
 	// resolves it so change-detection compares like with like.
 	desired := resolveDesired(mcpCfg, baseDir)
 	m.setDesired(desired)
+	keep := make(map[string]bool, len(desired))
+	for name := range desired {
+		keep[name] = true
+	}
+	m.forgetHealth(keep)
 
 	// Drop connections that are gone, disabled, or reconfigured.
 	for name, conn := range m.GetServers() {
@@ -738,7 +777,7 @@ func (m *Manager) CallTool(
 	}
 
 	logger.WarnCF("mcp", "MCP tool call failed on a dropped connection; reconnecting and retrying once",
-		map[string]any{"server": serverName, "tool": toolName, "error": err.Error()})
+		map[string]any{"server": serverName, "tool": toolName, "error": err.Error(), "stderr": conn.stderr.last()})
 
 	if rerr := m.reconnect(callCtx, serverName, conn.cfg); rerr != nil {
 		return nil, fmt.Errorf("failed to call tool (reconnect failed): %w", errors.Join(err, rerr))
@@ -903,27 +942,9 @@ func (m *Manager) GetAllTools() map[string][]mcp.Tool {
 	return result
 }
 
-// SetAlerter routes reconnect failures to an alerter.
+// SetAlerter routes server down and recovery alerts to an alerter.
 func (m *Manager) SetAlerter(a alerter.Alerter) {
 	m.mu.Lock()
 	m.alerter = a
 	m.mu.Unlock()
-}
-
-// alertUnreachable reports a server that could not be (re)connected. Low
-// priority: the gateway keeps answering, that server's tools are missing.
-// Repeats per server collapse in the alerter.
-func (m *Manager) alertUnreachable(name string, err error) {
-	m.mu.RLock()
-	a := m.alerter
-	m.mu.RUnlock()
-	if a == nil {
-		return
-	}
-	a.Send(alerter.Alert{
-		Title:       "MCP server unreachable",
-		Description: name + ": " + err.Error(),
-		Details:     "Its tools are unavailable until it reconnects; reconnects are retried after the cooldown, or force one from the MCP servers page.",
-		EventID:     name,
-	})
 }
