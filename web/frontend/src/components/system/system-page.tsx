@@ -30,7 +30,24 @@ type SaveStatus = "saving" | "saved" | "error" | null
 // Network page. Fields autosave on a debounce, as a JSON merge patch.
 export function SystemPage() {
   const { t } = useTranslation()
-  const [form, setForm] = useState<CoreConfigForm>(EMPTY_FORM)
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["config"],
+    queryFn: async () => {
+      const res = await fetch("/api/config")
+      if (!res.ok) {
+        throw new Error("Failed to load config")
+      }
+      return res.json()
+    },
+  })
+
+  // The cache may already hold the config on the first render (the page was
+  // reached from another page), in which case the "new data" sync below never
+  // fires: seed from it. Seeding from the empty form in that case once saved
+  // the defaults over the real settings.
+  const [form, setForm] = useState<CoreConfigForm>(() =>
+    data ? buildFormFromConfig(data) : EMPTY_FORM,
+  )
   const [status, setStatus] = useState<SaveStatus>(null)
   // Message for a validation failure (e.g. a bad number), shown inline instead of
   // toast-spamming on every debounced attempt.
@@ -48,23 +65,12 @@ export function SystemPage() {
   // at fire time. State rather than a bare ref because it is written from two
   // places — seeding on fetch (during render) and after a successful save — and
   // a render-phase ref write is a side effect in render.
-  const [baseline, setBaseline] = useState<CoreConfigForm>(EMPTY_FORM)
-  const baselineRef = useRef<CoreConfigForm>(EMPTY_FORM)
+  const [baseline, setBaseline] = useState<CoreConfigForm>(form)
+  const baselineRef = useRef<CoreConfigForm>(baseline)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["config"],
-    queryFn: async () => {
-      const res = await fetch("/api/config")
-      if (!res.ok) {
-        throw new Error("Failed to load config")
-      }
-      return res.json()
-    },
-  })
 
   useEffect(() => {
     formRef.current = form

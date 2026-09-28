@@ -25,34 +25,47 @@ vi.mock("@tanstack/react-router", () => ({
 const patched = vi.mocked(patchAppConfig)
 
 const sample = {
-  agents: { list: [{ id: "alice", name: "Alice" }] },
+  agents: {
+    list: [{ id: "alice", name: "Alice" }],
+    defaults: { max_tokens: 4096 },
+  },
   backup: { enabled: true, at: "02:30", retain_days: 14, dest: "/mnt/backup" },
 }
 
-function renderPage() {
+// Renders the page and returns the fetch mock. `qc` lets a test start from a
+// cache that already holds the config.
+function renderPage(
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   // The page loads /api/config; the model-default sections also load
   // /api/models through useChatModels and index into its `models` array.
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      const body = url.includes("/api/models")
-        ? { models: [], default_model: "" }
-        : sample
-      return { ok: true, json: async () => body }
-    }),
-  )
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    const body = url.includes("/api/models")
+      ? { models: [], default_model: "" }
+      : sample
+    return { ok: true, json: async () => body }
   })
+  vi.stubGlobal("fetch", fetchMock)
   // SidebarProvider because PageHeader reads the sidebar context.
-  return render(
+  render(
     <QueryClientProvider client={qc}>
       <SidebarProvider>
         <SystemPage />
       </SidebarProvider>
     </QueryClientProvider>,
   )
+  return fetchMock
+}
+
+// A client whose cache already holds the config, as when the page is reached
+// from another page that fetched the same key.
+function cachedClient() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  qc.setQueryData(["config"], sample)
+  return qc
 }
 
 /** The `backup` block of the most recent PATCH. */
@@ -118,5 +131,38 @@ describe("SystemPage backup block", () => {
     })
     expect(lastBackupPatch()).toMatchObject({ dest: "" })
     await screen.findByText("Saved ✓")
+  })
+})
+
+describe("SystemPage with the config already cached", () => {
+  // The page used to seed its form only when the query returned a new object.
+  // With the config already cached that never happened, the page showed the
+  // defaults, and the next edit saved those defaults over the configuration.
+  it("shows the configuration, not the defaults", async () => {
+    const fetchMock = renderPage(cachedClient())
+    const dest = await screen.findByTestId("backup-dest")
+    expect((dest as HTMLInputElement).value).toBe("/mnt/backup")
+    expect(screen.getByDisplayValue("4096")).toBeTruthy()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.includes("/api/config"))).toBe(false)
+  })
+
+  it("an edit saves the configured values with the change", async () => {
+    renderPage(cachedClient())
+    const dest = await screen.findByTestId("backup-dest")
+    fireEvent.change(dest, { target: { value: "/mnt/other" } })
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    })
+    expect(lastBackupPatch()).toEqual({
+      enabled: true,
+      at: "02:30",
+      retain_days: 14,
+      dest: "/mnt/other",
+    })
+    const patch = patched.mock.calls.at(-1)?.[0] as {
+      agents: { defaults: { max_tokens: number } }
+    }
+    expect(patch.agents.defaults.max_tokens).toBe(4096)
   })
 })

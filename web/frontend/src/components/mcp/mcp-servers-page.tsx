@@ -5,6 +5,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import dayjs from "dayjs"
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -49,14 +50,39 @@ function serverDotClass(
   }
 }
 
+// lastErrorLine is why the last connection attempt failed and, when known, how
+// long ago.
+function lastErrorLine(live: MCPServerStatus): string {
+  const when = live.last_error_at
+    ? ` (${dayjs(live.last_error_at).fromNow()})`
+    : ""
+  return `${live.last_error}${when}`
+}
+
 // MCPServersPage edits the external (upstream) MCP servers claw connects out to
 // (tools.mcp.servers). Two-column list/detail — a rail of servers on the left,
 // the selected server's fields on the right — so many servers stay manageable,
 // mirroring the Agents page. It patches only tools.mcp.servers.
 export function MCPServersPage() {
   const { t } = useTranslation()
-  const [servers, setServers] = useState<MCPServerForm[]>([])
-  const [selectedIdx, setSelectedIdx] = useState(-1)
+  const {
+    data: fetchedConfig,
+    isPending: loading,
+    error: loadQueryError,
+  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
+
+  // The cache may already hold the config on the first render (the page was
+  // reached from another page), in which case the "new data" sync below never
+  // fires: seed from it. Seeding from an empty list in that case once saved
+  // that empty list over the real servers.
+  const [servers, setServers] = useState<MCPServerForm[]>(() =>
+    fetchedConfig ? serversFromConfig(fetchedConfig) : [],
+  )
+  const [baseline, setBaseline] = useState<MCPServerForm[]>(servers)
+  const [selectedIdx, setSelectedIdx] = useState(servers.length > 0 ? 0 : -1)
+  // State, not a ref: the initial selection is decided during render, and a
+  // render-phase ref write is a side effect in render.
+  const [inited, setInited] = useState(fetchedConfig !== undefined)
   const [status, setStatus] = useState<SaveStatus>(null)
   const [applying, setApplying] = useState(false)
 
@@ -67,10 +93,7 @@ export function MCPServersPage() {
   useEffect(() => {
     serversRef.current = servers
   }, [servers])
-  const baselineRef = useRef<MCPServerForm[]>([])
-  // State, not a ref: the initial selection is decided during render, and a
-  // render-phase ref write is a side effect in render.
-  const [inited, setInited] = useState(false)
+  const baselineRef = useRef<MCPServerForm[]>(baseline)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -105,12 +128,6 @@ export function MCPServersPage() {
     (statusData?.servers ?? []).map((s) => [s.name, s]),
   )
 
-  const {
-    data: fetchedConfig,
-    isPending: loading,
-    error: loadQueryError,
-  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
-
   const loadError = loadQueryError
     ? loadQueryError instanceof Error
       ? loadQueryError.message
@@ -123,7 +140,6 @@ export function MCPServersPage() {
   // baselineRef is mirrored from state in the effect below rather than written
   // here, because a render-phase ref write is a side effect in render.
   const [syncedConfig, setSyncedConfig] = useState(fetchedConfig)
-  const [baseline, setBaseline] = useState<MCPServerForm[]>([])
   if (fetchedConfig && fetchedConfig !== syncedConfig) {
     setSyncedConfig(fetchedConfig)
     const next = serversFromConfig(fetchedConfig)
@@ -214,6 +230,9 @@ export function MCPServersPage() {
   }
 
   const selected = selectedIdx >= 0 ? servers[selectedIdx] : undefined
+  const selectedLive = selected
+    ? statusByName.get(selected.name.trim())
+    : undefined
   const listError = validateServers(servers)
 
   return (
@@ -295,11 +314,21 @@ export function MCPServersPage() {
               </p>
             ) : selected ? (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <ServerStatusBadge
-                    live={statusByName.get(selected.name.trim())}
-                    enabled={selected.enabled}
-                  />
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <ServerStatusBadge
+                      live={selectedLive}
+                      enabled={selected.enabled}
+                    />
+                    {selectedLive?.last_error && (
+                      <p
+                        data-testid="mcp-last-error"
+                        className="text-muted-foreground text-xs"
+                      >
+                        {lastErrorLine(selectedLive)}
+                      </p>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <Button
                       type="button"

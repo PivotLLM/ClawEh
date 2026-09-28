@@ -1592,6 +1592,67 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     }
     return rows ? providers.join(", ") : "none configured — empty state shown"
   })
+
+  await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {
+    // The three pages seed their form from the config query. Reached from a
+    // page that has already loaded it, the query is answered from the cache and
+    // they used to keep their empty defaults — which the next edit saved over
+    // the real configuration. Bindings shares the MCP pages' query and Network
+    // the System page's, so each is read with a warm cache.
+    const cfg = (await api("/api/config")).json ?? {}
+    const servers = Object.keys(cfg.tools?.mcp?.servers ?? {}).sort()
+    const listen = cfg.mcp_host?.listen || "127.0.0.1:5911"
+    const hostEnabled = cfg.mcp_host?.enabled === true
+    const backupDest = cfg.backup?.dest ?? ""
+    const maxTokens = String(cfg.agents?.defaults?.max_tokens ?? 32768)
+
+    const { close, page, problems } = await open("/agent/bindings")
+    const expand = async (name) => {
+      const group = page.getByRole("button", { name, exact: true })
+      if ((await group.getAttribute("aria-expanded")) !== "true") {
+        await group.click()
+        await page.waitForTimeout(400)
+      }
+    }
+    const go = async (href, pattern) => {
+      await page.locator(`a[href="${href}"]`).first().click()
+      await page.waitForURL(pattern, { timeout: 10000 })
+      await page.waitForTimeout(800)
+    }
+
+    await expand("Services")
+    await expand("MCP")
+    await go("/mcp/servers", /\/mcp\/servers$/)
+    const empty = await page.getByText("No external servers configured.").count()
+    const missing = []
+    for (const name of servers) {
+      if ((await page.getByRole("button", { name, exact: true }).count()) === 0) missing.push(name)
+    }
+
+    await go("/mcp/config", /\/mcp\/config$/)
+    const listenInput = page.getByPlaceholder("127.0.0.1:5911")
+    await listenInput.waitFor({ state: "visible", timeout: 10000 })
+    const shownListen = await listenInput.inputValue()
+    const shownEnabled = await page.getByRole("switch", { name: "Enabled", exact: true }).first().getAttribute("aria-checked")
+
+    await go("/network", /\/network$/)
+    await page.locator("[data-testid=network-mcp-listen]").waitFor({ state: "visible", timeout: 10000 })
+    await go("/system", /\/system$/)
+    const destInput = page.getByTestId("backup-dest")
+    await destInput.waitFor({ state: "visible", timeout: 10000 })
+    const shownDest = await destInput.inputValue()
+    const numbers = await page.getByRole("spinbutton").evaluateAll((els) => els.map((e) => e.value))
+    await close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(missing.length === 0, `/mcp/servers does not list ${missing.join(", ")}`)
+    assert(empty === (servers.length === 0 ? 1 : 0), `/mcp/servers empty state shown ${empty} times with ${servers.length} configured`)
+    assert(shownListen === listen, `/mcp/config listen shows ${shownListen}, config ${listen}`)
+    assert(shownEnabled === String(hostEnabled), `/mcp/config enabled shows ${shownEnabled}, config ${hostEnabled}`)
+    assert(shownDest === backupDest, `/system backup dest shows ${JSON.stringify(shownDest)}, config ${JSON.stringify(backupDest)}`)
+    assert(numbers.includes(maxTokens), `/system shows no max tokens ${maxTokens} (${numbers.join(", ")})`)
+    return `${servers.length} servers, listen ${listen}, max tokens ${maxTokens}`
+  })
 }
 
 // Q. Audit page
