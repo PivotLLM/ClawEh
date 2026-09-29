@@ -85,25 +85,36 @@ export function splitCsv(s: string): string[] {
     .filter(Boolean)
 }
 
-// MCPAccessServer is one row of the MCP access checkbox list.
+// MCPAccessServer is one row of the MCP access or Fusion services checkbox
+// list.
 export interface MCPAccessServer {
   name: string
   checked: boolean
-  // configured is false for an entry that names no configured server (a
-  // server since removed, or a hand-typed entry from before the checkbox
-  // list); it is shown checked and flagged so it can be removed.
+  // configured is false for an entry that names no configured server or
+  // Fusion service (a server since removed, or a hand-typed entry from before
+  // the checkbox list); it is shown checked and flagged so it can be removed.
   configured: boolean
+}
+
+const norm = (s: string) => s.trim().toLowerCase()
+
+// fusionOwned reports whether an mcp_tools entry belongs to a Fusion service:
+// it names the service, or a group within it (<service>_...).
+function fusionOwned(entry: string, serviceNames: string[]): boolean {
+  const e = norm(entry)
+  return serviceNames.some((s) => e === norm(s) || e.startsWith(norm(s) + "_"))
 }
 
 // mcpAccessView turns an agent's mcp_tools entries into checkbox rows: one
 // per configured server (checked when an entry matches it, case-insensitively)
-// followed by one flagged row per entry that matches no configured server.
-// Access is per server; there is no finer grant.
+// followed by one flagged row per entry that matches no configured server and
+// no Fusion service. Access is per server; there is no finer grant. Entries
+// owned by a Fusion service are left to fusionAccessView.
 export function mcpAccessView(
   entries: string[],
   serverNames: string[],
+  fusionServices: string[] = [],
 ): MCPAccessServer[] {
-  const norm = (s: string) => s.trim().toLowerCase()
   const rows: MCPAccessServer[] = serverNames.map((name) => ({
     name,
     checked: entries.some((e) => norm(e) === norm(name)),
@@ -111,8 +122,38 @@ export function mcpAccessView(
   }))
   for (const raw of entries) {
     const e = raw.trim()
-    if (e && !serverNames.some((n) => norm(n) === norm(e))) {
+    if (
+      e &&
+      !serverNames.some((n) => norm(n) === norm(e)) &&
+      !fusionOwned(e, fusionServices)
+    ) {
       rows.push({ name: e, checked: true, configured: false })
+    }
+  }
+  return rows
+}
+
+// fusionAccessView turns the same entries into the Fusion services rows: one
+// per defined service (checked when an entry names it) followed by one checked
+// row per entry that names a group within a service (microsoft365_calendar),
+// which is a valid finer grant and so is not flagged.
+export function fusionAccessView(
+  entries: string[],
+  serviceNames: string[],
+): MCPAccessServer[] {
+  const rows: MCPAccessServer[] = serviceNames.map((name) => ({
+    name,
+    checked: entries.some((e) => norm(e) === norm(name)),
+    configured: true,
+  }))
+  for (const raw of entries) {
+    const e = raw.trim()
+    if (
+      e &&
+      !serviceNames.some((n) => norm(n) === norm(e)) &&
+      fusionOwned(e, serviceNames)
+    ) {
+      rows.push({ name: e, checked: true, configured: true })
     }
   }
   return rows

@@ -4,6 +4,8 @@
 package fusion
 
 import (
+	"sort"
+
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -52,9 +54,36 @@ func (globalFusionProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	// ToolSpecDefinitions returns []toolspec.ToolDefinition, which is identical to
 	// []global.ToolDefinition (both toolspec v0.2.0) — no conversion needed.
 	tenant := routing.NormalizeAgentID(deps.AgentID)
-	defs := eng.ToolSpecDefinitions(tenant)
+	all := eng.ToolSpecDefinitions(tenant)
+	defs := allowedDefs(all, c.AgentByID(deps.AgentID))
 
 	logger.InfoCF("fusion", "fusion tools enabled for agent",
-		map[string]any{"agent": deps.AgentID, "tools": len(defs)})
+		map[string]any{"agent": deps.AgentID, "tools": len(defs), "available": len(all)})
 	return defs
+}
+
+// allowedDefs keeps the Fusion tools the agent's mcp_tools entries admit
+// (config.AgentConfig.FusionToolAllowed): Fusion on with no matching entry
+// yields none. A nil agent yields none.
+func allowedDefs(defs []global.ToolDefinition, a *config.AgentConfig) []global.ToolDefinition {
+	var out []global.ToolDefinition
+	for _, d := range defs {
+		if a.FusionToolAllowed(d.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// ServiceNames lists the Fusion services defined in the fusion config folder,
+// sorted, for the per-agent access list. Nil when the engine could not be
+// built or no service is defined.
+func ServiceNames(c *config.Config) []string {
+	eng := sharedEngine(c)
+	if eng == nil {
+		return nil
+	}
+	names := eng.GetServiceNames()
+	sort.Strings(names)
+	return names
 }

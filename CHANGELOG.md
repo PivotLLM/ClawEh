@@ -520,6 +520,17 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING: Fusion services are granted per agent through `mcp_tools`.**
+  The agent's `fusion` switch no longer grants every Fusion tool: an agent gets
+  the tools of a Fusion service only when `mcp_tools` names the service (or a
+  group within it, `microsoft365_calendar`), under the same equal-or-prefix rule
+  as MCP servers. An agent with `"fusion": true` and no matching entry now has
+  no Fusion tools. To restore an agent's access, add the service names to its
+  `mcp_tools` (in `config.json`, or tick them under **Fusion services** on the
+  Agents page, which now lists the defined services beside **MCP access**);
+  installs that already listed Fusion service names there, as the pre-July
+  configuration did, keep working unchanged. `GET /api/agents/tools` gains
+  `fusion_services`, the defined service names.
 - **Channel connection alerts are sent per platform, not per channel.** When
   channels of one platform lose their connection for ten minutes, one
   "`<Platform>` down" alert is raised (alert id is the platform, e.g.

@@ -4,6 +4,7 @@
 package fusion
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -37,5 +38,49 @@ func TestProvider_Metadata(t *testing.T) {
 	}
 	if ok, _ := GlobalProvider.Available(nil); !ok {
 		t.Error("Available should be true")
+	}
+}
+
+// allowedDefs keeps only the tools the agent's mcp_tools entries admit: Fusion
+// on with no entry yields none, a service entry yields that service, a group
+// entry yields that group.
+func TestAllowedDefs(t *testing.T) {
+	defs := []global.ToolDefinition{
+		{Name: "wxca_city_get"},
+		{Name: "wxca_city_hourly"},
+		{Name: "microsoft365_calendar_read_summary"},
+		{Name: "microsoft365_mail_search"},
+		{Name: "google_auth_setup"},
+	}
+	names := func(ds []global.ToolDefinition) []string {
+		out := make([]string, 0, len(ds))
+		for _, d := range ds {
+			out = append(out, d.Name)
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		agent *config.AgentConfig
+		want  []string
+	}{
+		{"nil agent", nil, []string{}},
+		{"fusion on, nothing listed", &config.AgentConfig{ID: "a", Fusion: true}, []string{}},
+		{"fusion off, services listed", &config.AgentConfig{ID: "a", MCPTools: []string{"wxca"}}, []string{}},
+		{
+			"one service", &config.AgentConfig{ID: "a", Fusion: true, MCPTools: []string{"wxca"}},
+			[]string{"wxca_city_get", "wxca_city_hourly"},
+		},
+		{
+			"a group and a service", &config.AgentConfig{ID: "a", Fusion: true, MCPTools: []string{"microsoft365_calendar", "google"}},
+			[]string{"microsoft365_calendar_read_summary", "google_auth_setup"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := names(allowedDefs(defs, tc.agent)); !slices.Equal(got, tc.want) {
+				t.Errorf("allowedDefs = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

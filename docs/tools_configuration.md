@@ -362,14 +362,39 @@ agent's list controls which of them that agent may use.
 
 In this example, Alice can use any globally-enabled tool, while Bob is restricted to three specific tools.
 
+### MCP servers and Fusion services (`mcp_tools`)
+
+`mcp_tools` is the agent's access list for the tools that come from outside
+the built-in set: external MCP servers (`tools.mcp.servers`) and Fusion
+services (the definitions under the data directory's `fusion/` folder). Each
+entry is matched, case-insensitively, as equal to or a prefix of the tool's
+`<server>_<tool>` or `<service>_<tool>` name, so `"github"` admits every tool of
+the github server, `"wxca"` every tool of the wxca Fusion service and
+`"microsoft365_calendar"` only the calendar group of the microsoft365 service.
+No `mcp_` prefix or wildcard is needed. An empty or absent list admits nothing.
+
+Fusion tools also need the agent's `fusion` switch on. The switch alone grants
+nothing: an agent with `"fusion": true` and no matching entry has no Fusion
+tools. On the Agents page the same list is edited as two sets of checkboxes,
+**MCP access** (one per configured server) and **Fusion services** (one per
+defined service).
+
+```json
+{
+  "id": "alice",
+  "fusion": true,
+  "mcp_tools": ["github", "wxca", "microsoft365_calendar"]
+}
+```
+
 ### Denying specific tools (`deny_tools`)
 
 `tools` and `mcp_tools` are allow lists that match by prefix, and the suite
-toggles (`fusion`, `maestro`, `cogmem`) grant a whole suite at once, so a grant
-such as `"fusion": true` or `"mcp_tools": ["google"]` admits every Google tool,
-including destructive ones. `deny_tools` lists the tools the agent may never
-call. It is evaluated after every grant and deny always wins, however the tool
-arrived; an empty or absent list denies nothing.
+toggles (`maestro`, `cogmem`) grant a whole suite at once, so a grant such as
+`"mcp_tools": ["google"]` admits every Google tool, including destructive ones.
+`deny_tools` lists the tools the agent may never call. It is evaluated after
+every grant and deny always wins, however the tool arrived; an empty or absent
+list denies nothing.
 
 Internal and suite tools match case-insensitively by exact published name or by
 prefix with a trailing `*` (`shell_exec`, `google_calendar_event_delete`,

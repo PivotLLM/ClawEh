@@ -78,6 +78,9 @@ export interface AgentMCPServer {
 export interface AgentToolCatalogResponse {
   tools: AgentToolEntry[]
   mcp_servers?: AgentMCPServer[]
+  // Fusion services defined in the fusion config folder. An mcp_tools entry
+  // naming one grants the service's tools when the agent's Fusion switch is on.
+  fusion_services?: string[]
   default_tools: string[]
 }
 

@@ -23,7 +23,7 @@
     "maestroAllowParallel": "Allow parallel runs",
     "maestroAllowParallelHint": "Runs are sequential unless the LLM asks for parallel; turn this off to refuse such requests.",
     "fusion": "Fusion (REST-API tools)",
-    "fusionHint": "Give this agent the full MCPFusion config-driven REST-API tool suite. Service definitions live under the data directory's fusion config; per-agent OAuth tokens are keyed by agent id in the shared fusion token store. Off by default.",
+    "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",

@@ -311,7 +311,9 @@ type AgentConfig struct {
 	// the block are passed to Maestro; unset ones take Maestro's defaults.
 	Maestro *MaestroConfig `json:"maestro,omitempty"`
 
-	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
+	// Fusion switches on the MCPFusion config-driven REST-API tool suite for the
+	// agent; which services it then gets is decided by MCPTools (see
+	// FusionToolAllowed). It remains the master switch for the MCPFusion
 	// tool suite. Off by default. When on, the agent gets every tool defined by the
 	// JSON config files under <dataDir>/fusion, with per-agent OAuth tokens keyed by
 	// agent id in the shared fusion token store.
@@ -383,14 +385,17 @@ type AgentConfig struct {
 	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
 	Mounts []MountConfig `json:"mounts,omitempty"`
 
-	// MCPTools is the per-agent allow-list for external MCP-client tools, kept
-	// separate from the generic Tools allowlist so MCP access is per-tool rather
-	// than all-or-nothing per server. Each entry is matched (case-insensitively)
-	// against a tool's <server>_<tool> name (i.e. the published mcp_<server>_<tool>
-	// with the mcp_ prefix stripped): an entry allows the tool when it equals or is
-	// a prefix of that name. So "fusion" admits every tool on servers named/
-	// starting "fusion"; "fusion_gcwx" admits just the gcwx tools. Empty ⇒ the
-	// agent gets no MCP tools. The mcp_ prefix and wildcards are never needed.
+	// MCPTools is the per-agent allow-list for external MCP-client tools and,
+	// when Fusion is on, for Fusion services. It is kept separate from the
+	// generic Tools allowlist so this access is per server or service rather
+	// than all-or-nothing. Each entry is matched (case-insensitively) against a
+	// tool's <server>_<tool> name (the published mcp_<server>_<tool> with the
+	// mcp_ prefix stripped) or a Fusion tool's <service>_<tool> name: an entry
+	// allows the tool when it equals or is a prefix of that name. So "github"
+	// admits every tool on the github server, "wxca" every tool of the wxca
+	// Fusion service, "microsoft365_calendar" one group of the microsoft365
+	// service. Empty ⇒ the agent gets no MCP tools and, Fusion on or off, no
+	// Fusion tools. The mcp_ prefix and wildcards are never needed.
 	MCPTools []string `json:"mcp_tools,omitempty"`
 
 	// DenyTools lists tools this agent may never call, even when Tools or
@@ -820,6 +825,20 @@ func (a *AgentConfig) MCPToolAllowed(name string) bool {
 	bare := strings.ToLower(strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(name, "_"), "mcp_"))
 	// DenyTools is checked after the allow list, under the same rule; deny wins.
 	return matchMCPEntry(a.MCPTools, bare) && !matchMCPEntry(a.DenyTools, bare)
+}
+
+// FusionToolAllowed reports whether a Fusion tool (named <service>_<tool>, no
+// mcp_ prefix) is granted to this agent: the Fusion suite must be on and an
+// MCPTools entry must equal or prefix the name under matchMCPEntry's rule, so
+// "wxca" admits every wxca tool and "microsoft365_calendar" one group of the
+// microsoft365 service. Fusion on with no matching entry admits nothing.
+// DenyTools is applied by the caller through IsToolDenied, as for every suite
+// tool.
+func (a *AgentConfig) FusionToolAllowed(name string) bool {
+	if a == nil || !a.Fusion || len(a.MCPTools) == 0 {
+		return false
+	}
+	return matchMCPEntry(a.MCPTools, mcpUnderscoreRun.ReplaceAllString(strings.ToLower(name), "_"))
 }
 
 // matchMCPEntry reports whether any entry equals or is a prefix of bare (an

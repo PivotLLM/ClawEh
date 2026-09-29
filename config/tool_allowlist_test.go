@@ -264,3 +264,39 @@ func TestAgentConfig_MCPToolAllowed(t *testing.T) {
 		})
 	}
 }
+
+// Fusion tools (named <service>_<tool>, no mcp_ prefix) need the Fusion switch
+// and an mcp_tools entry that equals or prefixes the name. The switch alone
+// grants nothing.
+func TestAgentConfig_FusionToolAllowed(t *testing.T) {
+	tests := []struct {
+		name      string
+		fusion    bool
+		mcpTools  []string
+		toolName  string
+		wantAllow bool
+	}{
+		{"fusion off denies even a listed service", false, []string{"wxca"}, "wxca_city_get", false},
+		{"fusion on with no entries admits nothing", true, nil, "wxca_city_get", false},
+		{"fusion on with an empty list admits nothing", true, []string{}, "wxca_city_get", false},
+		{"service name admits its tools", true, []string{"wxca"}, "wxca_city_get", true},
+		{"service name excludes other services", true, []string{"wxca"}, "microsoft365_mail_search", false},
+		{"group prefix admits its group", true, []string{"microsoft365_calendar"}, "microsoft365_calendar_read_summary", true},
+		{"group prefix excludes the rest of the service", true, []string{"microsoft365_calendar"}, "microsoft365_mail_search", false},
+		{"case-insensitive", true, []string{"WXCA"}, "wxca_City_Get", true},
+		{"an MCP server entry does not admit a Fusion tool", true, []string{"github"}, "wxca_city_get", false},
+		{"blank entry ignored", true, []string{" "}, "wxca_city_get", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &AgentConfig{ID: "alice", Fusion: tc.fusion, MCPTools: tc.mcpTools}
+			if got := a.FusionToolAllowed(tc.toolName); got != tc.wantAllow {
+				t.Errorf("FusionToolAllowed(%q) = %v, want %v", tc.toolName, got, tc.wantAllow)
+			}
+		})
+	}
+	var nilAgent *AgentConfig
+	if nilAgent.FusionToolAllowed("wxca_city_get") {
+		t.Error("nil agent must admit nothing")
+	}
+}

@@ -231,16 +231,12 @@ export function AgentCard({
           <p className="text-foreground text-sm font-semibold">Tools</p>
 
           {onMCPToolsChange !== undefined && (
-            <div className="space-y-1.5">
-              <p className="text-foreground text-xs font-semibold">
-                MCP access
-              </p>
-              <MCPAccessSelect
-                serverNames={mcpServers.map((s) => s.name)}
-                value={mcpTools}
-                onChange={onMCPToolsChange}
-              />
-            </div>
+            <MCPAccessSelect
+              serverNames={mcpServers.map((s) => s.name)}
+              fusionServices={availableTools.fusion_services ?? []}
+              value={mcpTools}
+              onChange={onMCPToolsChange}
+            />
           )}
 
           {availableTools.tools.length > 0 && (

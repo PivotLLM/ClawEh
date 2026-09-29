@@ -593,7 +593,8 @@ export function AgentsPage() {
                         </div>
                       )}
                       {(availableTools.tools.length > 0 ||
-                        (availableTools.mcp_servers?.length ?? 0) > 0) && (
+                        (availableTools.mcp_servers?.length ?? 0) > 0 ||
+                        (availableTools.fusion_services?.length ?? 0) > 0) && (
                         <div className="space-y-1.5">
                           <button
                             type="button"

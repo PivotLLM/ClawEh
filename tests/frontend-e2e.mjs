@@ -692,7 +692,32 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     return `${PROBE}=0.77, ${other}=${otherTemp || "unset"}`
   })
 
-  await check(5, "delete the agent and confirm it is gone", async () => {
+  await check(5, "ticking a Fusion service adds it to mcp_tools and unticking removes it", async () => {
+    if (!created) return "skipped, never created"
+    const catalog = await api("/api/agents/tools")
+    const service = catalog.json?.fusion_services?.[0]
+    if (!service) return "skipped, no Fusion service defined on this instance"
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
+    const box = page.getByLabel(service, { exact: true }).first()
+    assert((await box.count()) > 0, `no "${service}" checkbox under Fusion services`)
+    assert(!(await box.isChecked()), `"${service}" already ticked on a new agent`)
+    await box.click()
+    await page.waitForTimeout(2000)
+    let c = await config()
+    let a = (c.agents.list ?? []).find((x) => x.id === PROBE)
+    assert((a?.mcp_tools ?? []).includes(service), `mcp_tools = ${JSON.stringify(a?.mcp_tools)}; expected ${service}`)
+    await box.click()
+    await page.waitForTimeout(2000)
+    await close()
+    c = await config()
+    a = (c.agents.list ?? []).find((x) => x.id === PROBE)
+    assert(!(a?.mcp_tools ?? []).includes(service), `mcp_tools = ${JSON.stringify(a?.mcp_tools)}; ${service} should be gone`)
+    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
+  })
+
+  await check(6, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()

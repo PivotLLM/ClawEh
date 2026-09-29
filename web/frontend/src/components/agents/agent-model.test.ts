@@ -5,6 +5,7 @@ import {
   maestroEditsFromAgent,
   maestroFromRaw,
   maestroPayload,
+  fusionAccessView,
   mcpAccessEntries,
   mcpAccessView,
 } from "./agent-model"
@@ -116,5 +117,43 @@ describe("mcp access", () => {
       s.name === "fusion" ? { ...s, checked: false } : s,
     )
     expect(mcpAccessEntries(rows)).toEqual(["GitHub"])
+  })
+
+  it("leaves entries owned by a Fusion service to the Fusion list", () => {
+    const rows = mcpAccessView(
+      ["github", "wxca", "microsoft365_calendar", "old"],
+      servers,
+      ["wxca", "microsoft365"],
+    )
+    expect(rows.slice(2)).toEqual([{ name: "old", checked: true, configured: false }])
+  })
+})
+
+describe("fusion services", () => {
+  const services = ["microsoft365", "wxca"]
+
+  it("checks named services case-insensitively and ignores MCP entries", () => {
+    expect(fusionAccessView(["WXCA", "github"], services)).toEqual([
+      { name: "microsoft365", checked: false, configured: true },
+      { name: "wxca", checked: true, configured: true },
+    ])
+  })
+
+  it("shows a group within a service as its own unflagged row", () => {
+    const rows = fusionAccessView(["microsoft365_calendar"], services)
+    expect(rows).toEqual([
+      { name: "microsoft365", checked: false, configured: true },
+      { name: "wxca", checked: false, configured: true },
+      { name: "microsoft365_calendar", checked: true, configured: true },
+    ])
+  })
+
+  it("ticking a service adds it beside the MCP entries", () => {
+    const entries = ["github"]
+    const mcp = mcpAccessView(entries, ["github"], services)
+    const fusion = fusionAccessView(entries, services).map((s) =>
+      s.name === "wxca" ? { ...s, checked: true } : s,
+    )
+    expect(mcpAccessEntries([...mcp, ...fusion])).toEqual(["github", "wxca"])
   })
 })
