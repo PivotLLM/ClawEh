@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-144 checks in all; the runner prints the same tally at the end.
+145 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -123,7 +123,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F5 | Under **Fusion services** on the `e2e-probe` card, tick the first listed service, wait ~2s; tick it again, wait ~2s | `mcp_tools` gains the service name on the first tick and loses it on the second; the earlier edits are untouched. Skipped when the instance defines no Fusion service (`GET /api/agents/tools` has no `fusion_services`) |
 | F6 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
 | F7 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** a warning names the model and the flag, says the flag is ignored because the setting is off for that provider, and links to the Providers page |
-| F8 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
+| F8 | Through the API add twenty temporary enabled models; select an agent, open **Add model…**, scroll the list with the wheel twice; remove the models again | The list scrolls, does not jump back, and the popup keeps its height throughout. In Radix Select's item-aligned mode the popup grows and the scroll position is rewritten on every scroll event, which on a phone flickers and snaps back to the top on release; every select uses popper mode |
+| F9 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
 ## G. System page
 

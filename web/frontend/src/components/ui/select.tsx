@@ -55,10 +55,16 @@ function SelectTrigger({
   )
 }
 
+// position defaults to "popper": an ordinary dropdown under the trigger, sized
+// to the space available, scrolled by the browser. Radix's "item-aligned" mode
+// centres the list on the current value and then "expands on scroll", growing
+// the popup and rewriting the scroll position on every scroll event; with a
+// long list on a phone that flickers under the finger and jumps back to the
+// top on release.
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  position = "popper",
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {

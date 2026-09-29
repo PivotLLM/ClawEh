@@ -876,6 +876,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Dropdowns no longer flicker and jump back to the top on phones.** Every
+  select opened in Radix Select's item-aligned mode, which centres the list on
+  the current value and then grows the popup and rewrites the scroll position on
+  every scroll event; a long list such as an agent's models could not be
+  scrolled by touch. Selects now open as ordinary dropdowns under their control
+  and scroll like any list.
 - **The Agents page no longer shows "No agents yet" on a return visit.** Coming
   back to the page through the sidebar mounted it with its data already cached,
   and the list was seeded only when a new fetch landed, so the cached agents

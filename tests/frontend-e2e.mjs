@@ -766,7 +766,53 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(link > 0, "the warning has no link to the Providers page")
   })
 
-  await check(8, "delete the agent and confirm it is gone", async () => {
+  await check(8, "a long dropdown keeps its size and scroll position while scrolling", async () => {
+    // Radix Select's item-aligned mode grows the popup and rewrites the scroll
+    // position on every scroll event; on a phone the list flickers and snaps
+    // back to the top on release. The wheel goes through the same code, so this
+    // desktop check catches a return to that mode. The list is made long with
+    // twenty temporary models, removed again afterwards.
+    const c = await config()
+    const origModels = c.models ?? []
+    const base = origModels.find((m) => m.enabled)
+    if (!base) return "skipped, no enabled model to clone"
+    const rail = (c.agents.list ?? []).map((a) => a.name || a.id).filter((n) => n !== PROBE)
+    assert(rail.length >= 1, "need an agent")
+    const extra = Array.from({ length: 20 }, (_, i) => ({ ...base, model_name: `zz-e2e-scroll-${String(i + 1).padStart(2, "0")}`, enabled: true }))
+    const added = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: [...origModels, ...extra] }) })
+    assert(added.status === 200, `adding models = ${added.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: rail[0], exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("combobox").filter({ hasText: /Add model/ }).first().click()
+      await page.waitForTimeout(400)
+      const viewport = page.locator("[data-radix-select-viewport]").first()
+      const content = page.locator("[data-slot=select-content]").first()
+      const size = async () => (await content.boundingBox())?.height ?? 0
+      const top = () => viewport.evaluate((v) => Math.round(v.scrollTop))
+      const before = await size()
+      const box = await viewport.boundingBox()
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.wheel(0, 240)
+      await page.waitForTimeout(150)
+      const during = await top()
+      await page.mouse.wheel(0, 240)
+      await page.waitForTimeout(600)
+      const after = await top()
+      const afterSize = await size()
+      await page.keyboard.press("Escape")
+      await close()
+      assert(during > 0, "the list did not scroll")
+      assert(after >= during, `the list jumped back: ${during} then ${after}`)
+      assert(Math.abs(afterSize - before) < 2, `the popup resized while scrolling: ${Math.round(before)} -> ${Math.round(afterSize)}`)
+      return `scrolled to ${after}px, popup ${Math.round(before)}px throughout`
+    } finally {
+      await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: origModels }) })
+    }
+  })
+
+  await check(9, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
