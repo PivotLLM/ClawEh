@@ -286,13 +286,16 @@ func gatewayCmd(debug bool) error {
 	// truth; the MCP-host default below uses the same set).
 	config.SetDefaultAgentTools(tools.DefaultEnabledToolNames())
 
-	dispatcher := providers.NewProviderDispatcher(cfg)
-
 	// Operator alerts: parked models, unreachable MCP servers, channels that
-	// give up, failed jobs and reloads. Closed in shutdownGateway.
+	// give up, failed jobs and reloads. Closed in shutdownGateway. Installed
+	// before anything that can raise one at startup: the dispatcher below
+	// alerts for a CLI provider running without its bypass flag, and an alert
+	// sent before Set reaches the no-op default and is lost.
 	operatorAlerter, alertsPath := newAlerter(baseDir)
 	alerts.Set(operatorAlerter)
 	refAlerts.report(operatorAlerter, bootDanglingRefs)
+
+	dispatcher := providers.NewProviderDispatcher(cfg)
 	openAuditLog(baseDir)
 	// A core service that dies after startup takes the process down through
 	// here, so the service manager restarts it; see fatal.go.
