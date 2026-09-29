@@ -1,0 +1,493 @@
+{
+  "services": {
+    "wxca": {
+      "name": "Environment and Climate Change Canada Weather",
+      "baseURL": "https://api.weather.gc.ca",
+      "auth": {
+        "type": "none",
+        "config": {}
+      },
+      "retry": {
+        "enabled": true,
+        "maxAttempts": 3,
+        "strategy": "exponential",
+        "baseDelay": "1s",
+        "maxDelay": "10s",
+        "jitter": true,
+        "backoffFactor": 2.0,
+        "retryableErrors": [
+          "network_error",
+          "timeout",
+          "server_error",
+          "rate_limited"
+        ]
+      },
+      "circuitBreaker": {
+        "enabled": true,
+        "failureThreshold": 5,
+        "successThreshold": 2,
+        "timeout": "30s",
+        "halfOpenMaxCalls": 2,
+        "resetTimeout": "60s"
+      },
+      "endpoints": [
+        {
+          "id": "city_search",
+          "name": "Search Weather Canada Locations",
+          "description": "Find Weather Canada city-page forecast locations. Use q for a city or community name when supported by the API. A bbox can instead restrict results geographically. Returns only the feature id, name, region, and coordinates for each match (not the full weather record); pass a selected id to city_get. For ambiguous names, inspect name and region before choosing.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "q",
+              "description": "Free-text location search, such as Ottawa, Montréal, Saint John, or Yellowknife. If the server does not support free-text search for this collection, use bbox or city_list instead.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "examples": [
+                "Ottawa",
+                "Montréal",
+                "Saint John"
+              ]
+            },
+            {
+              "name": "bbox",
+              "description": "Optional bounding box as west,south,east,north in longitude/latitude (EPSG:4326), for example -75.9,45.2,-75.4,45.6 for the Ottawa area.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "validation": {
+                "pattern": "^-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?$"
+              },
+              "examples": [
+                "-75.9,45.2,-75.4,45.6"
+              ]
+            },
+            {
+              "name": "limit",
+              "description": "Maximum number of matching locations to return.",
+              "type": "number",
+              "required": false,
+              "location": "query",
+              "default": 20,
+              "validation": {
+                "minimum": 1,
+                "maximum": 100
+              }
+            },
+            {
+              "name": "offset",
+              "description": "Zero-based result offset for paging.",
+              "type": "number",
+              "required": false,
+              "location": "query",
+              "default": 0,
+              "validation": {
+                "minimum": 0
+              }
+            },
+            {
+              "name": "lang",
+              "description": "Metadata language.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "en",
+              "validation": {
+                "enum": [
+                  "en",
+                  "fr"
+                ]
+              }
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "Restrict returned feature properties to keep responses small. Defaults to name and region only.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "15m",
+              "key": "weather-canada:city-search:{q}:{bbox}:{limit}:{offset}:{lang}"
+            }
+          }
+        },
+        {
+          "id": "city_list",
+          "name": "List Weather Canada Locations",
+          "description": "List Weather Canada city-page locations and their feature IDs. Use this when free-text search is unavailable or when resolving an ambiguous place name. Page with limit and offset, then call city_get with the chosen feature ID.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "limit",
+              "description": "Number of locations to return.",
+              "type": "number",
+              "required": false,
+              "location": "query",
+              "default": 100,
+              "validation": {
+                "minimum": 1,
+                "maximum": 500
+              }
+            },
+            {
+              "name": "offset",
+              "description": "Zero-based result offset.",
+              "type": "number",
+              "required": false,
+              "location": "query",
+              "default": 0,
+              "validation": {
+                "minimum": 0
+              }
+            },
+            {
+              "name": "bbox",
+              "description": "Optional west,south,east,north bounding box in longitude/latitude.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "validation": {
+                "pattern": "^-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?$"
+              }
+            },
+            {
+              "name": "lang",
+              "description": "Metadata language.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "en",
+              "validation": {
+                "enum": [
+                  "en",
+                  "fr"
+                ]
+              }
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "Restrict returned feature properties to keep responses small. Defaults to name and region only.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "1h",
+              "key": "weather-canada:city-list:{bbox}:{limit}:{offset}:{lang}"
+            }
+          }
+        },
+        {
+          "id": "city_current",
+          "name": "Get Current Weather Conditions",
+          "description": "Get only the compact English current observations for one forecast-location feature ID, such as on-118 or qc-147: temperature, condition, wind direction/speed/gust, wind chill, humidity, dewpoint, pressure, station, observation time, and any active warnings. No forecast is included; use city_get for the 7-day day/night outlook or city_hourly for the next 24 hours.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "identifier",
+              "description": "Weather Canada city-page feature ID returned by city_search or city_list, for example on-118, qc-147, bc-74, or ns-19.",
+              "type": "string",
+              "required": true,
+              "location": "query",
+              "validation": {
+                "pattern": "^[a-z]{2}-[a-z0-9]+$",
+                "minLength": 4,
+                "maxLength": 32
+              },
+              "examples": [
+                "on-118",
+                "qc-147",
+                "bc-74"
+              ]
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "English current-conditions fields. Static; keeps the response small.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en,currentConditions.condition.en,currentConditions.temperature.value.en,currentConditions.temperature.units.en,currentConditions.dewpoint.value.en,currentConditions.relativeHumidity.value.en,currentConditions.relativeHumidity.units.en,currentConditions.wind.direction.value.en,currentConditions.wind.speed.value.en,currentConditions.wind.speed.units.en,currentConditions.wind.gust.value.en,currentConditions.windChill.value.en,currentConditions.pressure.value.en,currentConditions.pressure.units.en,currentConditions.pressure.tendency.en,currentConditions.timestamp.en,currentConditions.station.value.en,warnings",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "5m",
+              "key": "weather-canada:current:{identifier}"
+            }
+          }
+        },
+        {
+          "id": "city_get",
+          "name": "Get Current Weather and 7-Day Forecast",
+          "description": "Get a compact English city-page weather record for one forecast-location feature ID, such as on-118 or qc-147. Returns current observations (temperature, condition, wind, gust, humidity, dewpoint, pressure, wind chill, station, observation time) and the official day/night forecast periods covering about seven days (forecast text plus high/low temperatures), with sunrise/sunset and any active warnings. Hourly forecasts are not included here; use city_hourly for those.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "identifier",
+              "description": "Weather Canada city-page feature ID returned by city_search or city_list, for example on-118, qc-147, bc-74, or ns-19.",
+              "type": "string",
+              "required": true,
+              "location": "query",
+              "validation": {
+                "pattern": "^[a-z]{2}-[a-z0-9]+$",
+                "minLength": 4,
+                "maxLength": 32
+              },
+              "examples": [
+                "on-118",
+                "qc-147",
+                "bc-74"
+              ]
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "English current-conditions and 7-day forecast fields. Static; keeps the response small.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en,currentConditions.condition.en,currentConditions.temperature.value.en,currentConditions.temperature.units.en,currentConditions.dewpoint.value.en,currentConditions.relativeHumidity.value.en,currentConditions.relativeHumidity.units.en,currentConditions.wind.direction.value.en,currentConditions.wind.speed.value.en,currentConditions.wind.speed.units.en,currentConditions.wind.gust.value.en,currentConditions.windChill.value.en,currentConditions.pressure.value.en,currentConditions.pressure.units.en,currentConditions.pressure.tendency.en,currentConditions.timestamp.en,currentConditions.station.value.en,forecastGroup.forecasts.period.textForecastName.en,forecastGroup.forecasts.textSummary.en,forecastGroup.forecasts.temperatures.temperature.value.en,forecastGroup.forecasts.temperatures.temperature.class.en,riseSet.sunrise.en,riseSet.sunset.en,warnings",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "5m",
+              "key": "weather-canada:city:{identifier}"
+            }
+          }
+        },
+        {
+          "id": "city_hourly",
+          "name": "Get Hourly Forecast",
+          "description": "Get the compact English hourly forecast for one forecast-location feature ID, such as on-118 or qc-147. Returns each upcoming hour with its UTC timestamp, condition, temperature (C), chance of precipitation (lop, %), humidex, and wind speed/direction. Use city_get for current conditions and the 7-day day/night outlook.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "identifier",
+              "description": "Weather Canada city-page feature ID returned by city_search or city_list, for example on-118, qc-147, bc-74, or ns-19.",
+              "type": "string",
+              "required": true,
+              "location": "query",
+              "validation": {
+                "pattern": "^[a-z]{2}-[a-z0-9]+$",
+                "minLength": 4,
+                "maxLength": 32
+              },
+              "examples": [
+                "on-118",
+                "qc-147",
+                "bc-74"
+              ]
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "English hourly forecast fields. Static; keeps the response small.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en,hourlyForecastGroup.hourlyForecasts.timestamp,hourlyForecastGroup.hourlyForecasts.condition.en,hourlyForecastGroup.hourlyForecasts.temperature.value.en,hourlyForecastGroup.hourlyForecasts.lop.value.en,hourlyForecastGroup.hourlyForecasts.humidex.value.en,hourlyForecastGroup.hourlyForecasts.wind.speed.value.en,hourlyForecastGroup.hourlyForecasts.wind.direction.value.en",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "5m",
+              "key": "weather-canada:hourly:{identifier}"
+            }
+          }
+        },
+        {
+          "id": "city_near_coordinates",
+          "name": "Find Forecast Locations Near Coordinates",
+          "description": "Find Weather Canada city-page forecast locations near known coordinates. Supply a small west,south,east,north bounding box around the point. Select the closest returned feature by geometry, then call city_get with its ID.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/items",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "bbox",
+              "description": "Required bounding box as west,south,east,north in longitude/latitude. For a point, start with roughly ±0.5 degrees and widen if no location is returned.",
+              "type": "string",
+              "required": true,
+              "location": "query",
+              "validation": {
+                "pattern": "^-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?$"
+              },
+              "examples": [
+                "-76.2,44.9,-75.2,45.9"
+              ]
+            },
+            {
+              "name": "limit",
+              "description": "Maximum nearby forecast locations.",
+              "type": "number",
+              "required": false,
+              "location": "query",
+              "default": 20,
+              "validation": {
+                "minimum": 1,
+                "maximum": 100
+              }
+            },
+            {
+              "name": "lang",
+              "description": "Metadata language.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "en",
+              "validation": {
+                "enum": [
+                  "en",
+                  "fr"
+                ]
+              }
+            },
+            {
+              "name": "f",
+              "description": "Force GeoJSON/JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            },
+            {
+              "name": "properties",
+              "description": "Restrict returned feature properties to keep responses small. Defaults to name and region only; geometry is still returned so you can pick the closest location.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "name.en,region.en",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "30m",
+              "key": "weather-canada:near:{bbox}:{limit}:{lang}"
+            }
+          }
+        },
+        {
+          "id": "city_schema",
+          "name": "Get Weather Canada City-Page Schema",
+          "description": "Return the current schema for the experimental city-page weather collection. Use this to interpret fields or diagnose upstream schema changes.",
+          "method": "GET",
+          "path": "/collections/citypageweather-realtime/schema",
+          "connection": {
+            "timeout": "30s"
+          },
+          "parameters": [
+            {
+              "name": "f",
+              "description": "Force JSON output.",
+              "type": "string",
+              "required": false,
+              "location": "query",
+              "default": "json",
+              "static": true
+            }
+          ],
+          "response": {
+            "type": "json",
+            "caching": {
+              "enabled": true,
+              "ttl": "24h",
+              "key": "weather-canada:city-schema"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

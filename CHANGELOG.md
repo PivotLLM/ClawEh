@@ -271,6 +271,13 @@ observe does not need an entry.
 
 ### Added
 
+- **Startup checks for the two states that silently cost agents their tools.**
+  An agent with Fusion on and no service listed in `mcp_tools` raises "Fusion
+  on for `<agent>`, no service listed" (id `fusion-empty:<agent>`) once per
+  process, and the Check Up page marks it for action. A CLI provider with
+  "Bypass CLI restrictions" off raises "`<CLI>` runs under its own permissions"
+  (id `bypass-off:<protocol>`) once per process, and the Check Up page lists it
+  as an awareness row beside the existing one for providers with it on.
 - **A CLI that refuses tool calls is reported, not hidden.** With "Bypass CLI
   restrictions" off, the Claude CLI still answers in prose when its permission
   check refuses a call, so an agent's job could fail with only the model's own

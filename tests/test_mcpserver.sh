@@ -47,6 +47,8 @@ BEARER_ENDPOINT="${BEARER_ENDPOINT:-}"   # optional: bearer endpoint path (e.g. 
 PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
+FUSION_SERVICE="${FUSION_SERVICE:-}"   # optional: a Fusion service the token's agent lists in mcp_tools
+UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of an agent with Fusion on and nothing listed
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 GATEWAY_LOG="${GATEWAY_LOG:-}"     # optional: the gateway's log file, for background-behaviour checks
@@ -1054,6 +1056,62 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
             echo "    ${GREEN}PASS${NC}: all namespaces present after reload"
             PASS_COUNT=$((PASS_COUNT + 1))
         fi
+    fi
+fi
+
+################################################################################
+# 8. Fusion service gating on the running binary
+################################################################################
+# The gate's instance defines one Fusion service (FUSION_SERVICE). The agent
+# behind SESSION_TOKEN lists it in mcp_tools; the agent behind
+# UNGRANTED_SERVICE_TOKEN has Fusion on and lists nothing. The first must be
+# able to call the service's tools, the second must be refused with the
+# not-enabled message. Pins the per-agent gating end to end, so a refactor that
+# stops consulting mcp_tools for Fusion tools fails here, not in production.
+if [ -n "$FUSION_SERVICE" ]; then
+    print_section "8. Fusion service gating ($FUSION_SERVICE)"
+    FUSION_TOOL="${FUSION_SERVICE}_city_search"
+
+    echo "  8.1 tools/list publishes the granted agent's Fusion tools"
+    if echo "$LIST_OUT" | grep -qF "$FUSION_TOOL"; then
+        echo "    ${GREEN}PASS${NC}: $FUSION_TOOL listed"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: $FUSION_TOOL not in tools/list"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    echo "  8.2 the agent listing the service may call its tools"
+    if [ -n "$SESSION_TOKEN" ]; then
+        fg=$(probe_call_auth "$FUSION_TOOL" '{"q":"Ottawa"}')
+        if echo "$fg" | grep -qi "not enabled for this agent"; then
+            echo "    ${RED}FAIL${NC}: refused although mcp_tools lists $FUSION_SERVICE"
+            echo "$fg" | head -5 | sed 's/^/      /'
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        else
+            # The call reached the Fusion handler; a network failure past that
+            # point is not a gating result.
+            echo "    ${GREEN}PASS${NC}: call reached the Fusion tool"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        fi
+    else
+        echo "    SKIP: needs SESSION_TOKEN"
+    fi
+
+    echo "  8.3 the agent listing no service is refused"
+    if [ -n "$UNGRANTED_SERVICE_TOKEN" ]; then
+        ug=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+            -call "$FUSION_TOOL" -params "$(printf '{"q":"Ottawa","session_token":"%s"}' "$UNGRANTED_SERVICE_TOKEN")" 2>&1)
+        if echo "$ug" | grep -qi "not enabled for this agent"; then
+            echo "    ${GREEN}PASS${NC}: refused with the not-enabled message"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: an agent with Fusion on and nothing listed reached $FUSION_TOOL"
+            echo "$ug" | head -5 | sed 's/^/      /'
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+    else
+        echo "    SKIP: needs UNGRANTED_SERVICE_TOKEN"
     fi
 fi
 

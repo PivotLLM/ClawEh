@@ -165,6 +165,16 @@ export function mcpAccessEntries(rows: MCPAccessServer[]): string[] {
   return rows.filter((s) => s.checked).map((s) => s.name)
 }
 
+// toggleAccessEntry adds the name to the entries when absent and removes it
+// (case-insensitively) when present. It works on the entry list, not on the
+// rows, because one entry can back a row in both lists at once: a name that is
+// an MCP server and a Fusion service (simpledoc) is one grant for both, so
+// either checkbox toggles the same entry and both rows follow.
+export function toggleAccessEntry(entries: string[], name: string): string[] {
+  const present = entries.some((e) => norm(e) === norm(name))
+  return present ? entries.filter((e) => norm(e) !== norm(name)) : [...entries, name]
+}
+
 // settingsCardClass groups a set of agent settings into one bordered card.
 export const settingsCardClass =
   "border-border/60 bg-card rounded-xl border p-4 space-y-5"

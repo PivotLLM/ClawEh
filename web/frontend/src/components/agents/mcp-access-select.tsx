@@ -2,8 +2,8 @@ import { useState } from "react"
 
 import {
   fusionAccessView,
-  mcpAccessEntries,
   mcpAccessView,
+  toggleAccessEntry,
   type MCPAccessServer,
 } from "@/components/agents/agent-model"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -18,9 +18,10 @@ interface MCPAccessSelectProps {
 // MCPAccessSelect edits an agent's mcp_tools as two checkbox lists over the one
 // entry list: MCP access, one box per configured MCP server, and Fusion
 // services, one box per Fusion service (applied when the agent's Fusion switch
-// is on). Checked grants every tool of the server or service. An entry that
-// names neither stays visible under MCP access, checked and flagged, so it can
-// be removed.
+// is on). Checked grants every tool of the server or service. A name that is
+// both a server and a service is one entry shown in both lists; either box
+// toggles it. An entry that names neither stays visible under MCP access,
+// checked and flagged, so it can be removed.
 export function MCPAccessSelect({
   serverNames,
   fusionServices,
@@ -33,15 +34,8 @@ export function MCPAccessSelect({
   const mcpRows = mcpAccessView(entries, serverNames, fusionServices)
   const fusionRows = fusionAccessView(entries, fusionServices)
 
-  const flip = (rows: MCPAccessServer[], name: string) =>
-    rows.map((s) => (s.name === name ? { ...s, checked: !s.checked } : s))
-  const toggleMCP = (name: string) => {
-    const next = mcpAccessEntries([...flip(mcpRows, name), ...fusionRows])
-    setEntries(next)
-    onChange(next)
-  }
-  const toggleFusion = (name: string) => {
-    const next = mcpAccessEntries([...mcpRows, ...flip(fusionRows, name)])
+  const toggle = (name: string) => {
+    const next = toggleAccessEntry(entries, name)
     setEntries(next)
     onChange(next)
   }
@@ -56,7 +50,7 @@ export function MCPAccessSelect({
           </span>
         ) : (
           <>
-            <AccessGrid rows={mcpRows} onToggle={toggleMCP} />
+            <AccessGrid rows={mcpRows} onToggle={toggle} />
             <p className="text-muted-foreground text-xs">
               A checked server grants all of its tools. Nothing checked = no
               MCP tools.
@@ -69,7 +63,7 @@ export function MCPAccessSelect({
           <p className="text-foreground text-xs font-semibold">
             Fusion services
           </p>
-          <AccessGrid rows={fusionRows} onToggle={toggleFusion} />
+          <AccessGrid rows={fusionRows} onToggle={toggle} />
           <p className="text-muted-foreground text-xs">
             A checked service grants all of its tools when Fusion is on.
             Nothing checked = no Fusion tools.

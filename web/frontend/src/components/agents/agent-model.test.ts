@@ -8,6 +8,7 @@ import {
   fusionAccessView,
   mcpAccessEntries,
   mcpAccessView,
+  toggleAccessEntry,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -149,11 +150,27 @@ describe("fusion services", () => {
   })
 
   it("ticking a service adds it beside the MCP entries", () => {
-    const entries = ["github"]
-    const mcp = mcpAccessView(entries, ["github"], services)
-    const fusion = fusionAccessView(entries, services).map((s) =>
-      s.name === "wxca" ? { ...s, checked: true } : s,
-    )
-    expect(mcpAccessEntries([...mcp, ...fusion])).toEqual(["github", "wxca"])
+    expect(toggleAccessEntry(["github"], "wxca")).toEqual(["github", "wxca"])
+  })
+
+  it("a name that is both a server and a service is one entry shown in both lists", () => {
+    const servers = ["simpledoc", "github"]
+    const both = ["simpledoc", ...services]
+    let entries = ["simpledoc"]
+    expect(mcpAccessView(entries, servers, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
+    expect(fusionAccessView(entries, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
+    // Unticking it in either list removes the one entry, so both rows clear.
+    entries = toggleAccessEntry(entries, "simpledoc")
+    expect(entries).toEqual([])
+    expect(mcpAccessView(entries, servers, both)[0].checked).toBe(false)
+    expect(fusionAccessView(entries, both)[0].checked).toBe(false)
+    // Ticking it again restores both.
+    entries = toggleAccessEntry(entries, "simpledoc")
+    expect(fusionAccessView(entries, both)[0].checked).toBe(true)
+  })
+
+  it("toggling removes case-insensitively and never duplicates", () => {
+    expect(toggleAccessEntry(["WXCA", "github"], "wxca")).toEqual(["github"])
+    expect(toggleAccessEntry(["github"], "github")).toEqual([])
   })
 })

@@ -242,10 +242,26 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	// Awareness only, not an action mark: the operator turned it on, and the
 	// row says what that means. One per CLI provider so each is named.
 	for i := range cfg.Providers {
-		if p := &cfg.Providers[i]; p.BypassRestrictions && config.IsCLIProtocol(p.Protocol) {
+		p := &cfg.Providers[i]
+		if !config.IsCLIProtocol(p.Protocol) {
+			continue
+		}
+		if p.BypassRestrictions {
 			add(false, "Bypass CLI restrictions ("+p.Name+")",
 				"Bypass CLI restrictions is on for "+p.Name+": it can run commands and modify files anywhere the service user can, "+
 					"outside ClawEh's workspace and shell controls.")
+			continue
+		}
+		add(false, "Bypass CLI restrictions off ("+p.Name+")",
+			"Bypass CLI restrictions is off for "+p.Name+": whether its tool calls run depends on the CLI's own permission settings.")
+	}
+
+	// Fusion on with nothing granted is the state an upgrade from the
+	// all-or-nothing switch leaves behind: the agent has no Fusion tools.
+	for _, a := range enabledAgents(cfg) {
+		if a.Fusion && len(a.MCPTools) == 0 {
+			add(true, "Fusion on with no service ("+a.ID+")",
+				"Fusion is on for "+a.ID+" but no service is listed, so it has no Fusion tools. Tick its services under Fusion services on the Agents page.")
 		}
 	}
 

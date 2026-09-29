@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivotLLM/spawnllm"
@@ -257,17 +258,36 @@ func shortToolNames(names []string) []string {
 	return out
 }
 
+// bypassOffAlerted holds the CLI providers already alerted for running under
+// the CLI's own permissions: once per provider per process.
+var bypassOffAlerted sync.Map
+
 // logBypassEnabled writes one INFO line per CLI provider running with its
-// permission-bypass flag, so a startup log states what the CLI may do.
+// permission-bypass flag, so a startup log states what the CLI may do, and
+// raises one alert per CLI provider running without it: whether that CLI's
+// tool calls run then depends on the CLI's own permission settings, which an
+// operator upgrading from the always-on flag has not chosen.
 func logBypassEnabled(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
-		if p.BypassRestrictions && config.IsCLIProtocol(p.Protocol) {
+		if !config.IsCLIProtocol(p.Protocol) {
+			continue
+		}
+		if p.BypassRestrictions {
 			logger.InfoCF("provider", "Bypass CLI restrictions is on: the CLI can run commands and edit files anywhere the service user can, without asking",
 				map[string]any{"provider": p.Name, "protocol": p.Protocol})
+			continue
 		}
+		if _, dup := bypassOffAlerted.LoadOrStore(strings.ToLower(p.Name), true); dup {
+			continue
+		}
+		alerts.Send(alerter.Alert{
+			Title:       p.Name + " runs under its own permissions",
+			Description: "Bypass CLI restrictions is off for " + p.Name + ": whether its tool calls run depends on the CLI's own permission settings. Tick it on the Providers page to pass the bypass flag.",
+			EventID:     "bypass-off:" + p.Protocol,
+		})
 	}
 }

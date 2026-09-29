@@ -26,17 +26,47 @@ func TestAssessment_BypassCLIRestrictions(t *testing.T) {
 	}
 	contains(t, r[2], "Bypass CLI restrictions is on for Claude CLI", "row status")
 	contains(t, r[2], "outside ClawEh's workspace and shell controls", "row status")
-	for _, row := range s.Tables[0].Rows {
-		if strings.Contains(row[1], "Codex CLI") {
-			t.Errorf("row for a CLI with bypass off: %v", row)
-		}
+	// A CLI with bypass off gets its own awareness row: its tool calls depend
+	// on the CLI's permission settings.
+	off := assessmentRow(t, s, "Bypass CLI restrictions off (Codex CLI)")
+	if off[0] != "" {
+		t.Errorf("mark = %q, want blank: awareness, not an action", off[0])
 	}
+	contains(t, off[2], "depends on the CLI's own permission settings", "row status")
 
 	cfg.Providers[1].BypassRestrictions = false
 	s = collectAssessment(t.Context(), cfg, env)
 	for _, row := range s.Tables[0].Rows {
-		if strings.HasPrefix(row[1], "Bypass CLI restrictions") {
-			t.Errorf("row present with every bypass off: %v", row)
+		if row[1] == "Bypass CLI restrictions (Claude CLI)" {
+			t.Errorf("on-row present with every bypass off: %v", row)
+		}
+	}
+	assessmentRow(t, s, "Bypass CLI restrictions off (Claude CLI)")
+}
+
+// TestAssessment_FusionNoService: an agent with Fusion on and nothing in
+// mcp_tools has no Fusion tools; that is marked for action. Listing a service
+// clears it, as does Fusion off.
+func TestAssessment_FusionNoService(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[1].Fusion = true // bob: no mcp_tools
+	s := collectAssessment(t.Context(), cfg, env)
+	r := assessmentRow(t, s, "Fusion on with no service (bob)")
+	if r[0] == "" {
+		t.Error("expected an action mark")
+	}
+	contains(t, r[2], "no Fusion tools", "row status")
+	for _, row := range s.Tables[0].Rows {
+		if strings.HasPrefix(row[1], "Fusion on with no service (alice)") {
+			t.Errorf("alice lists services (%v) and Fusion is off; row = %v", cfg.Agents.List[0].MCPTools, row)
+		}
+	}
+
+	cfg.Agents.List[1].MCPTools = []string{"wxca"}
+	s = collectAssessment(t.Context(), cfg, env)
+	for _, row := range s.Tables[0].Rows {
+		if strings.HasPrefix(row[1], "Fusion on with no service") {
+			t.Errorf("row present with a service listed: %v", row)
 		}
 	}
 }

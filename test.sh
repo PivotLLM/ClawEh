@@ -364,6 +364,8 @@ fi
 
 INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
+CLI_SMOKE_STATUS="skipped (set CLAW_TEST_CLI=1)"
+CLI_SMOKE_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
 declare -a INTEGRATION_FAILS=()   # one reason per failed check, repeated in the final summary
@@ -522,6 +524,21 @@ PY
                 # Passed only via environment — never written to a config file.
                 TEST_SESSION_TOKEN="SST$(openssl rand -hex 32)"
 
+                # One Fusion service (the MCPFusion module's own wxca sample, no
+                # credentials) so the probe suite can check per-agent Fusion
+                # gating on the running binary: main lists the service, alice
+                # has Fusion on but lists nothing and must get none of its tools.
+                FUSION_SAMPLE="$(go list -m -f '{{.Dir}}' github.com/PivotLLM/MCPFusion 2>/dev/null)/configs/wxca.json"
+                FUSION_SERVICE=""
+                if [ -f "$FUSION_SAMPLE" ]; then
+                    mkdir -p "$INTEG_HOME/fusion"
+                    cp "$FUSION_SAMPLE" "$INTEG_HOME/fusion/wxca.json"
+                    chmod 600 "$INTEG_HOME/fusion/wxca.json"
+                    FUSION_SERVICE="wxca"
+                else
+                    integ_fail "MCPFusion sample service not found at $FUSION_SAMPLE; Fusion gating checks cannot run"
+                fi
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
@@ -531,12 +548,15 @@ PY
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*", "cogmem_*"]
+        "tools": ["*", "cogmem_*"],
+        "fusion": true,
+        "mcp_tools": ["wxca"]
       },
       {
         "id": "alice",
         "name": "alice",
-        "tools": ["*", "cogmem_*"]
+        "tools": ["*", "cogmem_*"],
+        "fusion": true
       }
     ]
   },
@@ -661,7 +681,8 @@ PY
       "common_get",
       "common_put",
       "common_delete",
-      "time_now"
+      "time_now",
+      "wxca"
     ]
   }
 }
@@ -673,8 +694,9 @@ EOF
                 # gateway loads it at boot (exercises loadServiceTokens + the
                 # headless service session on /mcp + /internal).
                 TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
+                ALICE_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
                 mkdir -p "$INTEG_HOME/internal"
-                printf '{"main":"%s"}\n' "$TEST_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
+                printf '{"main":"%s","alice":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
@@ -760,6 +782,8 @@ EOF
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
+                       FUSION_SERVICE="$FUSION_SERVICE" \
+                       UNGRANTED_SERVICE_TOKEN="$ALICE_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        GATEWAY_LOG="$INTEG_LOG" \
@@ -773,6 +797,18 @@ EOF
                     fi
 
                     # ---- Workspace re-population: delete alice's dir and restart ----
+                    if [ "${CLAW_TEST_CLI:-}" = "1" ]; then
+                        echo ""
+                        echo "${BOLD}--- CLI provider smoke (opt-in) ---${NC}"
+                        echo ""
+                        if bash "$SCRIPT_DIR/tests/test_cli_provider.sh" "$INTEG_BIN"; then
+                            CLI_SMOKE_STATUS="passed"
+                        else
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI provider smoke (tests/test_cli_provider.sh) failed; see its output above"
+                        fi
+                    fi
                     echo ""
                     echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
                     echo ""
@@ -937,6 +973,7 @@ else
     echo "MCP integ:   ${RED}failed (probe not found)${NC}"
     OVERALL_PASS=false
 fi
+echo "CLI smoke:   ${CLI_SMOKE_STATUS}"
 
 echo ""
 

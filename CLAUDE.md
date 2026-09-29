@@ -238,6 +238,32 @@ Hard-won learnings (don't relearn these):
 - **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral ClawEh instance. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
+### Capability changes — the golden fixture and the BREAKING entry
+
+What an existing configuration lets each agent do is pinned by
+`tests/capabilities`: a production-shaped fixture (`testdata/fixture.json`, one
+Fusion service under `testdata/fusion/`) resolved into `testdata/effective.golden`,
+per agent (native tools, suites, the Fusion tools the real engine registers,
+MCP grants) and per CLI model (the exact command line and environment). It
+exists because two changes passed every unit test and still cost agents their
+tools in production: the CLI bypass flag becoming opt-in, and per-service Fusion
+gating disappearing when MCPFusion was folded in.
+
+- Any change under tool gating, allowlists (`tools`, `mcp_tools`,
+  `deny_tools`), suite switches (`fusion`, `maestro`, `cogmem`), provider or
+  CLI arguments and environment, or their defaults, changes that golden file.
+  Regenerate it in the same commit (`UPDATE_GOLDEN=1 go test
+  ./tests/capabilities/`), read the diff, and add a **BREAKING** changelog
+  entry that names the step restoring the previous access. Never regenerate it
+  to make the gate pass without doing both.
+- A default that changes what an existing install can do must also come with a
+  runtime signal (an alert and a Check Up row), so the operator learns of it
+  from the running system, not from a failed job.
+- The MCP integration test (`tests/test_mcpserver.sh`, section 8) checks the
+  Fusion gating on the running binary; the opt-in CLI smoke test
+  (`CLAW_TEST_CLI=1`, `tests/test_cli_provider.sh`) exercises a real CLI's
+  permission path. Extend them when a new kind of grant appears.
+
 ### WebUI regression suite — run it for any significant frontend change
 
 `make test` does not load a page. The browser suite is a separate target

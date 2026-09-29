@@ -5,10 +5,12 @@ package fusion
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
 // TestProvider_GatingOff verifies the per-agent gate: an agent without the fusion
@@ -82,5 +84,25 @@ func TestAllowedDefs(t *testing.T) {
 				t.Errorf("allowedDefs = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Fusion on with nothing granted alerts once per agent per process, naming the
+// agent and the Fusion services list.
+func TestAlertNoServices_OncePerAgent(t *testing.T) {
+	rec := testalerts.Install(t)
+	noServicesAlerted.Clear()
+	alertNoServices("Amber")
+	alertNoServices("amber")
+	alertNoServices("Karen")
+	got := rec.Alerts()
+	if len(got) != 2 {
+		t.Fatalf("alerts = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].EventID != "fusion-empty:Amber" || !strings.Contains(got[0].Title, "Amber") || !strings.Contains(got[0].Description, "Fusion services") {
+		t.Errorf("alert = %+v", got[0])
+	}
+	if got[1].EventID != "fusion-empty:Karen" {
+		t.Errorf("second alert = %+v", got[1])
 	}
 }

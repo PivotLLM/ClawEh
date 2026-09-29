@@ -173,13 +173,25 @@ func TestNewProviderDispatcher_LogsBypassEnabled(t *testing.T) {
 		{Name: "Cursor CLI", Protocol: "cursor-cli"},
 		{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", BypassRestrictions: true},
 	}
+	rec := testalerts.Install(t)
+	bypassOffAlerted.Clear()
 	NewProviderDispatcher(cfg)
+	NewProviderDispatcher(cfg) // a rebuild does not alert again
 
 	out := buf.String()
-	if strings.Count(out, "Bypass CLI restrictions is on") != 1 || !strings.Contains(out, "Codex CLI") {
-		t.Errorf("want exactly one line, for Codex CLI:\n%s", out)
+	if strings.Count(out, "Bypass CLI restrictions is on") != 2 || !strings.Contains(out, "Codex CLI") {
+		t.Errorf("want one line per build, for Codex CLI:\n%s", out)
 	}
 	if strings.Contains(out, "Cursor CLI") || strings.Contains(out, "OpenAI") {
 		t.Errorf("logged a provider without bypass, or a non-CLI:\n%s", out)
+	}
+	// The CLI running without its bypass flag raises one alert per process;
+	// the CLI with it on and the HTTP provider raise none.
+	got := rec.Alerts()
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].EventID != "bypass-off:cursor-cli" || !strings.Contains(got[0].Title, "Cursor CLI") || !strings.Contains(got[0].Description, "Bypass CLI restrictions is off for Cursor CLI") {
+		t.Errorf("alert = %+v", got[0])
 	}
 }

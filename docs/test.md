@@ -35,10 +35,31 @@ frontend-deps`, or `pnpm install --frozen-lockfile` in `web/frontend`; the gate
 does not install them itself. A missing `oxlint` skips only the lint step.
 
 **MCP integration.** Builds the binary, starts a real ClawEh instance in a temporary
-`CLAW_HOME` with the MCP host enabled, drives it with the `probe` tool
-(MCPProbe) and checks workspace, PID-file and restart behaviour, then tears
-everything down. `probe` must be on `PATH` (or set `PROBE_PATH`); if it is not
-found this section counts as a failure, because the full suite did not run.
+`CLAW_HOME` with the MCP host enabled and one Fusion service (the MCPFusion
+module's `wxca` sample), drives it with the `probe` tool (MCPProbe) and checks
+workspace, PID-file and restart behaviour, then tears everything down. Section 8
+of `tests/test_mcpserver.sh` checks per-agent Fusion gating on the running
+binary: the agent whose `mcp_tools` lists the service can call its tools, the
+agent with Fusion on and nothing listed is refused. `probe` must be on `PATH`
+(or set `PROBE_PATH`); if it is not found this section counts as a failure,
+because the full suite did not run.
+
+**Effective capabilities (part of the Go tests).** `tests/capabilities` loads a
+production-shaped fixture and pins, per agent and per CLI model, what it may do:
+native tools, suites, the Fusion tools the real engine registers, MCP grants,
+CLI command lines and environment. It fails when any of that changes until
+`testdata/effective.golden` is regenerated (`UPDATE_GOLDEN=1 go test
+./tests/capabilities/`), which is the moment to write the BREAKING changelog
+entry. See "Capability changes" in `CLAUDE.md`.
+
+**CLI provider smoke (opt-in).** With `CLAW_TEST_CLI=1`, `test.sh` also runs
+`tests/test_cli_provider.sh` against the built binary: one turn through a real
+Claude CLI with "Bypass CLI restrictions" off, asking for a tool call the CLI
+must approve. It passes when the tool ran or when the turn ended with the
+"declined to use tools" error naming the setting; silence or a timeout fails.
+It costs one model call on the CLI account, so it is off by default and the
+summary prints `CLI smoke: skipped`. `CLAW_TEST_CLI_COMMAND` names another CLI
+binary.
 
 Useful flags:
 
