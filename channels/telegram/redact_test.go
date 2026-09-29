@@ -153,7 +153,9 @@ func TestPollFailed_RedactsToken(t *testing.T) {
 // cloned from) has been used and so advertises h2 in its ALPN list.
 func TestNewHTTPTransport_HTTP1Only(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, r.Proto)
+		if _, err := io.WriteString(w, r.Proto); err != nil {
+			t.Error(err)
+		}
 	}))
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
@@ -163,7 +165,7 @@ func TestNewHTTPTransport_HTTP1Only(t *testing.T) {
 	// state the production process is in by the time a bot connects. The
 	// request itself fails on the untrusted test certificate; that is fine.
 	if resp, err := http.DefaultClient.Get(srv.URL); err == nil {
-		_ = resp.Body.Close()
+		require.NoError(t, resp.Body.Close())
 	}
 
 	tr, err := newHTTPTransport("")
@@ -181,9 +183,9 @@ func TestNewHTTPTransport_HTTP1Only(t *testing.T) {
 	client := &http.Client{Transport: tr}
 	resp, err := client.Get(srv.URL)
 	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "HTTP/1.1", string(body))
 	assert.Equal(t, "HTTP/1.1", resp.Proto)
 }
