@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/internal/testalerts"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -100,6 +101,38 @@ func TestCLIArgs_WarnsOnceWhenStrippingABypassFlag(t *testing.T) {
 	CLIArgs("claude-cli", false, []string{"--verbose"})
 	if buf.Len() != 0 {
 		t.Errorf("warned with nothing to strip:\n%s", buf.String())
+	}
+}
+
+// Stripping a bypass flag raises one alert per CLI per process, naming the
+// flag and the setting; later builds only log. Nothing with bypass on or
+// nothing to strip.
+func TestCLIArgs_AlertsOnceWhenStrippingABypassFlag(t *testing.T) {
+	restore := logger.RedirectForTest(&bytes.Buffer{})
+	defer restore()
+	rec := testalerts.Install(t)
+	bypassAlerted.Clear()
+
+	CLIArgs("claude-cli", false, []string{"--dangerously-skip-permissions"})
+	CLIArgs("claude-cli", false, []string{"--dangerously-skip-permissions"})
+	CLIArgs("claude-cli", true, []string{"--dangerously-skip-permissions"})
+	CLIArgs("codex-cli", false, []string{"--verbose"})
+
+	got := rec.Alerts()
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+	a := got[0]
+	if a.EventID != "bypass:claude-cli" || a.Title != "Claude CLI bypass flag ignored" {
+		t.Errorf("alert = %q / %q", a.Title, a.EventID)
+	}
+	if !strings.Contains(a.Description, "--dangerously-skip-permissions") || !strings.Contains(a.Description, "Bypass CLI restrictions") {
+		t.Errorf("description names neither the flag nor the setting: %q", a.Description)
+	}
+
+	CLIArgs("codex-cli", false, []string{"--dangerously-bypass-approvals-and-sandbox"})
+	if len(rec.Alerts()) != 2 || rec.Alerts()[1].EventID != "bypass:codex-cli" {
+		t.Errorf("a second CLI gets its own alert: %+v", rec.Alerts())
 	}
 }
 

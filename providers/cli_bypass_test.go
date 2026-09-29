@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/testalerts"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -68,7 +69,10 @@ func TestNewCLIProvider_BypassSettingDecidesFlagAndGuard(t *testing.T) {
 	}
 }
 
+// Every declined case raises one "declined tools" alert naming the setting;
+// pass-through cases raise none.
 func TestCLIDeclinedGuard_Chat(t *testing.T) {
+	deniedText := "The Claude CLI declined to use tools (maestro_file_get, microsoft365_mail_read_inbox, Bash). Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
 	tests := []struct {
 		name    string
 		resp    *LLMResponse
@@ -79,6 +83,16 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 			name:    "an empty answer becomes the declined-tools error",
 			resp:    &LLMResponse{Content: "  "},
 			wantErr: declinedText,
+		},
+		{
+			// The Claude CLI answers in prose and lists the refused calls in
+			// permission_denials; the message and the alert name them.
+			name: "refused calls in the status become the error, naming the tools",
+			resp: &LLMResponse{
+				Content: "I couldn't run this morning's email brief.",
+				Status:  &DispatchStatus{Success: true, DeniedTools: []string{"mcp__claw__maestro_file_get", "mcp__claw__microsoft365_mail_read_inbox", "Bash"}},
+			},
+			wantErr: deniedText,
 		},
 		{
 			// agy names the denied action; keep that detail behind the message.
@@ -92,7 +106,8 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			g := &cliDeclinedGuard{LLMProvider: &scriptedProvider{resp: tc.resp, err: tc.err}, label: "Claude CLI"}
+			rec := testalerts.Install(t)
+			g := &cliDeclinedGuard{LLMProvider: &scriptedProvider{resp: tc.resp, err: tc.err}, label: "Claude CLI", protocol: "claude-cli"}
 			resp, err := g.Chat(context.Background(), nil, nil, "m", nil)
 			if resp != tc.resp {
 				t.Errorf("response replaced: got %v, want the inner %v", resp, tc.resp)
@@ -100,6 +115,9 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 			if tc.wantErr == "" {
 				if !errors.Is(err, tc.err) {
 					t.Errorf("err = %v, want the inner %v", err, tc.err)
+				}
+				if n := len(rec.Alerts()); n != 0 {
+					t.Errorf("alerts = %d, want none: %+v", n, rec.Alerts())
 				}
 				return
 			}
@@ -111,8 +129,28 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 			if !ok {
 				t.Fatalf("err is %T, want *CLIDeclinedError", err)
 			}
-			if declined.Message != declinedText {
-				t.Errorf("declined.Message = %q, want %q", declined.Message, declinedText)
+			wantMsg := declinedText
+			if tc.resp != nil && tc.resp.Status != nil && len(tc.resp.Status.DeniedTools) > 0 {
+				wantMsg = deniedText
+			}
+			if declined.Message != wantMsg {
+				t.Errorf("declined.Message = %q, want %q", declined.Message, wantMsg)
+			}
+			got := rec.Alerts()
+			if len(got) != 1 {
+				t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+			}
+			if got[0].Title != "Claude CLI declined tools" || got[0].EventID != "cli-declined:claude-cli" {
+				t.Errorf("alert = %q / %q", got[0].Title, got[0].EventID)
+			}
+			if !strings.Contains(got[0].Description, "Bypass CLI restrictions") {
+				t.Errorf("alert does not name the setting: %q", got[0].Description)
+			}
+			if wantMsg == deniedText && !strings.Contains(got[0].Description, "Denied: maestro_file_get, microsoft365_mail_read_inbox, Bash.") {
+				t.Errorf("alert does not list the refused tools: %q", got[0].Description)
+			}
+			if tc.err != nil && got[0].Details != tc.err.Error() {
+				t.Errorf("alert details = %q, want the CLI's error", got[0].Details)
 			}
 			if tc.err != nil && !errors.Is(err, tc.err) {
 				t.Error("the inner error is no longer in the chain")

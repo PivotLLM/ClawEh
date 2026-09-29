@@ -15,7 +15,9 @@ import (
 	"github.com/PivotLLM/spawnllm/azure"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 	"github.com/PivotLLM/spawnllm/openai_responses"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -160,16 +162,20 @@ func newCLIProvider[T LLMProvider](
 	if agent := config.CLIAgentByProtocol(prov.Protocol); agent != nil {
 		label = agent.Label
 	}
-	return &cliDeclinedGuard{LLMProvider: p, label: label}
+	return &cliDeclinedGuard{LLMProvider: p, label: label, protocol: prov.Protocol}
 }
 
 // cliDeclinedGuard wraps a CLI provider running without its permission-bypass
-// flag. A CLI that refuses a tool call it cannot prompt for reports success
-// with no text (agy also names the denied action), which would reach the user
-// as silence. The guard turns that into an error that says what to change.
+// flag. A CLI that refuses a tool call it cannot prompt for reports success:
+// with no text (agy also names the denied action), or, for the Claude CLI,
+// with a prose answer explaining the refusal and the refused calls listed
+// under permission_denials. Either would reach the user as silence or as an
+// apology with no cause. The guard turns each into an error that says what to
+// change and raises one "declined tools" alert.
 type cliDeclinedGuard struct {
 	LLMProvider
-	label string
+	label    string
+	protocol string
 }
 
 // IsCLI marks the wrapped provider as a CLI, as the agent loop checks.
@@ -177,13 +183,37 @@ func (g *cliDeclinedGuard) IsCLI() bool { return true }
 
 func (g *cliDeclinedGuard) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any) (*LLMResponse, error) {
 	resp, err := g.LLMProvider.Chat(ctx, messages, tools, model, options)
+	var denied []string
+	if resp != nil && resp.Status != nil {
+		denied = resp.Status.DeniedTools
+	}
 	switch {
 	case err != nil && strings.Contains(err.Error(), "denied"):
-		return resp, &CLIDeclinedError{Message: g.declinedMessage(), Cause: err}
+		g.alert(nil, err)
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil), Cause: err}
+	case err == nil && len(denied) > 0:
+		g.alert(denied, nil)
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(denied)}
 	case err == nil && resp != nil && strings.TrimSpace(resp.Content) == "" && len(resp.ToolCalls) == 0:
-		return resp, &CLIDeclinedError{Message: g.declinedMessage()}
+		g.alert(nil, nil)
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil)}
 	}
 	return resp, err
+}
+
+// alert raises the "declined tools" alert for this CLI. The alerter collapses
+// repeats of the same title and id inside its window, so a job that fails on
+// every run does not page on every run.
+func (g *cliDeclinedGuard) alert(denied []string, cause error) {
+	desc := "Tick \"Bypass CLI restrictions\" for " + g.label + " on the Providers page, or allow the tools in the CLI's settings."
+	if len(denied) > 0 {
+		desc = "Denied: " + strings.Join(shortToolNames(denied), ", ") + ". " + desc
+	}
+	a := alerter.Alert{Title: g.label + " declined tools", Description: desc, EventID: "cli-declined:" + g.protocol}
+	if cause != nil {
+		a.Details = cause.Error()
+	}
+	alerts.Send(a)
 }
 
 // CLIDeclinedError is the guard's error for a CLI that refused a tool call.
@@ -203,8 +233,28 @@ func (e *CLIDeclinedError) Error() string {
 
 func (e *CLIDeclinedError) Unwrap() error { return e.Cause }
 
-func (g *cliDeclinedGuard) declinedMessage() string {
-	return "The " + g.label + " declined to use tools. Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+func (g *cliDeclinedGuard) declinedMessage(denied []string) string {
+	msg := "The " + g.label + " declined to use tools"
+	if len(denied) > 0 {
+		msg += " (" + strings.Join(shortToolNames(denied), ", ") + ")"
+	}
+	return msg + ". Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+}
+
+// shortToolNames strips the MCP client prefix (mcp__<server>__) the CLI puts on
+// claw's own tools, so a message reads maestro_file_get, not
+// mcp__claw__maestro_file_get. Other names are returned unchanged.
+func shortToolNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if rest, ok := strings.CutPrefix(n, "mcp__"); ok {
+			if _, tool, found := strings.Cut(rest, "__"); found {
+				n = tool
+			}
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // logBypassEnabled writes one INFO line per CLI provider running with its
