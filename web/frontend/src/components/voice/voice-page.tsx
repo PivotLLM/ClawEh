@@ -176,6 +176,7 @@ export function VoicePage() {
                       <Switch
                         checked={row.enabled}
                         onCheckedChange={(v) => update(i, { enabled: v })}
+                        aria-label={`${row.provider} enabled`}
                       />
                       <span className="text-sm font-medium">
                         {row.enabled ? "Enabled" : "Disabled"}

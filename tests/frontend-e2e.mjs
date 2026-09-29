@@ -717,7 +717,31 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
   })
 
-  await check(6, "delete the agent and confirm it is gone", async () => {
+  await check(6, "returning to the Agents page through the sidebar shows the agents", async () => {
+    // A return visit mounts the page with its query already cached. It used to
+    // seed the editable list only when a new fetch landed, so the cached list
+    // never showed and the page said "No agents yet" until a browser reload.
+    const { close, page } = await open("/agents")
+    const c = await config()
+    const rail = (c.agents.list ?? []).map((a) => a.name || a.id)
+    assert(rail.length >= 1, "need at least one agent for this check")
+    await page.locator('a[href="/report"]').first().click()
+    await page.waitForTimeout(700)
+    const link = page.locator('a[href="/agents"]').first()
+    if (!(await link.isVisible().catch(() => false))) {
+      await page.getByRole("button", { name: "Agents", exact: true }).first().click()
+      await page.waitForTimeout(300)
+    }
+    await link.click()
+    await page.waitForTimeout(700)
+    const text = await page.locator("main").innerText()
+    const shown = await page.getByRole("button", { name: rail[0], exact: true }).count()
+    await close()
+    assert(!/No agents yet/.test(text), "the page says 'No agents yet' on a return visit")
+    assert(shown > 0, `the rail does not list "${rail[0]}" on a return visit`)
+  })
+
+  await check(7, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
@@ -2303,6 +2327,220 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
 }
 
 // ----------------------------------------------------------------- report ---
+
+
+// S. Keyboard — every check below drives the page with the keyboard only.
+if (useGroup("S", "Keyboard")) {
+  // focused() describes document.activeElement: an accessible name (aria-label,
+  // aria-labelledby, an associated <label>, an image's alt, text, title or
+  // placeholder), whether a focus ring is painted (outline or box-shadow), and
+  // a per-element id so a walk can tell a repeat from a new stop.
+  const focused = async (page) => {
+    const f = await describeFocus(page)
+    // A control that fades in on focus (transition-opacity) reads as opacity 0
+    // for the first frames; give the transition a moment before judging it.
+    if (!f.body && f.opacity === "0") {
+      await page.waitForTimeout(300)
+      return describeFocus(page)
+    }
+    return f
+  }
+  const describeFocus = (page) =>
+    page.evaluate(() => {
+      const el = document.activeElement
+      if (!el || el === document.body) return { body: true }
+      if (!el.dataset.e2eStop) {
+        window.__e2eStop = (window.__e2eStop || 0) + 1
+        el.dataset.e2eStop = String(window.__e2eStop)
+      }
+      const byId = el.getAttribute("aria-labelledby")
+      const label =
+        el.getAttribute("aria-label") ||
+        (byId && document.getElementById(byId)?.textContent) ||
+        (el.labels && el.labels[0]?.textContent) ||
+        el.querySelector("img[alt]")?.getAttribute("alt") ||
+        el.textContent ||
+        el.getAttribute("title") ||
+        el.getAttribute("placeholder") ||
+        ""
+      const cs = getComputedStyle(el)
+      return {
+        id: el.dataset.e2eStop,
+        tag: el.tagName.toLowerCase(),
+        name: label.trim().replace(/\s+/g, " ").slice(0, 60),
+        ring: (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none"),
+        opacity: cs.opacity,
+        html: el.outerHTML.slice(0, 120).replace(/\s+/g, " "),
+      }
+    })
+
+  // tabUntil presses Tab until pred(stop) holds; null when the tab order
+  // wrapped without a match.
+  const tabUntil = async (page, pred, max = 200) => {
+    let first = null
+    for (let i = 0; i < max; i++) {
+      await page.keyboard.press("Tab")
+      const f = await focused(page)
+      if (f.body) continue
+      if (first === null) first = f.id
+      else if (f.id === first) return null
+      if (pred(f)) return f
+    }
+    return null
+  }
+
+  await check(1, "log in with the keyboard only", async () => {
+    const fresh = await browser.newContext()
+    const page = await fresh.newPage()
+    await page.goto(BASE + "/login", { waitUntil: "networkidle" })
+    let f = await focused(page)
+    for (let i = 0; i < 8 && (f.body || f.tag !== "input"); i++) {
+      await page.keyboard.press("Tab")
+      f = await focused(page)
+    }
+    assert(f.tag === "input", "Tab does not reach the username field")
+    await page.keyboard.type(USER)
+    await page.keyboard.press("Tab")
+    f = await focused(page)
+    assert(f.tag === "input", `Tab from the username lands on ${f.tag} "${f.name}", not the password field`)
+    await page.keyboard.type(PASSWORD)
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(1500)
+    const path = new URL(page.url()).pathname
+    await fresh.close()
+    assert(path !== "/login", "Enter in the password field did not submit the login form")
+  })
+
+  await check(2, "navigate to the Agents page with the keyboard only", async () => {
+    const { close, page } = await open("/")
+    const group = await tabUntil(page, (f) => f.name === "Agents")
+    assert(group, "Tab never reaches the Agents entry in the sidebar")
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(500)
+    if (new URL(page.url()).pathname !== "/agents") {
+      // A disclosure: the first link inside it is the next stop.
+      await page.keyboard.press("Tab")
+      await page.keyboard.press("Enter")
+      await page.waitForTimeout(700)
+    }
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(path === "/agents", `keyboard navigation from the sidebar ended at ${path}`)
+  })
+
+  await check(3, "every page: Tab cycles through all controls with no trap and a focus ring on each", async () => {
+    const problems = []
+    for (const route of ROUTES) {
+      const { close, page } = await open(route)
+      const seen = new Set()
+      let first = null
+      let last = null
+      let noRing = 0
+      let invisible = 0
+      for (let i = 0; i < 260; i++) {
+        await page.keyboard.press("Tab")
+        const f = await focused(page)
+        if (f.body) continue
+        // A date or time input keeps the element focused while Tab moves
+        // between its own parts, so a consecutive repeat is not a trap.
+        if (f.id === last) continue
+        last = f.id
+        if (first === null) first = f.id
+        else if (f.id === first) break
+        if (seen.has(f.id)) {
+          problems.push(`${route}: focus trap at ${f.tag} "${f.name}"`)
+          break
+        }
+        seen.add(f.id)
+        if (!f.ring) noRing++
+        if (f.opacity === "0") invisible++
+      }
+      await close()
+      if (noRing) problems.push(`${route}: ${noRing} focus stop(s) without a focus ring`)
+      if (invisible) problems.push(`${route}: ${invisible} focus stop(s) invisible (opacity 0) while focused`)
+      if (seen.size === 0) problems.push(`${route}: nothing takes focus`)
+    }
+    assert(problems.length === 0, problems.join("; "))
+    return `${ROUTES.length} pages`
+  })
+
+  await check(4, "every focus stop has an accessible name", async () => {
+    const problems = []
+    for (const route of ROUTES) {
+      const { close, page } = await open(route)
+      let first = null
+      let last = null
+      const unnamed = []
+      for (let i = 0; i < 260; i++) {
+        await page.keyboard.press("Tab")
+        const f = await focused(page)
+        if (f.body) continue
+        if (f.id === last) continue
+        last = f.id
+        if (first === null) first = f.id
+        else if (f.id === first) break
+        // A text field is named by its label or placeholder; textContent is
+        // not a name for it, so an unlabelled one is reported too.
+        if (!f.name) unnamed.push(f.html)
+      }
+      await close()
+      if (unnamed.length) problems.push(`${route}: ${unnamed.length} unnamed: ${[...new Set(unnamed)].slice(0, 3).join(" | ")}`)
+    }
+    assert(problems.length === 0, problems.join("\n"))
+    return `${ROUTES.length} pages`
+  })
+
+  await check(5, "Space on a tool checkbox persists the change (on a throwaway agent)", async () => {
+    const ID = "e2e-kbd"
+    const before = await config()
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [] }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      const rail = await tabUntil(page, (f) => f.name === ID)
+      assert(rail, `Tab never reaches the ${ID} entry in the rail`)
+      await page.keyboard.press("Enter")
+      await page.waitForTimeout(400)
+      const box = await tabUntil(page, (f) => f.name === "time_now" || (f.tag === "button" && /time_now/.test(f.name)))
+      assert(box, "Tab never reaches the time_now checkbox")
+      await page.keyboard.press("Space")
+      await page.waitForTimeout(2000)
+      await close()
+      const c = await config()
+      const a = (c.agents.list ?? []).find((x) => x.id === ID)
+      assert(a && Array.isArray(a.tools) && a.tools.includes("time_now"), `tools = ${JSON.stringify(a?.tools)}; Space did not add time_now`)
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
+
+  await check(6, "Add Agent by keyboard: Enter focuses the ID field, Escape cancels", async () => {
+    const { close, page } = await open("/agents")
+    const add = await tabUntil(page, (f) => /Add Agent/i.test(f.name))
+    assert(add, "Tab never reaches the Add Agent button")
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(400)
+    const f = await focused(page)
+    const idField = !f.body && f.tag === "input" && /Agent ID/i.test(f.name)
+    await page.keyboard.press("Escape")
+    await page.waitForTimeout(400)
+    const still = await page.getByRole("textbox", { name: /Agent ID/i }).count()
+    await close()
+    assert(idField, `after Enter on Add Agent, focus is on ${f.body ? "the page body" : `${f.tag} "${f.name}"`}, not the Agent ID field`)
+    assert(still === 0, "Escape does not close the Add Agent form")
+  })
+}
 
 await browser.close()
 

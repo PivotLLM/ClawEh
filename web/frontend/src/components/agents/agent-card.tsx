@@ -380,6 +380,7 @@ export function AgentCard({
                   )
                 }
                 className="h-7 w-20 text-xs"
+                aria-label="Token rotation (minutes, 0 = disabled)"
               />
               <span className="text-muted-foreground text-xs">
                 Token rotation (minutes, 0 = disabled)
@@ -398,6 +399,7 @@ export function AgentCard({
                     )
                   }
                   className="h-7 w-20 text-xs"
+                  aria-label="Number of tokens retained"
                 />
                 <span className="text-muted-foreground text-xs">
                   Number of tokens retained
@@ -622,6 +624,7 @@ export function AgentCard({
                       <input
                         type="radio"
                         name={`default-channel-${label}`}
+                        aria-label={`Default channel: ${b.channel}`}
                         checked={b.isDefault}
                         disabled={noDefault}
                         onChange={() => {

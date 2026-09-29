@@ -106,8 +106,12 @@ export function AgentsPage() {
 
   // Seed the editable config when a fetch lands. Adjusted during render rather
   // than in an effect so the page is never painted with an empty agent list for
-  // a frame, and it fires only for a genuinely new fetch result.
-  const [syncedLoad, setSyncedLoad] = useState(loaded)
+  // a frame, and it fires only for a genuinely new fetch result. syncedLoad
+  // starts undefined, not at `loaded`: when the page mounts with the query
+  // already cached (a return visit through the sidebar), `loaded` is set on the
+  // first render, and seeding it here means the cached list shows at once
+  // instead of "No agents yet" until a reload.
+  const [syncedLoad, setSyncedLoad] = useState<typeof loaded>(undefined)
   if (loaded && loaded !== syncedLoad) {
     setSyncedLoad(loaded)
     setAgentsCfg(loaded.agentsCfg)
@@ -405,6 +409,21 @@ export function AgentsPage() {
   // or empty selection and then again with the corrected one, and everything
   // below keys off this value.
   const agentList = agentsCfg.list ?? []
+
+  // cancelAdd closes the Add Agent form and clears its fields; the Cancel
+  // button and Escape in the form's text fields both use it.
+  const cancelAdd = () => {
+    setShowAdd(false)
+    setAddingId("")
+    setAddingName("")
+    setAddingModels([])
+    setAddingSkills([])
+    setAddingTools([])
+    setAddingToolsExpanded(false)
+  }
+  const escapeCancelsAdd = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") cancelAdd()
+  }
   const activeId =
     agentList.length === 0
       ? ""
@@ -562,11 +581,20 @@ export function AgentsPage() {
                       <Input
                         value={addingId}
                         onChange={(e) => setAddingId(e.target.value)}
+                        onKeyDown={escapeCancelsAdd}
                         placeholder="Agent ID (e.g. alice)"
+                        aria-label="Agent ID"
+                        // Deliberate: the form only exists because the user
+                        // just activated Add Agent, so focus belongs in its
+                        // first field; without it a keyboard user is left on
+                        // the page body and has to Tab back to find the form.
+                        // oxlint-disable-next-line no-autofocus
+                        autoFocus
                       />
                       <Input
                         value={addingName}
                         onChange={(e) => setAddingName(e.target.value)}
+                        onKeyDown={escapeCancelsAdd}
                         placeholder="Display name (optional, e.g. Sam)"
                       />
                       <div className="space-y-1.5">
@@ -627,15 +655,7 @@ export function AgentsPage() {
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="outline"
-                        onClick={() => {
-                          setShowAdd(false)
-                          setAddingId("")
-                          setAddingName("")
-                          setAddingModels([])
-                          setAddingSkills([])
-                          setAddingTools([])
-                          setAddingToolsExpanded(false)
-                        }}
+                        onClick={cancelAdd}
                         disabled={saving === "add"}
                       >
                         Cancel

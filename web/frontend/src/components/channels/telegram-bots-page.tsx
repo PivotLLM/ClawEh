@@ -159,6 +159,7 @@ function BotCard({
               <Switch
                 checked={asBool(bot.enabled)}
                 onCheckedChange={(v) => onChange("enabled", v)}
+                aria-label={t("channels.page.enableLabel")}
               />
             </div>
           )}

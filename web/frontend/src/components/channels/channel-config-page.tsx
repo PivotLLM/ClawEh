@@ -445,6 +445,7 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
                   setEnabled(v)
                   scheduleSave()
                 }}
+                aria-label={t("channels.page.enableLabel")}
               />
             </div>
 

@@ -1,5 +1,13 @@
 import { IconChevronDown, IconEye, IconEyeOff } from "@tabler/icons-react"
-import { type ReactNode, useState } from "react"
+import {
+  Children,
+  cloneElement,
+  Fragment,
+  isValidElement,
+  type ReactNode,
+  useId,
+  useState,
+} from "react"
 import { useTranslation } from "react-i18next"
 
 import {
@@ -32,11 +40,28 @@ export function Field({
   layout = "default",
   controlClassName,
 }: FieldProps) {
+  // Associate the label with the control. When the field wraps exactly one
+  // element, that element gets an id (unless it brought its own) and the label
+  // points at it, so assistive technology reads the label as the control's
+  // name and clicking the label focuses the control. A wrapper element or a
+  // fragment is left alone.
+  const generated = useId()
+  let control: ReactNode = children
+  let htmlFor: string | undefined
+  if (
+    Children.count(children) === 1 &&
+    isValidElement<{ id?: string }>(children) &&
+    children.type !== Fragment
+  ) {
+    htmlFor = children.props.id ?? generated
+    if (!children.props.id) control = cloneElement(children, { id: generated })
+  }
+
   if (layout === "setting-row") {
     return (
       <div className="flex flex-col gap-4 py-4 md:grid md:grid-cols-[minmax(0,1fr)_minmax(240px,320px)] md:items-center md:gap-6">
         <div className="max-w-full space-y-1 md:max-w-[clamp(18rem,42vw,28rem)]">
-          <FieldLabel>
+          <FieldLabel htmlFor={htmlFor}>
             {label}
             {required && <span className="text-destructive ml-1">*</span>}
           </FieldLabel>
@@ -47,7 +72,7 @@ export function Field({
           )}
         </div>
         <div className={cn("w-full md:justify-self-center", controlClassName)}>
-          {children}
+          {control}
         </div>
         {error && (
           <FieldDescription className="text-destructive text-xs leading-normal md:col-start-2">
@@ -61,7 +86,7 @@ export function Field({
   return (
     <UiField className="gap-2.5">
       <div className="space-y-1">
-        <FieldLabel>
+        <FieldLabel htmlFor={htmlFor}>
           {label}
           {required && <span className="text-destructive ml-1">*</span>}
         </FieldLabel>
@@ -71,7 +96,7 @@ export function Field({
           </FieldDescription>
         )}
       </div>
-      {children}
+      {control}
       {error && (
         <FieldDescription className="text-destructive text-xs leading-normal">
           {error}

@@ -866,6 +866,19 @@ observe does not need an entry.
 
 ### Fixed
 
+- **The Agents page no longer shows "No agents yet" on a return visit.** Coming
+  back to the page through the sidebar mounted it with its data already cached,
+  and the list was seeded only when a new fetch landed, so the cached agents
+  never showed until the browser was reloaded.
+- **Keyboard and screen-reader access.** Every setting's label is now associated
+  with its control (Config, System, MCP, Network, channel forms), so it is read
+  as the control's name and clicking it focuses the field. Icon-only controls
+  carry names: the header's GitHub link and theme toggle, the bindings page's
+  edit, cancel and delete buttons, the agent card's token-rotation fields and
+  default-channel radios, and the enable switches on channel, Telegram bot,
+  secure-messaging and speech pages. The bindings page's edit-mentions button,
+  shown only on hover, is now also shown while it has keyboard focus. Add
+  Agent opens with focus in the Agent ID field and Escape cancels the form.
 - Files downloaded from Telegram no longer get a second extension
   (`file_3.oga.ogg`, `file_1.jpg.jpg`): the name keeps Telegram's own
   extension and the type-based one is used only when there is none. Voice

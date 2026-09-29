@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-136 checks in all; the runner prints the same tally at the end.
+143 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -121,7 +121,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F3 | Under **Internal tools**, toggle the `time_now` checkbox, wait ~2s | `tools` persisted with `time_now` added (or removed, if it was on) **and** `temperature` is still `0.77`. The second save must not clobber the first |
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | Under **Fusion services** on the `e2e-probe` card, tick the first listed service, wait ~2s; tick it again, wait ~2s | `mcp_tools` gains the service name on the first tick and loses it on the second; the earlier edits are untouched. Skipped when the instance defines no Fusion service (`GET /api/agents/tools` has no `fusion_services`) |
-| F6 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
+| F6 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
+| F7 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
 ## G. System page
 
@@ -313,6 +314,20 @@ a time.
 | Q4 | `curl -b jar '$BASE/api/audit?limit=100'`, then load `/audit` | **Load more** is shown when, and only when, the API returned 100 events **and** `next_before_id > 0`. On a fresh instance it is 0 and the button is absent; either way the page and the API must agree |
 
 ---
+
+## S. Keyboard
+
+Every step in this group uses the keyboard only: Tab, Shift+Tab, Enter, Space
+and Escape. Nothing is clicked.
+
+| Step | Process | Expected result |
+|---|---|---|
+| S1 | In a fresh browser context open `/login`; Tab to the username field, type it, Tab, type the password, Enter | The session is created and the browser leaves `/login` |
+| S2 | Open `/`; Tab until the sidebar entry **Agents** has focus; Enter (expands the group); Tab; Enter | The browser is at `/agents` |
+| S3 | On every route in the suite's list, press Tab until the focus order wraps to its first stop | No stop is reached twice before the wrap (no focus trap); every stop paints a focus ring (outline or box-shadow); no stop has `opacity: 0` while focused; at least one control takes focus |
+| S4 | On every route, Tab through the whole focus order and read each stop's accessible name (aria-label, aria-labelledby, an associated label, an image's alt, text, title or placeholder) | Every stop has a name. Icon-only controls carry `aria-label`; switches whose visible label sits beside them carry it too |
+| S5 | Create a throwaway agent `e2e-kbd` through the API; on `/agents` Tab to it in the rail, Enter; Tab to the `time_now` checkbox under Internal tools; Space; wait ~2s | `tools` for `e2e-kbd` contains `time_now` in `GET /api/config`. The agent is removed through the API afterwards |
+| S6 | On `/agents` Tab to **Add Agent**, Enter; then Escape | After Enter, focus is in the **Agent ID** field; after Escape the form is gone and nothing was created |
 
 ## Recording a run
 

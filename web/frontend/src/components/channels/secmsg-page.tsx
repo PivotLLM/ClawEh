@@ -168,6 +168,7 @@ function DaemonCard({
               <Switch
                 checked={asBool(daemon.enabled)}
                 onCheckedChange={(v) => onChange("enabled", v)}
+                aria-label={t("channels.page.enableLabel")}
               />
             </div>
           )}
