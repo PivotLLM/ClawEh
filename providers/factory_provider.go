@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/PivotLLM/spawnllm"
@@ -16,9 +15,7 @@ import (
 	"github.com/PivotLLM/spawnllm/azure"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 	"github.com/PivotLLM/spawnllm/openai_responses"
-	"github.com/tenebris-tech/alerter"
 
-	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -172,7 +169,7 @@ func newCLIProvider[T LLMProvider](
 // with a prose answer explaining the refusal and the refused calls listed
 // under permission_denials. Either would reach the user as silence or as an
 // apology with no cause. The guard turns each into an error that says what to
-// change and raises one "declined tools" alert.
+// change. It is not an alert: the CLI did what its settings say.
 type cliDeclinedGuard struct {
 	LLMProvider
 	label    string
@@ -190,31 +187,13 @@ func (g *cliDeclinedGuard) Chat(ctx context.Context, messages []Message, tools [
 	}
 	switch {
 	case err != nil && strings.Contains(err.Error(), "denied"):
-		g.alert(nil, err)
 		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil), Cause: err}
 	case err == nil && len(denied) > 0:
-		g.alert(denied, nil)
 		return resp, &CLIDeclinedError{Message: g.declinedMessage(denied)}
 	case err == nil && resp != nil && strings.TrimSpace(resp.Content) == "" && len(resp.ToolCalls) == 0:
-		g.alert(nil, nil)
 		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil)}
 	}
 	return resp, err
-}
-
-// alert raises the "declined tools" alert for this CLI. The alerter collapses
-// repeats of the same title and id inside its window, so a job that fails on
-// every run does not page on every run.
-func (g *cliDeclinedGuard) alert(denied []string, cause error) {
-	desc := "Tick \"Bypass CLI restrictions\" for " + g.label + " on the Providers page, or allow the tools in the CLI's settings."
-	if len(denied) > 0 {
-		desc = "Denied: " + strings.Join(shortToolNames(denied), ", ") + ". " + desc
-	}
-	a := alerter.Alert{Title: g.label + " declined tools", Description: desc, EventID: "cli-declined:" + g.protocol}
-	if cause != nil {
-		a.Details = cause.Error()
-	}
-	alerts.Send(a)
 }
 
 // CLIDeclinedError is the guard's error for a CLI that refused a tool call.
@@ -258,36 +237,20 @@ func shortToolNames(names []string) []string {
 	return out
 }
 
-// bypassOffAlerted holds the CLI providers already alerted for running under
-// the CLI's own permissions: once per provider per process.
-var bypassOffAlerted sync.Map
-
 // logBypassEnabled writes one INFO line per CLI provider running with its
-// permission-bypass flag, so a startup log states what the CLI may do, and
-// raises one alert per CLI provider running without it: whether that CLI's
-// tool calls run then depends on the CLI's own permission settings, which an
-// operator upgrading from the always-on flag has not chosen.
+// permission-bypass flag, so a startup log states what the CLI may do. A CLI
+// running without it is not reported here: it applies its own permission
+// settings, as directed, and a refusal reaches the user through the
+// declined-tools error.
 func logBypassEnabled(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
-		if !config.IsCLIProtocol(p.Protocol) {
-			continue
-		}
-		if p.BypassRestrictions {
+		if p.BypassRestrictions && config.IsCLIProtocol(p.Protocol) {
 			logger.InfoCF("provider", "Bypass CLI restrictions is on: the CLI can run commands and edit files anywhere the service user can, without asking",
 				map[string]any{"provider": p.Name, "protocol": p.Protocol})
-			continue
 		}
-		if _, dup := bypassOffAlerted.LoadOrStore(strings.ToLower(p.Name), true); dup {
-			continue
-		}
-		alerts.Send(alerter.Alert{
-			Title:       p.Name + " runs under its own permissions",
-			Description: "Bypass CLI restrictions is off for " + p.Name + ": whether its tool calls run depends on the CLI's own permission settings. Tick it on the Providers page to pass the bypass flag.",
-			EventID:     "bypass-off:" + p.Protocol,
-		})
 	}
 }

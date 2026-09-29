@@ -69,8 +69,8 @@ func TestNewCLIProvider_BypassSettingDecidesFlagAndGuard(t *testing.T) {
 	}
 }
 
-// Every declined case raises one "declined tools" alert naming the setting;
-// pass-through cases raise none.
+// A refusal is reported to the user through the error, never as an alert:
+// the CLI did what its settings say.
 func TestCLIDeclinedGuard_Chat(t *testing.T) {
 	deniedText := "The Claude CLI declined to use tools (maestro_file_get, microsoft365_mail_read_inbox, Bash). Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
 	tests := []struct {
@@ -116,9 +116,6 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 				if !errors.Is(err, tc.err) {
 					t.Errorf("err = %v, want the inner %v", err, tc.err)
 				}
-				if n := len(rec.Alerts()); n != 0 {
-					t.Errorf("alerts = %d, want none: %+v", n, rec.Alerts())
-				}
 				return
 			}
 			if err == nil || err.Error() != tc.wantErr {
@@ -136,21 +133,8 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 			if declined.Message != wantMsg {
 				t.Errorf("declined.Message = %q, want %q", declined.Message, wantMsg)
 			}
-			got := rec.Alerts()
-			if len(got) != 1 {
-				t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
-			}
-			if got[0].Title != "Claude CLI declined tools" || got[0].EventID != "cli-declined:claude-cli" {
-				t.Errorf("alert = %q / %q", got[0].Title, got[0].EventID)
-			}
-			if !strings.Contains(got[0].Description, "Bypass CLI restrictions") {
-				t.Errorf("alert does not name the setting: %q", got[0].Description)
-			}
-			if wantMsg == deniedText && !strings.Contains(got[0].Description, "Denied: maestro_file_get, microsoft365_mail_read_inbox, Bash.") {
-				t.Errorf("alert does not list the refused tools: %q", got[0].Description)
-			}
-			if tc.err != nil && got[0].Details != tc.err.Error() {
-				t.Errorf("alert details = %q, want the CLI's error", got[0].Details)
+			if n := len(rec.Alerts()); n != 0 {
+				t.Errorf("a refusal raised %d alert(s), want none: %+v", n, rec.Alerts())
 			}
 			if tc.err != nil && !errors.Is(err, tc.err) {
 				t.Error("the inner error is no longer in the chain")
@@ -161,7 +145,7 @@ func TestCLIDeclinedGuard_Chat(t *testing.T) {
 
 // One INFO line per CLI provider with bypass on, so the startup log states
 // which CLIs may act without asking. Nothing for HTTP providers or CLIs with it
-// off.
+// off, and no alert either way: a CLI without the flag is running as directed.
 func TestNewProviderDispatcher_LogsBypassEnabled(t *testing.T) {
 	var buf bytes.Buffer
 	restore := logger.RedirectForTest(&buf)
@@ -174,24 +158,16 @@ func TestNewProviderDispatcher_LogsBypassEnabled(t *testing.T) {
 		{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", BypassRestrictions: true},
 	}
 	rec := testalerts.Install(t)
-	bypassOffAlerted.Clear()
 	NewProviderDispatcher(cfg)
-	NewProviderDispatcher(cfg) // a rebuild does not alert again
 
 	out := buf.String()
-	if strings.Count(out, "Bypass CLI restrictions is on") != 2 || !strings.Contains(out, "Codex CLI") {
-		t.Errorf("want one line per build, for Codex CLI:\n%s", out)
+	if strings.Count(out, "Bypass CLI restrictions is on") != 1 || !strings.Contains(out, "Codex CLI") {
+		t.Errorf("want exactly one line, for Codex CLI:\n%s", out)
 	}
 	if strings.Contains(out, "Cursor CLI") || strings.Contains(out, "OpenAI") {
 		t.Errorf("logged a provider without bypass, or a non-CLI:\n%s", out)
 	}
-	// The CLI running without its bypass flag raises one alert per process;
-	// the CLI with it on and the HTTP provider raise none.
-	got := rec.Alerts()
-	if len(got) != 1 {
-		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
-	}
-	if got[0].EventID != "bypass-off:cursor-cli" || !strings.Contains(got[0].Title, "Cursor CLI") || !strings.Contains(got[0].Description, "Bypass CLI restrictions is off for Cursor CLI") {
-		t.Errorf("alert = %+v", got[0])
+	if n := len(rec.Alerts()); n != 0 {
+		t.Errorf("building the dispatcher raised %d alert(s), want none: %+v", n, rec.Alerts())
 	}
 }

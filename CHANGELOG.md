@@ -271,22 +271,22 @@ observe does not need an entry.
 
 ### Added
 
-- **Startup checks for the two states that silently cost agents their tools.**
-  An agent with Fusion on and no service listed in `mcp_tools` raises "Fusion
-  on for `<agent>`, no service listed" (id `fusion-empty:<agent>`) once per
-  process, and the Check Up page marks it for action. A CLI provider with
-  "Bypass CLI restrictions" off raises "`<CLI>` runs under its own permissions"
-  (id `bypass-off:<protocol>`) once per process, and the Check Up page lists it
-  as an awareness row beside the existing one for providers with it on.
+- **Startup check for an agent that has Fusion on and nothing granted.** An
+  agent with Fusion on and no service listed in `mcp_tools` raises "Fusion on
+  for `<agent>`, no service listed" (id `fusion-empty:<agent>`) once per
+  process, and the Check Up page marks it for action. The Check Up page also
+  lists each CLI provider with "Bypass CLI restrictions" off as an awareness
+  row beside the existing one for providers with it on.
 - **A CLI that refuses tool calls is reported, not hidden.** With "Bypass CLI
   restrictions" off, the Claude CLI still answers in prose when its permission
   check refuses a call, so an agent's job could fail with only the model's own
   apology as evidence. The refused calls (the CLI's `permission_denials`) now
-  turn the turn into the "declined to use tools" error, which names the tools,
-  and raise a "`<CLI>` declined tools" alert (id `cli-declined:<protocol>`).
-  Stripping a bypass flag left in a model's `extra_args` now also raises one
-  "`<CLI>` bypass flag ignored" alert per CLI per process (id
-  `bypass:<protocol>`) in addition to the log warning.
+  turn the turn into the "declined to use tools" error, which names the tools
+  and the setting. It is a reply to the user, not an alert: the CLI applied
+  its own permission settings, as directed. Stripping a bypass flag left in a
+  model's `extra_args` does raise one "`<CLI>` bypass flag ignored" alert per
+  CLI per process (id `bypass:<protocol>`), since that is configuration being
+  ignored, in addition to the log warning.
 - **`GET /api/mcp/status` reports why a server is down.** Each server entry
   gains `last_error` (the latest connect failure, empty once connected) and
   `last_error_at` (RFC 3339, omitted when there is none). For a stdio server
