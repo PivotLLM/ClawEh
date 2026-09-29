@@ -5,12 +5,7 @@ package fusion
 
 import (
 	"sort"
-	"strings"
-	"sync"
 
-	"github.com/tenebris-tech/alerter"
-
-	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -62,31 +57,11 @@ func (globalFusionProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	all := eng.ToolSpecDefinitions(tenant)
 	defs := allowedDefs(all, c.AgentByID(deps.AgentID))
 
+	// Fusion on with nothing granted is a configuration state, not an outage:
+	// it is logged here and shown on the Check Up page, never alerted.
 	logger.InfoCF("fusion", "fusion tools enabled for agent",
 		map[string]any{"agent": deps.AgentID, "tools": len(defs), "available": len(all)})
-	if len(all) > 0 && len(defs) == 0 {
-		alertNoServices(deps.AgentID)
-	}
 	return defs
-}
-
-// noServicesAlerted holds the agents already alerted for Fusion on with no
-// service granted: once per agent per process, since registries are rebuilt on
-// every reload.
-var noServicesAlerted sync.Map
-
-// alertNoServices raises the "Fusion on, no service listed" alert for an agent
-// whose Fusion switch is on while its mcp_tools admits no Fusion tool, the
-// state an upgrade from the all-or-nothing switch leaves behind.
-func alertNoServices(agentID string) {
-	if _, dup := noServicesAlerted.LoadOrStore(strings.ToLower(agentID), true); dup {
-		return
-	}
-	alerts.Send(alerter.Alert{
-		Title:       "Fusion on for " + agentID + ", no service listed",
-		Description: "Tick the services " + agentID + " may use under Fusion services on the Agents page, or turn Fusion off for it.",
-		EventID:     "fusion-empty:" + agentID,
-	})
 }
 
 // allowedDefs keeps the Fusion tools the agent's mcp_tools entries admit

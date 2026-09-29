@@ -256,9 +256,10 @@ gating disappearing when MCPFusion was folded in.
   ./tests/capabilities/`), read the diff, and add a **BREAKING** changelog
   entry that names the step restoring the previous access. Never regenerate it
   to make the gate pass without doing both.
-- A default that changes what an existing install can do must also come with a
-  runtime signal (an alert and a Check Up row), so the operator learns of it
-  from the running system, not from a failed job.
+- A default that changes what an existing install can do must also show on the
+  Check Up page and in the reply the user gets when it bites, so the operator
+  learns of it from the running system, not from a failed job. It is not an
+  alert: alerts are for outages, and a configuration state is not one.
 - The MCP integration test (`tests/test_mcpserver.sh`, section 8) checks the
   Fusion gating on the running binary; the opt-in CLI smoke test
   (`CLAW_TEST_CLI=1`, `tests/test_cli_provider.sh`) exercises a real CLI's
