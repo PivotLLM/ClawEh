@@ -3,8 +3,12 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -144,12 +148,42 @@ func TestPollFailed_RedactsToken(t *testing.T) {
 	ch.SetRunning(false)
 }
 
-// The transport never negotiates HTTP/2.
+// The transport never negotiates HTTP/2, even against a server that offers it
+// and after the process default transport (which the Telegram transport is
+// cloned from) has been used and so advertises h2 in its ALPN list.
 func TestNewHTTPTransport_HTTP1Only(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.Proto)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	// Use the default transport once so it stamps h2 into its TLS config, the
+	// state the production process is in by the time a bot connects. The
+	// request itself fails on the untrusted test certificate; that is fine.
+	if resp, err := http.DefaultClient.Get(srv.URL); err == nil {
+		_ = resp.Body.Close()
+	}
+
 	tr, err := newHTTPTransport("")
 	require.NoError(t, err)
 	assert.False(t, tr.ForceAttemptHTTP2)
-	require.NotNil(t, tr.TLSNextProto, "a nil TLSNextProto lets Go negotiate h2")
-	assert.Empty(t, tr.TLSNextProto)
+	require.NotNil(t, tr.Protocols)
+	assert.True(t, tr.Protocols.HTTP1())
+	assert.False(t, tr.Protocols.HTTP2())
+	assert.Equal(t, []string{"http/1.1"}, tr.TLSClientConfig.NextProtos)
 	assert.Positive(t, tr.ResponseHeaderTimeout)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	tr.TLSClientConfig.RootCAs = pool
+	client := &http.Client{Transport: tr}
+	resp, err := client.Get(srv.URL)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "HTTP/1.1", string(body))
+	assert.Equal(t, "HTTP/1.1", resp.Proto)
 }

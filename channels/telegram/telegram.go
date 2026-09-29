@@ -192,10 +192,19 @@ func newHTTPTransport(proxy string) (*http.Transport, error) {
 	// HTTP/1.1 only. A dead HTTP/2 connection is not detected until a request
 	// on it times out, so every poll hung for the full ResponseHeaderTimeout
 	// during a network outage; HTTP/1.1 fails fast and opens a new connection.
-	// The previous fasthttp transport was HTTP/1.1 as well. A non-nil, empty
-	// TLSNextProto stops Go from negotiating h2 over TLS.
+	// The previous fasthttp transport was HTTP/1.1 as well. Protocols limits
+	// the transport to HTTP/1; the ALPN list must be pinned too, because once
+	// the default transport has been used its TLS config advertises h2, and the
+	// clone inherits that list. Advertising h2 without an HTTP/2 handler made
+	// the server answer in HTTP/2 to a client parsing HTTP/1.1 ("malformed HTTP
+	// response \x00\x00\x12\x04...").
 	transport.ForceAttemptHTTP2 = false
-	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetHTTP1(true)
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	}
+	transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	return transport, nil
 }
 
