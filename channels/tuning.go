@@ -58,6 +58,16 @@ const (
 	// further upgrades are refused with 503 until one completes or times out.
 	DeviceMaxPreauthConns = 32
 
+	// DeviceIdleTimeout closes a plain HTTP keep-alive connection to the device
+	// listener that sends no request for this long, so an unauthenticated
+	// client cannot hold a descriptor and a goroutine open indefinitely. It
+	// does not apply to an upgraded WebSocket, which has its own ping cycle.
+	DeviceIdleTimeout = 30 * time.Second
+
+	// DeviceMaxHeaderBytes bounds a request's headers on the device listener;
+	// the handshake needs a few hundred bytes. net/http's default is 1 MiB.
+	DeviceMaxHeaderBytes = 64 << 10
+
 	// DevicePendingPairingsMax caps the pairing requests waiting for approval;
 	// when a new one would exceed it, the oldest are dropped. A request older
 	// than DevicePendingPairingTTL expires (a device still trying re-creates

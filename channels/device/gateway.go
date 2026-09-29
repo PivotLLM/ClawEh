@@ -340,15 +340,29 @@ func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Han
 // cancelled, which closes the server (and ln) so Serve returns. It always
 // returns a non-nil error; the caller decides whether it was a stop or a fault.
 func (c *DeviceChannel) serve(ln net.Listener, addr string, handler http.Handler) error {
-	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
-	// deadlines after the gorilla upgrade hijacks the conn.
-	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	srv := newDeviceServer(addr, handler)
 	// Close immediately rather than graceful Shutdown: a live device WebSocket
 	// would otherwise block the shutdown (and a config reload) for seconds. The
 	// device reconnects after the listener re-binds.
 	stop := context.AfterFunc(c.ctx, func() { utils.CloseQuietly(srv) })
 	defer stop()
 	return srv.Serve(ln)
+}
+
+// newDeviceServer builds the listener's http.Server. No Read/WriteTimeout:
+// long-lived WebSocket connections manage their own deadlines after the
+// gorilla upgrade hijacks the conn. The idle timeout and header cap apply to
+// the plain HTTP side only (the handshake and anything that is not a
+// WebSocket), where an unauthenticated client could otherwise park
+// connections forever.
+func newDeviceServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       channels.DeviceIdleTimeout,
+		MaxHeaderBytes:    channels.DeviceMaxHeaderBytes,
+	}
 }
 
 // Stop shuts down the device listener, closes every open device connection

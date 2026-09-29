@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -200,5 +201,24 @@ func TestDeviceListenerStopsOnContextCancel(t *testing.T) {
 	}
 	if err := dc.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop after cancel: %v", err)
+	}
+}
+
+// The listener's plain HTTP side times out idle keep-alive connections and
+// bounds request headers, so unauthenticated clients cannot hold descriptors
+// open; a hijacked WebSocket is unaffected (those fields do not apply to it).
+func TestNewDeviceServer_IdleAndHeaderLimits(t *testing.T) {
+	srv := newDeviceServer("127.0.0.1:0", nil)
+	if srv.IdleTimeout != channels.DeviceIdleTimeout || srv.IdleTimeout <= 0 {
+		t.Errorf("IdleTimeout = %v, want %v", srv.IdleTimeout, channels.DeviceIdleTimeout)
+	}
+	if srv.MaxHeaderBytes != channels.DeviceMaxHeaderBytes || srv.MaxHeaderBytes <= 0 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, channels.DeviceMaxHeaderBytes)
+	}
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Error("ReadHeaderTimeout must stay set")
+	}
+	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 {
+		t.Error("Read/WriteTimeout must stay zero: WebSockets manage their own deadlines")
 	}
 }

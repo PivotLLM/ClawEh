@@ -14,6 +14,12 @@ observe does not need an entry.
 
 ### Security
 
+- **Idle connections to the device listener time out.** A plain HTTP
+  keep-alive connection that sends nothing for 30 seconds is closed
+  (`DeviceIdleTimeout`), and request headers are capped at 64 KiB
+  (`DeviceMaxHeaderBytes`), so an unauthenticated client cannot hold
+  descriptors and goroutines open indefinitely. Paired-device WebSockets are
+  unaffected: they keep their own ping cycle.
 - **Telegram bot tokens no longer appear in logs or alerts.** A failed
   Telegram request's error text contains the request URL, which carries the bot
   token (`https://api.telegram.org/bot<id>:<secret>/...`), and that text reached
@@ -876,6 +882,13 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A model that no longer exists fails over instead of failing the turn.** An
+  endpoint answering 404, or OpenRouter's "No endpoints found that support the
+  requested parameters" for a retired model or an unsupported parameter, was an
+  unclassified error that stopped the fallback chain. It is now classified as
+  the model being unavailable (spawnllm v0.1.15): the chain moves to the next
+  model, this one cools down under the normal escalation, and the reply reads
+  "model not available".
 - **Dropdowns no longer flicker and jump back to the top on phones.** Every
   select opened in Radix Select's item-aligned mode, which centres the list on
   the current value and then grows the popup and rewrites the scroll position on
