@@ -61,7 +61,7 @@ type cliInfo struct {
 	RequiredArgs []string `json:"required_args"`
 	BypassArgs   []string `json:"bypass_args"`
 	// BypassRestrictions is the CLI provider's bypass_restrictions setting
-	// ("Bypass CLI restrictions"). False when there is no provider yet.
+	// ("Allow CLI to bypass restrictions"). False when there is no provider yet.
 	BypassRestrictions bool `json:"bypass_restrictions"`
 	// ExtraArgs are what the CLI's models add on top, deduplicated across them.
 	ExtraArgs []string `json:"extra_args,omitempty"`

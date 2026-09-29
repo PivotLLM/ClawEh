@@ -824,8 +824,8 @@
       "modelCount": "{{enabled}} of {{count}} model on",
       "modelCount_other": "{{enabled}} of {{count}} models on",
       "toggleError": "Failed to change the CLI agent",
-      "bypass": "Bypass CLI restrictions",
-      "bypassHint": "Passes the CLI's skip-permissions / sandbox-bypass flag. The CLI can then run commands and edit files anywhere the service user can, without asking."
+      "bypass": "Allow CLI to bypass restrictions",
+      "bypassHint": "Passes the CLI's skip-permissions / sandbox-bypass flag. It can then run commands and edit files anywhere the service user can, without asking."
     },
     "status": {
       "configured": "Configured",

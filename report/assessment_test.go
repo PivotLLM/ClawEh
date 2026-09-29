@@ -20,15 +20,15 @@ import (
 func TestAssessment_BypassCLIRestrictions(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
-	r := assessmentRow(t, s, "Bypass CLI restrictions (Claude CLI)")
+	r := assessmentRow(t, s, "Allow CLI to bypass restrictions (Claude CLI)")
 	if r[0] != "" {
 		t.Errorf("mark = %q, want blank: awareness, not an action", r[0])
 	}
-	contains(t, r[2], "Bypass CLI restrictions is on for Claude CLI", "row status")
+	contains(t, r[2], "Allow CLI to bypass restrictions is on for Claude CLI", "row status")
 	contains(t, r[2], "outside ClawEh's workspace and shell controls", "row status")
 	// A CLI with bypass off gets its own awareness row: its tool calls depend
 	// on the CLI's permission settings.
-	off := assessmentRow(t, s, "Bypass CLI restrictions off (Codex CLI)")
+	off := assessmentRow(t, s, "CLI bypass not allowed (Codex CLI)")
 	if off[0] != "" {
 		t.Errorf("mark = %q, want blank: awareness, not an action", off[0])
 	}
@@ -37,11 +37,11 @@ func TestAssessment_BypassCLIRestrictions(t *testing.T) {
 	cfg.Providers[1].BypassRestrictions = false
 	s = collectAssessment(t.Context(), cfg, env)
 	for _, row := range s.Tables[0].Rows {
-		if row[1] == "Bypass CLI restrictions (Claude CLI)" {
+		if row[1] == "Allow CLI to bypass restrictions (Claude CLI)" {
 			t.Errorf("on-row present with every bypass off: %v", row)
 		}
 	}
-	assessmentRow(t, s, "Bypass CLI restrictions off (Claude CLI)")
+	assessmentRow(t, s, "CLI bypass not allowed (Claude CLI)")
 }
 
 // TestAssessment_FusionNoService: an agent with Fusion on and nothing in

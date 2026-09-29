@@ -101,7 +101,7 @@ func modelsFor(cfg *config.Config, provider string) []*config.ModelConfig {
 func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Section {
 	api := Table{Caption: "API providers", Columns: []string{"Provider", "Protocol", "Base URL", "API key", "Proxy"}}
 	models := Table{Caption: "Enabled models", Columns: []string{"Alias", "Provider", "Model id", "Settings"}}
-	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names", "Bypass CLI restrictions"}}
+	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names", "Allow CLI to bypass restrictions"}}
 	var idle []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -166,7 +166,7 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 				Notes: []string{"A CLI provider runs as its own program with its own configuration on this host; " +
 					"ClawEh's file sandbox applies to ClawEh's tools, not to what the CLI does on its own behalf. " +
 					"\"process working directory\" is where the ClawEh service was started, not the agent's workspace. " +
-					"\"Bypass CLI restrictions\" on means the CLI's skip-permissions / sandbox-bypass flag is passed, " +
+					"\"Allow CLI to bypass restrictions\" on means the CLI's skip-permissions / sandbox-bypass flag is passed, " +
 					"so it runs commands and edits files without asking."},
 				Tables: []Table{cli},
 			},

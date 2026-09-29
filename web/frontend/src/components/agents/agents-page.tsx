@@ -10,6 +10,7 @@ import {
   getAppConfig,
   patchAppConfig,
 } from "@/api/channels"
+import { listCLIs } from "@/api/system"
 import { type ModelInfo, getModels } from "@/api/models"
 import { AgentCard } from "@/components/agents/agent-card"
 import {
@@ -23,6 +24,7 @@ import {
   parseAgentBindings,
   parseAgentsConfig,
   sortAgentList,
+  cliBypassWarnings,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -72,15 +74,19 @@ export function AgentsPage() {
   } = useQuery({
     queryKey: ["agents-page"],
     queryFn: async () => {
-      const [appConfig, modelsData, skillsData, toolsData] = await Promise.all([
+      const [appConfig, modelsData, skillsData, toolsData, clis] = await Promise.all([
         getAppConfig(),
         getModels(),
         fetchSkills(),
         getAgentTools(),
+        listCLIs(),
       ])
       return {
         agentsCfg: parseAgentsConfig(appConfig),
         bindings: parseAgentBindings(appConfig),
+        rawModels: appConfig.models,
+        rawProviders: appConfig.providers,
+        clis,
         models: modelsData.models,
         availableSkills: [...skillsData].sort((a, b) =>
           a.name.localeCompare(b.name),
@@ -518,6 +524,13 @@ export function AgentsPage() {
                       name={agent.name}
                       enabled={agent.enabled !== false}
                       selectedModels={e.models}
+                      bypassWarnings={cliBypassWarnings(
+                        e.models,
+                        agentsCfg.defaults.models ?? [],
+                        loaded?.rawModels,
+                        loaded?.rawProviders,
+                        loaded?.clis ?? [],
+                      )}
                       skills={e.skills}
                       tools={e.tools}
                       availableSkills={availableSkills}

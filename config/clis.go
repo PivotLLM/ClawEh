@@ -4,18 +4,11 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/PivotLLM/spawnllm"
-	"github.com/tenebris-tech/alerter"
 
-	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/logger"
 )
-
-// bypassAlerted holds the protocols already alerted for a stripped bypass flag:
-// the alert is raised once per process, the warning on every build.
-var bypassAlerted sync.Map
 
 // CLI agents — the local binaries ClawEh can drive as providers.
 //
@@ -30,7 +23,7 @@ var bypassAlerted sync.Map
 // The permission-bypass flag is the one an operator decides on: it lets the
 // CLI run commands and edit files anywhere the service user can, outside
 // ClawEh's own controls. It is passed only when the provider's
-// bypass_restrictions ("Bypass CLI restrictions" in the WebUI) is on.
+// bypass_restrictions ("Allow CLI to bypass restrictions" in the WebUI) is on.
 //
 // This table is the single source for all of it. The WebUI builds its CLI
 // section from it, the provider factory takes the required arguments from it,
@@ -171,15 +164,10 @@ func CLIArgs(protocol string, bypass bool, extraArgs []string) []string {
 		}
 	}
 	if len(stripped) > 0 {
-		logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Bypass CLI restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
+		// The alert for this, naming the model and the agents that use it, is
+		// raised by the provider dispatcher, which knows both.
+		logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Allow CLI to bypass restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
 			map[string]any{"protocol": agent.Protocol, "flags": strings.Join(stripped, " ")})
-		if _, dup := bypassAlerted.LoadOrStore(agent.Protocol, true); !dup {
-			alerts.Send(alerter.Alert{
-				Title:       agent.Label + " bypass flag ignored",
-				Description: strings.Join(stripped, " ") + " in extra_args is ignored because \"Bypass CLI restrictions\" is off. Tick it for " + agent.Label + " on the Providers page to pass it.",
-				EventID:     "bypass:" + agent.Protocol,
-			})
-		}
 	}
 	return args
 }

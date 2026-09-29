@@ -218,7 +218,7 @@ func (g *cliDeclinedGuard) declinedMessage(denied []string) string {
 	if len(denied) > 0 {
 		msg += " (" + strings.Join(shortToolNames(denied), ", ") + ")"
 	}
-	return msg + ". Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+	return msg + ". Tick *Allow CLI to bypass restrictions* for this CLI on the Providers page, or allow the tools in the CLI's own settings."
 }
 
 // shortToolNames strips the MCP client prefix (mcp__<server>__) the CLI puts on
@@ -249,7 +249,7 @@ func logBypassEnabled(cfg *config.Config) {
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		if p.BypassRestrictions && config.IsCLIProtocol(p.Protocol) {
-			logger.InfoCF("provider", "Bypass CLI restrictions is on: the CLI can run commands and edit files anywhere the service user can, without asking",
+			logger.InfoCF("provider", "Allow CLI to bypass restrictions is on: the CLI can run commands and edit files anywhere the service user can, without asking",
 				map[string]any{"provider": p.Name, "protocol": p.Protocol})
 		}
 	}

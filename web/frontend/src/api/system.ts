@@ -42,7 +42,7 @@ export interface CLIInfo {
   required_args: string[]
   /** The skip-permissions / sandbox-bypass flags, passed only when bypass_restrictions is on. */
   bypass_args: string[]
-  /** The CLI provider's "Bypass CLI restrictions" setting. False when there is no provider. */
+  /** The CLI provider's "Allow CLI to bypass restrictions" setting. False when there is no provider. */
   bypass_restrictions: boolean
   /** What this CLI's models add on top, deduplicated across them. */
   extra_args?: string[]
@@ -84,7 +84,7 @@ export async function setCLIEnabled(
   })
 }
 
-// setCLIBypassRestrictions sets a configured CLI's "Bypass CLI restrictions":
+// setCLIBypassRestrictions sets a configured CLI's "Allow CLI to bypass restrictions":
 // whether its skip-permissions / sandbox-bypass flag is passed. Separate from
 // the enable switch on purpose — enabling never turns this on.
 export async function setCLIBypassRestrictions(

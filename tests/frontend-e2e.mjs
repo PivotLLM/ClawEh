@@ -741,7 +741,32 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(shown > 0, `the rail does not list "${rail[0]}" on a return visit`)
   })
 
-  await check(7, "delete the agent and confirm it is gone", async () => {
+  await check(7, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
+    if (!created) return "skipped, never created"
+    const clis = (await api("/api/system/clis")).json ?? []
+    const c = await config()
+    const byName = Object.fromEntries((c.providers ?? []).map((p) => [p.name, p]))
+    const model = (c.models ?? []).find((m) => {
+      const p = byName[m.provider]
+      const cli = p && clis.find((x) => x.protocol === p.protocol)
+      return cli && !p.bypass_restrictions && (m.extra_args ?? []).some((a) => (cli.bypass_args ?? []).includes(a))
+    })
+    if (!model) return "skipped, no CLI model carries an ignored bypass flag on this instance"
+    const list = (c.agents.list ?? []).map((a) => (a.id === PROBE ? { ...a, models: [model.model_name] } : a))
+    const r = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agents: { list } }) })
+    assert(r.status === 200, `setting the model = ${r.status}`)
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(500)
+    const text = await page.locator("main").innerText()
+    const link = await page.getByRole("link", { name: "Providers" }).count()
+    await close()
+    assert(new RegExp(`${model.model_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} lists .* which is ignored`).test(text), `no warning for ${model.model_name}:\n${text.slice(0, 400)}`)
+    assert(/Allow CLI to bypass restrictions is off for/.test(text), "the warning does not name the setting")
+    assert(link > 0, "the warning has no link to the Providers page")
+  })
+
+  await check(8, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
@@ -1464,7 +1489,7 @@ if (useGroup("I", "Models and providers")) {
     }
     return cli.protocol
   })
-  await check(11, "a configured CLI offers Bypass CLI restrictions, reflecting the provider", async () => {
+  await check(11, "a configured CLI offers Allow CLI to bypass restrictions, reflecting the provider", async () => {
     // The checkbox is the only way to grant a CLI its permission-bypass flag.
     // It must be there for every configured CLI, and what it shows must be
     // what the provider actually has (off unless the operator turned it on).

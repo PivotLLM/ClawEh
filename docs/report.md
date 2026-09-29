@@ -57,7 +57,7 @@ appear in the output.
   under `CLAW_HOME` that other users can read), the WebUI chat token, whether
   new devices are auto-approved, file confinement, shell access, and for each
   confined agent that can run `shell_exec` a reminder that the shell is not
-  confined, CLI providers with *Bypass CLI restrictions* on, channels
+  confined, CLI providers with *Allow CLI to bypass restrictions* on, channels
   accepting any sender, message content in logs, the audit log
   (`<CLAW_HOME>/internal/audit.db`, 90-day retention), MCP servers running local
   programs, and sub-agent spawning. The first column holds `*` where action is

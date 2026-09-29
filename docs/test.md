@@ -54,7 +54,7 @@ entry. See "Capability changes" in `CLAUDE.md`.
 
 **CLI provider smoke (opt-in).** With `CLAW_TEST_CLI=1`, `test.sh` also runs
 `tests/test_cli_provider.sh` against the built binary: one turn through a real
-Claude CLI with "Bypass CLI restrictions" off, asking for a tool call the CLI
+Claude CLI with "Allow CLI to bypass restrictions" off, asking for a tool call the CLI
 must approve. It passes when the tool ran or when the turn ended with the
 "declined to use tools" error naming the setting; silence or a timeout fails.
 It costs one model call on the CLI account, so it is off by default and the

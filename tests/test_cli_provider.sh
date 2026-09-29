@@ -2,7 +2,7 @@
 # CLI provider smoke test (opt-in: CLAW_TEST_CLI=1).
 #
 # Starts one turn through a real Claude CLI configured the way an operator gets
-# it out of the box: "Bypass CLI restrictions" off, so whether the CLI's tool
+# it out of the box: "Allow CLI to bypass restrictions" off, so whether the CLI's tool
 # calls run depends on the CLI's own permission settings. The turn asks for a
 # tool call that needs the CLI's permission. Two outcomes pass: the tool ran
 # (the CLI allowed it), or the turn ended with claw's "declined to use tools"
@@ -49,7 +49,7 @@ chmod 600 "$HOME_DIR/config.json"
 mkdir -p "$HOME_DIR/cli"
 
 PROMPT="Use the Write tool to create a file named probe.txt in the current directory containing the single word hello, then reply with exactly: wrote probe.txt"
-echo "CLI provider smoke: $CLI_CMD, Bypass CLI restrictions off"
+echo "CLI provider smoke: $CLI_CMD, Allow CLI to bypass restrictions off"
 OUT=$(CLAW_HOME="$HOME_DIR" timeout 240 "$CLAW_BIN" agent -m "$PROMPT" 2>"$HOME_DIR/stderr.log")
 RC=$?
 LAST=$(printf '%s\n' "$OUT" | grep -v '^\s*$' | tail -3)

@@ -165,6 +165,48 @@ export function mcpAccessEntries(rows: MCPAccessServer[]): string[] {
   return rows.filter((s) => s.checked).map((s) => s.name)
 }
 
+// CLIBypassWarning is one model in an agent's chain whose skip-permissions flag
+// is being ignored: the model's extra_args carries the CLI's bypass flag, but
+// the provider's "Allow CLI to bypass restrictions" is off, so the flag is not
+// passed and the CLI applies its own permission settings.
+export interface CLIBypassWarning {
+  model: string
+  provider: string
+  flag: string
+}
+
+// cliBypassWarnings lists the ignored bypass flags for an agent's model chain
+// (the agent's own list, or the defaults when it has none). models and
+// providers are the raw config arrays; clis is GET /api/system/clis, which
+// carries each CLI protocol's bypass flags.
+export function cliBypassWarnings(
+  chain: string[],
+  defaultChain: string[],
+  models: unknown,
+  providers: unknown,
+  clis: { protocol: string; bypass_args: string[] }[],
+): CLIBypassWarning[] {
+  const effective = chain.length > 0 ? chain : defaultChain
+  const out: CLIBypassWarning[] = []
+  for (const alias of effective) {
+    const model = asArray(models)
+      .map(asRecord)
+      .find((m) => norm(asString(m.model_name)) === norm(alias))
+    if (!model) continue
+    const provider = asArray(providers)
+      .map(asRecord)
+      .find((p) => norm(asString(p.name)) === norm(asString(model.provider)))
+    if (!provider || provider.bypass_restrictions === true) continue
+    const cli = clis.find((c) => c.protocol === asString(provider.protocol))
+    if (!cli) continue
+    const flag = asArray(model.extra_args)
+      .map(asString)
+      .find((a) => cli.bypass_args.includes(a))
+    if (flag) out.push({ model: alias, provider: asString(provider.name), flag })
+  }
+  return out
+}
+
 // toggleAccessEntry adds the name to the entries when absent and removes it
 // (case-insensitively) when present. It works on the entry list, not on the
 // rows, because one entry can back a row in both lists at once: a name that is

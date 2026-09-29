@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-143 checks in all; the runner prints the same tally at the end.
+144 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -122,7 +122,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | Under **Fusion services** on the `e2e-probe` card, tick the first listed service, wait ~2s; tick it again, wait ~2s | `mcp_tools` gains the service name on the first tick and loses it on the second; the earlier edits are untouched. Skipped when the instance defines no Fusion service (`GET /api/agents/tools` has no `fusion_services`) |
 | F6 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
-| F7 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
+| F7 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** a warning names the model and the flag, says the flag is ignored because the setting is off for that provider, and links to the Providers page |
+| F8 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
 ## G. System page
 
@@ -197,7 +198,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 | I8 | Load `/providers` and read a CLI row | **Args:** lists the whole command line in invocation order — the provider's own flags (`-p --output-format json`), the permission flags (`--dangerously-skip-permissions`, `--yolo`), whatever the models add, then the stdin marker. Not just the configured part: someone asking what ClawEh runs on their machine is owed all of it, and some of it auto-approves tool use |
 | I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
 | I10 | With a CLI provider configured (`GET /api/system/clis` has a `configured` row; skip with a note otherwise), load `/providers` and `/models` | Both render with the CLI row present, no console errors and no error boundary. A CLI row carries argument lists the server encodes as `null` when empty (`required_args`, `bypass_args`, `extra_args`); spreading one used to throw *Spread syntax requires …iterable* straight into the boundary |
-| I11 | With a CLI provider configured (skip with a note otherwise), load `/providers` and find the **Bypass CLI restrictions** checkbox on every configured CLI row | The checkbox is present for each configured CLI and its state equals that provider's `bypass_restrictions` from `GET /api/system/clis` — off unless the operator ticked it. It is the only control that lets a CLI run with its permission-bypass flag, so it must never be missing or show the wrong state |
+| I11 | With a CLI provider configured (skip with a note otherwise), load `/providers` and find the **Allow CLI to bypass restrictions** checkbox on every configured CLI row | The checkbox is present for each configured CLI and its state equals that provider's `bypass_restrictions` from `GET /api/system/clis` — off unless the operator ticked it. It is the only control that lets a CLI run with its permission-bypass flag, so it must never be missing or show the wrong state |
 
 ## J. Devices
 

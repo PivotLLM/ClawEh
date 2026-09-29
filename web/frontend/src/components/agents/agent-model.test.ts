@@ -5,6 +5,7 @@ import {
   maestroEditsFromAgent,
   maestroFromRaw,
   maestroPayload,
+  cliBypassWarnings,
   fusionAccessView,
   mcpAccessEntries,
   mcpAccessView,
@@ -172,5 +173,38 @@ describe("fusion services", () => {
   it("toggling removes case-insensitively and never duplicates", () => {
     expect(toggleAccessEntry(["WXCA", "github"], "wxca")).toEqual(["github"])
     expect(toggleAccessEntry(["github"], "github")).toEqual([])
+  })
+})
+
+describe("cli bypass warnings", () => {
+  const models = [
+    { model_name: "Claude CLI Opus", provider: "Claude CLI", extra_args: ["--dangerously-skip-permissions", "--no-chrome"] },
+    { model_name: "Codex", provider: "Codex CLI", extra_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+    { model_name: "OR Flash", provider: "OpenRouter" },
+  ]
+  const providers = [
+    { name: "Claude CLI", protocol: "claude-cli" },
+    { name: "Codex CLI", protocol: "codex-cli", bypass_restrictions: true },
+    { name: "OpenRouter", protocol: "openai-chat" },
+  ]
+  const clis = [
+    { protocol: "claude-cli", bypass_args: ["--dangerously-skip-permissions"] },
+    { protocol: "codex-cli", bypass_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+  ]
+
+  it("flags a model whose bypass flag is dropped because the provider setting is off", () => {
+    expect(cliBypassWarnings(["Claude CLI Opus", "Codex", "OR Flash"], [], models, providers, clis)).toEqual([
+      { model: "Claude CLI Opus", provider: "Claude CLI", flag: "--dangerously-skip-permissions" },
+    ])
+  })
+
+  it("falls back to the default chain when the agent has none", () => {
+    expect(cliBypassWarnings([], ["Claude CLI Opus"], models, providers, clis)).toHaveLength(1)
+    expect(cliBypassWarnings([], ["OR Flash"], models, providers, clis)).toEqual([])
+  })
+
+  it("is quiet for unknown models, HTTP providers and missing data", () => {
+    expect(cliBypassWarnings(["Nope"], [], models, providers, clis)).toEqual([])
+    expect(cliBypassWarnings(["Claude CLI Opus"], [], undefined, undefined, [])).toEqual([])
   })
 })

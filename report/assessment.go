@@ -247,13 +247,13 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 			continue
 		}
 		if p.BypassRestrictions {
-			add(false, "Bypass CLI restrictions ("+p.Name+")",
-				"Bypass CLI restrictions is on for "+p.Name+": it can run commands and modify files anywhere the service user can, "+
+			add(false, "Allow CLI to bypass restrictions ("+p.Name+")",
+				"Allow CLI to bypass restrictions is on for "+p.Name+": it can run commands and modify files anywhere the service user can, "+
 					"outside ClawEh's workspace and shell controls.")
 			continue
 		}
-		add(false, "Bypass CLI restrictions off ("+p.Name+")",
-			"Bypass CLI restrictions is off for "+p.Name+": whether its tool calls run depends on the CLI's own permission settings.")
+		add(false, "CLI bypass not allowed ("+p.Name+")",
+			"Allow CLI to bypass restrictions is off for "+p.Name+": whether its tool calls run depends on the CLI's own permission settings.")
 	}
 
 	// Fusion on with nothing granted is the state an upgrade from the

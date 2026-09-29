@@ -11,11 +11,14 @@ import {
   type MountEntry,
   type SkillInfo,
   settingsCardClass,
+  type CLIBypassWarning,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
 import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
+import { Link } from "@tanstack/react-router"
+
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
@@ -56,6 +59,8 @@ export interface AgentCardProps {
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
+  /** Models in the chain whose skip-permissions flag is ignored (see cliBypassWarnings). */
+  bypassWarnings?: CLIBypassWarning[]
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
@@ -105,6 +110,7 @@ export function AgentCard({
   onSetDefaultBinding = undefined,
   onToggleEnabled,
   onModelsChange,
+  bypassWarnings = [],
   onSkillsChange,
   onToolsChange,
   onMessageChange,
@@ -190,6 +196,18 @@ export function AgentCard({
             models={models}
             onChange={onModelsChange}
           />
+          {bypassWarnings.map((w) => (
+            <p
+              key={w.model}
+              className="text-xs text-amber-600 dark:text-amber-400"
+            >
+              {w.model} lists {w.flag}, which is ignored: Allow CLI to bypass
+              restrictions is off for {w.provider}.{" "}
+              <Link to="/providers" className="underline">
+                Providers
+              </Link>
+            </p>
+          ))}
         </div>
 
         {onSummarizationModelsChange !== undefined && (

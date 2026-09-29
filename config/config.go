@@ -1779,7 +1779,7 @@ type Provider struct {
 	ResponseFormatJSON      bool `json:"response_format_json,omitempty"`
 	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
 	Command string `json:"command,omitempty"`
-	// BypassRestrictions ("Bypass CLI restrictions" in the WebUI) passes the
+	// BypassRestrictions ("Allow CLI to bypass restrictions" in the WebUI) passes the
 	// CLI's skip-permissions / sandbox-bypass flag on every invocation, so it
 	// can run commands and edit files anywhere the service user can, without
 	// asking. Off by default: the CLI then runs under its own permission

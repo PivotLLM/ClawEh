@@ -527,6 +527,16 @@ observe does not need an entry.
 
 ### Changed
 
+- **"Allow CLI to bypass restrictions" is the setting's name everywhere.** The
+  Providers page checkbox, the Check Up rows, the configuration report and the
+  "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
+  flag reads as allowing something. The config key `bypass_restrictions` is
+  unchanged. The reply now starts with the assistant's name ("Karen: The Claude
+  CLI declined to use tools…"), and the "bypass flag ignored" alert names the
+  agents that use the model and the model itself (id `bypass:<model>`), instead
+  of only the CLI. The Agents page shows a warning under a model chain when a
+  model's `extra_args` still carries the CLI's bypass flag while the provider's
+  setting is off, with a link to the Providers page.
 - **BREAKING: Fusion services are granted per agent through `mcp_tools`.**
   The agent's `fusion` switch no longer grants every Fusion tool: an agent gets
   the tools of a Fusion service only when `mcp_tools` names the service (or a
@@ -708,7 +718,7 @@ observe does not need an entry.
   now titled "Internal tools" rather than "Always-On Tools") and Mounts.
 
 - **BREAKING:** CLI providers no longer pass skip-permissions /
-  sandbox-bypass flags by default; tick *Bypass CLI restrictions* on the CLI
+  sandbox-bypass flags by default; tick *Allow CLI to bypass restrictions* on the CLI
   (or set `bypass_restrictions: true` on its provider) to restore the previous
   behaviour. A bypass flag left in a model's `extra_args` is ignored (with a
   warning) unless the provider setting is on; with it off, a CLI that refuses a

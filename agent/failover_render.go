@@ -38,6 +38,24 @@ func cooldownPolicy(cfg *config.Config) providers.CooldownPolicy {
 //     because operators are technical and want the code, not an interpretation;
 //  4. anything else — the raw error.
 func renderTurnError(turnCtx context.Context, budget time.Duration, err error) string {
+	return renderTurnErrorFor("", turnCtx, budget, err)
+}
+
+// renderTurnErrorFor is renderTurnError with the assistant's display name, which
+// prefixes the declined-tools message: that reply can land in a channel shared
+// by several assistants, and the operator must see at once whose CLI refused.
+func renderTurnErrorFor(assistant string, turnCtx context.Context, budget time.Duration, err error) string {
+	out := renderTurnErrorText(turnCtx, budget, err)
+	if assistant == "" || out == "" {
+		return out
+	}
+	if declined, ok := errors.AsType[*providers.CLIDeclinedError](err); ok && declined != nil {
+		return assistant + ": " + out
+	}
+	return out
+}
+
+func renderTurnErrorText(turnCtx context.Context, budget time.Duration, err error) string {
 	if turnCtx != nil && errors.Is(turnCtx.Err(), context.DeadlineExceeded) {
 		return fmt.Sprintf(
 			"⚠️ This turn ran past the %s time limit and was stopped. Some steps may have completed — ask me to continue if needed.",

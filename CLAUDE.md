@@ -129,6 +129,26 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 This is **not** a picoclaw fork for upstream PR purposes — it is an independent project.
 Upstream picoclaw docs are not carried in this repo.
 
+## Design principles for the WebUI
+
+Help the user avoid mistakes. The reviews that produced these rules each
+started with an operator surprised by their own configuration.
+
+- **A setting that only works together with another is shown with that
+  dependency at both places.** When a value is entered somewhere but ignored
+  because of a setting elsewhere, the page where it was entered says so and
+  links to the page that decides (the Agents page warns about a model whose
+  bypass flag is dropped because the provider's setting is off).
+- **Enabling a capability reads as allowing it.** A checkbox that turns a
+  power on is labelled "Allow …" ("Allow CLI to bypass restrictions"), never
+  as a neutral noun, so the operator sees that something is being granted.
+- **Anything the user is told about names the thing.** A reply or alert about
+  an agent names the agent; one about a model names the model. "The CLI
+  declined" in a channel shared by several assistants tells the operator
+  nothing; "Karen: the Claude CLI declined…" does.
+- **An ignored value is visible where it lives, not only in a log.** Logs are
+  for after the fact; the WebUI is where the mistake is being made.
+
 ## Build & Install
 ```
 make build       # build the binary (embeds the frontend bundle)
@@ -288,7 +308,7 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 143 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 144 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

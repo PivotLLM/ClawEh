@@ -36,7 +36,7 @@ func (s *scriptedProvider) Chat(context.Context, []Message, []ToolDefinition, st
 }
 func (s *scriptedProvider) GetDefaultModel() string { return "scripted" }
 
-const declinedText = "The Claude CLI declined to use tools. Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+const declinedText = "The Claude CLI declined to use tools. Tick *Allow CLI to bypass restrictions* for this CLI on the Providers page, or allow the tools in the CLI's own settings."
 
 // With bypass off, the CLI runs without its permission-bypass flag and is
 // wrapped so an empty answer — what a CLI returns when it refuses a tool call —
@@ -72,7 +72,7 @@ func TestNewCLIProvider_BypassSettingDecidesFlagAndGuard(t *testing.T) {
 // A refusal is reported to the user through the error, never as an alert:
 // the CLI did what its settings say.
 func TestCLIDeclinedGuard_Chat(t *testing.T) {
-	deniedText := "The Claude CLI declined to use tools (maestro_file_get, microsoft365_mail_read_inbox, Bash). Tick *Bypass CLI restrictions* for this CLI in the WebUI, or allow the tools in the CLI's own settings."
+	deniedText := "The Claude CLI declined to use tools (maestro_file_get, microsoft365_mail_read_inbox, Bash). Tick *Allow CLI to bypass restrictions* for this CLI on the Providers page, or allow the tools in the CLI's own settings."
 	tests := []struct {
 		name    string
 		resp    *LLMResponse
@@ -161,7 +161,7 @@ func TestNewProviderDispatcher_LogsBypassEnabled(t *testing.T) {
 	NewProviderDispatcher(cfg)
 
 	out := buf.String()
-	if strings.Count(out, "Bypass CLI restrictions is on") != 1 || !strings.Contains(out, "Codex CLI") {
+	if strings.Count(out, "Allow CLI to bypass restrictions is on") != 1 || !strings.Contains(out, "Codex CLI") {
 		t.Errorf("want exactly one line, for Codex CLI:\n%s", out)
 	}
 	if strings.Contains(out, "Cursor CLI") || strings.Contains(out, "OpenAI") {
@@ -169,5 +169,54 @@ func TestNewProviderDispatcher_LogsBypassEnabled(t *testing.T) {
 	}
 	if n := len(rec.Alerts()); n != 0 {
 		t.Errorf("building the dispatcher raised %d alert(s), want none: %+v", n, rec.Alerts())
+	}
+}
+
+// A CLI model whose extra_args still carry the bypass flag while the provider
+// has "Allow CLI to bypass restrictions" off raises one alert per model per
+// process, naming the agents that use the model and the model itself. Nothing
+// when the flag is absent or the setting is on.
+func TestDispatcher_AlertsWhenBypassFlagIgnored(t *testing.T) {
+	restore := logger.RedirectForTest(&bytes.Buffer{})
+	defer restore()
+	rec := testalerts.Install(t)
+	bypassIgnoredAlerted.Clear()
+
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{
+		{Name: "Claude CLI", Protocol: "claude-cli"},
+		{Name: "Codex CLI", Protocol: "codex-cli", BypassRestrictions: true},
+	}
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "Claude CLI Opus", Model: "claude-opus", Provider: "Claude CLI", Enabled: true, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}},
+		{ModelName: "Claude CLI Plain", Model: "claude-cli", Provider: "Claude CLI", Enabled: true},
+		{ModelName: "Codex", Model: "codex-cli", Provider: "Codex CLI", Enabled: true, ExtraArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+	}
+	cfg.Agents.Defaults.Models = []string{"Claude CLI Opus"}
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "karen", Name: "Karen", Models: []string{"Claude CLI Opus", "Codex"}},
+		{ID: "dawn", Models: []string{"Claude CLI Opus"}},
+		{ID: "sam"}, // no chain of its own: uses the defaults
+		{ID: "amber", Models: []string{"Codex"}},
+	}
+	d := NewProviderDispatcher(cfg)
+	for _, alias := range []string{"Claude CLI Opus", "Claude CLI Plain", "Codex", "Claude CLI Opus"} {
+		if _, err := d.Get(alias); err != nil {
+			t.Fatalf("Get(%q): %v", alias, err)
+		}
+	}
+	got := rec.Alerts()
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+	a := got[0]
+	if a.EventID != "bypass:Claude CLI Opus" {
+		t.Errorf("EventID = %q", a.EventID)
+	}
+	if a.Title != "Karen, dawn, sam: bypass flag ignored for Claude CLI Opus" {
+		t.Errorf("Title = %q", a.Title)
+	}
+	if !strings.Contains(a.Description, "--dangerously-skip-permissions") || !strings.Contains(a.Description, "Allow CLI to bypass restrictions is off for Claude CLI") {
+		t.Errorf("Description = %q", a.Description)
 	}
 }
