@@ -7,8 +7,9 @@ import "time"
 // is told that retrying is not working.
 const (
 	// ConnDownAlertAfter is how long a channel may go without a working
-	// connection to its service before a "Channel connection down" alert is
-	// raised. Retries continue after the alert; it is raised once per outage.
+	// connection to its service before it counts toward a "<Platform> down"
+	// alert. Retries continue after the alert; it is raised once per platform
+	// outage.
 	ConnDownAlertAfter = 10 * time.Minute
 
 	// RetryAfterPadding is added to a server's own retry-after delay (a

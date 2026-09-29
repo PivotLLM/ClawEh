@@ -57,7 +57,8 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Channel failed to start | A channel has failed to start ten times in a row; retries continue every five minutes | channel name |
 | | Channel send failed | An outbound message was dropped after its send retries | channel name |
 | | Channel receive loop stopped | The device listener failed; it re-listens with backoff while the channel still reports running | channel name |
-| | Channel connection down | A channel has had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`) | channel name |
+| | `<Platform>` down | Channels of one platform have had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`); one alert per platform | platform (`telegram`) |
+| | `<Platform>` up | Every channel in a platform outage has reconnected | platform + `-up` |
 | | Channel credentials rejected | Slack or Matrix rejected the channel's token | channel name |
 | | Telegram polling failed | Telegram rejected the bot token (401) | channel name |
 | | SecMsg account discovery failed | The SecMsg daemon could not be queried; no accounts bound until the next reload | `SecMsg (<name>)` |

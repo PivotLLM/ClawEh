@@ -157,6 +157,11 @@ type BaseChannel struct {
 	alerter   alerter.Alerter
 	// conn tracks connection outages; see ReportConnFailure.
 	conn connWatch
+	// platform groups connection outages across channels; see SetPlatform.
+	platform string
+	// outages aggregates connection outages per platform (connOutages;
+	// replaced in tests).
+	outages *connAggregator
 	// seen drops redelivered inbound messages; see inboundDedupe.
 	seen *inboundDedupe
 }
@@ -174,6 +179,7 @@ func NewBaseChannel(
 		name:      name,
 		allowList: allowList,
 		seen:      newInboundDedupe(),
+		outages:   connOutages,
 	}
 	for _, opt := range opts {
 		opt(bc)
@@ -403,8 +409,13 @@ func (c *BaseChannel) HandleMessage(
 	}
 }
 
+// SetRunning records whether the channel is running. Stopping ends any
+// connection outage in progress: a stopped channel no longer retries.
 func (c *BaseChannel) SetRunning(running bool) {
 	c.running.Store(running)
+	if !running {
+		c.connStopped()
+	}
 }
 
 // SetMediaStore injects a MediaStore into the channel.

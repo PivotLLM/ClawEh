@@ -14,6 +14,13 @@ observe does not need an entry.
 
 ### Security
 
+- **Telegram bot tokens no longer appear in logs or alerts.** A failed
+  Telegram request's error text contains the request URL, which carries the bot
+  token (`https://api.telegram.org/bot<id>:<secret>/...`), and that text reached
+  `claw.log`, the "Channel connection down" alert details, send errors and
+  telego's own log lines. Every such token is now written as `bot<redacted>`.
+  Earlier logs and alerts may contain your tokens: rotate them with @BotFather
+  (`/revoke`) and update `channels.telegram[].token`.
 - **BREAKING: the WebUI and its HTTP API now require a login.** There is no
   default account and no way to create one from the browser: run `claw admin`
   on the server. It asks for a username and a password (twice, no echo, at
@@ -504,6 +511,18 @@ observe does not need an entry.
 
 ### Changed
 
+- **Channel connection alerts are sent per platform, not per channel.** When
+  channels of one platform lose their connection for ten minutes, one
+  "`<Platform>` down" alert is raised (alert id is the platform, e.g.
+  `telegram`), saying how many bots or connections are down, with the affected
+  channel names and the last error in the details; channels that fail later in
+  the same outage join it silently. When they have all reconnected, one
+  "`<Platform>` up" alert (alert id `<platform>-up`) says how long it lasted.
+  Previously each channel raised its own "Channel connection down", so a
+  network outage with seven Telegram bots sent seven alerts.
+- **Telegram uses HTTP/1.1.** During a network outage a dead HTTP/2
+  connection made every Telegram poll hang for 45 seconds before failing;
+  HTTP/1.1 fails fast and reconnects, as the earlier transport did.
 - **MCP server alerts are sent once per outage, not per retry.** A server that
   goes down (or fails its first connect) raises "MCP `<name>` down" once, then at
   most one reminder an hour ("still down since HH:MM"), and "MCP `<name>` up"
@@ -876,7 +895,7 @@ observe does not need an entry.
   backoff (2s doubling to 60s) for as long as the channel runs. Telegram, Slack,
   Discord, Matrix and SecMsg report their connection state, and an operator is
   alerted only when retrying cannot help: a rejected token (at once), or no
-  working connection for ten minutes ("Channel connection down").
+  working connection for ten minutes ("`<Platform>` down").
 - **Telegram waits as long as Telegram asks.** On a `429 Too Many Requests`
   the bot now waits the `retry_after` Telegram gives plus one second, instead
   of retrying every two seconds, which could prolong the rate limit. Other poll

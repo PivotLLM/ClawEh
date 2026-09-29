@@ -315,9 +315,13 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 	return m, nil
 }
 
-// injectChannelDependencies injects optional dependencies (MediaStore, PlaceholderRecorder,
-// Owner) into a channel if it implements the corresponding setter interfaces.
-func (m *Manager) injectChannelDependencies(ch Channel) {
+// injectChannelDependencies injects optional dependencies (platform, MediaStore,
+// PlaceholderRecorder, Owner) into a channel if it implements the corresponding
+// setter interfaces.
+func (m *Manager) injectChannelDependencies(ch Channel, platform string) {
+	if setter, ok := ch.(interface{ SetPlatform(p string) }); ok {
+		setter.SetPlatform(platform)
+	}
 	if m.mediaStore != nil {
 		if setter, ok := ch.(interface{ SetMediaStore(s media.MediaStore) }); ok {
 			setter.SetMediaStore(m.mediaStore)
@@ -358,7 +362,7 @@ func (m *Manager) initChannel(name, displayName string) {
 			"error":   err.Error(),
 		})
 	} else {
-		m.injectChannelDependencies(ch)
+		m.injectChannelDependencies(ch, name)
 		m.channels[name] = ch
 		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
 			"channel": displayName,
@@ -395,7 +399,7 @@ func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
 		return
 	}
 
-	m.injectChannelDependencies(ch)
+	m.injectChannelDependencies(ch, "telegram")
 
 	if _, exists := m.channels[channelName]; exists {
 		logger.ErrorCF("channels", "Duplicate channel name — skipping bot", map[string]any{
@@ -440,7 +444,7 @@ func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
 			continue
 		}
 
-		m.injectChannelDependencies(ch)
+		m.injectChannelDependencies(ch, "secmsg")
 
 		if _, exists := m.channels[channelName]; exists {
 			logger.ErrorCF("channels", "Duplicate channel name — skipping account", map[string]any{

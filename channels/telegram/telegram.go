@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -124,12 +125,17 @@ type telegoLogger struct {
 }
 
 func (l telegoLogger) Errorf(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := RedactToken(fmt.Sprintf(format, args...))
 	if isCancelledPoll(msg) {
 		l.Debugf("%s", msg)
 		return
 	}
 	l.Logger.Errorf("%s", msg)
+}
+
+// Debugf logs telego's request traces, whose URLs carry the bot token.
+func (l telegoLogger) Debugf(format string, args ...any) {
+	l.Logger.Debugf("%s", RedactToken(fmt.Sprintf(format, args...)))
 }
 
 // isCancelledPoll reports whether a telego log message is a getUpdates request
@@ -161,25 +167,21 @@ type TelegramChannel struct {
 	commandRegCancel context.CancelFunc
 }
 
-// NewTelegramChannelFromConfig creates a TelegramChannel from a TelegramBotConfig.
-// The channel name is derived from botCfg.ChannelName().
-func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.MessageBus) (*TelegramChannel, error) {
-	if botCfg.Token == "" {
-		return nil, errors.New("telegram bot token is required")
-	}
-	// net/http rather than telego's default fasthttp caller: fasthttp checks the
-	// context only before sending, so cancelling it could not abort the 30 s
-	// getUpdates long poll and every Stop waited out pollExitTimeout. The cloned
-	// default transport keeps HTTP(S)_PROXY support; a configured proxy replaces it.
+// newHTTPTransport returns the transport for the bot's API calls: net/http
+// rather than telego's default fasthttp caller: fasthttp checks the
+// context only before sending, so cancelling it could not abort the 30 s
+// getUpdates long poll and every Stop waited out pollExitTimeout. The cloned
+// default transport keeps HTTP(S)_PROXY support; a configured proxy replaces it.
+func newHTTPTransport(proxy string) (*http.Transport, error) {
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return nil, errors.New("default HTTP transport is not an *http.Transport")
 	}
 	transport = transport.Clone()
-	if botCfg.Proxy != "" {
-		proxyURL, parseErr := url.Parse(botCfg.Proxy)
+	if proxy != "" {
+		proxyURL, parseErr := url.Parse(proxy)
 		if parseErr != nil {
-			return nil, fmt.Errorf("invalid proxy URL %q: %w", botCfg.Proxy, parseErr)
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxy, parseErr)
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
@@ -187,6 +189,26 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 	// to pollTimeoutSeconds. Not an overall client timeout, so a slow upload of a
 	// large file is not cut off while its body is still being sent.
 	transport.ResponseHeaderTimeout = pollTimeoutSeconds*time.Second + httpHeaderMargin
+	// HTTP/1.1 only. A dead HTTP/2 connection is not detected until a request
+	// on it times out, so every poll hung for the full ResponseHeaderTimeout
+	// during a network outage; HTTP/1.1 fails fast and opens a new connection.
+	// The previous fasthttp transport was HTTP/1.1 as well. A non-nil, empty
+	// TLSNextProto stops Go from negotiating h2 over TLS.
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	return transport, nil
+}
+
+// NewTelegramChannelFromConfig creates a TelegramChannel from a TelegramBotConfig.
+// The channel name is derived from botCfg.ChannelName().
+func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.MessageBus) (*TelegramChannel, error) {
+	if botCfg.Token == "" {
+		return nil, errors.New("telegram bot token is required")
+	}
+	transport, err := newHTTPTransport(botCfg.Proxy)
+	if err != nil {
+		return nil, err
+	}
 	opts := []telego.BotOption{telego.WithHTTPClient(&http.Client{Transport: transport})}
 
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
@@ -282,7 +304,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	go func() {
 		if err = bh.Start(); err != nil {
 			logger.ErrorCF("telegram", "Bot handler failed", map[string]any{
-				"error": err.Error(),
+				"error": redactErr(err).Error(),
 			})
 		}
 	}()
@@ -311,7 +333,7 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 		if c.bh != nil {
 			if err := c.bh.StopWithContext(ctx); err != nil {
 				logger.DebugCF("telegram", "Bot handler stop returned error", map[string]any{
-					"error": err.Error(),
+					"error": redactErr(err).Error(),
 				})
 			}
 		}
@@ -394,6 +416,7 @@ func pollRetryWait(err error, backoff time.Duration) (wait, next time.Duration) 
 // channel's outage tracker, which alerts only if the outage outlasts
 // channels.ConnDownAlertAfter.
 func (c *TelegramChannel) pollFailed(err error, wait time.Duration) {
+	err = redactErr(err)
 	var apiErr *ta.Error
 	if errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusUnauthorized {
 		logger.ErrorCF("telegram", "Telegram rejected the bot token", map[string]any{
@@ -477,7 +500,7 @@ func (c *TelegramChannel) sendHTMLChunk(
 
 	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
 		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		tgMsg.Text = mdFallback
 		tgMsg.ParseMode = ""
@@ -504,7 +527,7 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 	// Send the first typing action immediately
 	if err := c.bot.SendChatAction(ctx, action); err != nil {
 		logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
-			"chat_id": cid, "error": err.Error(),
+			"chat_id": cid, "error": redactErr(err).Error(),
 		})
 	}
 
@@ -521,7 +544,7 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 				a.MessageThreadID = threadID
 				if err := c.bot.SendChatAction(typingCtx, a); err != nil {
 					logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
-						"chat_id": cid, "error": err.Error(),
+						"chat_id": cid, "error": redactErr(err).Error(),
 					})
 				}
 			}
@@ -545,7 +568,7 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 	editMsg := tu.EditMessageText(tu.ID(cid), mid, htmlContent)
 	editMsg.ParseMode = telego.ModeHTML
 	_, err = c.bot.EditMessageText(ctx, editMsg)
-	return err
+	return redactErr(err)
 }
 
 // SendPlaceholder implements channels.PlaceholderCapable.
@@ -571,7 +594,7 @@ func (c *TelegramChannel) SendPlaceholder(ctx context.Context, chatID string) (s
 	phMsg.MessageThreadID = threadID
 	pMsg, err := c.bot.SendMessage(ctx, phMsg)
 	if err != nil {
-		return "", err
+		return "", redactErr(err)
 	}
 
 	return strconv.Itoa(pMsg.MessageID), nil
@@ -652,7 +675,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
 				"type":  part.Type,
-				"error": err.Error(),
+				"error": redactErr(err).Error(),
 			})
 			return fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
 		}
@@ -878,7 +901,7 @@ func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) stri
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		logger.ErrorCF("telegram", "Failed to get photo file", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		return ""
 	}
@@ -892,10 +915,12 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	}
 
 	url := c.bot.FileDownloadURL(file.FilePath)
-	logger.DebugCF("telegram", "File URL", map[string]any{"url": url})
+	logURL := RedactToken(url)
+	logger.DebugCF("telegram", "File URL", map[string]any{"url": logURL})
 
 	return utils.DownloadFile(url, localFilename(file.FilePath, ext), utils.DownloadOptions{
 		LoggerPrefix: "telegram",
+		LogURL:       logURL,
 	})
 }
 
@@ -914,7 +939,7 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		logger.ErrorCF("telegram", "Failed to get file", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		return ""
 	}

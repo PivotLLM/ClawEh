@@ -59,6 +59,9 @@ type DownloadOptions struct {
 	ExtraHeaders map[string]string
 	LoggerPrefix string
 	ProxyURL     string
+	// LogURL, when set, is shown in logs in place of the URL, for a URL that
+	// carries a credential (a Telegram file URL embeds the bot token).
+	LogURL string
 }
 
 var (
@@ -100,6 +103,13 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	if opts.LoggerPrefix == "" {
 		opts.LoggerPrefix = "utils"
 	}
+	// hide replaces the URL with opts.LogURL in text bound for the logs.
+	hide := func(s string) string {
+		if opts.LogURL == "" {
+			return s
+		}
+		return strings.ReplaceAll(s, urlStr, opts.LogURL)
+	}
 
 	mediaDir := MediaTempDir()
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
@@ -117,7 +127,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create download request", map[string]any{
-			"error": err.Error(),
+			"error": hide(err.Error()),
 		})
 		return ""
 	}
@@ -140,7 +150,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
-		redirects = append(redirects, fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String()))
+		redirects = append(redirects, hide(fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String())))
 		if registeredDomain(r.URL.Hostname()) == registeredDomain(origReq.URL.Hostname()) {
 			maps.Copy(r.Header, origReq.Header)
 		}
@@ -167,8 +177,8 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to download file", map[string]any{
-			"error": err.Error(),
-			"url":   urlStr,
+			"error": hide(err.Error()),
+			"url":   hide(urlStr),
 		})
 		return ""
 	}
@@ -177,7 +187,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	if resp.StatusCode != http.StatusOK {
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned non-200 status", map[string]any{
 			"status": resp.StatusCode,
-			"url":    urlStr,
+			"url":    hide(urlStr),
 		})
 		return ""
 	}
@@ -191,10 +201,10 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		}
 		// Detect Slack's web login redirect: files.slack.com → workspace.slack.com/?redir=...
 		// This happens when the bot token lacks the files:read OAuth scope.
-		finalURL := resp.Request.URL.String()
+		finalURL := hide(resp.Request.URL.String())
 		if strings.Contains(finalURL, "slack.com") && strings.Contains(finalURL, "redir=") {
 			logger.ErrorCF(opts.LoggerPrefix, "Slack redirected to login page — bot token is missing 'files:read' OAuth scope. Add it in Slack App settings → OAuth & Permissions → Bot Token Scopes, then reinstall the app.", map[string]any{
-				"url":       urlStr,
+				"url":       hide(urlStr),
 				"final_url": finalURL,
 				"status":    resp.StatusCode,
 				"redirects": redirects,
@@ -202,7 +212,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 			return ""
 		}
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
-			"url":          urlStr,
+			"url":          hide(urlStr),
 			"final_url":    finalURL,
 			"status":       resp.StatusCode,
 			"content_type": ct,
