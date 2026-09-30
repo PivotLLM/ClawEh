@@ -14,6 +14,7 @@ import (
 	mllm "github.com/PivotLLM/Maestro/llm"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
@@ -212,10 +213,11 @@ func TestDispatcher_NoTimeoutWhenUnset(t *testing.T) {
 // every one fail is a failed dispatch (retried by the runner), with the count
 // and the last error in the message and the usage kept.
 func TestDispatcher_AllToolCallsFailed(t *testing.T) {
+	lastErr := "cogmem_status: " + tools.NotEnabledMessage("cogmem_status")
 	runner := &stubRunner{res: &global.SyncResult{
 		Content: "I checked everything and it looks fine.", Iterations: 3,
 		Model: "claude-x", InputTokens: 900, OutputTokens: 80, CacheReadTokens: 9, CostUSD: 0.05,
-		ToolCalls: 3, ToolErrors: 3, LastToolError: "cogmem_status: invalid session token",
+		ToolCalls: 3, ToolErrors: 3, LastToolError: lastErr, SessionKey: "agent:alice:subagent:1",
 	}}
 	d := &dispatcher{run: runner, agent: "alice"}
 
@@ -227,7 +229,7 @@ func TestDispatcher_AllToolCallsFailed(t *testing.T) {
 		t.Fatalf("result = %+v, want exit 1, not successful, stop reason tools_failed", res)
 	}
 	for _, field := range []string{res.Text, res.Stderr} {
-		if !strings.Contains(field, "3 tool call(s)") || !strings.Contains(field, "cogmem_status: invalid session token") {
+		if !strings.Contains(field, "3 tool call(s)") || !strings.Contains(field, lastErr) {
 			t.Errorf("message %q lacks the count or the last error", field)
 		}
 	}

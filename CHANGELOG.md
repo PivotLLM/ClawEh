@@ -532,13 +532,16 @@ observe does not need an entry.
 
 ### Changed
 
-- **A Maestro worker whose tool calls all failed is a failed task attempt.** A
-  Maestro task whose worker made tool calls and saw every one of them fail is
-  now reported to Maestro as a failed dispatch and retried within the task's
-  `max_worker` budget, instead of its reply being accepted as a completed
-  result. The task error names the number of calls and the last tool error
-  ("sub-agent made 3 tool call(s) and every one failed; last error: …"). A
-  worker with at least one working tool call, or none at all, is unaffected.
+- **A Maestro dispatch whose tool calls all failed is a failed attempt.** When
+  the sub-agent behind a Maestro dispatch made ClawEh tool calls and every one
+  of them failed, Maestro is now told the dispatch failed, and the task is
+  retried within its `max_worker` budget instead of the reply being accepted as
+  a completed result. The task error names the number of calls and the last
+  tool error ("sub-agent made 3 tool call(s) and every one failed; last error:
+  …"). A dispatch with at least one working tool call, or none at all, is
+  unaffected. Only ClawEh's own tools are counted, including calls it refuses
+  (a tool not enabled for the agent); a CLI's built-in tools are not, and
+  neither are calls rejected before their session token is verified.
 - **"Allow CLI to bypass restrictions" is the setting's name everywhere.** The
   Providers page checkbox, the Check Up rows, the configuration report and the
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions

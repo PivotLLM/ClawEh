@@ -137,9 +137,11 @@ func (d *dispatcher) Dispatch(ctx context.Context, req *mllm.DispatchRequest) (*
 			res.ToolCalls, res.LastToolError)
 		logger.WarnCF("maestro", "maestro dispatch failed: every sub-agent tool call failed",
 			map[string]any{
-				"agent": d.agent, "tool_calls": res.ToolCalls, "tool_errors": res.ToolErrors,
+				"agent": d.agent, "session_key": res.SessionKey, "tool_calls": res.ToolCalls, "tool_errors": res.ToolErrors,
 				"last_error": res.LastToolError, "model": model, "duration_ms": elapsed,
 			})
+		// ResponseSize and BytesReceived deliberately keep the accounting of the
+		// discarded content: those bytes were received and paid for.
 		out.ExitCode = 1
 		out.Stdout = ""
 		out.Stderr = msg

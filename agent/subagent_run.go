@@ -137,6 +137,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	}
 	res.Content = content
 	res.ToolCalls, res.ToolErrors, res.LastToolError = toolCalls, toolErrors, lastToolError
+	res.SessionKey = sessionKey
 	logger.InfoCF("agent", "subagent.run.end", map[string]any{
 		"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "content_len": len(content),
 		"model": res.Model, "input_tokens": res.InputTokens, "output_tokens": res.OutputTokens,

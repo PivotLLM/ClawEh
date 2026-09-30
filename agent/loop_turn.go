@@ -1221,6 +1221,7 @@ func (al *AgentLoop) runLLMIteration(
 							Err:    fmt.Errorf("tool %s panicked: %v", tc.Name, r),
 							ForLLM: fmt.Sprintf("Tool %s failed with an internal error.", tc.Name),
 						}
+						tools.RecordToolResult(opts.SessionKey, tc.Name, tools.ErrorResult(agentResults[idx].result.ForLLM))
 					}
 				}()
 

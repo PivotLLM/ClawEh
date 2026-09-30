@@ -143,6 +143,9 @@ type SyncResult struct {
 	// LastToolError is "<tool>: <text>" for the last failed call, token-redacted
 	// and truncated to 300 runes; empty when no call failed.
 	LastToolError string
+	// SessionKey is the sub-agent session the worker ran in, for joining a
+	// caller's log lines with the run's own.
+	SessionKey string
 }
 
 // Errors a SyncRunner returns for failures that no retry can fix. Programmatic

@@ -49,6 +49,9 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	// Drop the idle runners of agents the config no longer has.
+	pruneRunners(c)
+
 	// Gate on the per-agent Maestro flag.
 	if !c.AgentHasMaestro(deps.AgentID) {
 		return nil
@@ -87,10 +90,11 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		agentCfg = c.AgentByID(deps.AgentID)
 	}
 	refDirs := referenceDirsFromMounts(agentCfg, workspace)
+	runCfg := runnerConfig(c.AgentMaestro(deps.AgentID))
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
-		mconfig.WithRunner(runnerConfig(c.AgentMaestro(deps.AgentID))),
+		mconfig.WithRunner(runCfg),
 		mconfig.WithReferenceDirs(refDirs),
 	)
 	if err := mcfg.Prepare(); err != nil {
@@ -115,8 +119,11 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	// file_import may only read what the agent's own file tools can.
 	allowImport := importAllowed(c, agentCfg, workspace)
 
-	// The runner is built here and injected so a run in progress survives a
-	// config reload (see runnerFor).
+	// The runner is built here and injected, one per agent for the life of the
+	// process, so a run in progress survives a config reload; this
+	// registration's dispatcher is swapped into it (see runnerFor).
+	run, swap := runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
+		disp, mcfg, mlog, allowImport)
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,
@@ -124,8 +131,8 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		Workspace: workspace,
 		Host: mmaestro.HostDeps{
 			Logger:        mlog,
-			Runner:        runnerFor(deps.AgentID, base, mcfg, mlog, disp, allowImport),
-			Dispatcher:    disp,
+			Runner:        run,
+			Dispatcher:    swap,
 			ImportAllowed: allowImport,
 		},
 	})

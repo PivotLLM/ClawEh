@@ -384,7 +384,7 @@ func dispatchToolCall(
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
 	toolActivity ToolActivityNotifier,
-) (string, bool) {
+) (out string, isErr bool) {
 	var rawSessTok string
 	if v, ok := args[sessionTokenParam].(string); ok {
 		rawSessTok = v
@@ -414,6 +414,9 @@ func dispatchToolCall(
 			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
 		return invalidTokenMessage, true
 	}
+	defer func() {
+		tools.RecordToolResult(rec.sessionKey, toolName, &tools.ToolResult{ForLLM: out, IsError: isErr})
+	}()
 
 	agentName := rec.agentID
 	logger.InfoCF("mcpserver", "MCP session token verified",
@@ -489,7 +492,6 @@ func dispatchToolCall(
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
 	result := reg.ExecuteForHost(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
-	tools.RecordToolResult(rec.sessionKey, toolName, result)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})
@@ -502,7 +504,7 @@ func dispatchToolCall(
 	// (Async completions are handled by asyncCb above.)
 	publishMCPForUser(ctx, msgBus, rec, toolName, result)
 
-	out := agenttoken.Redact(result.ForLLM)
+	out = agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
 }
 
