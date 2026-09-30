@@ -358,9 +358,12 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 		// refcount decides between sharing it and rebuilding it. The reference
 		// is taken before the mark is checked — the reverse of
 		// tryEvictEntry — so an evictor either counts this caller or
-		// is seen by it.
+		// is seen by it. An entry already marked is skipped without touching
+		// the refcount: a transient reference would look like a holder to
+		// takeCachedEntry and have it share a released stale entry instead of
+		// rebuilding it.
 		v, _ := al.contextManagers.Load(key)
-		if entry, ok := v.(*cmEntry); ok {
+		if entry, ok := v.(*cmEntry); ok && !entry.stale.Load() {
 			entry.refcount.Add(1)
 			if !entry.stale.Load() {
 				entry.touch()
@@ -397,8 +400,9 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 // current config. The caller holds the build slot for key; since the fast path
 // never uses a stale entry (it backs its reference out when it sees the mark),
 // nobody can start using one between the refcount check here and its eviction.
-// A fast-path caller's transient reference can only make this share an entry
-// that is still open, never evict one in use. Every other evictor also holds
+// A fast-path caller's transient reference (possible only while an evictor is
+// marking the entry at that moment) can only make this share an entry that is
+// still open, never evict one in use. Every other evictor also holds
 // the slot (tryEvictEntry), so none can race this one.
 func (al *AgentLoop) takeCachedEntry(key string) (*cmEntry, bool) {
 	v, _ := al.contextManagers.Load(key)

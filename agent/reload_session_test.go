@@ -249,39 +249,48 @@ func TestReload_EvictionPassSkipsHeldStaleEntry(t *testing.T) {
 }
 
 // TestReload_ConcurrentAccessAfterRelease: many callers reaching a released
-// stale entry at once rebuild it exactly once and all share the new entry.
-// Run with -race.
+// stale entry at once rebuild it exactly once and all share the new entry; none
+// is handed the stale manager, since nobody holds it any more. Repeated so the
+// narrow interleavings (a caller backing out of the stale entry on the fast path
+// while another holds the build slot) come up. Run with -race.
 func TestReload_ConcurrentAccessAfterRelease(t *testing.T) {
 	f := newReloadFixture(t)
-	releaseTurn := f.acquire()
-	f.al.invalidateContextManagers(context.Background())
-	releaseTurn()
+	const rounds, workers = 50, 32
+	for round := range rounds {
+		releaseTurn := f.acquire()
+		staleCM := f.entry().cm
+		f.al.invalidateContextManagers(context.Background())
+		releaseTurn()
 
-	const workers = 32
-	var start, done sync.WaitGroup
-	start.Add(1)
-	var mu sync.Mutex
-	seen := make(map[any]int)
-	for range workers {
-		done.Go(func() {
-			start.Wait()
-			cm, release := f.al.getContextManager(f.agent, f.key)
-			defer release()
-			mu.Lock()
-			seen[cm]++
-			mu.Unlock()
-		})
-	}
-	start.Done()
-	done.Wait()
+		var start, done sync.WaitGroup
+		start.Add(1)
+		var mu sync.Mutex
+		seen := make(map[any]int)
+		for range workers {
+			done.Go(func() {
+				start.Wait()
+				cm, release := f.al.getContextManager(f.agent, f.key)
+				defer release()
+				mu.Lock()
+				seen[cm]++
+				mu.Unlock()
+			})
+		}
+		start.Done()
+		done.Wait()
 
-	if len(seen) != 1 {
-		t.Fatalf("callers received %d distinct context managers, want 1", len(seen))
-	}
-	f.wantCounts(2, 1)
-	f.wantToken(f.token())
-	if rc := f.entry().refcount.Load(); rc != 0 {
-		t.Fatalf("refcount after all releases = %d, want 0", rc)
+		if _, ok := seen[staleCM]; ok {
+			t.Fatalf("round %d: a caller was handed the released stale manager", round)
+		}
+		if len(seen) != 1 {
+			t.Fatalf("round %d: callers received %d distinct context managers, want 1", round, len(seen))
+		}
+		// Each round: one rebuild (Issue) and the stale entry's Revoke.
+		f.wantCounts(2+round, 1+round)
+		f.wantToken(f.token())
+		if rc := f.entry().refcount.Load(); rc != 0 {
+			t.Fatalf("round %d: refcount after all releases = %d, want 0", round, rc)
+		}
 	}
 }
 
