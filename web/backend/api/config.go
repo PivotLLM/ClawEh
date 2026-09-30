@@ -111,10 +111,9 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		cfg.Tools.Exec.AllowRemote = config.DefaultConfig().Tools.Exec.AllowRemote
 	}
 
-	if !h.saveValidatedConfig(w, func(c *config.Config) { *c = cfg }) {
+	if !h.saveValidatedConfig(w, r, func(c *config.Config) { *c = cfg }) {
 		return
 	}
-	recordConfigWrite(r, current, &cfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]string{"status": "ok"})
@@ -124,9 +123,9 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 // rejects the result with a validation_error response when validateConfig
 // finds fault, and saves it otherwise. It reports whether the save happened;
 // on false a response has been written.
-func (h *Handler) saveValidatedConfig(w http.ResponseWriter, mutate func(*config.Config)) bool {
+func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mutate func(*config.Config)) bool {
 	var errs []string
-	err := h.updateConfig(func(c *config.Config) error {
+	err := h.updateConfig(r, func(c *config.Config) error {
 		before := c.Gateway.Listeners()
 		mutate(c)
 		errs = validateConfig(c)
@@ -230,10 +229,9 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.saveValidatedConfig(w, func(c *config.Config) { *c = newCfg }) {
+	if !h.saveValidatedConfig(w, r, func(c *config.Config) { *c = newCfg }) {
 		return
 	}
-	recordConfigWrite(r, cfg, &newCfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]string{"status": "ok"})

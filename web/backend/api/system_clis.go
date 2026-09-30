@@ -183,7 +183,7 @@ func (h *Handler) handleSetCLIEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.updateConfig(func(cfg *config.Config) error {
+	err := h.updateConfig(r, func(cfg *config.Config) error {
 		if body.Enabled != nil {
 			if !*body.Enabled {
 				disableCLIModels(cfg, agent.Protocol)

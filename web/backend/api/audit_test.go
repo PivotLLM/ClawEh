@@ -227,18 +227,150 @@ func TestConfigWrite_AuditRecordsKeysNotValues(t *testing.T) {
 	}
 }
 
-func TestChangedTopLevelKeys(t *testing.T) {
+func TestDiffTopLevelKeys(t *testing.T) {
 	a := config.DefaultConfig()
 	b := config.DefaultConfig()
-	if got := changedTopLevelKeys(a, b); len(got) != 0 {
+	if got := diffTopLevelKeys(topLevelJSON(a), topLevelJSON(b)); len(got) != 0 {
 		t.Errorf("identical configs differ: %v", got)
 	}
 	b.Gateway.Port = 1
 	b.Logging.Level = "debug"
-	if got := changedTopLevelKeys(a, b); strings.Join(got, ",") != "gateway,logging" {
+	if got := diffTopLevelKeys(topLevelJSON(a), topLevelJSON(b)); strings.Join(got, ",") != "gateway,logging" {
 		t.Errorf("keys = %v, want [gateway logging]", got)
 	}
-	if got := changedTopLevelKeys(nil, b); len(got) == 0 {
+	if got := diffTopLevelKeys(nil, topLevelJSON(b)); len(got) == 0 {
 		t.Error("nil old config should report every key")
+	}
+}
+
+// configWriteRows returns the config_write rows recorded so far, newest first.
+func configWriteRows(t *testing.T) []audit.Event {
+	t.Helper()
+	flushAudit(t)
+	rows, err := audit.Default().Query(context.Background(), audit.Filter{Kind: audit.KindConfigWrite})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	return rows
+}
+
+// TestUpdateConfig_AuditsEverySave: every endpoint that saves the config
+// through updateConfig records exactly one config_write row naming the changed
+// top-level keys and the actor; a save that fails records none.
+func TestUpdateConfig_AuditsEverySave(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		wantCode int
+		wantKeys string // "" means no row is expected
+	}{
+		{
+			"model added", http.MethodPost, "/api/models",
+			`{"model_name":"new-model","model":"gpt-4o","provider":"openai","enabled":true}`, http.StatusOK, "models",
+		},
+		{
+			"model index out of range", http.MethodPut, "/api/models/9",
+			`{"model":"gpt-4o"}`, http.StatusNotFound, "",
+		},
+		{
+			"provider added", http.MethodPost, "/api/providers",
+			`{"name":"ds","protocol":"openai-chat","base_url":"https://api.deepseek.com","api_key":"k"}`, http.StatusOK, "providers",
+		},
+		{
+			"provider invalid", http.MethodPost, "/api/providers",
+			`{"name":"bad"}`, http.StatusBadRequest, "",
+		},
+		{
+			"tool toggled", http.MethodPut, "/api/tools/cron_schedule/state",
+			`{"enabled":false}`, http.StatusOK, "tools",
+		},
+		{
+			"tool unknown", http.MethodPut, "/api/tools/no_such_tool/state",
+			`{"enabled":false}`, http.StatusBadRequest, "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := setupTestEnv(t)
+			initTestAudit(t)
+			h := NewHandler(configPath)
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = "192.0.2.8:40000"
+			req = req.WithContext(audit.WithActor(req.Context(), "alice"))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+
+			rows := configWriteRows(t)
+			if tc.wantKeys == "" {
+				if len(rows) != 0 {
+					t.Fatalf("config_write rows = %+v, want none", rows)
+				}
+				return
+			}
+			if len(rows) != 1 {
+				t.Fatalf("config_write rows = %d, want 1: %+v", len(rows), rows)
+			}
+			row := rows[0]
+			if row.Actor != "alice" || row.Sender != "192.0.2.8" || row.Outcome != audit.OutcomeOK {
+				t.Errorf("row = %+v", row)
+			}
+			if row.Summary != tc.wantKeys || row.Details != `{"keys":["`+tc.wantKeys+`"]}` {
+				t.Errorf("row keys: summary=%q details=%s, want %q", row.Summary, row.Details, tc.wantKeys)
+			}
+		})
+	}
+}
+
+// TestUpdateConfig_UnchangedNotAudited: a save the callback reports as
+// config.ErrUnchanged is not a config write.
+func TestUpdateConfig_UnchangedNotAudited(t *testing.T) {
+	configPath := setupTestEnv(t)
+	initTestAudit(t)
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	setup := func() {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/webui/setup", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("setup status = %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	setup() // configures the channel
+	if rows := configWriteRows(t); len(rows) != 1 || rows[0].Summary != "channels" {
+		t.Fatalf("first setup rows = %+v, want one row for channels", rows)
+	}
+	setup() // nothing left to change
+	if rows := configWriteRows(t); len(rows) != 1 {
+		t.Fatalf("config_write rows = %d, want no new row for an unchanged save", len(rows))
+	}
+}
+
+// TestUpdateConfig_OutsideRequestNotAudited: the startup self-configuration
+// runs outside any request and records nothing.
+func TestUpdateConfig_OutsideRequestNotAudited(t *testing.T) {
+	configPath := setupTestEnv(t)
+	initTestAudit(t)
+	h := NewHandler(configPath)
+	changed, err := h.EnsureWebUIChannel()
+	if err != nil {
+		t.Fatalf("EnsureWebUIChannel: %v", err)
+	}
+	if !changed {
+		t.Fatal("fixture already has the WebUI channel configured; the test needs a change")
+	}
+	if rows := configWriteRows(t); len(rows) != 0 {
+		t.Fatalf("config_write rows = %+v, want none", rows)
 	}
 }

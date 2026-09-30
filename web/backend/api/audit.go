@@ -104,15 +104,12 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 // recordConfigWrite writes a config_write audit row for a save that just
 // succeeded: who (the authenticated username, when the auth middleware set
 // one), from where (client IP), and which top-level config keys changed. Values
-// are never recorded — a changed key may be a credential. oldCfg may be nil
-// when the previous config could not be loaded; every key then counts as
-// changed.
-func recordConfigWrite(r *http.Request, oldCfg, newCfg *config.Config) {
+// are never recorded — a changed key may be a credential.
+func recordConfigWrite(r *http.Request, keys []string) {
 	store := audit.Default()
 	if store == nil {
 		return
 	}
-	keys := changedTopLevelKeys(oldCfg, newCfg)
 	details, err := json.Marshal(map[string]any{"keys": keys})
 	if err != nil {
 		details = []byte(`{"keys":[]}`)
@@ -127,12 +124,11 @@ func recordConfigWrite(r *http.Request, oldCfg, newCfg *config.Config) {
 	})
 }
 
-// changedTopLevelKeys diffs two configs at the top level of their JSON form and
+// diffTopLevelKeys diffs two top-level JSON snapshots taken by topLevelJSON and
 // returns the sorted keys whose serialised value differs (added, removed or
-// changed). Only key names come back, never what is under them.
-func changedTopLevelKeys(oldCfg, newCfg *config.Config) []string {
-	oldMap := topLevelJSON(oldCfg)
-	newMap := topLevelJSON(newCfg)
+// changed). Only key names come back, never what is under them. A nil oldMap
+// reports every key as changed.
+func diffTopLevelKeys(oldMap, newMap map[string]json.RawMessage) []string {
 	seen := map[string]struct{}{}
 	for k, nv := range newMap {
 		if ov, ok := oldMap[k]; !ok || string(ov) != string(nv) {

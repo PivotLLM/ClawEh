@@ -137,7 +137,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	index := -1
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		if _, perr := cfg.GetProvider(mc.Provider); perr != nil {
 			return badRequest("Validation error: %v", perr)
 		}
@@ -177,7 +177,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer utils.CloseQuietly(r.Body)
 
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		if idx < 0 || idx >= len(cfg.Models) {
 			return notFound("Index %d out of range (0-%d)", idx, len(cfg.Models)-1)
 		}
@@ -233,7 +233,7 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		if idx < 0 || idx >= len(cfg.Models) {
 			return notFound("Index %d out of range (0-%d)", idx, len(cfg.Models)-1)
 		}
@@ -288,7 +288,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		// Verify the model_name exists in models and is enabled
 		found := false
 		for _, m := range cfg.Models {

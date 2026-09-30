@@ -51,7 +51,7 @@ func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-	err := h.updateConfig(func(cfg *config.Config) error {
+	err := h.updateConfig(r, func(cfg *config.Config) error {
 		if err := applyToolState(cfg, r.PathValue("name"), req.Enabled); err != nil {
 			return badRequest("%s", err.Error())
 		}

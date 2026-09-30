@@ -119,9 +119,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // handleDevicePair provisions the device gateway (generates+persists a shared token
 // and enables the channel if needed), reloads the gateway, and returns the device
 // setup payload plus a rendered QR (PNG data-URL + ASCII).
-func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleDevicePair(w http.ResponseWriter, r *http.Request) {
 	changed := false
-	err := h.updateConfig(func(c *config.Config) error {
+	err := h.updateConfig(r, func(c *config.Config) error {
 		d := &c.Channels.Device
 		if d.Token == "" {
 			tok, terr := device.GenerateSharedToken()
@@ -183,7 +183,7 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 	// Only persist + reload (which re-binds the device listener) when something
 	// actually changed, so saving with no edits is a cheap no-op.
 	changed := false
-	err := h.updateConfig(func(c *config.Config) error {
+	err := h.updateConfig(r, func(c *config.Config) error {
 		d := &c.Channels.Device
 		if body.ListenLAN != nil {
 			newHost := "127.0.0.1"
@@ -232,13 +232,13 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 // handleDeviceWordTokenRegenerate mints a fresh word passphrase, persists it, reloads
 // the gateway so the new value takes effect, and returns the refreshed pairing status.
 // The long QR token is left untouched.
-func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, r *http.Request) {
 	wtok, werr := device.GenerateWordToken()
 	if werr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "word token generation failed"})
 		return
 	}
-	err := h.updateConfig(func(c *config.Config) error {
+	err := h.updateConfig(r, func(c *config.Config) error {
 		c.Channels.Device.WordToken = wtok
 		return nil
 	})

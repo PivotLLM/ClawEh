@@ -532,6 +532,11 @@ observe does not need an entry.
 
 ### Changed
 
+- **Every configuration save made through the WebUI is audited.** Each one now
+  writes a `config_write` audit entry naming the changed top-level keys (never
+  their values). Previously only saves from the configuration editor were
+  audited, so a reload triggered from any other page (Models, Providers, Tools,
+  Devices, Voice, CLI settings, and the WebUI channel setup) left no audit trail.
 - **"Allow CLI to bypass restrictions" is the setting's name everywhere.** The
   Providers page checkbox, the Check Up rows, the configuration report and the
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions

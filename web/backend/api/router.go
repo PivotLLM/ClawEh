@@ -164,13 +164,32 @@ func (h *Handler) currentConfig() (*config.Config, error) {
 }
 
 // updateConfig applies fn to the live configuration under the store's write
-// lock, saving and publishing the result. See config.Store.Update.
-func (h *Handler) updateConfig(fn func(cfg *config.Config) error) error {
+// lock, saving and publishing the result (see config.Store.Update), and records
+// one config_write audit row naming the top-level keys the save changed. A
+// callback that fails, or reports config.ErrUnchanged, records nothing; so does
+// a save made outside a request (r is nil).
+func (h *Handler) updateConfig(r *http.Request, fn func(cfg *config.Config) error) error {
 	st, err := h.configStore()
 	if err != nil {
 		return err
 	}
-	return st.Update(fn)
+	var keys []string
+	saved := false
+	err = st.Update(func(cfg *config.Config) error {
+		// cfg is the store's private clone; snapshot it before fn changes
+		// (or, for PUT /api/config, replaces) it.
+		before := topLevelJSON(cfg)
+		if ferr := fn(cfg); ferr != nil {
+			return ferr
+		}
+		keys = diffTopLevelKeys(before, topLevelJSON(cfg))
+		saved = true
+		return nil
+	})
+	if err == nil && saved && r != nil {
+		recordConfigWrite(r, keys)
+	}
+	return err
 }
 
 // httpError is an error raised inside an updateConfig callback that already

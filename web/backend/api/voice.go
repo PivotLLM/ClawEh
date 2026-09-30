@@ -62,7 +62,7 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err := h.updateConfig(func(cfg *config.Config) error {
+	err := h.updateConfig(r, func(cfg *config.Config) error {
 		for i := range body.STT {
 			key := body.STT[i].APIKey
 			if key == "" || strings.Contains(key, "****") {

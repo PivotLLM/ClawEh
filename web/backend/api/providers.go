@@ -93,7 +93,7 @@ func (h *Handler) handleAddProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	index := -1
-	err := h.updateConfig(func(cfg *config.Config) error {
+	err := h.updateConfig(r, func(cfg *config.Config) error {
 		cfg.Providers = append(cfg.Providers, p)
 		index = len(cfg.Providers) - 1
 		// Validate only the new provider, not the whole list — pre-existing invalid
@@ -125,7 +125,7 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		if idx < 0 || idx >= len(cfg.Providers) {
 			return notFound("Index %d out of range", idx)
 		}
@@ -178,7 +178,7 @@ func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.updateConfig(func(cfg *config.Config) error {
+	err = h.updateConfig(r, func(cfg *config.Config) error {
 		if idx < 0 || idx >= len(cfg.Providers) {
 			return notFound("Index %d out of range", idx)
 		}

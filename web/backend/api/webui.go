@@ -21,9 +21,16 @@ func (h *Handler) registerWebUIRoutes(mux *http.ServeMux) {
 
 // EnsureWebUIChannel checks if the WebUI Channel is properly configured and
 // enables it with sensible defaults if not. Returns true if config was changed.
+// It runs at startup, outside any request, so the save is not audited.
 func (h *Handler) EnsureWebUIChannel() (bool, error) {
+	return h.ensureWebUIChannel(nil)
+}
+
+// ensureWebUIChannel is EnsureWebUIChannel on behalf of r (nil outside a
+// request); a save made for a request is audited.
+func (h *Handler) ensureWebUIChannel(r *http.Request) (bool, error) {
 	changed := false
-	err := h.updateConfig(func(cfg *config.Config) error {
+	err := h.updateConfig(r, func(cfg *config.Config) error {
 		if !cfg.Channels.WebUI.Enabled {
 			cfg.Channels.WebUI.Enabled = true
 			changed = true
@@ -55,7 +62,7 @@ func (h *Handler) EnsureWebUIChannel() (bool, error) {
 //
 //	POST /api/webui/setup → {"enabled":true,"changed":bool}
 func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
-	changed, err := h.EnsureWebUIChannel()
+	changed, err := h.ensureWebUIChannel(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
