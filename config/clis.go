@@ -164,8 +164,8 @@ func CLIArgs(protocol string, bypass bool, extraArgs []string) []string {
 		}
 	}
 	if len(stripped) > 0 {
-		// The alert for this, naming the model and the agents that use it, is
-		// raised by the provider dispatcher, which knows both.
+		// Not an alert: a configuration state. The Agents page shows it under
+		// the model chain and the Check Up page lists the provider setting.
 		logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Allow CLI to bypass restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
 			map[string]any{"protocol": agent.Protocol, "flags": strings.Join(stripped, " ")})
 	}

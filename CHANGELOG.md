@@ -289,10 +289,9 @@ observe does not need an entry.
   apology as evidence. The refused calls (the CLI's `permission_denials`) now
   turn the turn into the "declined to use tools" error, which names the tools
   and the setting. It is a reply to the user, not an alert: the CLI applied
-  its own permission settings, as directed. Stripping a bypass flag left in a
-  model's `extra_args` does raise one "`<CLI>` bypass flag ignored" alert per
-  CLI per process (id `bypass:<protocol>`), since that is configuration being
-  ignored, in addition to the log warning.
+  its own permission settings, as directed. A bypass flag left in a model's
+  `extra_args` is dropped with a log warning; the Agents page shows it under
+  the model chain (see below) and the Check Up page lists the provider setting.
 - **`GET /api/mcp/status` reports why a server is down.** Each server entry
   gains `last_error` (the latest connect failure, empty once connected) and
   `last_error_at` (RFC 3339, omitted when there is none). For a stdio server
@@ -538,9 +537,7 @@ observe does not need an entry.
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
   flag reads as allowing something. The config key `bypass_restrictions` is
   unchanged. The reply now starts with the assistant's name ("Karen: The Claude
-  CLI declined to use tools…"), and the "bypass flag ignored" alert names the
-  agents that use the model and the model itself (id `bypass:<model>`), instead
-  of only the CLI. The Agents page shows a warning under a model chain when a
+  CLI declined to use tools…"). The Agents page shows a warning under a model chain when a
   model's `extra_args` still carries the CLI's bypass flag while the provider's
   setting is off, with a link to the Providers page.
 - **BREAKING: Fusion services are granted per agent through `mcp_tools`.**

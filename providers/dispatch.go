@@ -6,13 +6,9 @@ package providers
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 
-	"github.com/tenebris-tech/alerter"
-
-	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -98,7 +94,6 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: creating provider for %q: %w", alias, err)
 	}
-	alertBypassIgnored(cfgSnapshot, matched, prov)
 
 	// Write-lock only to store; double-check in case another goroutine raced us.
 	d.mu.Lock()
@@ -121,77 +116,4 @@ func (d *ProviderDispatcher) Flush(cfg *config.Config) {
 	defer d.mu.Unlock()
 	d.cache = make(map[string]LLMProvider)
 	d.cfg = cfg
-}
-
-// bypassIgnoredAlerted holds the model aliases already alerted for a dropped
-// bypass flag: once per model per process.
-var bypassIgnoredAlerted sync.Map
-
-// alertBypassIgnored raises one alert when a CLI model's extra_args still
-// carries the CLI's permission-bypass flag while the provider's "Allow CLI to
-// bypass restrictions" is off, so the flag is dropped (config.CLIArgs). It names
-// the agents that use the model, since that is who loses the behaviour, and the
-// model, since that is where the flag sits.
-func alertBypassIgnored(cfg *config.Config, m *config.ModelConfig, prov *config.Provider) {
-	if cfg == nil || m == nil || prov == nil || prov.BypassRestrictions {
-		return
-	}
-	cli := config.CLIAgentByProtocol(prov.Protocol)
-	if cli == nil {
-		return
-	}
-	var flags []string
-	for _, a := range m.ExtraArgs {
-		if slices.Contains(cli.BypassArgs, a) {
-			flags = append(flags, a)
-		}
-	}
-	if len(flags) == 0 {
-		return
-	}
-	if _, dup := bypassIgnoredAlerted.LoadOrStore(strings.ToLower(m.ModelName), true); dup {
-		return
-	}
-	who := strings.Join(agentsUsingModel(cfg, m.ModelName), ", ")
-	if who == "" {
-		who = "No agent"
-	}
-	alerts.Send(alerter.Alert{
-		Title:       who + ": bypass flag ignored for " + m.ModelName,
-		Description: m.ModelName + " lists " + strings.Join(flags, " ") + ", but Allow CLI to bypass restrictions is off for " + prov.Name + ", so it is not passed. Tick it on the Providers page.",
-		EventID:     "bypass:" + m.ModelName,
-	})
-}
-
-// agentsUsingModel lists the enabled agents whose model chain names the alias:
-// their own list when they have one, the defaults otherwise. Display names
-// where set, ids otherwise, in config order.
-func agentsUsingModel(cfg *config.Config, alias string) []string {
-	uses := func(list []string) bool {
-		for _, m := range list {
-			if strings.EqualFold(strings.TrimSpace(m), alias) {
-				return true
-			}
-		}
-		return false
-	}
-	var out []string
-	for i := range cfg.Agents.List {
-		a := &cfg.Agents.List[i]
-		if !a.IsEnabled() {
-			continue
-		}
-		chain := a.Models
-		if len(chain) == 0 {
-			chain = cfg.Agents.Defaults.Models
-		}
-		if uses(chain) {
-			name := a.Name
-			if name == "" {
-				name = a.ID
-			}
-			out = append(out, name)
-		}
-	}
-	return out
 }
