@@ -196,15 +196,16 @@ export function AgentCard({
             models={models}
             onChange={onModelsChange}
           />
-          {bypassWarnings.map((w) => (
+          {/* One line per CLI, however many of the chain's models run on it:
+              the state, and the means to change it. */}
+          {[...new Map(bypassWarnings.map((w) => [w.provider, w])).values()].map((w) => (
             <p
-              key={w.model}
+              key={w.provider}
               className="text-xs text-amber-600 dark:text-amber-400"
             >
-              {w.model} lists {w.flag}, which is ignored: Allow CLI to bypass
-              restrictions is off for {w.provider}.{" "}
+              {w.provider} is not allowed to bypass its restrictions.{" "}
               <Link to="/providers" className="underline">
-                Providers
+                Allow it
               </Link>
             </p>
           ))}

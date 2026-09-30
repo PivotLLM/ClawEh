@@ -759,11 +759,11 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(500)
     const text = await page.locator("main").innerText()
-    const link = await page.getByRole("link", { name: "Providers" }).count()
+    const link = await page.getByRole("link", { name: "Allow it" }).count()
     await close()
-    assert(new RegExp(`${model.model_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} lists .* which is ignored`).test(text), `no warning for ${model.model_name}:\n${text.slice(0, 400)}`)
-    assert(/Allow CLI to bypass restrictions is off for/.test(text), "the warning does not name the setting")
-    assert(link > 0, "the warning has no link to the Providers page")
+    const provider = model.provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    assert(new RegExp(`${provider} is not allowed to bypass its restrictions\\.`).test(text), `no warning for ${model.provider}:\n${text.slice(0, 400)}`)
+    assert(link > 0, 'the warning has no "Allow it" link to the Providers page')
   })
 
   await check(8, "a long dropdown keeps its size and scroll position while scrolling", async () => {

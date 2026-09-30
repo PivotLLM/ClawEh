@@ -537,9 +537,10 @@ observe does not need an entry.
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
   flag reads as allowing something. The config key `bypass_restrictions` is
   unchanged. The reply now starts with the assistant's name ("Karen: The Claude
-  CLI declined to use tools…"). The Agents page shows a warning under a model chain when a
-  model's `extra_args` still carries the CLI's bypass flag while the provider's
-  setting is off, with a link to the Providers page.
+  CLI declined to use tools…"). The Agents page shows one line under a model
+  chain when a model's `extra_args` still carries the CLI's bypass flag while the
+  provider's setting is off ("`<CLI>` is not allowed to bypass its
+  restrictions."), with an **Allow it** link to the Providers page.
 - **BREAKING: Fusion services are granted per agent through `mcp_tools`.**
   The agent's `fusion` switch no longer grants every Fusion tool: an agent gets
   the tools of a Fusion service only when `mcp_tools` names the service (or a
