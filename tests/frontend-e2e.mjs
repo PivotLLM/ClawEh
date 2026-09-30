@@ -792,6 +792,8 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       const size = async () => (await content.boundingBox())?.height ?? 0
       const top = () => viewport.evaluate((v) => Math.round(v.scrollTop))
       const before = await size()
+      const scrollbar = await viewport.evaluate((v) => getComputedStyle(v).scrollbarWidth)
+      assert(scrollbar !== "none", "the list hides its scrollbar, so a long list looks cut off")
       const box = await viewport.boundingBox()
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
       await page.mouse.wheel(0, 240)
