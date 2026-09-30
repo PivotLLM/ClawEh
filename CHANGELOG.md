@@ -894,8 +894,10 @@ observe does not need an entry.
   progress.** A run started with `maestro_task_run` kept going after a reload,
   but `maestro_task_status` then reported no run in progress and a second
   `maestro_task_run` on the same project was accepted, so two runs worked the
-  same task set at once. Status now shows the run and the second
-  `maestro_task_run` is refused until it finishes.
+  same task set at once. The run is now kept across a reload, so status shows
+  it and the second `maestro_task_run` is refused until it finishes, unless the
+  reload changed that agent's Maestro settings or mounts while no run was in
+  progress.
 - **A model that no longer exists fails over instead of failing the turn.** An
   endpoint answering 404, or OpenRouter's "No endpoints found that support the
   requested parameters" for a retired model or an unsupported parameter, was an

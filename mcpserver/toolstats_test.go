@@ -60,6 +60,40 @@ func TestDispatch_TalliesSubagentToolCalls(t *testing.T) {
 	}
 }
 
+// panickingMock panics when executed.
+type panickingMock struct{ mockTool }
+
+func (*panickingMock) Execute(context.Context, map[string]any) *tools.ToolResult {
+	panic("tool blew up")
+}
+
+// TestDispatch_PanickingToolTalliedAsFailure: a tool that panics is counted as
+// a failed call, and the panic still reaches the caller's recovery.
+func TestDispatch_PanickingToolTalliedAsFailure(t *testing.T) {
+	const session = "agent:alice:subagent:panic"
+	pm := &panickingMock{mockTool{name: "read_file", params: map[string]any{}}}
+	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(pm)}
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", session, "/ws/alice/sessions")
+
+	tools.BeginToolStats(session)
+	defer tools.EndToolStats(session)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the tool's panic did not propagate")
+			}
+		}()
+		dispatchToolCall(context.Background(), "read_file",
+			map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, nil, nil)
+	}()
+
+	calls, errs, last := tools.EndToolStats(session)
+	if calls != 1 || errs != 1 || last != "read_file: tool read_file panicked" {
+		t.Errorf("tally = %d calls, %d errors, last %q; want 1, 1, the panic", calls, errs, last)
+	}
+}
+
 // TestDispatch_UnverifiedTokenNotTallied: a call whose session token cannot
 // be resolved has no session to attribute it to and is not counted.
 func TestDispatch_UnverifiedTokenNotTallied(t *testing.T) {

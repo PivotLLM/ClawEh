@@ -23,9 +23,13 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// reuseNote is logged whenever a runner is kept across a registration: the
-// parts of the config baked into the runner are not refreshed by a reuse.
-const reuseNote = "reference directories and the file_import rule stay at the configuration the runner was built with until it is rebuilt"
+// reasonChangedWhileRunning is why a runner is kept although the settings it
+// was built from changed.
+const reasonChangedWhileRunning = "configuration changed but a run is in progress"
+
+// reuseNote is logged when a runner is kept across a settings change: what was
+// baked into it is not refreshed until it is rebuilt.
+const reuseNote = "Maestro runner settings and reference directories stay at the configuration the runner was built with until it is rebuilt"
 
 // swapDispatcher is the dispatcher a runner is built with. It forwards to the
 // dispatcher of the latest registration, so a reload's new sub-agent runner and
@@ -74,10 +78,13 @@ type cachedRunner struct {
 //
 // A run started by maestro_task_run executes in the background and outlives
 // the reload that rebuilds the agent's tools, and the "run in progress" guard
-// lives on the runner. Every registration of the agent's tools (at boot and on
-// each reload, including tools a turn still holds from before a reload) must
-// therefore see the same runner, or maestro_task_status stops reporting the run
-// and a second maestro_task_run on the same project is accepted.
+// lives on the runner. So every registration of the agent's tools (at boot and
+// on each reload) gets the cached runner, and tools a turn still holds from
+// before a reload share it with the new ones, unless the runner has to be
+// rebuilt: the base directory changed, or the Maestro runner settings or the
+// reference directories (the agent's mounts) changed while no run was in
+// progress. In that residual case a turn still holding the old tools can start
+// a run on the old runner, which the new tools do not see.
 var runners = struct {
 	mu      sync.Mutex
 	byAgent map[string]*cachedRunner
@@ -88,13 +95,13 @@ var runners = struct {
 // base directory changed, or its runner settings or reference directories
 // changed while it is idle; then a new one is built outside the lock and the
 // decision is re-checked before it is cached.
-func runnerFor(agentID string, spec runnerSpec, disp *dispatcher, cfg *mconfig.Config, l *mlogging.Logger, importAllowed func(string) bool) (*runner.Runner, *swapDispatcher) {
+func runnerFor(agentID string, spec runnerSpec, disp *dispatcher, cfg *mconfig.Config, l *mlogging.Logger) (*runner.Runner, *swapDispatcher) {
 	if r, sw, ok := reuseRunner(agentID, spec, disp); ok {
 		return r, sw
 	}
 
 	sw := newSwapDispatcher(disp)
-	r := newRunner(cfg, l, sw, importAllowed)
+	r := newRunner(cfg, l, sw)
 
 	runners.mu.Lock()
 	prev, cached := runners.byAgent[agentID]
@@ -144,16 +151,18 @@ func keepRunner(prev *cachedRunner, cached bool, spec runnerSpec) (bool, string)
 	case reflect.DeepEqual(prev.spec.runCfg, spec.runCfg) && slices.Equal(prev.spec.refDirs, spec.refDirs):
 		return true, "configuration unchanged"
 	case prev.runner.IsRunning():
-		return true, "configuration changed but a run is in progress"
+		return true, reasonChangedWhileRunning
 	default:
 		return false, "configuration changed"
 	}
 }
 
 func logReuse(agentID, base, reason string, r *runner.Runner) {
-	logger.InfoCF("maestro", "reusing Maestro runner", map[string]any{
-		"agent": agentID, "base": base, "reason": reason, "run_in_progress": r.IsRunning(), "note": reuseNote,
-	})
+	fields := map[string]any{"agent": agentID, "base": base, "reason": reason, "run_in_progress": r.IsRunning()}
+	if reason == reasonChangedWhileRunning {
+		fields["note"] = reuseNote
+	}
+	logger.InfoCF("maestro", "reusing Maestro runner", fields)
 }
 
 // pruneRunners drops the idle runners of agents no longer in the config. A
@@ -175,8 +184,9 @@ func pruneRunners(c *config.Config) {
 // newRunner builds a runner the way Maestro's Provider.RegisterTools does when
 // no runner is injected, with the host dispatcher. Its services are separate
 // instances from the provider's; both work on the same files under the base
-// directory.
-func newRunner(cfg *mconfig.Config, l *mlogging.Logger, disp mllm.Dispatcher, importAllowed func(string) bool) *runner.Runner {
+// directory. The runner never imports files, so its projects service needs no
+// file_import rule; file_import is served by the provider's own service.
+func newRunner(cfg *mconfig.Config, l *mlogging.Logger, disp mllm.Dispatcher) *runner.Runner {
 	refDirs := cfg.ReferenceDirs()
 	externalDirs := make([]reference.ExternalDir, 0, len(refDirs))
 	for _, rd := range refDirs {
@@ -189,9 +199,6 @@ func newRunner(cfg *mconfig.Config, l *mlogging.Logger, disp mllm.Dispatcher, im
 	)
 	playbooksSvc := playbooks.NewService(cfg.PlaybooksDir(), l)
 	projectsSvc := projects.NewService(cfg, l)
-	if importAllowed != nil {
-		projectsSvc.SetImportAllowed(importAllowed)
-	}
 	tasksSvc := tasks.NewService(cfg, projectsSvc, l)
 	return runner.New(cfg, l, nil, playbooksSvc, refSvc, disp, tasksSvc, projectsSvc)
 }

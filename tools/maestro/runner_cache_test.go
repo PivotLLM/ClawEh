@@ -5,12 +5,16 @@ package maestro
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	mconfig "github.com/PivotLLM/Maestro/config"
 	mglobal "github.com/PivotLLM/Maestro/global"
+	mlogging "github.com/PivotLLM/Maestro/logging"
+	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
 	"github.com/PivotLLM/Maestro/runner"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -65,10 +69,24 @@ type registration struct {
 func newRegistration(t *testing.T, agentID string) *registration {
 	t.Helper()
 	agent := config.AgentConfig{ID: agentID, Maestro: &config.MaestroConfig{Enabled: true}}
-	return &registration{
+	reg := &registration{
 		cfg: &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{agent}}},
 		ws:  t.TempDir(),
 	}
+	t.Cleanup(func() { forgetRunner(t, agentID) })
+	return reg
+}
+
+// forgetRunner waits for the agent's cached runner to go idle and removes its
+// cache entry, so a test never sees state left by an earlier one.
+func forgetRunner(t *testing.T, agentID string) {
+	t.Helper()
+	if r := cachedRunnerFor(agentID); r != nil {
+		waitIdle(t, r)
+	}
+	runners.mu.Lock()
+	delete(runners.byAgent, agentID)
+	runners.mu.Unlock()
 }
 
 func (r *registration) agentID() string { return r.cfg.Agents.List[0].ID }
@@ -316,5 +334,55 @@ func TestRunnerCache_PrunesRemovedAgents(t *testing.T) {
 	pruneRunners(&config.Config{})
 	if cachedRunnerFor(busy.agentID()) != nil {
 		t.Error("the removed agent's runner was kept after its run finished")
+	}
+}
+
+// TestRunnerCache_ConcurrentRegistrationsShareOneRunner: registrations of the
+// same agent and config racing each other all get the one cached runner.
+func TestRunnerCache_ConcurrentRegistrationsShareOneRunner(t *testing.T) {
+	const agentID, workers = "alice-concurrent", 8
+	t.Cleanup(func() { forgetRunner(t, agentID) })
+	base := t.TempDir()
+	mcfg := mconfig.New(mconfig.WithBaseDir(base), mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference))
+	if err := mcfg.Prepare(); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	mlog := mlogging.NewWithWriter(io.Discard)
+	spec := runnerSpec{base: base}
+
+	got := make([]*runner.Runner, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i], _ = runnerFor(agentID, spec, &dispatcher{agent: agentID}, mcfg, mlog)
+		}(i)
+	}
+	wg.Wait()
+
+	cached := cachedRunnerFor(agentID)
+	for i, r := range got {
+		if r == nil || r != cached {
+			t.Errorf("registration %d got runner %p, want the cached %p", i, r, cached)
+		}
+	}
+}
+
+// TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner: a new mount (a new
+// reference directory) on an idle runner builds a new runner.
+func TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner(t *testing.T) {
+	reg := newRegistration(t, "alice-reload-mount")
+	reg.register(t, newGatedRunner())
+	before := cachedRunnerFor(reg.agentID())
+
+	reg.cfg.Agents.List[0].Mounts = []config.MountConfig{{Name: "standards", Path: t.TempDir()}}
+	reg.register(t, newGatedRunner())
+	after := cachedEntry(reg.agentID())
+	if after == nil || after.runner == before {
+		t.Fatal("an idle runner was kept although the agent's mounts changed")
+	}
+	if len(after.spec.refDirs) != 1 || after.spec.refDirs[0].Mount != "standards" {
+		t.Errorf("new runner's reference dirs = %+v, want the standards mount", after.spec.refDirs)
 	}
 }

@@ -415,6 +415,12 @@ func dispatchToolCall(
 		return invalidTokenMessage, true
 	}
 	defer func() {
+		// A panicking tool leaves the named results unset: count it as a failure
+		// and let the panic continue to the server's recovery.
+		if p := recover(); p != nil {
+			tools.RecordToolResult(rec.sessionKey, toolName, tools.ErrorResult("tool "+toolName+" panicked"))
+			panic(p)
+		}
 		tools.RecordToolResult(rec.sessionKey, toolName, &tools.ToolResult{ForLLM: out, IsError: isErr})
 	}()
 

@@ -123,7 +123,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	// process, so a run in progress survives a config reload; this
 	// registration's dispatcher is swapped into it (see runnerFor).
 	run, swap := runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
-		disp, mcfg, mlog, allowImport)
+		disp, mcfg, mlog)
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,
