@@ -537,6 +537,16 @@ observe does not need an entry.
   their values). Previously only saves from the configuration editor were
   audited, so a reload triggered from any other page (Models, Providers, Tools,
   Devices, Voice, CLI settings, and the WebUI channel setup) left no audit trail.
+- **A Maestro dispatch whose tool calls all failed is a failed attempt.** When
+  the sub-agent behind a Maestro dispatch made ClawEh tool calls and every one
+  of them failed, Maestro is now told the dispatch failed, and the task is
+  retried within its `max_worker` budget instead of the reply being accepted as
+  a completed result. The task error names the number of calls and the last
+  tool error ("sub-agent made 3 tool call(s) and every one failed; last error:
+  …"). A dispatch with at least one working tool call, or none at all, is
+  unaffected. Only ClawEh's own tools are counted, including calls it refuses
+  (a tool not enabled for the agent); a CLI's built-in tools are not, and
+  neither are calls rejected before their session token is verified.
 - **"Allow CLI to bypass restrictions" is the setting's name everywhere.** The
   Providers page checkbox, the Check Up rows, the configuration report and the
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
@@ -892,6 +902,14 @@ observe does not need an entry.
   the whole process, and a session busy during a reload keeps its token until
   the turn finishes; idle sessions pick up the new configuration on their next
   message as before.
+- **A configuration reload no longer loses track of a Maestro run in
+  progress.** A run started with `maestro_task_run` kept going after a reload,
+  but `maestro_task_status` then reported no run in progress and a second
+  `maestro_task_run` on the same project was accepted, so two runs worked the
+  same task set at once. The run is now kept across a reload, so status shows
+  it and the second `maestro_task_run` is refused until it finishes, unless the
+  reload changed that agent's Maestro settings or mounts while no run was in
+  progress.
 - **A model that no longer exists fails over instead of failing the turn.** An
   endpoint answering 404, or OpenRouter's "No endpoints found that support the
   requested parameters" for a retired model or an unsupported parameter, was an

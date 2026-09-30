@@ -1207,6 +1207,7 @@ func (al *AgentLoop) runLLMIteration(
 			wg.Add(1)
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
+				recorded := false // the sub-agent tool tally already has this call
 				// A panicking tool must not crash the process or wedge wg.Wait();
 				// convert it into an error result so the turn proceeds.
 				defer func() {
@@ -1220,6 +1221,9 @@ func (al *AgentLoop) runLLMIteration(
 						agentResults[idx].result = &tools.ToolResult{
 							Err:    fmt.Errorf("tool %s panicked: %v", tc.Name, r),
 							ForLLM: fmt.Sprintf("Tool %s failed with an internal error.", tc.Name),
+						}
+						if !recorded {
+							tools.RecordToolResult(opts.SessionKey, tc.Name, tools.ErrorResult(agentResults[idx].result.ForLLM))
 						}
 					}
 				}()
@@ -1313,6 +1317,8 @@ func (al *AgentLoop) runLLMIteration(
 					asyncCallback,
 				)
 				agentResults[idx].result = toolResult
+				tools.RecordToolResult(opts.SessionKey, tc.Name, toolResult)
+				recorded = true
 				recordToolCallAudit(ctx, agent.ID, opts, tc, toolResult, time.Since(toolStart))
 			}(i, tc)
 		}

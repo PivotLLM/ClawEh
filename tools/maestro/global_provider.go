@@ -49,6 +49,9 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	// Drop the idle runners of agents the config no longer has.
+	pruneRunners(c)
+
 	// Gate on the per-agent Maestro flag.
 	if !c.AgentHasMaestro(deps.AgentID) {
 		return nil
@@ -87,10 +90,11 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		agentCfg = c.AgentByID(deps.AgentID)
 	}
 	refDirs := referenceDirsFromMounts(agentCfg, workspace)
+	runCfg := runnerConfig(c.AgentMaestro(deps.AgentID))
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
-		mconfig.WithRunner(runnerConfig(c.AgentMaestro(deps.AgentID))),
+		mconfig.WithRunner(runCfg),
 		mconfig.WithReferenceDirs(refDirs),
 	)
 	if err := mcfg.Prepare(); err != nil {
@@ -110,18 +114,26 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	mlog := mlogging.NewWithWriter(&logWriter{agent: deps.AgentID})
 
 	// Each dispatched prompt is one sub-agent run, bounded like a user turn.
-	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout()}
+	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout(), agent: deps.AgentID}
 
+	// file_import may only read what the agent's own file tools can.
+	allowImport := importAllowed(c, agentCfg, workspace)
+
+	// The runner is built here and injected, one per agent for the life of the
+	// process, so a run in progress survives a config reload; this
+	// registration's dispatcher is swapped into it (see runnerFor).
+	run, swap := runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
+		disp, mcfg, mlog)
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,
 		AgentID:   deps.AgentID,
 		Workspace: workspace,
 		Host: mmaestro.HostDeps{
-			Logger:     mlog,
-			Dispatcher: disp,
-			// file_import may only read what the agent's own file tools can.
-			ImportAllowed: importAllowed(c, agentCfg, workspace),
+			Logger:        mlog,
+			Runner:        run,
+			Dispatcher:    swap,
+			ImportAllowed: allowImport,
 		},
 	})
 
