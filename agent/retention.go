@@ -214,11 +214,8 @@ func (al *AgentLoop) ReleaseSession(sessionKey string) error {
 		if !ok || ag == nil {
 			continue
 		}
-		if v, ok := al.contextManagers.Load(ag.ID + ":" + sessionKey); ok {
-			if entry, ok := v.(*cmEntry); ok && entry.refcount.Load() > 0 {
-				return fmt.Errorf("session %s has a turn in flight", sessionKey)
-			}
-			al.dropContextManager(context.Background(), ag, sessionKey)
+		if !al.dropContextManager(context.Background(), ag, sessionKey, evictReasonReleased) {
+			return fmt.Errorf("session %s has a turn in flight", sessionKey)
 		}
 		forgetSessionState(ag.Sessions, sessionKey)
 	}

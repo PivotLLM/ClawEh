@@ -61,25 +61,33 @@ func makeEntry(al *AgentLoop, key string, cm ctxengine.ContextManager, lastAcces
 	return entry
 }
 
-// TestInvalidateContextManagers verifies a config reload clears every cached
-// context manager (so the summarization chain rebuilds) WITHOUT closing them or
-// disturbing active sessions.
+// TestInvalidateContextManagers verifies a config reload evicts (and closes)
+// every idle cached context manager, and only marks one still in use as stale,
+// leaving it cached and open for the turn holding it.
 func TestInvalidateContextManagers(t *testing.T) {
 	al := &AgentLoop{}
-	cm1 := &trackingContextManager{}
-	cm2 := &trackingContextManager{}
-	makeEntry(al, "a:main", cm1, time.Now(), 0)
-	makeEntry(al, "b:main", cm2, time.Now(), 1) // refcount>0: still in-flight
+	idle := &trackingContextManager{}
+	busy := &trackingContextManager{}
+	makeEntry(al, "a:main", idle, time.Now(), 0)
+	busyEntry := makeEntry(al, "b:main", busy, time.Now(), 1) // refcount>0: still in-flight
 
-	al.invalidateContextManagers()
+	al.invalidateContextManagers(context.Background())
 
-	remaining := 0
-	al.contextManagers.Range(func(_, _ any) bool { remaining++; return true })
-	if remaining != 0 {
-		t.Fatalf("expected all entries cleared, %d remain", remaining)
+	if _, ok := al.contextManagers.Load("a:main"); ok {
+		t.Error("idle entry still cached after reload")
 	}
-	if cm1.closed.Load() || cm2.closed.Load() {
-		t.Error("invalidation must not Close managers (in-flight holders keep using them)")
+	if !idle.closed.Load() {
+		t.Error("idle entry not closed after reload")
+	}
+	v, ok := al.contextManagers.Load("b:main")
+	if !ok || v != busyEntry {
+		t.Fatal("in-use entry must stay cached across a reload")
+	}
+	if busy.closed.Load() {
+		t.Error("in-use entry must not be closed by a reload")
+	}
+	if !busyEntry.stale.Load() {
+		t.Error("in-use entry not marked stale")
 	}
 }
 

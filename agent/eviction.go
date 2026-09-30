@@ -36,6 +36,12 @@ type cmEntry struct {
 	// without any other synchronisation.
 	lastAccessed atomic.Int64
 	refcount     atomic.Int32
+	// stale marks an entry a config reload found in use. It stays in the map
+	// so the turn holding it (and anyone sharing it mid-turn) keeps its manager
+	// and, above all, the session token already rendered into running prompts;
+	// getSessionContext rebuilds it from the new config on the first access
+	// after the last holder releases it.
+	stale atomic.Bool
 	// mem is the session's cognitive-memory view; nil for non-cognitive agents.
 	// Closed on eviction/drain to release the per-session store handle.
 	mem *cogmem.Session
@@ -132,42 +138,27 @@ func (al *AgentLoop) evictContextManagers() {
 // dropContextManager force-evicts a single session's context manager (closing
 // its DB handles and revoking its token), regardless of idle time, as long as it
 // is not in use. Used to tear down an ephemeral sub-agent session right after its
-// run so its snapshot DB can be deleted. No-op if absent or still referenced (the
-// idle sweep will reclaim it later).
-func (al *AgentLoop) dropContextManager(ctx context.Context, agent *AgentInstance, sessionKey string) {
+// run so its snapshot DB can be deleted, and to release a session before its
+// archive is deleted. It reports whether the session has no cached manager
+// afterwards: false while the entry is referenced or its build slot is busy (the
+// idle sweep reclaims it later).
+func (al *AgentLoop) dropContextManager(ctx context.Context, agent *AgentInstance, sessionKey, reason string) bool {
 	key := agent.ID + ":" + sessionKey
 	v, ok := al.contextManagers.Load(key)
 	if !ok {
-		return
+		return true
 	}
 	entry, ok := v.(*cmEntry)
 	if !ok || entry.refcount.Load() > 0 {
-		return
+		return false
 	}
-	al.contextManagers.Delete(key)
-
-	al.mu.RLock()
-	sti := al.sessionTokenIssuer
-	al.mu.RUnlock()
-	if sti != nil && entry.sessionKey != "" {
-		sti.Revoke(entry.sessionKey)
-	}
-	if err := entry.cm.Close(context.WithoutCancel(ctx)); err != nil {
-		logger.WarnCF("agent", "subagent: context manager close failed",
-			map[string]any{"key": key, "error": err.Error()})
-	}
-	forgetSessionState(entry.store, entry.sessionKey)
-	entry.mem.Close()
+	return al.tryEvictEntry(ctx, key, entry, reason)
 }
 
 // runEvictionPass evicts entries that have refcount == 0 and have been idle
 // longer than ttl. It uses a fresh background context so the archive flush
 // always completes regardless of the calling goroutine's context.
 func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
-	al.mu.RLock()
-	sti := al.sessionTokenIssuer
-	al.mu.RUnlock()
-
 	now := time.Now()
 	al.contextManagers.Range(func(key, value any) bool {
 		entry, ok := value.(*cmEntry)
@@ -180,30 +171,82 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 		if entry.idle(now) < ttl {
 			return true // not idle long enough
 		}
-
-		// Remove before closing to prevent a concurrent getContextManager from
-		// returning the entry while it is being closed.
-		al.contextManagers.Delete(key)
-
-		// Revoke the session token so the MCP server no longer accepts calls
-		// with the evicted session's token.
-		if sti != nil && entry.sessionKey != "" {
-			sti.Revoke(entry.sessionKey)
-		}
-
-		if err := entry.cm.Close(context.Background()); err != nil {
-			logger.WarnCF("agent", "eviction: context manager close failed", map[string]any{
-				"key":   key,
-				"error": err.Error(),
-			})
-		}
-		forgetSessionState(entry.store, entry.sessionKey)
-		entry.mem.Close()
-		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
-			"key":      key,
-			"idle_min": entry.idle(now).Minutes(),
-		})
+		// Losing the refcount race to a new caller leaves the entry stale; it is
+		// rebuilt on the first access after release, which is intended.
+		al.tryEvictEntry(context.Background(), fmt.Sprint(key), entry, evictReasonIdle)
 		return true
+	})
+}
+
+// Reasons recorded on the eviction log line.
+const (
+	evictReasonIdle         = "idle"          // TTL pass
+	evictReasonReload       = "reload"        // config reload found it unused
+	evictReasonStaleRebuild = "stale-rebuild" // first access after a reload-marked entry was released
+	evictReasonSubagent     = "subagent-done" // ephemeral sub-agent session torn down
+	evictReasonReleased     = "released"      // session released so its archive can be deleted
+)
+
+// tryEvictEntry evicts entry if nobody holds it, and reports whether it did.
+//
+// Two things make the eviction safe against concurrent callers of the same key.
+// It holds the key's build slot, so no getSessionContext can build, Store or
+// Issue for the key meanwhile: the Delete and Revoke in evictEntry can only hit
+// this entry and its token, never a successor. And it marks the entry stale
+// before reading the refcount, the reverse of the fast path (reference first,
+// then the mark), so a concurrent caller is either counted here (the entry
+// stays, stale, and is rebuilt on the first access after release) or sees the
+// mark and backs off to the build slot. When the slot is busy the eviction is
+// skipped; a mark the caller already set is kept.
+func (al *AgentLoop) tryEvictEntry(ctx context.Context, key string, entry *cmEntry, reason string) bool {
+	bk := sessionBuildKey{al: al, key: key}
+	done := make(chan struct{})
+	if _, busy := sessionBuilds.LoadOrStore(bk, done); busy {
+		return false
+	}
+	defer func() {
+		sessionBuilds.Delete(bk)
+		close(done)
+	}()
+
+	if v, _ := al.contextManagers.Load(key); v != entry {
+		return false // already evicted or replaced
+	}
+	entry.stale.Store(true)
+	if entry.refcount.Load() > 0 {
+		return false
+	}
+	al.evictEntry(ctx, key, entry, reason)
+	return true
+}
+
+// evictEntry removes one entry from the cache, revokes its session token so the
+// MCP server no longer accepts it, and closes its manager and memory session.
+// The caller holds the key's build slot and has established, after marking the
+// entry stale, that nobody holds it (see tryEvictEntry).
+func (al *AgentLoop) evictEntry(ctx context.Context, key string, entry *cmEntry, reason string) {
+	al.contextManagers.Delete(key)
+
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti != nil && entry.sessionKey != "" {
+		sti.Revoke(entry.sessionKey)
+	}
+
+	if err := entry.cm.Close(context.WithoutCancel(ctx)); err != nil {
+		logger.WarnCF("agent", "eviction: context manager close failed", map[string]any{
+			"key":    key,
+			"reason": reason,
+			"error":  err.Error(),
+		})
+	}
+	forgetSessionState(entry.store, entry.sessionKey)
+	entry.mem.Close()
+	logger.InfoCF("agent", "evicted context manager", map[string]any{
+		"key":      key,
+		"reason":   reason,
+		"idle_min": entry.idle(time.Now()).Minutes(),
 	})
 }
 
@@ -266,20 +309,33 @@ func (al *AgentLoop) drainContextManagers(ctx context.Context) {
 	}
 }
 
-// invalidateContextManagers drops every cached ContextManager so the next access
-// rebuilds it from the current config. Unlike drainContextManagers (shutdown),
-// it does NOT close the manager or revoke session tokens: in-flight holders keep
-// their existing entry and active sessions are undisturbed; only the cached
-// mapping is cleared so a fresh manager (with the reloaded summarization chain
-// and other per-session config) is built on demand. Called on config reload.
-func (al *AgentLoop) invalidateContextManagers() {
-	n := 0
-	al.contextManagers.Range(func(key, _ any) bool {
-		al.contextManagers.Delete(key)
-		n++
+// invalidateContextManagers makes every cached ContextManager be rebuilt from
+// the current config on its next access. Called on config reload.
+//
+// Every entry is marked stale. One nobody holds is evicted: its token is
+// revoked and the next turn builds a fresh manager and renders a fresh token.
+// One in use stays in the map, so the turn holding it (and the Maestro workers
+// and session tools that carry its token) keeps working; it is rebuilt on the
+// first access after the last holder releases it, or by the idle eviction pass.
+// An entry whose build slot is busy is left marked for the same treatment.
+func (al *AgentLoop) invalidateContextManagers(ctx context.Context) {
+	evicted, kept := 0, 0
+	al.contextManagers.Range(func(key, value any) bool {
+		entry, ok := value.(*cmEntry)
+		if !ok {
+			al.contextManagers.Delete(key)
+			return true
+		}
+		entry.stale.Store(true)
+		if entry.refcount.Load() == 0 && al.tryEvictEntry(ctx, fmt.Sprint(key), entry, evictReasonReload) {
+			evicted++
+		} else {
+			kept++
+		}
 		return true
 	})
-	if n > 0 {
-		logger.DebugCF("agent", "config reload: invalidated cached context managers", map[string]any{"count": n})
+	if evicted > 0 || kept > 0 {
+		logger.DebugCF("agent", "config reload: invalidated cached context managers",
+			map[string]any{"evicted": evicted, "kept_stale": kept})
 	}
 }

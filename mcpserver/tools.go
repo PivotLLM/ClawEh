@@ -111,7 +111,7 @@ func (t *firstCallTracker) workspace(agentName string) string {
 
 // dispatchDeps are the collaborators every tool handler closes over at call time.
 type dispatchDeps struct {
-	sessionTokens    *sessionTokenStore
+	sessionTokens    *SessionTokenStore
 	resolver         AgentResolver
 	tracker          *firstCallTracker
 	policy           acl.Policy
@@ -175,7 +175,7 @@ func addToolsToServer(
 	mode authMode,
 	agentRegistries map[string]*tools.ToolRegistry,
 	allowPatterns []string,
-	sessionTokens *sessionTokenStore,
+	sessionTokens *SessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
@@ -378,7 +378,7 @@ func dispatchToolCall(
 	ctx context.Context,
 	toolName string,
 	args map[string]any,
-	sessionTokens *sessionTokenStore,
+	sessionTokens *SessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,

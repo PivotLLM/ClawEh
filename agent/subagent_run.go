@@ -137,7 +137,10 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 // its DB handles), removes the memory snapshot directory and the ephemeral
 // session's archive files. Best-effort.
 func (al *AgentLoop) cleanupSubagentSession(ctx context.Context, agent *AgentInstance, sessionKey string) {
-	al.dropContextManager(ctx, agent, sessionKey)
+	if !al.dropContextManager(ctx, agent, sessionKey, evictReasonSubagent) {
+		logger.DebugCF("agent", "sub-agent session still in use; the idle sweep will reclaim it",
+			map[string]any{"session": sessionKey})
+	}
 	al.releaseSessionPins(sessionKey)
 	snapshotDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if err := os.RemoveAll(snapshotDir); err != nil {

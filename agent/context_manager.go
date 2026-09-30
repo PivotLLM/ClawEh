@@ -353,13 +353,21 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	key := agent.ID + ":" + sessionKey
 
 	for {
-		// Fast path: entry already exists.
+		// Fast path: entry already exists. A stale entry (marked by a config
+		// reload) is only handed out under the build slot below, where the
+		// refcount decides between sharing it and rebuilding it. The reference
+		// is taken before the mark is checked — the reverse of
+		// tryEvictEntry — so an evictor either counts this caller or
+		// is seen by it.
 		v, _ := al.contextManagers.Load(key)
 		if entry, ok := v.(*cmEntry); ok {
 			entry.refcount.Add(1)
-			entry.touch()
-			release := func() { entry.refcount.Add(-1) }
-			return entry.cm, entry.mem, release
+			if !entry.stale.Load() {
+				entry.touch()
+				release := func() { entry.refcount.Add(-1) }
+				return entry.cm, entry.mem, release
+			}
+			entry.refcount.Add(-1)
 		}
 
 		// Slow path: exactly one caller builds the entry; everyone else waits
@@ -382,6 +390,31 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	}
 }
 
+// takeCachedEntry is the build-slot holder's second look at the cache. A live
+// entry — or a stale one still held by an in-flight turn, whose token running
+// sub-agents carry — is shared: its refcount is taken and it is returned. A
+// stale entry nobody holds is evicted so the caller builds a fresh one from the
+// current config. The caller holds the build slot for key; since the fast path
+// never uses a stale entry (it backs its reference out when it sees the mark),
+// nobody can start using one between the refcount check here and its eviction.
+// A fast-path caller's transient reference can only make this share an entry
+// that is still open, never evict one in use. Every other evictor also holds
+// the slot (tryEvictEntry), so none can race this one.
+func (al *AgentLoop) takeCachedEntry(key string) (*cmEntry, bool) {
+	v, _ := al.contextManagers.Load(key)
+	entry, ok := v.(*cmEntry)
+	if !ok {
+		return nil, false
+	}
+	if entry.stale.Load() && entry.refcount.Load() == 0 {
+		al.evictEntry(context.Background(), key, entry, evictReasonStaleRebuild)
+		return nil, false
+	}
+	entry.refcount.Add(1)
+	entry.touch()
+	return entry, true
+}
+
 // sessionBuildKey identifies one in-flight context-manager build: the loop it
 // belongs to and the agentID:sessionKey being built.
 type sessionBuildKey struct {
@@ -398,6 +431,9 @@ var sessionBuilds sync.Map
 // memory session for one agent+session pair, stores the entry in
 // contextManagers with refcount 1 (the caller's reference), and then releases
 // the waiters registered under bk. The caller holds the build slot for bk.
+// When the cache already holds an entry the caller may share (a stale one still
+// in use, see takeCachedEntry), that entry is returned with the caller's
+// reference taken instead of building a new one.
 func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, agent *AgentInstance, sessionKey string) *cmEntry {
 	// Release waiters even if the build panics, so they retry instead of
 	// hanging; finding no entry, one of them becomes the builder.
@@ -405,6 +441,10 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		sessionBuilds.Delete(bk)
 		close(done)
 	}()
+
+	if entry, ok := al.takeCachedEntry(bk.key); ok {
+		return entry
+	}
 
 	// The summarization model chain. Per-agent models let an agent use
 	// specialised summarizers when the default ones refuse its content; see
@@ -500,7 +540,8 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	newEntry.refcount.Store(1)
 
 	// We hold the build slot for bk, so no other builder can have stored this
-	// key since the caller's Load missed; a plain Store clobbers nobody.
+	// key since takeCachedEntry found nothing to share; a plain Store clobbers
+	// nobody.
 	al.contextManagers.Store(bk.key, newEntry)
 	return newEntry
 }

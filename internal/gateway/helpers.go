@@ -178,6 +178,12 @@ type gatewayServices struct {
 	// ends its file watcher at shutdown.
 	TLSCerts     *tlscert.Manager
 	stopTLSWatch context.CancelFunc
+	// SessionTokens is the MCP session-token store. Like HTTPHost it lives for
+	// the whole process: every MCP server built (at start and on each config
+	// reload) shares it, so the tokens rendered into running prompts and
+	// Maestro workers keep resolving across a reload. Created by the first
+	// startMCPServer that runs; nil while the MCP host has never been enabled.
+	SessionTokens *mcpserver.SessionTokenStore
 	// bootListeners are the listener settings the process bound at start;
 	// a saved config that differs needs a restart (warnListenerConfigChanged,
 	// GET /api/tls restart_required).
@@ -815,7 +821,13 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		agentWorkspaces[agentID] = a.Workspace
 	}
 
+	if services.SessionTokens == nil {
+		services.SessionTokens = mcpserver.NewSessionTokenStore()
+		agentLoop.SetSessionTokenIssuer(services.SessionTokens)
+	}
+
 	srv, err := mcpserver.New(
+		mcpserver.WithSessionTokenStore(services.SessionTokens),
 		mcpserver.WithAgentRegistries(agentRegistries),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
@@ -835,7 +847,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		return fmt.Errorf("error starting MCP server: %w", err)
 	}
 	services.MCPServer = srv
-	agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
 	// The host catalogue follows the agent registries from here on: when an
 	// external MCP server's tools are re-registered, the loop asks the host to
 	// refresh, so a renamed tool reaches external clients without a restart.

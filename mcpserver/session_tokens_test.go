@@ -13,7 +13,7 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// --- sessionTokenStore unit tests ---
+// --- SessionTokenStore unit tests ---
 
 // TestSyncServiceTokens_HashedValuesResolveByPlaintext is the shape the gateway
 // actually syncs: servicetoken.Load hands over hashes, the client presents the

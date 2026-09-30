@@ -1056,6 +1056,30 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
             echo "    ${GREEN}PASS${NC}: all namespaces present after reload"
             PASS_COUNT=$((PASS_COUNT + 1))
         fi
+
+        # 5.6 — Reload smoke check: the service token still authenticates. It is
+        # re-synced from disk on every rebuild, so this does not show that tokens
+        # issued before the reload survive it; the Go tests cover that.
+        if [ -n "$SERVICE_TOKEN" ]; then
+            echo "  5.6 service token still works after reload"
+            rl_svc=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+                -call "session_info" -params "$(printf '{"session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
+            if echo "$rl_svc" | grep -q "Tool call succeeded"; then
+                echo "    ${GREEN}PASS${NC}: service token accepted after reload"
+                TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+            else
+                echo "    ${RED}FAIL${NC}: service token rejected after reload"
+                echo "    Output: $rl_svc"
+                TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
+        fi
+
+        # 5.7 — Reload smoke check: the test session token still authenticates.
+        # It is registered again on every rebuild, so like 5.6 it is not the
+        # regression check for carried tokens.
+        if [ -n "$SESSION_TOKEN" ]; then
+            run_test_ok_auth "5.7 session token still works after reload" "session_info" '{}'
+        fi
     fi
 fi
 

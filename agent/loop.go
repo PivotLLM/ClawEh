@@ -96,8 +96,8 @@ type AgentLoop struct {
 	showToolActivityCache map[string]bool
 
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
-	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
-	// MCP host is not configured.
+	// once via SetSessionTokenIssuer with the process-lifetime store every MCP
+	// server shares; nil when the MCP host is not configured.
 	sessionTokenIssuer SessionTokenIssuer
 
 	// cogmemManager schedules background cognitive-memory consolidation. Wired in
@@ -148,7 +148,7 @@ func shuttingDown(ctx context.Context) bool {
 
 // SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
 // session-scoped MCP tools (get_session_messages, search_session_messages).
-// mcpserver.sessionTokenStore satisfies this interface.
+// mcpserver.SessionTokenStore satisfies this interface.
 type SessionTokenIssuer interface {
 	// Issue generates and stores a new token for the given session. Returns
 	// the SST<64hex> token, or "" on failure.
@@ -390,7 +390,7 @@ func (al *AgentLoop) Close(ctx context.Context) {
 	al.GetRegistry().Close()
 }
 
-// SetSessionTokenIssuer wires the MCP server's session token store into the
+// SetSessionTokenIssuer wires the MCP session token store into the
 // agent loop so that session tokens are issued when a new ContextManager is
 // created and revoked on eviction or session clear.
 func (al *AgentLoop) SetSessionTokenIssuer(sti SessionTokenIssuer) {
@@ -518,10 +518,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		al.dispatcher.Flush(cfg)
 	}
 
-	// Drop cached ContextManagers so per-session config baked in at creation —
-	// notably the summarization model chain — is rebuilt from the new config on
-	// next use.
-	al.invalidateContextManagers()
+	// Have cached ContextManagers rebuilt from the new config, since per-session
+	// config is baked in at creation (notably the summarization model chain).
+	// Idle sessions are evicted now; sessions in use keep their manager and
+	// session token until released, then rebuild on their next access.
+	al.invalidateContextManagers(ctx)
 
 	// Close old provider after releasing the lock
 	// This prevents blocking readers while closing

@@ -247,4 +247,28 @@ func TestReleaseSession(t *testing.T) {
 	if !tl.al.sessionOpen(ag.ID, busy) {
 		t.Fatal("busy session's context manager dropped")
 	}
+
+	// An idle entry whose build slot is held (a build or another eviction in
+	// progress) is not released either, and is left untouched.
+	const building = "agent:main:telegram:direct:3"
+	key := ag.ID + ":" + building
+	buildingCM := &trackingContextManager{}
+	entry := makeEntry(tl.al, key, buildingCM, time.Now(), 0)
+	bk := sessionBuildKey{al: tl.al, key: key}
+	done := make(chan struct{})
+	sessionBuilds.Store(bk, done)
+	if err := tl.al.ReleaseSession(building); err == nil {
+		t.Fatal("ReleaseSession succeeded while the build slot was held")
+	}
+	if v, _ := tl.al.contextManagers.Load(key); v != entry || buildingCM.closed.Load() {
+		t.Fatal("entry touched while its build slot was held")
+	}
+	sessionBuilds.Delete(bk)
+	close(done)
+	if err := tl.al.ReleaseSession(building); err != nil {
+		t.Fatalf("ReleaseSession after the slot was freed: %v", err)
+	}
+	if !buildingCM.closed.Load() || tl.al.sessionOpen(ag.ID, building) {
+		t.Fatal("session not released once the slot was free")
+	}
 }

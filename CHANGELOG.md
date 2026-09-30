@@ -880,6 +880,13 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A config reload no longer cuts off running turns and Maestro workers from
+  their tools.** Every reload rebuilt the MCP host with an empty session-token
+  store, so each worker or QA sub-agent launched before it, and any turn in
+  flight, got `invalid_token` on every later MCP call. The store now lives for
+  the whole process, and a session busy during a reload keeps its token until
+  the turn finishes; idle sessions pick up the new configuration on their next
+  message as before.
 - **A model that no longer exists fails over instead of failing the turn.** An
   endpoint answering 404, or OpenRouter's "No endpoints found that support the
   requested parameters" for a retired model or an unsupported parameter, was an

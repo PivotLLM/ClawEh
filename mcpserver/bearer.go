@@ -53,7 +53,7 @@ func bearerContextFunc(_ context.Context, r *http.Request) context.Context {
 // HTTP layer with a 401 (matching standard MCP client expectations), before they
 // reach the streamable handler. A token that is present and resolvable in the
 // shared store is accepted; per-call routing/ACL still runs in dispatch.
-func bearerAuthMiddleware(store *sessionTokenStore, next http.Handler) http.Handler {
+func bearerAuthMiddleware(store *SessionTokenStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := extractBearer(r)
 		if tok == "" {
