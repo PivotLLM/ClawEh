@@ -489,6 +489,7 @@ func dispatchToolCall(
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
 	result := reg.ExecuteForHost(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
+	tools.RecordToolResult(rec.sessionKey, toolName, result)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})

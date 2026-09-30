@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
@@ -108,6 +109,13 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		"task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
+	// Tally the worker's tool calls (in the loop and over MCP) under its session
+	// key, so a caller can tell a worker whose every tool call failed from one
+	// that did its work. The deferred End removes the entry if the run never
+	// reaches the read below (a panic); after the read it is a no-op.
+	tools.BeginToolStats(sessionKey)
+	defer tools.EndToolStats(sessionKey)
+
 	res := &global.SyncResult{}
 	content, err := al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:    sessionKey,
@@ -119,16 +127,20 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		IterationsOut: &res.Iterations,
 		UsageOut:      &res.TurnUsage,
 	})
+	toolCalls, toolErrors, lastToolError := tools.EndToolStats(sessionKey)
 	if err != nil {
 		logger.WarnCF("agent", "subagent.run.end", map[string]any{
 			"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "error": err.Error(),
+			"tool_calls": toolCalls, "tool_errors": toolErrors,
 		})
 		return nil, err
 	}
 	res.Content = content
+	res.ToolCalls, res.ToolErrors, res.LastToolError = toolCalls, toolErrors, lastToolError
 	logger.InfoCF("agent", "subagent.run.end", map[string]any{
 		"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "content_len": len(content),
 		"model": res.Model, "input_tokens": res.InputTokens, "output_tokens": res.OutputTokens,
+		"tool_calls": toolCalls, "tool_errors": toolErrors,
 	})
 	return res, nil
 }

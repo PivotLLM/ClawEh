@@ -4,7 +4,10 @@
 // Package maestro adapts the embedded Maestro task-orchestration provider into
 // ClawEh: it builds Maestro's per-agent config, routes Maestro's logs to a
 // per-agent log file, and dispatches every Maestro task as a ClawEh sub-agent so
-// the host owns model selection + fallback.
+// the host owns model selection + fallback. A sub-agent whose every tool call
+// failed is reported to Maestro as a failed dispatch, not a result. The Maestro
+// runner is kept per agent across config reloads while a run is in progress,
+// so its run-in-progress guard survives the reload (see runner_cache.go).
 package maestro
 
 import (
@@ -18,6 +21,7 @@ import (
 	mllm "github.com/PivotLLM/Maestro/llm"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // hostProviderModel is the model label recorded when the sub-agent run did not
@@ -32,6 +36,8 @@ type dispatcher struct {
 	run global.SyncRunner
 	// timeout bounds one dispatched prompt (the whole sub-agent run). 0 = none.
 	timeout time.Duration
+	// agent is the agent id the dispatcher serves, for log lines.
+	agent string
 }
 
 // hostModel maps Maestro's llm_model_id hint to a host model request. Maestro's
@@ -60,7 +66,10 @@ func isPermanent(err error) bool {
 // Error mapping: failures that no retry can fix (no runner, depth exceeded,
 // unknown model alias) are returned as a Maestro permanent error so the runner
 // fails the task at once; anything else (provider errors, the timeout) is
-// returned as a non-zero exit so the runner's normal retry budget applies.
+// returned as a non-zero exit so the runner's normal retry budget applies. A
+// run that succeeded but whose tool calls all failed (at least one call made)
+// is also returned as a non-zero exit, with StopReason "tools_failed" and the
+// last tool error, keeping the run's usage.
 func (d *dispatcher) Dispatch(ctx context.Context, req *mllm.DispatchRequest) (*mllm.DispatchResult, error) {
 	if d == nil || d.run == nil {
 		return nil, mllm.Permanent(fmt.Errorf("%w: host dispatcher not available", global.ErrSpawnUnavailable))
@@ -100,7 +109,7 @@ func (d *dispatcher) Dispatch(ctx context.Context, req *mllm.DispatchRequest) (*
 	if model == "" {
 		model = hostProviderModel
 	}
-	return &mllm.DispatchResult{
+	out := &mllm.DispatchResult{
 		ExitCode:            0,
 		Stdout:              res.Content,
 		Text:                res.Content,
@@ -118,7 +127,30 @@ func (d *dispatcher) Dispatch(ctx context.Context, req *mllm.DispatchRequest) (*
 		CostUSD:             res.CostUSD,
 		DurationMs:          elapsed,
 		ProviderModel:       model,
-	}, nil
+	}
+
+	// A worker whose every tool call failed did not do the work, whatever its
+	// prose says: report a failed dispatch so the runner retries it. The usage
+	// fields above are kept so the attempt is still accounted for.
+	if res.ToolCalls > 0 && res.ToolErrors == res.ToolCalls {
+		msg := fmt.Sprintf("sub-agent made %d tool call(s) and every one failed; last error: %s",
+			res.ToolCalls, res.LastToolError)
+		logger.WarnCF("maestro", "maestro dispatch failed: every sub-agent tool call failed",
+			map[string]any{
+				"agent": d.agent, "tool_calls": res.ToolCalls, "tool_errors": res.ToolErrors,
+				"last_error": res.LastToolError, "model": model, "duration_ms": elapsed,
+			})
+		out.ExitCode = 1
+		out.Stdout = ""
+		out.Stderr = msg
+		out.Text = msg
+		out.ResponseParsed = false
+		out.NormalTermination = false
+		out.Success = false
+		out.StopReason = "tools_failed"
+		return out, nil
+	}
+	return out, nil
 }
 
 // The metadata methods return host stubs. This is deliberate: the host owns

@@ -207,3 +207,60 @@ func TestDispatcher_NoTimeoutWhenUnset(t *testing.T) {
 		t.Errorf("caller cancellation was reported as a timeout: %+v", res)
 	}
 }
+
+// TestDispatcher_AllToolCallsFailed: a worker that made tool calls and saw
+// every one fail is a failed dispatch (retried by the runner), with the count
+// and the last error in the message and the usage kept.
+func TestDispatcher_AllToolCallsFailed(t *testing.T) {
+	runner := &stubRunner{res: &global.SyncResult{
+		Content: "I checked everything and it looks fine.", Iterations: 3,
+		Model: "claude-x", InputTokens: 900, OutputTokens: 80, CacheReadTokens: 9, CostUSD: 0.05,
+		ToolCalls: 3, ToolErrors: 3, LastToolError: "cogmem_status: invalid session token",
+	}}
+	d := &dispatcher{run: runner, agent: "alice"}
+
+	res, err := d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "audit control X"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if res.ExitCode != 1 || res.Success || res.StopReason != "tools_failed" {
+		t.Fatalf("result = %+v, want exit 1, not successful, stop reason tools_failed", res)
+	}
+	for _, field := range []string{res.Text, res.Stderr} {
+		if !strings.Contains(field, "3 tool call(s)") || !strings.Contains(field, "cogmem_status: invalid session token") {
+			t.Errorf("message %q lacks the count or the last error", field)
+		}
+	}
+	if strings.Contains(res.Text, "looks fine") || res.Stdout != "" {
+		t.Errorf("the worker's prose leaked into the failed result: text=%q stdout=%q", res.Text, res.Stdout)
+	}
+	if res.InputTokens != 900 || res.OutputTokens != 80 || res.CacheReadTokens != 9 || res.CostUSD != 0.05 ||
+		res.NumTurns != 3 || res.ProviderModel != "claude-x" {
+		t.Errorf("usage not kept: %+v", res)
+	}
+	if res.BytesSent != int64(len("audit control X")) {
+		t.Errorf("byte count not kept: %+v", res)
+	}
+}
+
+// TestDispatcher_SomeOrNoToolCallsFailed: a worker with at least one working
+// tool call, or no tool calls at all, is a successful dispatch as before.
+func TestDispatcher_SomeOrNoToolCallsFailed(t *testing.T) {
+	cases := map[string]*global.SyncResult{
+		"some failed": {Content: "done", ToolCalls: 3, ToolErrors: 2, LastToolError: "web_fetch: timeout"},
+		"no calls":    {Content: "done"},
+		"none failed": {Content: "done", ToolCalls: 2},
+	}
+	for name, sr := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := &dispatcher{run: &stubRunner{res: sr}}
+			res, err := d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "p"})
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if res.ExitCode != 0 || !res.Success || res.Text != "done" || res.StopReason != "" {
+				t.Errorf("result = %+v, want success with the worker's text", res)
+			}
+		})
+	}
+}

@@ -532,6 +532,13 @@ observe does not need an entry.
 
 ### Changed
 
+- **A Maestro worker whose tool calls all failed is a failed task attempt.** A
+  Maestro task whose worker made tool calls and saw every one of them fail is
+  now reported to Maestro as a failed dispatch and retried within the task's
+  `max_worker` budget, instead of its reply being accepted as a completed
+  result. The task error names the number of calls and the last tool error
+  ("sub-agent made 3 tool call(s) and every one failed; last error: …"). A
+  worker with at least one working tool call, or none at all, is unaffected.
 - **"Allow CLI to bypass restrictions" is the setting's name everywhere.** The
   Providers page checkbox, the Check Up rows, the configuration report and the
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
@@ -880,6 +887,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A configuration reload no longer loses track of a Maestro run in
+  progress.** A run started with `maestro_task_run` kept going after a reload,
+  but `maestro_task_status` then reported no run in progress and a second
+  `maestro_task_run` on the same project was accepted, so two runs worked the
+  same task set at once. Status now shows the run and the second
+  `maestro_task_run` is refused until it finishes.
 - **A model that no longer exists fails over instead of failing the turn.** An
   endpoint answering 404, or OpenRouter's "No endpoints found that support the
   requested parameters" for a retired model or an unsupported parameter, was an

@@ -129,11 +129,20 @@ func (u *TurnUsage) Add(model, provider string, in, out, cacheRead, cacheCreate 
 }
 
 // SyncResult is what a SyncRunner returns: the worker's raw content, how many
-// LLM iterations it took, and the turn's resource accounting.
+// LLM iterations it took, the turn's resource accounting, and a tally of the
+// worker's tool calls so a caller can tell a worker whose tools all failed from
+// one that did its work.
 type SyncResult struct {
 	Content    string
 	Iterations int
 	TurnUsage
+	// ToolCalls is the number of tool calls the worker made; ToolErrors how
+	// many of them failed.
+	ToolCalls  int
+	ToolErrors int
+	// LastToolError is "<tool>: <text>" for the last failed call, token-redacted
+	// and truncated to 300 runes; empty when no call failed.
+	LastToolError string
 }
 
 // Errors a SyncRunner returns for failures that no retry can fix. Programmatic

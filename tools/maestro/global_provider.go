@@ -110,18 +110,23 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	mlog := mlogging.NewWithWriter(&logWriter{agent: deps.AgentID})
 
 	// Each dispatched prompt is one sub-agent run, bounded like a user turn.
-	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout()}
+	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout(), agent: deps.AgentID}
 
+	// file_import may only read what the agent's own file tools can.
+	allowImport := importAllowed(c, agentCfg, workspace)
+
+	// The runner is built here and injected so a run in progress survives a
+	// config reload (see runnerFor).
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,
 		AgentID:   deps.AgentID,
 		Workspace: workspace,
 		Host: mmaestro.HostDeps{
-			Logger:     mlog,
-			Dispatcher: disp,
-			// file_import may only read what the agent's own file tools can.
-			ImportAllowed: importAllowed(c, agentCfg, workspace),
+			Logger:        mlog,
+			Runner:        runnerFor(deps.AgentID, base, mcfg, mlog, disp, allowImport),
+			Dispatcher:    disp,
+			ImportAllowed: allowImport,
 		},
 	})
 

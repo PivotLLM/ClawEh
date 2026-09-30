@@ -1313,6 +1313,7 @@ func (al *AgentLoop) runLLMIteration(
 					asyncCallback,
 				)
 				agentResults[idx].result = toolResult
+				tools.RecordToolResult(opts.SessionKey, tc.Name, toolResult)
 				recordToolCallAudit(ctx, agent.ID, opts, tc, toolResult, time.Since(toolStart))
 			}(i, tc)
 		}
