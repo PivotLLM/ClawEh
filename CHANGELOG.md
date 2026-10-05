@@ -924,6 +924,13 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Every scheduled (cron) job fire now reaches the agent.** Repeated fires of
+  the same job were treated as duplicates when the conversation was compacted,
+  so a fire arriving while a compaction ran could be dropped and the agent
+  answered without the request (for example, a morning email job that ran but
+  did nothing). Each fire is now kept as its own message, and compaction
+  (ctxengine v0.0.7) never removes the message the agent is answering and
+  treats a message as a repeat only when it directly follows an identical one.
 - **The sub-agent depth limit now applies to CLI-provider agents.**
   `agents.defaults.max_subagent_depth` (and a message's `spawn_depth`) now
   also bounds tool calls made by claude-cli, codex-cli, antigravity-cli and
