@@ -1123,7 +1123,7 @@ func restartServices(
 	// without this a reload would silently end mount notifications for the rest of
 	// the process's life — and every service around it is rebuilt the same way.
 	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0, al.Alerter())
-	services.MountWatcher.Start() //nolint:contextcheck // background poller whose lifetime is Stop(), not the run context
+	services.MountWatcher.Start() //nolint:contextcheck,nolintlint // background poller whose lifetime is Stop(), not the run context
 	logger.InfoC("mountwatch", "Mount watcher restarted")
 
 	// Stop the old media store before creating a new one

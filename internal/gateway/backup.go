@@ -40,7 +40,7 @@ func startBackupScheduler(getConfig func() *config.Config, configPath string, a 
 					continue
 				}
 				lastRunDay = day
-				res, err := backup.RunForConfig(cfg, configPath, now, backup.Options{Alerter: a}) //nolint:contextcheck // same code path as `claw backup`, which has no context; the quick_check inside runs on its own busy_timeout-bounded connection
+				res, err := backup.RunForConfig(cfg, configPath, now, backup.Options{Alerter: a}) //nolint:contextcheck,nolintlint // same code path as `claw backup`, which has no context; the quick_check inside runs on its own busy_timeout-bounded connection
 				if err != nil {
 					logger.ErrorCF("backup", "nightly backup failed", map[string]any{"error": err.Error()})
 					a.Send(alerter.Alert{
