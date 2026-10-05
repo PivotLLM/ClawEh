@@ -67,7 +67,7 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 		})
 		return nil, false
 	}
-	p, err := al.dispatcher.Get(alias)
+	p, err := al.dispatchProvider(agent, alias)
 	if err != nil {
 		logger.WarnCF("agent", "vision model dispatch failed; skipping", map[string]any{
 			"agent_id":  agent.ID,

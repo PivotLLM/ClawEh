@@ -32,6 +32,11 @@ type ContextBuilder struct {
 	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
 	maestroEnabled bool
 
+	// fixedPrompt, when set, is the agent's whole system prompt: no identity,
+	// workspace files, skills, memory guidance, date or runtime block. A fresh
+	// temporary agent's prompt (see WithFixedPrompt).
+	fixedPrompt string
+
 	// memoryGuidance is the operating rule contributed by the memory subsystem
 	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
 	// numbered rule in the identity section.
@@ -115,6 +120,15 @@ func (cb *ContextBuilder) accessibleFolders() string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// WithFixedPrompt makes text the agent's whole system prompt: PromptLayers
+// returns it alone, and nothing is read from the workspace. It also leaves the
+// agent no skills.
+func (cb *ContextBuilder) WithFixedPrompt(text string) *ContextBuilder {
+	cb.fixedPrompt = text
+	cb.skillsFilter = []string{}
+	return cb
 }
 
 // WithSkillsFilter restricts which skills are available to this agent.
@@ -242,6 +256,9 @@ const discoveryRule = "**Tool Discovery** - Your visible tools are limited to sa
 	"`get_tool_details(name)`" + " on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing."
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
+	if cb.fixedPrompt != "" {
+		return cb.fixedPrompt
+	}
 	parts := []string{}
 
 	// Core identity section
@@ -647,6 +664,9 @@ func sanitizeChannelName(s string) string {
 // "system" parameter, Codex maps only the first system message to its
 // instructions field, and OpenAI-compat passes messages through as-is.
 func (cb *ContextBuilder) PromptLayers(channel, chatID string) []ctxengine.Layer {
+	if cb.fixedPrompt != "" {
+		return []ctxengine.Layer{{Name: "static", Text: cb.fixedPrompt}}
+	}
 	// The static part (identity, bootstrap, skills, memory) is cached locally to
 	// avoid repeated file I/O and string building on every call (fixes issue #607).
 	staticPrompt := cb.BuildSystemPromptWithCache()

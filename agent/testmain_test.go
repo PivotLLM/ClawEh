@@ -10,6 +10,7 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 	toolscogmem "github.com/PivotLLM/ClawEh/tools/cogmem"
 	toolsfiles "github.com/PivotLLM/ClawEh/tools/files"
+	toolsmaestro "github.com/PivotLLM/ClawEh/tools/maestro"
 	toolssession "github.com/PivotLLM/ClawEh/tools/session"
 	toolsshell "github.com/PivotLLM/ClawEh/tools/shell"
 )
@@ -24,5 +25,7 @@ func TestMain(m *testing.M) {
 	tools.RegisterProvider(tools.NamespacedProvider("shell", toolsshell.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("session", toolssession.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", toolscogmem.GlobalProvider))
+	// Only agents with the Maestro suite switched on get its tools.
+	tools.RegisterProvider(tools.NamespacedProvider("maestro", toolsmaestro.GlobalProvider))
 	os.Exit(m.Run())
 }

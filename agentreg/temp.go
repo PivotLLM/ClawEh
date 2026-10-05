@@ -41,6 +41,28 @@ type createOptions struct {
 	source    string
 	ephemeral bool
 	owner     string
+	// The fresh-agent options; a clone refuses them.
+	systemPrompt    string
+	hasSystemPrompt bool
+	noMemory        bool
+	singleShot      bool
+}
+
+// freshOnly reports whether any option that applies only to a fresh agent
+// was given.
+func (o createOptions) freshOnly() bool { return o.hasSystemPrompt || o.noMemory || o.singleShot }
+
+// mode is the fresh agent's mode the options select: single-shot wins over
+// no memory, and memory is the default.
+func (o createOptions) mode() Mode {
+	switch {
+	case o.singleShot:
+		return ModeSingleShot
+	case o.noMemory:
+		return ModeNoMemory
+	default:
+		return ModeMemory
+	}
 }
 
 // OwnedBy records the agent that creates the temporary agent (Spec.Owner),
@@ -64,9 +86,27 @@ func CloneOf(srcID string) Option { return func(o *createOptions) { o.source = s
 // is not saved across restarts.
 func EphemeralMemory() Option { return func(o *createOptions) { o.ephemeral = true } }
 
+// WithSystemPrompt sets a fresh agent's whole system prompt (default
+// DefaultSystemPrompt). Not for a clone.
+func WithSystemPrompt(text string) Option {
+	return func(o *createOptions) { o.systemPrompt, o.hasSystemPrompt = text, true }
+}
+
+// WithoutMemory gives a fresh agent no cognitive memory; it still keeps its
+// conversation. Not for a clone.
+func WithoutMemory() Option { return func(o *createOptions) { o.noMemory = true } }
+
+// SingleShot makes a fresh agent keep nothing: no memory, and every turn
+// starts on a blank context (the system prompt and the new message only).
+// Not for a clone.
+func SingleShot() Option { return func(o *createOptions) { o.singleShot = true } }
+
 // Create adds a temporary agent and returns its UUID id. Without CloneOf the
-// agent is fresh: cfg (its id ignored) with a new workspace under
-// <CLAW_HOME>/internal/temp/<uuid>/workspace and no tools. The memory
+// agent is fresh: cfg (its id ignored) with an empty workspace of its own
+// under <CLAW_HOME>/internal/temp/<uuid>/workspace, no tools, no prompt files
+// and no skills. Its system prompt is WithSystemPrompt's text or
+// DefaultSystemPrompt, and its mode (ModeMemory unless WithoutMemory or
+// SingleShot) decides its cognitive memory, overriding cfg.Cogmem. The memory
 // snapshot and the build run outside the registry's lock, so creations run
 // in parallel.
 func (r *Registry[T]) Create(cfg config.AgentConfig, opts ...Option) (string, error) {
@@ -91,6 +131,12 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	}
 	if o.source != "" && !reflect.ValueOf(cfg).IsZero() {
 		return "", nil, errors.New("agentreg: a clone takes its configuration from its source; pass a zero AgentConfig")
+	}
+	if o.source != "" && o.freshOnly() {
+		return "", nil, errors.New("agentreg: a clone takes its prompt and memory from its source; WithSystemPrompt, WithoutMemory and SingleShot are for a fresh agent")
+	}
+	if o.hasSystemPrompt && strings.TrimSpace(o.systemPrompt) == "" {
+		return "", nil, errors.New("agentreg: the system prompt is empty")
 	}
 
 	// Held for reading from reading the configuration to inserting the agent:
@@ -162,7 +208,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	}
 	logger.InfoCF("agent", "Created temporary agent", map[string]any{
 		"agent_id": id, "agent": spec.Label(), "source": spec.SourceID,
-		"ephemeral_memory": spec.Ephemeral, "ttl": o.ttl.String(),
+		"ephemeral_memory": spec.Ephemeral, "ttl": o.ttl.String(), "mode": string(spec.Mode),
 	})
 	end := func() {}
 	if inTurn {
@@ -184,11 +230,24 @@ func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *
 	if err != nil {
 		return Spec{}, err
 	}
+	prompt := DefaultSystemPrompt
+	if o.hasSystemPrompt {
+		prompt = o.systemPrompt
+	}
+	return freshSpec(ac, id, stateDir, o.mode(), prompt, o.ephemeral), nil
+}
+
+// freshSpec is the spec of a fresh temporary agent with configuration ac. The
+// mode decides the cognitive memory, whatever ac says.
+func freshSpec(ac config.AgentConfig, id, stateDir string, mode Mode, prompt string, ephemeral bool) Spec {
 	ac.ID, ac.Default = id, false
+	memory := mode == ModeMemory
+	ac.Cogmem = &memory
 	return Spec{
 		ID: id, Config: &ac, Origin: OriginTemp, StateDir: stateDir,
-		Workspace: freshWorkspace(stateDir), Ephemeral: o.ephemeral, Fresh: true,
-	}, nil
+		Workspace: freshWorkspace(stateDir), Ephemeral: ephemeral, Fresh: true,
+		Mode: mode, SystemPrompt: prompt,
+	}
 }
 
 // cloneSpec is the spec of a clone of src: a copy of src's current

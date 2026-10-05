@@ -220,7 +220,7 @@ func (al *AgentLoop) resolveCompressClient(agent *AgentInstance, compressModelNa
 	if ok && al.dispatcher != nil {
 		// The dispatcher keys on the model_name alias and resolves the provider
 		// from the model's provider reference.
-		if p, err := al.dispatcher.Get(alias); err == nil {
+		if p, err := al.dispatchProvider(agent, alias); err == nil {
 			logger.DebugCF("llmcontext", "compression model resolved", map[string]any{
 				"agent_id":  agent.ID,
 				"requested": compressModelName,
@@ -260,7 +260,7 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 	primary := strings.TrimSpace(agent.Model)
 	if primary != "" && al.dispatcher != nil {
 		if alias, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
-			if p, err := al.dispatcher.Get(alias); err == nil {
+			if p, err := al.dispatchProvider(agent, alias); err == nil {
 				logger.DebugCF("llmcontext", "compression: agent primary appended as final fallback", map[string]any{
 					"agent_id": agent.ID,
 					"alias":    alias,
@@ -493,9 +493,17 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	// The archive directory is the sessions directory within the agent's state
 	// directory, derived the same way initSessionStore does.
 	archiveDir := filepath.Join(agent.StateDir, "sessions")
+	// A fresh temporary agent keeps no engine archive: it has no session tools
+	// to read one with, so the engine must not point it at one either (the
+	// archive note in the system message names those tools). Its conversation
+	// window and summary are still kept by the session store.
+	engineArchiveDir := archiveDir
+	if agent.Spec.Fresh {
+		engineArchiveDir = ""
+	}
 	opts := append([]ctxengine.Option{
 		ctxengine.WithContextWindow(agent.ContextWindow),
-		ctxengine.WithArchiveDir(archiveDir),
+		ctxengine.WithArchiveDir(engineArchiveDir),
 		ctxengine.WithModelCaller(caller),
 		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
 		ctxengine.WithCompressionProfileDir(agent.StateDir),
@@ -525,7 +533,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	sti := al.sessionTokenIssuer
 	al.mu.RUnlock()
 	token := ""
-	if sti != nil {
+	if sti != nil && !agent.Spec.Fresh { // a fresh temporary agent has no tools to call with it
 		token = sti.Issue(agent.ID, sessionKey, archiveDir)
 	}
 

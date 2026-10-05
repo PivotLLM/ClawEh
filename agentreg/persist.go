@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -29,15 +30,17 @@ type stateFile struct {
 // tempRecord is one temporary agent that survives a restart. Its directories
 // derive from its id. A clone stores only its source: its configuration is
 // always its source's current one. A fresh agent stores the configuration it
-// was created with.
+// was created with, its mode and its system prompt.
 type tempRecord struct {
-	ID         string              `json:"id"`
-	SourceID   string              `json:"source_id,omitempty"`
-	Created    time.Time           `json:"created"`
-	LastUsed   time.Time           `json:"last_used"`
-	TTLSeconds int64               `json:"ttl_seconds"`
-	Config     *config.AgentConfig `json:"config,omitempty"`
-	Owner      string              `json:"owner,omitempty"`
+	ID           string              `json:"id"`
+	SourceID     string              `json:"source_id,omitempty"`
+	Created      time.Time           `json:"created"`
+	LastUsed     time.Time           `json:"last_used"`
+	TTLSeconds   int64               `json:"ttl_seconds"`
+	Config       *config.AgentConfig `json:"config,omitempty"`
+	Owner        string              `json:"owner,omitempty"`
+	Mode         Mode                `json:"mode,omitempty"`
+	SystemPrompt string              `json:"system_prompt,omitempty"`
 }
 
 // persist writes the temporary agents that survive a restart (those without
@@ -67,7 +70,7 @@ func (r *Registry[T]) persist() {
 			Owner:      e.spec.Owner,
 		}
 		if !e.spec.IsClone() {
-			rec.Config = e.spec.Config
+			rec.Config, rec.Mode, rec.SystemPrompt = e.spec.Config, e.spec.Mode, e.spec.SystemPrompt
 		}
 		file.Agents = append(file.Agents, rec)
 	}
@@ -111,16 +114,17 @@ func (r *Registry[T]) restore() {
 	for i := range file.Agents {
 		rec := &file.Agents[i]
 		id := routing.NormalizeAgentID(rec.ID)
-		if id != rec.ID || r.entries[id] != nil || (rec.SourceID == "" && rec.Config == nil) {
+		fresh := rec.SourceID == ""
+		if id != rec.ID || r.entries[id] != nil ||
+			(fresh && (rec.Config == nil || !rec.Mode.valid() || strings.TrimSpace(rec.SystemPrompt) == "")) {
 			logger.WarnCF("agent", "Ignoring invalid temporary agent record", map[string]any{"agent_id": rec.ID})
 			continue
 		}
-		spec := Spec{ID: id, Origin: OriginTemp, SourceID: rec.SourceID, StateDir: filepath.Join(r.tempRoot, id), Owner: rec.Owner}
-		if rec.SourceID == "" {
-			ac := *rec.Config
-			ac.ID = id
-			spec.Config, spec.Fresh, spec.Workspace = &ac, true, freshWorkspace(spec.StateDir)
+		spec := Spec{ID: id, Origin: OriginTemp, SourceID: rec.SourceID, StateDir: filepath.Join(r.tempRoot, id)}
+		if fresh {
+			spec = freshSpec(*rec.Config, id, spec.StateDir, rec.Mode, rec.SystemPrompt, false)
 		}
+		spec.Owner = rec.Owner
 		spec, reason := r.respec(r.cfg, spec, r.entries)
 		if reason == "" {
 			inst, err := r.build(r.cfg, spec)

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -118,7 +117,7 @@ func TestClone_SharesWorkspaceOwnsConversationAndMemory(t *testing.T) {
 
 // TestFreshTempAgent_HasNoTools: a temporary agent that is not a clone gets no
 // tools at all, whatever its configuration allows, including the host-built
-// and cognitive-memory tools, and a seeded workspace of its own.
+// and cognitive-memory tools, and an empty workspace of its own.
 func TestFreshTempAgent_HasNoTools(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
@@ -136,8 +135,8 @@ func TestFreshTempAgent_HasNoTools(t *testing.T) {
 	if n := fresh.Tools.Count(); n != 0 {
 		t.Fatalf("fresh temporary agent has %d tools (%v), want none", n, fresh.Tools.List())
 	}
-	if _, statErr := os.Stat(filepath.Join(fresh.Workspace, "AGENTS.md")); statErr != nil {
-		t.Fatalf("fresh agent workspace not seeded: %v", statErr)
+	if entries, readErr := os.ReadDir(fresh.Workspace); readErr != nil || len(entries) != 0 {
+		t.Fatalf("fresh agent workspace must exist and be empty (no prompt files, no skills): %v %v", entries, readErr)
 	}
 	main, _ := reg.Get("main")
 	if fresh.Workspace == main.Workspace || !strings.HasPrefix(fresh.Workspace, fresh.StateDir) {

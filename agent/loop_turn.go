@@ -105,6 +105,15 @@ func (al *AgentLoop) runAgentLoop(
 		defer endTurn()
 	}
 
+	// A single-shot agent keeps nothing between turns: its conversation is
+	// discarded once the turn is over (after the context manager is released
+	// below), however the turn ended. That includes a turn shutdown
+	// interrupted: restart recovery replays config agents' turns only, never a
+	// temporary agent's, so nothing would ever read it again.
+	if agent.Spec.SingleShot() {
+		defer al.discardConversation(context.WithoutCancel(ctx), agent, opts.SessionKey)
+	}
+
 	// 1. Get or create the ContextManager (and the cognitive-memory session, nil
 	// for agents without it) for this session.
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
@@ -142,6 +151,16 @@ func (al *AgentLoop) runAgentLoop(
 		// The cleared history no longer references any media; let its files age out.
 		al.releaseSessionPins(opts.SessionKey)
 		al.reissueSessionToken(agent, opts.SessionKey)
+	}
+
+	// A single-shot turn always starts blank: whatever a previous turn left
+	// behind (its discard skipped because the session was in use) is cleared,
+	// and a retried message is saved again as the turn's only message.
+	if agent.Spec.SingleShot() {
+		if err := cm.Reset(ctx); err != nil {
+			return "", fmt.Errorf("single-shot reset: %w", err)
+		}
+		opts.IsRetry = false
 	}
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
@@ -565,11 +584,15 @@ func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentIn
 // promptLayers is the system prompt for one dispatch: the agent's static and
 // dynamic prompt for this channel/chat, then the session token behind the
 // summary. A test that injects a bare instance without a ContextBuilder gets
-// only the token layer.
+// only the token layer. A fresh temporary agent has no tools, so no token:
+// its prompt is exactly its creator's.
 func (al *AgentLoop) promptLayers(agent *AgentInstance, opts processOptions) []ctxengine.Layer {
 	var layers []ctxengine.Layer
 	if agent.ContextBuilder != nil {
 		layers = agent.ContextBuilder.PromptLayers(opts.Channel, opts.ChatID)
+	}
+	if agent.Spec.Fresh {
+		return layers
 	}
 	return append(layers, sessionTokenLayer(al.sessionToken(agent, opts.SessionKey)))
 }
@@ -824,7 +847,7 @@ func (al *AgentLoop) runLLMIteration(
 							if key == "" {
 								key = c.Provider + "/" + c.Model
 							}
-							if p, getErr := al.dispatcher.Get(key); getErr == nil {
+							if p, getErr := al.dispatchProvider(agent, key); getErr == nil {
 								return p.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 							}
 						}
@@ -1553,6 +1576,16 @@ func (al *AgentLoop) runLLMIteration(
 	return finalContent, lastNormal, degenerate, lastFinishReason, iteration, nil
 }
 
+// dispatchProvider resolves the model alias to a provider for agent through
+// the dispatcher. A fresh temporary agent gets an isolated provider: a CLI
+// model runs in its own workspace without bypass flags (GetIsolated).
+func (al *AgentLoop) dispatchProvider(agent *AgentInstance, alias string) (providers.LLMProvider, error) {
+	if agent != nil && agent.Spec.Fresh {
+		return al.dispatcher.GetIsolated(alias, agent.Workspace)
+	}
+	return al.dispatcher.Get(alias)
+}
+
 // resolveRunProvider returns the LLMProvider (and matching model id) that will
 // serve this turn's primary chat dispatch. When activeCandidates has at least
 // one entry the first candidate's (protocol, model) pair is resolved through
@@ -1578,7 +1611,7 @@ func (al *AgentLoop) resolveRunProvider(
 			alias, modelID = a, m
 		}
 		if alias != "" {
-			if p, err := al.dispatcher.Get(alias); err == nil {
+			if p, err := al.dispatchProvider(agent, alias); err == nil {
 				return p, modelID
 			}
 		}

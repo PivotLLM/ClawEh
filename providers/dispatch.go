@@ -117,3 +117,52 @@ func (d *ProviderDispatcher) Flush(cfg *config.Config) {
 	d.cache = make(map[string]LLMProvider)
 	d.cfg = cfg
 }
+
+// GetIsolated returns the provider for alias as a fresh temporary agent uses
+// it. An HTTP model is the shared cached provider (Get). A CLI model is a
+// provider of its own, never cached: it runs in workspace (the agent's own
+// empty workspace, never the shared cli/ directory) and without the
+// provider's permission-bypass flags whatever bypass_restrictions says, since
+// a fresh agent has no tools to grant. It is not wrapped in the
+// declined-tools guard, whose message points at the bypass setting.
+func (d *ProviderDispatcher) GetIsolated(alias, workspace string) (LLMProvider, error) {
+	alias = strings.TrimSpace(alias)
+	if strings.TrimSpace(workspace) == "" {
+		return nil, errors.New("dispatcher: isolated provider needs a workspace")
+	}
+	d.mu.RLock()
+	cfgSnapshot := d.cfg
+	d.mu.RUnlock()
+	var matched *config.ModelConfig
+	for i := range cfgSnapshot.Models {
+		if cfgSnapshot.Models[i].Enabled && cfgSnapshot.Models[i].ModelName == alias {
+			cp := cfgSnapshot.Models[i]
+			matched = &cp
+			break
+		}
+	}
+	if matched == nil {
+		return nil, fmt.Errorf("dispatcher: no enabled models entry with model_name=%q", alias)
+	}
+	prov, err := cfgSnapshot.GetProvider(matched.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: resolving provider for %q: %w", alias, err)
+	}
+	if config.CLIAgentByProtocol(prov.Protocol) == nil {
+		return d.Get(alias)
+	}
+	isolated := *prov
+	isolated.BypassRestrictions = false
+	matched.Workspace = workspace
+	if matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
+		matched.RequestTimeout = cfgSnapshot.Agents.Defaults.RequestTimeout
+	}
+	p, _, err := CreateProviderFromConfig(matched, &isolated)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: creating isolated provider for %q: %w", alias, err)
+	}
+	if g, ok := p.(*cliDeclinedGuard); ok {
+		p = g.LLMProvider
+	}
+	return p, nil
+}

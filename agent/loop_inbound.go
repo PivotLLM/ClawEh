@@ -154,8 +154,10 @@ func (al *AgentLoop) takeCancelResult(key string) (running bool, skipped int) {
 // channel:chat, up to the next command in that chat. Messages from other chats
 // stay queued (an agent's session may serve several chats, whose messages are
 // never merged), and a command always runs as a turn of its own, as does a
-// message that requires its own reply (bus.MetaReplyRequired).
-func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
+// message that requires its own reply (bus.MetaReplyRequired). With
+// eachAlone (the session's agent is single-shot) every message is a turn of
+// its own.
+func takeBatch(pending *[]bus.InboundMessage, eachAlone bool) (bus.InboundMessage, bool) {
 	queue := *pending
 	if len(queue) == 0 {
 		return bus.InboundMessage{}, false
@@ -164,7 +166,7 @@ func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
 	chat := first.Channel + ":" + first.ChatID
 	batch := []bus.InboundMessage{first}
 	rest := make([]bus.InboundMessage, 0, len(queue)-1)
-	stop := runsAlone(first)
+	stop := eachAlone || runsAlone(first)
 	for _, m := range queue[1:] {
 		if !stop && m.Channel+":"+m.ChatID == chat {
 			if !runsAlone(m) {
@@ -249,7 +251,11 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 	// share the same agent session use the same dispatch key. This prevents
 	// concurrent LLM history reads/writes on the agent's one session.
 	var dispatchKey string
-	route, _, routeErr := al.resolveMessageRoute(msg)
+	route, routed, routeErr := al.resolveMessageRoute(msg)
+	// A single-shot agent answers every message on a blank context, so its
+	// queued messages are never merged into one turn. The session's messages
+	// all go to the one agent its scope key names.
+	singleShot := routeErr == nil && routed != nil && routed.Spec.SingleShot()
 	if routeErr != nil {
 		// Fall back to channel:chatID if routing fails; processMessage will
 		// return the same error and report it to the user.
@@ -283,7 +289,7 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 
 	for {
 		ss.mu.Lock()
-		batch, ok := takeBatch(&ss.pending)
+		batch, ok := takeBatch(&ss.pending, singleShot)
 		if !ok || ctx.Err() != nil {
 			ss.busy = false
 			ss.mu.Unlock()
@@ -620,7 +626,12 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	userContent := prependSenderLabel(msg.Content, msg.Sender)
 	// Drop received attachments into the agent's workspace so its file tools can read
 	// them (the model otherwise only sees an annotation it can't open).
-	userContent += al.materializeInboundMedia(msg, agent)
+	// Not for a fresh temporary agent: it has no file tools to read them
+	// with, and its workspace stays empty. The media refs still reach the
+	// model with the message.
+	if !agent.Spec.Fresh {
+		userContent += al.materializeInboundMedia(msg, agent)
+	}
 
 	opts := processOptions{
 		SessionKey:      sessionKey,
@@ -643,6 +654,11 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
 	if response, handled := al.handleCommand(ctx, msg, agent, &opts); handled {
+		if agent.Spec.SingleShot() {
+			// Whatever the command opened or wrote (a /compact, a session
+			// reset) is not kept by an agent that keeps nothing.
+			al.discardConversation(context.WithoutCancel(ctx), agent, sessionKey)
+		}
 		return response, nil
 	}
 

@@ -146,7 +146,15 @@ func newAgentInstance(
 	workspace := spec.Workspace
 	stateDir := spec.StateDir
 
-	agentws.Populate(workspace)
+	if spec.Fresh {
+		// A fresh temporary agent's prompt is entirely its creator's: its
+		// workspace is never seeded with prompt files or skills.
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			return nil, fmt.Errorf("create workspace %s: %w", workspace, err)
+		}
+	} else {
+		agentws.Populate(workspace)
+	}
 
 	models := resolveAgentModels(agentCfg, defaults)
 	model := ""
@@ -176,7 +184,10 @@ func newAgentInstance(
 	if spec.Origin == agentreg.OriginTemp {
 		migrateID = spec.Label()
 	}
-	cogmemhost.Migrate(migrateID, stateDir)
+	if !spec.Fresh || agentCfg.CognitiveMemoryEnabled() {
+		// A fresh agent without memory never gets a memory directory.
+		cogmemhost.Migrate(migrateID, stateDir)
+	}
 
 	sessions, err := initSessionStore(sessionsDir)
 	if err != nil {
@@ -192,14 +203,23 @@ func newAgentInstance(
 	// Progressive discovery is a single global switch; AgentLoop also sets it during
 	// tool registration (and DiscoveryActive), so this just seeds the context rule.
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
-	if agentCfg.CognitiveMemoryEnabled() {
+	switch {
+	case spec.Fresh:
+		// The whole system prompt is the creator's (or the default): no
+		// identity, prompt files, skills, memory guidance or runtime block.
+		prompt := spec.SystemPrompt
+		if strings.TrimSpace(prompt) == "" {
+			prompt = agentreg.DefaultSystemPrompt // never the host prompt
+		}
+		contextBuilder = contextBuilder.WithFixedPrompt(prompt)
+	case agentCfg.CognitiveMemoryEnabled():
 		// Only an agent that has the subsystem is told how to use it.
 		contextBuilder = contextBuilder.WithMemoryGuidance(cogmem.Guidance())
 	}
 	// For named agents, always apply the skills filter — even if empty.
 	// nil filter = no restriction (all skills); empty filter = no skills.
 	// Default/nil agentCfg means the default agent which gets all skills.
-	if agentCfg != nil && agentCfg.Skills != nil {
+	if agentCfg != nil && agentCfg.Skills != nil && !spec.Fresh {
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
 	if agentCfg != nil {
@@ -219,6 +239,10 @@ func newAgentInstance(
 		agentName = agentCfg.Name
 		subagents = agentCfg.Subagents
 		skillsFilter = agentCfg.Skills
+	}
+
+	if spec.Fresh {
+		skillsFilter = []string{} // no skills: the prompt is the creator's
 	}
 
 	maxIter := defaults.MaxToolIterations

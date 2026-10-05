@@ -82,28 +82,37 @@ func (s *agentServices) CreateClone(agentID string) (string, error) {
 	return s.al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf(agentID), agentreg.OwnedBy(s.callerID))
 }
 
-func (s *agentServices) CreateFresh(spec tools.FreshAgentSpec) (string, error) {
+func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (string, error) {
 	a, err := s.caller()
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(spec.Model) == "" {
+	if strings.TrimSpace(model) == "" {
 		return "", errors.New("a fresh agent needs a model")
 	}
-	matched, ok := toolsagents.MatchCandidate(a.Candidates, spec.Model)
+	matched, ok := toolsagents.MatchCandidate(a.Candidates, model)
 	if !ok {
-		return "", fmt.Errorf("model %q is not one of agent %q's models", spec.Model, s.callerID)
+		return "", fmt.Errorf("model %q is not one of agent %q's models", model, s.callerID)
 	}
-	model := matched.Alias
-	if model == "" {
-		model = matched.Model
+	modelName := matched.Alias
+	if modelName == "" {
+		modelName = matched.Model
 	}
-	cogmem := spec.Cogmem
+	o := tools.NewFreshOptions(opts...)
+	regOpts := []agentreg.Option{agentreg.OwnedBy(s.callerID)}
+	if o.SystemPromptSet {
+		regOpts = append(regOpts, agentreg.WithSystemPrompt(o.SystemPrompt))
+	}
+	if o.NoMemory {
+		regOpts = append(regOpts, agentreg.WithoutMemory())
+	}
+	if o.SingleShot {
+		regOpts = append(regOpts, agentreg.SingleShot())
+	}
 	return s.al.GetRegistry().Create(config.AgentConfig{
-		Name:   spec.Name,
-		Models: []string{model},
-		Cogmem: &cogmem,
-	}, agentreg.OwnedBy(s.callerID))
+		Name:   o.Name,
+		Models: []string{modelName},
+	}, regOpts...)
 }
 
 // Delete deletes a temporary agent whose recorded owner (agentreg.Spec.Owner,

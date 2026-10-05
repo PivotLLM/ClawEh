@@ -189,7 +189,8 @@ production instance directly; test against a dev instance.
   Config agents are built from config and rebuilt on reload (`Reload` builds the
   whole new set, then swaps it in one step with `al.cfg`). **Temporary agents**
   are created at run time (`Create`, or `CreateInTurn` which begins a turn
-  atomically with insertion; options `CloneOf`, `EphemeralMemory`, `Temp(ttl)`;
+  atomically with insertion; options `CloneOf`, `EphemeralMemory`, `Temp(ttl)`, `OwnedBy`, and for a fresh
+  agent `WithSystemPrompt`, `WithoutMemory`, `SingleShot`;
   UUID ids), kept across reloads (rebuilt; a clone always from its source's
   CURRENT config, never a stored copy; deleted when its model or clone source is
   gone; left alone while in a turn) and, unless ephemeral, across restarts
@@ -225,8 +226,29 @@ production instance directly; test against a dev instance.
   (`toolIdentity`: Maestro, Fusion tokens, cron via `CronTool.SetHomeAgent`,
   task ownership) without replacing anything registered once per agent
   (`ToolDeps.TempAgent`: the source's Maestro runner is used as is, never
-  re-pointed); a **fresh** temporary agent gets its own seeded workspace and
-  no tools. Sub-agents (`agent_spawn`, Maestro dispatch) are ephemeral clones
+  re-pointed); a **fresh** temporary agent gets an empty workspace of its own
+  (never seeded: no AGENTS.md/SOUL.md/IDENTITY.md/USER.md/MEMORY.md/
+  COMPRESSION.md/COGMEM.md, no skills), no tools, no session token and no
+  engine archive; its whole system prompt is the `WithSystemPrompt` text or
+  `agentreg.DefaultSystemPrompt` (`ContextBuilder.WithFixedPrompt`), followed
+  only by memory recall when it has memory. Its `agentreg.Mode` (saved with its
+  prompt in `temp_agents.json`) is `memory` (default: conversation + cogmem),
+  `no_memory` (conversation only, no cogmem dir) or `single_shot` (no memory;
+  each turn sees only the prompt and the new message, and the conversation is
+  deleted after the turn, `discardConversation`). Tools create one through
+  `AgentServices.CreateFresh(model, opts...)` (`tools.WithName`,
+  `WithSystemPrompt`, `WithoutMemory`, `SingleShot`). A single-shot agent's
+  queued messages are never merged (each gets its own blank turn), and its
+  conversation is discarded after every turn and command, even one shutdown
+  interrupted. An interrupted turn of any temporary agent is not replayed after
+  a restart (recovery covers config agents only; the forum resends). Inbound
+  attachments are not copied into a fresh agent's workspace; the model still
+  gets the refs. On a CLI model a fresh agent runs the CLI in its own empty
+  workspace (never `cli/`) and never with the bypass flags, whatever
+  `bypass_restrictions` says (`ProviderDispatcher.GetIsolated`); the CLI still
+  applies its own built-in system prompt and its built-in non-bypass
+  permission behaviour, so the exact-prompt guarantee holds for HTTP models
+  only. Sub-agents (`agent_spawn`, Maestro dispatch) are ephemeral clones
   (`runSubagentTask`), deleted once their result is delivered; there is no
   sub-agent session key. Logs name a clone `alice (clone 1a2b3c4d)`
   (`AgentInstance.Label`); audit rows keep the source id in the agent column

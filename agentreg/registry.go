@@ -41,6 +41,29 @@ const (
 	OriginTemp Origin = "temp"
 )
 
+// Mode is how a fresh temporary agent keeps context between turns.
+type Mode string
+
+const (
+	// ModeMemory keeps the conversation and gives the agent its own cognitive
+	// memory. The default.
+	ModeMemory Mode = "memory"
+	// ModeNoMemory keeps the conversation; no cognitive memory.
+	ModeNoMemory Mode = "no_memory"
+	// ModeSingleShot keeps nothing: every turn sees only the system prompt
+	// and the new message, and the conversation is discarded after the turn.
+	ModeSingleShot Mode = "single_shot"
+)
+
+// valid reports whether m is one of the modes.
+func (m Mode) valid() bool {
+	return m == ModeMemory || m == ModeNoMemory || m == ModeSingleShot
+}
+
+// DefaultSystemPrompt is a fresh temporary agent's system prompt when its
+// creator gives none.
+const DefaultSystemPrompt = "You are an AI agent. Respond as requested."
+
 // DefaultTTL is how long a temporary agent may sit idle before the sweep
 // deletes it, unless Create was given another TTL.
 const DefaultTTL = 24 * time.Hour
@@ -93,12 +116,24 @@ type Spec struct {
 	// nothing is observed into it or consolidated. An ephemeral agent is not
 	// saved across restarts.
 	Ephemeral bool
-	// Fresh marks a temporary agent that is not a clone. It gets no tools.
+	// Fresh marks a temporary agent that is not a clone. It gets no tools, no
+	// workspace prompt files and no skills: its system prompt is SystemPrompt.
 	Fresh bool
+	// Mode is how a fresh temporary agent keeps context; empty for every other
+	// agent. Saved across restarts with the agent.
+	Mode Mode
+	// SystemPrompt is a fresh temporary agent's whole system prompt (the
+	// creator's text, or DefaultSystemPrompt); empty for every other agent.
+	// Saved across restarts with the agent.
+	SystemPrompt string
 	// Owner is the agent that created a temporary agent on its own behalf
 	// (see OwnedBy); empty otherwise. Saved across restarts with the agent.
 	Owner string
 }
+
+// SingleShot reports whether the spec is a single-shot fresh agent: every
+// turn starts on a blank context.
+func (s Spec) SingleShot() bool { return s.Fresh && s.Mode == ModeSingleShot }
 
 // IsClone reports whether the spec is a clone of a config agent.
 func (s Spec) IsClone() bool { return s.SourceID != "" }

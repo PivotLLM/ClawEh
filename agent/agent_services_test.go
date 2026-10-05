@@ -143,7 +143,7 @@ func TestAgentServices_OwnershipSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateClone: %v", err)
 	}
-	fresh, err := newAgentServices(first, "alice").CreateFresh(tools.FreshAgentSpec{Model: "alpha"})
+	fresh, err := newAgentServices(first, "alice").CreateFresh("alpha", tools.WithSystemPrompt("You are Bob."), tools.WithoutMemory())
 	if err != nil {
 		t.Fatalf("CreateFresh: %v", err)
 	}
@@ -151,6 +151,10 @@ func TestAgentServices_OwnershipSurvivesRestart(t *testing.T) {
 
 	restarted := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil, OwnsDataDir())
 	alice, bob := newAgentServices(restarted, "alice"), newAgentServices(restarted, "bob")
+	if got, ok := restarted.GetRegistry().Get(fresh); !ok || got.Spec.Mode != agentreg.ModeNoMemory ||
+		got.Spec.SystemPrompt != "You are Bob." || got.Config.CognitiveMemoryEnabled() {
+		t.Fatalf("fresh agent's mode and prompt not restored: %+v", got)
+	}
 	for _, id := range []string{clone, fresh} {
 		if _, ok := restarted.GetRegistry().Get(id); !ok {
 			t.Fatalf("%s not restored", id)
@@ -174,30 +178,70 @@ func TestAgentServices_CreateFresh(t *testing.T) {
 	reg := al.GetRegistry()
 	alice := newAgentServices(al, "alice")
 
-	for _, spec := range []tools.FreshAgentSpec{{}, {Model: "gamma"}, {Model: "nope"}} {
-		if _, err := alice.CreateFresh(spec); err == nil {
-			t.Fatalf("CreateFresh(%+v) succeeded; want refused (no model / not alice's)", spec)
+	// The model must be one of the caller's own (alpha, beta); gamma is only
+	// bob's default.
+	for _, model := range []string{"", "  ", "gamma", "nope"} {
+		if _, err := alice.CreateFresh(model); err == nil {
+			t.Fatalf("CreateFresh(%q) succeeded; want refused (no model / not alice's)", model)
 		}
 	}
+	// An explicitly given blank prompt is refused, never taken for the default.
+	for _, p := range []string{"", "   ", "\n\t"} {
+		if _, err := alice.CreateFresh("alpha", tools.WithSystemPrompt(p)); err == nil {
+			t.Fatalf("CreateFresh with system prompt %q succeeded", p)
+		}
+	}
+	if got := len(reg.ListTemp()); got != 0 {
+		t.Fatalf("refused creations left %d temporary agents", got)
+	}
 
-	for _, cogmem := range []bool{false, true} {
-		id, err := alice.CreateFresh(tools.FreshAgentSpec{Name: "Bob", Model: "beta-wire", Cogmem: cogmem})
-		if err != nil {
-			t.Fatalf("CreateFresh: %v", err)
-		}
-		fresh, ok := reg.Get(id)
-		if !ok || !fresh.IsTemp() || fresh.Spec.IsClone() {
-			t.Fatalf("fresh agent %s not registered as a fresh temporary agent", id)
-		}
-		if fresh.Name != "Bob" || !slices.Equal(fresh.Config.Models, []string{"beta"}) {
-			t.Fatalf("fresh agent name %q models %v, want Bob [beta]", fresh.Name, fresh.Config.Models)
-		}
-		if fresh.Config.Cogmem == nil || *fresh.Config.Cogmem != cogmem {
-			t.Fatalf("fresh agent cogmem = %v, want %v", fresh.Config.Cogmem, cogmem)
-		}
-		if err := alice.Delete(id); err != nil {
-			t.Fatalf("Delete: %v", err)
-		}
+	tests := []struct {
+		name       string
+		opts       []tools.FreshOption
+		wantMode   agentreg.Mode
+		wantPrompt string
+	}{
+		{"default", nil, agentreg.ModeMemory, agentreg.DefaultSystemPrompt},
+		{
+			"named with prompt",
+			[]tools.FreshOption{tools.WithName("Bob"), tools.WithSystemPrompt("You are Bob.")},
+			agentreg.ModeMemory, "You are Bob.",
+		},
+		{"without memory", []tools.FreshOption{tools.WithoutMemory()}, agentreg.ModeNoMemory, agentreg.DefaultSystemPrompt},
+		{"single shot", []tools.FreshOption{tools.SingleShot()}, agentreg.ModeSingleShot, agentreg.DefaultSystemPrompt},
+		{
+			"single shot wins over without memory",
+			[]tools.FreshOption{tools.WithoutMemory(), tools.SingleShot()},
+			agentreg.ModeSingleShot, agentreg.DefaultSystemPrompt,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := alice.CreateFresh("beta-wire", tc.opts...)
+			if err != nil {
+				t.Fatalf("CreateFresh: %v", err)
+			}
+			fresh, ok := reg.Get(id)
+			if !ok || !fresh.IsTemp() || fresh.Spec.IsClone() || !fresh.Spec.Fresh {
+				t.Fatalf("fresh agent %s not registered as a fresh temporary agent", id)
+			}
+			wantName := tools.NewFreshOptions(tc.opts...).Name
+			if fresh.Name != wantName || !slices.Equal(fresh.Config.Models, []string{"beta"}) {
+				t.Fatalf("fresh agent name %q models %v, want %q [beta]", fresh.Name, fresh.Config.Models, wantName)
+			}
+			if fresh.Spec.Mode != tc.wantMode || fresh.Spec.SystemPrompt != tc.wantPrompt {
+				t.Fatalf("mode %q prompt %q, want %q %q", fresh.Spec.Mode, fresh.Spec.SystemPrompt, tc.wantMode, tc.wantPrompt)
+			}
+			if got, want := fresh.Config.CognitiveMemoryEnabled(), tc.wantMode == agentreg.ModeMemory; got != want {
+				t.Fatalf("cognitive memory = %v, want %v", got, want)
+			}
+			if fresh.Spec.Owner != "alice" {
+				t.Fatalf("owner = %q, want alice", fresh.Spec.Owner)
+			}
+			if err := alice.Delete(id); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+		})
 	}
 }
 
