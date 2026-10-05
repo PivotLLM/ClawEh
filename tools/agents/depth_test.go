@@ -90,12 +90,12 @@ func TestDepthPropagation_AcrossAsyncDetach(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace: t.TempDir(),
 		Live:      NewLiveSet(),
-		RunFull: func(ctx context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, error) {
+		RunFull: func(ctx context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			gotDepth = SpawnDepth(ctx)
 			mu.Unlock()
 			close(done)
-			return &global.SyncResult{Content: "ok", Iterations: 1}, nil
+			return &global.SyncResult{Content: "ok", Iterations: 1}, func() {}, nil
 		},
 	})
 	sp := NewSpawner(mgr)

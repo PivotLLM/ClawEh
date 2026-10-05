@@ -100,7 +100,7 @@ func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string
 	if !ok {
 		return
 	}
-	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	archiveDir := filepath.Join(agent.StateDir, "sessions")
 	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
 		entry.setToken(tok)
 	}
@@ -137,8 +137,8 @@ func (al *AgentLoop) evictContextManagers() {
 
 // dropContextManager force-evicts a single session's context manager (closing
 // its DB handles and revoking its token), regardless of idle time, as long as it
-// is not in use. Used to tear down an ephemeral sub-agent session right after its
-// run so its snapshot DB can be deleted, and to release a session before its
+// is not in use. Used to close a temporary agent's session before the agent
+// is deleted, and to release a session before its
 // archive is deleted. It reports whether the session has no cached manager
 // afterwards: false while the entry is referenced or its build slot is busy (the
 // idle sweep reclaims it later).
@@ -183,7 +183,7 @@ const (
 	evictReasonIdle         = "idle"          // TTL pass
 	evictReasonReload       = "reload"        // config reload found it unused
 	evictReasonStaleRebuild = "stale-rebuild" // first access after a reload-marked entry was released
-	evictReasonSubagent     = "subagent-done" // ephemeral sub-agent session torn down
+	evictReasonTempDeleted  = "temp-deleted"  // temporary agent deleted
 	evictReasonReleased     = "released"      // session released so its archive can be deleted
 )
 

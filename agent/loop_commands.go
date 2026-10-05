@@ -79,7 +79,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 	cfg := al.GetConfig()
 	rt := &commands.Runtime{
 		Config:          cfg,
-		ListAgentIDs:    registry.ListAgentIDs,
+		ListAgentIDs:    registry.List,
 		ListDefinitions: al.cmdRegistry.Definitions,
 		GetEnabledChannels: func() []string {
 			if al.channelManager == nil {
@@ -97,7 +97,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			if agent == nil || opts == nil {
 				return 0, time.Time{}, time.Time{}
 			}
-			path := archiveDBPath(agent.Workspace, opts.SessionKey)
+			path := archiveDBPath(agent.StateDir, opts.SessionKey)
 			store, err := memory.OpenReadOnly(path)
 			if err != nil {
 				return 0, time.Time{}, time.Time{}
@@ -406,9 +406,10 @@ func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []s
 	return out
 }
 
-// archiveDBPath returns the on-disk path of the SQLite archive for a session.
-func archiveDBPath(workspace, sessionKey string) string {
-	return memory.ArchivePath(filepath.Join(workspace, "sessions"), sessionKey)
+// archiveDBPath returns the on-disk path of the SQLite archive for a session
+// of the agent whose state directory is stateDir.
+func archiveDBPath(stateDir, sessionKey string) string {
+	return memory.ArchivePath(filepath.Join(stateDir, "sessions"), sessionKey)
 }
 
 func mapCommandError(result commands.ExecuteResult) string {

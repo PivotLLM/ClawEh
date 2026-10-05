@@ -17,7 +17,7 @@ import (
 // reach their tools this way): calls that ran, and calls refused after the
 // token was verified (tool not in the registry, denied by the ACL).
 func TestDispatch_TalliesSubagentToolCalls(t *testing.T) {
-	const session = "agent:alice:subagent:tally"
+	const session = "agent:clone-tally:main"
 	ok := &mockTool{name: "read_file", params: map[string]any{}, result: &tools.ToolResult{ForLLM: "contents"}}
 	bad := &mockTool{name: "write_file", params: map[string]any{}, result: &tools.ToolResult{ForLLM: "disk full", IsError: true}}
 	denied := &mockTool{name: "shell_exec", params: map[string]any{}, result: &tools.ToolResult{ForLLM: "ran"}}
@@ -70,7 +70,7 @@ func (*panickingMock) Execute(context.Context, map[string]any) *tools.ToolResult
 // TestDispatch_PanickingToolTalliedAsFailure: a tool that panics is counted as
 // a failed call, and the panic still reaches the caller's recovery.
 func TestDispatch_PanickingToolTalliedAsFailure(t *testing.T) {
-	const session = "agent:alice:subagent:panic"
+	const session = "agent:clone-panic:main"
 	pm := &panickingMock{mockTool{name: "read_file", params: map[string]any{}}}
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(pm)}
 	st := newSessionTokenStore()
@@ -97,7 +97,7 @@ func TestDispatch_PanickingToolTalliedAsFailure(t *testing.T) {
 // TestDispatch_UnverifiedTokenNotTallied: a call whose session token cannot
 // be resolved has no session to attribute it to and is not counted.
 func TestDispatch_UnverifiedTokenNotTallied(t *testing.T) {
-	const session = "agent:alice:subagent:unverified"
+	const session = "agent:clone-unverified:main"
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(&mockTool{name: "read_file", params: map[string]any{}})}
 	st := newSessionTokenStore()
 	st.Issue("alice", session, "/ws/alice/sessions")

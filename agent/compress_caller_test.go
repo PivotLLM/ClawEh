@@ -202,7 +202,7 @@ func (s *issuingSTI) Issue(_, _, _ string) string {
 // (session clear) replaces it in place.
 func TestSessionToken_IssuedAndReissuedOnEntry(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

@@ -29,7 +29,7 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 	}
 
 	factory := func(j consolidate.Job) (*consolidate.Worker, error) {
-		inst, ok := agentLoop.GetRegistry().GetAgent(j.ID)
+		inst, ok := agentLoop.GetRegistry().Get(j.ID)
 		if !ok || inst == nil || inst.Config == nil || !inst.Config.CognitiveMemoryEnabled() {
 			return nil, fmt.Errorf("cogmem: agent %q not cognitive", j.ID)
 		}
@@ -61,16 +61,19 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 				agentID = pk.AgentID
 			}
 		}
-		inst, ok := agentLoop.GetRegistry().GetAgent(agentID)
+		inst, ok := agentLoop.GetRegistry().Get(agentID)
 		if !ok || inst == nil {
 			logger.WarnCF("cogmem", "manual consolidate ignored; agent not found", map[string]any{
 				"agent_id": agentID, "session_key": sessionKey,
 			})
 			return
 		}
+		if inst.Spec.Ephemeral {
+			return // a sub-agent's snapshot is never consolidated
+		}
 		mgr.Enqueue(consolidate.Job{
-			ID:        agentID,
-			Dir:       cogmemhost.Dir(inst.Workspace),
+			ID:        inst.ID,
+			Dir:       cogmemhost.Dir(inst.StateDir),
 			Workspace: inst.Workspace,
 		}, "manual")
 	})
@@ -83,8 +86,8 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 // cogmem tools.
 func anyCognitiveAgent(cfg *config.Config, agentLoop *agent.AgentLoop) bool {
 	reg := agentLoop.GetRegistry()
-	for _, id := range reg.ListAgentIDs() {
-		if inst, ok := reg.GetAgent(id); ok && inst != nil && inst.Config != nil &&
+	for _, id := range reg.List() {
+		if inst, ok := reg.Get(id); ok && inst != nil && inst.Config != nil &&
 			inst.Config.CognitiveMemoryEnabled() {
 			return true
 		}
@@ -95,7 +98,7 @@ func anyCognitiveAgent(cfg *config.Config, agentLoop *agent.AgentLoop) bool {
 // defaultEffectiveMemory returns the effective memory config for the default
 // agent, used to source the process-global consolidation triggers.
 func defaultEffectiveMemory(cfg *config.Config, agentLoop *agent.AgentLoop) config.MemoryConfig {
-	if da := agentLoop.GetRegistry().GetDefaultAgent(); da != nil {
+	if da := agentLoop.GetRegistry().Default(); da != nil {
 		return cfg.Agents.Defaults.EffectiveMemory(da.Config)
 	}
 	return cfg.Agents.Defaults.Memory

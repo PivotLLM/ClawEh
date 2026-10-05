@@ -64,7 +64,7 @@ func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
 	t.Helper()
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -104,7 +104,7 @@ func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
 func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -171,7 +171,7 @@ func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
 		t.Run(channel, func(t *testing.T) {
 			al := newTestAgentLoop(t).al
 
-			agentInstance := al.registry.GetDefaultAgent()
+			agentInstance := al.registry.Default()
 			if agentInstance == nil {
 				t.Fatal("no default agent")
 			}

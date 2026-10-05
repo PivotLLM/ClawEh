@@ -66,6 +66,27 @@ func (al *AgentLoop) runAgentLoop(
 	// before reaching that point, so we set it once here at the top.
 	ctx = providers.WithAgentID(ctx, agent.ID)
 
+	// Mark the agent in a turn: a temporary agent is never deleted mid-turn, and
+	// its idle time counts from the end of its last turn. A temporary agent's
+	// instance resolved before a reload rebuilt it is closed: the turn runs on
+	// the current instance instead, and is dropped only when the agent is gone.
+	// (A replaced config instance is not closed, so its turn runs as before.)
+	if registry := al.GetRegistry(); registry != nil {
+		endTurn, current := registry.BeginTurn(agent.ID, agent)
+		if !current && agent.IsTemp() {
+			if fresh, ok := registry.Get(agent.ID); ok {
+				agent = fresh
+				endTurn, current = registry.BeginTurn(agent.ID, agent)
+			}
+			if !current {
+				logger.WarnCF("agent", "Turn dropped: the temporary agent no longer exists",
+					map[string]any{"agent_id": agent.ID, "agent": agent.Label(), "session_key": opts.SessionKey})
+				return "", errAgentGone
+			}
+		}
+		defer endTurn()
+	}
+
 	// 1. Get or create the ContextManager (and the cognitive-memory session, nil
 	// for agents without it) for this session.
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
@@ -1218,7 +1239,10 @@ func (al *AgentLoop) runLLMIteration(
 				// Create async callback for tools that implement AsyncExecutor.
 				// When the background work completes, this publishes the result
 				// as an inbound system message so processSystemMessage routes it
-				// back to the user via the normal agent loop.
+				// back to the user via the normal agent loop. Where it goes is
+				// fixed now, while the agent exists: a clone's late result goes to
+				// its source's main conversation, as a sub-agent's always has.
+				resultAgentID, resultSessionKey := asyncResultTarget(agent)
 				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
@@ -1266,8 +1290,8 @@ func (al *AgentLoop) runLLMIteration(
 						SenderID:   "async:" + tc.Name,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
-						SessionKey: opts.SessionKey,
-						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
+						SessionKey: resultSessionKey,
+						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: resultAgentID},
 					}); err != nil {
 						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
 							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})
@@ -1297,7 +1321,7 @@ func (al *AgentLoop) runLLMIteration(
 				agentResults[idx].result = toolResult
 				tools.RecordToolResult(opts.SessionKey, tc.Name, toolResult)
 				recorded = true
-				recordToolCallAudit(ctx, agent.ID, opts, tc, toolResult, time.Since(toolStart))
+				recordToolCallAudit(ctx, agent, opts, tc, toolResult, time.Since(toolStart))
 			}(i, tc)
 		}
 		wg.Wait()

@@ -30,8 +30,8 @@ uses) on a stable footing.
   `cogmem: false` if it should not accumulate memory). There is deliberately no
   carve-out.
 - **Headless.** No bound user channel → a tool's `ForUser` output is
-  dropped; only `ForLLM` returns to the caller. It is a **primary** session key
-  (not `subagent:…`), so it starts at sub-agent depth 0 and may spawn workers up
+  dropped; only `ForLLM` returns to the caller. It is the agent's own
+  session, not a sub-agent's, so it starts at sub-agent depth 0 and may spawn workers up
   to `agents.defaults.max_subagent_depth`. Cross-agent rejection still applies:
   the token resolves to exactly one agent.
 - **Immune to rotation and eviction by construction.** Service tokens are indexed

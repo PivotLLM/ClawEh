@@ -32,6 +32,10 @@ const sessionIdleTTL = time.Hour
 // the turn's failure renders as a cancellation rather than a timeout.
 var errCancelledByUser = errors.New("cancelled by /cancel")
 
+// errAgentGone marks a message addressed to an agent that does not exist (a
+// deleted temporary agent): it is dropped, never given to another agent.
+var errAgentGone = errors.New("addressed agent does not exist")
+
 // sessionState is one session's dispatch state. The first message to arrive
 // while the session is idle makes its goroutine the owner: it runs turns until
 // pending is empty, so at most one goroutine per session is ever running or
@@ -315,6 +319,12 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
 		return
 	}
+	if errors.Is(err, errAgentGone) {
+		// Addressed to an agent that no longer exists (a deleted temporary
+		// agent): dropped, logged where it was detected, and never handed to
+		// another agent.
+		return
+	}
 	if err != nil {
 		if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
 			response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."
@@ -586,20 +596,27 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	// such as the callback HTTP handler). This bypasses binding-based routing
 	// so the message is delivered to the named agent regardless of which
 	// bindings would otherwise match the channel/peer/account cascade.
+	//
+	// A message addressed to an agent that does not exist (a temporary agent
+	// deleted since, or an agent removed from the config) is dropped: handing
+	// it to binding routing or the default agent would deliver one agent's
+	// traffic — a session_clear, say — to another.
 	if preresolved := inboundMetadata(msg, metadataKeyPreresolvedAgentID); preresolved != "" {
 		normalized := routing.NormalizeAgentID(preresolved)
-		if agent, ok := registry.GetAgent(normalized); ok {
-			route := routing.ResolvedRoute{
-				AgentID:    normalized,
-				Channel:    msg.Channel,
-				AccountID:  routing.NormalizeAccountID(inboundMetadata(msg, metadataKeyAccountID)),
-				SessionKey: routing.BuildAgentMainSessionKey(normalized),
-				MatchedBy:  "preresolved",
-			}
-			return route, agent, nil
+		agent, ok := registry.Get(normalized)
+		if !ok {
+			logger.WarnCF("agent", "Message dropped: addressed agent does not exist",
+				map[string]any{"preresolved_agent_id": preresolved, "channel": msg.Channel, "sender_id": msg.SenderID})
+			return routing.ResolvedRoute{}, nil, fmt.Errorf("%w: %s", errAgentGone, preresolved)
 		}
-		logger.WarnCF("agent", "preresolved_agent_id not registered; falling back to binding routing",
-			map[string]any{"preresolved_agent_id": preresolved})
+		route := routing.ResolvedRoute{
+			AgentID:    normalized,
+			Channel:    msg.Channel,
+			AccountID:  routing.NormalizeAccountID(inboundMetadata(msg, metadataKeyAccountID)),
+			SessionKey: routing.BuildAgentMainSessionKey(normalized),
+			MatchedBy:  "preresolved",
+		}
+		return route, agent, nil
 	}
 
 	route := registry.ResolveRoute(routing.RouteInput{
@@ -612,9 +629,10 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		MentionedAgent: inboundMetadata(msg, "mentioned_agent"),
 	})
 
-	agent, ok := registry.GetAgent(route.AgentID)
+	// Bindings and mentions only ever name config agents.
+	agent, ok := registry.GetConfigured(route.AgentID)
 	if !ok {
-		agent = registry.GetDefaultAgent()
+		agent = registry.Default()
 	}
 	if agent == nil {
 		return routing.ResolvedRoute{}, nil, fmt.Errorf("no agent available for route (agent_id=%s)", route.AgentID)
@@ -624,10 +642,9 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 }
 
 // resolveScopeKey returns the session an inbound message runs in: the routed
-// agent's main conversation, or that agent's own sub-agent session when the
-// message names one. Any other explicit key collapses to the main session, so
-// no inbound path can open a second persistent session for an agent (its
-// cognitive memory is fed from exactly one).
+// agent's main conversation. Any explicit key collapses to it, so no inbound
+// path can open a second session for an agent (its cognitive memory is fed
+// from exactly one).
 func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 	return routing.ResolveAgentSessionKey(route.AgentID, msgSessionKey)
 }
@@ -653,7 +670,7 @@ func (al *AgentLoop) extractMention(msg *bus.InboundMessage) {
 	if registry == nil {
 		return
 	}
-	agentIDs := registry.ListAgentIDs()
+	agentIDs := registry.List()
 	if mentionedAgent, stripped := channels.ExtractAgentMention(msg.Content, triggers, agentIDs); mentionedAgent != "" {
 		msg.Content = stripped
 		if msg.Metadata == nil {
@@ -710,6 +727,9 @@ func (al *AgentLoop) processSystemMessage(
 
 	agent, sessionKey := al.resolveSystemMessageTarget(msg)
 	if agent == nil {
+		if inboundMetadata(msg, metadataKeyPreresolvedAgentID) != "" {
+			return "", errAgentGone
+		}
 		return "", errors.New("no agent available for system message")
 	}
 
@@ -751,23 +771,28 @@ func (al *AgentLoop) runMeteredTurn(ctx context.Context, agent *AgentInstance, o
 // session on session_key, so the completion is handled by the SPAWNING agent in
 // its own session — not whichever agent happens to be the default. Falls back to
 // the default agent and that agent's main session when no originator is given
-// (legacy behavior). Returns (nil, "") when no agent is available.
+// (legacy behavior). A preresolved agent that does not exist is never replaced
+// by another: the message is dropped. Returns (nil, "") when no agent is
+// available or the addressed one is gone.
 func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentInstance, string) {
 	var agent *AgentInstance
 	if preresolved := inboundMetadata(msg, metadataKeyPreresolvedAgentID); preresolved != "" {
-		if a, ok := al.GetRegistry().GetAgent(routing.NormalizeAgentID(preresolved)); ok && a != nil {
-			agent = a
+		a, ok := al.GetRegistry().Get(routing.NormalizeAgentID(preresolved))
+		if !ok || a == nil {
+			// Never another agent: the addressed one is gone.
+			logger.WarnCF("agent", "System message dropped: addressed agent does not exist",
+				map[string]any{"preresolved_agent_id": preresolved, "sender_id": msg.SenderID})
+			return nil, ""
 		}
-	}
-	if agent == nil {
-		agent = al.GetRegistry().GetDefaultAgent()
+		agent = a
+	} else {
+		agent = al.GetRegistry().Default()
 	}
 	if agent == nil {
 		return nil, ""
 	}
 
-	// A sub-agent session key is kept as given; any other key resolves to the
-	// agent's one conversation.
+	// Any key resolves to the agent's one conversation.
 	return agent, routing.ResolveAgentSessionKey(agent.ID, msg.SessionKey)
 }
 

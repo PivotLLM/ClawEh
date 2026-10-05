@@ -14,8 +14,8 @@ import (
 
 // echoRunFull is a fake full-pipeline runner that returns the task text as the
 // worker's output, so results reference the task.
-func echoRunFull(_ context.Context, _, _, task, _ string, _ []string) (*global.SyncResult, error) {
-	return &global.SyncResult{Content: task, Iterations: 1}, nil
+func echoRunFull(_ context.Context, _, task, _ string, _ []string) (*global.SyncResult, func(), error) {
+	return &global.SyncResult{Content: task, Iterations: 1}, func() {}, nil
 }
 
 func newTestManager(t *testing.T) (*SubagentManager, string) {

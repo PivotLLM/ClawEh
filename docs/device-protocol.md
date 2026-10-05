@@ -291,7 +291,7 @@ conversation.
   `metadata["session_key"]` (honored by `BaseChannel.HandleMessage` →
   `bus.InboundMessage.SessionKey`) and the agent as `metadata["preresolved_agent_id"]`. The
   agent loop's `resolveScopeKey` resolves any `SessionKey` to the agent's main session
-  (only the agent's own sub-agent session is kept); routing logs `matched_by=preresolved`
+  (an agent has one conversation); routing logs `matched_by=preresolved`
   for the chosen agent.
 
 ### `/agent` command (node clients switch assistants)

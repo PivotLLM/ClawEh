@@ -167,8 +167,8 @@ var ErrNoDefaultChannel = errors.New("agent has no default channel")
 // would keep validating against a stale manager.
 func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[string]*msgtoken.Manager {
 	managers := make(map[string]*msgtoken.Manager)
-	for _, agentID := range registry.ListAgentIDs() {
-		agentInstance, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		agentInstance, ok := registry.Get(agentID)
 		if !ok {
 			continue
 		}

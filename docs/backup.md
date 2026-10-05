@@ -24,8 +24,10 @@ If `agents.base_dir` points outside `CLAW_HOME`, its databases are stored under
 `external/agents/` and the manifest records the real directory.
 
 **Not included:** `media/` (tool-produced files, a cache), `logs/`, per-agent
-`tmp/`, cogmem's per-sub-agent `subagents/` snapshots, previous backups, and
-SQLite `-wal`/`-shm` files (see below). Agent `files/` and `skills/` are not
+`tmp/`, temporary agents (`internal/temp/` and `internal/temp_agents.json`:
+sub-agent runs, deleted when they finish), the `cogmem/subagents/` snapshots
+earlier versions left behind, previous backups, and SQLite `-wal`/`-shm` files
+(see below). Agent `files/` and `skills/` are not
 part of the backup; treat them like any other directory you own.
 
 ## How databases are copied

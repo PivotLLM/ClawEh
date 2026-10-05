@@ -8,7 +8,7 @@ only deletion is the daily retention prune (90 days).
 
 | kind | when | actor / sender | fields |
 |---|---|---|---|
-| `tool_call` | every tool an agent runs (including `agent_spawn`) | agent id; chat sender id | session, channel, tool, outcome (`ok`/`error`), duration_ms, `turn_id`, details `{"chat_id", "args"}` |
+| `tool_call` | every tool an agent runs (including `agent_spawn`) | agent id; chat sender id | session, channel, tool, outcome (`ok`/`error`), duration_ms, `turn_id`, details `{"chat_id", "args"}` (plus `"clone": "<short id>"` when a sub-agent made the call; its row carries the agent it copies) |
 | `config_write` | every configuration save made through the WebUI API (the configuration editor and every settings page) | WebUI username; client IP | summary = changed top-level keys, details `{"keys":[...]}` |
 | `auth` | WebUI login, logout, lockout, attempt refused while locked (`locked`) | username; client IP | summary = the action, outcome `ok`/`error` |
 | `restart` | every `POST /api/system/restart` ClawEh acts on | WebUI username; client IP | summary = `restart requested` |

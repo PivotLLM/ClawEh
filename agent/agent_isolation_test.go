@@ -40,10 +40,11 @@ func TestAgentIsolation_ResolveScopeKeyRejectsMismatchedAgentID(t *testing.T) {
 		}
 	}
 
-	// 3a. The agent's own sub-agent session is preserved.
+	// 3a. The retired sub-agent key form collapses too (a sub-agent is now a
+	// temporary agent with its own main session).
 	got = resolveScopeKey(bobRoute, "agent:bob:subagent:123")
-	if got != "agent:bob:subagent:123" {
-		t.Fatalf("resolveScopeKey dropped own sub-agent key: got %q", got)
+	if got != "agent:bob:main" {
+		t.Fatalf("resolveScopeKey kept a sub-agent key: got %q", got)
 	}
 
 	// 4. Empty session key falls back to route
@@ -97,11 +98,11 @@ func TestAgentIsolation_ResolveSystemMessageTargetValidation(t *testing.T) {
 		t.Fatalf("expected sessionKey agent:bob:main, got %q (cross-agent leak!)", sessionKey)
 	}
 
-	// Bob's own non-main key collapses to his main session; his own sub-agent
-	// session key is kept as given.
+	// Bob's own non-main keys, the retired sub-agent form included, collapse
+	// to his main session.
 	for key, want := range map[string]string{
 		"agent:bob:telegram:direct:1": "agent:bob:main",
-		"agent:bob:subagent:u1":       "agent:bob:subagent:u1",
+		"agent:bob:subagent:u1":       "agent:bob:main",
 	} {
 		msg.SessionKey = key
 		if _, got := al.resolveSystemMessageTarget(msg); got != want {

@@ -32,6 +32,10 @@ type CronTool struct {
 	// per run rather than captured once, so a tool revoked in config stops being
 	// probed. Nil disables watch jobs rather than failing the whole cron service.
 	agentTools func(agentID string) *tools.ToolRegistry
+	// homeAgent maps the calling agent to the config agent it acts as (a
+	// temporary clone acts as its source), so a sub-agent schedules for the
+	// agent it is a copy of. Nil keeps the caller's own id.
+	homeAgent func(agentID string) string
 
 	// Listen jobs: one goroutine per enabled job, kept in step with the store
 	// by a supervisor. See listen.go.
@@ -52,6 +56,12 @@ func NewCronTool(cronService *cron.CronService, msgBus *bus.MessageBus, getConfi
 // cron service.
 func (t *CronTool) SetAgentTools(fn func(agentID string) *tools.ToolRegistry) {
 	t.agentTools = fn
+}
+
+// SetHomeAgent wires the lookup from a calling agent to the config agent it
+// acts as (see homeAgent).
+func (t *CronTool) SetHomeAgent(fn func(agentID string) string) {
+	t.homeAgent = fn
 }
 
 // config returns the live config, or nil if unavailable.
@@ -161,6 +171,9 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	// (global_cron) agent may target another agent via the `agent` arg. Operators
 	// see everything via the `claw cron` CLI.
 	callerID := callerAgentID(ctx)
+	if callerID != "" && t.homeAgent != nil {
+		callerID = t.homeAgent(callerID)
+	}
 	target, errRes := t.resolveTargetAgent(args, callerID)
 	if errRes != nil {
 		return errRes

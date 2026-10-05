@@ -16,7 +16,7 @@ func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 	al, cfg := tl.al, tl.cfg
 	cfg.Agents.Defaults.ShowReasoningAsContent = showAsContent
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

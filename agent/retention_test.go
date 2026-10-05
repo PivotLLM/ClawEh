@@ -170,7 +170,7 @@ func TestRetentionExempt(t *testing.T) {
 // old, while snapshot pruning still runs.
 func TestRunRetentionPass_Disabled(t *testing.T) {
 	tl := newTestAgentLoop(t)
-	ag := tl.al.GetRegistry().GetDefaultAgent()
+	ag := tl.al.GetRegistry().Default()
 	dir := filepath.Join(ag.Workspace, "sessions")
 	old := time.Now().Add(-400 * 24 * time.Hour)
 	const key = "agent:main:telegram:direct:1"
@@ -205,7 +205,7 @@ func TestRunRetentionPass_Disabled(t *testing.T) {
 func TestRunRetentionPass_Enabled(t *testing.T) {
 	tl := newTestAgentLoop(t)
 	tl.cfg.Session.RetentionDays = 30
-	ag := tl.al.GetRegistry().GetDefaultAgent()
+	ag := tl.al.GetRegistry().Default()
 	dir := filepath.Join(ag.Workspace, "sessions")
 	old := time.Now().Add(-31 * 24 * time.Hour)
 	const idle, open = "agent:main:telegram:direct:1", "agent:main:telegram:direct:2"
@@ -227,7 +227,7 @@ func TestRunRetentionPass_Enabled(t *testing.T) {
 // be deleted, and refuses while a turn holds it.
 func TestReleaseSession(t *testing.T) {
 	tl := newTestAgentLoop(t)
-	ag := tl.al.GetRegistry().GetDefaultAgent()
+	ag := tl.al.GetRegistry().Default()
 	const idle, busy = "agent:main:telegram:direct:1", "agent:main:telegram:direct:2"
 	cm := &trackingContextManager{}
 	makeEntry(tl.al, ag.ID+":"+idle, cm, time.Now(), 0)

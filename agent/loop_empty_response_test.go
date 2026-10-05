@@ -14,7 +14,7 @@ func driveEmptyResponse(t *testing.T, responses []*providers.LLMResponse) (strin
 	t.Helper()
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -70,7 +70,7 @@ func TestEmptyResponse_DegenerateAfterRetries(t *testing.T) {
 func TestNoResponseSentinel_SilentNoPoke(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -118,7 +118,7 @@ func driveEmptyViaLoop(t *testing.T, isGroup bool) string {
 	t.Helper()
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

@@ -5,6 +5,7 @@ package cogmem
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,22 +16,15 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-const (
-	mainSession     = "agent:alice:main"
-	subagentSession = "agent:alice:subagent:3f2b9c1e"
-)
+const mainSession = "agent:alice:main"
 
-func buildAgentHandlers(t *testing.T) (map[string]global.ToolHandler, string) {
-	t.Helper()
-	ws := t.TempDir()
-	defs := GlobalProvider.RegisterTools(global.Deps{
-		Host: tools.ToolDeps{Workspace: ws, AgentID: "alice"},
-	})
+func handlersFor(deps tools.ToolDeps) map[string]global.ToolHandler {
+	defs := GlobalProvider.RegisterTools(global.Deps{Host: deps})
 	m := make(map[string]global.ToolHandler, len(defs))
 	for _, d := range defs {
 		m[d.Name] = d.Handler
 	}
-	return m, ws
+	return m
 }
 
 func fileExists(path string) bool {
@@ -38,85 +32,63 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// TestMemoryWritesFollowSession checks that a memory tool writes to the
-// sub-agent's snapshot in a sub-agent session and to the agent's own memory in
-// any other session, and that neither write is visible from the other side.
-func TestMemoryWritesFollowSession(t *testing.T) {
-	tests := []struct {
-		name       string
-		writer     string
-		other      string
-		wantDir    func(ws string) string
-		absentDir  func(ws string) string
-		memoryText string
-	}{
-		{
-			name:       "sub-agent write lands in the snapshot",
-			writer:     subagentSession,
-			other:      mainSession,
-			wantDir:    func(ws string) string { return cogmemhost.SubagentDir(ws, subagentSession) },
-			absentDir:  cogmemhost.Dir,
-			memoryText: "Bob prefers tea.",
-		},
-		{
-			name:       "main-session write lands in the primary memory",
-			writer:     mainSession,
-			other:      subagentSession,
-			wantDir:    cogmemhost.Dir,
-			absentDir:  func(ws string) string { return cogmemhost.SubagentDir(ws, subagentSession) },
-			memoryText: "Alice prefers coffee.",
-		},
+// TestMemoryLivesInStateDir checks that the tools work on <state dir>/cogmem:
+// the workspace when no state directory is set (a config agent), the state
+// directory when one is (a temporary agent sharing another's workspace), and
+// that two agents sharing a workspace do not see each other's memories.
+func TestMemoryLivesInStateDir(t *testing.T) {
+	ws := t.TempDir()
+	cloneState := filepath.Join(t.TempDir(), "clone")
+
+	alice := handlersFor(tools.ToolDeps{Workspace: ws, AgentID: "alice"})
+	clone := handlersFor(tools.ToolDeps{Workspace: ws, StateDir: cloneState, AgentID: "alice"})
+
+	if res := run(t, alice["memory_create"], newCall(mainSession, map[string]any{
+		"type": "fact", "text": "Alice prefers coffee.",
+	})); res.IsError {
+		t.Fatalf("memory_create (alice) failed: %s", res.ForLLM)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h, ws := buildAgentHandlers(t)
+	if !fileExists(store.DBPath(cogmemhost.Dir(ws))) {
+		t.Fatal("a config agent's memory must live in its workspace")
+	}
 
-			res := run(t, h["memory_create"], newCall(tt.writer, map[string]any{
-				"type": "fact", "text": tt.memoryText,
-			}))
-			if res.IsError {
-				t.Fatalf("memory_create failed: %s", res.ForLLM)
-			}
+	if res := run(t, clone["memory_create"], newCall("agent:c1:main", map[string]any{
+		"type": "fact", "text": "Bob prefers tea.",
+	})); res.IsError {
+		t.Fatalf("memory_create (clone) failed: %s", res.ForLLM)
+	}
+	if !fileExists(store.DBPath(cogmemhost.Dir(cloneState))) {
+		t.Fatal("a temporary agent's memory must live in its state directory")
+	}
 
-			if !fileExists(store.DBPath(tt.wantDir(ws))) {
-				t.Fatalf("expected the memory store at %s", store.DBPath(tt.wantDir(ws)))
-			}
-			if fileExists(store.DBPath(tt.absentDir(ws))) {
-				t.Fatalf("the write must not create a store at %s", store.DBPath(tt.absentDir(ws)))
-			}
-
-			found := run(t, h["memory_search"], newCall(tt.writer, map[string]any{"query": tt.memoryText}))
-			if found.IsError || strings.Contains(found.ForLLM, "No active memories match") ||
-				!strings.Contains(found.ForLLM, tt.memoryText) {
-				t.Fatalf("writer's session should find the memory: %s", found.ForLLM)
-			}
-			other := run(t, h["memory_search"], newCall(tt.other, map[string]any{"query": tt.memoryText}))
-			if other.IsError {
-				t.Fatalf("memory_search in the other session failed: %s", other.ForLLM)
-			}
-			if !strings.Contains(other.ForLLM, "No active memories match") {
-				t.Fatalf("the other session must not see the memory: %s", other.ForLLM)
-			}
-		})
+	other := run(t, alice["memory_search"], newCall(mainSession, map[string]any{"query": "Bob prefers tea."}))
+	if other.IsError || !strings.Contains(other.ForLLM, "No active memories match") {
+		t.Fatalf("alice must not see the clone's memory: %s", other.ForLLM)
+	}
+	found := run(t, clone["memory_search"], newCall("agent:c1:main", map[string]any{"query": "Bob prefers tea."}))
+	if found.IsError || !strings.Contains(found.ForLLM, "Bob prefers tea.") {
+		t.Fatalf("the clone should find its own memory: %s", found.ForLLM)
 	}
 }
 
-// TestSubagentConsolidateDoesNotTriggerPrimary checks that a sub-agent cannot
-// start a consolidation run, which would work on the agent's own memory.
-func TestSubagentConsolidateDoesNotTriggerPrimary(t *testing.T) {
+// TestEphemeralMemoryDoesNotConsolidate checks that an agent with an ephemeral
+// memory (a sub-agent's snapshot) cannot start a consolidation run, and that
+// any other agent can.
+func TestEphemeralMemoryDoesNotConsolidate(t *testing.T) {
 	var triggered []string
 	SetConsolidateTrigger(func(_, sessionKey string) { triggered = append(triggered, sessionKey) })
 	t.Cleanup(func() { SetConsolidateTrigger(nil) })
 
-	h, _ := buildAgentHandlers(t)
-
-	run(t, h["consolidate"], newCall(subagentSession, nil))
+	ws := t.TempDir()
+	ephemeral := handlersFor(tools.ToolDeps{Workspace: ws, StateDir: t.TempDir(), AgentID: "alice", EphemeralMemory: true})
+	run(t, ephemeral["consolidate"], newCall("agent:c1:main", nil))
 	if len(triggered) != 0 {
-		t.Fatalf("a sub-agent session must not trigger consolidation, got %v", triggered)
+		t.Fatalf("an ephemeral memory must not trigger consolidation, got %v", triggered)
 	}
 
-	run(t, h["consolidate"], newCall(mainSession, nil))
+	live := handlersFor(tools.ToolDeps{Workspace: ws, AgentID: "alice"})
+	run(t, live["consolidate"], newCall(mainSession, nil))
 	if len(triggered) != 1 || triggered[0] != mainSession {
-		t.Fatalf("a main session should trigger consolidation once, got %v", triggered)
+		t.Fatalf("a live memory should trigger consolidation once, got %v", triggered)
 	}
 }

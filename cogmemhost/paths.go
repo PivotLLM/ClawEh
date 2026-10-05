@@ -8,31 +8,25 @@ import (
 	"path/filepath"
 
 	"github.com/PivotLLM/cogmem/store"
-	"github.com/PivotLLM/ctxengine/memory"
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// DirName is the directory inside an agent workspace that cogmem owns.
+// DirName is the directory inside an agent's state directory that cogmem owns.
 const DirName = "cogmem"
 
-// Dir returns the agent's memory directory, <workspace>/cogmem. One agent, one
-// memory: every session of the agent shares it. Sessions, archives and the
-// rest of the workspace can be deleted and the memory survives, and the
-// directory can be backed up or copied to a new agent as a unit.
-func Dir(workspace string) string {
-	if workspace == "" {
+// Dir returns the agent's memory directory, <state dir>/cogmem (the state
+// directory is the workspace for a config agent). One agent, one memory: every
+// session of the agent shares it. Sessions, archives and the rest of the
+// workspace can be deleted and the memory survives, and the directory can be
+// backed up or copied to a new agent as a unit.
+func Dir(stateDir string) string {
+	if stateDir == "" {
 		return ""
 	}
-	return filepath.Join(workspace, DirName)
-}
-
-// SubagentDir returns the throwaway directory a sub-agent's snapshot of the
-// memory lives in for the length of its run: <workspace>/cogmem/subagents/<key>.
-func SubagentDir(workspace, sessionKey string) string {
-	return filepath.Join(Dir(workspace), "subagents", memory.SanitizeSessionKey(sessionKey))
+	return filepath.Join(stateDir, DirName)
 }
 
 // Migrate opens the agent's memory once at load so any pending schema

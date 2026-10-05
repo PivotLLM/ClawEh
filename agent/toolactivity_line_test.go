@@ -8,7 +8,7 @@ import "testing"
 func TestToolActivityLine(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

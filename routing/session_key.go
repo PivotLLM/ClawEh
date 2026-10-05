@@ -23,20 +23,13 @@ func BuildAgentMainSessionKey(agentID string) string {
 }
 
 // ResolveAgentSessionKey returns the session a turn for agentID runs in, given
-// a session key the caller asked for. Every agent has exactly one persistent
+// a session key the caller asked for. Every agent has exactly one
 // conversation, agent:<id>:main: its cognitive memory is fed from one session
 // only, so no surface (a channel, a device, an MCP token, a bus message with an
-// explicit key) may open a second one. The one exception is the agent's own
-// ephemeral sub-agent session (agent:<id>:subagent:<uuid>), which is returned
-// unchanged; any other key, including one naming another agent, resolves to
-// agentID's main session.
+// explicit key) may open a second one. Any key, including one naming another
+// agent, resolves to agentID's main session. (A sub-agent is a temporary
+// agent of its own, with its own main session.)
 func ResolveAgentSessionKey(agentID, requested string) string {
-	requested = strings.TrimSpace(requested)
-	if pk := ParseAgentSessionKey(requested); pk != nil &&
-		NormalizeAgentID(pk.AgentID) == NormalizeAgentID(agentID) &&
-		IsSubagentSessionKey(requested) {
-		return requested
-	}
 	return BuildAgentMainSessionKey(agentID)
 }
 
@@ -75,20 +68,4 @@ func ParseAgentSessionKey(sessionKey string) *ParsedSessionKey {
 		return nil
 	}
 	return &ParsedSessionKey{AgentID: agentID, Rest: rest}
-}
-
-// IsSubagentSessionKey returns true if the session key represents a subagent.
-func IsSubagentSessionKey(sessionKey string) bool {
-	raw := strings.TrimSpace(sessionKey)
-	if raw == "" {
-		return false
-	}
-	if strings.HasPrefix(strings.ToLower(raw), "subagent:") {
-		return true
-	}
-	parsed := ParseAgentSessionKey(raw)
-	if parsed == nil {
-		return false
-	}
-	return strings.HasPrefix(strings.ToLower(parsed.Rest), "subagent:")
 }

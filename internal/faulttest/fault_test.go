@@ -262,7 +262,7 @@ func TestRestartMidTurn_ReplaysOnOriginalChannel(t *testing.T) {
 	if pt := pendingTurns(t, cfg); len(pt) != 0 {
 		t.Errorf("pending_turns after recovery = %+v, want cleared", pt)
 	}
-	agentMain, ok := second.al.GetRegistry().GetAgent("main")
+	agentMain, ok := second.al.GetRegistry().Get("main")
 	if !ok {
 		t.Fatal("agent main missing")
 	}

@@ -14,7 +14,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -35,23 +34,18 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 
 	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
 	perMessageChars := mem.Consolidation.PerMessageChars
-	// One memory per agent, shared by every session. A sub-agent works on a
-	// throwaway snapshot in its own directory (see runSubagentTask).
-	ephemeral := routing.IsSubagentSessionKey(sessionKey)
-	dir, id := cogmemhost.Dir(agent.Workspace), agent.ID
-	if ephemeral {
-		dir, id = cogmemhost.SubagentDir(agent.Workspace, sessionKey), agent.ID+" (sub-agent)"
-	}
+	// One memory per agent, in its state directory. A sub-agent clone's is a
+	// snapshot of its source's, ephemeral: recalled from, never observed into.
 	return cogmem.NewSession(cogmem.SessionOptions{
-		ID:        id,
-		Dir:       dir,
+		ID:        agent.ID,
+		Dir:       cogmemhost.Dir(agent.StateDir),
 		Workspace: agent.Workspace,
-		Ephemeral: ephemeral,
+		Ephemeral: agent.Spec.Ephemeral,
 		Settings:  cogmemhost.Settings(mem),
-		Loader:    cogmemhost.NewLoader(cfg, agent.ID, agent.Workspace),
+		Loader:    cogmemhost.NewLoader(cfg, agent.Label(), agent.Workspace),
 		Manager:   cogMgr,
 		OnOpen: func(ctx context.Context, st *store.Store) {
-			backfillInbox(ctx, st, agent.ID, agent.Workspace, sessionKey, perMessageChars)
+			backfillInbox(ctx, st, agent.Label(), agent.StateDir, sessionKey, perMessageChars)
 		},
 	})
 }
@@ -60,7 +54,7 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 // its own inbox, and not yet consolidated, are copied in so the upgrade loses
 // nothing to memory. Later opens find the flag set and skip it. Host-side by
 // design: only ClawEh knows about the session archive.
-func backfillInbox(ctx context.Context, st *store.Store, agentID, workspace, sessionKey string, perMessageChars int) {
+func backfillInbox(ctx context.Context, st *store.Store, agentID, stateDir, sessionKey string, perMessageChars int) {
 	done, err := st.InboxBackfilled(ctx)
 	if err != nil || done {
 		return
@@ -70,7 +64,7 @@ func backfillInbox(ctx context.Context, st *store.Store, agentID, workspace, ses
 		return
 	}
 	copied := 0
-	if a, err := memory.OpenReadOnly(archiveDBPath(workspace, sessionKey)); err == nil {
+	if a, err := memory.OpenReadOnly(archiveDBPath(stateDir, sessionKey)); err == nil {
 		defer utils.CloseQuietly(a)
 		if _, maxSeq, err := a.Bounds(); err == nil && maxSeq > state.ConsolidatedSeq {
 			rows, err := a.QueryRange(state.ConsolidatedSeq+1, maxSeq)

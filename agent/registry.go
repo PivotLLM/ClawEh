@@ -1,95 +1,19 @@
 package agent
 
 import (
-	"fmt"
-	"sync"
-
-	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// AgentRegistry manages multiple agent instances and routes messages to them.
-type AgentRegistry struct {
-	agents         map[string]*AgentInstance
-	defaultAgentID string // normalized ID of the agent marked Default:true (or first enabled)
-	resolver       *routing.RouteResolver
-	mu             sync.RWMutex
-}
+// AgentRegistry is the agent registry (package agentreg) holding this
+// package's instances.
+type AgentRegistry = agentreg.Registry[*AgentInstance]
 
-// NewAgentRegistry creates a registry from config, instantiating all agents.
-func NewAgentRegistry(
-	cfg *config.Config,
-	provider providers.LLMProvider,
-) (*AgentRegistry, error) {
-	registry := &AgentRegistry{
-		agents:   make(map[string]*AgentInstance),
-		resolver: routing.NewRouteResolver(cfg),
-	}
-
-	hasExplicitDefault := false
-	for i := range cfg.Agents.List {
-		ac := &cfg.Agents.List[i]
-		if !ac.IsEnabled() {
-			logger.InfoCF("agent", "Skipping disabled agent", map[string]any{"agent_id": ac.ID})
-			continue
-		}
-		id := routing.NormalizeAgentID(ac.ID)
-		instance, err := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
-		if err != nil {
-			return nil, fmt.Errorf("agent %q: %w", id, err)
-		}
-		registry.agents[id] = instance
-		logger.InfoCF("agent", "Registered agent",
-			map[string]any{
-				"agent_id":  id,
-				"name":      ac.Name,
-				"workspace": instance.Workspace,
-				"model":     instance.Model,
-			})
-		// First enabled agent is the fallback; first Default:true agent wins.
-		if registry.defaultAgentID == "" {
-			registry.defaultAgentID = id
-		}
-		if ac.Default && !hasExplicitDefault {
-			registry.defaultAgentID = id
-			hasExplicitDefault = true
-		}
-	}
-
-	return registry, nil
-}
-
-// GetAgent returns the agent instance for a given ID.
-func (r *AgentRegistry) GetAgent(agentID string) (*AgentInstance, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	id := routing.NormalizeAgentID(agentID)
-	agent, ok := r.agents[id]
-	return agent, ok
-}
-
-// ResolveRoute determines which agent handles the message.
-func (r *AgentRegistry) ResolveRoute(input routing.RouteInput) routing.ResolvedRoute {
-	return r.resolver.ResolveRoute(input)
-}
-
-// ListAgentIDs returns all registered agent IDs.
-func (r *AgentRegistry) ListAgentIDs() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	ids := make([]string, 0, len(r.agents))
-	for id := range r.agents {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// CanSpawnSubagent checks if parentAgentID is allowed to spawn targetAgentID.
-func (r *AgentRegistry) CanSpawnSubagent(parentAgentID, targetAgentID string) bool {
-	parent, ok := r.GetAgent(parentAgentID)
+// canSpawnSubagent reports whether parentAgentID may spawn targetAgentID: the
+// parent's subagents.allow_agents lists the target or "*".
+func canSpawnSubagent(registry *AgentRegistry, parentAgentID, targetAgentID string) bool {
+	parent, ok := registry.Get(parentAgentID)
 	if !ok {
 		return false
 	}
@@ -108,47 +32,15 @@ func (r *AgentRegistry) CanSpawnSubagent(parentAgentID, targetAgentID string) bo
 	return false
 }
 
-// ForEachTool calls fn for every tool registered under the given name
-// across all agents. This is useful for propagating dependencies (e.g.
-// MediaStore) to tools after registry construction.
-func (r *AgentRegistry) ForEachTool(name string, fn func(tools.Tool)) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, agent := range r.agents {
-		if t, ok := agent.Tools.Get(name); ok {
-			fn(t)
+// forEachTool calls fn for every tool registered under name across all
+// agents, temporary ones included. Used to propagate dependencies (e.g. the
+// MediaStore) to tools after they are built.
+func forEachTool(registry *AgentRegistry, name string, fn func(tools.Tool)) {
+	for _, id := range registry.All() {
+		if agent, ok := registry.Get(id); ok {
+			if t, ok := agent.Tools.Get(name); ok {
+				fn(t)
+			}
 		}
 	}
-}
-
-// Close releases resources held by all registered agents.
-func (r *AgentRegistry) Close() {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, agent := range r.agents {
-		if err := agent.Close(); err != nil {
-			logger.WarnCF("agent", "Failed to close agent",
-				map[string]any{"agent_id": agent.ID, "error": err.Error()})
-		}
-	}
-}
-
-// GetDefaultAgentID returns the normalized ID of the default agent,
-// or empty string if none is registered.
-func (r *AgentRegistry) GetDefaultAgentID() string {
-	return r.defaultAgentID
-}
-
-// GetDefaultAgent returns the agent marked Default:true in config, or the
-// first enabled agent if none is explicitly marked. Never uses map iteration
-// order, which is non-deterministic in Go.
-func (r *AgentRegistry) GetDefaultAgent() *AgentInstance {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.defaultAgentID != "" {
-		if agent, ok := r.agents[r.defaultAgentID]; ok {
-			return agent
-		}
-	}
-	return nil
 }

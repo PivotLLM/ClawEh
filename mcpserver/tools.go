@@ -23,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -544,6 +545,12 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 			})
 		return
 	}
+	// A temporary clone's late result goes to its source's main conversation
+	// (resolved when its token was issued): the clone may be gone by now.
+	targetAgent, targetSession := rec.agentID, rec.sessionKey
+	if rec.homeID != "" {
+		targetAgent, targetSession = rec.homeID, routing.BuildAgentMainSessionKey(rec.homeID)
+	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
@@ -551,8 +558,8 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		SenderID:   "async:" + toolName,
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
-		SessionKey: rec.sessionKey,
-		Metadata:   map[string]string{"preresolved_agent_id": rec.agentID},
+		SessionKey: targetSession,
+		Metadata:   map[string]string{"preresolved_agent_id": targetAgent},
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})

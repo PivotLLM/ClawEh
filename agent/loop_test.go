@@ -367,7 +367,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 	})
 	sessionKey := route.SessionKey
 
-	defaultAgent := al.registry.GetDefaultAgent()
+	defaultAgent := al.registry.Default()
 	if defaultAgent == nil {
 		t.Fatal("No default agent found")
 	}
@@ -392,7 +392,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 func TestProcessMessage_OtherSessionKeyLandsInMain(t *testing.T) {
 	cfg := newTestConfig(t)
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &simpleMockProvider{response: "ok"}, nil)
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("No default agent found")
 	}
@@ -646,7 +646,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		{Role: "assistant", Content: "Old response 2"},
 		{Role: "user", Content: "Trigger message"},
 	}
-	defaultAgent := al.registry.GetDefaultAgent()
+	defaultAgent := al.registry.Default()
 	if defaultAgent == nil {
 		t.Fatal("No default agent found")
 	}
@@ -1194,7 +1194,7 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1248,7 +1248,7 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1313,7 +1313,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
 	// Replace the default agent's provider with one that always returns a timeout error.
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1414,7 +1414,7 @@ func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.To
 func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1454,7 +1454,7 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1508,7 +1508,7 @@ func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1563,7 +1563,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 func TestRunLLMIteration_MaxIterations(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1633,7 +1633,7 @@ func fourCandidates() []providers.FallbackCandidate {
 func TestSelectCandidates_DefaultOrder(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1657,7 +1657,7 @@ func TestSelectCandidates_DefaultOrder(t *testing.T) {
 func TestSelectCandidates_Reorder(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1697,7 +1697,7 @@ func TestSelectCandidates_Reorder(t *testing.T) {
 func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1721,7 +1721,7 @@ func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
 func TestActiveModelIndex_Persists(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1849,13 +1849,14 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 		t.Errorf("session key = %q, want %q", sessionKey, want)
 	}
 
-	// Unknown originator: also falls back to the default agent.
+	// Unknown originator (a deleted temporary agent, say): dropped, never
+	// handed to the default agent.
 	agent, _ = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:  "system",
 		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "nobody"},
 	})
-	if agent == nil || agent.ID != "penny" {
-		t.Fatalf("expected fallback to default (penny) for unknown originator, got %v", agent)
+	if agent != nil {
+		t.Fatalf("a message for an unknown originator went to %s; want it dropped", agent.ID)
 	}
 }
 
@@ -1865,7 +1866,7 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -2057,7 +2058,7 @@ func TestExtractParentPeer(t *testing.T) {
 func TestProcessDirect_ReturnsResponse(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -2237,13 +2238,10 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 		t.Errorf("expected session key %q, got %q", want, route.SessionKey)
 	}
 
-	// Unknown preresolved ID falls back to binding resolution without error.
+	// Unknown preresolved ID: dropped, never handed to binding resolution.
 	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "nobody"}
 	_, agent, err = al.resolveMessageRoute(msg)
-	if err != nil {
-		t.Fatalf("unknown-preresolved resolveMessageRoute: %v", err)
-	}
-	if agent.ID != "penny" {
-		t.Errorf("expected fallback to binding resolution (penny), got %q", agent.ID)
+	if !errors.Is(err, errAgentGone) || agent != nil {
+		t.Fatalf("unknown-preresolved resolveMessageRoute = %v, %v; want errAgentGone and no agent", agent, err)
 	}
 }

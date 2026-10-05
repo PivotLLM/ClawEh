@@ -162,7 +162,7 @@ func TestEmitLLMFinishEvent_ErrorPathWithPartialStatus_BytesPreserved(t *testing
 func TestRunLLMIteration_EmitsDispatchAndFinishPerCall(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

@@ -116,7 +116,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
 - Data dir layout (README "File layout"): `internal/` holds claw's own state
   (token stores, `gateway.db`, fusion tokens, the ACP identity, `audit.db`,
-  `claw.pid`, `claw.lock`; `config.InternalPath()`,
+  `claw.pid`, `claw.lock`, and the temporary agents: `internal/temp/<uuid>/` and
+  their list `internal/temp_agents.json`, both left out of backups;
+  `config.InternalPath()`,
   `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
   workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `common/` the
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
@@ -181,6 +183,53 @@ production instance directly; test against a dev instance.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
 - **Multiple Telegram bots**: each `telegram_bots[].id` → channel `telegram-<id>`.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
+- **Agent registry** (`agentreg`): every agent the loop can run, with its origin.
+  Config agents are built from config and rebuilt on reload (`Reload` builds the
+  whole new set, then swaps it in one step with `al.cfg`). **Temporary agents**
+  are created at run time (`Create`, or `CreateInTurn` which begins a turn
+  atomically with insertion; options `CloneOf`, `EphemeralMemory`, `Temp(ttl)`;
+  UUID ids), kept across reloads (rebuilt; a clone always from its source's
+  CURRENT config, never a stored copy; deleted when its model or clone source is
+  gone; left alone while in a turn) and, unless ephemeral, across restarts
+  (`internal/temp_agents.json`; any other dir under `internal/temp/` is removed
+  at start), deleted by `Delete` (refused mid-turn; `BeginTurn` marks turns) or
+  after `agentreg.DefaultTTL` (24h) idle by the sweep. Create/Delete take the
+  registry lock only to insert/remove (builds and memory snapshots run in
+  parallel with each other) and are ordered against reloads by `reloadMu`
+  (Create holds it for reading from reading the config to inserting, Reload
+  for writing), so a temporary agent is never kept on a superseded config;
+  `Reload` reconciles with concurrent Deletes at its commit. Only the data-dir
+  owner (`agent.OwnsDataDir()`, set by the gateway, which holds `claw.lock`)
+  uses `internal/temp/`, restores, cleans it or writes `temp_agents.json`;
+  any other process (`claw agent`) keeps its temporary agents in a private
+  system-temp root removed at Close. `BeginTurn(id, inst)` refuses a stale
+  instance; `runAgentLoop` retries a rebuilt temporary agent once on its
+  current instance and drops the turn only if the agent is gone. They are invisible to
+  operators and routing: `List`/`Default`/`ResolveRoute`/`GetConfigured` see
+  config agents only (`All`/`Get` see both). A message preresolved to an agent
+  that no longer exists is dropped (`errAgentGone`), never routed elsewhere; a
+  clone's late async results go to its source's main conversation
+  (`asyncResultTarget`, `SessionTokenStore.SetHomeResolver`).
+  The registry is generic and imports no loop code: the loop hands it a
+  `BuildFunc` (`AgentLoop.agentBuilder`: instance + tools), a `RetireFunc`
+  (`retireAgent`: close the session, revoke tokens) and an `InsertedFunc`
+  (`agentInserted`: MCP tools once visible). An agent has a **workspace**
+  (prompt files, `files/`, skills, Maestro, tasks, mounts) and a **state dir**
+  (`sessions/` and `cogmem/`): the same directory for a config agent,
+  `internal/temp/<uuid>/` for a temporary one. Anything deriving a conversation
+  or memory path uses `AgentInstance.StateDir` / `ToolDeps.EffectiveStateDir()`.
+  A **clone** shares its source's workspace and config, gets a snapshot of its
+  memory and its own conversation, and its tools act as the source
+  (`toolIdentity`: Maestro, Fusion tokens, cron via `CronTool.SetHomeAgent`,
+  task ownership) without replacing anything registered once per agent
+  (`ToolDeps.TempAgent`: the source's Maestro runner is used as is, never
+  re-pointed); a **fresh** temporary agent gets its own seeded workspace and
+  no tools. Sub-agents (`agent_spawn`, Maestro dispatch) are ephemeral clones
+  (`runSubagentTask`), deleted once their result is delivered; there is no
+  sub-agent session key. Logs name a clone `alice (clone 1a2b3c4d)`
+  (`AgentInstance.Label`); audit rows keep the source id in the agent column
+  and add `"clone"` to details. CLI clones reach their tools through the MCP
+  host's `WithAgentLookup` fallback.
 - **Systemd**: `claw install` generates the unit and bakes the installer's live `PATH` into `Environment=PATH=` (target bin dir + current `PATH` + standard system dirs) — systemd does not expand `$HOME`/`~`/`%h` in `Environment=`, so paths must be absolute, which capturing the live PATH handles. The extra home-dir entries (node/pnpm/nvm, CLI-agent bins) are **not required to run ClawEh** — they are only needed to support **CLI-based providers** (claude-cli, codex-cli, antigravity-cli, cursor-cli) and tools that shell out (e.g. MCP via `npx`, skills); a core install using HTTP providers needs none of them. Re-run `claw install` if your node/nvm path changes. Set `CLAW_HOME` only for a non-default data dir (defaults to `~/.claw`); the app writes its own log to `$CLAW_HOME/logs/claw.log` — no `StandardOutput`/`StandardError` redirection needed.
 
 ## Device listener (external devices: Rabbit R1, voice apps)

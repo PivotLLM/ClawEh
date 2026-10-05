@@ -53,8 +53,8 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		Clear:   cd.ClearFn,
 		Log:     logToClaw,
 	}
-	if cd.Workspace != "" {
-		host.SessionsDir = filepath.Join(cd.Workspace, "sessions")
+	if dir := cd.EffectiveStateDir(); dir != "" {
+		host.SessionsDir = filepath.Join(dir, "sessions")
 	}
 	if cd.SessionInfoFn != nil {
 		host.SessionInfo = func(ctx context.Context, sessionKey string) (*sessiontools.SessionInfo, error) {

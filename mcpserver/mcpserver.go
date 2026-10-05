@@ -74,8 +74,12 @@ type MCPServer struct {
 	onServeError    func(error)
 	serving         atomic.Bool
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
-	internalAllow   []string                       // tools/list visibility filter for /internal
-	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
+	// agentLookup resolves a tools/call for an agent not in agentRegistries:
+	// a temporary agent created after the host started. Never part of the
+	// published catalogue.
+	agentLookup   func(agentID string) (*tools.ToolRegistry, bool)
+	internalAllow []string // tools/list visibility filter for /internal
+	externalAllow []string // tools/list visibility filter for /mcp (bearer)
 
 	// NOTE: progressive tool discovery is intentionally NOT applied on the host.
 	// It is an in-loop model-context optimization only; the MCP host always
@@ -131,6 +135,13 @@ func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 		m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
 		maps.Copy(m.agentRegistries, registries)
 	}
+}
+
+// WithAgentLookup sets the fallback that resolves the tool registry of an
+// agent the registries map does not hold (a temporary agent created at run
+// time, whose session token the agent loop issues), for tools/call dispatch.
+func WithAgentLookup(fn func(agentID string) (*tools.ToolRegistry, bool)) Option {
+	return func(m *MCPServer) { m.agentLookup = fn }
 }
 
 // WithAgentWorkspaces supplies the agentID → workspace map. Used only
@@ -286,10 +297,7 @@ func New(opts ...Option) (*MCPServer, error) {
 
 	tracker := newFirstCallTracker(m.workspaces)
 
-	resolver := func(agentName string) (*tools.ToolRegistry, bool) {
-		reg, ok := m.agentRegistries[agentName]
-		return reg, ok
-	}
+	resolver := m.registryFor
 
 	newSrv := func() *server.MCPServer {
 		// Protocol handshake: bare semver, not app.Version(). A client may
@@ -337,6 +345,18 @@ func New(opts ...Option) (*MCPServer, error) {
 	m.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	return m, nil
+}
+
+// registryFor resolves the tool registry a tools/call for agentName dispatches
+// to: a registered agent's, else the lookup's (a temporary agent).
+func (m *MCPServer) registryFor(agentName string) (*tools.ToolRegistry, bool) {
+	if reg, ok := m.agentRegistries[agentName]; ok {
+		return reg, true
+	}
+	if m.agentLookup != nil {
+		return m.agentLookup(agentName)
+	}
+	return nil, false
 }
 
 // Listen returns the configured listen address.

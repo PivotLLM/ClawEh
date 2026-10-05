@@ -19,7 +19,7 @@ func TestToolActivity_BreadcrumbGating(t *testing.T) {
 		// Keep the model's ForUser streaming off so only the breadcrumb reaches the bus.
 		cfg.Agents.Defaults.StreamToolActivity = false
 
-		agentInstance := al.registry.GetDefaultAgent()
+		agentInstance := al.registry.Default()
 		if agentInstance == nil {
 			t.Fatal("no default agent")
 		}

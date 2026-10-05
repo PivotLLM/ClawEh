@@ -79,9 +79,24 @@ const (
 
 // ExcludedDirs are directory names skipped anywhere in the database walk: the
 // media staging cache, logs, the backup destination itself, per-agent scratch
-// space, and cogmem's throwaway per-sub-agent snapshots. Nothing in them is
-// needed to bring an install back.
+// space, and the per-sub-agent memory snapshots earlier versions left under
+// cogmem/. Nothing in them is needed to bring an install back.
 var ExcludedDirs = [...]string{"media", "logs", "backup", "tmp", "subagents"}
+
+// Temporary agents (sub-agent clones and the like) live under
+// internal/temp/<uuid> and are listed in internal/temp_agents.json. They are
+// run-time scratch, deleted after their run or when idle, and are never
+// archived: a restore starts without them.
+const (
+	tempAgentsDir  = internalDir + "/temp/"
+	tempAgentsList = internalDir + "/temp_agents.json"
+)
+
+// isTempAgentPath reports whether an archive name belongs to the temporary
+// agents.
+func isTempAgentPath(name string) bool {
+	return name == tempAgentsList || strings.HasPrefix(name, tempAgentsDir)
+}
 
 // excludedPrefixes are top-level directory name prefixes skipped in the walk:
 // what a restore leaves behind, and its own staging area.
@@ -345,7 +360,8 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	// describe this host's process, not state to restore.
 	for _, d := range []string{tlsDir, internalDir} {
 		if err := walk(filepath.Join(src.Home, d), d+"/", dest, func(path, name string) {
-			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName {
+			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName ||
+				isTempAgentPath(name) {
 				return
 			}
 			add(entry{src: path, name: name, db: isDB(path)})
@@ -355,7 +371,7 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	}
 	// Databases anywhere else under Home.
 	dbOnly := func(path, name string) {
-		if isDB(path) {
+		if isDB(path) && !isTempAgentPath(name) {
 			add(entry{src: path, name: name, db: true})
 		}
 	}

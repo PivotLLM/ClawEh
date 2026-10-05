@@ -93,7 +93,7 @@ func newRecoveryTestLoop(t *testing.T) (*testLoop, *recoveryTestStore) {
 
 func mustGetAgent(t *testing.T, al *AgentLoop) *AgentInstance {
 	t.Helper()
-	agent, ok := al.GetRegistry().GetAgent("main")
+	agent, ok := al.GetRegistry().Get("main")
 	if !ok {
 		t.Fatal("agent main not registered")
 	}

@@ -532,6 +532,21 @@ observe does not need an entry.
 
 ### Changed
 
+- **A sub-agent (`agent_spawn`, Maestro dispatch) now runs as a temporary
+  clone of its agent** instead of in a sub-agent session of the agent. What it
+  can do is unchanged: same workspace, tools, models, prompt, depth limit,
+  results and errors, and a throwaway snapshot of the agent's memory. What
+  you see changes: its conversation and memory live in
+  `<CLAW_HOME>/internal/temp/<uuid>/` (left out of backups) rather than in the
+  agent's `sessions/` and `cogmem/subagents/`; its session key is
+  `agent:<uuid>:main` instead of `agent:<id>:subagent:<uuid>`; log lines name
+  it `alice (clone 1a2b3c4d)`; and its audit rows, still recorded under
+  `alice`, carry `"clone": "1a2b3c4d"` in their details. It is deleted once its
+  result is delivered; one left by a stop or crash mid-run is removed at the
+  next start. Its late async results go to the agent's main conversation, and
+  a message for a temporary agent that no longer exists is dropped, never
+  handed to another agent. Temporary agents never appear on the Agents page,
+  in the Check Up report or in a device's agent list.
 - **BREAKING: every agent runs in unified mode — one conversation per agent.**
   The per-user, per-platform and per-account session modes are removed, with
   the `session.mode` setting (`session_scope` in the docs) and

@@ -35,6 +35,10 @@ type sessionRecord struct {
 	archiveDir string
 	channel    string
 	chatID     string
+	// homeID, when set, is the agent a late async result of this session is
+	// delivered to instead of agentID: a temporary clone's source, resolved
+	// when the token is issued, so it holds after the clone is deleted.
+	homeID string
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
@@ -61,6 +65,18 @@ type SessionTokenStore struct {
 	// name one session, and rotating the conversation token must not disturb
 	// the service token (or vice versa).
 	bySvc map[string]string // agentID → service token
+	// home maps an agent to the agent its late results go to (a clone's
+	// source); nil keeps every agent's own. Set once at startup.
+	home func(agentID string) string
+}
+
+// SetHomeResolver installs the lookup from an agent to the agent its late
+// async results are delivered to (a temporary clone's source). Tokens issued
+// afterwards record it.
+func (s *SessionTokenStore) SetHomeResolver(fn func(agentID string) string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.home = fn
 }
 
 // NewSessionTokenStore returns an empty store. The gateway creates one for the
@@ -88,10 +104,22 @@ func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		return ""
 	}
 
+	// Resolve the home agent outside the store's lock: the resolver reads the
+	// agent registry.
+	s.mu.RLock()
+	home := s.home
+	s.mu.RUnlock()
+	homeID := ""
+	if home != nil {
+		if h := home(agentID); h != "" && h != agentID {
+			homeID = h
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, homeID: homeID}
 
 	// If a pinned token is already registered for this session key, preserve it —
 	// pinned tokens (test + service tokens) must not be rotated by normal session

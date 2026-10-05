@@ -42,6 +42,14 @@ type ToolProvider interface {
 	Describe() []ToolDescriptor
 }
 
+// EffectiveStateDir is StateDir, or Workspace when StateDir is unset.
+func (d ToolDeps) EffectiveStateDir() string {
+	if d.StateDir != "" {
+		return d.StateDir
+	}
+	return d.Workspace
+}
+
 // ToolDeps carries everything a tool package needs at construction time.
 // Fields are optional — providers check for nil/zero before using.
 type ToolDeps struct {
@@ -49,6 +57,17 @@ type ToolDeps struct {
 	AgentCfg  *config.AgentConfig // nil for the default agent
 	AgentID   string
 	Workspace string
+	// StateDir holds the agent's conversation archive (sessions/) and its
+	// cognitive memory (cogmem/): the workspace for a config agent, the
+	// agent's own directory for a temporary one. Empty means Workspace.
+	StateDir string
+	// EphemeralMemory marks a memory nothing is consolidated into (a
+	// sub-agent's snapshot of its source's memory).
+	EphemeralMemory bool
+	// TempAgent marks a temporary agent (a sub-agent clone). Its tools must
+	// not replace anything registered once per agent id for the agent it acts
+	// as (the Maestro runner): it uses what is there.
+	TempAgent bool
 
 	// Spawn/subagent
 	Provider          providers.LLMProvider

@@ -7,12 +7,51 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
+
+// agentRecordingProvider wraps a provider and records the agent each call was
+// made for, so a test can find the temporary clone a sub-agent ran as.
+type agentRecordingProvider struct {
+	providers.LLMProvider
+	mu     sync.Mutex
+	agents []string
+}
+
+func (p *agentRecordingProvider) Chat(
+	ctx context.Context, messages []providers.Message, defs []providers.ToolDefinition, model string, opts map[string]any,
+) (*providers.LLMResponse, error) {
+	p.mu.Lock()
+	p.agents = append(p.agents, providers.AgentIDFromContext(ctx))
+	p.mu.Unlock()
+	return p.LLMProvider.Chat(ctx, messages, defs, model, opts)
+}
+
+func (p *agentRecordingProvider) lastAgent() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.agents) == 0 {
+		return ""
+	}
+	return p.agents[len(p.agents)-1]
+}
+
+// newSubagentTestLoop builds a loop whose one agent ("main") allows every
+// tool and whose model calls go to provider. Tools added with RegisterTool
+// reach the sub-agent clones built later.
+func newSubagentTestLoop(t *testing.T, provider providers.LLMProvider) *AgentLoop {
+	t.Helper()
+	cfg := newTestConfig(t)
+	cfg.Agents.List[0].Tools = []string{"*"}
+	return mustNewAgentLoop(t, cfg, bus.NewMessageBus(), provider, nil)
+}
 
 // TestRunSubagentTask_CarriesToolTally: a sub-agent run reports how many tool
 // calls its worker made, how many failed and the last failure, and removes
@@ -21,17 +60,7 @@ func TestRunSubagentTask_CarriesToolTally(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 
-	al := newTestAgentLoop(t).al
-	agentInstance := al.registry.GetDefaultAgent()
-	if agentInstance == nil {
-		t.Fatal("no default agent")
-	}
-	agentInstance.Tools.Register(&noopWriteFile{})
-	agentInstance.Tools.Register(&panickingTool{})
-	if agentInstance.Config != nil {
-		agentInstance.Config.Tools = []string{"*"}
-	}
-	agentInstance.Provider = &sequenceProvider{
+	provider := &sequenceProvider{
 		responses: []*providers.LLMResponse{
 			{ToolCalls: []providers.ToolCall{toolCallTo("tc-1", "file_write")}},
 			{ToolCalls: []providers.ToolCall{toolCallTo("tc-2", "no_such_tool")}},
@@ -40,9 +69,12 @@ func TestRunSubagentTask_CarriesToolTally(t *testing.T) {
 		},
 		errors: []error{nil, nil, nil, nil},
 	}
+	al := newSubagentTestLoop(t, provider)
+	al.RegisterTool(&noopWriteFile{})
+	al.RegisterTool(&panickingTool{})
 
-	session := "agent:" + agentInstance.ID + ":subagent:tally"
-	res, err := al.runSubagentTask(context.Background(), agentInstance.ID, session, "do the work", "", nil)
+	res, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", nil)
+	defer release()
 	if err != nil {
 		t.Fatalf("runSubagentTask: %v", err)
 	}
@@ -52,29 +84,22 @@ func TestRunSubagentTask_CarriesToolTally(t *testing.T) {
 	if !strings.HasPrefix(res.LastToolError, "panic_tool: ") {
 		t.Errorf("last tool error = %q, want the panic_tool failure", res.LastToolError)
 	}
-	if res.SessionKey != session {
-		t.Errorf("session key = %q, want %q", res.SessionKey, session)
+	pk := routing.ParseAgentSessionKey(res.SessionKey)
+	if pk == nil || pk.Rest != routing.DefaultMainKey || !al.GetRegistry().IsTemp(pk.AgentID) {
+		t.Errorf("session key = %q, want the main session of a temporary clone", res.SessionKey)
 	}
-	if calls, _, _ := tools.EndToolStats(session); calls != 0 {
+	if calls, _, _ := tools.EndToolStats(res.SessionKey); calls != 0 {
 		t.Errorf("tally entry left behind after the run (%d calls)", calls)
 	}
 }
 
 // TestRunSubagentTask_ErrorPathRemovesTally: a sub-agent run that fails still
-// removes its tally entry, so later calls under that key are not counted.
+// removes its tally entry, so later calls under that key are not counted, and
+// its clone is deleted once released.
 func TestRunSubagentTask_ErrorPathRemovesTally(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 
-	al := newTestAgentLoop(t).al
-	agentInstance := al.registry.GetDefaultAgent()
-	if agentInstance == nil {
-		t.Fatal("no default agent")
-	}
-	agentInstance.Tools.Register(&noopWriteFile{})
-	if agentInstance.Config != nil {
-		agentInstance.Config.Tools = []string{"*"}
-	}
 	boom := errors.New("provider exploded")
 	// One working tool call, then the provider fails on every attempt.
 	responses := make([]*providers.LLMResponse, 11)
@@ -83,15 +108,26 @@ func TestRunSubagentTask_ErrorPathRemovesTally(t *testing.T) {
 	for i := 1; i < len(errs); i++ {
 		errs[i] = boom
 	}
-	agentInstance.Provider = &sequenceProvider{responses: responses, errors: errs}
+	provider := &agentRecordingProvider{LLMProvider: &sequenceProvider{responses: responses, errors: errs}}
+	al := newSubagentTestLoop(t, provider)
+	al.RegisterTool(&noopWriteFile{})
 
-	session := "agent:" + agentInstance.ID + ":subagent:tally-error"
-	if _, err := al.runSubagentTask(context.Background(), agentInstance.ID, session, "do the work", "", nil); err == nil {
+	_, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", nil)
+	if err == nil {
 		t.Fatal("runSubagentTask succeeded; want the provider error")
 	}
+	release()
+	clone := provider.lastAgent()
+	if clone == "" || clone == "main" {
+		t.Fatalf("the run was not made by a clone (agent %q)", clone)
+	}
+	session := routing.BuildAgentMainSessionKey(clone)
 	tools.RecordToolResult(session, "file_write", tools.NewToolResult("late"))
 	if calls, _, _ := tools.EndToolStats(session); calls != 0 {
 		t.Errorf("tally entry left behind after a failed run (%d calls)", calls)
+	}
+	if temps := al.GetRegistry().ListTemp(); len(temps) != 0 {
+		t.Errorf("clone left in the registry after release: %v", temps)
 	}
 }
 

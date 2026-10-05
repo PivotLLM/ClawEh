@@ -18,7 +18,7 @@ func defaultAgentTarget(al *agent.AgentLoop) devices.TargetFunc {
 		if cfg == nil {
 			return "", "", false
 		}
-		channel, chatID, _, ok := cfg.CronTarget(al.GetRegistry().GetDefaultAgentID())
+		channel, chatID, _, ok := cfg.CronTarget(al.GetRegistry().DefaultID())
 		return channel, chatID, ok
 	}
 }

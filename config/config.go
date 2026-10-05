@@ -2914,7 +2914,7 @@ func (c *Config) CLIPath() string {
 
 // AgentSessionDirs returns the sessions subdirectory for every configured
 // agent, deduped. This mirrors the workspace resolution logic in
-// agent/instance.go:resolveAgentWorkspace. The result is used by the
+// agentreg.ConfigWorkspace. The result is used by the
 // WebUI to enumerate sessions across all configured agents.
 func (c *Config) AgentSessionDirs() []string {
 	base := c.BaseDir()

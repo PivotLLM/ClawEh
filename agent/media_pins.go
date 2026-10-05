@@ -102,7 +102,7 @@ func (al *AgentLoop) reconcileSessionPins(sessionKey string, messages []provider
 }
 
 // releaseSessionPins drops all pins held by the session (session_clear, or a
-// sub-agent session being cleaned up).
+// temporary agent being deleted).
 func (al *AgentLoop) releaseSessionPins(sessionKey string) {
 	p := al.refPinner()
 	if p == nil {

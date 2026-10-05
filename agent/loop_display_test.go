@@ -44,7 +44,7 @@ func TestRunLLMIteration_ToolForUser_PublishedOnInboundUserMessage(t *testing.T)
 	// ForUser is only streamed to the user when tool-activity streaming is on.
 	cfg.Agents.Defaults.StreamToolActivity = true
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -145,7 +145,7 @@ func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
 	al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 	cfg.Agents.Defaults.StreamToolActivity = false // explicit: the default
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/ctxengine/session"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cronmsg"
@@ -19,16 +20,25 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	ID             string
-	Name           string
-	Model          string
-	Fallbacks      []string
-	Workspace      string
+	ID        string
+	Name      string
+	Model     string
+	Fallbacks []string
+	Workspace string
+	// StateDir holds the agent's conversation archive (sessions/) and its
+	// cognitive memory (cogmem/). It is the workspace for a config agent and
+	// the agent's own directory under internal/temp for a temporary one.
+	StateDir string
+	// Spec is how the registry built the agent: its origin, the source of a
+	// clone, whether its memory is ephemeral, whether it is a fresh temporary
+	// agent (no tools).
+	Spec           agentreg.Spec
 	MaxIterations  int
 	MaxTokens      int
 	Temperature    float64
@@ -48,7 +58,7 @@ type AgentInstance struct {
 	// AgentDefaults.VisionModel + VisionModelFallbacks). When the active model is
 	// text-only and images are encountered, they are dispatched to these clients
 	// (first success wins) for a one-shot text description instead of being
-	// dropped. Empty = feature off. Wired by AgentLoop.registerRuntimeTools.
+	// dropped. Empty = feature off. Wired by AgentLoop.agentBuilder.
 	VisionClients []visionClient
 	// EffectiveVisionModel is the first (primary) vision-describe model name, for
 	// logging. Empty when no vision model is configured.
@@ -71,16 +81,70 @@ type AgentInstance struct {
 	// both the suite path and loop_mcp so a pinned maestro/fusion/MCP tool is
 	// registered visible (core) instead of hidden. Empty pins nothing.
 	AlwaysShownNamespaces []string
+
+	// spawnMgr is the agent's sub-agent task manager, built with its tools; the
+	// task supervisor scans the config agents' managers.
+	spawnMgr *toolsagents.SubagentManager
 }
 
-// NewAgentInstance creates an agent instance from config.
+// Label names the agent in logs and audit rows: its id, or "alice (clone
+// 1a2b3c4d)" for a temporary clone of alice.
+func (a *AgentInstance) Label() string {
+	if a.Spec.ID == "" {
+		return a.ID
+	}
+	return a.Spec.Label()
+}
+
+// IsTemp reports whether the agent is a temporary agent.
+func (a *AgentInstance) IsTemp() bool { return a.Spec.Origin == agentreg.OriginTemp }
+
+// toolIdentity is the agent id the agent's tools act as: a clone acts as its
+// source (its Maestro projects, OAuth tokens, cron jobs and task ownership are
+// the source's), every other agent as itself.
+func (a *AgentInstance) toolIdentity() string {
+	if a.Spec.IsClone() {
+		return a.Spec.SourceID
+	}
+	return a.ID
+}
+
+// asyncResultTarget is where a late (async) result of a's tools is
+// delivered: a's main conversation, or for a clone its source's — the clone
+// may be deleted by the time the result arrives. Callers resolve it when the
+// callback is built.
+func asyncResultTarget(a *AgentInstance) (agentID, sessionKey string) {
+	home := a.toolIdentity()
+	return home, routing.BuildAgentMainSessionKey(home)
+}
+
+// NewAgentInstance creates a config agent's instance; its state lives in its
+// workspace. A nil agentCfg is the routing-default agent.
 func NewAgentInstance(
 	agentCfg *config.AgentConfig,
 	defaults *config.AgentDefaults,
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) (*AgentInstance, error) {
-	workspace := resolveAgentWorkspace(agentCfg, cfg.BaseDir())
+	workspace := agentreg.ConfigWorkspace(agentCfg, cfg.BaseDir())
+	spec := agentreg.Spec{Origin: agentreg.OriginConfig, Workspace: workspace, StateDir: workspace}
+	if agentCfg != nil {
+		spec.ID = routing.NormalizeAgentID(agentCfg.ID)
+		spec.Config = agentCfg
+	}
+	return newAgentInstance(spec, defaults, cfg, provider)
+}
+
+// newAgentInstance creates the instance a registry spec describes.
+func newAgentInstance(
+	spec agentreg.Spec,
+	defaults *config.AgentDefaults,
+	cfg *config.Config,
+	provider providers.LLMProvider,
+) (*AgentInstance, error) {
+	agentCfg := spec.Config
+	workspace := spec.Workspace
+	stateDir := spec.StateDir
 
 	agentws.Populate(workspace)
 
@@ -97,7 +161,7 @@ func NewAgentInstance(
 
 	toolsRegistry := tools.NewToolRegistry()
 
-	sessionsDir := filepath.Join(workspace, "sessions")
+	sessionsDir := filepath.Join(stateDir, "sessions")
 
 	// Bring this agent's cognitive memory to the current layout and schema now,
 	// rather than leaving it to be upgraded whenever it next happens to be
@@ -109,7 +173,10 @@ func NewAgentInstance(
 	if agentCfg != nil && agentCfg.ID != "" {
 		migrateID = agentCfg.ID
 	}
-	cogmemhost.Migrate(migrateID, workspace)
+	if spec.Origin == agentreg.OriginTemp {
+		migrateID = spec.Label()
+	}
+	cogmemhost.Migrate(migrateID, stateDir)
 
 	sessions, err := initSessionStore(sessionsDir)
 	if err != nil {
@@ -117,7 +184,7 @@ func NewAgentInstance(
 	}
 
 	// The registry starts empty. Tools are registered exactly once — after
-	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
+	// construction by AgentLoop.agentBuilder, and again on config reload —
 	// so the full runtime deps (session closures, the sub-agent spawner, and the
 	// per-agent message tool) are present. Registering here too would double-build
 	// every tool and overwrite it, so we intentionally don't.
@@ -297,12 +364,18 @@ func NewAgentInstance(
 		agentCfg = &config.AgentConfig{Tools: []string{}}
 	}
 
+	if spec.ID == "" {
+		spec.ID, spec.Config = agentID, agentCfg
+	}
+
 	return &AgentInstance{
 		ID:             agentID,
 		Name:           agentName,
 		Model:          model,
 		Fallbacks:      fallbacks,
 		Workspace:      workspace,
+		StateDir:       stateDir,
+		Spec:           spec,
 		MaxIterations:  maxIter,
 		MaxTokens:      maxTokens,
 		Temperature:    temperature,
@@ -319,23 +392,6 @@ func NewAgentInstance(
 		Candidates:     candidates,
 		Config:         agentCfg,
 	}, nil
-}
-
-// resolveAgentWorkspace determines the workspace directory for an agent:
-// an explicit per-agent workspace wins; otherwise the agent lives at
-// <base_dir>/<id>, with the routing-default agent (empty/"main" id) at
-// <base_dir>/default.
-func resolveAgentWorkspace(agentCfg *config.AgentConfig, baseDir string) string {
-	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
-		return expandHome(strings.TrimSpace(agentCfg.Workspace))
-	}
-	id := "default"
-	if agentCfg != nil {
-		if nid := routing.NormalizeAgentID(agentCfg.ID); nid != "" && nid != "main" {
-			id = nid
-		}
-	}
-	return filepath.Join(baseDir, id)
 }
 
 // resolveAgentModels resolves the ordered model list for an agent: the agent's
@@ -395,23 +451,6 @@ func refuseUnmigratedSessions(dir string) error {
 		}
 	}
 	return nil
-}
-
-func expandHome(path string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			logger.WarnCF("agent", "Failed to resolve home directory", map[string]any{"path": path, "error": err.Error()})
-		}
-		if len(path) > 1 && path[1] == '/' {
-			return home + path[1:]
-		}
-		return home
-	}
-	return path
 }
 
 // resolveAgentIntOpt resolves a per-agent integer config knob against the

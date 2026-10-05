@@ -28,10 +28,10 @@ func openSessionStore(t *testing.T, agent *AgentInstance, key string) *store.Sto
 }
 
 // TestWireCognitiveMemory_GatesOnAgentFlag: only agents with cogmem on get a
-// session; sub-agent sessions are ephemeral.
+// session.
 func TestWireCognitiveMemory_GatesOnAgentFlag(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	mem := al.wireCognitiveMemory(agent, "agent:main:main")
 	if mem == nil {
 		t.Fatal("default agent has cognitive memory on; expected a session")
@@ -54,7 +54,7 @@ func TestWireCognitiveMemory_GatesOnAgentFlag(t *testing.T) {
 // nothing already spoken is lost to memory; a second open does not repeat it.
 func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	const key = "agent:main:main"
 	ctx := context.Background()
 

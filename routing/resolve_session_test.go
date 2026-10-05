@@ -20,9 +20,8 @@ func TestAgentIDFromSessionKey(t *testing.T) {
 	}
 }
 
-// TestResolveAgentSessionKey: an agent has one persistent conversation. Every
-// requested key resolves to agent:<id>:main except the agent's own sub-agent
-// session, which is kept.
+// TestResolveAgentSessionKey: an agent has one conversation. Every requested
+// key resolves to agent:<id>:main, including the retired sub-agent key form.
 func TestResolveAgentSessionKey(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -41,7 +40,7 @@ func TestResolveAgentSessionKey(t *testing.T) {
 		{"old service key", "alice", "agent:alice:service", "agent:alice:main"},
 		{"another agent's main", "alice", "agent:bob:main", "agent:alice:main"},
 		{"another agent's sub-agent", "alice", "agent:bob:subagent:u1", "agent:alice:main"},
-		{"own sub-agent", "alice", "agent:alice:subagent:u1", "agent:alice:subagent:u1"},
+		{"own retired sub-agent key", "alice", "agent:alice:subagent:u1", "agent:alice:main"},
 		{"agent id normalized", "Sales Bot", "agent:sales-bot:telegram:direct:1", "agent:sales-bot:main"},
 	}
 	for _, tt := range tests {

@@ -42,7 +42,7 @@ func TestNewAgentRegistry_EmptyList(t *testing.T) {
 	cfg := testCfg(nil)
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	ids := registry.ListAgentIDs()
+	ids := registry.List()
 	if len(ids) != 0 {
 		t.Errorf("expected empty registry with no agents configured, got %v", ids)
 	}
@@ -55,12 +55,12 @@ func TestNewAgentRegistry_ExplicitAgents(t *testing.T) {
 	})
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	ids := registry.ListAgentIDs()
+	ids := registry.List()
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 agents, got %d: %v", len(ids), ids)
 	}
 
-	sales, ok := registry.GetAgent("sales")
+	sales, ok := registry.Get("sales")
 	if !ok || sales == nil {
 		t.Fatal("expected to find 'sales' agent")
 	}
@@ -68,7 +68,7 @@ func TestNewAgentRegistry_ExplicitAgents(t *testing.T) {
 		t.Errorf("sales.Name = %q, want 'Sales Bot'", sales.Name)
 	}
 
-	support, ok := registry.GetAgent("support")
+	support, ok := registry.Get("support")
 	if !ok || support == nil {
 		t.Fatal("expected to find 'support' agent")
 	}
@@ -80,7 +80,7 @@ func TestAgentRegistry_GetAgent_Normalize(t *testing.T) {
 	})
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	agent, ok := registry.GetAgent("My-Agent")
+	agent, ok := registry.Get("My-Agent")
 	if !ok || agent == nil {
 		t.Fatal("expected to find agent with normalized ID")
 	}
@@ -97,7 +97,7 @@ func TestAgentRegistry_GetDefaultAgent(t *testing.T) {
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
 	// GetDefaultAgent first checks for "main", then returns any
-	agent := registry.GetDefaultAgent()
+	agent := registry.Default()
 	if agent == nil {
 		t.Fatal("expected a default agent")
 	}
@@ -118,16 +118,16 @@ func TestAgentRegistry_CanSpawnSubagent(t *testing.T) {
 	})
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	if !registry.CanSpawnSubagent("parent", "child1") {
+	if !canSpawnSubagent(registry, "parent", "child1") {
 		t.Error("expected parent to be allowed to spawn child1")
 	}
-	if !registry.CanSpawnSubagent("parent", "child2") {
+	if !canSpawnSubagent(registry, "parent", "child2") {
 		t.Error("expected parent to be allowed to spawn child2")
 	}
-	if registry.CanSpawnSubagent("parent", "restricted") {
+	if canSpawnSubagent(registry, "parent", "restricted") {
 		t.Error("expected parent to NOT be allowed to spawn restricted")
 	}
-	if registry.CanSpawnSubagent("child1", "child2") {
+	if canSpawnSubagent(registry, "child1", "child2") {
 		t.Error("expected child1 to NOT be allowed to spawn (no subagents config)")
 	}
 }
@@ -145,10 +145,10 @@ func TestAgentRegistry_CanSpawnSubagent_Wildcard(t *testing.T) {
 	})
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	if !registry.CanSpawnSubagent("admin", "any-agent") {
+	if !canSpawnSubagent(registry, "admin", "any-agent") {
 		t.Error("expected wildcard to allow spawning any agent")
 	}
-	if !registry.CanSpawnSubagent("admin", "nonexistent") {
+	if !canSpawnSubagent(registry, "admin", "nonexistent") {
 		t.Error("expected wildcard to allow spawning even nonexistent agents")
 	}
 }
@@ -159,7 +159,7 @@ func TestAgentInstance_Model(t *testing.T) {
 	})
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	agent, _ := registry.GetAgent("custom")
+	agent, _ := registry.Get("custom")
 	if agent.Model != "claude-opus" {
 		t.Errorf("agent.Model = %q, want 'claude-opus'", agent.Model)
 	}
@@ -176,7 +176,7 @@ func TestAgentInstance_FallbackInheritance(t *testing.T) {
 	}
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	agent, _ := registry.GetAgent("inherit")
+	agent, _ := registry.Get("inherit")
 	if len(agent.Fallbacks) != 2 {
 		t.Errorf("expected 2 fallbacks inherited from defaults, got %d", len(agent.Fallbacks))
 	}
@@ -194,7 +194,7 @@ func TestAgentInstance_FallbackSingleModel(t *testing.T) {
 	}
 	registry := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 
-	agent, _ := registry.GetAgent("no-fallback")
+	agent, _ := registry.Get("no-fallback")
 	if len(agent.Fallbacks) != 0 {
 		t.Errorf("expected 0 fallbacks (single model), got %d: %v", len(agent.Fallbacks), agent.Fallbacks)
 	}

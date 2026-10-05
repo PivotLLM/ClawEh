@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
@@ -21,34 +23,68 @@ import (
 	toolsmsg "github.com/PivotLLM/ClawEh/tools/msg"
 )
 
-// registerRuntimeTools is the single tool-registration entry point: for every
-// agent in the registry it builds the full ToolDeps (session closures, the
-// sub-agent spawner, the per-agent message tool, dispatcher/fallback) and registers
-// every allowed provider tool exactly once. It runs after the AgentLoop exists so
-// the closures can capture al — at initial construction (NewAgentLoop) and again
-// on config reload (ReloadProviderAndConfig). NewAgentInstance deliberately
-// leaves the registry empty so tools are never double-registered.
-func (al *AgentLoop) registerRuntimeTools(
-	registry *AgentRegistry,
+// agentBuilder returns the registry's BuildFunc: it builds the instance a spec
+// describes and registers its tools, so every agent — config agents at start
+// and on reload, temporary agents when they are created or rebuilt — gets its
+// tools exactly once, from one place. cfg is the one being built against (on
+// reload, al.cfg is still the old one at this point). A fresh temporary agent
+// gets no tools at all.
+func (al *AgentLoop) agentBuilder(
+	provider providers.LLMProvider,
+	dispatcher *providers.ProviderDispatcher,
+	fallbackChain *providers.FallbackChain,
+) agentreg.BuildFunc[*AgentInstance] {
+	return func(cfg *config.Config, spec agentreg.Spec) (*AgentInstance, error) {
+		inst, err := newAgentInstance(spec, &cfg.Agents.Defaults, cfg, provider)
+		if err != nil {
+			return nil, err
+		}
+		// Wire the vision-describe side-model chain onto the instance (no-op when
+		// no vision model is configured).
+		al.wireVisionClients(cfg, inst)
+		if spec.Fresh {
+			return inst, nil
+		}
+		al.registerAgentTools(inst, provider, dispatcher, fallbackChain, cfg)
+		if inst.IsTemp() {
+			// A config agent gets these after the registry is built (the gateway
+			// registers its tools, the media store is set at start); an agent
+			// created later gets them now. Its MCP tools come once it is
+			// registered (agentInserted).
+			al.registerExtraTools(inst)
+			al.applyMediaStore(inst)
+		}
+		return inst, nil
+	}
+}
+
+// agentInserted is the registry's InsertedFunc: a temporary agent Create has
+// just made visible gets the current MCP tool set. Done after insertion and
+// under the MCP refresh lock, so a server that is replaced while the agent is
+// being created is either seen here or re-registered onto it by the refresh.
+func (al *AgentLoop) agentInserted(_ agentreg.Spec, inst *AgentInstance) {
+	if inst.Spec.Fresh {
+		return
+	}
+	al.mcp.refreshMu.Lock()
+	defer al.mcp.refreshMu.Unlock()
+	inst.Tools.RemoveByPrefix(tools.MCPToolPrefix)
+	al.registerMCPToolsOn(inst)
+}
+
+// registerAgentTools builds the full ToolDeps for one agent (session closures,
+// the sub-agent spawner, the message tool, dispatcher/fallback) and registers
+// every allowed provider tool on it. A clone's tools act as its source (see
+// toolIdentity) but are bound to the clone's own state directory and session.
+func (al *AgentLoop) registerAgentTools(
+	currentAgent *AgentInstance,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
 	fallbackChain *providers.FallbackChain,
 	cfg *config.Config,
 ) {
-	// cfg is passed explicitly (not al.GetConfig()) because on reload
-	// ReloadProviderAndConfig registers tools BEFORE swapping al.cfg, so
-	// al.GetConfig() would return the stale pre-reload config here.
-
-	// Collect the per-agent spawn managers built below so the task supervisor can
-	// scan/relaunch interrupted tasks against the current config.
-	managers := make(map[string]*toolsagents.SubagentManager)
-
-	for _, agentID := range registry.ListAgentIDs() {
-		agentInst, ok := registry.GetAgent(agentID)
-		if !ok {
-			continue
-		}
-		currentAgent := agentInst
+	{
+		agentID := currentAgent.toolIdentity()
 		agentCfg := currentAgent.Config
 
 		// Build message tool for this agent instance.
@@ -67,14 +103,10 @@ func (al *AgentLoop) registerRuntimeTools(
 			messageTool = mt
 		}
 
-		// Wire the vision-describe side-model chain onto the instance (no-op when
-		// no vision model is configured). cfg is passed explicitly because on
-		// reload al.cfg is still the pre-reload config at this point.
-		al.wireVisionClients(cfg, currentAgent)
-
-		// Build candidate resolver for spawn.
+		// Build candidate resolver for spawn. The registry is looked up at call
+		// time: this runs while the registry is still being built.
 		candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
-			target, ok := registry.GetAgent(targetAgentID)
+			target, ok := al.GetRegistry().Get(targetAgentID)
 			if !ok {
 				return nil, false
 			}
@@ -131,13 +163,16 @@ func (al *AgentLoop) registerRuntimeTools(
 		}
 
 		// Determine spawn allowlist.
-		currentAgentID := agentID
+		currentAgentID := currentAgent.ID
 		spawnAllowlist := func(callerID, targetID string) bool {
-			return registry.CanSpawnSubagent(currentAgentID, targetID)
+			return canSpawnSubagent(al.GetRegistry(), currentAgentID, targetID)
 		}
 
 		// Robust sub-agent launcher, injected via Deps.Spawn so the internal spawn
 		// tool and any external/MCP tool launch workers through the same path.
+		// A clone's tasks are its source's: same tasks directory, same owner, so a
+		// background task it starts reports to the source's main conversation,
+		// like every other late result of a clone (see asyncResultTarget).
 		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 			Workspace:         currentAgent.Workspace,
 			Live:              al.taskLive,
@@ -147,7 +182,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			RunFull:           al.runSubagentTask,
 			Alerter:           al.Alerter(),
 		})
-		managers[agentID] = spawnMgr
+		currentAgent.spawnMgr = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
 		spawner.SetMaxDepth(cfg.Agents.Defaults.GetMaxSubagentDepth())
 		spawner.SetAllowlistChecker(func(targetID string) bool {
@@ -159,6 +194,9 @@ func (al *AgentLoop) registerRuntimeTools(
 			AgentCfg:          agentCfg,
 			AgentID:           agentID,
 			Workspace:         currentAgent.Workspace,
+			StateDir:          currentAgent.StateDir,
+			EphemeralMemory:   currentAgent.Spec.Ephemeral,
+			TempAgent:         currentAgent.IsTemp(),
 			Provider:          provider,
 			Dispatcher:        dispatcher,
 			Fallback:          fallbackChain,
@@ -227,10 +265,39 @@ func (al *AgentLoop) registerRuntimeTools(
 			al.registerDiscoveryMetaTools(currentAgent, cfg)
 		}
 	}
+}
 
-	al.spawnMu.Lock()
-	al.spawnManagers = managers
-	al.spawnMu.Unlock()
+// retireAgent is the registry's RetireFunc: before a temporary agent is
+// closed and its directory removed, its one session's context manager is
+// closed (refused while something holds it), its session tokens revoked and
+// the per-session caches the loop keeps for it dropped.
+func (al *AgentLoop) retireAgent(spec agentreg.Spec, inst *AgentInstance) error {
+	sessionKey := routing.BuildAgentMainSessionKey(inst.ID)
+	if !al.dropContextManager(context.Background(), inst, sessionKey, evictReasonTempDeleted) {
+		return fmt.Errorf("session %s is still in use", sessionKey)
+	}
+	al.releaseSessionPins(sessionKey)
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti != nil {
+		sti.RevokeAgent(inst.ID)
+	}
+	al.forgetSessionCaches(inst, sessionKey)
+	return nil
+}
+
+// registerExtraTools registers on agent the tools added with RegisterTool
+// (the gateway's cron tool), honouring its allowlist.
+func (al *AgentLoop) registerExtraTools(agent *AgentInstance) {
+	al.extraToolsMu.Lock()
+	extra := slices.Clone(al.extraTools)
+	al.extraToolsMu.Unlock()
+	for _, t := range extra {
+		if agent.Config.IsToolAllowed(t.Name()) {
+			agent.Tools.Register(t)
+		}
+	}
 }
 
 // suiteCogmem is the one suite that is never subject to progressive discovery —
@@ -281,11 +348,19 @@ func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *confi
 	}
 }
 
+// RegisterTool registers a host-built tool (the gateway's cron tool) on every
+// agent that allows it, and remembers it for the temporary agents created
+// later. A fresh temporary agent gets no tools.
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
+	al.extraToolsMu.Lock()
+	al.extraTools = slices.DeleteFunc(al.extraTools, func(t tools.Tool) bool { return t.Name() == tool.Name() })
+	al.extraTools = append(al.extraTools, tool)
+	al.extraToolsMu.Unlock()
+
 	registry := al.GetRegistry()
-	for _, agentID := range registry.ListAgentIDs() {
-		agent, ok := registry.GetAgent(agentID)
-		if !ok {
+	for _, agentID := range registry.All() {
+		agent, ok := registry.Get(agentID)
+		if !ok || agent.Spec.Fresh {
 			continue
 		}
 		// Per-agent allowlist check: skip registration if the agent config
@@ -371,14 +446,17 @@ func (al *AgentLoop) superviseTasks(ctx context.Context) {
 	}
 }
 
-// runTaskSupervision runs one supervision pass over all current spawn managers.
+// runTaskSupervision runs one supervision pass over the config agents' spawn
+// managers. A clone shares its source's tasks directory, so the source's
+// manager covers the tasks a clone started.
 func (al *AgentLoop) runTaskSupervision() {
-	al.spawnMu.Lock()
-	managers := make([]*toolsagents.SubagentManager, 0, len(al.spawnManagers))
-	for _, m := range al.spawnManagers {
-		managers = append(managers, m)
+	registry := al.GetRegistry()
+	var managers []*toolsagents.SubagentManager
+	for _, id := range registry.List() {
+		if a, ok := registry.Get(id); ok && a.spawnMgr != nil {
+			managers = append(managers, a.spawnMgr)
+		}
 	}
-	al.spawnMu.Unlock()
 
 	now := time.Now().Unix()
 	for _, m := range managers {
@@ -445,7 +523,7 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	// Get any agent to access the provider
-	defaultAgent := registry.GetDefaultAgent()
+	defaultAgent := registry.Default()
 	if defaultAgent == nil {
 		return nil, false
 	}

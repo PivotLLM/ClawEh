@@ -48,7 +48,6 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/servicetoken"
 	"github.com/PivotLLM/ClawEh/tools"
-	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
 	"github.com/PivotLLM/ClawEh/utils"
 	"github.com/PivotLLM/ClawEh/voice"
@@ -306,7 +305,7 @@ func gatewayCmd(debug bool) error {
 	// here, so the service manager restarts it; see fatal.go.
 	fatal := newFatalNotifier(operatorAlerter)
 	msgBus := bus.NewMessageBus()
-	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher, agent.OwnsDataDir())
 	if err != nil {
 		return fmt.Errorf("error creating agent loop: %w", err)
 	}
@@ -771,15 +770,6 @@ func setupAndStartServices(
 	// pruning; boot-only like the backup, reads live config each pass.
 	agentLoop.StartRetention()
 
-	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
-	// those older than 24h, so a crashed worker's artefacts can be inspected first.
-	// (Normal completion cleans up immediately.)
-	for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
-		if a, ok := agentLoop.GetRegistry().GetAgent(agentID); ok && a != nil {
-			toolsagents.PruneOrphanSubagentSessions(a.Workspace, 24*time.Hour, time.Now())
-		}
-	}
-
 	return services, nil
 }
 
@@ -803,7 +793,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		return nil
 	}
 	autoStarted := !cfg.MCPHost.Enabled
-	defaultAgent := agentLoop.GetRegistry().GetDefaultAgent()
+	defaultAgent := agentLoop.GetRegistry().Default()
 	if defaultAgent == nil || defaultAgent.Tools == nil {
 		logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
 		return nil
@@ -811,8 +801,8 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 
 	agentRegistries := make(map[string]*tools.ToolRegistry)
 	agentWorkspaces := make(map[string]string)
-	for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
-		a, ok := agentLoop.GetRegistry().GetAgent(agentID)
+	for _, agentID := range agentLoop.GetRegistry().List() {
+		a, ok := agentLoop.GetRegistry().Get(agentID)
 		if !ok || a.Tools == nil {
 			continue
 		}
@@ -822,12 +812,33 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 
 	if services.SessionTokens == nil {
 		services.SessionTokens = mcpserver.NewSessionTokenStore()
+		// A sub-agent clone's late async results go to its source agent.
+		services.SessionTokens.SetHomeResolver(func(agentID string) string {
+			reg := agentLoop.GetRegistry()
+			if !reg.IsTemp(agentID) {
+				return ""
+			}
+			return reg.HomeID(agentID)
+		})
 		agentLoop.SetSessionTokenIssuer(services.SessionTokens)
 	}
 
 	srv, err := mcpserver.New(
 		mcpserver.WithSessionTokenStore(services.SessionTokens),
 		mcpserver.WithAgentRegistries(agentRegistries),
+		// A sub-agent clone on a CLI provider calls its tools back through the
+		// host under its own id; clones are created after the host starts.
+		mcpserver.WithAgentLookup(func(agentID string) (*tools.ToolRegistry, bool) {
+			reg := agentLoop.GetRegistry()
+			if !reg.IsTemp(agentID) {
+				return nil, false
+			}
+			a, ok := reg.Get(agentID)
+			if !ok || a.Tools == nil {
+				return nil, false
+			}
+			return a.Tools, true
+		}),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
@@ -851,12 +862,12 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 	agentLoop.SetMCPHost(srv)
 
 	if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
-		defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
+		defaultAgentID := agentLoop.GetRegistry().DefaultID()
 		if defaultAgentID == "" {
 			logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
 		} else {
-			if da, ok := agentLoop.GetRegistry().GetAgent(defaultAgentID); ok && da != nil {
-				archiveDir := filepath.Join(da.Workspace, "sessions")
+			if da, ok := agentLoop.GetRegistry().Get(defaultAgentID); ok && da != nil {
+				archiveDir := filepath.Join(da.StateDir, "sessions")
 				srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
 				logger.InfoCF("mcpserver", "Test session token registered",
 					map[string]any{"agent": defaultAgentID})
@@ -903,13 +914,13 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 		return
 	}
 	srv.SessionTokens().SyncServiceTokens(tokens, func(agentID string) string {
-		da, ok := agentLoop.GetRegistry().GetAgent(agentID)
+		da, ok := agentLoop.GetRegistry().GetConfigured(agentID)
 		if !ok || da == nil {
 			logger.WarnCF("mcpserver", "service token for unknown agent; skipping",
 				map[string]any{"agent": agentID})
 			return ""
 		}
-		return filepath.Join(da.Workspace, "sessions")
+		return filepath.Join(da.StateDir, "sessions")
 	})
 }
 
@@ -1463,11 +1474,15 @@ func setupCronTool(
 			if reg == nil {
 				return nil
 			}
-			inst, ok := reg.GetAgent(agentID)
+			inst, ok := reg.GetConfigured(agentID)
 			if !ok || inst == nil {
 				return nil
 			}
 			return inst.Tools
+		})
+		// A sub-agent (a temporary clone) schedules for the agent it copies.
+		cronTool.SetHomeAgent(func(agentID string) string {
+			return agentLoop.GetRegistry().HomeID(agentID)
 		})
 	}
 

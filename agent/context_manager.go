@@ -490,15 +490,15 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		}
 	}
 
-	// The archive directory is the sessions directory within the agent workspace.
-	// We derive it from the workspace the same way initSessionStore does.
-	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	// The archive directory is the sessions directory within the agent's state
+	// directory, derived the same way initSessionStore does.
+	archiveDir := filepath.Join(agent.StateDir, "sessions")
 	opts := append([]ctxengine.Option{
 		ctxengine.WithContextWindow(agent.ContextWindow),
 		ctxengine.WithArchiveDir(archiveDir),
 		ctxengine.WithModelCaller(caller),
 		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
-		ctxengine.WithCompressionProfileDir(agent.Workspace),
+		ctxengine.WithCompressionProfileDir(agent.StateDir),
 		ctxengine.WithCompactDebug(debugCapture),
 		ctxengine.WithFailureDump(failureDump),
 		ctxengine.WithCompactionReporter(reporter),

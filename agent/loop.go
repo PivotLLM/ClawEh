@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/cogmem/consolidate"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -119,14 +120,19 @@ type AgentLoop struct {
 
 	// Background-task supervision. taskLive is the process-shared running-task
 	// set, shared by every per-agent SubagentManager (across reloads) so the
-	// supervisor never relaunches a task that is still running. spawnManagers maps
-	// agentID → its current manager (rebuilt on each registerRuntimeTools), used
-	// by the supervisor to scan/relaunch interrupted tasks. superStop is closed by
-	// Close() to stop the supervisor goroutine.
-	taskLive      *toolsagents.LiveSet
-	spawnMu       sync.Mutex
-	spawnManagers map[string]*toolsagents.SubagentManager
-	superStop     chan struct{}
+	// supervisor never relaunches a task that is still running. Each config
+	// agent's current manager hangs off its instance (spawnMgr). superStop is
+	// closed by Close() to stop the supervisor goroutine.
+	taskLive  *toolsagents.LiveSet
+	superStop chan struct{}
+
+	// sweepWG tracks the temporary-agent sweeper, stopped by evictStop.
+	sweepWG sync.WaitGroup
+
+	// extraTools are the host-built tools added with RegisterTool, kept so a
+	// temporary agent created later gets them too.
+	extraToolsMu sync.Mutex
+	extraTools   []tools.Tool
 
 	// stopRun cancels the context Run derives for every turn it starts, with
 	// errShuttingDown as the cause; set by Run, called by Stop. Guarded by
@@ -173,34 +179,39 @@ const (
 	metadataKeyPreresolvedAgentID = "preresolved_agent_id"
 )
 
+// LoopOption configures NewAgentLoop.
+type LoopOption func(*loopOptions)
+
+type loopOptions struct {
+	ownsDataDir bool
+}
+
+// OwnsDataDir marks the loop as the data directory's owner: the process that
+// holds claw.lock (the gateway). Only the owner restores the saved temporary
+// agents at start, removes stale temporary-agent directories and writes
+// internal/temp_agents.json. Without it (`claw agent` running beside the
+// service) the loop's temporary agents are kept in memory only and the
+// service's are left alone.
+func OwnsDataDir() LoopOption { return func(o *loopOptions) { o.ownsDataDir = true } }
+
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
+	opts ...LoopOption,
 ) (*AgentLoop, error) {
+	var lo loopOptions
+	for _, opt := range opts {
+		opt(&lo)
+	}
 	// Route the context engine's logs into ours before anything constructs a
 	// session store or context manager.
 	InstallLogging()
 
-	registry, err := NewAgentRegistry(cfg, provider)
-	if err != nil {
-		return nil, err
-	}
-
 	// Set up shared fallback chain with the config-driven cooldown policy.
 	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
 	fallbackChain := providers.NewFallbackChain(cooldown)
-
-	// Build per-agent state managers and message-token managers.
-	agentStates := make(map[string]*state.Manager)
-
-	for _, agentID := range registry.ListAgentIDs() {
-		if agentInstance, ok := registry.GetAgent(agentID); ok {
-			agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-		}
-	}
-	messageManagers := buildMessageManagers(registry, cfg)
 
 	// Load the long-lived named message-API token store from the data dir. An
 	// empty data dir (only happens in tests that build a bare Config) yields an
@@ -232,13 +243,11 @@ func NewAgentLoop(
 	al := &AgentLoop{
 		bus:                   msgBus,
 		cfg:                   cfg,
-		registry:              registry,
 		fallback:              fallbackChain,
 		cooldown:              cooldown,
 		cmdRegistry:           commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:            dispatcher,
-		agentStates:           agentStates,
-		messageManagers:       messageManagers,
+		agentStates:           make(map[string]*state.Manager),
 		namedTokens:           namedTokens,
 		sessions:              make(map[string]*sessionState),
 		startedAt:             time.Now(),
@@ -250,16 +259,34 @@ func NewAgentLoop(
 		exposeReasoningCache:  make(map[string]bool),
 		showToolActivityCache: make(map[string]bool),
 		taskLive:              toolsagents.NewLiveSet(),
-		spawnManagers:         make(map[string]*toolsagents.SubagentManager),
 		superStop:             make(chan struct{}),
 	}
 	if n := cfg.Agents.Defaults.MaxConcurrentTurns; n > 0 {
 		al.turnSem = make(chan struct{}, n)
 	}
 
-	// Register runtime-dependent tools via providers (session closures,
-	// spawn/subagent, msg with shared MessageTool).
-	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain, cfg)
+	// Build the registry: every config agent, then the temporary agents saved
+	// by the previous run. The builder registers each agent's tools (session
+	// closures, spawn/subagent, msg with shared MessageTool), so it runs once
+	// al exists.
+	registry, err := agentreg.New(cfg, agentreg.Hooks[*AgentInstance]{
+		Build:    al.agentBuilder(provider, dispatcher, fallbackChain),
+		Retire:   al.retireAgent,
+		Inserted: al.agentInserted,
+		Owner:    lo.ownsDataDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	al.registry = registry
+
+	// Per-agent state managers and message-token managers: config agents only.
+	for _, agentID := range registry.List() {
+		if agentInstance, ok := registry.Get(agentID); ok {
+			al.agentStates[agentID] = state.NewManager(agentInstance.Workspace)
+		}
+	}
+	al.messageManagers = buildMessageManagers(registry, cfg)
 
 	return al, nil
 }
@@ -284,6 +311,12 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Drop dispatch state for sessions that have been idle for an hour.
 	go al.pruneSessions()
+
+	// Delete temporary agents idle past their TTL (and any the configuration
+	// can no longer build). One pass now catches those that expired while the
+	// process was down.
+	al.registry.Sweep(time.Now())
+	al.sweepWG.Go(func() { al.registry.RunSweeper(al.evictStop, agentreg.SweepInterval) })
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).
@@ -377,6 +410,9 @@ func (al *AgentLoop) Close(ctx context.Context) {
 		mgr.Stop()
 	}
 
+	// The sweeper stopped with evictStop; wait for a sweep in progress so it
+	// cannot close an agent the registry closes next. Close runs once.
+	al.sweepWG.Wait()
 	al.GetRegistry().Close()
 }
 
@@ -419,82 +455,81 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return errors.New("config cannot be nil")
 	}
 
-	// Create new registry with updated config and provider
-	// Wrap in defer/recover to handle any panics gracefully
-	type registryResult struct {
-		registry *AgentRegistry
-		err      error
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context canceled before registry creation: %w", err)
 	}
-	done := make(chan registryResult, 1)
 
+	registry := al.GetRegistry()
+	oldProvider, hadProvider := extractProvider(registry)
+
+	// The new fallback chain is built here so it is shared between the tools the
+	// rebuilt agents register and the swapped-in al.fallback. Reuse the existing
+	// cooldown tracker so its state (notably out-of-credits parks) PERSISTS
+	// across the reload; only refresh its policy from the new config. The shared
+	// tracker continues to back both the new fallback chain and the rebuilt
+	// compaction managers.
+	al.cooldown.SetPolicy(cooldownPolicy(cfg))
+	newFallback := providers.NewFallbackChain(al.cooldown)
+
+	// Rebuild every agent against the new config and provider (config agents
+	// from the config, temporary agents against it too), each with its tools
+	// registered the same way as at start. Nothing changes until all are built;
+	// then the registry swaps them in one step and, in the same step, the config
+	// and fallback chain are swapped here, so readers see a consistent pair.
+	// A ctx that ends first returns at once: the rebuild is abandoned (the
+	// commit below refuses) and closes what it built. Whichever of the commit
+	// and the abandonment comes first wins. Panics are recovered and reported
+	// as a failed reload.
+	const (
+		reloadPending int32 = iota
+		reloadCommitted
+		reloadAbandoned
+	)
+	var outcome atomic.Int32
+	done := make(chan error, 1)
 	go func() {
-		var res registryResult
+		var err error
 		defer func() {
 			if r := recover(); r != nil {
-				res.err = fmt.Errorf("panic during registry creation: %v", r)
+				err = fmt.Errorf("panic during registry creation: %v", r)
 				logger.ErrorCF("agent", "Panic during registry creation",
 					map[string]any{"panic": r})
 			}
-			done <- res
+			done <- err
 		}()
-		res.registry, res.err = NewAgentRegistry(cfg, provider)
+		err = registry.Reload(ctx, cfg, al.agentBuilder(provider, al.dispatcher, newFallback), func() bool {
+			if !outcome.CompareAndSwap(reloadPending, reloadCommitted) {
+				return false
+			}
+			al.mu.Lock()
+			al.cfg = cfg
+			al.fallback = newFallback
+			al.mu.Unlock()
+			return true
+		})
 	}()
-
-	var registry *AgentRegistry
 	select {
-	case res := <-done:
-		if res.err != nil {
-			return fmt.Errorf("registry creation failed: %w", res.err)
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("registry creation failed: %w", err)
 		}
-		if res.registry == nil {
-			return errors.New("registry creation failed (nil result)")
-		}
-		registry = res.registry
 	case <-ctx.Done():
-		return fmt.Errorf("context canceled during registry creation: %w", ctx.Err())
+		if outcome.CompareAndSwap(reloadPending, reloadAbandoned) {
+			return fmt.Errorf("context canceled during registry creation: %w", ctx.Err())
+		}
+		// The swap already happened: finish the reload.
+		if err := <-done; err != nil {
+			return fmt.Errorf("registry creation failed: %w", err)
+		}
 	}
 
-	// Check context again before proceeding
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context canceled after registry creation: %w", err)
-	}
-
-	// Register tools on the freshly built registry with the full runtime deps —
-	// the same single registration the initial construction performs. Without
-	// this, reloaded agents would have an empty tool set (NewAgentInstance no
-	// longer registers anything). The new fallback chain is built here so it is
-	// shared between the registered spawn tools and the swapped-in al.fallback.
-	// Reuse the existing cooldown tracker so its state (notably out-of-credits
-	// parks) PERSISTS across the reload; only refresh its policy from the new
-	// config. The shared tracker continues to back both the new fallback chain
-	// and the rebuilt compaction managers.
-	al.cooldown.SetPolicy(cooldownPolicy(cfg))
-	newFallback := providers.NewFallbackChain(al.cooldown)
-	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback, cfg)
-
-	// Rebuild callback managers against the new registry/config and wire them onto
-	// the new ContextBuilders. Without this, reloaded agents get no callback token
-	// injected, and the stale managers would keep validating tokens against the
-	// OLD config (e.g. an agent whose callbacks were since disabled).
+	// Rebuild callback managers against the new registry/config. Without this,
+	// the stale managers would keep validating tokens against the OLD config
+	// (e.g. an agent whose callbacks were since disabled).
 	newCallbackManagers := buildMessageManagers(registry, cfg)
-
-	// Atomically swap the config and registry under write lock
-	// This ensures readers see a consistent pair
 	al.mu.Lock()
-	oldRegistry := al.registry
 	oldCallbackManagers := al.messageManagers
-
-	// Store new values
-	al.cfg = cfg
-	al.registry = registry
 	al.messageManagers = newCallbackManagers
-
-	// Also update fallback chain with new config (same chain used for the tools
-	// just registered above). al.cooldown is unchanged — the same shared tracker
-	// persists across reload and backs both the chain and the rebuilt compaction
-	// managers.
-	al.fallback = newFallback
-
 	al.mu.Unlock()
 
 	// Stop the superseded callback managers (their tokens persist on disk and are
@@ -516,7 +551,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 
 	// Close old provider after releasing the lock
 	// This prevents blocking readers while closing
-	if oldProvider, ok := extractProvider(oldRegistry); ok {
+	if hadProvider {
 		if stateful, ok := oldProvider.(providers.StatefulProvider); ok {
 			waitDone := make(chan struct{})
 			go func() {
@@ -570,15 +605,35 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 
 	// Propagate store to send_file / msg_send_file tools in all agents.
 	registry := al.GetRegistry()
-	type mediaStoreSetter interface {
-		SetMediaStore(store media.MediaStore)
-	}
-	for _, toolName := range []string{"send_file", "msg_send_file"} {
-		registry.ForEachTool(toolName, func(t tools.Tool) {
+	for _, toolName := range mediaStoreTools {
+		forEachTool(registry, toolName, func(t tools.Tool) {
 			if sf, ok := t.(mediaStoreSetter); ok {
 				sf.SetMediaStore(s)
 			}
 		})
+	}
+}
+
+// mediaStoreSetter is a tool that sends files and needs the media store.
+type mediaStoreSetter interface {
+	SetMediaStore(store media.MediaStore)
+}
+
+// mediaStoreTools are the tools SetMediaStore wires.
+var mediaStoreTools = []string{"send_file", "msg_send_file"}
+
+// applyMediaStore gives one agent's file-sending tools the media store, for an
+// agent built after SetMediaStore ran. No-op before it runs.
+func (al *AgentLoop) applyMediaStore(agent *AgentInstance) {
+	if al.mediaStore == nil {
+		return
+	}
+	for _, toolName := range mediaStoreTools {
+		if t, ok := agent.Tools.Get(toolName); ok {
+			if sf, ok := t.(mediaStoreSetter); ok {
+				sf.SetMediaStore(al.mediaStore)
+			}
+		}
 	}
 }
 
@@ -596,7 +651,7 @@ func (al *AgentLoop) GetStartupInfo() map[string]any {
 	info := make(map[string]any)
 
 	registry := al.GetRegistry()
-	agent := registry.GetDefaultAgent()
+	agent := registry.Default()
 	if agent == nil {
 		return info
 	}
@@ -613,8 +668,8 @@ func (al *AgentLoop) GetStartupInfo() map[string]any {
 
 	// Agents info
 	info["agents"] = map[string]any{
-		"count": len(registry.ListAgentIDs()),
-		"ids":   registry.ListAgentIDs(),
+		"count": len(registry.List()),
+		"ids":   registry.List(),
 	}
 
 	return info

@@ -19,12 +19,12 @@ type deviceAgentQuerier struct{ al *agent.AgentLoop }
 // Agents lists configured agents plus the default agent's id and main session key.
 func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) {
 	reg := q.al.GetRegistry()
-	defaultID := reg.GetDefaultAgentID()
-	ids := reg.ListAgentIDs()
+	defaultID := reg.DefaultID()
+	ids := reg.List()
 	out := make([]device.DeviceAgentInfo, 0, len(ids))
 	for _, id := range ids {
 		info := device.DeviceAgentInfo{ID: id, Name: id}
-		if inst, ok := reg.GetAgent(id); ok && inst.Name != "" {
+		if inst, ok := reg.Get(id); ok && inst.Name != "" {
 			info.Name = inst.Name
 		}
 		// Always carry a non-empty name: operator clients hide entries without a
@@ -36,7 +36,7 @@ func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) 
 
 // DefaultAgentID returns the registry's default agent id.
 func (q deviceAgentQuerier) DefaultAgentID() string {
-	return q.al.GetRegistry().GetDefaultAgentID()
+	return q.al.GetRegistry().DefaultID()
 }
 
 // History returns the user/assistant text turns stored for a session key. A
@@ -61,14 +61,15 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	return out
 }
 
-// agentForSessionKey resolves the registered agent that owns a session key of
-// the form "agent:<id>:...", or nil when there is none.
+// agentForSessionKey resolves the config agent that owns a session key of the
+// form "agent:<id>:...", or nil when there is none. A temporary agent is never
+// reachable from a device.
 func agentForSessionKey(reg *agent.AgentRegistry, sessionKey string) *agent.AgentInstance {
 	parts := strings.SplitN(sessionKey, ":", 3)
 	if len(parts) < 2 || parts[0] != "agent" {
 		return nil
 	}
-	inst, ok := reg.GetAgent(parts[1])
+	inst, ok := reg.GetConfigured(parts[1])
 	if !ok {
 		return nil
 	}

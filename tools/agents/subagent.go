@@ -30,10 +30,10 @@ type SubagentManager struct {
 	candidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
 	// runFull runs the target agent's FULL pipeline (curated prompt, full tools,
-	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
-	// returns the final response. Injected by the host (the agent loop). Without
-	// it every spawn fails with ErrSpawnUnavailable.
-	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+	// MCP, snapshotted memory) on the task as a temporary clone of the agent,
+	// and returns the final response. Injected by the host (the agent loop).
+	// Without it every spawn fails with ErrSpawnUnavailable.
+	runFull RunFunc
 
 	// alerter receives the alert raised when a task's status or results file
 	// cannot be written. Never nil.
@@ -55,10 +55,10 @@ type SubagentManagerConfig struct {
 	// CandidateResolver resolves model candidates for a named target agent.
 	// Returns false if the agent is unknown.
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
-	// RunFull runs the target agent's full pipeline on the task in an isolated
-	// sub-agent session (see SubagentManager.runFull). Required for spawning to
-	// behave as "a copy of the agent with fresh context."
-	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+	// RunFull runs the target agent's full pipeline on the task as a temporary
+	// clone of the agent (see SubagentManager.runFull). Required for spawning
+	// to behave as "a copy of the agent with fresh context."
+	RunFull RunFunc
 	// Alerter receives operator alerts for task records that cannot be
 	// written; nil means none.
 	Alerter alerter.Alerter
@@ -81,11 +81,11 @@ func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
 	}
 }
 
-// subagentSessionKey builds an isolated sub-agent session key for the target
-// agent (IsSubagentSessionKey reports true for it).
-func subagentSessionKey(agentID, uuid string) string {
-	return fmt.Sprintf("agent:%s:subagent:%s", agentID, uuid)
-}
+// RunFunc runs task as a temporary clone of agentID (fresh conversation, a
+// snapshot of the agent's memory, an optional model) and returns the worker's
+// result. release deletes the clone; it is never nil, and the caller calls it
+// once the result has been delivered, also when err is not nil.
+type RunFunc func(ctx context.Context, agentID, task, model string, media []string) (res *global.SyncResult, release func(), err error)
 
 // targetAgent resolves the agent a spawn runs as: the explicit target, or the
 // owner for a self-spawn (empty agentID).
@@ -244,13 +244,14 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 		return
 	}
 
-	// Run a copy of the agent in an isolated sub-agent session keyed by the task
-	// UUID (deterministic, so a relaunch reuses + recleans it).
+	// Run a temporary clone of the agent; it is deleted once the result has
+	// been delivered.
 	target := sm.targetAgent(rec.AgentID)
 	// Restore the spawning agent's depth onto the detached context so the
 	// worker (and any layer it spawns) stays within MaxSpawnDepth.
 	runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
-	fr, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
+	fr, release, err := sm.runFull(runCtx, target, taskText, rec.Model, rec.Media)
+	defer release()
 	if err != nil {
 		sm.finalize(rec, "", 0, err, cb)
 		return
@@ -506,7 +507,8 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 	logger.InfoCF("subagent", "subagent.runsync.launched", map[string]any{
 		"uuid": id, "agent": target, "owner": sm.ownerAgentID, "model": model, "task_len": len(task),
 	})
-	fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, nil)
+	fr, release, err := sm.runFull(ctx, target, task, model, nil)
+	defer release()
 	if err != nil {
 		logger.WarnCF("subagent", "subagent.runsync.failed", map[string]any{
 			"uuid": id, "agent": target, "error": err.Error(),
@@ -564,13 +566,15 @@ func (sm *SubagentManager) Run(
 		return sm.recordResults(rec, "", 0, errRunnerNotConfigured()), nil
 	}
 
-	// Run a copy of the agent in an isolated sub-agent session.
+	// Run a temporary clone of the agent; it is deleted once the result is
+	// recorded.
 	target := sm.targetAgent(agentID)
 	logger.InfoCF("subagent", "subagent.spawn.launched", map[string]any{
 		"uuid": id, "label": labelStr, "agent": target,
 		"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
 	})
-	fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
+	fr, release, err := sm.runFull(ctx, target, task, model, media)
+	defer release()
 	var content string
 	var iterations int
 	if err != nil {

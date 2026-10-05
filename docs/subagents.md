@@ -1,8 +1,8 @@
 # Sub-agents (spawn)
 
-A **sub-agent** is a copy of an agent run on a focused task in an **isolated
-session**. It is the same agent — same workspace, tools, MCP access, and curated
-identity/prompt — differing only in:
+A **sub-agent** is a copy of an agent run on a focused task as a **temporary
+clone** of it. It is the same agent — same workspace, tools, MCP access, and
+curated identity/prompt — differing only in:
 
 - a **fresh context** (its conversation starts from the given task, with none of
   the primary's chat history), and
@@ -46,7 +46,7 @@ A sub-agent runs through the **full agent pipeline**, so it inherits:
   agent's domains, preferences, and project state as background. The worker can
   read memory (`cogmem_memory_search`, `cogmem_domain_get`, …) **and** the write
   tools are available to it, but the snapshot is a **throwaway copy** deleted with
-  the session when the worker finishes — so any writes it makes stay on that copy
+  the clone when the worker finishes — so any writes it makes stay on that copy
   and **never reach the primary's memory**. Workers report findings back in their
   result; the **primary** decides what to persist.
 
@@ -68,14 +68,24 @@ Maestro, but only to a bounded depth so a runaway `spawn → spawn → …` (or
 
 ## Sessions, cleanup, and isolation
 
-- Each sub-agent runs in its own session, keyed `agent:<id>:subagent:<uuid>`,
-  with its own conversation history and its own (snapshotted) memory DB. None of
-  it touches the primary's `main` session.
-- The session and its snapshot DB are deleted when the worker finishes.
-- If the process crashes mid-run, leftover sub-agent session files are reclaimed
-  at the next startup, but only once they are **older than 24h** — so a crashed
-  worker's artefacts can be inspected first. (`files/` outputs are never deleted.)
-- Consolidation never runs on sub-agent sessions (they are ephemeral snapshots).
+- Each sub-agent is a temporary agent with a UUID id, cloned from the target:
+  it shares the target's workspace, but its conversation (its own
+  `agent:<uuid>:main` session) and its snapshotted memory live in its own
+  directory, `<CLAW_HOME>/internal/temp/<uuid>/`. None of it touches the
+  primary's `main` session or memory.
+- The clone and its directory are deleted once its result has been delivered.
+- If the process stops mid-run, the clone's directory is removed at the next
+  start. A background task that was interrupted is relaunched as a new clone.
+  (`files/` outputs are never deleted.)
+- A late async result from a sub-agent's tools goes to the agent's main
+  conversation; nothing addressed to a sub-agent that no longer exists is ever
+  given to another agent.
+- Consolidation never runs on a sub-agent's memory (it is an ephemeral snapshot).
+- Temporary agents are not listed anywhere an operator or a client picks an
+  agent (the Agents page, the Check Up report, a device's agent list), are never
+  a routing target, and are not backed up. Log lines name a clone as
+  `alice (clone 1a2b3c4d)`; its audit rows are recorded under `alice` with
+  `"clone": "1a2b3c4d"` in their details.
 
 ## Notes
 

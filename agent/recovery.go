@@ -26,8 +26,8 @@ const (
 // that were interrupted mid-turn (PendingTurn == true on startup).
 func (al *AgentLoop) recoverPendingTurns(ctx context.Context) {
 	registry := al.GetRegistry()
-	for _, agentID := range registry.ListAgentIDs() {
-		agent, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		agent, ok := registry.Get(agentID)
 		if !ok {
 			continue
 		}

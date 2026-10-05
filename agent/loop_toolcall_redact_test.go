@@ -60,7 +60,7 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

@@ -173,6 +173,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `internal/` | claw | claw's own state: service and message tokens, the device pairing database and Fusion's OAuth tokens. |
 | `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
 | `internal/claw.pid`, `internal/claw.lock` | claw | Mark the running instance, so a second one refuses to start. |
+| `internal/temp/<uuid>/`, `internal/temp_agents.json` | claw | Temporary agents (sub-agent runs): each one's conversation and memory, and the list of those kept across restarts. Deleted when the run ends or after a day idle; not backed up. |
 | `fusion/` | You | Fusion's REST-API service definitions, its env file and `fusion.log`. |
 | `tls/` | claw | The self-signed HTTPS certificate and key (`gateway.tls.cert_file` uses your own instead). |
 | `logs/` | claw | `claw.log`, `error.log`, `alerts.log`, and `dumps/` when diagnostic dumps are on. |
@@ -620,7 +621,7 @@ format is in [docs/alerts.md](docs/alerts.md).
 
 ## Backup and restore
 
-ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `internal/` state and token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs and per-agent `tmp/` are excluded.
+ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `internal/` state and token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs, per-agent `tmp/` and temporary agents (`internal/temp/`) are excluded.
 
 Manage it in the web console under **Config → Backup**, or in `config.json`:
 
@@ -728,7 +729,7 @@ Compaction itself is configured under a `compression` block, split by what each 
 | `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
 | `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
-| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only sessions other than the agent's `main` conversation are affected (sub-agent sessions, and per-sender sessions left by earlier releases); `main` is never deleted (use `archive_days` to trim messages inside it). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
+| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only sessions other than the agent's `main` conversation are affected (sub-agent and per-sender sessions left by earlier releases); `main` is never deleted (use `archive_days` to trim messages inside it). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
 
 **Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every per-sender session Alice or Bob hold for that chat id on Telegram (direct and group sessions left by earlier releases) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. The sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
 | `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |

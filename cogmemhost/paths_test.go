@@ -59,7 +59,7 @@ func TestDirs(t *testing.T) {
 	if Dir("") != "" {
 		t.Fatal("empty workspace must give an empty dir, so tools refuse rather than write somewhere")
 	}
-	if got := SubagentDir("/w", "agent:alice:subagent:abc"); got != "/w/cogmem/subagents/agent_alice_subagent_abc" {
-		t.Fatalf("SubagentDir = %q", got)
+	if got := Dir("/w"); got != "/w/cogmem" {
+		t.Fatalf("Dir = %q", got)
 	}
 }

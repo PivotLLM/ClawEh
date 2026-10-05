@@ -31,6 +31,23 @@ func activeModelCacheKey(agentID, sessionKey string) string {
 	return agentID + "\x00" + sessionKey
 }
 
+// forgetSessionCaches drops the per-session flags the loop caches for a
+// session (active model, reasoning, tool activity, session_clear rate limit),
+// for a temporary agent that is being deleted.
+func (al *AgentLoop) forgetSessionCaches(agent *AgentInstance, sessionKey string) {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.activeModelMu.Lock()
+	delete(al.activeModelIdx, key)
+	al.activeModelMu.Unlock()
+	al.exposeReasoningMu.Lock()
+	delete(al.exposeReasoningCache, key)
+	al.exposeReasoningMu.Unlock()
+	al.showToolActivityMu.Lock()
+	delete(al.showToolActivityCache, key)
+	al.showToolActivityMu.Unlock()
+	al.lastSelfClear.Delete(sessionKey)
+}
+
 // getActiveModelIndex returns the session's active model index, loading it from
 // the session store on a cache miss. The result is clamped to a valid candidate
 // index and cached.
@@ -154,7 +171,7 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 // produces no summary. Wired into the MCP server as a ToolActivityNotifier so
 // CLI-routed tool calls surface to the user the same way loop-dispatched ones do.
 func (al *AgentLoop) ToolActivityLine(agentID, sessionKey, toolName string, args map[string]any) string {
-	agent, ok := al.registry.GetAgent(agentID)
+	agent, ok := al.registry.Get(agentID)
 	if !ok || agent == nil {
 		return ""
 	}
@@ -232,7 +249,7 @@ func (al *AgentLoop) cogmemSessionStatus(ctx context.Context, agent *AgentInstan
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return ""
 	}
-	path := cogmemstore.DBPath(cogmemhost.Dir(agent.Workspace))
+	path := cogmemstore.DBPath(cogmemhost.Dir(agent.StateDir))
 	if _, err := os.Stat(path); err != nil {
 		return "No cognitive-memory database for this assistant yet."
 	}

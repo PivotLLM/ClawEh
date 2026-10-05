@@ -18,7 +18,7 @@ import (
 // agent's, and the head of the result plus the truncation marker reach the LLM.
 func TestProcessSystemMessage_CapsAsyncResult(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
