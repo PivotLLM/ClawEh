@@ -242,6 +242,13 @@ func (al *AgentLoop) isCancelCommand(content string) bool {
 func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundMessage) {
 	defer al.activeRequests.Done()
 
+	// A person writing in their human agent's chat answers the request
+	// waiting for them, or is told nothing is; neither is a turn. Decided
+	// before the session is taken: the turn waiting for the answer holds it.
+	if al.handleHumanChat(ctx, msg) {
+		return
+	}
+
 	// Strip agent mention trigger if present and record the target agent in metadata
 	// before resolving the route, so that mention routing is reflected in dispatchKey
 	// and session key scoping.
@@ -301,19 +308,19 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		ss.turnCancel = cancelTurn
 		ss.mu.Unlock()
 
-		// An asked turn takes no slot: its asker holds one while it waits, so
-		// with every slot held by askers it could never run. Asks are bounded
-		// by max_subagent_depth instead.
+		// An asked turn takes no slot: its asker lent its own while it waits,
+		// so with every slot held by askers it could never run. Asks are
+		// bounded by max_subagent_depth instead. Any other turn's slot
+		// travels with it, so a wait inside it (an Ask, a request to a
+		// person) can lend it out (turnSlot).
+		slot := &turnSlot{al: al}
 		if batch.Channel == constants.AgentMessageChannel {
 			al.runTurn(ctx, turnCtx, batch)
-		} else if al.acquireTurnSlot(turnCtx) {
-			// The slot is lent out while the turn waits in an Ask.
-			slotCtx := turnCtx
-			if al.turnSem != nil {
-				slotCtx = withHeldSlot(turnCtx, &heldSlot{al: al})
-			}
-			al.runTurn(ctx, slotCtx, batch)
-			al.releaseTurnSlot()
+		} else if slot.acquire(turnCtx) {
+			func() {
+				defer slot.release()
+				al.runTurn(ctx, withTurnSlot(turnCtx, slot), batch)
+			}()
 		} else if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
 			// Cancelled while waiting for a turn slot: it never ran.
 			al.publishCancelledReplies(ctx, []bus.InboundMessage{batch})
@@ -344,6 +351,8 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	// the LLM/tool loop unwinds, and we deliver a clear message below (which also
 	// clears the typing indicator via the channel manager's preSend).
 	turnTimeout := al.GetConfig().Agents.Defaults.GetTurnTimeout()
+	// A request to a person may wait longer than a model turn would.
+	turnTimeout = al.humanTurnBudget(msg, turnTimeout)
 	turnCtx, turnCancel := context.WithTimeout(turnParent, turnTimeout)
 	defer turnCancel()
 	// One id per turn, carried on the context so every log line and audit row
@@ -356,6 +365,29 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	var outcome string
 	response, err := al.processMessageSafely(msgCtx, msg, &outcome)
 	replyRequired := msg.ReplyRequired()
+	if err != nil && shuttingDown(turnCtx) && al.humanTarget(msg) != nil {
+		// A request to a person is never replayed (the person may already
+		// have read it): it ends as cancelled, and a sender that requires a
+		// reply gets one.
+		logger.InfoCF("agent", "Request to a person cancelled by shutdown",
+			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
+		const shutdownText = "The request was cancelled because claw is shutting down."
+		if msg.Channel == constants.AgentMessageChannel {
+			al.deliverAskReply(msg, shutdownText, bus.OutcomeCancelled)
+			return
+		}
+		if replyRequired {
+			pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if perr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+				Channel: msg.Channel, ChatID: msg.ChatID, OriginalMessageID: msg.MessageID,
+				Content: shutdownText, Outcome: bus.OutcomeCancelled,
+			}); perr != nil {
+				logger.WarnCF("agent", "Failed to publish cancelled reply", map[string]any{"channel": msg.Channel, "error": perr.Error()})
+			}
+		}
+		return
+	}
 	if err != nil && shuttingDown(turnCtx) {
 		// Interrupted, not failed: the turn stays pending and is replayed on
 		// restart, so nothing is sent now.
@@ -372,6 +404,17 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			return
 		}
 		response, outcome = err.Error(), bus.OutcomeError
+	case errors.As(err, new(humanNotAskedError)):
+		// Dropped (logged where detected): a person takes only questions from
+		// agents. Someone who wrote to it (a mention, a chat, a device) or a
+		// sender that requires a reply is told so, which also clears the
+		// chat's indicators; claw's own messages are dropped silently.
+		if !replyRequired && !fromPerson(msg) {
+			return
+		}
+		response, outcome = err.Error(), bus.OutcomeError
+	case errors.Is(err, errHumanCancelled):
+		response, outcome = err.Error(), bus.OutcomeCancelled
 	case err != nil && errors.Is(context.Cause(turnCtx), errCancelledByUser):
 		response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."
 		outcome = bus.OutcomeCancelled
@@ -469,6 +512,9 @@ func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body st
 	cfg := al.GetConfig()
 	if cfg == nil {
 		return errors.New("configuration not loaded")
+	}
+	if cfg.IsHumanAgent(agentID) {
+		return fmt.Errorf("%w: agent %q is a person and takes no external messages", ErrHumanAgent, agentID)
 	}
 	channel, chatID, peerKind, ok := cfg.CronTarget(agentID)
 	if !ok {
@@ -590,7 +636,11 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	)
 
 	var hadAudio bool
-	msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
+	// A request to a person is relayed as written: no transcription model
+	// sees a human agent's conversation.
+	if al.humanTarget(msg) == nil {
+		msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
+	}
 
 	// For audio messages the placeholder was deferred by the channel.
 	// Now that transcription (and optional feedback) is done, send it.

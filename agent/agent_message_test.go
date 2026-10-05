@@ -65,9 +65,16 @@ func messagingConfig(t *testing.T) *config.Config {
 // model: inbound messages on the bus are dispatched as Run does.
 func messagingLoop(t *testing.T, cfg *config.Config, model providers.LLMProvider) (*AgentLoop, *bus.MessageBus) {
 	t.Helper()
+	return messagingLoopWith(t, cfg, model, nil)
+}
+
+// messagingLoopWith is messagingLoop with a provider dispatcher (a human
+// agent's turn dispatches its person's model through it).
+func messagingLoopWith(t *testing.T, cfg *config.Config, model providers.LLMProvider, dispatcher *providers.ProviderDispatcher) (*AgentLoop, *bus.MessageBus) {
+	t.Helper()
 	tools.RegisterProvider(tools.NamespacedProvider("agent", toolsagents.GlobalProvider))
 	msgBus := bus.NewMessageBus()
-	al := mustNewAgentLoop(t, cfg, msgBus, model, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, model, dispatcher)
 	for _, id := range al.GetRegistry().List() {
 		if a, ok := al.GetRegistry().Get(id); ok {
 			a.Provider = model
@@ -82,8 +89,7 @@ func messagingLoop(t *testing.T, cfg *config.Config, model providers.LLMProvider
 			if !ok {
 				return
 			}
-			al.activeRequests.Add(1)
-			go al.processSessionMessage(ctx, msg)
+			al.dispatchInbound(ctx, msg)
 		}
 	})
 	t.Cleanup(func() {

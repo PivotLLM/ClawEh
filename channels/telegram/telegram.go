@@ -580,6 +580,19 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 	return redactErr(err)
 }
 
+// DeleteMessage implements channels.MessageDeleter.
+func (c *TelegramChannel) DeleteMessage(ctx context.Context, chatID string, messageID string) error {
+	cid, _, err := parseTelegramChatID(chatID)
+	if err != nil {
+		return err
+	}
+	mid, err := strconv.Atoi(messageID)
+	if err != nil {
+		return err
+	}
+	return redactErr(c.bot.DeleteMessage(ctx, &telego.DeleteMessageParams{ChatID: tu.ID(cid), MessageID: mid}))
+}
+
 // SendPlaceholder implements channels.PlaceholderCapable.
 // It sends a placeholder message (e.g. "Thinking... 💭") that will later be
 // edited to the actual response via EditMessage (channels.MessageEditor).

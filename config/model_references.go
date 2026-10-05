@@ -12,6 +12,8 @@ type modelRef struct {
 	agent  string    // agent ID for a per-agent site, empty otherwise
 	slice  *[]string // set for list sites
 	scalar *string   // set for scalar sites
+	own    bool      // the agent's own model list (agents.list[x].models)
+	role   string    // what a model at the site is, for messages ("a vision model")
 }
 
 // DanglingModelReference is one reference to a model that does not exist: the
@@ -28,21 +30,21 @@ type DanglingModelReference struct {
 func (c *Config) modelRefSites() []modelRef {
 	d := &c.Agents.Defaults
 	sites := []modelRef{
-		{where: "agents.defaults.models", slice: &d.Models},
-		{where: "agents.defaults.image_model", scalar: &d.ImageModel},
-		{where: "agents.defaults.image_model_fallbacks", slice: &d.ImageModelFallbacks},
-		{where: "agents.defaults.vision_model", scalar: &d.VisionModel},
-		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks},
-		{where: "summarization.models", slice: &c.Summarization.Models},
+		{where: "agents.defaults.models", slice: &d.Models, role: "a default model"},
+		{where: "agents.defaults.image_model", scalar: &d.ImageModel, role: "an image model"},
+		{where: "agents.defaults.image_model_fallbacks", slice: &d.ImageModelFallbacks, role: "an image model"},
+		{where: "agents.defaults.vision_model", scalar: &d.VisionModel, role: "a vision model"},
+		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks, role: "a vision model"},
+		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},
 	}
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		sites = append(sites,
-			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.ID, slice: &a.Models},
-			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.ID, slice: &a.SummarizationModels},
+			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.ID, slice: &a.Models, own: true},
+			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.ID, slice: &a.SummarizationModels, role: "a summarization model"},
 		)
 		if a.Subagents != nil {
-			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.ID, slice: &a.Subagents.Models})
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.ID, slice: &a.Subagents.Models, role: "a sub-agent model"})
 		}
 	}
 	return sites

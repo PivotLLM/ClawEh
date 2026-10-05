@@ -268,6 +268,9 @@ func (al *AgentLoop) buildCommandsRuntime(
 				Peer:       msg.Peer,
 				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 			}
+			if agent.HumanModel != "" {
+				return nil // a person gets no notice: it would be posted to them
+			}
 			go func() {
 				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

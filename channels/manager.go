@@ -220,6 +220,42 @@ func (m *Manager) StopTyping(channel, chatID string) {
 	}
 }
 
+// DismissInbound clears what the channel showed while an inbound message was
+// being handled (typing, the reaction on messageID, the placeholder) when that
+// message gets no reply of its own. A placeholder is deleted where the channel
+// can, otherwise edited to a check mark. No-op for anything not recorded.
+func (m *Manager) DismissInbound(ctx context.Context, channel, chatID, messageID string) {
+	key := channel + ":" + chatID
+	m.StopTyping(channel, chatID)
+	if v, loaded := m.reactionUndos.LoadAndDelete(key + ":" + messageID); loaded {
+		if entry, ok := v.(reactionEntry); ok {
+			entry.undo()
+		}
+	}
+	v, loaded := m.placeholders.LoadAndDelete(key)
+	if !loaded {
+		return
+	}
+	entry, ok := v.(placeholderEntry)
+	if !ok || entry.id == "" {
+		return
+	}
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if d, ok := ch.(MessageDeleter); ok && d.DeleteMessage(ctx, chatID, entry.id) == nil {
+		return
+	}
+	if e, ok := ch.(MessageEditor); ok {
+		if err := e.EditMessage(ctx, chatID, entry.id, "✓"); err != nil {
+			logger.DebugCF("channels", "Placeholder not cleared", map[string]any{"channel": channel, "chat_id": chatID, "error": err.Error()})
+		}
+	}
+}
+
 // SupportsStreaming reports whether the named channel's owner implements
 // StreamCapable. The agent loop uses this to decide whether to install the
 // per-delta streaming callback for a turn; false means the channel is streamed

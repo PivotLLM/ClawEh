@@ -170,6 +170,9 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 		return "", nil, err
 	}
 	spec.Owner = o.owner
+	if err = refuseHuman(current, spec); err != nil {
+		return "", nil, err
+	}
 	if missing := missingModels(current, spec.Config); len(missing) > 0 {
 		return "", nil, fmt.Errorf("agentreg: model(s) %v are not configured", missing)
 	}

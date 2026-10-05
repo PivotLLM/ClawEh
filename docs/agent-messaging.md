@@ -61,6 +61,8 @@ When Alice asks Bob:
   she waits, so Bob can finish a message queued ahead of the ask, and an asked
   turn never waits for a slot itself. Asks are bounded by the depth limit
   below instead.
+- Bob may be a person (a human agent, see `human-agents.md`): the ask is
+  posted to his chat and his next text there is the reply.
 - If Alice stopped waiting (timeout, `/cancel`, shutdown) before Bob got to
   the ask, Bob does not answer it at all.
 - A failed turn returns "Bob's turn failed: …", a turn stopped with `/cancel`

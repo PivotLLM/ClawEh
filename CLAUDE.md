@@ -190,13 +190,18 @@ production instance directly; test against a dev instance.
   the forum. An ask is an inbound message on the internal `constants.AgentMessageChannel`
   (preresolved agent, `reply_required`, `spawn_depth`+1, the waiting agents in
   `ask_chain`, `remote_origin`); `runTurn` hands its final reply to the waiting `Ask`,
-  never to the bus; asked turns take no `max_concurrent_turns` slot. Whispers are held
-  in memory and prepended in `runAgentLoop` to the agent's next message.
+  never to the bus. Concurrency (`agent/turn_slot.go`): every turn except an asked one
+  holds a `max_concurrent_turns` slot as a `turnSlot` on its context, and a wait inside
+  it (an `Ask`, a request to a person) lends the slot (`lend`/`reclaim`: first wait lends,
+  last reclaims; parallel waits are counted); asked turns take no slot. Whispers are held
+  in memory and prepended in `runAgentLoop` (in `runHumanTurn` for a human agent) to the
+  agent's next message.
 - **Turn scope** (`tools/origin.go`): the ask chain and the remote-origin mark
   (`tools.RemoteOrigin`: the work began with a message on a non-internal channel) ride the
   context, bus metadata (`bus.MetaRemoteOrigin`), task records and the MCP session token
   (`SetTurnScope`) like the sub-agent depth. `shell_exec` refuses remote-origin work
   without `tools.exec.allow_remote`, whatever channel it runs on.
+- **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `docs/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting, while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → outcome cancelled, shutdown → cancelled, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/vision/image/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.

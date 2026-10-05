@@ -101,6 +101,11 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if errs := newDanglingModelReferences(s.cur, next); len(errs) > 0 {
 		return &ValidationError{Err: errors.Join(errs...)}
 	}
+	// The human-agent rules (human.go) are enforced the same way: only a
+	// problem this update introduces is refused.
+	if errs := newHumanProblems(s.cur, next); len(errs) > 0 {
+		return &ValidationError{Err: errors.Join(errs...)}
+	}
 
 	resolved, err := resolveConfigSecrets(next)
 	if err != nil {

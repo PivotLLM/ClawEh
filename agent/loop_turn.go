@@ -105,6 +105,11 @@ func (al *AgentLoop) runAgentLoop(
 		defer endTurn()
 	}
 
+	// A human agent's turn is answered by the person, never by a model.
+	if agent.HumanModel != "" {
+		return al.runHumanTurn(ctx, agent, opts)
+	}
+
 	// A single-shot agent keeps nothing between turns: its conversation is
 	// discarded once the turn is over (after the context manager is released
 	// below), however the turn ended. That includes a turn shutdown

@@ -1,5 +1,5 @@
 import { IconCode } from "@tabler/icons-react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -30,6 +30,7 @@ type SaveStatus = "saving" | "saved" | "error" | null
 // Network page. Fields autosave on a debounce, as a JSON merge patch.
 export function SystemPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const { data, isLoading, error } = useQuery({
     queryKey: ["config"],
     queryFn: async () => {
@@ -392,6 +393,8 @@ export function SystemPage() {
     setStatus("saving")
     try {
       await patchAppConfig(patch)
+      // A model named here may represent a person; refresh the notes.
+      void queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
       setBaseline(form)
       setStatus("saved")
       clearTimeout(savedTimer.current)

@@ -84,6 +84,12 @@ type AgentInstance struct {
 	// spawnMgr is the agent's sub-agent task manager, built with its tools; the
 	// task supervisor scans the config agents' managers.
 	spawnMgr *toolsagents.SubagentManager
+
+	// HumanModel is set for a human agent: the model, on the human protocol,
+	// that represents the person. Such an agent runs no model, has no tools
+	// and no cognitive memory; its turns are answered in the person's chat
+	// (runHumanTurn).
+	HumanModel string
 }
 
 // Label names the agent in logs and audit rows: its id, or "alice (clone
@@ -94,6 +100,10 @@ func (a *AgentInstance) Label() string {
 	}
 	return a.Spec.Label()
 }
+
+// toolless reports whether the agent gets no tools at all: a fresh temporary
+// agent, or a human agent (which runs no model to call them).
+func (a *AgentInstance) toolless() bool { return a.Spec.Fresh || a.HumanModel != "" }
 
 // IsTemp reports whether the agent is a temporary agent.
 func (a *AgentInstance) IsTemp() bool { return a.Spec.Origin == agentreg.OriginTemp }
@@ -144,6 +154,16 @@ func newAgentInstance(
 	agentCfg := spec.Config
 	workspace := spec.Workspace
 	stateDir := spec.StateDir
+
+	humanModel, human := cfg.HumanModelOf(agentCfg)
+	if human {
+		// A person's conversation is never given to a model, so a human agent
+		// has no cognitive memory to observe into or consolidate.
+		c := *agentCfg
+		off := false
+		c.Cogmem = &off
+		agentCfg = &c
+	}
 
 	if spec.Fresh {
 		// A fresh temporary agent's prompt is entirely its creator's: its
@@ -414,6 +434,7 @@ func newAgentInstance(
 		SkillsFilter:   skillsFilter,
 		Candidates:     candidates,
 		Config:         agentCfg,
+		HumanModel:     humanModel,
 	}, nil
 }
 

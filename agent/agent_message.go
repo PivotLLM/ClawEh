@@ -167,52 +167,6 @@ func (g *waitGraph) reachesLocked(from, to string, seen map[string]bool) bool {
 	return false
 }
 
-// heldSlot is the max_concurrent_turns slot a turn holds. A turn waiting in
-// Ask lends it out (the asked agent may need it to finish a turn queued ahead
-// of the ask) and takes it back before it goes on.
-type heldSlot struct {
-	al       *AgentLoop
-	mu       sync.Mutex
-	waiting  int
-	released bool
-}
-
-type heldSlotKey struct{}
-
-func withHeldSlot(ctx context.Context, s *heldSlot) context.Context {
-	return context.WithValue(ctx, heldSlotKey{}, s)
-}
-
-func heldSlotFrom(ctx context.Context) *heldSlot {
-	if s, ok := ctx.Value(heldSlotKey{}).(*heldSlot); ok {
-		return s
-	}
-	return nil
-}
-
-// lend releases the slot for the first of the turn's waiting asks.
-func (s *heldSlot) lend() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.waiting++
-	if s.waiting == 1 && !s.released {
-		s.al.releaseTurnSlot()
-		s.released = true
-	}
-}
-
-// reclaim takes the slot back once the turn's last waiting ask returns,
-// waiting for one to free if need be.
-func (s *heldSlot) reclaim() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.waiting--
-	if s.waiting == 0 && s.released {
-		s.al.turnSem <- struct{}{}
-		s.released = false
-	}
-}
-
 // whisper is one held message.
 type whisper struct {
 	from string
@@ -465,9 +419,9 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 	}
 	fields := map[string]any{"ask_id": id, "agent_id": target.ID, "from": from.label(), "depth": depth + 1, "wait_s": waitSeconds(wait)}
 	logger.InfoCF("agent", "Ask sent", fields)
-	if slot := heldSlotFrom(ctx); slot != nil {
+	if slot := turnSlotFrom(ctx); slot != nil {
 		slot.lend()
-		defer slot.reclaim()
+		defer slot.reclaim(ctx)
 	}
 
 	answered := func(reply tools.AgentReply) tools.AgentReply {
@@ -636,7 +590,7 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 	// starts at depth 0 with an empty chain, and it is marked remote when the
 	// chat is.
 	// It holds no turn slot: the command's turn ends before it does.
-	askCtx, cancel := context.WithCancel(withHeldSlot(context.WithoutCancel(ctx), nil))
+	askCtx, cancel := context.WithCancel(withTurnSlot(context.WithoutCancel(ctx), nil))
 	stop := func() bool { return false }
 	if runCtx := al.runContext(); runCtx != nil {
 		stop = context.AfterFunc(runCtx, cancel) //nolint:contextcheck // the run context only ends the ask; its values come from the command's turn

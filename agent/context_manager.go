@@ -290,6 +290,12 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 // so a model parked by either path (e.g. an out-of-credits 402) is skipped by
 // both. Also returns the effective (first) model name for the summary stamp.
 func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey string) (*compressModelCaller, string) {
+	if agent.HumanModel != "" {
+		// A person's conversation is never given to a model: no
+		// summarization chain at all, so compaction and consolidation find
+		// no model (and the person is never asked to summarize).
+		return &compressModelCaller{agentID: agent.ID, sessionKey: sessionKey}, ""
+	}
 	var agentModels, globalModels []string
 	if agent.Config != nil {
 		agentModels = agent.Config.SummarizationModels

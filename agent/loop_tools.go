@@ -40,6 +40,10 @@ func (al *AgentLoop) agentBuilder(
 		if err != nil {
 			return nil, err
 		}
+		if inst.HumanModel != "" {
+			// A human agent runs no model: no vision side-model, no tools.
+			return inst, nil
+		}
 		// Wire the vision-describe side-model chain onto the instance (no-op when
 		// no vision model is configured).
 		al.wireVisionClients(cfg, inst)
@@ -64,7 +68,7 @@ func (al *AgentLoop) agentBuilder(
 // under the MCP refresh lock, so a server that is replaced while the agent is
 // being created is either seen here or re-registered onto it by the refresh.
 func (al *AgentLoop) agentInserted(_ agentreg.Spec, inst *AgentInstance) {
-	if inst.Spec.Fresh {
+	if inst.toolless() {
 		return
 	}
 	al.mcp.refreshMu.Lock()
@@ -299,6 +303,9 @@ func (al *AgentLoop) retireAgent(spec agentreg.Spec, inst *AgentInstance) error 
 // registerExtraTools registers on agent the tools added with RegisterTool
 // (the gateway's cron tool), honouring its allowlist.
 func (al *AgentLoop) registerExtraTools(agent *AgentInstance) {
+	if agent.toolless() {
+		return
+	}
 	al.extraToolsMu.Lock()
 	extra := slices.Clone(al.extraTools)
 	al.extraToolsMu.Unlock()
@@ -369,7 +376,7 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	registry := al.GetRegistry()
 	for _, agentID := range registry.All() {
 		agent, ok := registry.Get(agentID)
-		if !ok || agent.Spec.Fresh {
+		if !ok || agent.toolless() {
 			continue
 		}
 		// Per-agent allowlist check: skip registration if the agent config

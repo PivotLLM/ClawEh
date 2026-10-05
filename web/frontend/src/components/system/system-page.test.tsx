@@ -13,6 +13,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/api/channels", () => ({
   patchAppConfig: vi.fn().mockResolvedValue({ status: "ok" }),
+  getHumanAgents: vi.fn().mockResolvedValue({ problems: [], human_agents: [] }),
 }))
 
 // The page links to /config/raw; the router is not mounted here.

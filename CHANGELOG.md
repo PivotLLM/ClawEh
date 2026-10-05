@@ -323,6 +323,29 @@ observe does not need an entry.
   commands appear in Telegram's command menu.
 - **Check Up lists `agent_message` among each agent's sensitive tools**, beside
   `agent_spawn`, since it gives other agents turns.
+- **Human agents: a person can take part as an agent.** Add a provider with
+  protocol `human` (no base URL or key), a model on it with a name of its own
+  (for example `"model_name": "Bob (human)"`, any placeholder `model`), and an
+  agent whose `models` is only that model. Give the agent exactly one binding:
+  its default, naming one chat used by that person alone (a Telegram DM, a
+  Slack channel). A question asked by an agent (`agent_message`, `/ask`, a
+  forum turn) is posted, with its sender header, to that chat, and the
+  person's next text message there is the answer; after the model's
+  `request_timeout` the asker is told the person did not reply. A whisper to
+  the agent is shown to the person at the start of their next question.
+  Questions are answered one at a time and do not hold a
+  `max_concurrent_turns` slot while waiting. In that chat
+  `/cancel` cancels the waiting question, other commands work as usual, and
+  other text that answers nothing gets "Nothing is waiting for your answer."
+  A human agent takes no other work: scheduling a job for it and sending it an
+  external message are refused, someone writing to it directly (a mention, a
+  device) is told "Bob only answers questions from agents.", and claw's own
+  messages to it are dropped. Devices do not list human agents. It
+  runs no model (no tools, memory, summarization or image description), is
+  never the default agent, and can never be cloned or spawned. A save that
+  breaks these rules is refused; a human agent without a default chat is
+  saved but not run, and the Agents page says why. `GET /api/agents/human`
+  lists the human agents and any rule problems. See `docs/human-agents.md`.
 - **Check Up rows for the two states that silently cost agents their tools.**
   An agent with Fusion on and no service listed in `mcp_tools` is marked for
   action ("Fusion on with no service"); each CLI provider with "Bypass CLI

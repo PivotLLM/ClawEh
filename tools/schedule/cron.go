@@ -243,6 +243,11 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	if cfg == nil {
 		return tools.ErrorResult("cron unavailable: configuration not loaded")
 	}
+	// A human agent takes work only from agents' questions: a scheduled job
+	// would post to the person with nobody waiting for the answer.
+	if cfg.IsHumanAgent(agentID) {
+		return tools.ErrorResult(fmt.Sprintf("Agent %q is a person; scheduled jobs can't be sent to them.", agentID))
+	}
 	if _, _, _, ok := cfg.CronTarget(agentID); !ok {
 		return tools.ErrorResult(fmt.Sprintf("agent %q has no default channel configured; set a default channel (binding) before scheduling", agentID))
 	}
@@ -520,6 +525,10 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 		if cfg == nil {
 			logger.WarnCF("cron", "job skipped: configuration not loaded", map[string]any{"id": job.ID, "agent_id": job.AgentID})
 			return "", errors.New("configuration not loaded")
+		}
+		if cfg.IsHumanAgent(job.AgentID) {
+			logger.WarnCF("cron", "job skipped: its agent is a person", map[string]any{"id": job.ID, "agent_id": job.AgentID})
+			return "", fmt.Errorf("agent %q is a person; job skipped", job.AgentID)
 		}
 		var ok bool
 		channel, chatID, peerKind, ok = cfg.CronTarget(job.AgentID)

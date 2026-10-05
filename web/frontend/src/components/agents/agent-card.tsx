@@ -3,7 +3,10 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { type AgentToolCatalogResponse } from "@/api/channels"
+import {
+  type AgentToolCatalogResponse,
+  type HumanAgentProblem,
+} from "@/api/channels"
 import { type ModelInfo } from "@/api/models"
 import {
   type AgentBindingView,
@@ -22,6 +25,7 @@ import { Link } from "@tanstack/react-router"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
+import { noteKey, uniqueNotes } from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -61,6 +65,10 @@ export interface AgentCardProps {
   onModelsChange: (models: string[]) => void
   /** Models in the chain whose skip-permissions flag is ignored (see cliBypassWarnings). */
   bypassWarnings?: CLIBypassWarning[]
+  /** The agent represents a person (a model on the human protocol). */
+  human?: boolean
+  /** Human-agent rule notes for this agent (GET /api/agents/human). */
+  humanNotes?: HumanAgentProblem[]
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
@@ -111,6 +119,8 @@ export function AgentCard({
   onToggleEnabled,
   onModelsChange,
   bypassWarnings = [],
+  human = false,
+  humanNotes = [],
   onSkillsChange,
   onToolsChange,
   onMessageChange,
@@ -209,9 +219,32 @@ export function AgentCard({
               </Link>
             </p>
           ))}
+          {human && (
+            <p className="text-muted-foreground text-xs">
+              Represents a person: answers are typed by hand.
+            </p>
+          )}
+          {uniqueNotes(humanNotes).map((n) => (
+            <p
+              key={noteKey(n)}
+              data-testid="human-agent-problem"
+              className="text-xs text-amber-600 dark:text-amber-400"
+            >
+              {n.kind === "not_running" ? "Not running: " : "Ignored: "}
+              {n.message}
+              {n.link && (
+                <>
+                  {" "}
+                  <Link to={n.link} className="underline">
+                    Channels
+                  </Link>
+                </>
+              )}
+            </p>
+          ))}
         </div>
 
-        {onSummarizationModelsChange !== undefined && (
+        {!human && onSummarizationModelsChange !== undefined && (
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
               {t("agents.summarizationModels")}
@@ -230,7 +263,7 @@ export function AgentCard({
         )}
       </div>
 
-      {availableSkills.length > 0 && (
+      {!human && availableSkills.length > 0 && (
         <div className={settingsCardClass}>
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">Skills</p>
@@ -243,9 +276,10 @@ export function AgentCard({
         </div>
       )}
 
-      {(onMCPToolsChange !== undefined ||
-        onDenyToolsChange !== undefined ||
-        availableTools.tools.length > 0) && (
+      {!human &&
+        (onMCPToolsChange !== undefined ||
+          onDenyToolsChange !== undefined ||
+          availableTools.tools.length > 0) && (
         <div className={settingsCardClass}>
           <p className="text-foreground text-sm font-semibold">Tools</p>
 
@@ -542,7 +576,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onCogmemChange !== undefined && (
+        {!human && onCogmemChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">

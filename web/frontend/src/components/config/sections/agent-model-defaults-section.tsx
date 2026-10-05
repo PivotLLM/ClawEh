@@ -10,6 +10,7 @@ import {
   ConfigSectionCard,
   type UpdateCoreField,
 } from "@/components/config/sections/section-card"
+import { HumanSettingNotes } from "@/components/human-setting-notes"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Input } from "@/components/ui/input"
 import {
@@ -45,6 +46,7 @@ export function AgentModelDefaultsSection({
       title={t("pages.config.sections.agent_defaults")}
       description={t("pages.config.sections.agent_defaults_desc")}
     >
+      <HumanSettingNotes page="/system" />
       {agentOptions.length > 0 && (
         <Field
           label={t("pages.config.default_agent")}

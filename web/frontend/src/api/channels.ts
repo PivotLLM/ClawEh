@@ -88,6 +88,28 @@ export async function getAgentTools(): Promise<AgentToolCatalogResponse> {
   return request<AgentToolCatalogResponse>("/api/agents/tools")
 }
 
+// HumanAgentProblem is one way the configuration breaks the human-agent
+// rules. kind says where it shows: "not_running" and "ignored" on the agent's
+// card, "setting" on the page given by page (/system, /models). link, when
+// set, is the page that fixes it.
+export interface HumanAgentProblem {
+  agent?: string
+  kind: "not_running" | "ignored" | "setting"
+  message: string
+  link?: string
+  page?: string
+}
+
+export interface HumanAgentsInfo {
+  problems: HumanAgentProblem[]
+  human_agents: string[]
+}
+
+export async function getHumanAgents(): Promise<HumanAgentsInfo> {
+  const res = await request<Partial<HumanAgentsInfo>>("/api/agents/human")
+  return { problems: res.problems ?? [], human_agents: res.human_agents ?? [] }
+}
+
 // SecMsgLinkStatus mirrors the backend pairing reply. status is
 // "pending" | "complete" | "error"; qr_png is a PNG data-URL for the pairing URI.
 export interface SecMsgLinkStatus {

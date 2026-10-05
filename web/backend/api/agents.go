@@ -34,6 +34,60 @@ type agentToolCatalogResponse struct {
 
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/tools", h.handleListAgentTools)
+	mux.HandleFunc("GET /api/agents/human", h.handleHumanAgentProblems)
+}
+
+// humanAgentProblem is one way the configuration breaks the human-agent
+// rules, placed where the WebUI shows it:
+//   - "not_running": the agent named is not run (shown on its card);
+//   - "ignored": a human model the agent names is ignored there (a note on
+//     its card);
+//   - "setting": a global setting ignores a human model (shown on Page (/system, /models), the
+//     page that sets it).
+//
+// Link, when set, is the page that fixes it ("/channels" for a missing chat).
+type humanAgentProblem struct {
+	Agent   string `json:"agent,omitempty"`
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+	Link    string `json:"link,omitempty"`
+	Page    string `json:"page,omitempty"`
+}
+
+// handleHumanAgentProblems lists the human agents and the human-agent
+// problems of the saved configuration (config.HumanProblems).
+func (h *Handler) handleHumanAgentProblems(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := h.currentConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	problems := []humanAgentProblem{}
+	for _, p := range cfg.HumanProblems() {
+		hp := humanAgentProblem{Agent: p.Agent, Message: p.Message}
+		switch {
+		case p.SetsAgentAside():
+			hp.Kind = "not_running"
+		case p.Agent != "":
+			hp.Kind = "ignored"
+		case p.Kind == config.HumanSharedName:
+			hp.Kind, hp.Page = "setting", "/models"
+		default:
+			hp.Kind, hp.Page = "setting", "/system"
+		}
+		if p.Kind == config.HumanNoChat {
+			hp.Link = "/channels"
+		}
+		problems = append(problems, hp)
+	}
+	humans := []string{}
+	for i := range cfg.Agents.List {
+		if cfg.IsHumanAgent(cfg.Agents.List[i].ID) {
+			humans = append(humans, cfg.Agents.List[i].ID)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encodeJSON(w, map[string]any{"problems": problems, "human_agents": humans})
 }
 
 func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {

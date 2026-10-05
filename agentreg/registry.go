@@ -348,6 +348,10 @@ func buildConfigEntries[T Instance](cfg *config.Config, build BuildFunc[T], now 
 			"name":      ac.Name,
 			"workspace": spec.Workspace,
 		})
+		// A human agent (one representing a person) is never the default.
+		if cfg.IsHumanAgent(ac.ID) {
+			continue
+		}
 		if defaultID == "" {
 			defaultID = spec.ID
 		}
@@ -758,7 +762,27 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 	if missing := missingModels(cfg, spec.Config); len(missing) > 0 {
 		return spec, fmt.Sprintf("model(s) %v no longer configured", missing)
 	}
+	if err := refuseHuman(cfg, spec); err != nil {
+		return spec, err.Error()
+	}
 	return spec, ""
+}
+
+// ErrHuman is returned for a temporary agent that would stand in for a person:
+// a clone of a human agent, or a fresh agent on a human model. A person is
+// never cloned or spawned.
+var ErrHuman = errors.New("represents a person")
+
+// refuseHuman refuses a temporary agent spec that would stand in for a
+// person (see config.HumanProtocol).
+func refuseHuman(cfg *config.Config, spec Spec) error {
+	if spec.IsClone() && cfg.IsHumanAgent(spec.SourceID) {
+		return fmt.Errorf("agentreg: agent %q %w and cannot be cloned", spec.SourceID, ErrHuman)
+	}
+	if model, ok := cfg.HumanModelOf(spec.Config); ok {
+		return fmt.Errorf("agentreg: model %q %w; a temporary agent cannot use it", model, ErrHuman)
+	}
+	return nil
 }
 
 // missingModels lists the models ac names that cfg has no enabled model for,
