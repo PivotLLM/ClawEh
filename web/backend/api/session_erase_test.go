@@ -73,15 +73,12 @@ func TestHandleEraseSessions_RequiresChannelAndChatID(t *testing.T) {
 	}
 }
 
-// The session endpoints must never join the auth-exempt list: erasing a
-// sender's history, like reading it, requires a login.
+// The session erase endpoint must never join the auth-exempt list: erasing
+// a sender's history requires a login.
 func TestSessionRoutes_RequireLogin(t *testing.T) {
 	exempt := middleware.CompileAuthExempt()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodDelete, "/api/sessions?channel=telegram&chat_id=555"},
-		{http.MethodDelete, "/api/sessions/abc"},
-		{http.MethodGet, "/api/sessions"},
-		{http.MethodGet, "/api/sessions/abc"},
 	} {
 		if exempt.Matches(httptest.NewRequest(tc.method, tc.path, nil)) {
 			t.Errorf("%s %s is exempt from authentication", tc.method, tc.path)

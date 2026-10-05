@@ -1,15 +1,9 @@
-import { toast } from "sonner"
-
-import { getSessionHistory } from "@/api/sessions"
-import i18n from "@/i18n"
 import { LOGIN_PATH, loginHref } from "@/lib/auth-redirect"
 import {
-  clearStoredSessionId,
   generateSessionId,
   normalizeUnixTimestamp,
-  readStoredSessionId,
 } from "@/lib/claw-chat-state"
-import { type ChatMessage, getChatState, updateChatStore } from "@/store/chat"
+import { getChatState, updateChatStore } from "@/store/chat"
 
 interface WebUIMessage {
   type: string
@@ -24,7 +18,6 @@ let isConnecting = false
 let msgIdCounter = 0
 let activeSessionIdRef = getChatState().activeSessionId
 let initialized = false
-let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 let reconnectAttempts = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -88,18 +81,6 @@ function scheduleReconnect() {
       void connectChat()
     }, delay)
   })
-}
-
-async function loadSessionMessages(sessionId: string): Promise<ChatMessage[]> {
-  const detail = await getSessionHistory(sessionId)
-  const fallbackTime = detail.updated
-
-  return detail.messages.map((message, index) => ({
-    id: `hist-${index}-${Date.now()}`,
-    role: message.role,
-    content: message.content,
-    timestamp: fallbackTime,
-  }))
 }
 
 function handleWebUIMessage(message: WebUIMessage) {
@@ -288,71 +269,6 @@ export function disconnectChat() {
   })
 }
 
-export async function hydrateActiveSession() {
-  if (hydratePromise) {
-    return hydratePromise
-  }
-
-  const state = getChatState()
-  const storedSessionId = readStoredSessionId()
-
-  if (
-    !storedSessionId ||
-    state.hasHydratedActiveSession ||
-    state.messages.length > 0 ||
-    storedSessionId !== state.activeSessionId
-  ) {
-    if (!state.hasHydratedActiveSession) {
-      updateChatStore({ hasHydratedActiveSession: true })
-    }
-    return
-  }
-
-  hydratePromise = loadSessionMessages(storedSessionId)
-    .then((historyMessages) => {
-      const currentState = getChatState()
-      if (currentState.activeSessionId !== storedSessionId) {
-        return
-      }
-
-      if (currentState.messages.length > 0) {
-        updateChatStore({ hasHydratedActiveSession: true })
-        return
-      }
-
-      updateChatStore({
-        messages: historyMessages,
-        isTyping: false,
-        hasHydratedActiveSession: true,
-      })
-    })
-    .catch((error) => {
-      console.error("Failed to restore last session history:", error)
-
-      const currentState = getChatState()
-      if (currentState.activeSessionId !== storedSessionId) {
-        return
-      }
-
-      if (currentState.messages.length > 0) {
-        updateChatStore({ hasHydratedActiveSession: true })
-        return
-      }
-
-      clearStoredSessionId()
-      updateChatStore({
-        messages: [],
-        isTyping: false,
-        hasHydratedActiveSession: true,
-      })
-    })
-    .finally(() => {
-      hydratePromise = null
-    })
-
-  return hydratePromise
-}
-
 export function sendChatMessage(content: string) {
   if (!wsRef || wsRef.readyState !== WebSocket.OPEN) {
     console.warn("WebSocket not connected")
@@ -378,29 +294,6 @@ export function sendChatMessage(content: string) {
   )
 }
 
-export async function switchChatSession(sessionId: string) {
-  if (sessionId === activeSessionIdRef) {
-    return
-  }
-
-  try {
-    const historyMessages = await loadSessionMessages(sessionId)
-
-    disconnectChat()
-    setActiveSessionId(sessionId)
-    updateChatStore({
-      messages: historyMessages,
-      isTyping: false,
-      hasHydratedActiveSession: true,
-    })
-
-    await connectChat()
-  } catch (error) {
-    console.error("Failed to load session history:", error)
-    toast.error(i18n.t("chat.historyOpenFailed"))
-  }
-}
-
 export async function newChatSession() {
   if (getChatState().messages.length === 0) {
     return
@@ -411,7 +304,6 @@ export async function newChatSession() {
   updateChatStore({
     messages: [],
     isTyping: false,
-    hasHydratedActiveSession: true,
   })
 
   await connectChat()
@@ -424,10 +316,6 @@ export function initializeChatStore() {
 
   initialized = true
   activeSessionIdRef = getChatState().activeSessionId
-
-  if (!readStoredSessionId()) {
-    updateChatStore({ hasHydratedActiveSession: true })
-  }
 
   void connectChat()
 }

@@ -28,6 +28,6 @@ func TestNewAgentCommand(t *testing.T) {
 
 	assert.NotNil(t, cmd.Flags().Lookup("debug"))
 	assert.NotNil(t, cmd.Flags().Lookup("message"))
-	assert.NotNil(t, cmd.Flags().Lookup("session"))
+	assert.Nil(t, cmd.Flags().Lookup("session"))
 	assert.NotNil(t, cmd.Flags().Lookup("model"))
 }

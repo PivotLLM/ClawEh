@@ -7,20 +7,12 @@ function readStorageValue() {
   )
 }
 
-export function readStoredSessionId(): string {
-  return readStorageValue()
-}
-
 export function writeStoredSessionId(sessionId: string) {
   if (sessionId) {
     globalThis.localStorage?.setItem(LAST_SESSION_STORAGE_KEY, sessionId)
     return
   }
 
-  globalThis.localStorage?.removeItem(LAST_SESSION_STORAGE_KEY)
-}
-
-export function clearStoredSessionId() {
   globalThis.localStorage?.removeItem(LAST_SESSION_STORAGE_KEY)
 }
 

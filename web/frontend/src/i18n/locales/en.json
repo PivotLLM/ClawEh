@@ -71,13 +71,6 @@
       "step3": "Preparing response...",
       "step4": "Almost there..."
     },
-    "history": "History",
-    "noHistory": "No chat history yet",
-    "historyLoadFailed": "Failed to load chat history",
-    "historyOpenFailed": "Failed to open this chat history",
-    "loadingMore": "Loading more...",
-    "deleteSession": "Delete session",
-    "messagesCount": "{{count}} messages",
     "noModel": "Select model",
     "empty": {
       "noConfiguredModel": "No Model Configured",

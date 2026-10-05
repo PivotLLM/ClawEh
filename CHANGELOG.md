@@ -916,9 +916,19 @@ observe does not need an entry.
   without the full-pipeline runner now fails with the same error the
   synchronous path already returned. No behaviour change for a running
   ClawEh, which always has the runner.
+- **The WebUI chat-history endpoints are gone.** `GET /api/sessions` and
+  `GET`/`DELETE /api/sessions/{id}` only listed the WebUI conversations of the
+  removed per-platform session mode, so they always came back empty.
+- **`claw agent --session`/`-s` is removed.** Every agent has one
+  conversation, so the flag no longer selected anything.
 
 ### Fixed
 
+- **The sub-agent depth limit now applies to CLI-provider agents.**
+  `agents.defaults.max_subagent_depth` (and a message's `spawn_depth`) now
+  also bounds tool calls made by claude-cli, codex-cli, antigravity-cli and
+  cursor-cli agents, which could previously spawn sub-agents without that
+  limit.
 - **A sub-agent's memory tools no longer change the parent agent's long-term
   memory.** `cogmem_memory_create`, `cogmem_memory_forget` and the other
   `cogmem_*` tools now act only on the sub-agent's throwaway copy, which is

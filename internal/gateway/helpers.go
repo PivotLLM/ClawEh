@@ -613,7 +613,7 @@ func setupAndStartServices(
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
-	// DELETE /api/sessions/{key} releases the live session and its archive.
+	// DELETE /api/sessions releases a live session before erasing its archive.
 	services.WebServer.APIHandler().SetSessionReleaser(agentLoop.ReleaseSession)
 	// Expose the live outbound-MCP connection state to the WebUI MCP page. Reads the
 	// same manager the agent loop owns (reused in place across reloads).

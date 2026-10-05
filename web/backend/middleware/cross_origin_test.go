@@ -33,7 +33,7 @@ func TestCrossOrigin_Policy(t *testing.T) {
 	}{
 		{"cross-site POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"cross-site PUT", http.MethodPut, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
-		{"cross-site DELETE", http.MethodDelete, "/api/sessions/x", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		{"cross-site DELETE", http.MethodDelete, "/api/sessions?channel=telegram&chat_id=1", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"same-site POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
 		{"same-origin POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "same-origin"}, http.StatusOK},
 		{"none (typed URL) POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "none"}, http.StatusOK},

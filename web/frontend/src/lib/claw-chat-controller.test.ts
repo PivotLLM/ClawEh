@@ -6,10 +6,6 @@ import {
   disconnectChat,
 } from "./claw-chat-controller"
 
-vi.mock("@/api/sessions", () => ({ getSessionHistory: vi.fn() }))
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-vi.mock("@/i18n", () => ({ default: { t: (k: string) => k } }))
-
 // Every socket the controller opens, recorded so the test can assert on the URL
 // and the subprotocols it was constructed with.
 interface OpenedSocket {
