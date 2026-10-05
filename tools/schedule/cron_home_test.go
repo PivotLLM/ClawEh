@@ -17,15 +17,15 @@ func TestCronTool_CloneSchedulesForItsSource(t *testing.T) {
 
 	tool.SetHomeAgent(func(id string) string {
 		if id == "c1" {
-			return "amber"
+			return "alice"
 		}
 		return id
 	})
 	if res := tool.Execute(agentCtx("c1"), add); res.IsError {
-		t.Fatalf("add from amber's clone: %s", res.ForLLM)
+		t.Fatalf("add from alice's clone: %s", res.ForLLM)
 	}
 	jobs := tool.cronService.ListJobs(true)
-	if len(jobs) != 1 || jobs[0].AgentID != "amber" {
-		t.Fatalf("jobs = %+v, want one job addressed to amber", jobs)
+	if len(jobs) != 1 || jobs[0].AgentID != "alice" {
+		t.Fatalf("jobs = %+v, want one job addressed to alice", jobs)
 	}
 }

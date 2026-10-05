@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-// stubQuerier is an AgentQuerier with the agents amber, wendy and bob and a
+// stubQuerier is an AgentQuerier with the agents alice, bob and third and a
 // fixed default agent; History is unused by session-scope resolution.
 type stubQuerier struct {
 	defaultAgent string
 }
 
 func (q stubQuerier) Agents() ([]DeviceAgentInfo, string, string) {
-	agents := []DeviceAgentInfo{{ID: "amber"}, {ID: "wendy"}, {ID: "bob"}}
+	agents := []DeviceAgentInfo{{ID: "alice"}, {ID: "bob"}, {ID: "third"}}
 	return agents, q.defaultAgent, "agent:" + q.defaultAgent + ":main"
 }
 func (q stubQuerier) DefaultAgentID() string                { return q.defaultAgent }
@@ -31,7 +31,7 @@ func newScopeServer(t *testing.T) *Server {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	return &Server{store: st, querier: stubQuerier{defaultAgent: "amber"}}
+	return &Server{store: st, querier: stubQuerier{defaultAgent: "alice"}}
 }
 
 // scopeKey resolves lc's declared session key and fails the test on a refusal.
@@ -50,8 +50,8 @@ func TestSessionScopeKeyNodeClient(t *testing.T) {
 	s := newScopeServer(t)
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := scopeKey(t, s, lc); got != "agent:amber:main" {
-		t.Fatalf("session key = %q, want agent:amber:main", got)
+	if got := scopeKey(t, s, lc); got != "agent:alice:main" {
+		t.Fatalf("session key = %q, want agent:alice:main", got)
 	}
 }
 
@@ -71,10 +71,10 @@ func TestSessionScopeKeyDevicesShareSession(t *testing.T) {
 // that agent's main conversation.
 func TestSessionScopeKeyOperatorClient(t *testing.T) {
 	s := newScopeServer(t)
-	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
+	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:bob:slack:work"}
 
-	if got := scopeKey(t, s, lc); got != "agent:wendy:main" {
-		t.Fatalf("session key = %q, want agent:wendy:main", got)
+	if got := scopeKey(t, s, lc); got != "agent:bob:main" {
+		t.Fatalf("session key = %q, want agent:bob:main", got)
 	}
 }
 
@@ -92,13 +92,13 @@ func TestSessionScopeKeyHonorsDeviceAssignment(t *testing.T) {
 	if _, _, err := s.store.Approve(ctx, reqID, []string{"node"}, nil); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if err := s.store.SetDeviceAgent(ctx, "dev1", "wendy"); err != nil {
+	if err := s.store.SetDeviceAgent(ctx, "dev1", "bob"); err != nil {
 		t.Fatalf("SetDeviceAgent: %v", err)
 	}
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := scopeKey(t, s, lc); got != "agent:wendy:main" {
-		t.Fatalf("session key = %q, want agent:wendy:main", got)
+	if got := scopeKey(t, s, lc); got != "agent:bob:main" {
+		t.Fatalf("session key = %q, want agent:bob:main", got)
 	}
 }
 
@@ -115,9 +115,9 @@ func TestSessionScopeKeyUnknownAgent(t *testing.T) {
 // surface resolve to the agent's main conversation.
 func TestSessionScopeKeyOtherKeysResolveToMain(t *testing.T) {
 	s := newScopeServer(t)
-	for _, key := range []string{"agent:wendy:device:dev1", "agent:wendy:service", "agent:wendy:telegram:direct:1", "agent:wendy:subagent:u1"} {
-		if got := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: key}); got != "agent:wendy:main" {
-			t.Errorf("%s: session key = %q, want agent:wendy:main", key, got)
+	for _, key := range []string{"agent:bob:device:dev1", "agent:bob:service", "agent:bob:telegram:direct:1", "agent:bob:subagent:u1"} {
+		if got := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: key}); got != "agent:bob:main" {
+			t.Errorf("%s: session key = %q, want agent:bob:main", key, got)
 		}
 	}
 }
@@ -126,12 +126,12 @@ func TestSessionScopeKeyOtherKeysResolveToMain(t *testing.T) {
 // reads the transcript its turns are written to.
 func TestHistoryKeyMatchesSendKey(t *testing.T) {
 	s := newScopeServer(t)
-	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
+	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:bob:slack:work"}
 
 	send := scopeKey(t, s, lc)
 	// The operator client asks for its own key; resolution must land on the same
 	// session the turn was written to.
-	history, err := s.sessionScopeKeyFor(context.Background(), lc, "agent:wendy:slack:work")
+	history, err := s.sessionScopeKeyFor(context.Background(), lc, "agent:bob:slack:work")
 	if err != nil {
 		t.Fatalf("sessionScopeKeyFor: %v", err)
 	}

@@ -171,8 +171,8 @@ func toolCallBreadcrumb(tc providers.ToolCall) string {
 // stripToolNamespace removes an "mcp__server__" prefix so a namespaced tool shows
 // its bare name.
 func stripToolNamespace(name string) string {
-	if i := strings.LastIndex(name, "__"); i >= 0 {
-		return name[i+2:]
+	if _, after, ok := strings.CutLast(name, "__"); ok {
+		return after
 	}
 	return name
 }

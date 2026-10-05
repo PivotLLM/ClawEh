@@ -30,7 +30,7 @@ func TestSpawnCallback_ReleasesAfterDelivery(t *testing.T) {
 			mgr := NewSubagentManager(SubagentManagerConfig{
 				Workspace:     t.TempDir(),
 				Live:          NewLiveSet(),
-				CallerAgentID: "penny",
+				CallerAgentID: "alice",
 				RunFull: func(_ context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 					release := func() {
 						mu.Lock()

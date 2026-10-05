@@ -37,6 +37,8 @@ func TestLogLevelFiltering(t *testing.T) {
 				if tt.shouldLog {
 					t.Logf("FATAL test skipped to prevent program exit")
 				}
+			default:
+				t.Fatalf("unhandled level %v", tt.level)
 			}
 		})
 	}

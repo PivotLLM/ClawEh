@@ -61,7 +61,7 @@ func (s *scriptedTool) callCount() int {
 	return s.calls
 }
 
-// newListenEnv builds a cron tool whose agent "amber" owns one scripted tool,
+// newListenEnv builds a cron tool whose agent "alice" owns one scripted tool,
 // with timing levers shortened so a test runs in milliseconds.
 func newListenEnv(t *testing.T, tool *scriptedTool) (*CronTool, *bus.MessageBus) {
 	t.Helper()
@@ -78,7 +78,7 @@ func newListenEnv(t *testing.T, tool *scriptedTool) (*CronTool, *bus.MessageBus)
 	reg := tools.NewToolRegistry()
 	reg.Register(tool)
 	ct.SetAgentTools(func(agentID string) *tools.ToolRegistry {
-		if agentID == "amber" {
+		if agentID == "alice" {
 			return reg
 		}
 		return nil
@@ -94,7 +94,7 @@ func addListenJob(t *testing.T, ct *CronTool, args map[string]any) *cron.CronJob
 		"watch_timeout_seconds": float64(1),
 	}
 	maps.Copy(base, args)
-	res := ct.Execute(agentCtx("amber"), base)
+	res := ct.Execute(agentCtx("alice"), base)
 	if res.IsError {
 		t.Fatalf("add listen job: %s", res.ForLLM)
 	}
@@ -115,11 +115,11 @@ func nextInbound(t *testing.T, msgBus *bus.MessageBus, within time.Duration) (bu
 // TestListen_AddValidation: listen needs a watch tool and takes no schedule.
 func TestListen_AddValidation(t *testing.T) {
 	ct, _ := newListenEnv(t, &scriptedTool{})
-	res := ct.Execute(agentCtx("amber"), map[string]any{"action": "add", "message": "m", "listen": true})
+	res := ct.Execute(agentCtx("alice"), map[string]any{"action": "add", "message": "m", "listen": true})
 	if !res.IsError || !strings.Contains(res.ForLLM, "watch_tool") {
 		t.Fatalf("listen without watch_tool: %+v", res)
 	}
-	res = ct.Execute(agentCtx("amber"), map[string]any{
+	res = ct.Execute(agentCtx("alice"), map[string]any{
 		"action": "add", "message": "m", "listen": true, "watch_tool": "x", "every_seconds": float64(60),
 	})
 	if !res.IsError || !strings.Contains(res.ForLLM, "no schedule") {
@@ -168,8 +168,8 @@ func TestListen_DeliversEvents(t *testing.T) {
 	if strings.Contains(first.Content, "cron job that fired") {
 		t.Fatalf("monitor event was wrapped as a cron fire:\n%s", first.Content)
 	}
-	if first.Channel != "telegram-Amber" || first.ChatID != "chat-amber" || first.SenderID != "cron" {
-		t.Fatalf("delivered to %s/%s as %s, want amber's default channel", first.Channel, first.ChatID, first.SenderID)
+	if first.Channel != "telegram-Alice" || first.ChatID != "chat-alice" || first.SenderID != "cron" {
+		t.Fatalf("delivered to %s/%s as %s, want alice's default channel", first.Channel, first.ChatID, first.SenderID)
 	}
 
 	// The replay of e1 is delivered again: repeats are on by default.
@@ -296,7 +296,7 @@ func TestListen_ToolActionsReconcileImmediately(t *testing.T) {
 	job := addListenJob(t, ct, nil)
 	waitFor(func() bool { return running() == 1 && tool.callCount() >= 1 }, "listener did not start on add")
 
-	res := ct.Execute(agentCtx("amber"), map[string]any{"action": "remove", "job_id": job.ID})
+	res := ct.Execute(agentCtx("alice"), map[string]any{"action": "remove", "job_id": job.ID})
 	if res.IsError {
 		t.Fatalf("remove: %s", res.ForLLM)
 	}
@@ -347,7 +347,7 @@ func TestListen_DistinctEventsAllDelivered(t *testing.T) {
 		if want := fmt.Sprintf(`"id":"e%d"`, i); !strings.Contains(msg.Content, want) {
 			t.Fatalf("event %d out of order or wrong:\n%s", i, msg.Content)
 		}
-		if msg.Channel != "telegram-Amber" || msg.ChatID != "chat-amber" {
+		if msg.Channel != "telegram-Alice" || msg.ChatID != "chat-alice" {
 			t.Fatalf("event %d delivered to %s/%s", i, msg.Channel, msg.ChatID)
 		}
 	}

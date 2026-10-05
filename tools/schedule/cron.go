@@ -77,7 +77,7 @@ func (t *CronTool) config() *config.Config {
 func (t *CronTool) IsSessionScoped() bool { return true }
 
 // callerAgentID extracts the calling agent's ID from the session key in context
-// (e.g. "agent:amber:main" → "amber"). Empty when unavailable — callers treat
+// (e.g. "agent:alice:main" → "alice"). Empty when unavailable — callers treat
 // an empty id as "owns nothing" so cron stays fail-closed.
 func callerAgentID(ctx context.Context) string {
 	if pk := routing.ParseAgentSessionKey(tools.ToolSessionKey(ctx)); pk != nil {
