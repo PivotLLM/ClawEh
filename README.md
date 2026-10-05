@@ -2,13 +2,19 @@
 
 **ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** 
 
-Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
+Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can connect to Telegram, Slack, Discord, Signal (via an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
 **Quickstart**: A tutorial can be found at
 
 https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
+
+---
+
+## Development Status
+
+Version 0.6.0 represents a significant evolution toward a more secure business-class product. HTTPS is now enabled by default, and authentication is required to access the web interface. An overivew of the more important security-related configuration items is now displayed on the "Check-Up" page and a detailed .pdf report can be downloaded for review. Remaining legacy code from the original fork has also been removed and rewritten.
 
 ---
 
@@ -83,22 +89,7 @@ With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,
 
 **Latest Changes:**
 
-- Refactored the context engine and memory (cogmem) into separate packages for a cleaner architecture.
-- Added command-line install, uninstall, and update commands.
-- **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts ClawEh, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
-- Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
-- **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
-- ClawEh's built-in **device listener** is tested and working with the **Rabbit R1** (through the Rabbit agent) and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device protocol notes](docs/device-protocol.md) for technical details.
-- Added long-lived tokens to support inbound webhooks for integration.
-- Integrated Maestro orchestration directly into ClawEh.
-
----
-
-**Development status:** This application is a work in progress.
-
----
-
-**Web interface & authentication:** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. This causes security challange for those who wish to run ClawEh on a VM or other headless system. Migrating to HTTPS with authentication seems obvious, but many users would end up requiring a self-signed certicate and be plagued by browser warnings. We are evaluating appropriate approaches for a future version and welcome input.
+Changes have been moved to CHANGES.md.
 
 ---
 
@@ -115,7 +106,7 @@ With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,
 - **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
 - **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
 - **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
-- **Maestro built in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
+- **Maestro built-in ** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
 - **MCP server and client** — ClawEh provides its internal tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
 - **File tools** — Sandboxed tools for reading, searching, and editing files by line or byte, along with move and delete operations and an optional shared directory for exchanging files between agents.
 - **Image & vision** — A `file_view_image` tool lets vision-capable models view workspace images (auto-downscaled when large). Text-only models can be paired with an optional global vision model that describes inbound images, screenshots, and viewed image files for them automatically.
