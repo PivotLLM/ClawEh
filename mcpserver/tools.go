@@ -463,6 +463,12 @@ func dispatchToolCall(
 		ctx = tools.WithSessionKey(ctx, rec.sessionKey)
 	}
 
+	// Run at the sub-agent depth of the turn that holds this token, as the
+	// in-process loop does: a CLI provider's tool calls (agent_spawn, Maestro
+	// dispatch) arrive here, not through the loop, and would otherwise start at
+	// depth 0 whatever the turn's depth.
+	ctx = toolsagents.WithSpawnDepth(ctx, rec.depth)
+
 	// Carry the session's source channel/chatID so tools that re-inject a turn
 	// (e.g. session_clear) can route the follow-up back to the originating user
 	// on the MCP path, which otherwise has no channel/chatID in context.

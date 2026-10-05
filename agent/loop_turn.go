@@ -119,6 +119,17 @@ func (al *AgentLoop) runAgentLoop(
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	defer releaseCtxMgr()
 
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	// Record this turn's sub-agent depth on the session token, every turn and
+	// on every channel (a sub-agent clone's turn is on the internal "subagent"
+	// channel), so a CLI provider's MCP tool calls run at the turn's depth and
+	// a later ordinary turn resets it.
+	if sti != nil {
+		sti.SetDepth(opts.SessionKey, toolsagents.SpawnDepth(ctx))
+	}
+
 	// Record the inbound source on the session token record so MCP-routed tool
 	// calls (which bypass the agent loop) can publish their ForUser payloads
 	// back to the originating user. Done after getContextManager so the token
@@ -127,13 +138,8 @@ func (al *AgentLoop) runAgentLoop(
 	// (cli/subagent/recovery/system) have no real channel handler, so skip
 	// the record entirely — the MCP ForUser publish path drops on the empty
 	// channel/chatID guard rather than dispatching to a nonexistent handler.
-	if !constants.IsInternalChannel(opts.Channel) {
-		al.mu.RLock()
-		stiSource := al.sessionTokenIssuer
-		al.mu.RUnlock()
-		if stiSource != nil {
-			stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
-		}
+	if sti != nil && !constants.IsInternalChannel(opts.Channel) {
+		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
 	// Session-reset handshake: session_clear publishes an inbound tagged

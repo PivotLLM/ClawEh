@@ -5,15 +5,12 @@ import { useTranslation } from "react-i18next"
 import { AssistantMessage } from "@/components/chat/assistant-message"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
-import { SessionHistoryMenu } from "@/components/chat/session-history-menu"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useClawChat } from "@/hooks/use-claw-chat"
-import { useSessionHistory } from "@/hooks/use-session-history"
-import { hydrateActiveSession } from "@/lib/claw-chat-controller"
 
 export function ChatPage() {
   const { t } = useTranslation()
@@ -22,29 +19,9 @@ export function ChatPage() {
   const [hasScrolled, setHasScrolled] = useState(false)
   const [input, setInput] = useState("")
 
-  const {
-    messages,
-    isTyping,
-    activeSessionId,
-    sendMessage,
-    switchSession,
-    newChat,
-  } = useClawChat()
+  const { messages, isTyping, sendMessage, newChat } = useClawChat()
 
   const { hasConfiguredModels, defaultModelName } = useChatModels()
-
-  const {
-    sessions,
-    hasMore,
-    loadError,
-    loadErrorMessage,
-    observerRef,
-    loadSessions,
-    handleDeleteSession,
-  } = useSessionHistory({
-    activeSessionId,
-    onDeletedActiveSession: newChat,
-  })
 
   const syncScrollState = (element: HTMLDivElement) => {
     const { scrollTop, scrollHeight, clientHeight } = element
@@ -55,10 +32,6 @@ export function ChatPage() {
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     syncScrollState(e.currentTarget)
   }
-
-  useEffect(() => {
-    void hydrateActiveSession()
-  }, [])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -93,22 +66,6 @@ export function ChatPage() {
           <IconPlus className="size-4" />
           <span className="hidden sm:inline">{t("chat.newChat")}</span>
         </Button>
-
-        <SessionHistoryMenu
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          hasMore={hasMore}
-          loadError={loadError}
-          loadErrorMessage={loadErrorMessage}
-          observerRef={observerRef}
-          onOpenChange={(open) => {
-            if (open) {
-              void loadSessions(true)
-            }
-          }}
-          onSwitchSession={switchSession}
-          onDeleteSession={handleDeleteSession}
-        />
       </PageHeader>
 
       <div

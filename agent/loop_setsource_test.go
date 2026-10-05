@@ -14,6 +14,12 @@ import (
 type recordingSTI struct {
 	mu      sync.Mutex
 	sources []sourceCall
+	depths  []depthCall
+}
+
+type depthCall struct {
+	sessionKey string
+	depth      int
 }
 
 type sourceCall struct {
@@ -39,6 +45,18 @@ func (r *recordingSTI) SetSource(sessionKey, channel, chatID string) {
 		channel:    channel,
 		chatID:     chatID,
 	})
+}
+
+func (r *recordingSTI) SetDepth(sessionKey string, depth int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.depths = append(r.depths, depthCall{sessionKey: sessionKey, depth: depth})
+}
+
+func (r *recordingSTI) depthCalls() []depthCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]depthCall(nil), r.depths...)
 }
 
 func (r *recordingSTI) calls() []sourceCall {

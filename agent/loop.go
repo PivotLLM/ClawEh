@@ -167,6 +167,10 @@ type SessionTokenIssuer interface {
 	// tool's ForUser payload back to the originating user. No-op when the
 	// sessionKey is unknown.
 	SetSource(sessionKey, channel, chatID string)
+	// SetDepth records the sub-agent depth of the turn starting on sessionKey,
+	// so MCP tool calls made with the session's token (CLI providers) run at
+	// it. No-op when the sessionKey is unknown.
+	SetDepth(sessionKey string, depth int)
 }
 
 const (

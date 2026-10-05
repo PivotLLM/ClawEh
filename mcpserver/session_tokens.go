@@ -39,6 +39,11 @@ type sessionRecord struct {
 	// delivered to instead of agentID: a temporary clone's source, resolved
 	// when the token is issued, so it holds after the clone is deleted.
 	homeID string
+	// depth is the sub-agent depth of the session's current turn, recorded by
+	// the agent loop when the turn starts (SetDepth). Tool calls presented with
+	// this token run at it, so a CLI provider's spawns stay within
+	// max_subagent_depth. Service tokens have no turn and stay at 0.
+	depth int
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
@@ -135,6 +140,7 @@ func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		// the inbound SetSource and the tool call would wipe it.
 		rec.channel = s.tokens[old].channel
 		rec.chatID = s.tokens[old].chatID
+		rec.depth = s.tokens[old].depth
 		delete(s.tokens, old)
 	}
 	s.tokens[tok] = rec
@@ -248,6 +254,30 @@ func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 	}
 	rec.channel = channel
 	rec.chatID = chatID
+	s.tokens[tok] = rec
+}
+
+// SetDepth records the sub-agent depth of the turn now running on sessionKey
+// on its conversation token, so MCP tool calls made with that token (a CLI
+// provider's) run at the turn's depth. Called by the agent loop at the start of
+// every turn, so a later turn at a lower depth lowers it again. Service tokens
+// are indexed apart and never carry a depth. No-op if the session has no
+// token.
+func (s *SessionTokenStore) SetDepth(sessionKey string, depth int) {
+	if sessionKey == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.bySess[sessionKey]
+	if !ok {
+		return
+	}
+	rec, ok := s.tokens[tok]
+	if !ok {
+		return
+	}
+	rec.depth = depth
 	s.tokens[tok] = rec
 }
 
