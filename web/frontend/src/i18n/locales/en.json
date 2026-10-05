@@ -824,6 +824,7 @@
       "namePlaceholder": "e.g. openai-main",
       "protocol": "Protocol",
       "protocolHint": "The wire protocol used to talk to this provider.",
+      "humanHint": "A person answers in their own chat. No URL or key.",
       "baseURL": "Base URL",
       "baseURLRequiredHint": "Required for this protocol. e.g. https://api.example.com/v1",
       "command": "Command",

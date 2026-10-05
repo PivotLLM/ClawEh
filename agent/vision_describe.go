@@ -144,7 +144,8 @@ const visionDescribeSystemPrompt = "You are a vision assistant for a text-only m
 // client fails — the caller then degrades gracefully. A describe failure never
 // breaks the turn.
 func (al *AgentLoop) describeImages(ctx context.Context, agent *AgentInstance, images []string, focus string) (string, bool) {
-	if agent == nil || len(agent.VisionClients) == 0 || len(images) == 0 {
+	// A human agent has no vision chain; its conversation never reaches a model.
+	if agent == nil || agent.HumanModel != "" || len(agent.VisionClients) == 0 || len(images) == 0 {
 		return "", false
 	}
 

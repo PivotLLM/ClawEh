@@ -3079,6 +3079,8 @@ var validProtocols = map[string]struct{}{
 	// Antigravity, and a released config naming this must keep validating.
 	"gemini-cli": {},
 	"cursor-cli": {},
+	// A model on it represents a person: see human.go.
+	HumanProtocol: {},
 }
 
 // httpProtocols are the protocols that require a base_url.
@@ -3105,10 +3107,11 @@ func IsCLIProtocol(protocol string) bool {
 }
 
 // HasCredentials reports whether this provider carries enough to authenticate:
-// CLI providers always qualify (they auth out-of-band); HTTP providers need an
-// API key.
+// CLI providers always qualify (they auth out-of-band), and so does the human
+// protocol, which reaches a person and needs none; HTTP providers need an API
+// key.
 func (p *Provider) HasCredentials() bool {
-	if IsCLIProtocol(p.Protocol) {
+	if IsCLIProtocol(p.Protocol) || IsHumanProtocol(p.Protocol) {
 		return true
 	}
 	return p.APIKey != ""

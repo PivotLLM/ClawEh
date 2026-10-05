@@ -111,6 +111,10 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	case "cursor-cli":
 		return newCLIProvider(NewCursorCliProvider, NewCursorCliProviderWithTimeout, model, prov), modelID, nil
 
+	// A model on the human protocol represents a person: no endpoint, no key.
+	case config.HumanProtocol:
+		return NewHumanProvider(model.ModelName, time.Duration(model.RequestTimeout)*time.Second), modelID, nil
+
 	default:
 		return nil, "", fmt.Errorf("provider %q: unknown protocol %q", prov.Name, prov.Protocol)
 	}

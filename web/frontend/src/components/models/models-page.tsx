@@ -9,6 +9,7 @@ import {
   setDefaultModel,
   updateModel,
 } from "@/api/models"
+import { HumanSettingNotes } from "@/components/human-setting-notes"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
@@ -136,6 +137,7 @@ export function ModelsPage() {
           <p className="text-muted-foreground mt-1 text-sm">
             {t("models.description")}
           </p>
+          <HumanSettingNotes page="/models" />
         </div>
 
         {loading && (

@@ -126,7 +126,7 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 			// A missing default channel is a configuration precondition, not a
 			// server fault — report it as such (with the reason) so the external
 			// caller can act, instead of a bare 500.
-			if errors.Is(err, agent.ErrNoDefaultChannel) {
+			if errors.Is(err, agent.ErrNoDefaultChannel) || errors.Is(err, agent.ErrHumanAgent) {
 				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 				return
 			}

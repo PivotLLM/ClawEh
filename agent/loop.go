@@ -139,6 +139,9 @@ type AgentLoop struct {
 	// runMu.
 	runMu   sync.Mutex
 	stopRun context.CancelCauseFunc
+
+	// humans holds the requests waiting for a person's answer (human agents).
+	humans humanDesk
 }
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
@@ -339,6 +342,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 		default:
 			msg, ok := al.bus.ConsumeInbound(ctx)
 			if !ok {
+				continue
+			}
+			// A person's answer to a waiting request is taken here, in arrival
+			// order, before any goroutine could race it (human agents).
+			if al.takeHumanAnswer(ctx, msg) {
 				continue
 			}
 			al.activeRequests.Add(1)

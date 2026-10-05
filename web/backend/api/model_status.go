@@ -23,7 +23,7 @@ var (
 )
 
 func hasModelConfiguration(prov *config.Provider, m config.ModelConfig) bool {
-	if config.IsCLIProtocol(prov.Protocol) {
+	if config.IsCLIProtocol(prov.Protocol) || config.IsHumanProtocol(prov.Protocol) {
 		return true
 	}
 	if hasLocalAPIBase(prov.BaseURL) {

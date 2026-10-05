@@ -8,6 +8,7 @@ import {
   type AgentToolCatalogResponse,
   getAgentTools,
   getAppConfig,
+  getHumanAgents,
   patchAppConfig,
 } from "@/api/channels"
 import { listCLIs } from "@/api/system"
@@ -95,6 +96,15 @@ export function AgentsPage() {
       }
     },
   })
+
+  // Human agents breaking their rules are not run; each card says why. Kept
+  // apart from the page query so a save can refresh it alone.
+  const { data: humanInfo } = useQuery({
+    queryKey: ["agents-human-problems"],
+    queryFn: getHumanAgents,
+  })
+  const refreshHumanProblems = () =>
+    queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
 
   const fetchError = loadError
     ? loadError instanceof Error
@@ -209,6 +219,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
       await patchAppConfig(buildPayload(next))
+      void refreshHumanProblems()
       // In-place update: no reload, so no scroll jump. The hook suppresses its
       // reseed around this write, so the saved snapshot cannot overwrite a
       // field that is still being edited.
@@ -356,6 +367,7 @@ export function AgentsPage() {
     setSaving(`binding-${targetIndex}`)
     try {
       await patchAppConfig({ bindings: next })
+      void refreshHumanProblems()
       // Optimistic cache update rather than a refetch, matching what the old
       // setBindings(next) did: the patch already succeeded, so re-reading the
       // whole page would only cost a round trip.
@@ -530,6 +542,14 @@ export function AgentsPage() {
                         loaded?.rawModels,
                         loaded?.rawProviders,
                         loaded?.clis ?? [],
+                      )}
+                      human={(humanInfo?.human_agents ?? []).some(
+                        (id) => id.toLowerCase() === agent.id.toLowerCase(),
+                      )}
+                      humanNotes={(humanInfo?.problems ?? []).filter(
+                        (p) =>
+                          p.kind !== "setting" &&
+                          (p.agent ?? "").toLowerCase() === agent.id.toLowerCase(),
                       )}
                       skills={e.skills}
                       tools={e.tools}

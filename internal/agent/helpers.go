@@ -14,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -24,6 +25,17 @@ import (
 // loop routes every message to the agent's one conversation (agent:<id>:main)
 // whatever key it carries.
 const cliSessionKey = "cli:default"
+
+// pruneHumanProblems applies the human-agent rules the gateway applies to its
+// running copy (config.PruneHumanProblems): an agent breaking them is not run
+// here either.
+func pruneHumanProblems(cfg *config.Config) {
+	for _, p := range cfg.PruneHumanProblems() {
+		logger.WarnCF("agent", "ignored human-agent configuration", map[string]any{
+			"agent": p.Agent, "model": p.Model, "reason": p.Message,
+		})
+	}
+}
 
 func agentCmd(message, model string, debug bool) error {
 	if debug {
@@ -39,6 +51,7 @@ func agentCmd(message, model string, debug bool) error {
 	if model != "" {
 		cfg.Agents.Defaults.SetDefaultModel(model)
 	}
+	pruneHumanProblems(cfg)
 
 	provider, modelID, err := providers.CreateProvider(cfg)
 	if err != nil {

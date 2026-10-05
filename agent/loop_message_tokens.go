@@ -158,6 +158,11 @@ func (al *AgentLoop) UpdateMessageToken(agentID, id string, ratePerMin, blockMin
 // Callers can errors.Is against it to report a precondition failure (4xx).
 var ErrNoDefaultChannel = errors.New("agent has no default channel")
 
+// ErrHumanAgent is returned (wrapped) by HandleExternalMessage for a human
+// agent: a person takes work only from agents' questions, never from an
+// external event. Callers report it as a precondition failure (4xx).
+var ErrHumanAgent = errors.New("agent is a person")
+
 // buildMessageManagers constructs per-agent message-token managers from cfg and
 // wires each onto its agent's ContextBuilder. An agent whose message-token window is
 // not > 0 gets no manager — no token is ever issued, injected, or validated for

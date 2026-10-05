@@ -42,6 +42,9 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 	if !ok || target == nil {
 		return nil, noop, fmt.Errorf("subagent: agent %q not found", agentID)
 	}
+	if target.HumanModel != "" {
+		return nil, noop, fmt.Errorf("subagent: agent %q represents a person and cannot be spawned", agentID)
+	}
 
 	// Validate attached media refs up front so a typo'd or expired ref fails the
 	// spawn loudly instead of the worker silently seeing nothing.

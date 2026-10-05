@@ -104,3 +104,18 @@ func TestDefaultCLIBinary_CoversEveryAcceptedCLIProtocol(t *testing.T) {
 		}
 	}
 }
+
+// A human provider reaches a person: it is ready with no key, and its models
+// count as configured.
+func TestProviderReady_Human(t *testing.T) {
+	p := &config.Provider{Name: "People", Protocol: config.HumanProtocol}
+	if !providerReady(p) {
+		t.Error("a human provider is not ready")
+	}
+	if !hasModelConfiguration(p, config.ModelConfig{ModelName: "Bob (human)", Model: "bob"}) {
+		t.Error("a human model is not configured")
+	}
+	if got := testProviderConnectivity(providerTestRequest{Protocol: config.HumanProtocol}); !got.OK {
+		t.Errorf("connectivity test = %+v, want OK", got)
+	}
+}

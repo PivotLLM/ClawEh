@@ -128,6 +128,11 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 			}
 			continue
 		}
+		if config.IsHumanProtocol(p.Protocol) {
+			// Reaches a person: no endpoint, key or proxy.
+			api.Rows = append(api.Rows, row(p.Name, "Person", "", "", ""))
+			continue
+		}
 		api.Rows = append(api.Rows, row(p.Name, p.Protocol, p.BaseURL, yesNo(p.APIKey != ""), orValue(redactURL(p.Proxy), "")))
 	}
 	if len(api.Rows) == 0 {

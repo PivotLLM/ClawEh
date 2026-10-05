@@ -97,7 +97,10 @@ func (p *phaseTimer) done(what string) {
 // provider) are then dropped from the copy with a WARN and the rest is kept,
 // rather than failing over one bad entry; those stay in the file so they can
 // be repaired via the WebUI, and a reference to such a model is skipped in the
-// copy only. What was removed or skipped is returned for modelRefAlerts. Boot,
+// copy only. Human agents breaking their rules are disabled in the copy and a
+// human model is dropped from every site where a model must answer
+// (config.PruneHumanProblems). What was removed or skipped is returned for
+// modelRefAlerts. Boot,
 // the config watcher and the forced reload all build their runtime copy here,
 // so they cannot drift apart.
 func runtimeConfig(store *config.Store) (*config.Config, modelRefPrune, error) {
@@ -118,6 +121,16 @@ func runtimeConfig(store *config.Store) (*config.Config, modelRefPrune, error) {
 		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
 			"providers_dropped": dp,
 			"models_dropped":    dm,
+		})
+	}
+	// Human agents that break their rules are not run, and a human model is
+	// dropped wherever a model must answer; the file keeps both for repair,
+	// and the Agents page shows why.
+	for _, p := range cfg.PruneHumanProblems() {
+		logger.WarnCF("gateway", "ignored human-agent configuration", map[string]any{
+			"agent":  p.Agent,
+			"model":  p.Model,
+			"reason": p.Message,
 		})
 	}
 	prune.skipped = pruneModelReferences(cfg)

@@ -241,16 +241,24 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 	if len(agents) == 0 {
 		return DefaultAgentID
 	}
+	// A human agent (one representing a person) is never the default: an
+	// unaddressed message must not be posted to a person.
 	for _, a := range agents {
-		if a.Default {
+		if a.Default && !r.cfg.IsHumanAgent(a.ID) {
 			id := strings.TrimSpace(a.ID)
 			if id != "" {
 				return NormalizeAgentID(id)
 			}
 		}
 	}
-	if id := strings.TrimSpace(agents[0].ID); id != "" {
-		return NormalizeAgentID(id)
+	for _, a := range agents {
+		if r.cfg.IsHumanAgent(a.ID) {
+			continue
+		}
+		if id := strings.TrimSpace(a.ID); id != "" {
+			return NormalizeAgentID(id)
+		}
+		break
 	}
 	return DefaultAgentID
 }

@@ -6,6 +6,7 @@ import { type ProviderInfo, updateProvider } from "@/api/providers"
 import {
   PROTOCOL_OPTIONS,
   isCliProtocol,
+  isHumanProtocol,
   requiresBaseURL,
 } from "@/components/providers/provider-config-fields"
 import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
@@ -75,6 +76,7 @@ export function EditProviderSheet({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const cli = isCliProtocol(form.protocol)
+  const human = isHumanProtocol(form.protocol)
   const configured = Boolean(provider?.api_key)
 
   // Reload the form when a different provider is selected. Adjusted during
@@ -111,12 +113,14 @@ export function EditProviderSheet({
     setError("")
     try {
       const cliProto = isCliProtocol(form.protocol)
+      // A human provider reaches a person: no endpoint, no key.
+      const noEndpoint = cliProto || isHumanProtocol(form.protocol)
       await updateProvider(provider.index, {
         name: form.name.trim(),
         protocol: form.protocol,
-        base_url: cliProto ? undefined : form.baseURL.trim() || undefined,
+        base_url: noEndpoint ? undefined : form.baseURL.trim() || undefined,
         // Empty api_key keeps the stored key (backend semantics).
-        api_key: cliProto ? undefined : form.apiKey.trim() || undefined,
+        api_key: noEndpoint ? undefined : form.apiKey.trim() || undefined,
         proxy: form.proxy.trim() || undefined,
         command: cliProto ? form.command.trim() || undefined : undefined,
         strict_compat: form.strictCompat,
@@ -198,6 +202,10 @@ export function EditProviderSheet({
                   className="font-mono text-sm"
                 />
               </Field>
+            ) : human ? (
+              <p className="text-muted-foreground text-xs">
+                {t("providers.field.humanHint")}
+              </p>
             ) : (
               <>
                 <Field
@@ -236,7 +244,7 @@ export function EditProviderSheet({
                 available but disabled, which is how response_format_json came
                 to look like the reason a CLI was not returning JSON. (It always
                 does: --output-format json is in the argv, not the config.) */}
-            {!cli && (
+            {!cli && !human && (
               <AdvancedSection>
                 <Field
                   label={t("providers.field.proxy")}

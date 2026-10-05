@@ -352,7 +352,7 @@ func (al *AgentLoop) registerMCPToolsOn(agent *AgentInstance) {
 // by its mcp_tools allow-list, and returns how many it registered. A fresh
 // temporary agent gets none.
 func registerMCPServerToolsOn(agent *AgentInstance, mgr *mcp.Manager, serverName string, conn *mcp.ServerConnection) int {
-	if agent.Spec.Fresh {
+	if agent.toolless() {
 		return 0
 	}
 	added := 0
