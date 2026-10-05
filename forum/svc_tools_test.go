@@ -73,6 +73,19 @@ func svcToolSetup(t *testing.T) *svcTools {
 	return &svcTools{t: t, e: e, host: host, defs: defs}
 }
 
+// internal checks that a host failure (errSvcHost) is a tool error with
+// the fixed sentence want, the detail being logged, not shown.
+func (st *svcTools) internal(name string, args map[string]any, want string) {
+	st.t.Helper()
+	res, err := st.call(name, args)
+	if err != nil || res == nil || !res.IsError || res.ForLLM != want || !errors.Is(res.Err, errSvcHost) {
+		st.t.Errorf("%s with a host failure = %+v, %v; want %q", name, res, err, want)
+	}
+	if !st.e.logger.has(errSvcHost.Error()) {
+		st.t.Errorf("%s: the host failure was not logged", name)
+	}
+}
+
 // call invokes a tool as agent "launcher".
 func (st *svcTools) call(name string, args map[string]any) (*toolspec.Result, error) {
 	return st.callAs("launcher", name, args)
@@ -179,9 +192,7 @@ func TestSvcToolModels(t *testing.T) {
 	st.e.agents.mu.Lock()
 	st.e.agents.createErr["models"] = errSvcHost
 	st.e.agents.mu.Unlock()
-	if res, err := st.call("models", nil); !errors.Is(err, errSvcHost) || res != nil {
-		t.Errorf("models with a host failure = %+v, %v", res, err)
-	}
+	st.internal("models", nil, "The models could not be listed because of an internal error.")
 }
 
 func TestSvcToolValidate(t *testing.T) {
@@ -228,9 +239,7 @@ func TestSvcToolValidate(t *testing.T) {
 	}
 
 	st.host.wsErr = errSvcHost
-	if res, err := st.call("validate", map[string]any{"config": svcConfigMap(t, svcConfigJSON)}); !errors.Is(err, errSvcHost) || res != nil {
-		t.Errorf("workspace failure = %+v, %v", res, err)
-	}
+	st.internal("validate", map[string]any{"config": svcConfigMap(t, svcConfigJSON)}, "The forum could not be validated because of an internal error.")
 }
 
 func TestSvcToolLaunch(t *testing.T) {
@@ -271,9 +280,7 @@ func TestSvcToolLaunch(t *testing.T) {
 	st.e.agents.mu.Lock()
 	st.e.agents.createErr["clone:bob"] = errSvcHost
 	st.e.agents.mu.Unlock()
-	if res, err := st.call("launch", map[string]any{"config": svcConfigMap(t, svcConfigJSON)}); !errors.Is(err, errSvcHost) || res != nil {
-		t.Errorf("host failure = %+v, %v", res, err)
-	}
+	st.internal("launch", map[string]any{"config": svcConfigMap(t, svcConfigJSON)}, "The forum could not be launched because of an internal error.")
 }
 
 func TestSvcToolStatus(t *testing.T) {
@@ -365,34 +372,74 @@ func TestSvcToolLockedForum(t *testing.T) {
 
 func TestSvcToolError(t *testing.T) {
 	id := uuid.NewString()
+	agent := uuid.NewString()
 	tests := []struct {
 		name string
 		err  error
 		id   string
-		want string // "" means the error is returned, not rendered
+		tool string
+		want string
+		// logged, when set, must appear in the log (the detail the agent
+		// is not shown).
+		logged string
 	}{
-		{"host failure", errSvcHost, id, ""},
-		{"not found", fmt.Errorf("%w: %s", ErrNotFound, id), id, "Forum " + id + " was not found."},
-		{"not found without an id", ErrNotFound, "", "Forum not found."},
-		{"locked", ErrLocked, id, "Forum " + id + " is in use by another process; try again later."},
-		{"corrupt", fmt.Errorf("%w: bad digest", ErrCorrupt), id, "Forum " + id + " is damaged and cannot be used: forum directory is corrupt: bad digest."},
-		{"state", invalidState("forum %s is completed and cannot be paused", id), id, "Forum " + id + " is completed and cannot be paused."},
-		{"schemas", fmt.Errorf("%w (the configuration names schemas: s)", ErrSchemasUnavailable), "", "JSON Schema validation is not available (the configuration names schemas: s)."},
-		{"one whole-document issue", argIssue("give either config or config_file, not both"), "", "Give either config or config_file, not both."},
-		{"issues", &ValidationError{Issues: []Issue{{Path: "a", Message: "x"}, {Path: "b", Message: "y"}}}, "", "invalid configuration:\na: x\nb: y"},
+		{"host failure", errSvcHost, id, "pause", "Forum " + id + " could not be paused because of an internal error.", errSvcHost.Error()},
+		{"host failure without an id", fmt.Errorf("open /secret/path: %w", errSvcHost), "", "launch", "The forum could not be launched because of an internal error.", "/secret/path"},
+		{"not found", fmt.Errorf("%w: %s", ErrNotFound, id), id, "results", "Forum " + id + " was not found.", ""},
+		{"not found without an id", ErrNotFound, "", "status", "The forum was not found.", ""},
+		{"locked", ErrLocked, id, "delete", "Forum " + id + " is in use by another process; try again later.", ""},
+		{"corrupt", fmt.Errorf("%w: /base/x/output.md digest abc", ErrCorrupt), id, "resume", "Forum " + id + " is damaged and cannot be used.", "/base/x/output.md digest abc"},
+		{"state", invalidState("forum %s is completed and cannot be paused", id), id, "pause", "Forum " + id + " is completed and cannot be paused.", ""},
+		{"run ended", runEnded(id, "paused"), id, "pause", "Forum " + id + " has stopped running and cannot be paused by this run.", ""},
+		{"bare state", fmt.Errorf("append commit: %w: resumed expected at seq 3", ErrInvalidState), id, "resume", "Forum " + id + " cannot be resumed in its current state.", "expected at seq 3"},
+		{
+			"agents left", fmt.Errorf("wrapped: %w", &agentsLeftError{forumID: id, agents: []string{agent}, err: errSvcHost}), id, "delete",
+			"Forum " + id + " was not deleted because its temporary agent " + agent + " could not be deleted; try again later.", errSvcHost.Error(),
+		},
+		{"closed", errClosed, id, "resume", "Forums cannot be started or changed while the service is shutting down.", ""},
+		{"schemas", fmt.Errorf("%w (the configuration names schemas: s)", ErrSchemasUnavailable), "", "launch", "JSON Schema validation is not available (the configuration names schemas: s).", ""},
+		{"one whole-document issue", argIssue("give either config or config_file, not both"), "", "launch", "Give either config or config_file, not both.", ""},
+		{"issues", &ValidationError{Issues: []Issue{{Path: "a", Message: "x"}, {Path: "b", Message: "y"}}}, "", "validate", "invalid configuration:\na: x\nb: y", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := toolError(tt.err, tt.id)
-			if tt.want == "" {
-				if res != nil || !errors.Is(err, tt.err) {
-					t.Errorf("toolError = %+v, %v; want the error returned", res, err)
-				}
-				return
-			}
+			e := svcSetup(t)
+			ts := &toolSuite{svc: e.svc}
+			res, err := ts.fail(tt.err, tt.id, tt.tool)
 			if err != nil || res == nil || !res.IsError || res.ForLLM != tt.want || !errors.Is(res.Err, tt.err) {
-				t.Errorf("toolError = %+v, %v; want %q", res, err, tt.want)
+				t.Fatalf("fail = %+v, %v; want %q", res, err, tt.want)
+			}
+			if tt.logged != "" && !e.logger.has(tt.logged) {
+				t.Errorf("the detail %q was not logged", tt.logged)
 			}
 		})
+	}
+}
+
+// svcTurnHost refuses every call as made from inside a forum turn.
+type svcTurnHost struct{ svcToolHost }
+
+func (h *svcTurnHost) Scope(*toolspec.ToolCall) (Scope, error) {
+	return Scope{}, fmt.Errorf("agent alice is in a forum turn: %w", ErrForumTurn)
+}
+
+// Every forum tool is refused inside a forum turn, before the service is
+// reached.
+func TestSvcToolsRefusedInsideAForumTurn(t *testing.T) {
+	e := svcSetup(t)
+	host := &svcTurnHost{svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}}
+	args := map[string]any{"id": uuid.NewString(), "config": map[string]any{"version": 1}}
+	defs := Tools(e.svc, host)
+	if len(defs) != 9 {
+		t.Fatalf("%d tools", len(defs))
+	}
+	for _, d := range defs {
+		res, err := d.Handler(&toolspec.ToolCall{AgentID: "alice", Args: args, Ctx: t.Context()})
+		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum tools are not available inside a forum turn." || !errors.Is(res.Err, ErrForumTurn) {
+			t.Errorf("%s inside a forum turn = %+v, %v", d.Name, res, err)
+		}
+	}
+	if ids := e.forumIDs(); len(ids) != 0 {
+		t.Errorf("a forum was launched from inside a forum turn: %v", ids)
 	}
 }

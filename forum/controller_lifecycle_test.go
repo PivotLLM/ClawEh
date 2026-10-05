@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -222,7 +223,9 @@ func TestCtlCancelInFlight(t *testing.T) {
 }
 
 // A paused forum can be cancelled; running it then ends it cancelled
-// without dispatching.
+// without dispatching. The controller whose Run already returned refuses
+// the request (nothing would complete it); a controller opened for the
+// purpose, as the service does, accepts it.
 func TestCtlCancelPaused(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 2, FormatText)))
 	c := f.open()
@@ -234,12 +237,38 @@ func TestCtlCancelPaused(t *testing.T) {
 		t.Fatalf("Run: %s, %v", st, err)
 	}
 	ctlWant(t, "calls", len(f.msg.all()), 0)
-	if err := c.RequestCancel(); err != nil {
+	for name, req := range map[string]func() error{"cancel": c.RequestCancel, "pause": c.RequestPause} {
+		reqErr := req()
+		if !errors.Is(reqErr, errRunEnded) || !errors.Is(reqErr, ErrInvalidState) || !strings.Contains(reqErr.Error(), "forum "+f.s.ID()) {
+			t.Errorf("%s after Run returned: %v, want a refusal naming the forum", name, reqErr)
+		}
+	}
+	ctlWant(t, "status after the refusals", f.state().Status, StatusPaused)
+	c = f.open()
+	if err = c.RequestCancel(); err != nil {
 		t.Fatal(err)
 	}
-	_, st = f.run()
+	st, err = c.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctlWant(t, "status", st, StatusCancelled)
 	ctlWant(t, "calls", len(f.msg.all()), 0)
+}
+
+// Requests name the forum when the state refuses them.
+func TestCtlRequestRefusalsNameTheForum(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	c := f.open() // a fresh controller over the terminal forum: Run not called
+	for name, req := range map[string]func() error{"cancel": c.RequestCancel, "pause": c.RequestPause} {
+		err := req()
+		if !errors.Is(err, ErrInvalidState) || errors.Is(err, errRunEnded) ||
+			!strings.Contains(err.Error(), "forum "+f.s.ID()+" is") || !strings.Contains(err.Error(), "completed") {
+			t.Errorf("%s of a completed forum: %v", name, err)
+		}
+	}
 }
 
 // Pause and cancel racing a run: whatever the interleaving, the log
@@ -520,8 +549,114 @@ func TestCtlOpenRebuildsTranscript(t *testing.T) {
 			if err := f.s.writeRel(fileTranscript, []byte(damaged), false); err != nil {
 				t.Fatal(err)
 			}
+			before, err := os.Stat(f.s.Path(fileTranscript))
+			if err != nil {
+				t.Fatal(err)
+			}
 			f.open()
 			ctlWant(t, "transcript", f.transcript(), want)
+			// Rewritten in place: a reader following the file keeps it.
+			after, err := os.Stat(f.s.Path(fileTranscript))
+			if err != nil || !os.SameFile(before, after) {
+				t.Errorf("the transcript was replaced by another file (%v)", err)
+			}
 		})
+	}
+}
+
+// The host shutting down (ErrShuttingDown from Ask, ctx still alive)
+// leaves the attempt uncertain and the forum running on disk: no failed
+// reply, no failure. A later run resends it and completes.
+func TestCtlShuttingDownLeavesAttemptUncertain(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
+	f.msg.hook = func(context.Context, ctlCall) error {
+		return fmt.Errorf("agent loop stopping: %w", ErrShuttingDown)
+	}
+	if _, err := f.open().Run(context.Background()); !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("Run: %v, want ErrShuttingDown", err)
+	}
+	ctlWant(t, "status on disk", f.state().Status, StatusRunning)
+	att := f.attempts("talk")
+	ctlWant(t, "attempts", len(att), 1)
+	if att[0].Reply != nil {
+		t.Errorf("a reply was recorded for the shutdown: %+v", att[0].Reply)
+	}
+	f.msg.hook = nil
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+}
+
+// A turn cancelled while the run's context has ended (the service is
+// closing) is not recorded as a failed reply either.
+func TestCtlCancelledByShutdownIsNotAFailedAttempt(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
+	ctx, cancel := context.WithCancel(context.Background())
+	f.msg.respond = func(cl ctlCall) (Reply, error) {
+		cancel()
+		return Reply{Outcome: OutcomeCancelled}, nil
+	}
+	if _, err := f.open().Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run: %v, want context.Canceled", err)
+	}
+	att := f.attempts("talk")
+	if len(att) != 1 || att[0].Reply != nil {
+		t.Fatalf("attempts after the shutdown: %+v", att)
+	}
+	ctlWant(t, "status on disk", f.state().Status, StatusRunning)
+
+	// Without a shutdown, a cancelled turn is an unsuccessful attempt.
+	f.msg.respond = func(cl ctlCall) (Reply, error) {
+		if cl.Participant == "alice" && len(f.msg.find("alice", "talk", 1, false)) == 2 {
+			return Reply{Outcome: OutcomeCancelled}, nil
+		}
+		return f.reply(cl), nil
+	}
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	att = f.attempts("talk")
+	if len(att) < 3 || att[1].Reply == nil || att[1].Reply.Outcome != OutcomeCancelled {
+		t.Errorf("attempts = %+v, want the second recorded as cancelled", att)
+	}
+}
+
+// A run that meets ErrCorrupt ends the forum failed with EndCorrupt and
+// logs the cause at Error naming the forum.
+func TestCtlCorruptEndsFailed(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
+	c := f.open()
+	c.crashHook = func(event string) bool { return event == "reply" }
+	if _, err := c.Run(context.Background()); !errors.Is(err, errCrashed) {
+		t.Fatalf("Run: %v", err)
+	}
+	// The saved accepted reply no longer validates (an empty text).
+	rel := attemptRel("talk", TurnID(1, "alice"), 1) + "/" + fileReply
+	var reply map[string]any
+	data, err := f.s.ReadFile(rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(data, &reply); err != nil {
+		t.Fatal(err)
+	}
+	reply["text"] = ""
+	if data, err = json.Marshal(reply); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(f.s.Path(rel), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c = f.open()
+	st, err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ctlWant(t, "status", st, StatusFailed)
+	ctlWant(t, "reason", f.result().Reason, EndCorrupt)
+	found := false
+	for _, line := range f.log.lines {
+		found = found || (strings.HasPrefix(line, "ERROR forum "+f.s.ID()+": its records are corrupt") && strings.Contains(line, "no longer validates"))
+	}
+	if !found {
+		t.Errorf("the corruption was not logged at Error: %q", f.log.lines)
 	}
 }

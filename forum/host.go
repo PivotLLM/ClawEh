@@ -46,8 +46,12 @@ type Messenger interface {
 	// or ask further, and waits up to wait for the final reply. A wait that
 	// elapses returns Reply{Outcome: OutcomeTimeout} with a nil error. The
 	// error return is for transport failures only: the agent does not exist,
-	// the host is shutting down, or ctx was cancelled (the ctx error is
-	// returned). Every call, whatever its result, is one of the forum's calls.
+	// the host is shutting down (an error wrapping ErrShuttingDown), or ctx
+	// was cancelled (the ctx error is returned). A turn the host cancels
+	// because it is shutting down must be reported as ErrShuttingDown, not
+	// as Reply{Outcome: OutcomeCancelled}: the forum then leaves the attempt
+	// uncertain and resumes at the next start instead of recording a failed
+	// attempt. Every call, whatever its result, is one of the forum's calls.
 	Ask(ctx context.Context, agentID, message string, wait time.Duration) (Reply, error)
 }
 
@@ -143,6 +147,14 @@ type Notifier interface {
 	// ForumFinished delivers the notice as a delayed reply to the launching
 	// message. It is called only after result.json is committed. An error
 	// is logged by the service; the forum's state does not depend on it.
+	//
+	// It should hand the notice off and return rather than wait for the
+	// launcher's turn. The service calls it on a goroutine of its own with
+	// no lock held, so even a blocking Notifier never stalls a forum
+	// operation (including a forum tool called from the turn the notice
+	// starts), but Service.Close waits for it until Close's context ends.
+	// ctx is cancelled when the service closes; a notice that fails then
+	// is delivered at the next start.
 	ForumFinished(ctx context.Context, origin Origin, result *Result) error
 }
 
@@ -192,11 +204,22 @@ func (e *SchemaViolationError) Error() string {
 }
 
 // Host bundles the host-provided dependencies the service needs. Schemas
-// may be nil (see SchemaValidator); the others are required.
+// and OnStuck may be nil; the others are required.
 type Host struct {
 	Messenger Messenger
 	Agents    Agents
 	Notifier  Notifier
 	Logger    Logger
 	Schemas   SchemaValidator
+	// OnStuck, when set, is called once per forum and process when a
+	// forum stops on an error it does not recover from by itself (a store
+	// write that fails during a run, a forum Recover cannot reopen): the
+	// forum keeps its status on disk with no live controller and continues
+	// only with forum_resume or at the next start. err is the cause, already
+	// logged at Error; origin is the launcher, so the host can tell it and
+	// raise an operator alert. A corrupt forum is not stuck: it ends failed
+	// (EndCorrupt) and the launcher gets the normal completion notice. It
+	// is called on the run's goroutine with no lock held and must not
+	// block.
+	OnStuck func(forumID string, origin Origin, err error)
 }

@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -63,6 +62,12 @@ type Controller struct {
 	// after_round round has several turns in flight.
 	dispatchMu sync.Mutex
 
+	// exited is true (under mu) from the moment Run returns until it is
+	// called again. Requests are refused while it is set: a request that
+	// lands after Run has exited could otherwise leave the forum pausing or
+	// cancelling with nothing to complete the transition.
+	exited bool
+
 	// pause and cancel are set (under mu, right after the request is
 	// committed) by RequestPause/RequestCancel and polled between
 	// dispatches; cancel also cancels in-flight asks through cancelActive.
@@ -90,6 +95,11 @@ var errSkip = errors.New("forum: commit not needed")
 // errCrashed is what every write returns after crashHook fired.
 var errCrashed = errors.New("forum: simulated crash")
 
+// errRunEnded is wrapped by RequestPause and RequestCancel when Run has
+// already returned: the caller waits for the run to be released and takes
+// the forum over instead.
+var errRunEnded = errors.New("the forum's run has stopped")
+
 // Run drives the forum until it is terminal or paused and returns the
 // resulting status. Forum-level failures (exhausted attempts, a gone
 // participant, limits) become a terminal state and a nil error. A non-nil
@@ -106,7 +116,33 @@ var errCrashed = errors.New("forum: simulated crash")
 // decision, recorded as CommitResumed before Run); then for each enabled layer
 // not Ended, runLayer; then end with StatusCompleted. A pause or cancel
 // requested while a layer runs is honoured between dispatches.
+//
+// A run that meets ErrCorrupt (a record that no longer verifies, a commit
+// the log refuses) ends the forum failed with EndCorrupt, logged at Error
+// with the cause, rather than leaving it to fail the same way at every
+// start. While Run is not executing after having returned, RequestPause
+// and RequestCancel are refused (errRunEnded); the caller that started
+// Run re-reads State afterwards and calls Run again while it is pausing
+// or cancelling, so no accepted request is ever left unfinished.
 func (c *Controller) Run(ctx context.Context) (Status, error) {
+	c.mu.Lock()
+	c.exited = false
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.exited = true
+		c.mu.Unlock()
+	}()
+	status, err := c.run(ctx)
+	if err != nil && errors.Is(err, ErrCorrupt) && !c.dead.Load() {
+		c.host.Logger.Errorf("forum %s: its records are corrupt; ending it failed: %v", c.snap.ForumID, err)
+		return c.end(StatusFailed, EndCorrupt)
+	}
+	return status, err
+}
+
+// run is Run's body.
+func (c *Controller) run(ctx context.Context) (Status, error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	c.mu.Lock()
@@ -158,7 +194,7 @@ func (c *Controller) Run(ctx context.Context) (Status, error) {
 		switch reason {
 		case EndForumCallLimit, EndDeadline:
 			return c.end(StatusIncomplete, reason)
-		case EndAttemptsExhausted, EndModeratorFailed, EndParticipantGone, EndHostError:
+		case EndAttemptsExhausted, EndModeratorFailed, EndParticipantGone, EndHostError, EndCorrupt:
 			return c.end(StatusFailed, reason)
 		case EndCompleted, EndRoundLimit, EndCallLimit, EndModeratorStop, EndCancelled:
 		}
@@ -170,18 +206,25 @@ func (c *Controller) Run(ctx context.Context) (Status, error) {
 // CommitPauseRequested (status pausing); in-flight asks finish within
 // their timeouts and the run then commits CommitPaused and returns. A
 // forum already pausing or paused is left as it is (idempotent). It is
-// ErrInvalidState in any other state but running: cancellation dominates
-// a pause, and a terminal forum stays terminal.
+// ErrInvalidState, naming the forum, in any other state but running:
+// cancellation dominates a pause, and a terminal forum stays terminal.
+// After Run has returned it is refused (errRunEnded, see Run).
 func (c *Controller) RequestPause() error {
+	id := c.snap.ForumID
 	err := c.commitWhen(func(st *State) error {
+		if c.exited {
+			return runEnded(id, "paused")
+		}
 		switch st.Status {
 		case StatusRunning:
 			return nil
 		case StatusPausing, StatusPaused:
 			return errSkip
-		case StatusQueued, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+		case StatusCancelling:
+			return invalidState("forum %s is being cancelled and cannot be paused", id)
+		case StatusQueued, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		}
-		return ErrInvalidState
+		return invalidState("forum %s is %s and cannot be paused", id, st.Status)
 	}, &Commit{Kind: CommitPauseRequested}, func() { c.pause.Store(true) })
 	if errors.Is(err, errSkip) {
 		return nil
@@ -191,13 +234,17 @@ func (c *Controller) RequestPause() error {
 
 // RequestCancel commits CommitCancelRequested (status cancelling) and
 // cancels in-flight asks; the run then ends with StatusCancelled, keeping
-// every committed output. Repeating it is harmless. It is ErrInvalidState
-// when the status is terminal.
+// every committed output. Repeating it is harmless. It is ErrInvalidState,
+// naming the forum, when the status is terminal. After Run has returned
+// it is refused (errRunEnded, see Run).
 func (c *Controller) RequestCancel() error {
+	id := c.snap.ForumID
 	err := c.commitWhen(func(st *State) error {
 		switch {
+		case c.exited:
+			return runEnded(id, "cancelled")
 		case st.Status.Terminal():
-			return ErrInvalidState
+			return invalidState("forum %s is already %s", id, st.Status)
 		case st.Status == StatusCancelling:
 			return errSkip
 		}
@@ -214,6 +261,11 @@ func (c *Controller) RequestCancel() error {
 		cancelActive()
 	}
 	return nil
+}
+
+// runEnded is the refusal of a request made after Run returned.
+func runEnded(id, verb string) error {
+	return &stateError{msg: fmt.Sprintf("forum %s has stopped running and cannot be %s by this run", id, verb), cause: errRunEnded}
 }
 
 // State returns a deep copy of the current derived state.
@@ -241,12 +293,6 @@ func cloneState(st *State) State {
 		cp.Outputs = slices.Clone(ls.Outputs)
 		cp.Decisions = slices.Clone(ls.Decisions)
 		out.Layers[id] = &cp
-	}
-	out.Participants = make(map[string]*ParticipantState, len(st.Participants))
-	for id, ps := range st.Participants {
-		cp := *ps
-		cp.Introduced = maps.Clone(ps.Introduced)
-		out.Participants[id] = &cp
 	}
 	return out
 }
@@ -625,11 +671,8 @@ func (c *Controller) commitWhen(guard func(*State) error, commit *Commit, after 
 	if err := replayApply(c.cfg, c.snap, &next, &trial); err != nil {
 		return fmt.Errorf("commit %s refused: %w", commit.Kind, err)
 	}
-	if _, err := c.store.AppendCommit(commit); err != nil {
+	if err := c.store.AppendCommit(trial.Seq, commit); err != nil {
 		return fmt.Errorf("commit %s: %w", commit.Kind, err)
-	}
-	if commit.Seq != trial.Seq {
-		return fmt.Errorf("%w: commit %s landed at seq %d, the state is at %d", ErrCorrupt, commit.Kind, commit.Seq, c.state.Seq)
 	}
 	next.UpdatedAt = commit.At
 	c.state = &next

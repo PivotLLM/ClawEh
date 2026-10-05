@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,10 +107,21 @@ func stLaunch(t *testing.T, s *Store, cfg *Config) *Snapshot {
 	if err := s.WriteSnapshot(snap); err != nil {
 		t.Fatalf("WriteSnapshot: %v", err)
 	}
-	if _, err := s.AppendCommit(&Commit{Kind: CommitLaunched}); err != nil {
+	if _, err := nextAppend(s, &Commit{Kind: CommitLaunched}); err != nil {
 		t.Fatalf("AppendCommit(launched): %v", err)
 	}
 	return snap
+}
+
+// nextAppend appends c at the seq after the last commit on disk, as a
+// caller that tracks the log's seq would.
+func nextAppend(s *Store, c *Commit) (int, error) {
+	commits, err := s.ReadCommits()
+	if err != nil {
+		return 0, err
+	}
+	seq := len(commits) + 1 // seqs are contiguous from 1 (ReadCommits checks)
+	return seq, s.AppendCommit(seq, c)
 }
 
 // stReserve writes an attempt's request and commits its reservation.
@@ -122,7 +134,7 @@ func stReserve(t *testing.T, s *Store, layer string, round int, turn string, kin
 	if err := s.WriteAttemptRequest(req); err != nil {
 		t.Fatalf("WriteAttemptRequest(%s/%s/%d): %v", layer, turn, attempt, err)
 	}
-	if _, err := s.AppendCommit(&Commit{
+	if _, err := nextAppend(s, &Commit{
 		Kind: CommitAttempt, Layer: layer, Round: round, Turn: turn, TurnKind: kind,
 		Participant: participant, Attempt: attempt, ThroughSeq: through,
 	}); err != nil {
@@ -352,7 +364,7 @@ func TestStoreRecordsRoundTrip(t *testing.T) {
 	}
 	st := &State{
 		Status: StatusRunning, Seq: 1, Layers: map[string]*LayerState{"debate": {Outputs: []OutputRecord{}}},
-		Participants: map[string]*ParticipantState{}, UpdatedAt: time.Now().UTC().Round(0),
+		UpdatedAt: time.Now().UTC().Round(0),
 	}
 	if err = s.WriteState(st); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("WriteState without the lock: %v, want ErrInvalidState", err)
@@ -593,7 +605,7 @@ func TestStoreWriteOutput(t *testing.T) {
 	if got, err := s.ReadFile(out.PublishedFile); err != nil || string(got) != string(published) {
 		t.Errorf("published %q, %v", got, err)
 	}
-	if _, err := s.AppendCommit(&Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}); err != nil {
+	if _, err := nextAppend(s, &Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}); err != nil {
 		t.Fatal(err)
 	}
 	// One output per work ID.
@@ -620,7 +632,7 @@ func TestStoreAppendCommit(t *testing.T) {
 		t.Fatalf("empty log = %v, %v", got, err)
 	}
 	// checkCommit needs the snapshot: nothing commits before it is written.
-	if _, err := s.AppendCommit(&Commit{Kind: CommitLaunched}); !errors.Is(err, ErrInvalidState) {
+	if _, err := nextAppend(s, &Commit{Kind: CommitLaunched}); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("AppendCommit before the snapshot: %v, want ErrInvalidState", err)
 	}
 	before := time.Now().UTC()
@@ -632,7 +644,7 @@ func TestStoreAppendCommit(t *testing.T) {
 	if _, err = os.Stat(s.Path("commits/00000001.json")); err != nil {
 		t.Errorf("commit file: %v", err)
 	}
-	seq, err := s.AppendCommit(&Commit{Kind: CommitLayerStarted, Layer: "debate"})
+	seq, err := nextAppend(s, &Commit{Kind: CommitLayerStarted, Layer: "debate"})
 	if err != nil || seq != 2 {
 		t.Errorf("second seq %d, %v", seq, err)
 	}
@@ -643,19 +655,39 @@ func TestStoreAppendCommit(t *testing.T) {
 	if err = stale.loadIndexLocked(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.AppendCommit(&Commit{Kind: CommitPauseRequested}); err != nil {
+	if _, err = nextAppend(s, &Commit{Kind: CommitPauseRequested}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = stale.AppendCommit(&Commit{Kind: CommitPaused}); !errors.Is(err, os.ErrExist) {
+	if err = stale.AppendCommit(3, &Commit{Kind: CommitPaused}); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("stale writer: %v, want os.ErrExist", err)
 	}
-	// The failure dropped its index, so it continues from the real end.
-	if seq, err = stale.AppendCommit(&Commit{Kind: CommitPaused}); err != nil || seq != 4 {
-		t.Errorf("stale writer after reload: %d, %v", seq, err)
+	// The failure dropped its index, so the seq it expected no longer
+	// matches the log, and it continues from the real end.
+	if err = stale.AppendCommit(3, &Commit{Kind: CommitPaused}); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("stale writer at a taken seq: %v, want ErrInvalidState", err)
+	}
+	if err = stale.AppendCommit(4, &Commit{Kind: CommitPaused}); err != nil {
+		t.Errorf("stale writer after reload: %v", err)
 	}
 	commits, err := s.ReadCommits()
 	if err != nil || len(commits) != 4 || commits[2].Kind != CommitPauseRequested {
 		t.Errorf("log %+v, %v", commits, err)
+	}
+
+	// A seq that does not follow the log is refused before anything is
+	// written, whether it is ahead of the log or behind it.
+	fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+	for _, seq := range []int{0, 4, 6, 9} {
+		c := &Commit{Kind: CommitResumed}
+		if err := fresh.AppendCommit(seq, c); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "expected at seq") {
+			t.Errorf("AppendCommit at seq %d: %v, want ErrInvalidState", seq, err)
+		}
+		if c.Seq != 0 {
+			t.Errorf("refused commit got seq %d", c.Seq)
+		}
+		if _, err := os.Stat(s.Path(commitRel(seq))); seq > 4 && !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("refused commit at seq %d was written: %v", seq, err)
+		}
 	}
 }
 
@@ -672,12 +704,12 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	if err := s.WriteOutput(out, []byte(`{"claim":"c"}`), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AppendCommit(&Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}); err != nil {
+	if _, err := nextAppend(s, &Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}); err != nil {
 		t.Fatal(err)
 	}
 	stReserve(t, s, "debate", 1, ModeratorTurnID(1), TurnModerator, "mod", 1, 1, "m")
 	guide := "look again"
-	if _, err := s.AppendCommit(&Commit{
+	if _, err := nextAppend(s, &Commit{
 		Kind: CommitModerated, Layer: "debate", Round: 1, Turn: ModeratorTurnID(1),
 		Decision: &Decision{Decision: DecisionGuide, Reason: "r", Guidance: &guide},
 	}); err != nil {
@@ -736,7 +768,7 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := tt.c
-			seq, appendErr := s.AppendCommit(&c)
+			seq, appendErr := nextAppend(s, &c)
 			if appendErr == nil || !strings.Contains(appendErr.Error(), tt.want) {
 				t.Errorf("AppendCommit = %d, %v; want an error containing %q", seq, appendErr, tt.want)
 			}
@@ -769,7 +801,7 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 		{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: bob, Output: bobOut},
 		{Kind: CommitRoundPublished, Layer: "debate", Round: 1},
 	} {
-		if _, err = s.AppendCommit(c); err != nil {
+		if _, err = nextAppend(s, c); err != nil {
 			t.Fatalf("AppendCommit(%s): %v", c.Kind, err)
 		}
 	}
@@ -782,32 +814,32 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	}
 }
 
+// Concurrent appends at the same seq: exactly one lands.
 func TestStoreAppendCommitConcurrent(t *testing.T) {
 	s := stNewStore(t)
 	stLaunch(t, s, stConfig())
 	const n = 32
-	var wg sync.WaitGroup
-	seqs := make(chan int, n)
+	var (
+		wg sync.WaitGroup
+		ok atomic.Int32
+	)
 	for range n {
 		wg.Go(func() {
-			seq, err := s.AppendCommit(&Commit{Kind: CommitResumed})
-			if err != nil {
-				t.Error(err)
+			err := s.AppendCommit(2, &Commit{Kind: CommitResumed})
+			switch {
+			case err == nil:
+				ok.Add(1)
+			case !errors.Is(err, ErrInvalidState):
+				t.Errorf("losing append: %v, want ErrInvalidState", err)
 			}
-			seqs <- seq
 		})
 	}
 	wg.Wait()
-	close(seqs)
-	seen := map[int]bool{}
-	for seq := range seqs {
-		if seen[seq] {
-			t.Errorf("seq %d assigned twice", seq)
-		}
-		seen[seq] = true
+	if got := ok.Load(); got != 1 {
+		t.Errorf("%d appends at seq 2 landed, want 1", got)
 	}
 	commits, err := s.ReadCommits()
-	if err != nil || len(commits) != n+1 {
+	if err != nil || len(commits) != 2 {
 		t.Fatalf("log has %d commits, %v", len(commits), err)
 	}
 }
@@ -853,7 +885,7 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 			s := stNewStore(t)
 			stLaunch(t, s, stConfig())
 			for range 2 {
-				if _, err := s.AppendCommit(&Commit{Kind: CommitResumed}); err != nil {
+				if _, err := nextAppend(s, &Commit{Kind: CommitResumed}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -863,7 +895,7 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 			}
 			// The index is built from the same log, so writes fail too.
 			fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
-			if _, err := fresh.AppendCommit(&Commit{Kind: CommitResumed}); !errors.Is(err, ErrCorrupt) {
+			if err := fresh.AppendCommit(4, &Commit{Kind: CommitResumed}); !errors.Is(err, ErrCorrupt) {
 				t.Errorf("AppendCommit on a corrupt log: %v, want ErrCorrupt", err)
 			}
 		})
@@ -886,8 +918,8 @@ func TestStoreCrashLeftovers(t *testing.T) {
 		t.Fatalf("ReadCommits with leftovers = %d, %v", len(commits), err)
 	}
 	fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
-	if seq, err := fresh.AppendCommit(&Commit{Kind: CommitPauseRequested}); err != nil || seq != 2 {
-		t.Errorf("AppendCommit after a crash = %d, %v", seq, err)
+	if err := fresh.AppendCommit(2, &Commit{Kind: CommitPauseRequested}); err != nil {
+		t.Errorf("AppendCommit after a crash: %v", err)
 	}
 }
 
@@ -1414,5 +1446,55 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 	}
 	if _, err := os.Lstat(turnDir); err != nil {
 		t.Errorf("turn directory removed by the sweep: %v", err)
+	}
+}
+
+// ReplaceTranscript rewrites transcript.md in place: same file, new
+// content, so `tail -f` keeps following it.
+func TestStoreReplaceTranscript(t *testing.T) {
+	s := stNewStore(t)
+	if err := s.ReplaceTranscript([]byte("first\n")); err != nil {
+		t.Fatalf("ReplaceTranscript on a missing file: %v", err)
+	}
+	if err := s.AppendTranscript("second\n"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(s.Path(fileTranscript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReplaceTranscript([]byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(s.Path(fileTranscript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("the transcript was replaced by another file")
+	}
+	if got, err := s.ReadFile(fileTranscript); err != nil || string(got) != "new\n" {
+		t.Errorf("transcript = %q, %v", got, err)
+	}
+	if err := s.ReplaceTranscript(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ReadFile(fileTranscript); err != nil || len(got) != 0 {
+		t.Errorf("emptied transcript = %q, %v", got, err)
+	}
+
+	// A symbolic link in its place is refused, never followed.
+	if err := os.Remove(s.Path(fileTranscript)); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.Symlink(outside, s.Path(fileTranscript)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceTranscript([]byte("x")); err == nil {
+		t.Error("ReplaceTranscript followed a symbolic link")
+	}
+	if _, err := os.Stat(outside); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a file was written through the link: %v", err)
 	}
 }

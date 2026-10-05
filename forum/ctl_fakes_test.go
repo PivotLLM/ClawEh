@@ -290,7 +290,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	if err = s.WriteSnapshot(f.snap); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AppendCommit(&Commit{Kind: CommitLaunched}); err != nil {
+	if _, err := nextAppend(s, &Commit{Kind: CommitLaunched}); err != nil {
 		t.Fatal(err)
 	}
 	f.msg = &ctlMessenger{agents: agents}
@@ -437,7 +437,7 @@ func ctlJSON(t *testing.T, v any) string {
 // before running it again) and runs it.
 func (f *ctlForum) resume() (*Controller, Status) {
 	f.t.Helper()
-	if _, err := f.s.AppendCommit(&Commit{Kind: CommitResumed}); err != nil {
+	if _, err := nextAppend(f.s, &Commit{Kind: CommitResumed}); err != nil {
 		f.t.Fatalf("resume: %v", err)
 	}
 	return f.run()

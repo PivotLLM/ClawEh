@@ -13,8 +13,8 @@
 // Notifier, Logger, SchemaValidator); ClawEh wires them in and mounts the
 // tools from tools.go under the "forum" namespace.
 //
-// The package is split along five seams, each in its own files so they can
-// be implemented in parallel (see DESIGN.md):
+// The package is split along five seams, each in its own files (see
+// DESIGN.md):
 //
 //   - config.go, decode.go, validate.go: the configuration contract, strict
 //     decoding and preflight validation.
@@ -30,7 +30,7 @@
 // Invariants every seam relies on:
 //
 //   - The commit log (commits/) is authoritative; state.json is a cache that
-//     Replay rebuilds from the commits and the attempt records.
+//     Replay rebuilds from the commits.
 //   - Exactly one output is ever committed per turn (work) ID, however many
 //     attempts were sent.
 //   - Private material (participant instructions, directed messages, failed

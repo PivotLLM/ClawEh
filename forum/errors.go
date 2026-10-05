@@ -21,13 +21,17 @@ var (
 	// ErrSchemasUnavailable: the configuration names a JSON Schema but the
 	// host provided no SchemaValidator.
 	ErrSchemasUnavailable = errors.New("JSON Schema validation is not available")
-	// ErrParticipantGone: a temporary participant recorded in
-	// participants.json no longer exists; the run fails rather than
-	// recreating it without its history (§8).
-	ErrParticipantGone = errors.New("temporary participant no longer exists")
 	// ErrCorrupt: the forum directory fails verification (missing files,
 	// digest mismatch, unreadable commit).
 	ErrCorrupt = errors.New("forum directory is corrupt")
-
-	errNotImplemented = errors.New("forum: not implemented")
+	// ErrShuttingDown: the host is shutting down. Messenger.Ask returns an
+	// error wrapping it when it cannot deliver or finish a turn for that
+	// reason; the attempt stays uncertain and the forum resumes at the next
+	// start instead of failing.
+	ErrShuttingDown = errors.New("the host is shutting down")
+	// ErrForumTurn: a forum tool was called from inside a forum turn (at
+	// the maximum sub-agent depth, or by a temporary agent a forum
+	// created). ToolHost.Scope returns an error wrapping it and the tool is
+	// refused, so a forum can never launch or control forums.
+	ErrForumTurn = errors.New("forum tools are not available inside a forum turn")
 )

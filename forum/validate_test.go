@@ -293,9 +293,6 @@ func TestValidateStaticAccepts(t *testing.T) {
 // TestValidateStaticProjection covers the share and paths pointer checks,
 // which ValidateStatic delegates to CheckProjection (seam c).
 func TestValidateStaticProjection(t *testing.T) {
-	if len(CheckProjection([]string{""})) == 0 {
-		t.Skip("CheckProjection (seam c, jsonpointer.go) is not implemented in this tree yet")
-	}
 	tests := []struct {
 		name   string
 		mutate func(c *Config)

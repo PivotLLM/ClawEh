@@ -198,6 +198,8 @@ func (a *svcAgents) setDeleteErr(id string, err error) {
 type svcNotifier struct {
 	base string
 	err  error
+	// block, when set, holds every notice until it is closed or ctx ends.
+	block chan struct{}
 
 	mu         sync.Mutex
 	notices    []*Result
@@ -205,7 +207,14 @@ type svcNotifier struct {
 	violations []string
 }
 
-func (n *svcNotifier) ForumFinished(_ context.Context, origin Origin, res *Result) error {
+func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, res *Result) error {
+	if n.block != nil {
+		select {
+		case <-n.block:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.notices = append(n.notices, res)
@@ -292,14 +301,38 @@ type svcCtrl struct {
 	pause, cancel atomic.Bool
 	wake          chan struct{}
 	finish        chan Status
-	started       chan struct{}
+	// fail makes a running Run return the error sent on it.
+	fail        chan error
+	started     chan struct{}
+	startedOnce sync.Once
+	runs        atomic.Int32
+	// exited mirrors the real controller: set when Run returns, cleared
+	// when it is called; requests are refused while it is set.
+	exited atomic.Bool
+	// beforeReturn, when set, runs as Run is about to return (a request
+	// landing in that window).
+	beforeReturn func(c *svcCtrl)
+	// onRequest, when set, runs at the start of RequestPause and
+	// RequestCancel.
+	onRequest func(c *svcCtrl)
 	// noResult makes end commit without writing result.json (a crash
 	// between the two).
 	noResult bool
 }
 
 func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
-	close(c.started)
+	c.exited.Store(false)
+	c.runs.Add(1)
+	c.startedOnce.Do(func() { close(c.started) })
+	st, err := c.run(ctx)
+	if c.beforeReturn != nil {
+		c.beforeReturn(c)
+	}
+	c.exited.Store(true)
+	return st, err
+}
+
+func (c *svcCtrl) run(ctx context.Context) (Status, error) {
 	switch st := c.State().Status; st {
 	case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		return st, nil
@@ -313,6 +346,8 @@ func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
+		case err := <-c.fail:
+			return "", err
 		case st := <-c.finish:
 			reason := EndCompleted
 			if st == StatusFailed {
@@ -342,13 +377,13 @@ func (c *svcCtrl) end(st Status, reason EndReason) error {
 		return nil
 	}
 	cur := c.State()
-	return c.store.WriteResult(resultOf(c.cfg, c.snap, &cur))
+	return c.store.WriteResult(buildResult(c.cfg, c.snap, &cur))
 }
 
 func (c *svcCtrl) commit(commit *Commit) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := c.store.AppendCommit(commit); err != nil {
+	if _, err := nextAppend(c.store, commit); err != nil {
 		return err
 	}
 	st, err := ReplayState(c.store, c.cfg, c.snap) // as the real controller, the lock holder writes state.json
@@ -367,6 +402,12 @@ func (c *svcCtrl) poke() {
 }
 
 func (c *svcCtrl) RequestPause() error {
+	if c.onRequest != nil {
+		c.onRequest(c)
+	}
+	if c.exited.Load() {
+		return runEnded(c.snap.ForumID, "paused")
+	}
 	if c.State().Status != StatusRunning {
 		return ErrInvalidState
 	}
@@ -379,6 +420,12 @@ func (c *svcCtrl) RequestPause() error {
 }
 
 func (c *svcCtrl) RequestCancel() error {
+	if c.onRequest != nil {
+		c.onRequest(c)
+	}
+	if c.exited.Load() {
+		return runEnded(c.snap.ForumID, "cancelled")
+	}
 	if c.State().Status.Terminal() {
 		return ErrInvalidState
 	}
@@ -426,7 +473,7 @@ func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error)
 	}
 	c := &svcCtrl{
 		store: s, cfg: cfg, snap: snap, parts: parts, st: st,
-		wake: make(chan struct{}, 1), finish: make(chan Status, 1), started: make(chan struct{}),
+		wake: make(chan struct{}, 1), finish: make(chan Status, 1), fail: make(chan error, 1), started: make(chan struct{}),
 		noResult: r.noResult,
 	}
 	r.byID[s.ID()] = c
@@ -468,6 +515,25 @@ type svcEnv struct {
 	ctrls     *svcCtrls
 	workspace string
 	scope     Scope
+	stuck     *svcStuck
+}
+
+// svcStuck records Host.OnStuck calls.
+type svcStuck struct {
+	mu    sync.Mutex
+	calls []string // "<forum id> <origin agent>: <error>"
+}
+
+func (s *svcStuck) record(id string, origin Origin, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, id+" "+origin.AgentID+": "+err.Error())
+}
+
+func (s *svcStuck) list() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.calls)
 }
 
 // svcSetup builds a service over fakes with the fake controller. The
@@ -487,6 +553,7 @@ func svcSetup(t *testing.T) *svcEnv {
 		ctrls:     &svcCtrls{byID: map[string]*svcCtrl{}},
 		workspace: ws,
 		scope:     Scope{AgentID: "launcher", BaseDirectory: base},
+		stuck:     &svcStuck{},
 	}
 	e.svc = e.newService()
 	return e
@@ -501,6 +568,7 @@ func (e *svcEnv) newService() *Service {
 		Notifier:  e.notifier,
 		Logger:    e.logger,
 		Schemas:   JSONSchemaValidator{},
+		OnStuck:   e.stuck.record,
 	})
 	svc.openCtrl = e.ctrls.open
 	e.t.Cleanup(func() { svcClose(e.t, svc) })
@@ -610,7 +678,7 @@ func (e *svcEnv) appendCommits(id string, commits ...Commit) {
 	}
 	defer s.Unlock()
 	for i := range commits {
-		if _, err := s.AppendCommit(&commits[i]); err != nil {
+		if _, err := nextAppend(s, &commits[i]); err != nil {
 			e.t.Fatalf("append %s to %s: %v", commits[i].Kind, id, err)
 		}
 	}

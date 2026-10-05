@@ -60,6 +60,7 @@ const (
 	EndModeratorFailed   EndReason = "moderator_failed"   // the moderator produced no valid decision: run failed
 	EndParticipantGone   EndReason = "participant_gone"   // a temporary participant disappeared (§8): run failed
 	EndHostError         EndReason = "host_error"         // a transport or store error: run failed
+	EndCorrupt           EndReason = "corrupt"            // the forum's records failed verification during the run: run failed
 	EndCancelled         EndReason = "cancelled"          // forum_cancel
 )
 
@@ -322,18 +323,6 @@ type LayerState struct {
 	Decisions []RoundDecision `json:"decisions,omitempty"`
 }
 
-// ParticipantState is what the controller must know to send a participant
-// only what is new (§2.3). It is derived from the CommitAttempt entries of
-// kind TurnParticipant.
-type ParticipantState struct {
-	// Briefed is true once any attempt was reserved for the participant.
-	Briefed bool `json:"briefed"`
-	// Introduced lists the layers in which an attempt was reserved for it.
-	Introduced map[string]bool `json:"introduced,omitempty"`
-	// ThroughSeq is the highest ThroughSeq reserved for it.
-	ThroughSeq int `json:"through_seq"`
-}
-
 // State (state.json) is the derived view of a forum. It is a cache: the
 // store rewrites it after every commit, and Replay rebuilds it from the
 // commits when it is missing or stale.
@@ -344,10 +333,9 @@ type State struct {
 	Seq int `json:"seq"`
 	// Calls counts every CommitAttempt in the forum, replied or not
 	// (restart resets no limits, §5).
-	Calls        int                          `json:"calls"`
-	Layers       map[string]*LayerState       `json:"layers"`
-	Participants map[string]*ParticipantState `json:"participants"`
-	UpdatedAt    time.Time                    `json:"updated_at"`
+	Calls     int                    `json:"calls"`
+	Layers    map[string]*LayerState `json:"layers"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 // LayerResult is one result layer's contribution to the manifest.

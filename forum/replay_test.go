@@ -80,7 +80,7 @@ func (r *rpRun) apply(c *Commit) {
 
 func (r *rpRun) commit(c *Commit) int {
 	r.t.Helper()
-	seq, err := r.s.AppendCommit(c)
+	seq, err := nextAppend(r.s, c)
 	if err != nil {
 		r.t.Fatalf("AppendCommit(%s): %v", c.Kind, err)
 	}
@@ -251,22 +251,6 @@ func TestReplayFullRun(t *testing.T) {
 	}
 	if len(debate.Decisions) != 1 || debate.Decisions[0].Round != 1 || debate.Decisions[0].Decision.Decision != DecisionGuide {
 		t.Errorf("decisions %+v", debate.Decisions)
-	}
-	if _, ok := st.Participants["mod"]; ok {
-		t.Error("the moderator has participant state")
-	}
-	alice := st.Participants["alice"]
-	if alice == nil || !alice.Briefed || !alice.Introduced["debate"] || !alice.Introduced["summary"] {
-		t.Fatalf("alice %+v", alice)
-	}
-	var maxThrough int
-	for _, c := range commits {
-		if c.Kind == CommitAttempt && c.Participant == "alice" {
-			maxThrough = max(maxThrough, c.ThroughSeq)
-		}
-	}
-	if alice.ThroughSeq != maxThrough {
-		t.Errorf("alice ThroughSeq %d, want %d", alice.ThroughSeq, maxThrough)
 	}
 	if !st.UpdatedAt.Equal(commits[len(commits)-1].At) {
 		t.Errorf("UpdatedAt %v, want the last commit's %v", st.UpdatedAt, commits[len(commits)-1].At)
@@ -522,7 +506,6 @@ func TestReplayStateIgnoresTheCache(t *testing.T) {
 // directory.
 func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 	r := rpFullRun(t)
-	decodeOK := rpDecodeAvailable(t)
 	n := len(r.states)
 	for k := n; k >= 1; k-- {
 		for seq := k + 1; seq <= n; seq++ {
@@ -545,11 +528,9 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("k=%d: OpenStore: %v", k, err)
 		}
-		cfg, snap := r.cfg, r.snap
-		if decodeOK {
-			if cfg, snap, err = Verify(s); err != nil {
-				t.Fatalf("k=%d: Verify: %v", k, err)
-			}
+		cfg, snap, err := Verify(s)
+		if err != nil {
+			t.Fatalf("k=%d: Verify: %v", k, err)
 		}
 		st, err := LoadState(s, cfg, snap)
 		if err != nil {
@@ -573,35 +554,7 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 	}
 }
 
-// rpDecodeAvailable reports whether Decode (seam (a), implemented in
-// parallel) works yet. Verify calls Decode, so until it does the tests
-// that need Verify to succeed are skipped with that reason; once Decode
-// lands they always run.
-func rpDecodeAvailable(t *testing.T) bool {
-	t.Helper()
-	raw, err := json.Marshal(stConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Decode(raw)
-	if errors.Is(err, errNotImplemented) {
-		return false
-	}
-	if err != nil {
-		t.Fatalf("Decode rejects the test configuration: %v", err)
-	}
-	return true
-}
-
-func rpRequireDecode(t *testing.T) {
-	t.Helper()
-	if !rpDecodeAvailable(t) {
-		t.Skip("Decode (seam (a)) is not implemented in this tree yet")
-	}
-}
-
 func TestVerifyAcceptsAFullRun(t *testing.T) {
-	rpRequireDecode(t)
 	r := rpFullRun(t)
 	cfg, snap, err := Verify(r.s)
 	if err != nil {
@@ -615,7 +568,6 @@ func TestVerifyAcceptsAFullRun(t *testing.T) {
 // Verify fails on every tampered or missing committed artifact, and never
 // repairs or regenerates it.
 func TestVerifyDetectsDamage(t *testing.T) {
-	rpRequireDecode(t)
 	committedOutput := func(r *rpRun, layer string, published bool) string {
 		o := r.st.Layers[layer].Outputs[0]
 		if published {

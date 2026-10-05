@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -29,18 +30,27 @@ import (
 // Host wiring (what ClawEh calls, in order):
 //
 //	svc := forum.New(forum.Host{Messenger: ..., Agents: ..., Notifier: ...,
-//	        Logger: ..., Schemas: forum.JSONSchemaValidator{}},
+//	        Logger: ..., Schemas: forum.JSONSchemaValidator{},
+//	        OnStuck: ...},                             // optional: tell the launcher, raise an alert
 //	        forum.WithHostLimits(...))                 // optional ceilings
 //	err := svc.Recover(ctx, scopes)                    // once at startup, every agent's <workspace>/forums
 //	defs := forum.Tools(svc, toolHost)                 // mount under "forum", gated by the forum permission
 //	...
-//	err = svc.Close(ctx)                               // at shutdown
+//	err = svc.Close(ctx)                               // at shutdown, before the agent loop stops
+//
+// The host's side of the contract, beyond the interfaces' signatures:
+// Messenger.Ask reports a host shutdown as ErrShuttingDown (never as a
+// cancelled reply); ToolHost.Scope refuses calls made inside a forum turn
+// with ErrForumTurn; Notifier.ForumFinished hands the notice off; OnStuck
+// does not block.
 //
 // Every ID-only operation takes the caller's Scope and never looks outside
 // Scope.BaseDirectory.
 
-// keepAliveInterval is how often a paused forum's temporary agents are
-// touched so they outlive the registry's idle TTL (§9, DESIGN.md §7.10).
+// keepAliveInterval is how often the temporary agents of paused and
+// running forums are touched so they outlive the registry's idle TTL, and
+// how often pending temporary-agent deletions are retried (§9, DESIGN.md
+// §7.10).
 const keepAliveInterval = time.Hour
 
 // cleanupNotice is the marker (<base>/.cleanup/<uuid>.notice) of a
@@ -113,13 +123,30 @@ type Service struct {
 	closed bool
 	runs   map[string]*run
 	// paused holds the stores of paused forums whose temporary agents
-	// keepAlive touches.
+	// keepAlive touches (running forums' agents are touched through runs).
 	paused map[string]*Store
+	// cleanups holds the forums whose temporary agents could not all be
+	// deleted at their terminal state, by ID; keepAlive retries them.
+	cleanups map[string]Scope
 	// controls serialises the control operations (pause, resume, cancel,
-	// delete) of one forum ID.
-	controls  map[string]*sync.Mutex
+	// delete) of one forum ID; an entry lives while an operation holds or
+	// waits for it.
+	controls map[string]*controlLock
+	// stuck lists the forums Host.OnStuck was called for in this process,
+	// so it is called once; a run that later stops cleanly clears it.
+	stuck map[string]bool
+	// notifying lists the forums whose completion notice is being
+	// delivered, so a notice is never sent twice concurrently.
+	notifying map[string]bool
 	keepAlive sync.Once
 	wg        sync.WaitGroup
+}
+
+// controlLock is one forum ID's control mutex with the number of
+// operations holding or waiting for it.
+type controlLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // run is one active controller with its store and lock. It stays in
@@ -158,7 +185,10 @@ func New(host Host, opts ...Option) *Service {
 		stop:           stop,
 		runs:           map[string]*run{},
 		paused:         map[string]*Store{},
-		controls:       map[string]*sync.Mutex{},
+		cleanups:       map[string]Scope{},
+		controls:       map[string]*controlLock{},
+		stuck:          map[string]bool{},
+		notifying:      map[string]bool{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -167,11 +197,20 @@ func New(host Host, opts ...Option) *Service {
 }
 
 // stateError is ErrInvalidState with a message naming the forum and why
-// the operation is refused.
-type stateError struct{ msg string }
+// the operation is refused, and optionally a more specific cause.
+type stateError struct {
+	msg   string
+	cause error
+}
 
 func (e *stateError) Error() string { return e.msg }
-func (e *stateError) Unwrap() error { return ErrInvalidState }
+
+func (e *stateError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrInvalidState}
+	}
+	return []error{ErrInvalidState, e.cause}
+}
 
 // invalidState builds a *stateError from a message that starts with
 // "forum <id>".
@@ -331,8 +370,7 @@ func (s *Service) allocate(ctx context.Context, store *Store, raw []byte, cfg *C
 	if err = store.WriteSnapshot(snap); err != nil {
 		return err
 	}
-	_, err = store.AppendCommit(&Commit{Kind: CommitLaunched})
-	return err
+	return store.AppendCommit(1, &Commit{Kind: CommitLaunched})
 }
 
 // materialiseSources copies every source into sources/: a file source
@@ -433,7 +471,8 @@ func (s *Service) createParticipants(ctx context.Context, store *Store, cfg *Con
 	return out, nil
 }
 
-// Status returns one forum's summary.
+// Status returns one forum's summary. It reads the forum's records
+// without verifying their digests (loadView); verification is Open's job.
 func (s *Service) Status(_ context.Context, scope Scope, id string) (*Summary, error) {
 	if r, ok := s.running(scope, id); ok {
 		st := r.ctrl.State()
@@ -443,7 +482,7 @@ func (s *Service) Status(_ context.Context, scope Scope, id string) (*Summary, e
 	if err != nil {
 		return nil, err
 	}
-	cfg, snap, st, err := load(store)
+	cfg, snap, st, err := loadView(store)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +524,15 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 	if r != nil {
 		switch st := r.ctrl.State().Status; st {
 		case StatusRunning, StatusQueued:
-			return r.ctrl.RequestPause()
+			reqErr := r.ctrl.RequestPause()
+			if !errors.Is(reqErr, errRunEnded) {
+				return reqErr
+			}
+			// The run stopped under us: wait for it to be released and
+			// take the forum over.
+			if err = waitDone(ctx, r); err != nil {
+				return err
+			}
 		case StatusPausing, StatusPaused:
 			return nil
 		case StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
@@ -503,7 +550,7 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 	case StatusPausing:
 		return s.openAndStart(ctx, store, nil) // the controller completes the pause
 	case StatusQueued, StatusRunning:
-		if err := markLaunched(store, st.Status); err != nil {
+		if err := markLaunched(store, st); err != nil {
 			store.Unlock()
 			return err
 		}
@@ -574,7 +621,7 @@ func (s *Service) resume(ctx context.Context, store *Store, st *State) error {
 		return refuseResume(store.ID(), st.Status)
 	}
 	if commit != "" {
-		if _, err := store.AppendCommit(&Commit{Kind: commit}); err != nil {
+		if err := store.AppendCommit(st.Seq+1, &Commit{Kind: commit}); err != nil {
 			store.Unlock()
 			return err
 		}
@@ -604,7 +651,13 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 		case StatusCompleted, StatusIncomplete, StatusFailed:
 			return invalidState("forum %s is already %s", id, st)
 		case StatusQueued, StatusRunning, StatusPausing, StatusPaused:
-			return r.ctrl.RequestCancel()
+			reqErr := r.ctrl.RequestCancel()
+			if !errors.Is(reqErr, errRunEnded) {
+				return reqErr
+			}
+			if err = waitDone(ctx, r); err != nil {
+				return err
+			}
 		}
 	}
 	store, st, err := s.takeOver(scope, id)
@@ -627,11 +680,13 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 }
 
 // Results returns result.json for a terminal forum, or a partial manifest
-// (resultOf over the current state, Complete false) for any other.
+// (buildResult over the current state, Complete false) for any other, built
+// exactly as the controller builds result.json, so a round that was not
+// published stays hidden.
 func (s *Service) Results(_ context.Context, scope Scope, id string) (*Result, error) {
 	if r, ok := s.running(scope, id); ok {
 		if st := r.ctrl.State(); !st.Status.Terminal() {
-			return resultOf(r.ctrl.Config(), r.ctrl.Snapshot(), &st), nil
+			return buildResult(r.ctrl.Config(), r.ctrl.Snapshot(), &st), nil
 		}
 	}
 	store, err := s.open(scope, id)
@@ -645,11 +700,11 @@ func (s *Service) Results(_ context.Context, scope Scope, id string) (*Result, e
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	cfg, snap, st, err := load(store)
+	cfg, snap, st, err := loadView(store)
 	if err != nil {
 		return nil, err
 	}
-	return resultOf(cfg, snap, st), nil
+	return buildResult(cfg, snap, st), nil
 }
 
 // Delete removes a paused or terminal forum: it takes the forum's lock
@@ -690,9 +745,10 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	}
 	if err := s.deleteTempAgents(ctx, store); err != nil {
 		store.Unlock()
-		return fmt.Errorf("forum %s was not deleted because its temporary agents could not all be deleted: %w", id, err)
+		return err
 	}
 	s.forgetPaused(id)
+	s.forgetCleanup(id)
 	if err := store.Remove(); err != nil {
 		return err
 	}
@@ -704,8 +760,10 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 // binding is rebuilt by scanning workspaces; §2 "resume unfinished work
 // after reboot"). Per scope it first removes roots staged for deletion
 // (ListStaged, RemoveStaged), then applies recoverOne to every forum in
-// ListForums. Errors are logged per forum and do not stop the scan; the
-// returned error is the first one, for the caller's log line.
+// ListForums. Errors are logged per forum and do not stop the scan; a
+// forum that cannot be reopened (other than one locked by another
+// process) is also reported through Host.OnStuck. The returned error is
+// the first one, for the caller's log line.
 func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 	var first error
 	note := func(err error) {
@@ -735,6 +793,9 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 			if err := s.recoverOne(ctx, scope, id); err != nil {
 				s.host.Logger.Errorf("forum %s: recover: %v", id, err)
 				note(fmt.Errorf("forum %s: %w", id, err))
+				if !errors.Is(err, ErrLocked) && !errors.Is(err, errClosed) {
+					s.reportStuck(scope, id, err)
+				}
 			}
 		}
 	}
@@ -783,7 +844,7 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 		s.registerPaused(store)
 		return nil
 	case StatusQueued:
-		if err := markLaunched(store, st.Status); err != nil {
+		if err := markLaunched(store, st); err != nil {
 			store.Unlock()
 			return err
 		}
@@ -848,12 +909,11 @@ func (s *Service) takeOver(scope Scope, id string) (*Store, *State, error) {
 
 // markLaunched appends the CommitLaunched a launch did not get to write
 // (status queued after a crash); any other status needs nothing.
-func markLaunched(store *Store, st Status) error {
-	if st != StatusQueued {
+func markLaunched(store *Store, st *State) error {
+	if st.Status != StatusQueued {
 		return nil
 	}
-	_, err := store.AppendCommit(&Commit{Kind: CommitLaunched})
-	return err
+	return store.AppendCommit(st.Seq+1, &Commit{Kind: CommitLaunched})
 }
 
 // openAndStart opens a locked store, applies before to the controller (a
@@ -882,7 +942,31 @@ func (s *Service) openAndStart(ctx context.Context, store *Store, before func(co
 	return nil
 }
 
-// load reads a forum's configuration, snapshot and current state.
+// loadView reads what a read-only caller (status, list, results) needs:
+// forum.json, snapshot.json and the current State (LoadState), without
+// Verify's digest checks of every source and output.
+func loadView(store *Store) (*Config, *Snapshot, *State, error) {
+	snap, err := store.ReadSnapshot()
+	if err != nil {
+		return nil, nil, nil, corrupt("%s: %v", fileSnapshot, err)
+	}
+	raw, err := store.ReadConfig()
+	if err != nil {
+		return nil, nil, nil, corrupt("%s: %v", fileConfig, err)
+	}
+	cfg, err := Decode(raw)
+	if err != nil {
+		return nil, nil, nil, corrupt("%s: %v", fileConfig, err)
+	}
+	st, err := LoadState(store, cfg, snap)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return cfg, snap, st, nil
+}
+
+// load reads a forum's configuration, snapshot and current state after
+// verifying the directory (Verify).
 func load(store *Store) (*Config, *Snapshot, *State, error) {
 	cfg, snap, err := Verify(store)
 	if err != nil {
@@ -918,34 +1002,50 @@ func (s *Service) live(ctx context.Context, scope Scope, id string) (*run, error
 	if st := r.ctrl.State().Status; st != StatusPaused && !st.Terminal() {
 		return r, nil
 	}
+	return nil, waitDone(ctx, r)
+}
+
+// waitDone waits until a run has been released (its done channel closed)
+// or ctx ends.
+func waitDone(ctx context.Context, r *run) error {
 	select {
 	case <-r.done:
-		return nil, nil
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 }
 
 // control locks the control operations of one forum ID and returns the
-// unlock function.
+// unlock function. The entry is removed once no operation holds or waits
+// for it, so the map never outgrows the operations in progress.
 func (s *Service) control(id string) func() {
 	s.mu.Lock()
-	m, ok := s.controls[id]
+	cl, ok := s.controls[id]
 	if !ok {
-		m = &sync.Mutex{}
-		s.controls[id] = m
+		cl = &controlLock{}
+		s.controls[id] = cl
 	}
+	cl.refs++
 	s.mu.Unlock()
-	m.Lock()
-	return m.Unlock
+	cl.mu.Lock()
+	return func() {
+		cl.mu.Unlock()
+		s.mu.Lock()
+		if cl.refs--; cl.refs == 0 {
+			delete(s.controls, id)
+		}
+		s.mu.Unlock()
+	}
 }
 
 // start runs ctrl in a goroutine whose context is the service's own,
 // cancelled by Close, not the launching call's. The run is in s.runs
 // until it has stopped and its follow-up is done: for a terminal status,
-// completeTerminal; for a pause, registration for keep-alive. The lock is
-// released and the run removed from s.runs in one step, so a caller that
-// no longer sees the run can take the lock.
+// completeTerminal; for a pause, registration for keep-alive; for an error,
+// the log line and, unless the host is shutting down, Host.OnStuck. The
+// lock is released and the run removed from s.runs in one step, so a
+// caller that no longer sees the run can take the lock.
 func (s *Service) start(store *Store, ctrl controller) error {
 	id := store.ID()
 	s.mu.Lock()
@@ -961,13 +1061,18 @@ func (s *Service) start(store *Store, ctrl controller) error {
 	r := &run{store: store, ctrl: ctrl, cancel: cancel, done: make(chan struct{})}
 	s.runs[id] = r
 	s.mu.Unlock()
+	s.ensureKeepAlive()
 	s.wg.Go(func() {
 		defer close(r.done)
 		defer cancel()
-		status, err := ctrl.Run(ctx)
+		status, err := drive(ctx, ctrl)
 		if err != nil {
-			s.host.Logger.Errorf("forum %s: run stopped: %v", id, err)
 			status = ctrl.State().Status
+			s.runFailed(ctrl.Snapshot(), err)
+		} else {
+			s.mu.Lock()
+			delete(s.stuck, id)
+			s.mu.Unlock()
 		}
 		if status.Terminal() {
 			st := ctrl.State()
@@ -982,19 +1087,83 @@ func (s *Service) start(store *Store, ctrl controller) error {
 		s.mu.Unlock()
 		if status == StatusPaused {
 			s.host.Logger.Infof("forum %s: paused", id)
-			s.ensureKeepAlive()
 		}
 	})
 	return nil
+}
+
+// drive runs ctrl until it settles. A pause or cancel request accepted
+// just before Run returned (or while it was failing) leaves the forum
+// pausing or cancelling with nothing to finish the transition, so while
+// the state is pausing or cancelling Run is called again to settle it.
+// The controller refuses requests once Run has returned (errRunEnded), so
+// re-reading the state after Run returns sees every request it accepted.
+// Two errors in a row stop the loop: the failure is persistent.
+func drive(ctx context.Context, ctrl controller) (Status, error) {
+	status, err := ctrl.Run(ctx)
+	for {
+		st := ctrl.State().Status
+		if (st != StatusPausing && st != StatusCancelling) || st == status {
+			return status, err
+		}
+		prev := err
+		status, err = ctrl.Run(ctx)
+		if err != nil && prev != nil {
+			return status, err
+		}
+	}
+}
+
+// runFailed logs a run that stopped on an error and leaves the forum as it
+// is on disk (it resumes with forum_resume or at the next start). A host
+// shutdown is expected and logged at Info; anything else is logged at
+// Error naming the forum and reported once through Host.OnStuck.
+func (s *Service) runFailed(snap *Snapshot, err error) {
+	id := snap.ForumID
+	if errors.Is(err, ErrShuttingDown) || (s.ctx.Err() != nil && errors.Is(err, context.Canceled)) {
+		s.host.Logger.Infof("forum %s: stopped by the shutdown; it resumes at the next start", id)
+		return
+	}
+	s.host.Logger.Errorf("forum %s: run stopped and the forum is stuck until it is resumed: %v", id, err)
+	s.stuckOnce(id, snap.Origin, err)
+}
+
+// reportStuck reports a forum Recover could not reopen through
+// Host.OnStuck, with its origin when the snapshot is readable.
+func (s *Service) reportStuck(scope Scope, id string, err error) {
+	origin := Origin{AgentID: scope.AgentID}
+	if store, openErr := s.open(scope, id); openErr == nil {
+		if snap, snapErr := store.ReadSnapshot(); snapErr == nil {
+			origin = snap.Origin
+		}
+	}
+	s.stuckOnce(id, origin, err)
+}
+
+// stuckOnce calls Host.OnStuck for a forum unless it was already called
+// in this process.
+func (s *Service) stuckOnce(id string, origin Origin, err error) {
+	if s.host.OnStuck == nil {
+		return
+	}
+	s.mu.Lock()
+	seen := s.stuck[id]
+	s.stuck[id] = true
+	s.mu.Unlock()
+	if !seen {
+		s.host.OnStuck(id, origin, err)
+	}
 }
 
 // completeTerminal does the work that follows a terminal state, each step
 // only if still pending, so a restart can repeat it (§9 Completion):
 //
 //  1. result.json is written if the controller did not get to it;
-//  2. the temporary agents are deleted (deleteTempAgents);
+//  2. the temporary agents are deleted (deleteTempAgents); a failure is
+//     retried by the keep-alive loop until it succeeds;
 //  3. the launcher is notified with result.json, only once it is
-//     committed, and the notice marker is cleared.
+//     committed, and the notice marker is cleared (notify, on a goroutine
+//     of its own so a blocking Notifier never holds the forum).
 //
 // The store must be locked by the caller. Failures are logged.
 func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Config, snap *Snapshot, st *State) {
@@ -1002,11 +1171,12 @@ func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Confi
 	ctx = context.WithoutCancel(ctx)
 	res, resErr := store.ReadResult()
 	if errors.Is(resErr, ErrNotFound) {
-		res = resultOf(cfg, snap, st)
+		res = buildResult(cfg, snap, st)
 		resErr = store.WriteResult(res)
 	}
 	if err := s.deleteTempAgents(ctx, store); err != nil {
-		s.host.Logger.Warnf("forum %s: temporary agents: %v (retried at the next start)", id, err)
+		s.host.Logger.Warnf("forum %s: %v (retried every %s)", id, err, s.keepAliveEvery)
+		s.registerCleanup(Scope{AgentID: snap.Origin.AgentID, BaseDirectory: store.base}, id)
 	}
 	if resErr != nil {
 		s.host.Logger.Errorf("forum %s: result: %v (the launcher is notified once it is written)", id, resErr)
@@ -1017,17 +1187,43 @@ func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Confi
 		s.host.Logger.Errorf("forum %s: notice marker: %v", id, err)
 		return
 	}
-	if !pending {
+	if pending {
+		s.notify(store, snap.Origin, res)
+	}
+}
+
+// notify delivers the completion notice on a goroutine of its own and
+// clears the notice marker afterwards. A notice that fails because the
+// service is closing keeps its marker, so the next start delivers it; any
+// other failure is logged and not retried. A notice already in flight for
+// the forum is not sent again.
+func (s *Service) notify(store *Store, origin Origin, res *Result) {
+	id := store.ID()
+	s.mu.Lock()
+	if s.notifying[id] {
+		s.mu.Unlock()
 		return
 	}
-	if err := s.host.Notifier.ForumFinished(ctx, snap.Origin, res); err != nil {
-		s.host.Logger.Warnf("forum %s: notifying agent %s: %v", id, snap.Origin.AgentID, err)
-	} else {
-		s.host.Logger.Infof("forum %s: %s; agent %s notified", id, res.Status, snap.Origin.AgentID)
-	}
-	if err := store.ClearCleanup(cleanupNotice); err != nil {
-		s.host.Logger.Warnf("forum %s: notice marker: %v", id, err)
-	}
+	s.notifying[id] = true
+	s.mu.Unlock()
+	s.wg.Go(func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.notifying, id)
+			s.mu.Unlock()
+		}()
+		if err := s.host.Notifier.ForumFinished(s.ctx, origin, res); err != nil {
+			s.host.Logger.Warnf("forum %s: notifying agent %s: %v", id, origin.AgentID, err)
+			if s.ctx.Err() != nil {
+				return
+			}
+		} else {
+			s.host.Logger.Infof("forum %s: %s; agent %s notified", id, res.Status, origin.AgentID)
+		}
+		if err := store.ClearCleanup(cleanupNotice); err != nil {
+			s.host.Logger.Warnf("forum %s: notice marker: %v", id, err)
+		}
+	})
 }
 
 // agentsMarker reads the CleanupAgents marker: the temporary agents still
@@ -1057,13 +1253,29 @@ func setAgentsMarker(store *Store, ids []string) error {
 	return store.SetCleanup(CleanupAgents, data)
 }
 
+// agentsLeftError is deleteTempAgents' failure: the temporary agents of a
+// forum that could not be deleted (they stay in the marker for the next
+// attempt).
+type agentsLeftError struct {
+	forumID string
+	agents  []string
+	err     error
+}
+
+func (e *agentsLeftError) Error() string {
+	return fmt.Sprintf("forum %s: temporary agents %v could not be deleted: %v", e.forumID, e.agents, e.err)
+}
+
+func (e *agentsLeftError) Unwrap() error { return e.err }
+
 // deleteTempAgents deletes every agent in the forum's CleanupAgents
 // marker through Agents.Delete. The marker, written at launch as each
 // agent is created, is the record of what is still to delete: once it is
 // gone there is nothing to do, so repeating the call (or a restart) never
 // deletes twice. Delete failing with ErrNotFound counts as done. Agents
 // that could not be deleted stay in the marker for the next attempt (the
-// registry's TTL is the backstop); the error names them.
+// keep-alive loop retries a terminal forum's, the registry's TTL is the
+// backstop); the error is an *agentsLeftError naming them.
 func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 	ids, err := agentsMarker(store)
 	if err != nil || len(ids) == 0 {
@@ -1083,7 +1295,7 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 		return errors.Join(failures, err)
 	}
 	if failures != nil {
-		return fmt.Errorf("deleting temporary agents of forum %s: %w", store.ID(), failures)
+		return &agentsLeftError{forumID: store.ID(), agents: remaining, err: failures}
 	}
 	s.host.Logger.Debugf("forum %s: deleted temporary agents %v", store.ID(), ids)
 	return nil
@@ -1105,6 +1317,22 @@ func (s *Service) forgetPaused(id string) {
 	delete(s.paused, id)
 }
 
+// registerCleanup records a terminal forum whose temporary agents are
+// still to delete, for the keep-alive loop to retry.
+func (s *Service) registerCleanup(scope Scope, id string) {
+	s.mu.Lock()
+	s.cleanups[id] = scope
+	s.mu.Unlock()
+	s.ensureKeepAlive()
+}
+
+// forgetCleanup drops a forum from the cleanup retries.
+func (s *Service) forgetCleanup(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cleanups, id)
+}
+
 // ensureKeepAlive starts the keep-alive goroutine once.
 func (s *Service) ensureKeepAlive() {
 	s.keepAlive.Do(func() {
@@ -1112,8 +1340,8 @@ func (s *Service) ensureKeepAlive() {
 	})
 }
 
-// runKeepAlive touches the temporary agents of every paused forum every
-// keepAliveEvery until the service closes.
+// runKeepAlive runs keepAliveTick every keepAliveEvery until the service
+// closes.
 func (s *Service) runKeepAlive() {
 	t := time.NewTicker(s.keepAliveEvery)
 	defer t.Stop()
@@ -1122,23 +1350,69 @@ func (s *Service) runKeepAlive() {
 		case <-s.ctx.Done():
 			return
 		case <-t.C:
-			s.touchPaused(s.ctx)
+			s.keepAliveTick(s.ctx)
 		}
 	}
 }
 
-// touchPaused calls Agents.Touch for every temporary agent of every
-// paused forum, logging failures.
-func (s *Service) touchPaused(ctx context.Context) {
+// keepAliveTick touches the temporary agents of every paused and running
+// forum, then retries the pending temporary-agent deletions.
+func (s *Service) keepAliveTick(ctx context.Context) {
 	s.mu.Lock()
-	stores := make([]*Store, 0, len(s.paused))
+	stores := make([]*Store, 0, len(s.paused)+len(s.runs))
 	for _, st := range s.paused {
 		stores = append(stores, st)
+	}
+	for _, r := range s.runs {
+		stores = append(stores, r.store)
 	}
 	s.mu.Unlock()
 	for _, store := range stores {
 		s.touchForum(ctx, store)
 	}
+	s.retryCleanups(ctx)
+}
+
+// retryCleanups retries the temporary-agent deletion of every forum in
+// s.cleanups. A forum that is gone, or whose deletion succeeds, leaves the
+// set; one that is running or locked by another process is tried again at
+// the next tick.
+func (s *Service) retryCleanups(ctx context.Context) {
+	s.mu.Lock()
+	pending := maps.Clone(s.cleanups)
+	s.mu.Unlock()
+	for _, id := range slices.Sorted(maps.Keys(pending)) {
+		if _, ok := s.running(pending[id], id); ok {
+			continue
+		}
+		if s.retryCleanup(ctx, pending[id], id) {
+			s.forgetCleanup(id)
+		}
+	}
+}
+
+// retryCleanup retries one forum's temporary-agent deletion and reports
+// whether nothing is left to do.
+func (s *Service) retryCleanup(ctx context.Context, scope Scope, id string) bool {
+	defer s.control(id)()
+	store, err := s.open(scope, id)
+	if errors.Is(err, ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		s.host.Logger.Warnf("forum %s: temporary agents: %v", id, err)
+		return false
+	}
+	if err := store.Lock(); err != nil {
+		return false
+	}
+	defer store.Unlock()
+	if err := s.deleteTempAgents(ctx, store); err != nil {
+		s.host.Logger.Warnf("forum %s: %v (retried every %s)", id, err, s.keepAliveEvery)
+		return false
+	}
+	s.host.Logger.Infof("forum %s: its remaining temporary agents are deleted", id)
+	return true
 }
 
 // touchForum touches the temporary agents of one forum (those in its
@@ -1180,62 +1454,4 @@ func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 		sum.Layers = append(sum.Layers, p)
 	}
 	return sum
-}
-
-// resultOf builds a Result (partial unless the status is terminal) from
-// the loaded records: the result layers in snapshot order with their
-// committed outputs. Omissions (DESIGN.md §8.9) name each result layer
-// that did not start or did not end, and each participant turn of a
-// result layer's rounds 1..Round (the rounds attempted) that has no
-// committed output.
-func resultOf(cfg *Config, snap *Snapshot, st *State) *Result {
-	res := &Result{
-		ForumID:    snap.ForumID,
-		Name:       snap.Name,
-		Status:     st.Status,
-		Reason:     st.Reason,
-		LaunchedAt: snap.LaunchedAt,
-		Complete:   st.Status == StatusCompleted,
-		Calls:      st.Calls,
-		Layers:     make([]LayerResult, 0, len(snap.ResultLayers)),
-		Transcript: fileTranscript,
-	}
-	if st.Status.Terminal() {
-		res.EndedAt = st.UpdatedAt
-	}
-	for _, id := range snap.ResultLayers {
-		ls := st.Layers[id]
-		if ls == nil {
-			ls = &LayerState{}
-		}
-		res.Layers = append(res.Layers, LayerResult{
-			LayerID:   id,
-			Ended:     ls.Ended,
-			EndReason: ls.EndReason,
-			Outputs:   append([]OutputRecord{}, ls.Outputs...),
-		})
-		switch {
-		case !ls.Started:
-			res.Omissions = append(res.Omissions, fmt.Sprintf("layer %s did not start", id))
-			continue
-		case !ls.Ended:
-			res.Omissions = append(res.Omissions, fmt.Sprintf("layer %s did not end", id))
-		}
-		layer, ok := cfg.Layer(id)
-		if !ok {
-			continue
-		}
-		committed := make(map[string]bool, len(ls.Outputs))
-		for _, o := range ls.Outputs {
-			committed[o.Turn] = true
-		}
-		for round := 1; round <= ls.Round; round++ {
-			for _, pid := range layer.Participants {
-				if !committed[TurnID(round, pid)] {
-					res.Omissions = append(res.Omissions, fmt.Sprintf("layer %s round %d: no output from %s", id, round, pid))
-				}
-			}
-		}
-	}
-	return res
 }

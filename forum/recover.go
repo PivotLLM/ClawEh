@@ -34,8 +34,9 @@ import (
 //     first dispatch, not at Open.
 //  4. Build the Router over the store's ReadFile.
 //  5. Regenerate transcript.md from the log (renderTranscript) when it
-//     differs, atomically, so a crash between a publication commit and
-//     its append leaves no gap, duplicate or torn entry.
+//     differs, in place, so a crash between a publication commit and its
+//     append (or during an earlier regeneration) leaves no gap, duplicate
+//     or torn entry.
 //
 // A terminal forum opens too (Run returns its status at once); the service
 // uses that to finish cleanup after a restart.
@@ -170,8 +171,8 @@ func (c *Controller) renderTranscript() (string, int, error) {
 }
 
 // regenerateTranscript makes transcript.md equal renderTranscript,
-// replacing it atomically only when it differs, and positions the live
-// appends after the last rendered publication.
+// rewriting it in place (Store.ReplaceTranscript) only when it differs,
+// and positions the live appends after the last rendered publication.
 func (c *Controller) regenerateTranscript() error {
 	want, last, err := c.renderTranscript()
 	if err != nil {
@@ -186,11 +187,7 @@ func (c *Controller) regenerateTranscript() error {
 	}
 	if !bytes.Equal(have, []byte(want)) && (want != "" || have != nil) {
 		c.host.Logger.Infof("forum %s: rebuilding %s from the commit log", c.snap.ForumID, fileTranscript)
-		if err := c.durable("transcript", func() error {
-			c.store.mu.Lock() // serialised with AppendTranscript
-			defer c.store.mu.Unlock()
-			return c.store.writeRel(fileTranscript, []byte(want), false)
-		}); err != nil {
+		if err := c.durable("transcript", func() error { return c.store.ReplaceTranscript([]byte(want)) }); err != nil {
 			return fmt.Errorf("rebuild transcript: %w", err)
 		}
 	}

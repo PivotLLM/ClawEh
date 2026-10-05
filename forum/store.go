@@ -46,14 +46,15 @@ import (
 //	    commits/<seq>.json    Commit, seq zero-padded to commitSeqWidth digits
 //	    state.json            State (derived cache)
 //	    result.json           Result (terminal only)
-//	    transcript.md         public transcript, append-only
+//	    transcript.md         public transcript, appended (rewritten in place only by Open's repair)
 //
 // Locks and cleanup staging sit beside the roots, not inside them (rev 3
 // §8), so removing a root never removes the lock protecting it. Every write
 // of a whole file is atomic and durable (writeFileAt): an exclusive write
 // links its temporary file to the target, so a racing second writer fails
-// with os.ErrExist instead of replacing the first. Appends (transcript.md)
-// are fsynced after each write. Directories are created 0700 and files
+// with os.ErrExist instead of replacing the first. transcript.md is the
+// exception: it is appended to, or rewritten in place, and fsynced after
+// each write, so a reader following it keeps the same file. Directories are created 0700 and files
 // 0600, as everywhere under CLAW_HOME. Every read and write inside the root
 // goes through os.Root and refuses a symbolic link anywhere on the path
 // below the root (noSymlinks), so nothing is read from or written to
@@ -155,7 +156,7 @@ type Store struct {
 	id   string
 	root string
 
-	mu   sync.Mutex // guards lock, idx, cfg and snap, and serialises commits and transcript appends
+	mu   sync.Mutex // guards lock, idx, cfg and snap, and serialises commits and transcript writes
 	lock *os.File
 	idx  commitIndex
 	// cfg and snap are forum.json and snapshot.json as AppendCommit reads
@@ -832,8 +833,11 @@ func (s *Store) statRegular(rel string) error {
 	})
 }
 
-// AppendCommit assigns c.Seq = last seq + 1 and c.At = now, writes
-// commits/<seq>.json durably, and returns the sequence number. It is
+// AppendCommit writes c as commits/<seq>.json durably, with c.Seq = seq
+// and c.At = now. seq is the sequence number the caller expects the commit
+// to take, the one after the last commit it knows of: a mismatch with the
+// log on disk (a caller working from a stale state, another writer) is
+// refused before anything is written, with ErrInvalidState. It is
 // serialised within the process; the file is created exclusively so a
 // second writer fails rather than overwriting. The caller writes State
 // afterwards (WriteState); a crash between the two is what Replay repairs.
@@ -843,31 +847,35 @@ func (s *Store) statRegular(rel string) error {
 // refuses), plus that a CommitAttempt's request.json exists. That needs
 // forum.json and snapshot.json, so a commit before WriteSnapshot fails
 // with ErrInvalidState. On failure c.Seq and c.At are left as they were.
-func (s *Store) AppendCommit(c *Commit) (int, error) {
+func (s *Store) AppendCommit(seq int, c *Commit) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadIndexLocked(); err != nil {
-		return 0, err
+		return err
+	}
+	if next := s.idx.last + 1; seq != next {
+		return fmt.Errorf("append commit: %w: %s expected at seq %d, but the log of forum %s is at %d",
+			ErrInvalidState, c.Kind, seq, s.id, s.idx.last)
 	}
 	if err := s.checkCommitLocked(c); err != nil {
-		return 0, err
+		return err
 	}
 	rec := *c
-	rec.Seq = s.idx.last + 1
+	rec.Seq = seq
 	rec.At = time.Now().UTC().Round(0)
 	data, err := marshalRecord(&rec)
 	if err != nil {
-		return 0, fmt.Errorf("append commit: %w", err)
+		return fmt.Errorf("append commit: %w", err)
 	}
 	if err := s.writeRel(commitRel(rec.Seq), data, true); err != nil {
 		// The file may exist even though the write reported an error (a
 		// failed directory sync); re-read the log before the next commit.
 		s.idx.loaded = false
-		return 0, fmt.Errorf("append commit: %w", err)
+		return fmt.Errorf("append commit: %w", err)
 	}
 	s.idx.add(&rec)
 	c.Seq, c.At = rec.Seq, rec.At
-	return rec.Seq, nil
+	return nil
 }
 
 // checkCommitLocked rejects a commit that would break the log's
@@ -1057,22 +1065,46 @@ func (s *Store) ReadResult() (*Result, error) {
 }
 
 // AppendTranscript appends text (which the caller terminates with a
-// newline) to transcript.md and fsyncs. It is the only write to that file;
-// callers pass only public material (§8). Appends are serialised, so
-// entries never interleave.
+// newline) to transcript.md and fsyncs. With ReplaceTranscript it is the
+// only write to that file; callers pass only public material (§8). Writes
+// are serialised, so entries never interleave.
 func (s *Store) AppendTranscript(text string) error {
+	if err := s.writeTranscript(os.O_APPEND, []byte(text)); err != nil {
+		return fmt.Errorf("append transcript: %w", err)
+	}
+	return nil
+}
+
+// ReplaceTranscript rewrites transcript.md with data in place: the
+// existing file is truncated, written and fsynced, never replaced by
+// another file, so a reader following it (`tail -f`) keeps reading the
+// same file. A crash part-way leaves a torn transcript, which the next
+// Open regenerates from the commit log (the transcript is derived). It is
+// serialised with AppendTranscript.
+func (s *Store) ReplaceTranscript(data []byte) error {
+	if err := s.writeTranscript(os.O_TRUNC, data); err != nil {
+		return fmt.Errorf("replace transcript: %w", err)
+	}
+	return nil
+}
+
+// writeTranscript opens transcript.md (refusing anything but a regular
+// file reached without a symbolic link) with mode (os.O_APPEND or
+// os.O_TRUNC), writes data and fsyncs, and fsyncs the directory when the
+// file was created.
+func (s *Store) writeTranscript(mode int, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	err := s.inRoot(func(r *os.Root) error {
+	return s.inRoot(func(r *os.Root) error {
 		statErr := lstatRegular(r, fileTranscript)
 		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 			return statErr
 		}
-		f, err := r.OpenFile(fileTranscript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePerm)
+		f, err := r.OpenFile(fileTranscript, mode|os.O_CREATE|os.O_WRONLY, filePerm)
 		if err != nil {
 			return err
 		}
-		if _, err := f.WriteString(text); err != nil {
+		if _, err := f.Write(data); err != nil {
 			return errors.Join(err, f.Close())
 		}
 		if err := f.Sync(); err != nil {
@@ -1086,10 +1118,6 @@ func (s *Store) AppendTranscript(text string) error {
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("append transcript: %w", err)
-	}
-	return nil
 }
 
 // SetCleanup writes the marker <base>/.cleanup/<id>.<name> with data.

@@ -26,15 +26,6 @@ func (m *svcReplier) Ask(_ context.Context, agentID, _ string, _ time.Duration) 
 	return Reply{Text: "Hello from " + agentID + ".", Outcome: OutcomeOK}, nil
 }
 
-// svcSkipUnimplemented skips a test that needs the real controller while
-// seam (d) is still a stub; it runs once the controller is merged.
-func svcSkipUnimplemented(t *testing.T, err error) {
-	t.Helper()
-	if errors.Is(err, errNotImplemented) {
-		t.Skipf("needs the real controller (seam d), not implemented yet: %v", err)
-	}
-}
-
 func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	e := svcSetup(t)
 	messenger := &svcReplier{asks: map[string]int{}}
@@ -42,7 +33,6 @@ func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	t.Cleanup(func() { svcClose(t, svc) })
 
 	id, err := svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts())
-	svcSkipUnimplemented(t, err)
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
@@ -73,7 +63,6 @@ func TestSvcRealControllerPausesAndCancels(t *testing.T) {
 	t.Cleanup(func() { svcClose(t, svc) })
 
 	id, err := svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts())
-	svcSkipUnimplemented(t, err)
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}

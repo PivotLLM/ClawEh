@@ -140,9 +140,9 @@ func corrupt(format string, args ...any) error {
 //     layer); moderated appends a RoundDecision; layer_ended sets Ended
 //     and EndReason.
 //   - State.Calls is the number of attempt commits.
-//   - ParticipantState: each attempt commit of TurnKind TurnParticipant
-//     sets Briefed and Introduced[layer] for its Participant and raises
-//     ThroughSeq to the commit's ThroughSeq.
+//   - What a participant was already sent is not part of State: the
+//     controller derives it from the attempt commits themselves
+//     (Controller.contact), the one source of truth.
 //   - Seq is the last commit's sequence number.
 //
 // A commit that cannot follow the ones before it is ErrCorrupt: one that
@@ -322,13 +322,11 @@ func checkWorkID(layer Layer, kind TurnKind, round int, participant, turn string
 }
 
 // replayInitialState is the State of a forum with an empty commit log:
-// queued, every enabled layer present and not started, no participants
-// briefed.
+// queued, every enabled layer present and not started.
 func replayInitialState(snap *Snapshot) *State {
 	st := &State{
-		Status:       StatusQueued,
-		Layers:       make(map[string]*LayerState, len(snap.Layers)),
-		Participants: map[string]*ParticipantState{},
+		Status: StatusQueued,
+		Layers: make(map[string]*LayerState, len(snap.Layers)),
 	}
 	for _, id := range snap.Layers {
 		st.Layers[id] = &LayerState{Outputs: []OutputRecord{}}
@@ -398,22 +396,6 @@ func replayApply(cfg *Config, snap *Snapshot, st *State, c *Commit) error {
 		ls.Calls++
 		ls.Round = c.Round
 		st.Calls++
-		if c.TurnKind == TurnParticipant {
-			if c.Participant == "" {
-				return corrupt("commit %d: participant attempt names no participant", c.Seq)
-			}
-			ps := st.Participants[c.Participant]
-			if ps == nil {
-				ps = &ParticipantState{}
-				st.Participants[c.Participant] = ps
-			}
-			ps.Briefed = true
-			if ps.Introduced == nil {
-				ps.Introduced = map[string]bool{}
-			}
-			ps.Introduced[c.Layer] = true
-			ps.ThroughSeq = max(ps.ThroughSeq, c.ThroughSeq)
-		}
 	case CommitTurn:
 		if err := needLayer(); err != nil {
 			return err

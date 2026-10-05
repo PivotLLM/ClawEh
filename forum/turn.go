@@ -195,9 +195,12 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 // reply.json with Issues from validate when the outcome is OutcomeOK, the
 // outcome otherwise, and the attempts cache. A Messenger error leaves the
 // request and its reservation on disk without a reply: after RequestCancel
-// it is an interruption (nil reply, no reason), when ctx ended it is
-// returned as the error (the host is shutting down), otherwise it is the
-// hostFailure reason.
+// it is an interruption (nil reply, no reason); when ctx ended or the host
+// is shutting down (ErrShuttingDown) it is returned as the error, leaving
+// the attempt uncertain (§8: resent at the next start) and the forum as it
+// is; otherwise it is the hostFailure reason. A cancelled turn while ctx
+// has ended (the service is closing) is treated the same way: the
+// shutdown cancelled it, so no failed reply is recorded.
 func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
 	reply, err := c.host.Messenger.Ask(ctx, req.AgentID, req.Message, wait)
 	if err != nil {
@@ -206,8 +209,15 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 			return nil, "", nil
 		case ctx.Err() != nil:
 			return nil, "", ctx.Err()
+		case errors.Is(err, ErrShuttingDown):
+			c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: the host is shutting down", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+			return nil, "", fmt.Errorf("ask %s (agent %s): %w", p.ID, p.AgentID, err)
 		}
 		return nil, c.hostFailure(ctx, p, err), nil
+	}
+	if reply.Outcome == OutcomeCancelled && ctx.Err() != nil && !c.cancel.Load() {
+		c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+		return nil, "", ctx.Err()
 	}
 	rec := &AttemptReply{ReceivedAt: time.Now().UTC(), Outcome: reply.Outcome, Text: reply.Text}
 	if reply.Outcome.Successful() {

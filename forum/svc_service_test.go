@@ -6,12 +6,17 @@
 package forum
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -557,7 +562,7 @@ func TestSvcResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Complete || res.Status != StatusRunning || res.Transcript != fileTranscript ||
-		!slices.Equal(res.Omissions, []string{"layer talk did not start"}) {
+		!slices.Equal(res.Omissions, []string{"layer talk did not run"}) {
 		t.Errorf("partial result = %+v", res)
 	}
 	if _, readErr := e.store(id).ReadResult(); !errors.Is(readErr, ErrNotFound) {
@@ -579,35 +584,54 @@ func TestSvcResults(t *testing.T) {
 	}
 }
 
-func TestSvcResultOfOmissions(t *testing.T) {
-	cfg, err := Decode([]byte(svcSimpleJSON))
+// The service builds partial results with the controller's buildResult:
+// omissions name what is missing, and an after_round round that is not
+// published stays hidden.
+func TestSvcResultOmissions(t *testing.T) {
+	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &Snapshot{ForumID: "f", Layers: []string{"talk"}, ResultLayers: []string{"talk"}}
-	out := OutputRecord{OutputID: "o1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")}
+	out := func(pid string, round int) OutputRecord {
+		return OutputRecord{OutputID: pid + strconv.Itoa(round), LayerID: "talk", Round: round, ParticipantID: pid, Turn: TurnID(round, pid)}
+	}
 	ended := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	st := &State{
 		Status: StatusIncomplete, Reason: EndDeadline, Calls: 3, UpdatedAt: ended,
-		Layers: map[string]*LayerState{"talk": {Started: true, Round: 1, Calls: 3, Outputs: []OutputRecord{out}}},
+		Layers: map[string]*LayerState{"talk": {Started: true, Round: 1, Calls: 3, Outputs: []OutputRecord{out("alice", 1)}}},
 	}
-	res := resultOf(cfg, snap, st)
+	res := buildResult(cfg, snap, st)
 	if res.Complete || !res.EndedAt.Equal(ended) || res.Calls != 3 || res.Reason != EndDeadline {
 		t.Errorf("result = %+v", res)
 	}
-	want := []string{"layer talk did not end", "layer talk round 1: no output from bob"}
+	want := []string{"layer talk did not end", "layer talk round 1: no output from bob", "layer talk round 1: 1 committed output(s) not published (round incomplete)"}
 	if !slices.Equal(res.Omissions, want) {
 		t.Errorf("omissions = %q, want %q", res.Omissions, want)
 	}
-	if len(res.Layers) != 1 || len(res.Layers[0].Outputs) != 1 || res.Layers[0].Outputs[0].OutputID != "o1" {
-		t.Errorf("layers = %+v", res.Layers)
+	if len(res.Layers) != 1 || len(res.Layers[0].Outputs) != 0 {
+		t.Errorf("an unpublished round is in the result: %+v", res.Layers)
 	}
 
+	// Round 1 published, round 2 partly committed: only round 1 shows.
+	ls := st.Layers["talk"]
+	ls.Outputs = []OutputRecord{out("alice", 1), out("bob", 1), out("bob", 2)}
+	ls.RoundsPublished, ls.Round = 1, 2
+	st.Status, st.Reason = StatusRunning, ""
+	res = buildResult(cfg, snap, st)
+	if got := res.Layers[0].Outputs; len(got) != 2 || got[0].OutputID != "alice1" || got[1].OutputID != "bob1" {
+		t.Errorf("outputs = %+v, want round 1 in participant order", got)
+	}
+	want = []string{"layer talk did not end", "layer talk round 2: no output from alice", "layer talk round 2: 1 committed output(s) not published (round incomplete)"}
+	if !slices.Equal(res.Omissions, want) || !res.EndedAt.IsZero() {
+		t.Errorf("omissions = %q, want %q (ended %v)", res.Omissions, want, res.EndedAt)
+	}
+
+	ls.Outputs = append(ls.Outputs, out("alice", 2))
+	ls.RoundsPublished, ls.Ended, ls.EndReason = 2, true, EndRoundLimit
 	st.Status, st.Reason = StatusCompleted, EndCompleted
-	st.Layers["talk"].Ended, st.Layers["talk"].EndReason = true, EndRoundLimit
-	st.Layers["talk"].Outputs = append(st.Layers["talk"].Outputs, OutputRecord{Turn: TurnID(1, "bob"), ParticipantID: "bob", Round: 1})
-	res = resultOf(cfg, snap, st)
-	if !res.Complete || len(res.Omissions) != 0 || res.Layers[0].EndReason != EndRoundLimit {
+	res = buildResult(cfg, snap, st)
+	if !res.Complete || len(res.Omissions) != 0 || res.Layers[0].EndReason != EndRoundLimit || len(res.Layers[0].Outputs) != 4 {
 		t.Errorf("complete result = %+v", res)
 	}
 }
@@ -771,12 +795,11 @@ func TestSvcNotifyFailureIsLogged(t *testing.T) {
 	id, c := e.launch("")
 	c.finish <- StatusCompleted
 	e.settled(id, StatusCompleted)
-	if !e.logger.has("forum " + id + ": notifying agent launcher") {
-		t.Error("notify failure not logged")
-	}
-	if _, ok := e.marker(id, cleanupNotice); ok {
-		t.Error("a failed notice is retried forever")
-	}
+	svcEventually(t, "notify failure logged", func() bool { return e.logger.has("forum " + id + ": notifying agent launcher") })
+	svcEventually(t, "notice marker cleared", func() bool {
+		_, ok := e.marker(id, cleanupNotice)
+		return !ok // a failed notice is not retried forever
+	})
 }
 
 func TestSvcNoNoticeWithoutResult(t *testing.T) {
@@ -929,6 +952,9 @@ func TestSvcRecover(t *testing.T) {
 			t.Errorf("Recover = %v", err)
 		}
 		e.running(good)
+		if calls := e.stuck.list(); len(calls) != 1 || !strings.HasPrefix(calls[0], bad+" launcher: ") {
+			t.Errorf("OnStuck calls = %q, want the corrupt forum", calls)
+		}
 	})
 	t.Run("forum locked by another process is left alone", func(t *testing.T) {
 		e := svcSetup(t)
@@ -941,6 +967,9 @@ func TestSvcRecover(t *testing.T) {
 		defer other.Unlock()
 		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); !errors.Is(err, ErrLocked) {
 			t.Errorf("Recover = %v, want ErrLocked", err)
+		}
+		if calls := e.stuck.list(); len(calls) != 0 {
+			t.Errorf("a forum locked elsewhere was reported stuck: %q", calls)
 		}
 		if _, ok := e.svc.running(e.scope, id); ok {
 			t.Error("a locked forum was started")
@@ -1016,11 +1045,15 @@ func TestSvcRunErrorLeavesForumInterrupted(t *testing.T) {
 		_, ok := e.svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("forum " + id + ": run stopped") {
-		t.Error("the run error was not logged")
+	if !e.logger.has("ERROR forum " + id + ": run stopped") {
+		t.Error("the run error was not logged at Error")
 	}
 	if e.notifier.count() != 0 {
 		t.Error("notified after a failed run")
+	}
+	// The launcher's host hears of the stuck forum once.
+	if calls := e.stuck.list(); len(calls) != 1 || !strings.HasPrefix(calls[0], id+" launcher: ") {
+		t.Errorf("OnStuck calls = %q", calls)
 	}
 }
 
@@ -1031,4 +1064,296 @@ func TestSvcNewPanicsWithoutHost(t *testing.T) {
 		}
 	}()
 	New(Host{})
+}
+
+// A cancel request accepted just before Run returned paused is settled:
+// the service sees the cancelling state and runs the controller again.
+func TestSvcRequestLandingAsRunReturnsIsSettled(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	var once sync.Once
+	c.beforeReturn = func(c *svcCtrl) {
+		once.Do(func() {
+			if err := c.RequestCancel(); err != nil {
+				t.Errorf("cancel in the window: %v", err)
+			}
+		})
+	}
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+	if n := c.runs.Load(); n != 2 {
+		t.Errorf("Run called %d times, want 2", n)
+	}
+	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+	if e.keptAlive(id) {
+		t.Error("a cancelled forum is kept alive")
+	}
+}
+
+// A pause request accepted while Run fails is settled the same way, and
+// the forum is not reported stuck.
+func TestSvcPauseLandingWhileRunFailsIsSettled(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	var once sync.Once
+	c.beforeReturn = func(c *svcCtrl) {
+		once.Do(func() {
+			if err := c.RequestPause(); err != nil {
+				t.Errorf("pause in the window: %v", err)
+			}
+		})
+	}
+	c.fail <- errSvcHost
+	e.settled(id, StatusPaused)
+	if !e.keptAlive(id) {
+		t.Error("the paused forum is not kept alive")
+	}
+	if calls := e.stuck.list(); len(calls) != 0 {
+		t.Errorf("OnStuck called for a settled forum: %q", calls)
+	}
+}
+
+// A request the controller refuses because its Run has just returned is
+// carried out on the forum taken over from disk.
+func TestSvcRequestRefusedAfterRunExitTakesOver(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	var once sync.Once
+	c.onRequest = func(c *svcCtrl) {
+		once.Do(func() {
+			c.fail <- errSvcHost
+			svcEventually(t, "run returned", c.exited.Load)
+		})
+	}
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	e.settled(id, StatusPaused)
+	if n := e.ctrls.openCount(); n != 2 {
+		t.Errorf("%d opens, want the take-over's second", n)
+	}
+}
+
+// The host shutting down is not a stuck forum: logged at Info, no
+// OnStuck, the forum resumes at the next start without a failed attempt.
+func TestSvcShutdownIsNotStuck(t *testing.T) {
+	e := svcSetup(t)
+	var down atomic.Bool
+	down.Store(true)
+	replier := &svcReplier{asks: map[string]int{}}
+	messenger := svcMessengerFunc(func(ctx context.Context, agentID, msg string, wait time.Duration) (Reply, error) {
+		if down.Load() {
+			return Reply{}, fmt.Errorf("agent loop stopping: %w", ErrShuttingDown)
+		}
+		return replier.Ask(ctx, agentID, msg, wait)
+	})
+	newSvc := func() *Service {
+		svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}, OnStuck: e.stuck.record})
+		t.Cleanup(func() { svcClose(t, svc) })
+		return svc
+	}
+	svc := newSvc()
+	id, err := svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svcEventually(t, "run stopped", func() bool {
+		_, ok := svc.running(e.scope, id)
+		return !ok
+	})
+	if !e.logger.has("INFO forum "+id+": stopped by the shutdown") || e.logger.has("ERROR forum "+id) {
+		t.Error("the shutdown was not logged at Info only")
+	}
+	if calls := e.stuck.list(); len(calls) != 0 {
+		t.Errorf("OnStuck = %q", calls)
+	}
+	attempts, err := e.store(id).ListAttempts("talk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range attempts {
+		if a.Reply != nil {
+			t.Errorf("a reply was recorded for the shutdown: %+v", a)
+		}
+	}
+	svcClose(t, svc)
+	down.Store(false)
+	svc = newSvc()
+	if err := svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+		t.Fatal(err)
+	}
+	svcEventually(t, "completion notice", func() bool { return e.notifier.count() == 1 })
+	if res, _ := e.notifier.last(); res.Status != StatusCompleted {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+// svcMessengerFunc adapts a function to Messenger.
+type svcMessengerFunc func(ctx context.Context, agentID, message string, wait time.Duration) (Reply, error)
+
+func (f svcMessengerFunc) Ask(ctx context.Context, agentID, message string, wait time.Duration) (Reply, error) {
+	return f(ctx, agentID, message, wait)
+}
+
+// Temporary agents that could not be deleted at the terminal state are
+// retried by the keep-alive loop until they are gone.
+func TestSvcCleanupIsRetried(t *testing.T) {
+	e := svcSetup(t)
+	e.svc.keepAliveEvery = 10 * time.Millisecond
+	id, c := e.launch("")
+	created := e.agents.createdIDs()
+	e.agents.setDeleteErr(created[0], errSvcHost)
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	if _, ok := e.marker(id, CleanupAgents); !ok {
+		t.Fatal("the agents marker is gone although a deletion failed")
+	}
+	svcEventually(t, "retry logged", func() bool { return e.logger.has("retried every") })
+	e.agents.setDeleteErr(created[0], nil)
+	svcEventually(t, "agents deleted", func() bool {
+		_, ok := e.marker(id, CleanupAgents)
+		return !ok && slices.Contains(e.agents.deletedIDs(), created[0])
+	})
+	svcEventually(t, "retry set emptied", func() bool {
+		e.svc.mu.Lock()
+		defer e.svc.mu.Unlock()
+		return len(e.svc.cleanups) == 0
+	})
+}
+
+// The temporary agents of a running forum are touched too.
+func TestSvcKeepAliveTouchesRunningForums(t *testing.T) {
+	e := svcSetup(t)
+	e.svc.keepAliveEvery = 10 * time.Millisecond
+	id, _ := e.launch("")
+	e.running(id)
+	created := e.agents.createdIDs()
+	svcEventually(t, "running forum's agents touched", func() bool {
+		for _, a := range created {
+			if e.agents.touches(a) < 1 {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// A run error other than a shutdown is reported through OnStuck once,
+// however often the forum stops again in this process.
+func TestSvcStuckIsReportedOnce(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	c.fail <- errSvcHost
+	svcEventually(t, "run stopped", func() bool {
+		_, ok := e.svc.running(e.scope, id)
+		return !ok
+	})
+	if !e.logger.has("ERROR forum " + id + ": run stopped") {
+		t.Error("not logged at Error naming the forum")
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	c = e.ctrls.get(t, id)
+	c.fail <- errSvcHost
+	svcEventually(t, "second stop", func() bool {
+		_, ok := e.svc.running(e.scope, id)
+		return !ok && e.ctrls.openCount() == 2
+	})
+	if calls := e.stuck.list(); len(calls) != 1 || !strings.HasPrefix(calls[0], id+" launcher: ") || !strings.Contains(calls[0], errSvcHost.Error()) {
+		t.Errorf("OnStuck calls = %q, want one", calls)
+	}
+}
+
+// A Notifier that blocks never holds the forum: the run is released and
+// the forum can be deleted while the notice is still being delivered.
+func TestSvcBlockingNotifierDoesNotHoldTheForum(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.block = make(chan struct{})
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+		t.Fatalf("delete while the notice is pending: %v", err)
+	}
+	close(e.notifier.block)
+	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+}
+
+// Control locks are dropped once no operation uses them, and status and
+// list read forums without verifying every digest.
+func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.mu.Lock()
+	n := len(e.svc.controls)
+	e.svc.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d control locks left", n)
+	}
+
+	// A damaged source fails Verify but not status or list.
+	snap, err := e.store(id).ReadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(e.store(id).Path(snap.Sources["note"].File), []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = Verify(e.store(id)); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Verify: %v", err)
+	}
+	list, err := e.svc.List(t.Context(), e.scope)
+	if err != nil || len(list) != 1 || list[0].Status != StatusPaused {
+		t.Errorf("List = %+v, %v", list, err)
+	}
+}
+
+// Results of a running forum hide a round that is not yet published,
+// exactly as result.json would.
+func TestSvcResultsHidePartialRound(t *testing.T) {
+	e := svcSetup(t)
+	release := make(chan struct{})
+	replier := &svcReplier{asks: map[string]int{}}
+	messenger := svcMessengerFunc(func(ctx context.Context, agentID, msg string, wait time.Duration) (Reply, error) {
+		if agentID != "alice" && strings.Contains(msg, "round 2") {
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return Reply{}, ctx.Err()
+			}
+		}
+		return replier.Ask(ctx, agentID, msg, wait)
+	})
+	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	t.Cleanup(func() { svcClose(t, svc) })
+	cfg := strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)
+	id, err := svc.Launch(t.Context(), []byte(cfg), e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res *Result
+	svcEventually(t, "alice's round 2 committed", func() bool {
+		res, err = svc.Results(t.Context(), e.scope, id)
+		return err == nil && slices.Contains(res.Omissions, "layer talk round 2: 1 committed output(s) not published (round incomplete)")
+	})
+	for _, o := range res.Layers[0].Outputs {
+		if o.Round != 1 {
+			t.Errorf("an unpublished round-2 output is in the partial result: %+v", o)
+		}
+	}
+	if len(res.Layers[0].Outputs) != 2 || res.Complete {
+		t.Errorf("partial result = %+v", res)
+	}
+	close(release)
+	svcEventually(t, "completion notice", func() bool { return e.notifier.count() == 1 })
 }
