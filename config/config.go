@@ -319,6 +319,12 @@ type AgentConfig struct {
 	// agent id in the shared fusion token store.
 	Fusion bool `json:"fusion,omitempty"`
 
+	// Forum lets the agent set up and manage forums with other agents: the
+	// forum_* tool suite (the forum package), gated as a unit. Off by default.
+	// A forum's files live under <workspace>/forums. Turning it off removes the
+	// tools; forums already running continue.
+	Forum bool `json:"forum,omitempty"`
+
 	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
 	// subsystem (prompt injection, archive hook, consolidation). It is an optional
 	// bool so the default is ON: nil (key absent) or true ⇒ enabled; false ⇒
@@ -1069,7 +1075,8 @@ func (c *Config) DiscoveryVisibleBudget() int {
 
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
 // enabled for the agent. Suites are gated as a unit by a per-agent flag rather
-// than the per-tool allowlist. cogmem defaults ON; maestro and fusion default OFF.
+// than the per-tool allowlist. cogmem defaults ON; maestro, fusion and forum
+// default OFF.
 func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
@@ -1080,6 +1087,8 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 				return a.MaestroEnabled()
 			case "fusion":
 				return a.Fusion
+			case "forum":
+				return a.Forum
 			case "cogmem":
 				return a.CognitiveMemoryEnabled()
 			default:

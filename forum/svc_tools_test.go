@@ -25,7 +25,10 @@ import (
 type svcToolHost struct {
 	base, workspace string
 	wsErr           error
+	remote          bool
 }
+
+func (h *svcToolHost) Remote(*toolspec.ToolCall) bool { return h.remote }
 
 func (h *svcToolHost) Scope(call *toolspec.ToolCall) (Scope, error) {
 	if call.AgentID == "denied" {
@@ -441,5 +444,24 @@ func TestSvcToolsRefusedInsideAForumTurn(t *testing.T) {
 	}
 	if ids := e.forumIDs(); len(ids) != 0 {
 		t.Errorf("a forum was launched from inside a forum turn: %v", ids)
+	}
+}
+
+// svcDepthHost refuses every call as made at the maximum sub-agent depth.
+type svcDepthHost struct{ svcToolHost }
+
+func (h *svcDepthHost) Scope(*toolspec.ToolCall) (Scope, error) {
+	return Scope{}, fmt.Errorf("agent alice at depth 3 of 3: %w", ErrForumDepth)
+}
+
+// A call at the maximum sub-agent depth is refused with its own sentence.
+func TestSvcToolsRefusedAtMaximumDepth(t *testing.T) {
+	e := svcSetup(t)
+	host := &svcDepthHost{svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}}
+	for _, d := range Tools(e.svc, host) {
+		res, err := d.Handler(&toolspec.ToolCall{AgentID: "alice", Args: map[string]any{"id": uuid.NewString()}, Ctx: t.Context()})
+		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum tools are not available at the maximum sub-agent depth." || !errors.Is(res.Err, ErrForumDepth) {
+			t.Errorf("%s at the maximum depth = %+v, %v", d.Name, res, err)
+		}
 	}
 }

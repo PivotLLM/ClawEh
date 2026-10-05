@@ -182,6 +182,21 @@ func TestCollectAgents_Settings(t *testing.T) {
 	if cron[1] != "on" {
 		t.Errorf("global cron = %q", cron[1])
 	}
+	if _, fr := findRow(t, st, "Forum"); fr[1] != "off" {
+		t.Errorf("bob forum = %q, want off (the default)", fr[1])
+	}
+	if markers := toolMarkers(findTable(t, agentSub(t, s, "bob"), "Internal tools")); markers["forum_launch"] != "" {
+		t.Errorf("bob (forum off) lists forum_launch as %q", markers["forum_launch"])
+	}
+	cfg.Agents.List[1].Forum = true
+	on := collectAgents(t.Context(), cfg, env)
+	bobOn := findTable(t, agentSub(t, on, "bob"), "Settings")
+	if _, fr := findRow(t, bobOn, "Forum"); fr[1] != "on" {
+		t.Errorf("bob forum with the switch on = %q, want on", fr[1])
+	}
+	if m := toolMarkers(findTable(t, agentSub(t, on, "bob"), "Internal tools"))["forum_launch"]; m != "yes (Allow forum)" {
+		t.Errorf("bob (forum on) forum_launch marker = %q, want sensitive by Allow forum", m)
+	}
 	_, def := findRow(t, st, "Routing default")
 	if def[1] != "no" {
 		t.Errorf("bob routing default = %q", def[1])

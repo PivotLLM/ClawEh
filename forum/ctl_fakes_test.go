@@ -118,8 +118,8 @@ func (a *ctlAgents) CreateClone(context.Context, CloneSpec) (string, error) {
 func (a *ctlAgents) CreateFresh(context.Context, FreshSpec) (string, error) {
 	return "", errors.New("not used")
 }
-func (a *ctlAgents) Delete(context.Context, string) error { return nil }
-func (a *ctlAgents) Touch(context.Context, string) error  { return nil }
+func (a *ctlAgents) Delete(context.Context, string, string) error { return nil }
+func (a *ctlAgents) Touch(context.Context, string, string) error  { return nil }
 
 // ctlLogger records log lines; it never calls t.Log (runs may outlive a
 // subtest's logging window).

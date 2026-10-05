@@ -1,0 +1,398 @@
+// ClawEh
+// License: MIT
+
+package agent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/agentreg"
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
+)
+
+// ForumHost is ClawEh's side of the forum package's host contract over one
+// agent loop: forum.Messenger (the core Ask), forum.Agents (the agent
+// registry), forum.Notifier (the completion notice) and OnStuck (an operator
+// alert). The gateway creates it before the loop, because the forum service
+// must exist when the loop builds the agents' tools, and binds it once the
+// loop exists.
+type ForumHost struct {
+	loop atomic.Pointer[AgentLoop]
+}
+
+var (
+	_ forum.Messenger = (*ForumHost)(nil)
+	_ forum.Agents    = (*ForumHost)(nil)
+	_ forum.Notifier  = (*ForumHost)(nil)
+)
+
+// forumNoticeSender is the sender id of a forum's completion notice, as the
+// launching agent sees it ("[System: forum] …").
+const forumNoticeSender = "forum"
+
+// NewForumHost returns a host bound to no loop yet.
+func NewForumHost() *ForumHost { return &ForumHost{} }
+
+// Bind attaches the agent loop the host works on.
+func (h *ForumHost) Bind(al *AgentLoop) { h.loop.Store(al) }
+
+// bound returns the loop, or ErrShuttingDown before Bind.
+func (h *ForumHost) bound() (*AgentLoop, error) {
+	al := h.loop.Load()
+	if al == nil {
+		return nil, fmt.Errorf("the agent loop is not ready: %w", forum.ErrShuttingDown)
+	}
+	return al, nil
+}
+
+// registry returns the loop's agent registry.
+func (h *ForumHost) registry() (*AgentRegistry, error) {
+	al, err := h.bound()
+	if err != nil {
+		return nil, err
+	}
+	r := al.GetRegistry()
+	if r == nil {
+		return nil, errors.New("agent registry is not available")
+	}
+	return r, nil
+}
+
+// Scopes lists the forum scope of every configured agent: its id and
+// <workspace>/forums. Startup recovery runs over these whatever the agent's
+// `forum` switch says, so forums of an agent whose switch was turned off
+// still resume, keep their participants alive and are cleaned up; the
+// switch gates only the tools.
+func (h *ForumHost) Scopes() []forum.Scope {
+	al, err := h.bound()
+	if err != nil {
+		return nil
+	}
+	cfg, r := al.GetConfig(), al.GetRegistry()
+	if cfg == nil || r == nil {
+		return nil
+	}
+	var scopes []forum.Scope
+	for _, id := range r.List() {
+		a, ok := r.GetConfigured(id)
+		if !ok || a.Workspace == "" {
+			continue
+		}
+		base, err := filepath.Abs(filepath.Join(a.Workspace, "forums"))
+		if err != nil {
+			continue
+		}
+		scopes = append(scopes, forum.Scope{AgentID: id, BaseDirectory: base})
+	}
+	return scopes
+}
+
+// Ask implements forum.Messenger over the core Ask. The participant's turn
+// runs at the maximum sub-agent depth, so it cannot spawn or ask further, and
+// its sender is the forum's launching agent. A host shutdown is reported as
+// forum.ErrShuttingDown, never as a cancelled reply.
+func (h *ForumHost) Ask(ctx context.Context, agentID, message string, wait time.Duration) (forum.Reply, error) {
+	al, err := h.bound()
+	if err != nil {
+		return forum.Reply{}, err
+	}
+	cfg := al.GetConfig()
+	if cfg == nil || !al.running.Load() {
+		return forum.Reply{}, fmt.Errorf("ask %s: %w", agentID, forum.ErrShuttingDown)
+	}
+	info, ok := forum.AskInfoFromContext(ctx)
+	if !ok || info.Origin.AgentID == "" {
+		return forum.Reply{}, fmt.Errorf("ask %s: the forum's launcher is unknown", agentID)
+	}
+	if refusal := h.mayAsk(al, info.Origin.AgentID, agentID); refusal != nil {
+		return forum.Reply{}, refusal
+	}
+	askCtx := toolsagents.WithSpawnDepth(ctx, cfg.Agents.Defaults.GetMaxSubagentDepth()-1)
+	if info.Origin.Remote {
+		askCtx = tools.WithRemoteOrigin(askCtx)
+	}
+	reply, err := al.Ask(askCtx, h.sender(al, ctx), agentID, message, wait)
+	stopping := !al.running.Load()
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return forum.Reply{}, ctx.Err()
+	case err != nil && stopping:
+		return forum.Reply{}, fmt.Errorf("ask %s: %w", agentID, forum.ErrShuttingDown)
+	case err != nil:
+		return forum.Reply{}, err
+	}
+	switch reply.Outcome {
+	case bus.OutcomeOK:
+		return forum.Reply{Text: reply.Text, Outcome: forum.OutcomeOK}, nil
+	case bus.OutcomeEmpty:
+		return forum.Reply{Outcome: forum.OutcomeEmpty}, nil
+	case tools.OutcomeTimeout:
+		return forum.Reply{Outcome: forum.OutcomeTimeout}, nil
+	case bus.OutcomeCancelled, tools.OutcomePersonCancelled:
+		if stopping {
+			return forum.Reply{}, fmt.Errorf("ask %s: turn cancelled: %w", agentID, forum.ErrShuttingDown)
+		}
+		return forum.Reply{Outcome: forum.OutcomeCancelled}, nil
+	default:
+		return forum.Reply{Text: reply.Text, Outcome: forum.OutcomeError}, nil
+	}
+}
+
+// mayAsk checks, now, that the launcher may have the forum ask agentID: an
+// agent in its subagents.allow_agents, or a forum participant it owns. The
+// forum's records live in the launcher's workspace and are not trusted for
+// this.
+func (h *ForumHost) mayAsk(al *AgentLoop, launcherID, agentID string) error {
+	if newAgentServices(al, launcherID).CanTarget(agentID) {
+		return nil
+	}
+	if ownedParticipant(al.GetRegistry(), launcherID, agentID) {
+		return nil
+	}
+	return fmt.Errorf("agent %s may not take part in a forum of %s: it is not in the launcher's subagents.allow_agents", agentID, launcherID)
+}
+
+// ownedParticipant reports whether agentID is a temporary agent a forum of
+// launcherID created.
+func ownedParticipant(r *AgentRegistry, launcherID, agentID string) bool {
+	info, ok := r.Info(agentID)
+	return ok && info.Spec.Origin == agentreg.OriginTemp && info.Spec.Purpose == tools.TempPurposeForum &&
+		info.Spec.Owner != "" && info.Spec.Owner == routing.NormalizeAgentID(launcherID)
+}
+
+// sender names the forum's launching agent (from the ask's context) for the
+// participant: its name, or its id when it is gone.
+func (h *ForumHost) sender(al *AgentLoop, ctx context.Context) string {
+	info, ok := forum.AskInfoFromContext(ctx)
+	if !ok || info.Origin.AgentID == "" {
+		return "Forum"
+	}
+	if a, found := al.GetRegistry().Get(info.Origin.AgentID); found && a != nil {
+		return instanceName(a)
+	}
+	return info.Origin.AgentID
+}
+
+// Exists implements forum.Agents: any registered agent, config or temporary.
+func (h *ForumHost) Exists(_ context.Context, agentID string) (bool, error) {
+	r, err := h.registry()
+	if err != nil {
+		return false, err
+	}
+	_, ok := r.Get(agentID)
+	return ok, nil
+}
+
+// MayTarget implements forum.Agents: the launcher's subagents.allow_agents,
+// for configured agents only.
+func (h *ForumHost) MayTarget(_ context.Context, launcherID, targetID string) (bool, error) {
+	al, err := h.bound()
+	if err != nil {
+		return false, err
+	}
+	return newAgentServices(al, launcherID).CanTarget(targetID), nil
+}
+
+// Models implements forum.Agents: the agent's models in its fallback order,
+// described from their configuration.
+func (h *ForumHost) Models(_ context.Context, agentID string) ([]forum.ModelInfo, error) {
+	al, err := h.bound()
+	if err != nil {
+		return nil, err
+	}
+	a, ok := al.GetRegistry().Get(agentID)
+	if !ok || a == nil {
+		return nil, fmt.Errorf("%w: %s", agentreg.ErrNotFound, agentID)
+	}
+	cfg := al.GetConfig()
+	out := make([]forum.ModelInfo, 0, len(a.Candidates))
+	for _, c := range a.Candidates {
+		out = append(out, modelInfo(cfg, candidateName(c)))
+	}
+	return out, nil
+}
+
+// modelInfo describes the model name from its configuration.
+func modelInfo(cfg *config.Config, name string) forum.ModelInfo {
+	info := forum.ModelInfo{Name: name}
+	if cfg == nil {
+		return info
+	}
+	mc, err := cfg.GetModelConfig(name)
+	if err != nil || mc == nil {
+		return info
+	}
+	info.Provider, info.NoTools = mc.Provider, mc.NoTools
+	info.Vision = mc.Vision != "" && !strings.EqualFold(mc.Vision, "off")
+	if p, perr := cfg.GetProvider(mc.Provider); perr == nil && p != nil {
+		info.Protocol = p.Protocol
+	}
+	return info
+}
+
+// CreateClone implements forum.Agents: a temporary clone of the source,
+// owned by the launcher and marked as a forum participant, optionally on one
+// of the source's models. Its memory is a snapshot kept across restarts.
+func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string, error) {
+	al, err := h.bound()
+	if err != nil {
+		return "", err
+	}
+	if !newAgentServices(al, spec.Owner).CanTarget(spec.Source) {
+		return "", fmt.Errorf("agent %q may not target agent %q (subagents.allow_agents)", spec.Owner, spec.Source)
+	}
+	opts := []agentreg.Option{
+		agentreg.CloneOf(spec.Source), agentreg.OwnedBy(spec.Owner), agentreg.WithPurpose(tools.TempPurposeForum),
+	}
+	if spec.Model != "" {
+		src, ok := al.GetRegistry().GetConfigured(spec.Source)
+		if !ok || src == nil {
+			return "", fmt.Errorf("%w: %s", agentreg.ErrNotFound, spec.Source)
+		}
+		m, ok := toolsagents.MatchCandidate(src.Candidates, spec.Model)
+		if !ok {
+			return "", fmt.Errorf("model %q is not one of agent %q's models", spec.Model, spec.Source)
+		}
+		opts = append(opts, agentreg.CloneModel(candidateName(m)))
+	}
+	return al.GetRegistry().Create(config.AgentConfig{}, opts...)
+}
+
+// CreateFresh implements forum.Agents: a fresh temporary agent on one of the
+// launcher's models, owned by it and marked as a forum participant.
+func (h *ForumHost) CreateFresh(_ context.Context, spec forum.FreshSpec) (string, error) {
+	al, err := h.bound()
+	if err != nil {
+		return "", err
+	}
+	var o tools.FreshOptions
+	if spec.SystemPrompt != "" {
+		o.SystemPrompt, o.SystemPromptSet = spec.SystemPrompt, true
+	}
+	switch spec.Mode {
+	case "", forum.FreshModeMemory:
+	case forum.FreshModeContext:
+		o.NoMemory = true
+	case forum.FreshModeSingleShot:
+		o.SingleShot = true
+	default:
+		return "", fmt.Errorf("unknown fresh participant mode %q", spec.Mode)
+	}
+	return newAgentServices(al, spec.Owner).createFresh(spec.Model, o, agentreg.WithPurpose(tools.TempPurposeForum))
+}
+
+// Delete implements forum.Agents: only a forum participant the launcher
+// owns is deleted; an agent that is already gone counts as deleted; one in
+// a turn is refused (agentreg.ErrBusy) and retried later.
+func (h *ForumHost) Delete(_ context.Context, launcherID, agentID string) error {
+	r, err := h.registry()
+	if err != nil {
+		return err
+	}
+	if _, ok := r.Info(agentID); !ok {
+		return nil
+	}
+	if !ownedParticipant(r, launcherID, agentID) {
+		return fmt.Errorf("agent %s is not a forum participant of %s; not deleted", agentID, launcherID)
+	}
+	if err := r.Delete(agentID); err != nil && !errors.Is(err, agentreg.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// Touch implements forum.Agents: only a forum participant the launcher
+// owns is touched.
+func (h *ForumHost) Touch(_ context.Context, launcherID, agentID string) error {
+	r, err := h.registry()
+	if err != nil {
+		return err
+	}
+	if _, ok := r.Info(agentID); ok && !ownedParticipant(r, launcherID, agentID) {
+		return fmt.Errorf("agent %s is not a forum participant of %s; not touched", agentID, launcherID)
+	}
+	return r.Touch(agentID)
+}
+
+// ForumFinished implements forum.Notifier: the notice is queued as a
+// background result for the launching agent, in its one conversation, and
+// the call returns without waiting for the agent's turn. The chat recorded
+// at launch is not trusted (it lives in the launcher's workspace): a forum
+// launched from a remote chat has the agent's answer posted to its own
+// default chat (its default binding) when it has one; otherwise, and for a
+// forum launched locally, the answer stays in the conversation.
+func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, result *forum.Result) error {
+	al, err := h.bound()
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return errors.New("no result")
+	}
+	name := result.Name
+	if name == "" {
+		name = result.ForumID
+	}
+	// processSystemMessage keeps a result of the ask channel in the agent's
+	// main conversation and sends it to no chat.
+	channel, chatID := constants.AgentMessageChannel, ""
+	if cfg := al.GetConfig(); origin.Remote && cfg != nil {
+		if c, id, _, ok := cfg.CronTarget(origin.AgentID); ok {
+			channel, chatID = c, id
+		}
+	}
+	meta := bus.SetRemoteOrigin(map[string]string{metadataKeyPreresolvedAgentID: origin.AgentID}, origin.Remote)
+	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+		Channel:    "system",
+		SenderID:   forumNoticeSender,
+		ChatID:     channel + ":" + chatID,
+		Content:    fmt.Sprintf("Forum %s finished: %s (id %s).", name, result.Status, result.ForumID),
+		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
+		Metadata:   meta,
+	}); err != nil {
+		return fmt.Errorf("queue the notice for agent %s: %w", origin.AgentID, err)
+	}
+	return nil
+}
+
+// OnStuck is forum.Host.OnStuck: an operator alert naming the forum and its
+// launching agent. Alerts are queued, so it does not block.
+func (h *ForumHost) OnStuck(forumID string, origin forum.Origin, err error) {
+	al := h.loop.Load()
+	if al == nil {
+		return
+	}
+	who := origin.AgentID
+	if a, ok := al.GetRegistry().Get(origin.AgentID); ok && a != nil {
+		who = instanceName(a)
+	}
+	details := ""
+	if err != nil {
+		details = err.Error()
+	}
+	al.Alerter().Send(alerter.Alert{
+		Title:       fmt.Sprintf("Forum %s of %s stopped", forumID, who),
+		Description: "the forum stopped on an error; it continues with forum_resume or at the next start",
+		Details:     details,
+		EventID:     "forum:" + forumID,
+	})
+	logger.WarnCF("forum", "Forum stopped on an error; operator alerted",
+		map[string]any{"forum_id": forumID, "agent_id": origin.AgentID})
+}

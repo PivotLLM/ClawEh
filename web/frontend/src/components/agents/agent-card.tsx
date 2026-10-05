@@ -52,6 +52,7 @@ export interface AgentCardProps {
   maestroSettings?: MaestroRunnerEdits
   onMaestroSettingsChange?: (v: MaestroRunnerEdits) => void
   fusion?: boolean
+  forum?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   onMountsChange?: (mounts: MountEntry[]) => void
@@ -80,6 +81,7 @@ export interface AgentCardProps {
   onGlobalCronChange?: (v: boolean) => void
   onMaestroChange?: (v: boolean) => void
   onFusionChange?: (v: boolean) => void
+  onForumChange?: (v: boolean) => void
   onCogmemChange?: (v: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
@@ -107,6 +109,7 @@ export function AgentCard({
   maestroSettings = undefined,
   onMaestroSettingsChange = undefined,
   fusion = false,
+  forum = false,
   cogmem = true,
   mounts = [],
   onMountsChange = undefined,
@@ -132,6 +135,7 @@ export function AgentCard({
   onGlobalCronChange = undefined,
   onMaestroChange = undefined,
   onFusionChange = undefined,
+  onForumChange = undefined,
   onCogmemChange = undefined,
   onDelete,
   status,
@@ -305,7 +309,7 @@ export function AgentCard({
               </p>
               <p className="text-muted-foreground text-xs">
                 Native tools that stay in this agent&apos;s context on every
-                request. Suites (cogmem, maestro, fusion) and MCP access are
+                request. Suites (cogmem, maestro, fusion, forum) and MCP access are
                 controlled by their own toggles.
               </p>
               <ToolSelect
@@ -632,6 +636,24 @@ export function AgentCard({
             </div>
             <p className="text-muted-foreground text-xs">
               {t("agents.fusionHint")}
+            </p>
+          </div>
+        )}
+
+        {onForumChange !== undefined && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-foreground text-sm font-semibold">
+                {t("agents.forum")}
+              </p>
+              <Switch
+                checked={forum}
+                onCheckedChange={onForumChange}
+                aria-label={t("agents.forum")}
+              />
+            </div>
+            <p className="text-muted-foreground text-xs">
+              {t("agents.forumHint")}
             </p>
           </div>
         )}

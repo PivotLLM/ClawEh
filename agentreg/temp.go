@@ -41,6 +41,9 @@ type createOptions struct {
 	source    string
 	ephemeral bool
 	owner     string
+	purpose   string
+	// cloneModel replaces a clone's model list with this one model.
+	cloneModel string
 	// The fresh-agent options; a clone refuses them.
 	systemPrompt    string
 	hasSystemPrompt bool
@@ -69,6 +72,16 @@ func (o createOptions) mode() Mode {
 // so that agent can be told apart from others after a restart.
 func OwnedBy(agentID string) Option {
 	return func(o *createOptions) { o.owner = routing.NormalizeAgentID(agentID) }
+}
+
+// WithPurpose records what the temporary agent is created for
+// (Spec.Purpose), so the host can tell it apart later, across restarts.
+func WithPurpose(purpose string) Option { return func(o *createOptions) { o.purpose = purpose } }
+
+// CloneModel makes a clone run on model, one of its source's models, instead
+// of its source's list. Only for a clone.
+func CloneModel(model string) Option {
+	return func(o *createOptions) { o.cloneModel = strings.TrimSpace(model) }
 }
 
 // Temp sets how long the agent may sit idle before the sweep deletes it
@@ -135,6 +148,9 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	if o.source != "" && o.freshOnly() {
 		return "", nil, errors.New("agentreg: a clone takes its prompt and memory from its source; WithSystemPrompt, WithoutMemory and SingleShot are for a fresh agent")
 	}
+	if o.source == "" && o.cloneModel != "" {
+		return "", nil, errors.New("agentreg: CloneModel is for a clone; a fresh agent takes its models from its configuration")
+	}
 	if o.hasSystemPrompt && strings.TrimSpace(o.systemPrompt) == "" {
 		return "", nil, errors.New("agentreg: the system prompt is empty")
 	}
@@ -169,7 +185,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	if err != nil {
 		return "", nil, err
 	}
-	spec.Owner = o.owner
+	spec.Owner, spec.Purpose = o.owner, o.purpose
 	if err = refuseHuman(current, spec); err != nil {
 		return "", nil, err
 	}
@@ -227,7 +243,17 @@ func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *
 		if src == nil {
 			return Spec{}, fmt.Errorf("%w: clone source %q is not a configured agent", ErrNotFound, o.source)
 		}
-		return cloneSpec(src.spec, id, stateDir, o.ephemeral)
+		spec, err := cloneSpec(src.spec, id, stateDir, o.ephemeral)
+		if err != nil {
+			return Spec{}, err
+		}
+		if o.cloneModel != "" {
+			// The caller checks the model is one of the source's; Create
+			// checks it is configured.
+			spec.CloneModel = o.cloneModel
+			spec.Config.Models = cloneModels(spec.Config.Models, o.cloneModel)
+		}
+		return spec, nil
 	}
 	ac, err := copyAgentConfig(cfg)
 	if err != nil {
@@ -265,6 +291,15 @@ func cloneSpec(src Spec, id, stateDir string, ephemeral bool) (Spec, error) {
 		ID: id, Config: &ac, Origin: OriginTemp, SourceID: src.ID,
 		Workspace: src.Workspace, StateDir: stateDir, Ephemeral: ephemeral,
 	}, nil
+}
+
+// cloneModels is a clone's model list: its source's, or only model when one
+// is set.
+func cloneModels(source []string, model string) []string {
+	if model == "" {
+		return source
+	}
+	return []string{model}
 }
 
 // freshWorkspace is a fresh temporary agent's own workspace.

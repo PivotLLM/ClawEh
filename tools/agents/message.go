@@ -78,6 +78,9 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 	if strings.TrimSpace(message) == "" {
 		return fail("message is required")
 	}
+	if tools.AgentMessageTooLong(message) {
+		return fail("%s", tools.AgentMessageLimitText())
+	}
 	seconds, ok := numArg(call.Args, "wait_seconds")
 	if !ok || seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return fail("wait_seconds is required: 0 to whisper, or the seconds to wait for a reply")

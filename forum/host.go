@@ -52,7 +52,30 @@ type Messenger interface {
 	// as Reply{Outcome: OutcomeCancelled}: the forum then leaves the attempt
 	// uncertain and resumes at the next start instead of recording a failed
 	// attempt. Every call, whatever its result, is one of the forum's calls.
+	// ctx carries the forum the ask is made for (AskInfoFromContext), so
+	// the host can name the launching agent as the sender.
 	Ask(ctx context.Context, agentID, message string, wait time.Duration) (Reply, error)
+}
+
+// AskInfo is the forum an Ask is made for: its ID and its launcher.
+type AskInfo struct {
+	ForumID string
+	Origin  Origin
+}
+
+type askInfoKey struct{}
+
+// WithAskInfo returns ctx carrying info for Messenger.Ask. The controller
+// sets it on every ask; a host's tests use it to make one.
+func WithAskInfo(ctx context.Context, info AskInfo) context.Context {
+	return context.WithValue(ctx, askInfoKey{}, info)
+}
+
+// AskInfoFromContext returns the forum a Messenger.Ask call is made for. The
+// controller sets it on every Ask; ok is false for any other context.
+func AskInfoFromContext(ctx context.Context) (AskInfo, bool) {
+	info, ok := ctx.Value(askInfoKey{}).(AskInfo)
+	return info, ok
 }
 
 // ModelInfo describes one model an agent may use (§2.4). It never carries
@@ -121,13 +144,17 @@ type Agents interface {
 	CreateClone(ctx context.Context, spec CloneSpec) (agentID string, err error)
 	// CreateFresh creates a fresh temporary agent and returns its UUID.
 	CreateFresh(ctx context.Context, spec FreshSpec) (agentID string, err error)
-	// Delete removes a temporary agent the forum created. Deleting an agent
-	// that is already gone is not an error. The host may refuse while the
-	// agent is mid-turn; the caller retries later (the TTL is the backstop).
-	Delete(ctx context.Context, agentID string) error
-	// Touch refreshes a temporary agent's last-used time so a paused forum
-	// keeps its participants alive past the idle TTL (§9).
-	Touch(ctx context.Context, agentID string) error
+	// Delete removes a temporary agent the forum launched by launcherID
+	// created. Deleting an agent that is already gone is not an error. The
+	// host may refuse while the agent is mid-turn, or an agent that is not a
+	// forum participant owned by launcherID (the cleanup marker lives in the
+	// launcher's workspace and is not trusted); the caller retries later
+	// (the TTL is the backstop).
+	Delete(ctx context.Context, launcherID, agentID string) error
+	// Touch refreshes the last-used time of a temporary agent the forum
+	// launched by launcherID created, so a paused forum keeps its
+	// participants alive past the idle TTL (§9). The same refusal applies.
+	Touch(ctx context.Context, launcherID, agentID string) error
 }
 
 // Origin identifies the launching agent and the message that launched the
@@ -140,6 +167,10 @@ type Origin struct {
 	Channel string `json:"channel,omitempty"`
 	ChatID  string `json:"chat_id,omitempty"`
 	Session string `json:"session,omitempty"`
+	// Remote marks a forum launched by work that began on a remote chat
+	// (the host's remote-origin mark): its asks carry the mark, so tools
+	// restricted to local work stay refused in its turns.
+	Remote bool `json:"remote,omitempty"`
 }
 
 // Notifier tells the launching agent that a forum reached a terminal state.

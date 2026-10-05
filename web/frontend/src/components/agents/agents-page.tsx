@@ -168,6 +168,7 @@ export function AgentsPage() {
         ...(a.global_cron ? { global_cron: true } : {}),
         ...(a.maestro ? { maestro: maestroPayload(a.maestro) } : {}),
         ...(a.fusion ? { fusion: true } : {}),
+        ...(a.forum ? { forum: true } : {}),
         ...(a.cogmem === false ? { cogmem: false } : {}),
         // Always sent (like tools/mounts) so clearing the box persists; the
         // backend drops an empty slice on save (omitempty).
@@ -321,6 +322,22 @@ export function AgentsPage() {
     list[index] = { ...list[index], fusion: !list[index].fusion }
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`fusion-${index}`)
+    try {
+      await patchAppConfig(buildPayload(next))
+      setAgentsCfg(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Independent toggle: allow or withhold the agent's forum tool suite.
+  const handleToggleForum = async (index: number) => {
+    const list = [...(agentsCfg.list ?? [])]
+    list[index] = { ...list[index], forum: !list[index].forum }
+    const next: AgentsConfig = { ...agentsCfg, list }
+    setSaving(`forum-${index}`)
     try {
       await patchAppConfig(buildPayload(next))
       setAgentsCfg(next)
@@ -589,6 +606,8 @@ export function AgentsPage() {
                       onMaestroSettingsChange={(ms) => edit(i, { maestro: ms })}
                       fusion={agent.fusion === true}
                       onFusionChange={() => handleToggleFusion(i)}
+                      forum={agent.forum === true}
+                      onForumChange={() => handleToggleForum(i)}
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
                       mounts={e.mounts}

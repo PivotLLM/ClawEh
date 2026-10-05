@@ -813,6 +813,46 @@ else
     # it is hermetic, so there is nothing environmental for this suite to add.
 
     #---------------------------------------------------------------------------
+    # Section 4g: Forum tools (forum_*). The test config switches `forum` on for
+    # main, the session token's agent. Every tool is probed: models and status
+    # are hermetic successes on an agent with no forums; validate and launch
+    # refuse a call without a configuration and an invalid configuration;
+    # pause, resume, cancel and results refuse an unknown forum; delete of an
+    # absent forum succeeds (deleting is idempotent). No forum is started.
+    #---------------------------------------------------------------------------
+
+    if echo "$LIST_OUT" | grep -qw "forum_launch"; then
+        print_section "4g. Forum tools (forum)"
+        FORUM_ID="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+
+        run_test_ok_auth "4g.1 forum_models lists the agent's models" \
+            "forum_models" '{}' "["
+        run_test_ok_auth "4g.2 forum_status lists no forums" \
+            "forum_status" '{}' "[]"
+        run_test_err_msg_auth "4g.3 forum_validate refuses a call without a configuration" \
+            "forum_validate" '{}' "Give the configuration as config"
+        run_test_err_msg_auth "4g.4 forum_launch refuses an invalid configuration" \
+            "forum_launch" '{"config":{"version":1}}' "invalid configuration"
+        run_test_err_msg_auth "4g.5 forum_pause refuses an unknown forum" \
+            "forum_pause" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.6 forum_resume refuses an unknown forum" \
+            "forum_resume" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.7 forum_cancel refuses an unknown forum" \
+            "forum_cancel" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.8 forum_results refuses an unknown forum" \
+            "forum_results" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_ok_auth "4g.9 forum_delete of an absent forum succeeds" \
+            "forum_delete" "{\"id\":\"$FORUM_ID\"}" "is deleted"
+    else
+        # The test config switches forum on for main: missing tools are a
+        # regression, not an optional host feature.
+        echo "  4g. Forum tools"
+        echo "    ${RED}FAIL${NC}: forum_launch is not in the catalogue although main has forum on"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    #---------------------------------------------------------------------------
     # Section 4f: A listen job is a persistent callback: one cron_schedule call
     # creates it, and from then on the gateway calls the watched tool in the
     # background and delivers each new result to the agent with no further

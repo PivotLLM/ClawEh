@@ -6,8 +6,39 @@ package tools
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
+	"unicode/utf8"
 )
+
+// MaxAgentMessageChars is the most characters (Unicode code points) one
+// message to another agent may hold, from the agent_message tool and the
+// /ask and /whisper commands. It keeps one agent from flooding another's
+// conversation; a longer text belongs in a file the other agent can read.
+// The core Ask and Whisper do not enforce it: the forum composes longer
+// messages itself.
+const MaxAgentMessageChars = 8000
+
+// AgentMessageTooLong reports whether message exceeds MaxAgentMessageChars.
+func AgentMessageTooLong(message string) bool {
+	return utf8.RuneCountInString(message) > MaxAgentMessageChars
+}
+
+// AgentMessageLimitText is the refusal for a message over
+// MaxAgentMessageChars: "Messages to other agents are limited to 8,000
+// characters."
+func AgentMessageLimitText() string {
+	return "Messages to other agents are limited to " + groupThousands(MaxAgentMessageChars) + " characters."
+}
+
+// groupThousands renders n with a comma between groups of three digits.
+func groupThousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
 
 // OutcomeTimeout is the AgentReply outcome of an ask the target did not answer
 // in time. The other outcomes are the bus turn outcomes (bus.OutcomeOK,

@@ -68,6 +68,9 @@ type ToolDeps struct {
 	// not replace anything registered once per agent id for the agent it acts
 	// as (the Maestro runner): it uses what is there.
 	TempAgent bool
+	// TempPurpose is what a temporary agent was created for (TempPurposeForum
+	// for a forum participant); empty for every other agent.
+	TempPurpose string
 
 	// Spawn/subagent
 	Provider          providers.LLMProvider

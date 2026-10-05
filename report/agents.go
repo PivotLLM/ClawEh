@@ -19,6 +19,9 @@ import (
 // or start other agents (or give them turns).
 var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn", "agent_message"}
 
+// forumLaunchTool is the forum tool that starts other agents' turns.
+const forumLaunchTool = "forum_launch"
+
 // folderRow is one line of the Folder access table before sorting.
 type folderRow struct {
 	path      string
@@ -166,6 +169,11 @@ func agentToolsTable(a *config.AgentConfig) Table {
 			cells = append(cells, row(s, "yes (by pattern)"))
 		}
 	}
+	// forum_launch gives other agents turns; the forum switch, not the
+	// tools list, grants it.
+	if a.Forum && !a.IsToolDenied(forumLaunchTool) {
+		cells = append(cells, row(forumLaunchTool, "yes (Allow forum)"))
+	}
 	for i := 0; i < len(cells); i += 2 {
 		r := row(cells[i][0], cells[i][1], "", "")
 		if i+1 < len(cells) {
@@ -244,6 +252,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		row("Cognitive memory", memory),
 		row("Sub-agents", sub),
 		row("Suites", "Maestro "+onOff(a.MaestroEnabled())+", Fusion "+onOff(a.Fusion)),
+		row("Forum (sets up forums with other agents)", onOff(a.Forum)),
 		row("Shared common directory", onOff(a.SharesCommon())),
 		row("Global cron (schedules for other agents)", onOff(a.GlobalCron)),
 	)

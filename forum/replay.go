@@ -39,6 +39,15 @@ import (
 // artifacts fail recovery rather than regenerating history. Verify only
 // reads. It returns the decoded configuration and snapshot so the caller
 // does not read them twice.
+// checkOwner refuses a snapshot whose launcher is not the agent the store
+// was opened for (Store.owner), when that is known.
+func checkOwner(s *Store, snap *Snapshot) error {
+	if s.owner != "" && snap.Origin.AgentID != s.owner {
+		return corrupt("%s names launcher %q, not %q", fileSnapshot, snap.Origin.AgentID, s.owner)
+	}
+	return nil
+}
+
 func Verify(s *Store) (*Config, *Snapshot, error) {
 	snap, err := s.ReadSnapshot()
 	if err != nil {
@@ -46,6 +55,9 @@ func Verify(s *Store) (*Config, *Snapshot, error) {
 	}
 	if snap.ForumID != s.ID() {
 		return nil, nil, corrupt("%s names forum %q", fileSnapshot, snap.ForumID)
+	}
+	if ownerErr := checkOwner(s, snap); ownerErr != nil {
+		return nil, nil, ownerErr
 	}
 	raw, err := s.ReadConfig()
 	if err != nil {

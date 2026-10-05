@@ -215,18 +215,28 @@ atomic rename out of `ListForums` followed by a plain delete.
 
 ## 6. Host wiring (ClawEh, outside this package)
 
-A `tools/forum` provider builds `Host` and `ToolHost` from `tools.ToolDeps`
-and mounts `forum.Tools(svc, toolHost)` under the `forum` namespace,
-gated by the `forum` permission. Startup calls `svc.Recover` over every
-agent's `<workspace>/forums`; shutdown calls `svc.Close` before the agent
-loop stops. The contract beyond the interface signatures:
+The `tools/forum` provider builds the `ToolHost` from `tools.ToolDeps` and
+mounts `forum.Tools(svc, toolHost)` under the `forum` namespace, gated by
+the `forum` switch; `Host` is `agent.ForumHost`, and the gateway creates the
+service before the agent loop builds any tools
+(`internal/gateway/forum.go`). Startup calls `svc.Recover` over the
+`<workspace>/forums` of every agent with the switch on, once the loop
+accepts asks; shutdown calls `svc.Close` before the agent loop stops. Every
+`Messenger.Ask` context carries the forum and its launcher
+(`AskInfoFromContext`), so the host names the launcher as the sender. The
+contract beyond the interface signatures:
 
 - `Messenger.Ask` runs the turn at the maximum sub-agent depth and reports
   a host shutdown as an error wrapping `ErrShuttingDown`, never as
   `Reply{Outcome: cancelled}`.
-- `ToolHost.Scope` refuses, with an error wrapping `ErrForumTurn`, a call
-  made at the maximum sub-agent depth or by a temporary agent a forum
-  created; the tools turn it into a tool error.
+- `ToolHost.Scope` refuses a call made at the maximum sub-agent depth
+  (`ErrForumDepth`) or by a temporary agent a forum created
+  (`ErrForumTurn`); the tools turn each into its own tool error.
+- The forum directory lives in the launcher's workspace and is not trusted
+  for privileged decisions: a store opened in a scope refuses a snapshot
+  naming another launcher (`ErrCorrupt`), `Agents.Delete`/`Touch` name the
+  launcher so the host acts only on forum participants it owns, and the
+  host checks every ask against the launcher's current permissions.
 - `Notifier.ForumFinished` hands the notice off and returns; it is called
   on its own goroutine, and `Close` waits for it until its context ends.
 - `Host.OnStuck` (optional) tells the launcher and may raise an operator

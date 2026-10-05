@@ -39,6 +39,8 @@ type tempRecord struct {
 	TTLSeconds   int64               `json:"ttl_seconds"`
 	Config       *config.AgentConfig `json:"config,omitempty"`
 	Owner        string              `json:"owner,omitempty"`
+	Purpose      string              `json:"purpose,omitempty"`
+	CloneModel   string              `json:"clone_model,omitempty"`
 	Mode         Mode                `json:"mode,omitempty"`
 	SystemPrompt string              `json:"system_prompt,omitempty"`
 }
@@ -68,6 +70,8 @@ func (r *Registry[T]) persist() {
 			LastUsed:   e.meta.last().UTC(),
 			TTLSeconds: int64(e.meta.ttl / time.Second),
 			Owner:      e.spec.Owner,
+			Purpose:    e.spec.Purpose,
+			CloneModel: e.spec.CloneModel,
 		}
 		if !e.spec.IsClone() {
 			rec.Config, rec.Mode, rec.SystemPrompt = e.spec.Config, e.spec.Mode, e.spec.SystemPrompt
@@ -124,7 +128,7 @@ func (r *Registry[T]) restore() {
 		if fresh {
 			spec = freshSpec(*rec.Config, id, spec.StateDir, rec.Mode, rec.SystemPrompt, false)
 		}
-		spec.Owner = rec.Owner
+		spec.Owner, spec.Purpose, spec.CloneModel = rec.Owner, rec.Purpose, rec.CloneModel
 		spec, reason := r.respec(r.cfg, spec, r.entries)
 		if reason == "" {
 			inst, err := r.build(r.cfg, spec)

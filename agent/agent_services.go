@@ -83,6 +83,12 @@ func (s *agentServices) CreateClone(agentID string) (string, error) {
 }
 
 func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (string, error) {
+	return s.createFresh(model, tools.NewFreshOptions(opts...))
+}
+
+// createFresh is CreateFresh with its options applied, plus extra registry
+// options (the forum's purpose).
+func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ...agentreg.Option) (string, error) {
 	a, err := s.caller()
 	if err != nil {
 		return "", err
@@ -94,12 +100,8 @@ func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (st
 	if !ok {
 		return "", fmt.Errorf("model %q is not one of agent %q's models", model, s.callerID)
 	}
-	modelName := matched.Alias
-	if modelName == "" {
-		modelName = matched.Model
-	}
-	o := tools.NewFreshOptions(opts...)
-	regOpts := []agentreg.Option{agentreg.OwnedBy(s.callerID)}
+	modelName := candidateName(matched)
+	regOpts := append([]agentreg.Option{agentreg.OwnedBy(s.callerID)}, extra...)
 	if o.SystemPromptSet {
 		regOpts = append(regOpts, agentreg.WithSystemPrompt(o.SystemPrompt))
 	}

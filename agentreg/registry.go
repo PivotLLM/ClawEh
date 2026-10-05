@@ -129,6 +129,12 @@ type Spec struct {
 	// Owner is the agent that created a temporary agent on its own behalf
 	// (see OwnedBy); empty otherwise. Saved across restarts with the agent.
 	Owner string
+	// Purpose is what a temporary agent was created for (see WithPurpose),
+	// opaque to the registry; empty otherwise. Saved across restarts.
+	Purpose string
+	// CloneModel is the one model a clone runs on instead of its source's
+	// list (see CloneModel); empty keeps the source's. Saved across restarts.
+	CloneModel string
 }
 
 // SingleShot reports whether the spec is a single-shot fresh agent: every
@@ -498,6 +504,28 @@ func (r *Registry[T]) ResolveRoute(input routing.RouteInput) routing.ResolvedRou
 	return resolver.ResolveRoute(input)
 }
 
+// Touch refreshes a temporary agent's last-used time, so it outlives the
+// idle TTL while something still needs it (a paused forum's participants).
+// It is ErrNotFound for an unknown id and ErrNotTemp for a config agent.
+func (r *Registry[T]) Touch(id string) error {
+	r.mu.RLock()
+	e, ok := r.entries[routing.NormalizeAgentID(id)]
+	if ok && e.spec.Origin == OriginTemp {
+		e.meta.touch(r.now())
+	}
+	r.mu.RUnlock()
+	switch {
+	case !ok:
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
+	case e.spec.Origin != OriginTemp:
+		return fmt.Errorf("%w: %s", ErrNotTemp, id)
+	}
+	if persisted(e.spec) {
+		r.persist()
+	}
+	return nil
+}
+
 // BeginTurn records that a turn of agent id, on instance inst, started,
 // touching its last-used time; the returned function ends it. A temporary
 // agent in a turn is never deleted, disposed or replaced. current is false
@@ -756,7 +784,12 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 		if err != nil {
 			return spec, err.Error()
 		}
-		next.Owner = spec.Owner
+		next.Owner, next.Purpose = spec.Owner, spec.Purpose
+		next.CloneModel = spec.CloneModel
+		if spec.CloneModel != "" && !sourceHasModel(cfg, src.spec.Config, spec.CloneModel) {
+			return spec, "model " + spec.CloneModel + " is no longer one of " + spec.SourceID + "'s models"
+		}
+		next.Config.Models = cloneModels(next.Config.Models, spec.CloneModel)
 		spec = next
 	}
 	if missing := missingModels(cfg, spec.Config); len(missing) > 0 {
@@ -766,6 +799,29 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 		return spec, err.Error()
 	}
 	return spec, ""
+}
+
+// sourceHasModel reports whether model is in a clone source's model list
+// (the default list when it names none), by model_name or wire model id.
+func sourceHasModel(cfg *config.Config, ac *config.AgentConfig, model string) bool {
+	list := ac.Models
+	if len(list) == 0 && cfg != nil {
+		list = cfg.Agents.Defaults.Models
+	}
+	for _, name := range list {
+		if name == model {
+			return true
+		}
+		if cfg == nil {
+			continue
+		}
+		for i := range cfg.Models {
+			if m := &cfg.Models[i]; m.ModelName == name && m.Model == model || m.Model == name && m.ModelName == model {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ErrHuman is returned for a temporary agent that would stand in for a person:

@@ -31,10 +31,13 @@ import (
 )
 
 type AgentLoop struct {
-	bus             *bus.MessageBus
-	cfg             *config.Config
-	registry        *AgentRegistry
-	running         atomic.Bool
+	bus      *bus.MessageBus
+	cfg      *config.Config
+	registry *AgentRegistry
+	running  atomic.Bool
+	// started is closed once Run has begun serving (see Started).
+	started         chan struct{}
+	startedOnce     sync.Once
 	contextManagers sync.Map
 	fallback        *providers.FallbackChain
 	channelManager  *channels.Manager
@@ -280,6 +283,7 @@ func NewAgentLoop(
 		sessions:              make(map[string]*sessionState),
 		startedAt:             time.Now(),
 		evictStop:             make(chan struct{}),
+		started:               make(chan struct{}),
 		mcpRetryStop:          make(chan struct{}),
 		evictTTL:              defaultEvictTTL,
 		evictInterval:         defaultEvictInterval,
@@ -321,6 +325,11 @@ func NewAgentLoop(
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
+	al.startedOnce.Do(func() {
+		if al.started != nil {
+			close(al.started)
+		}
+	})
 
 	// Every turn runs under this context, so Stop can abort the model requests,
 	// CLI subprocesses and tool calls still in flight.
@@ -372,6 +381,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	return nil
 }
+
+// Started is closed once Run has begun: from then on asks are accepted
+// (the forum resumes its forums only after that).
+func (al *AgentLoop) Started() <-chan struct{} { return al.started }
 
 // runContext is the context Run serves under, or nil before Run.
 func (al *AgentLoop) runContext() context.Context {

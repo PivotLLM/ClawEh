@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -723,4 +724,37 @@ func TestCtlStateMatchesReplay(t *testing.T) {
 	}
 	cj := ctlJSON(t, cached)
 	ctlWant(t, "state.json", cj, b)
+}
+
+// Every Ask carries the forum it is made for, so the host can name the
+// launching agent as the sender.
+func TestCtlAskCarriesForum(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlLayer("first", DeliveryPerTurn, 1, FormatText)), func(f *ctlForum) {
+		f.snap.Origin = Origin{AgentID: "alice", Channel: "telegram", ChatID: "42"}
+	})
+	var seen []AskInfo
+	var mu sync.Mutex
+	f.msg.hook = func(ctx context.Context, _ ctlCall) error {
+		info, ok := AskInfoFromContext(ctx)
+		if !ok {
+			t.Error("Ask context carries no forum")
+		}
+		mu.Lock()
+		seen = append(seen, info)
+		mu.Unlock()
+		return nil
+	}
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	if len(seen) == 0 {
+		t.Fatal("no Ask was made")
+	}
+	for _, info := range seen {
+		if info.ForumID != f.s.ID() || info.Origin.AgentID != "alice" || info.Origin.ChatID != "42" {
+			t.Errorf("AskInfo = %+v, want forum %s launched by alice", info, f.s.ID())
+		}
+	}
+	if _, ok := AskInfoFromContext(context.Background()); ok {
+		t.Error("AskInfoFromContext reports a forum on a plain context")
+	}
 }

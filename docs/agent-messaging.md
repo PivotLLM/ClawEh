@@ -11,6 +11,11 @@ any chat. There are two kinds of message:
 Agents reach them with the `agent_message` tool; people with the `/ask` and
 `/whisper` commands. The examples use two agents, Alice and Bob.
 
+A message is at most 8,000 characters (`tools.MaxAgentMessageChars`). The
+tool and both commands refuse a longer one with "Messages to other agents are
+limited to 8,000 characters."; longer text belongs in a file the other agent
+can read. The forum's own asks are not limited.
+
 ## The `agent_message` tool
 
 | Parameter | Meaning |
@@ -143,7 +148,8 @@ Whisper(ctx, from, agentID, message string) error
 
 `AgentReply{Text, Outcome}` carries the final reply and one of `ok`,
 `error`, `cancelled`, `empty` (the bus turn outcomes) or `timeout`
-(`tools.OutcomeTimeout`). These do no `allow_agents` or channel check; the
-caller decides who may message whom. `Ask` accepts any agent in the registry,
+(`tools.OutcomeTimeout`). These do no `allow_agents` or channel check and
+no size check (`tools.MaxAgentMessageChars` is enforced by the tool and the
+commands); the caller decides who may message whom. `Ask` accepts any agent in the registry,
 temporary agents included, and returns `tools.ErrNoSuchAgent`,
 `tools.ErrMaxDepth` or `tools.ErrAskLoop` when it refuses.

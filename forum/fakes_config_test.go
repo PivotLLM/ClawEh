@@ -173,11 +173,11 @@ func (a *cfgtAgents) CreateFresh(context.Context, FreshSpec) (string, error) {
 	return "", errors.New("preflight must not create agents")
 }
 
-func (a *cfgtAgents) Delete(context.Context, string) error {
+func (a *cfgtAgents) Delete(context.Context, string, string) error {
 	return errors.New("preflight must not delete agents")
 }
 
-func (a *cfgtAgents) Touch(context.Context, string) error {
+func (a *cfgtAgents) Touch(context.Context, string, string) error {
 	return errors.New("preflight must not touch agents")
 }
 

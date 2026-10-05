@@ -22,6 +22,7 @@
       {"id": "bob", "name": "Bob", "models": ["Claude CLI Opus", "Codex CLI"],
        "tools": ["*"],
        "fusion": true,
+       "forum": true,
        "mcp_tools": ["simpledoc"]},
       {"id": "carol", "name": "Carol",
        "tools": ["file_read_lines"],

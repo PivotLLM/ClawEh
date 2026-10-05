@@ -202,7 +202,7 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 // has ended (the service is closing) is treated the same way: the
 // shutdown cancelled it, so no failed reply is recorded.
 func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
-	reply, err := c.host.Messenger.Ask(ctx, req.AgentID, req.Message, wait)
+	reply, err := c.host.Messenger.Ask(WithAskInfo(ctx, AskInfo{ForumID: c.snap.ForumID, Origin: c.snap.Origin}), req.AgentID, req.Message, wait)
 	if err != nil {
 		switch {
 		case c.cancel.Load():

@@ -41,7 +41,7 @@ import (
 // The host's side of the contract, beyond the interfaces' signatures:
 // Messenger.Ask reports a host shutdown as ErrShuttingDown (never as a
 // cancelled reply); ToolHost.Scope refuses calls made inside a forum turn
-// with ErrForumTurn; Notifier.ForumFinished hands the notice off; OnStuck
+// with ErrForumTurn or ErrForumDepth; Notifier.ForumFinished hands the notice off; OnStuck
 // does not block.
 //
 // Every ID-only operation takes the caller's Scope and never looks outside
@@ -294,6 +294,7 @@ func (s *Service) Launch(ctx context.Context, raw []byte, opts LaunchOptions) (s
 	if err != nil {
 		return "", err
 	}
+	store.owner = opts.Scope.AgentID
 	if err = store.Lock(); err != nil {
 		return "", errors.Join(err, store.Remove())
 	}
@@ -885,7 +886,12 @@ func (s *Service) isClosed() bool {
 // open resolves a forum ID within the scope: OpenStore(scope.BaseDirectory,
 // id), ErrNotFound when absent.
 func (s *Service) open(scope Scope, id string) (*Store, error) {
-	return OpenStore(scope.BaseDirectory, id)
+	store, err := OpenStore(scope.BaseDirectory, id)
+	if err != nil {
+		return nil, err
+	}
+	store.owner = scope.AgentID
+	return store, nil
 }
 
 // takeOver opens a forum that has no live controller in this process,
@@ -949,6 +955,9 @@ func loadView(store *Store) (*Config, *Snapshot, *State, error) {
 	snap, err := store.ReadSnapshot()
 	if err != nil {
 		return nil, nil, nil, corrupt("%s: %v", fileSnapshot, err)
+	}
+	if ownerErr := checkOwner(store, snap); ownerErr != nil {
+		return nil, nil, nil, ownerErr
 	}
 	raw, err := store.ReadConfig()
 	if err != nil {
@@ -1284,7 +1293,7 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 	var remaining []string
 	var failures error
 	for _, agentID := range ids {
-		err := s.host.Agents.Delete(ctx, agentID)
+		err := s.host.Agents.Delete(ctx, store.owner, agentID)
 		if err == nil || errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -1424,7 +1433,7 @@ func (s *Service) touchForum(ctx context.Context, store *Store) {
 		return
 	}
 	for _, agentID := range ids {
-		if err := s.host.Agents.Touch(ctx, agentID); err != nil {
+		if err := s.host.Agents.Touch(ctx, store.owner, agentID); err != nil {
 			s.host.Logger.Warnf("forum %s: keep-alive of temporary agent %s: %v", store.ID(), agentID, err)
 		}
 	}

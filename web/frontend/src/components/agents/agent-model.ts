@@ -30,6 +30,7 @@ export interface AgentEntry {
   global_cron?: boolean
   maestro?: MaestroSettings
   fusion?: boolean
+  forum?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]

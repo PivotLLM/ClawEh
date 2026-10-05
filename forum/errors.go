@@ -29,9 +29,13 @@ var (
 	// reason; the attempt stays uncertain and the forum resumes at the next
 	// start instead of failing.
 	ErrShuttingDown = errors.New("the host is shutting down")
-	// ErrForumTurn: a forum tool was called from inside a forum turn (at
-	// the maximum sub-agent depth, or by a temporary agent a forum
-	// created). ToolHost.Scope returns an error wrapping it and the tool is
+	// ErrForumTurn: a forum tool was called by a temporary agent a forum
+	// created. ToolHost.Scope returns an error wrapping it and the tool is
 	// refused, so a forum can never launch or control forums.
 	ErrForumTurn = errors.New("forum tools are not available inside a forum turn")
+	// ErrForumDepth: a forum tool was called from a turn at the maximum
+	// sub-agent depth (where every forum turn runs, but also any other
+	// turn that deep). ToolHost.Scope returns an error wrapping it and the
+	// tool is refused.
+	ErrForumDepth = errors.New("forum tools are not available at the maximum sub-agent depth")
 )

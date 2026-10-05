@@ -81,6 +81,7 @@ type svcAgents struct {
 	created   []string
 	deleted   []string
 	touched   map[string]int
+	launchers []string         // the launcher passed to every Delete and Touch
 	createErr map[string]error // "clone:<source>" or "fresh:<model>"
 	deleteErr map[string]error // by agent ID
 	touchErr  error
@@ -146,9 +147,10 @@ func (a *svcAgents) CreateFresh(_ context.Context, spec FreshSpec) (string, erro
 	return a.newAgent(), nil
 }
 
-func (a *svcAgents) Delete(_ context.Context, id string) error {
+func (a *svcAgents) Delete(_ context.Context, launcher, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.launchers = append(a.launchers, launcher)
 	if err := a.deleteErr[id]; err != nil {
 		return err
 	}
@@ -157,9 +159,10 @@ func (a *svcAgents) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (a *svcAgents) Touch(_ context.Context, id string) error {
+func (a *svcAgents) Touch(_ context.Context, launcher, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.launchers = append(a.launchers, launcher)
 	a.touched[id]++
 	return a.touchErr
 }

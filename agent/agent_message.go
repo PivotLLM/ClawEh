@@ -598,6 +598,9 @@ func (al *AgentLoop) commandTarget(command string, msg bus.InboundMessage, ref s
 
 // commandWhisper runs /whisper <agent> <text> for msg's sender.
 func (al *AgentLoop) commandWhisper(ctx context.Context, msg bus.InboundMessage, ref, text string) string {
+	if tools.AgentMessageTooLong(text) {
+		return tools.AgentMessageLimitText()
+	}
 	target, refusal := al.commandTarget("whisper", msg, ref)
 	if target == nil {
 		return refusal
@@ -616,6 +619,9 @@ func (al *AgentLoop) commandWhisper(ctx context.Context, msg bus.InboundMessage,
 // chat as "<agent>: <reply>". It returns the reply to give now: empty when
 // the ask was sent.
 func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref, text string) string {
+	if tools.AgentMessageTooLong(text) {
+		return tools.AgentMessageLimitText()
+	}
 	target, refusal := al.commandTarget("ask", msg, ref)
 	if target == nil {
 		return refusal

@@ -550,6 +550,7 @@ PY
         "default": true,
         "tools": ["*", "cogmem_*"],
         "fusion": true,
+        "forum": true,
         "mcp_tools": ["wxca"]
       },
       {
@@ -684,6 +685,15 @@ PY
       "common_put",
       "common_delete",
       "time_now",
+      "forum_models",
+      "forum_validate",
+      "forum_launch",
+      "forum_status",
+      "forum_pause",
+      "forum_resume",
+      "forum_cancel",
+      "forum_results",
+      "forum_delete",
       "wxca"
     ]
   }

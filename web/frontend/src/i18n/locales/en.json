@@ -24,6 +24,8 @@
     "maestroAllowParallelHint": "Runs are sequential unless the LLM asks for parallel; turn this off to refuse such requests.",
     "fusion": "Fusion (REST-API tools)",
     "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
+    "forum": "Allow forum",
+    "forumHint": "Lets the agent set up forums with other agents; it can include only the agents in its subagents.allow_agents (config.json).",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",

@@ -155,6 +155,11 @@ type Store struct {
 	base string
 	id   string
 	root string
+	// owner is the agent whose scope the store was opened in (set by the
+	// service); when set, Verify refuses a snapshot naming another
+	// launcher, because the directory lives in that agent's workspace and
+	// is not trusted for whose forum it is.
+	owner string
 
 	mu   sync.Mutex // guards lock, idx, cfg and snap, and serialises commits and transcript writes
 	lock *os.File

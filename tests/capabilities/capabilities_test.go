@@ -20,17 +20,22 @@
 package capabilities
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
 	"github.com/PivotLLM/ClawEh/tools/fusion"
 )
 
@@ -47,6 +52,14 @@ func TestEffectiveCapabilities(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	gateway.RegisterToolProvidersForTest()
+	svc := forum.New(forum.Host{Messenger: nopForumHost{}, Agents: nopForumHost{}, Notifier: nopForumHost{}, Logger: nopForumHost{}})
+	toolsforum.SetService(svc)
+	t.Cleanup(func() {
+		toolsforum.SetService(nil)
+		if closeErr := svc.Close(context.Background()); closeErr != nil {
+			t.Errorf("forum service Close: %v", closeErr)
+		}
+	})
 
 	got := render(t, cfg)
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
@@ -80,8 +93,9 @@ func render(t *testing.T, cfg *config.Config) string {
 	for i := range agents {
 		a := &agents[i]
 		w("agent %s\n", a.ID)
-		w("  suites: cogmem=%s maestro=%s fusion=%s\n",
-			onOff(cfg.AgentSuiteEnabled(a.ID, "cogmem")), onOff(cfg.AgentSuiteEnabled(a.ID, "maestro")), onOff(cfg.AgentSuiteEnabled(a.ID, "fusion")))
+		w("  suites: cogmem=%s maestro=%s fusion=%s forum=%s\n",
+			onOff(cfg.AgentSuiteEnabled(a.ID, "cogmem")), onOff(cfg.AgentSuiteEnabled(a.ID, "maestro")), onOff(cfg.AgentSuiteEnabled(a.ID, "fusion")),
+			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")))
 
 		var native []string
 		for _, name := range catalog {
@@ -102,6 +116,20 @@ func render(t *testing.T, cfg *config.Config) string {
 		}
 		sort.Strings(fusionTools)
 		w("  fusion tools: %s\n", list(fusionTools))
+
+		forumDefs := toolsforum.GlobalProvider.RegisterTools(global.Deps{
+			Cfg: cfg, AgentID: a.ID, Host: tools.ToolDeps{Cfg: cfg, AgentID: a.ID, Workspace: t.TempDir()},
+		})
+		forumTools := make([]string, 0, len(forumDefs))
+		for _, d := range forumDefs {
+			name := toolsforum.Suite + "_" + d.Name
+			if a.IsToolDenied(name) {
+				name += " (denied)"
+			}
+			forumTools = append(forumTools, name)
+		}
+		sort.Strings(forumTools)
+		w("  forum tools: %s\n", list(forumTools))
 
 		mcp := make([]string, 0, len(servers))
 		for _, s := range servers {
@@ -135,7 +163,7 @@ func render(t *testing.T, cfg *config.Config) string {
 }
 
 // nativeCatalog is every tool the registered non-suite providers describe, by
-// published name, sorted. Suite tools (cogmem, maestro, fusion) are gated by
+// published name, sorted. Suite tools (cogmem, maestro, fusion, forum) are gated by
 // their switches, not the per-tool allowlist, and are reported separately.
 func nativeCatalog() []string {
 	var names []string
@@ -226,3 +254,33 @@ func copyTree(t *testing.T, src, dst string) {
 		copyFile(t, filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()), 0o600)
 	}
 }
+
+// nopForumHost lets the forum service exist so the forum tools register; it
+// runs nothing.
+type nopForumHost struct{}
+
+func (nopForumHost) Ask(context.Context, string, string, time.Duration) (forum.Reply, error) {
+	return forum.Reply{}, errors.New("unused")
+}
+func (nopForumHost) Exists(context.Context, string) (bool, error)            { return false, nil }
+func (nopForumHost) MayTarget(context.Context, string, string) (bool, error) { return false, nil }
+func (nopForumHost) Models(context.Context, string) ([]forum.ModelInfo, error) {
+	return nil, nil
+}
+
+func (nopForumHost) CreateClone(context.Context, forum.CloneSpec) (string, error) {
+	return "", errors.New("unused")
+}
+
+func (nopForumHost) CreateFresh(context.Context, forum.FreshSpec) (string, error) {
+	return "", errors.New("unused")
+}
+func (nopForumHost) Delete(context.Context, string, string) error { return nil }
+func (nopForumHost) Touch(context.Context, string, string) error  { return nil }
+func (nopForumHost) ForumFinished(context.Context, forum.Origin, *forum.Result) error {
+	return nil
+}
+func (nopForumHost) Debugf(string, ...any) {}
+func (nopForumHost) Infof(string, ...any)  {}
+func (nopForumHost) Warnf(string, ...any)  {}
+func (nopForumHost) Errorf(string, ...any) {}

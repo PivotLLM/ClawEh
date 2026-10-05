@@ -321,6 +321,33 @@ observe does not need an entry.
   the sender is a person and how they wrote ("Alice (a person, via /ask on
   telegram)"), so a person cannot pass for an agent of the same name. Both
   commands appear in Telegram's command menu.
+- **Forums: an agent can run a structured discussion among other agents.**
+  A new per-agent switch, `forum` (WebUI Agents page: "Allow forum", off by
+  default, so no existing agent gains anything), gives the agent nine tools:
+  `forum_models`, `forum_validate`, `forum_launch`, `forum_status`,
+  `forum_pause`, `forum_resume`, `forum_cancel`, `forum_results` and
+  `forum_delete`. A forum is one JSON configuration: a brief, sources, and
+  participants that are existing agents, clones of agents, or fresh temporary
+  agents on one of the launching agent's models, taking turns in ordered
+  layers with optional moderation and JSON Schema checks. Existing and clone
+  participants are limited to the launcher's `subagents.allow_agents`. Each
+  turn is an ask from the launching agent run at the maximum sub-agent depth,
+  so a participant cannot spawn, ask further or use forum tools. Everything is
+  kept under `<workspace>/forums/<id>/`, with a live `transcript.md`; temporary
+  participants are deleted when the forum ends, and the launching agent is told
+  "Forum <name> finished: <status>" (posted to its default chat if it launched
+  the forum from a chat). A forum launched from a chat counts as work from that
+  chat, so `shell_exec` stays refused in its turns unless
+  `tools.exec.allow_remote` is on. Forums survive a restart and resume where
+  they stopped. Turning the switch off removes the tools; the agent's forums
+  still run, resume and are cleaned up. A forum that stops on an error raises
+  the "Forum stopped" alert. Check Up shows a Forum row per agent and lists
+  `forum_launch` among its sensitive tools when the switch is on. See
+  `docs/forum.md`.
+- **Messages to other agents are limited to 8,000 characters.** The
+  `agent_message` tool, `/ask` and `/whisper` refuse a longer message with
+  "Messages to other agents are limited to 8,000 characters."; put longer text
+  in a file the other agent can read.
 - **Check Up lists `agent_message` among each agent's sensitive tools**, beside
   `agent_spawn`, since it gives other agents turns.
 - **Human agents: a person can take part as an agent.** Add a provider with

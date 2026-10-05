@@ -33,10 +33,11 @@ type ToolHost interface {
 	// without the `forum` permission, as defence in depth behind the
 	// aggregator's gating.
 	//
-	// It must also refuse, with an error wrapping ErrForumTurn, every call
-	// made from inside a forum turn: a call at the maximum sub-agent depth
-	// (every forum Ask runs there) and a call by a temporary agent a forum
-	// created (a clone or fresh participant). A forum can then never
+	// It must also refuse every call that could come from inside a forum
+	// turn: a call at the maximum sub-agent depth (every forum Ask runs
+	// there) with an error wrapping ErrForumDepth, and a call by a
+	// temporary agent a forum created (a clone or fresh participant) with
+	// one wrapping ErrForumTurn. A forum can then never
 	// launch, control or read forums, whatever its participants' tools
 	// allow. The tool returns that refusal to the agent as a tool error.
 	Scope(call *toolspec.ToolCall) (Scope, error)
@@ -48,10 +49,13 @@ type ToolHost interface {
 	// Workspace is the agent's workspace, the ConfigDir of an inline
 	// configuration.
 	Workspace(agentID string) (string, error)
+	// Remote reports whether the call is part of work that began on a
+	// remote chat; a forum it launches carries the mark (Origin.Remote).
+	Remote(call *toolspec.ToolCall) bool
 }
 
 // Tools returns the nine forum tools over svc. Every handler resolves the
-// caller's Scope first: ErrForumTurn is a tool error, any other Scope
+// caller's Scope first: ErrForumTurn and ErrForumDepth are tool errors, any other Scope
 // failure is returned as the error. Every failure of the operation itself
 // is a Result with IsError and one plain sentence naming the forum (when
 // there is one): an unknown forum, a refused state, a forum locked by
@@ -240,8 +244,11 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 // precision. config_file keeps the bytes exactly.
 func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchOptions, []byte, error) {
 	opts := LaunchOptions{
-		Scope:  scope,
-		Origin: Origin{AgentID: scope.AgentID, Channel: call.Channel, ChatID: call.ChatID, Session: call.Session},
+		Scope: scope,
+		Origin: Origin{
+			AgentID: scope.AgentID, Channel: call.Channel, ChatID: call.ChatID, Session: call.Session,
+			Remote: t.host.Remote(call),
+		},
 		ReadAllowed: func(abs string) error {
 			return t.host.ReadAllowed(scope.AgentID, abs)
 		},
@@ -345,11 +352,14 @@ func jsonResult(v any) (*toolspec.Result, error) {
 }
 
 // scopeFailure renders a ToolHost.Scope failure: a call from inside a
-// forum turn (ErrForumTurn) is a tool error the agent sees; anything else
+// forum turn (ErrForumTurn, ErrForumDepth) is a tool error the agent sees; anything else
 // is returned as the error, for the host to report.
 func scopeFailure(err error) (*toolspec.Result, error) {
 	if errors.Is(err, ErrForumTurn) {
 		return &toolspec.Result{ForLLM: "Forum tools are not available inside a forum turn.", IsError: true, Err: err}, nil
+	}
+	if errors.Is(err, ErrForumDepth) {
+		return &toolspec.Result{ForLLM: "Forum tools are not available at the maximum sub-agent depth.", IsError: true, Err: err}, nil
 	}
 	return nil, err
 }

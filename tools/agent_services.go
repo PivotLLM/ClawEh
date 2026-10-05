@@ -3,6 +3,10 @@
 
 package tools
 
+// TempPurposeForum is ToolDeps.TempPurpose of a temporary agent a forum
+// created (a clone or fresh participant).
+const TempPurposeForum = "forum"
+
 // FreshOption configures AgentServices.CreateFresh.
 type FreshOption func(*FreshOptions)
 

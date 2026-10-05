@@ -806,6 +806,9 @@ func TestCommands_AskAndWhisper(t *testing.T) {
 		{"default agent allowed", "u2", "/ask alice hello", "Alice: reply 1"},
 		{"unknown agent", "u1", "/ask zed hello", "There is no agent named zed."},
 		{"usage", "u1", "/ask bob", "Usage: /ask <agent> <message>"},
+		{"whisper at the limit", "u1", "/whisper bob " + strings.Repeat("é", tools.MaxAgentMessageChars), "Whispered to Bob."},
+		{"whisper over the limit", "u1", "/whisper bob " + strings.Repeat("é", tools.MaxAgentMessageChars+1), "Messages to other agents are limited to 8,000 characters."},
+		{"ask over the limit", "u1", "/ask bob " + strings.Repeat("x", tools.MaxAgentMessageChars+1), "Messages to other agents are limited to 8,000 characters."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := &recordingProvider{}
@@ -911,5 +914,29 @@ func TestRemoteOrigin_AsyncReentry(t *testing.T) {
 		if got := tools.RemoteOrigin(withInboundOrigin(context.Background(), msg)); got != remote {
 			t.Fatalf("re-entered turn remote = %v, want %v", got, remote)
 		}
+	}
+}
+
+// TestAgentMessageTool_SizeLimit: agent_message refuses a message over
+// tools.MaxAgentMessageChars and sends one at the limit.
+func TestAgentMessageTool_SizeLimit(t *testing.T) {
+	model := &recordingProvider{}
+	al, _ := messagingLoop(t, messagingConfig(t), model)
+	alice, _ := al.GetRegistry().Get("alice")
+	tool, ok := alice.Tools.Get("agent_message")
+	if !ok {
+		t.Fatal("alice has no agent_message")
+	}
+	over := tool.Execute(context.Background(), map[string]any{
+		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars+1), "wait_seconds": 0,
+	})
+	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." {
+		t.Fatalf("over the limit: %+v, want the limit refusal", over)
+	}
+	at := tool.Execute(context.Background(), map[string]any{
+		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars), "wait_seconds": 0,
+	})
+	if at.IsError || at.ForLLM != "Whispered to Bob." {
+		t.Fatalf("at the limit: %+v, want the whisper sent", at)
 	}
 }

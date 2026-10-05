@@ -32,6 +32,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 	"github.com/PivotLLM/ClawEh/devices"
+	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
@@ -201,6 +202,9 @@ type gatewayServices struct {
 	bootListeners config.ListenerSettings
 
 	CogmemManager *consolidate.Manager
+	// Forum is the forum service. Like HTTPHost it lives for the whole
+	// process; shutdownGateway closes it before the agent loop stops.
+	Forum *forum.Service
 	// AuthStore holds the WebUI login sessions and the admin credentials;
 	// stopAuthWatch ends its credentials-file poller at shutdown.
 	AuthStore     *middleware.AuthStore
@@ -318,10 +322,15 @@ func gatewayCmd(debug bool) error {
 	// here, so the service manager restarts it; see fatal.go.
 	fatal := newFatalNotifier(operatorAlerter)
 	msgBus := bus.NewMessageBus()
+	// The forum service exists before the loop builds the agents' tools.
+	forumHost := agent.NewForumHost()
+	forumSvc := newForumService(forumHost)
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher, agent.OwnsDataDir())
 	if err != nil {
+		closeForums(forumSvc)
 		return fmt.Errorf("error creating agent loop: %w", err)
 	}
+	forumHost.Bind(agentLoop)
 	agentLoop.SetAlerter(operatorAlerter)
 
 	dumpsDir := filepath.Join(internal.GetClawHome(), "logs", "dumps")
@@ -361,8 +370,10 @@ func gatewayCmd(debug bool) error {
 	// Setup and start all services
 	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath, store, fatal)
 	if err != nil {
+		closeForums(forumSvc)
 		return err
 	}
+	services.Forum = forumSvc
 	// The Logs page tails the alerts file the alerter writes.
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())
@@ -384,6 +395,7 @@ func gatewayCmd(debug bool) error {
 			fatal.fatalService("agent-loop", runErr)
 		}
 	}()
+	recoverForums(ctx, forumSvc, forumHost.Scopes, agentLoop.Started(), nil)
 
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
@@ -1004,6 +1016,12 @@ func shutdownGateway(
 ) {
 	begin := time.Now()
 	phases := newPhaseTimer("Shutdown")
+	// Forum runs stop first, while the loop still runs: their asks end as a
+	// shutdown, not as failed turns, and resume at the next start.
+	if services.Forum != nil {
+		closeForums(services.Forum)
+		phases.done("forums stopped")
+	}
 	agentLoop.BeginMCPShutdown()
 
 	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
