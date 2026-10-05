@@ -16,7 +16,8 @@ import (
 // imports channels, so the device package cannot import agent.
 type deviceAgentQuerier struct{ al *agent.AgentLoop }
 
-// Agents lists configured agents plus the default agent's id and main session key.
+// Agents lists configured agents (human agents left out: a device cannot
+// chat with a person) plus the default agent's id and main session key.
 func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) {
 	reg := q.al.GetRegistry()
 	defaultID := reg.DefaultID()
@@ -24,7 +25,11 @@ func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) 
 	out := make([]device.DeviceAgentInfo, 0, len(ids))
 	for _, id := range ids {
 		info := device.DeviceAgentInfo{ID: id, Name: id}
-		if inst, ok := reg.Get(id); ok && inst.Name != "" {
+		inst, ok := reg.Get(id)
+		if ok && inst.HumanModel != "" {
+			continue // a person can't be chatted with, only asked by agents
+		}
+		if ok && inst.Name != "" {
 			info.Name = inst.Name
 		}
 		// Always carry a non-empty name: operator clients hide entries without a

@@ -287,3 +287,47 @@ func TestPruneHumanProblems(t *testing.T) {
 		}
 	})
 }
+
+// A disabled human agent keeps its chat: binding another agent to it is
+// refused on save, as messages there never reach another agent.
+func TestHumanProblems_DisabledAgentKeepsItsChat(t *testing.T) {
+	cfg := humanTestConfig()
+	off := false
+	cfg.Agents.List[1].Enabled = &off
+	if got := cfg.HumanProblems(); len(got) != 0 {
+		t.Fatalf("problems = %+v for a disabled human agent alone", got)
+	}
+	s := newHumanTestStore(t, cfg)
+	err := s.Update(func(c *Config) error {
+		c.Bindings = append(c.Bindings, AgentBinding{AgentID: "alice", Match: BindingMatch{Channel: "telegram-main", Peer: &PeerMatch{Kind: "direct", ID: "4242"}}})
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "Bob's chat is also used by Alice.") {
+		t.Fatalf("Update = %v, want the shared chat refused", err)
+	}
+}
+
+// Agent ids are matched to bindings the way DefaultBinding does (trimmed), and
+// a human agent whose only binding is not its default has no chat yet.
+func TestHumanProblems_AgentIDMatching(t *testing.T) {
+	cfg := humanTestConfig()
+	cfg.Agents.List[1].ID = " bob "
+	if got := cfg.HumanProblems(); len(got) != 0 {
+		t.Fatalf("problems = %+v for an id with spaces", got)
+	}
+	cfg.Bindings[1].Default = false
+	if got := problemKinds(cfg.HumanProblems()); !slices.Equal(got, []HumanProblemKind{HumanNoChat}) {
+		t.Fatalf("kinds = %v, want no chat", got)
+	}
+}
+
+// An existing problem is recognised by what it is, not its wording: renaming
+// the agent does not make it new, so the save is not refused.
+func TestStoreUpdate_RenameKeepsExistingProblem(t *testing.T) {
+	cfg := humanTestConfig()
+	cfg.Agents.List[1].Models = []string{"Bob (human)", "m"}
+	s := newHumanTestStore(t, cfg)
+	if err := s.Update(func(c *Config) error { c.Agents.List[1].Name = "Bob B."; return nil }); err != nil {
+		t.Fatalf("rename refused: %v", err)
+	}
+}

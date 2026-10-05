@@ -63,6 +63,8 @@ export function ModelsPage() {
 
   const fetchModels = async () => {
     await queryClient.invalidateQueries({ queryKey: ["models"] })
+    // A model change can create or clear a human-agent note.
+    await queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
   }
 
   const handleToggleEnabled = async (model: ModelInfo) => {

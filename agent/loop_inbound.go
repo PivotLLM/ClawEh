@@ -308,11 +308,16 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		ss.turnCancel = cancelTurn
 		ss.mu.Unlock()
 
-		// The slot travels with the turn so a request to a person can give it
-		// up while the person types (askHuman).
+		// For a turn addressed to a human agent the slot travels with the
+		// turn, so the request can give it up while the person types
+		// (askHuman, turnSlot).
 		slot := &turnSlot{al: al}
 		if slot.acquire(turnCtx) {
-			al.runTurn(ctx, withTurnSlot(turnCtx, slot), batch)
+			runCtx := turnCtx
+			if routed != nil && routed.HumanModel != "" {
+				runCtx = withTurnSlot(turnCtx, slot)
+			}
+			al.runTurn(ctx, runCtx, batch)
 			slot.release()
 		} else if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
 			// Cancelled while waiting for a turn slot: it never ran.
@@ -387,8 +392,10 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		response, outcome = err.Error(), bus.OutcomeError
 	case errors.As(err, new(humanNotAskedError)):
 		// Dropped (logged where detected): a person takes only questions from
-		// agents. A sender that requires a reply is told so.
-		if !replyRequired {
+		// agents. Someone who wrote to it (a mention, a chat, a device) or a
+		// sender that requires a reply is told so, which also clears the
+		// chat's indicators; claw's own messages are dropped silently.
+		if !replyRequired && !fromPerson(msg) {
 			return
 		}
 		response, outcome = err.Error(), bus.OutcomeError

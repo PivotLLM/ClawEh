@@ -148,6 +148,15 @@ func (d *humanDesk) recentlyExpired(agentID string, window time.Duration) bool {
 	return ok && window > 0 && time.Since(t) < window
 }
 
+// inboundDismisser clears what a chat shows for an inbound message that gets
+// no reply (channels.Manager.DismissInbound).
+type inboundDismisser interface {
+	DismissInbound(ctx context.Context, channel, chatID, messageID string)
+}
+
+// dismissTimeout bounds clearing a chat's indicators for an answer.
+const dismissTimeout = 5 * time.Second
+
 // sameChat reports whether msg was sent in channel:chatID, matched on the
 // chat or on the routing peer (a thread's chat id carries more than the
 // channel id a binding names).
@@ -155,9 +164,13 @@ func sameChat(msg bus.InboundMessage, channel, chatID string) bool {
 	return msg.Channel == channel && chatID != "" && (msg.ChatID == chatID || msg.Peer.ID == chatID)
 }
 
-// turnSlot is a turn's hold on a max_concurrent_turns slot. It is used by the
-// turn's own goroutine only. A request to a person gives it up while it waits
-// (askHuman), so a person taking an hour does not stall every other turn.
+// turnSlot is a turn's hold on a max_concurrent_turns slot, put on the
+// context of a turn addressed to a human agent only (processSessionMessage)
+// and used by that turn's own goroutine only. A request to a person gives it
+// up while it waits (askHuman), so a person taking an hour does not stall
+// every other turn. This is self-contained on purpose: core Ask also lends
+// the asking turn's slot while it waits for the target, and the two are to be
+// reconciled when that branch is merged (one lending mechanism, not two).
 type turnSlot struct {
 	al   *AgentLoop
 	held bool
@@ -384,9 +397,10 @@ func humanCommand(text string) bool {
 }
 
 // takeHumanAnswer hands msg to the request waiting for it when msg is the
-// person's text answer, and reports whether it did. Run calls it for each
-// inbound message in arrival order, before any goroutine is started, so the
-// person's messages are taken as answers one at a time and in order.
+// person's text answer, and reports whether it did. dispatchInbound calls it
+// for each inbound message in arrival order, before any goroutine is started,
+// so the person's messages are taken as answers one at a time and in order.
+// It is the only place an answer is taken.
 func (al *AgentLoop) takeHumanAnswer(ctx context.Context, msg bus.InboundMessage) bool {
 	hc, ok := al.humanChatOwner(msg)
 	if !ok || hc.agent == nil || humanCommand(msg.Content) || strings.TrimSpace(msg.Content) == "" {
@@ -397,9 +411,14 @@ func (al *AgentLoop) takeHumanAnswer(ctx context.Context, msg bus.InboundMessage
 	}
 	logger.InfoCF("agent", "Answer received from a person",
 		map[string]any{"agent_id": hc.id, "channel": msg.Channel, "chat_id": msg.ChatID})
-	// The answer gets no reply of its own: clear what the chat shows for it.
-	if al.channelManager != nil {
-		al.channelManager.DismissInbound(ctx, msg.Channel, msg.ChatID, msg.MessageID)
+	// The answer gets no reply of its own: clear what the chat shows for it,
+	// off the inbound dispatcher (the channel may be slow to answer).
+	if d := al.dismisser; d != nil {
+		go func() {
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dismissTimeout)
+			defer cancel()
+			d.DismissInbound(dctx, msg.Channel, msg.ChatID, msg.MessageID)
+		}()
 	}
 	return true
 }
@@ -410,10 +429,10 @@ func (al *AgentLoop) takeHumanAnswer(ctx context.Context, msg bus.InboundMessage
 //   - a command: /cancel ends the waiting request; any other command runs at
 //     once while a request waits (the waiting turn holds the agent's
 //     session), else takes the ordinary command path;
-//   - text answers the waiting request (takeHumanAnswer);
 //   - an attachment alone does not answer: the person is asked for text;
-//   - otherwise the person is told nothing is waiting, or that the request
-//     they answer has timed out.
+//   - text reaches here only when it found nothing waiting (dispatchInbound
+//     takes answers): the person is told nothing is waiting, or that the
+//     request they answer has timed out.
 //
 // No turn ever starts for the person's message.
 func (al *AgentLoop) handleHumanChat(ctx context.Context, msg bus.InboundMessage) bool {
@@ -444,9 +463,6 @@ func (al *AgentLoop) handleHumanChat(ctx context.Context, msg bus.InboundMessage
 			reply = textOnlyReply
 		}
 		al.replyInHumanChat(ctx, msg, reply)
-		return true
-	}
-	if al.takeHumanAnswer(ctx, msg) {
 		return true
 	}
 	window := time.Duration(al.GetConfig().HumanRequestTimeout(hc.id)) * time.Second

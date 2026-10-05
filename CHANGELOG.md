@@ -290,7 +290,9 @@ observe does not need an entry.
   `/cancel` cancels the waiting question, other commands work as usual, and
   other text that answers nothing gets "Nothing is waiting for your answer."
   A human agent takes no other work: scheduling a job for it and sending it an
-  external message are refused, and anything else routed to it is dropped. It
+  external message are refused, someone writing to it directly (a mention, a
+  device) is told "Bob only answers questions from agents.", and claw's own
+  messages to it are dropped. Devices do not list human agents. It
   runs no model (no tools, memory, summarization or image description), is
   never the default agent, and can never be cloned or spawned. A save that
   breaks these rules is refused; a human agent without a default chat is

@@ -88,6 +88,12 @@ func (c *Config) agentByID(agentID string) *AgentConfig {
 	return nil
 }
 
+// sameAgentID matches a binding's agent id to an agent id the way
+// DefaultBinding does: case-insensitively, the agent id trimmed.
+func sameAgentID(bindingAgentID, agentID string) bool {
+	return strings.EqualFold(bindingAgentID, strings.TrimSpace(agentID))
+}
+
 func agentLabel(ac *AgentConfig) string {
 	if ac.Name != "" {
 		return ac.Name
@@ -129,6 +135,16 @@ type HumanProblem struct {
 	Message string
 }
 
+// key identifies the problem across edits: kind, agent and site, and the
+// model for a shared model name (which has neither agent nor site).
+func (p HumanProblem) key() string {
+	k := fmt.Sprintf("%d|%s|%s", p.Kind, strings.ToLower(strings.TrimSpace(p.Agent)), p.Site)
+	if p.Kind == HumanSharedName {
+		k += "|" + p.Model
+	}
+	return k
+}
+
 // SetsAgentAside reports whether the problem keeps its agent from running
 // (PruneHumanProblems disables it). The others are a value ignored where it
 // is set.
@@ -137,7 +153,8 @@ func (p HumanProblem) SetsAgentAside() bool {
 }
 
 // HumanProblems lists every way the configuration breaks the human-agent
-// rules, for enabled agents:
+// rules, for enabled agents (a disabled one is checked only for its chat,
+// which it keeps):
 //   - a human agent has only that one model, so no other model could ever
 //     answer in the person's place;
 //   - it has exactly one binding: its default, naming one chat;
@@ -149,9 +166,6 @@ func (c *Config) HumanProblems() []HumanProblem {
 	var out []HumanProblem
 	for i := range c.Agents.List {
 		ac := &c.Agents.List[i]
-		if !ac.IsEnabled() {
-			continue
-		}
 		model, ok := c.HumanModelOf(ac)
 		if !ok {
 			continue
@@ -159,6 +173,15 @@ func (c *Config) HumanProblems() []HumanProblem {
 		name := agentLabel(ac)
 		add := func(kind HumanProblemKind, msg string) {
 			out = append(out, HumanProblem{Kind: kind, Agent: ac.ID, Model: model, Message: msg})
+		}
+		if !ac.IsEnabled() {
+			// A disabled human agent still owns its chat (messages there are
+			// answered "not running", never routed to another agent), so no
+			// other agent may be bound to it.
+			if p, ok := c.humanChatProblem(ac, name); ok && p.Kind == HumanSharedChat {
+				add(p.Kind, p.Message)
+			}
+			continue
 		}
 		if len(ac.Models) > 1 {
 			add(HumanExtraModels, fmt.Sprintf("%s represents a person, so %s must be its only model.", name, model))
@@ -206,19 +229,20 @@ func (c *Config) HumanProblems() []HumanProblem {
 // humanChatProblem checks a human agent's bindings: exactly one, its
 // default, naming one chat that no other agent is bound to.
 func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, bool) {
-	var own []*AgentBinding
+	own := 0
 	for i := range c.Bindings {
-		if strings.EqualFold(c.Bindings[i].AgentID, ac.ID) {
-			own = append(own, &c.Bindings[i])
+		if sameAgentID(c.Bindings[i].AgentID, ac.ID) {
+			own++
 		}
 	}
+	def, hasDefault := c.DefaultBinding(ac.ID)
 	channel, chatID, _, found := c.CronTarget(ac.ID)
 	switch {
-	case len(own) > 1:
+	case own > 1:
 		return HumanProblem{Kind: HumanBindings, Message: name + " must have exactly one chat: its default."}, true
-	case !found:
+	case !found || !hasDefault:
 		return HumanProblem{Kind: HumanNoChat, Message: name + " needs a default chat where the person is reached."}, true
-	case own[0].Match.Peer == nil || own[0].Match.Peer.ID == "":
+	case def.Match.Peer == nil || def.Match.Peer.ID == "":
 		return HumanProblem{Kind: HumanBindings, Message: name + " needs a chat of its own, not a whole channel or bot."}, true
 	}
 	if other, shared := c.chatBoundElsewhere(ac.ID, channel, chatID); shared {
@@ -233,7 +257,7 @@ func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, b
 func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bool) {
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		if strings.EqualFold(b.AgentID, agentID) || b.Match.Channel != channel {
+		if sameAgentID(b.AgentID, agentID) || b.Match.Channel != channel {
 			continue
 		}
 		if (b.Match.Peer != nil && b.Match.Peer.ID == chatID) || b.DeliverTo == chatID {
@@ -251,14 +275,18 @@ func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bo
 // exist before a binding can name it, so a human agent is set up in two
 // saves; until it has a chat it is not run (PruneHumanProblems) and the
 // Agents page says why.
+//
+// A problem is the same one when its kind, agent and site match (the model
+// too, for a shared model name), not its text, so renaming an agent does not
+// turn an old problem into a new one.
 func newHumanProblems(before, next *Config) []error {
 	had := make(map[string]bool)
 	for _, p := range before.HumanProblems() {
-		had[p.Message] = true
+		had[p.key()] = true
 	}
 	var errs []error
 	for _, p := range next.HumanProblems() {
-		if p.Kind != HumanNoChat && !had[p.Message] {
+		if p.Kind != HumanNoChat && !had[p.key()] {
 			errs = append(errs, fmt.Errorf("%s", p.Message))
 		}
 	}

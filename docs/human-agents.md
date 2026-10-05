@@ -61,7 +61,9 @@ and their next message there is the answer.
   webhook or Integration Token message, a system notice or a restart replay is
   never posted to the person: scheduling a job for a human agent and sending
   it an external message are refused, and anything else is dropped with a log
-  line.
+  line. Someone who writes to it directly (an `@bob` mention, a chat routed
+  to it) is told "Bob only answers questions from agents." Devices (the
+  `/agent` list, `agents.list`) do not offer human agents.
 - No model ever sees its conversation: it has no tools, no cognitive memory,
   no summarization or compaction, and its images and voice messages are not
   described or transcribed. The exchange is not kept in its session history.

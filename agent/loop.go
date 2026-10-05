@@ -142,6 +142,10 @@ type AgentLoop struct {
 
 	// humans holds the requests waiting for a person's answer (human agents).
 	humans humanDesk
+	// dismisser clears a chat's indicators for a person's answer, which gets
+	// no reply of its own: the channel manager (SetChannelManager); tests
+	// substitute a fake.
+	dismisser inboundDismisser
 }
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
@@ -344,17 +348,23 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-			// A person's answer to a waiting request is taken here, in arrival
-			// order, before any goroutine could race it (human agents).
-			if al.takeHumanAnswer(ctx, msg) {
-				continue
-			}
-			al.activeRequests.Add(1)
-			go al.processSessionMessage(ctx, msg)
+			al.dispatchInbound(ctx, msg)
 		}
 	}
 
 	return nil
+}
+
+// dispatchInbound hands one inbound message to its session goroutine. A
+// person's answer to a waiting request is taken here instead, in arrival
+// order, before any goroutine could race it (human agents); a message that
+// finds nothing waiting here is never retried as an answer later.
+func (al *AgentLoop) dispatchInbound(ctx context.Context, msg bus.InboundMessage) {
+	if al.takeHumanAnswer(ctx, msg) {
+		return
+	}
+	al.activeRequests.Add(1)
+	go al.processSessionMessage(ctx, msg)
 }
 
 // Stop ends Run and cancels the turns in flight. A cancelled turn is left
@@ -449,6 +459,9 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+	if cm != nil {
+		al.dismisser = cm
+	}
 }
 
 // ReloadProviderAndConfig atomically swaps the provider and config with proper synchronization.

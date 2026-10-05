@@ -81,6 +81,14 @@ func newHumanLoop(t *testing.T, timeoutSec int) (*AgentLoop, *bus.MessageBus, *c
 	return newHumanLoopWith(t, humanLoopConfig(t, timeoutSec))
 }
 
+// deliver passes msg on the way Run does (dispatchInbound), but waits for it.
+func deliver(al *AgentLoop, msg bus.InboundMessage) {
+	if al.takeHumanAnswer(context.Background(), msg) {
+		return
+	}
+	dispatch(al, msg)
+}
+
 // fromBob is a message Bob writes in his own chat.
 func fromBob(id, content string) bus.InboundMessage {
 	return bus.InboundMessage{
@@ -134,12 +142,12 @@ func TestHumanAgent_AskIsAnsweredByThePerson(t *testing.T) {
 		t.Fatalf("request = %q, want the request with its sender header only", posted.Content)
 	}
 
-	dispatch(al, fromBob("b0", "/help"))
+	deliver(al, fromBob("b0", "/help"))
 	if got := nextOutbound(t, msgBus); got.ChatID != bobChat || !strings.Contains(got.Content, "/show") {
 		t.Fatalf("/help while a request waits got %+v, want the help text", got)
 	}
 
-	dispatch(al, fromBob("b1", "Looks good to me."))
+	deliver(al, fromBob("b1", "Looks good to me."))
 	reply := nextOutbound(t, msgBus)
 	if reply.Channel != askChannel || reply.OriginalMessageID != "r1" || reply.Content != "Looks good to me." || reply.Outcome != bus.OutcomeOK {
 		t.Fatalf("reply = %+v, want Bob's answer to r1", reply)
@@ -158,7 +166,9 @@ func TestHumanAgent_OnlyAsksReachThePerson(t *testing.T) {
 	defer restore()
 	al, msgBus, model := newHumanLoop(t, 60)
 
-	dispatch(al, toAgent("bob", "m1", "hello")) // not an ask, no reply required
+	internal := toAgent("bob", "m1", "hello") // claw's own, not an ask, no reply required
+	internal.SenderID = "system"
+	dispatch(al, internal)
 	noOutbound(t, msgBus)
 
 	plain := askBob("m2", "hello")
@@ -194,10 +204,10 @@ func TestHumanAgent_TimeoutIsEmpty(t *testing.T) {
 	}
 	al.activeRequests.Wait()
 
-	dispatch(al, fromBob("b1", "Sorry, I was away."))
+	deliver(al, fromBob("b1", "Sorry, I was away."))
 	expectInBobChat(t, msgBus, timedOutReply)
 	time.Sleep(1100 * time.Millisecond)
-	dispatch(al, fromBob("b2", "Hello?"))
+	deliver(al, fromBob("b2", "Hello?"))
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 	if n := model.count(); n != 0 {
 		t.Fatalf("a model was called %d times", n)
@@ -211,19 +221,19 @@ func TestHumanAgent_UnsolicitedMessages(t *testing.T) {
 	defer restore()
 	al, msgBus, model := newHumanLoop(t, 60)
 
-	dispatch(al, fromBob("b1", "Hello?"))
+	deliver(al, fromBob("b1", "Hello?"))
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 
-	dispatch(al, fromBob("b2", "!help"))
+	deliver(al, fromBob("b2", "!help"))
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 
-	dispatch(al, fromBob("b3", "/help"))
+	deliver(al, fromBob("b3", "/help"))
 	if got := nextOutbound(t, msgBus); got.ChatID != bobChat || !strings.Contains(got.Content, "/show") {
 		t.Fatalf("/help got %+v, want the help text", got)
 	}
 
 	// /clear runs, but no notice is posted to the person.
-	dispatch(al, fromBob("b4", "/clear"))
+	deliver(al, fromBob("b4", "/clear"))
 	nextOutbound(t, msgBus)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -246,10 +256,10 @@ func TestHumanAgent_AnswerMustBeText(t *testing.T) {
 	expectPosted(t, msgBus)
 	photo := fromBob("b1", "")
 	photo.Media = []string{"media://photo"}
-	dispatch(al, photo)
+	deliver(al, photo)
 	expectInBobChat(t, msgBus, textOnlyReply)
 
-	dispatch(al, fromBob("b2", "!B, clearly"))
+	deliver(al, fromBob("b2", "!B, clearly"))
 	if reply := nextOutbound(t, msgBus); reply.OriginalMessageID != "r1" || reply.Content != "!B, clearly" {
 		t.Fatalf("reply = %+v, want the text answer", reply)
 	}
@@ -264,7 +274,7 @@ func TestHumanAgent_PersonCancels(t *testing.T) {
 
 	go dispatch(al, askBob("r1", "Can you take this?"))
 	expectPosted(t, msgBus)
-	dispatch(al, fromBob("b1", "/cancel"))
+	deliver(al, fromBob("b1", "/cancel"))
 	expectInBobChat(t, msgBus, cancelledReply)
 	reply := nextOutbound(t, msgBus)
 	if reply.OriginalMessageID != "r1" || reply.Outcome != bus.OutcomeCancelled || reply.Content != "Bob cancelled the request." {
@@ -334,21 +344,20 @@ func TestHumanAgent_NotRunningChatIsKept(t *testing.T) {
 	cfg.Agents.List[1].Enabled = &off
 	al, msgBus, model := newHumanLoopWith(t, cfg)
 
-	dispatch(al, fromBob("b1", "Hello?"))
+	deliver(al, fromBob("b1", "Hello?"))
 	expectInBobChat(t, msgBus, "Bob is not running.")
-	dispatch(al, fromBob("b2", "/help"))
+	deliver(al, fromBob("b2", "/help"))
 	expectInBobChat(t, msgBus, "Bob is not running.")
 	if n := model.count(); n != 0 {
 		t.Fatalf("the person's message reached a model %d times", n)
 	}
 }
 
-// Requests to one human agent are answered one at a time, and each request's
-// timeout runs from when it is posted, not from when it queued.
+// Requests to one human agent are answered one at a time.
 func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
-	al, msgBus, _ := newHumanLoop(t, 1)
+	al, msgBus, _ := newHumanLoop(t, 60)
 	bob, _ := al.GetRegistry().Get("bob")
 	key := routing.BuildAgentMainSessionKey("bob")
 
@@ -366,15 +375,12 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 	}
 	first := expectPosted(t, msgBus)
 	noOutbound(t, msgBus) // the second waits
-	time.Sleep(600 * time.Millisecond)
-	dispatch(al, fromBob("b1", "answer to "+first.Content))
+	deliver(al, fromBob("b1", "answer to "+first.Content))
 	second := expectPosted(t, msgBus)
 	if second.Content == first.Content {
 		t.Fatalf("the same request was posted twice: %q", first.Content)
 	}
-	// Over a second since the second request queued, under one since posted.
-	time.Sleep(600 * time.Millisecond)
-	dispatch(al, fromBob("b2", "answer to "+second.Content))
+	deliver(al, fromBob("b2", "answer to "+second.Content))
 	got := map[string]bool{}
 	for range 2 {
 		select {
@@ -386,6 +392,32 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 	}
 	if !got["answer to first"] || !got["answer to second"] {
 		t.Fatalf("answers = %v, want each request its own answer", got)
+	}
+}
+
+// A request's timeout runs from when it is posted, not from when it queued
+// behind another: queued for longer than its timeout, it still waits once
+// posted.
+func TestHumanAgent_TimeoutRunsFromPosting(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, msgBus, _ := newHumanLoop(t, 60)
+	desk := al.humans.slot("bob")
+	desk <- struct{}{} // another request holds the person
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := al.askHuman(context.Background(), "bob", "test", bobChat, "question", 300*time.Millisecond)
+		done <- err
+	}()
+	time.Sleep(600 * time.Millisecond) // queued twice as long as its timeout
+	<-desk
+	expectPosted(t, msgBus)
+	if !al.humans.waiting("bob") {
+		t.Fatal("the request expired before it was posted")
+	}
+	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want its own timeout after posting", err)
 	}
 }
 
@@ -403,7 +435,7 @@ func TestHumanAgent_WaitDoesNotHoldTurnSlot(t *testing.T) {
 	if got := nextOutbound(t, msgBus); got.ChatID != "c2" || got.Content != "Alice here" {
 		t.Fatalf("Alice's turn got %+v while Bob's request waited", got)
 	}
-	dispatch(al, fromBob("b1", "Done."))
+	deliver(al, fromBob("b1", "Done."))
 	if got := nextOutbound(t, msgBus); got.OriginalMessageID != "r1" || got.Content != "Done." {
 		t.Fatalf("reply = %+v", got)
 	}
@@ -433,7 +465,7 @@ func TestHumanAgent_BufferedAnswerSurvivesCancel(t *testing.T) {
 		done <- result{a, err}
 	}()
 	expectPosted(t, msgBus)
-	if !al.humans.answer("bob", fromBob("b1", "yes"), humanAnswer{text: "yes"}) {
+	if !al.takeHumanAnswer(ctx, fromBob("b1", "yes")) {
 		t.Fatal("answer not taken")
 	}
 	cancel()
@@ -578,4 +610,93 @@ func TestHumanAgent_ExternalMessagesRefused(t *testing.T) {
 	if msg, ok := msgBus.ConsumeInbound(ctx); ok {
 		t.Fatalf("published %+v", msg)
 	}
+}
+
+// fakeDismisser records the chats whose indicators were cleared.
+type fakeDismisser struct {
+	mu   sync.Mutex
+	seen []string
+	done chan struct{}
+}
+
+func (f *fakeDismisser) DismissInbound(_ context.Context, channel, chatID, messageID string) {
+	f.mu.Lock()
+	f.seen = append(f.seen, channel+":"+chatID+":"+messageID)
+	f.mu.Unlock()
+	f.done <- struct{}{}
+}
+
+// An accepted answer clears the chat's typing, reaction and placeholder, and
+// nothing is sent for it.
+func TestHumanAgent_AnswerDismissesIndicators(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, msgBus, _ := newHumanLoop(t, 60)
+	fake := &fakeDismisser{done: make(chan struct{}, 1)}
+	al.dismisser = fake
+
+	go dispatch(al, askBob("r1", "Ready?"))
+	expectPosted(t, msgBus)
+	deliver(al, fromBob("b1", "Yes."))
+	select {
+	case <-fake.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the answer's indicators were not cleared")
+	}
+	if fake.seen[0] != "test:"+bobChat+":b1" {
+		t.Fatalf("dismissed %v", fake.seen)
+	}
+	if reply := nextOutbound(t, msgBus); reply.OriginalMessageID != "r1" {
+		t.Fatalf("got %+v, want only the reply to r1", reply)
+	}
+	al.activeRequests.Wait()
+}
+
+// Someone who writes to a human agent directly (a mention, a chat, a device)
+// is told it only answers agents' questions, never left without a reply.
+func TestHumanAgent_PersonWritingToItIsTold(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	cfg := humanLoopConfig(t, 60)
+	cfg.Bindings = append(cfg.Bindings, config.AgentBinding{
+		AgentID: "alice", AgentMentions: []string{"*"}, Match: config.BindingMatch{Channel: "test"},
+	})
+	al, msgBus, model := newHumanLoopWith(t, cfg)
+
+	dispatch(al, inbound("c2", "a1", "@bob are you free?"))
+	got := nextOutbound(t, msgBus)
+	if got.ChatID != "c2" || got.OriginalMessageID != "a1" || got.Content != "Bob only answers questions from agents." {
+		t.Fatalf("mention of bob got %+v", got)
+	}
+	dispatch(al, toAgent("bob", "a2", "hello")) // addressed to bob by a person's client
+	if got := nextOutbound(t, msgBus); got.Content != "Bob only answers questions from agents." {
+		t.Fatalf("message to bob got %+v", got)
+	}
+	if n := model.count(); n != 0 {
+		t.Fatalf("a model was called %d times", n)
+	}
+}
+
+// An unknown command in the person's chat gets the usual reply, whether or
+// not a request is waiting.
+func TestHumanAgent_UnknownCommand(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, msgBus, _ := newHumanLoop(t, 60)
+
+	deliver(al, fromBob("b1", "/nosuch"))
+	if got := nextOutbound(t, msgBus); got.ChatID != bobChat || !strings.Contains(got.Content, "Unknown command") {
+		t.Fatalf("idle: got %+v", got)
+	}
+	go dispatch(al, askBob("r1", "Ready?"))
+	expectPosted(t, msgBus)
+	deliver(al, fromBob("b2", "/nosuch"))
+	if got := nextOutbound(t, msgBus); got.ChatID != bobChat || !strings.Contains(got.Content, "Unknown command") {
+		t.Fatalf("waiting: got %+v", got)
+	}
+	deliver(al, fromBob("b3", "Ready."))
+	if got := nextOutbound(t, msgBus); got.OriginalMessageID != "r1" || got.Content != "Ready." {
+		t.Fatalf("reply = %+v", got)
+	}
+	al.activeRequests.Wait()
 }

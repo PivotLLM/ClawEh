@@ -25,6 +25,7 @@ import { Link } from "@tanstack/react-router"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
+import { noteKey, uniqueNotes } from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -223,9 +224,9 @@ export function AgentCard({
               Represents a person: answers are typed by hand.
             </p>
           )}
-          {humanNotes.map((n) => (
+          {uniqueNotes(humanNotes).map((n) => (
             <p
-              key={n.message}
+              key={noteKey(n)}
               data-testid="human-agent-problem"
               className="text-xs text-amber-600 dark:text-amber-400"
             >
