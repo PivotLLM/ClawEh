@@ -29,7 +29,8 @@ the interfaces in `host.go`.
 only"), violations flattened into `SchemaViolationError.Messages` for the
 repair message. The host passes `forum.JSONSchemaValidator{}` as
 `Host.Schemas`; with a nil validator any configuration naming a schema
-fails with `ErrSchemasUnavailable`.
+or having an enabled moderated layer (whose decision schema is always
+validated) fails preflight with `ErrSchemasUnavailable` naming them.
 
 ## 2. Seams and owners
 
@@ -58,10 +59,12 @@ Rules that keep the seams independent:
 ```
 tool call ──► (e) Service.Launch
                  │  Decode → ValidateStatic → Preflight          (a)
-                 │  CreateStore, WriteConfig, WriteSource…       (b)
+                 │  CreateStore → Lock, WriteConfig, WriteSource… (b)
                  │  Agents.CreateClone / CreateFresh             host
-                 │  WriteParticipants, WriteSnapshot, Commit(launched)
-                 │  Lock → Open                                  (d)
+                 │    (each ID added to .cleanup/<uuid>.agents.json)
+                 │  WriteParticipants, set .cleanup/<uuid>.notice,
+                 │  WriteSnapshot, Commit(launched)
+                 │  Open (any failure: delete agents, Remove)    (d)
                  ▼
             (d) Controller.Run            ← the SAME path a restart takes
                  │  Verify, ReplayState, ListAttempts            (b)
@@ -74,13 +77,14 @@ tool call ──► (e) Service.Launch
                  │             → Commit(moderated)
                  │  end      : Commit(ended) → WriteResult
                  ▼
-            (e) Service.finish: deleteTempAgents → Notifier.ForumFinished
+            (e) completeTerminal: result.json if missing → deleteTempAgents
+                 → Notifier.ForumFinished (if .notice pending) → clear .notice
 ```
 
 What crosses each boundary:
 
 - (a) → (e): `*Config`, `*Resolved` (models per participant, compiled
-  schemas, effective moderator schemas, source paths). (a) → (d): `Config`
+  schemas, effective moderator schemas, file source contents read once). (a) → (d): `Config`
   accessors (`Layer`, `EnabledLayers`, `Route.Producer`,
   `EffectiveModeratorSchema`). (a) ← (c): `ValidPointer`,
   `CheckProjection` for `share`/`paths` syntax.
@@ -104,7 +108,8 @@ What crosses each boundary:
 ```
 <base>/                              <launching-agent-workspace>/forums
   .locks/<uuid>.run                  flock held by the running controller
-  .cleanup/<uuid>.agents.json        temp agents still to delete
+  .cleanup/<uuid>.agents.json        temp agents still to delete (written at launch)
+  .cleanup/<uuid>.notice             completion notice not yet delivered (written at launch)
   .cleanup/<uuid>/                   a root staged for removal (Remove)
   <uuid>/
     forum.json  snapshot.json  participants.json  state.json  result.json
@@ -165,12 +170,22 @@ atomic rename out of `ListForums` followed by a plain delete.
     projection against the recorded SHA-256, reading through the root
     without following symbolic links; a mismatch fails recovery with
     `ErrCorrupt`.
-11. **Terminal before notice.** `result.json` is written by `end`, then the
-    service deletes temporary agents, then notifies (§9 Completion).
+11. **Terminal before notice.** `result.json` is written by `end` (or by
+    the service if `end` did not get to it), then the service deletes
+    temporary agents, then notifies (§9 Completion). The
+    `.cleanup/<uuid>.notice` marker, written at launch and cleared after
+    the notice attempt, lets a restart deliver a notice a crash
+    interrupted; a failed notice is logged, not retried.
 12. **Temporary agents are created at launch and deleted at a terminal
-    state or on delete**, with the `.cleanup/<uuid>.agents.json` marker so
-    a restart finishes an interrupted deletion; the registry TTL is only a
-    backstop, and paused forums are touched every `keepAliveInterval` (1 h).
+    state or on delete.** Each created agent is added to the
+    `.cleanup/<uuid>.agents.json` marker as soon as it exists; the marker
+    is the only record of what is still to delete. `deleteTempAgents(ctx,
+    store)` deletes the agents it lists (`ErrNotFound` counts as done),
+    keeps the failures in it and clears it when empty, so a restart
+    finishes an interrupted deletion and never deletes twice. The
+    registry TTL is only a backstop; paused forums' agents (from the same
+    marker) are touched every `keepAliveInterval` (1 h) and once at
+    recovery.
 
 ## 6. Order of implementation
 
@@ -232,10 +247,25 @@ Within (e), `Launch`, `Status`, `Results`, `Delete`, `Recover`, `Close`,
 16. **`inline` for `decode: json`** is any raw JSON value
     (`json.RawMessage`); for text/markdown it is a JSON string.
 17. **`instructions`** is optional.
-18. **Restart:** `Recover` automatically resumes queued and running
-    forums, resumes pausing/cancelling ones so the controller finishes
-    the transition, leaves paused forums paused (keep-alive only), and
-    finishes cleanup for terminal ones and staged removals.
+18. **Restart:** `Recover` automatically resumes queued (after appending
+    the missing `CommitLaunched`) and running forums, resumes
+    pausing/cancelling ones so the controller finishes the transition,
+    leaves paused forums paused (keep-alive only), finishes the terminal
+    work of terminal ones (result.json, agents, notice) and staged
+    removals, and discards a launch that died before its snapshot.
+19. **Launch is all or nothing** for its caller: any failure, including
+    `Open` failing after `CommitLaunched` (nothing has been dispatched),
+    deletes the agents created so far and removes the directory. The
+    store is locked right after `CreateStore`.
+20. **Control operations** (service): repeating pause, resume or cancel
+    is harmless; cancellation dominates (pause and resume of a cancelling
+    forum are refused, and a pending cancel must win over a pending pause
+    in the controller); resume clears a pending pause (`CommitResumed`
+    from pausing or paused); pause, resume and cancel take over an
+    interrupted forum. `delete` works on paused or terminal forums (and a
+    corrupt one), deleting an absent ID succeeds, and a forum whose agents
+    cannot all be deleted is kept. Operations on one ID are serialised;
+    live lookups are restricted to the caller's base directory.
 
 ## 8. Still inferred (rev 3 and rev 5 do not say)
 

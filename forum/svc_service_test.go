@@ -1,0 +1,1034 @@
+// ClawEh
+// License: MIT
+//
+// Copyright (c) 2026 Tenebris Technologies Inc.
+
+package forum
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+var errSvcHost = errors.New("host refused")
+
+func TestSvcLaunchWritesTheForum(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	if !validForumID(id) {
+		t.Fatalf("id %q is not a UUID", id)
+	}
+	e.running(id)
+	s := e.store(id)
+
+	parts, err := s.ReadParticipants()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parts.Participants["spare"]; ok {
+		t.Error("a participant of a disabled layer was recorded")
+	}
+	alice := parts.Participants["alice"]
+	if alice.Form != FormExisting || alice.AgentID != "alice" || alice.Created || alice.Name != "alice" {
+		t.Errorf("alice = %+v", alice)
+	}
+	bob := parts.Participants["bob"]
+	if bob.Form != FormClone || !bob.Created || bob.Model != "large" || bob.Name != "Bob" || !validForumID(bob.AgentID) {
+		t.Errorf("bob = %+v", bob)
+	}
+	editor := parts.Participants["editor"]
+	if editor.Form != FormFresh || !editor.Created || editor.Model != "default" || editor.Mode != FreshModeContext {
+		t.Errorf("editor = %+v", editor)
+	}
+	if len(e.agents.clones) != 1 || e.agents.clones[0] != (CloneSpec{Source: "bob", Model: "large", Owner: "launcher"}) {
+		t.Errorf("clones = %+v", e.agents.clones)
+	}
+	wantFresh := FreshSpec{Model: "default", SystemPrompt: "Be brief.", Mode: FreshModeContext, Owner: "launcher"}
+	if len(e.agents.freshes) != 1 || e.agents.freshes[0] != wantFresh {
+		t.Errorf("freshes = %+v", e.agents.freshes)
+	}
+
+	marker, ok := e.marker(id, CleanupAgents)
+	if !ok {
+		t.Fatal("no agents marker")
+	}
+	var pending []string
+	if jsonErr := json.Unmarshal([]byte(marker), &pending); jsonErr != nil {
+		t.Fatal(jsonErr)
+	}
+	slices.Sort(pending)
+	want := []string{bob.AgentID, editor.AgentID}
+	slices.Sort(want)
+	if !slices.Equal(pending, want) {
+		t.Errorf("agents marker = %v, want %v", pending, want)
+	}
+	if _, ok := e.marker(id, cleanupNotice); !ok {
+		t.Error("no notice marker")
+	}
+
+	snap, err := s.ReadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.ForumID != id || snap.Name != "svc-test" || snap.BaseDirectory != e.scope.BaseDirectory {
+		t.Errorf("snapshot identity = %+v", snap)
+	}
+	if snap.Origin != (Origin{AgentID: "launcher", Channel: "test", ChatID: "chat-1"}) {
+		t.Errorf("origin = %+v", snap.Origin)
+	}
+	if got := snap.Deadline.Sub(snap.LaunchedAt); got != 600*time.Second {
+		t.Errorf("deadline is %v after launch, want 600s", got)
+	}
+	if !slices.Equal(snap.Layers, []string{"talk"}) || !slices.Equal(snap.ResultLayers, []string{"talk"}) {
+		t.Errorf("layers %v, result layers %v", snap.Layers, snap.ResultLayers)
+	}
+	if snap.Models["bob"] != "large" || snap.Models["editor"] != "default" {
+		t.Errorf("models = %v", snap.Models)
+	}
+	if _, ok := snap.ModeratorSchemas["talk"]; !ok {
+		t.Error("no moderator schema for layer talk")
+	}
+	if snap.Seed < 0 {
+		t.Errorf("seed %d is negative", snap.Seed)
+	}
+	for srcID, want := range map[string]string{"note": "A short note.", "data": `{"k": 1}`, "doc": "# Doc\n\nBody.\n"} {
+		rec, ok := snap.Sources[srcID]
+		if !ok {
+			t.Errorf("source %s not materialised", srcID)
+			continue
+		}
+		data, readErr := s.ReadFile(rec.File)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(data) != want || rec.Digest != digest(data) {
+			t.Errorf("source %s = %q (digest %s)", srcID, data, rec.Digest)
+		}
+	}
+	raw, err := s.ReadConfig()
+	if err != nil || string(raw) != svcConfigJSON {
+		t.Errorf("forum.json is not the configuration verbatim (%v)", err)
+	}
+	commits, err := s.ReadCommits()
+	if err != nil || len(commits) != 1 || commits[0].Kind != CommitLaunched {
+		t.Errorf("commits = %+v (%v)", commits, err)
+	}
+}
+
+func TestSvcLaunchUsesTheConfiguredSeed(t *testing.T) {
+	e := svcSetup(t)
+	cfg := strings.Replace(svcSimpleJSON, `"version": 1,`, `"version": 1, "seed": 42,`, 1)
+	id, _ := e.launch(cfg)
+	snap, err := e.store(id).ReadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Seed != 42 {
+		t.Errorf("seed = %d, want 42", snap.Seed)
+	}
+}
+
+func TestSvcLaunchFailuresLeaveNothing(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     string
+		setup   func(e *svcEnv)
+		wantErr func(error) bool
+	}{
+		{
+			name:    "invalid configuration",
+			cfg:     `{"version": 1}`,
+			wantErr: func(err error) bool { return errors.As(err, new(*ValidationError)) },
+		},
+		{
+			name: "fresh participant cannot be created after a clone was",
+			cfg:  svcConfigJSON,
+			setup: func(e *svcEnv) {
+				e.agents.createErr["fresh:default"] = errSvcHost
+			},
+			wantErr: func(err error) bool {
+				return errors.Is(err, errSvcHost) && strings.Contains(err.Error(), `participant "editor"`)
+			},
+		},
+		{
+			name: "clone cannot be created",
+			cfg:  svcConfigJSON,
+			setup: func(e *svcEnv) {
+				e.agents.createErr["clone:bob"] = errSvcHost
+			},
+			wantErr: func(err error) bool {
+				return errors.Is(err, errSvcHost) && strings.Contains(err.Error(), `could not clone agent "bob"`)
+			},
+		},
+		{
+			name: "controller cannot open",
+			cfg:  svcConfigJSON,
+			setup: func(e *svcEnv) {
+				e.ctrls.openErr = ErrCorrupt
+			},
+			wantErr: func(err error) bool {
+				return errors.Is(err, ErrCorrupt) && strings.Contains(err.Error(), "could not start")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := svcSetup(t)
+			if tt.setup != nil {
+				tt.setup(e)
+			}
+			id, err := e.svc.Launch(t.Context(), []byte(tt.cfg), e.opts())
+			if err == nil || id != "" || !tt.wantErr(err) {
+				t.Fatalf("Launch = %q, %v", id, err)
+			}
+			if ids := e.forumIDs(); len(ids) != 0 {
+				t.Errorf("forums left behind: %v", ids)
+			}
+			created, deleted := e.agents.createdIDs(), e.agents.deletedIDs()
+			slices.Sort(created)
+			slices.Sort(deleted)
+			if !slices.Equal(created, deleted) {
+				t.Errorf("created %v but deleted %v", created, deleted)
+			}
+			entries, err := os.ReadDir(filepath.Join(e.scope.BaseDirectory, dirCleanup))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("cleanup entries left behind: %v", entries)
+			}
+		})
+	}
+}
+
+func TestSvcValidate(t *testing.T) {
+	e := svcSetup(t)
+	if err := e.svc.Validate(t.Context(), []byte(svcConfigJSON), e.opts()); err != nil {
+		t.Fatalf("valid configuration: %v", err)
+	}
+	if len(e.agents.createdIDs()) != 0 || len(e.forumIDs()) != 0 {
+		t.Error("Validate created something")
+	}
+	bad := strings.Replace(svcConfigJSON, `"model": "large"`, `"model": "huge"`, 1)
+	err := e.svc.Validate(t.Context(), []byte(bad), e.opts())
+	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "participants.bob.model") {
+		t.Errorf("unknown model: %v", err)
+	}
+	noSchemas := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
+	withSchema := strings.Replace(svcSimpleJSON, `"limits"`, `"schemas": {"s": {"type": "object"}}, "limits"`, 1)
+	err = noSchemas.Validate(t.Context(), []byte(withSchema), e.opts())
+	if !errors.Is(err, ErrSchemasUnavailable) {
+		t.Errorf("schemas without a validator: %v", err)
+	}
+	// A moderated layer needs the validator for its decision schema, even
+	// without named schemas, so validation catches it before Open does.
+	err = noSchemas.Validate(t.Context(), []byte(svcConfigJSON), e.opts())
+	if !errors.Is(err, ErrSchemasUnavailable) || !strings.Contains(err.Error(), "moderated layers: talk") {
+		t.Errorf("moderated layer without a validator: %v", err)
+	}
+	if err := noSchemas.Validate(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
+		t.Errorf("no schemas and no moderator without a validator: %v", err)
+	}
+}
+
+func TestSvcHostLimits(t *testing.T) {
+	e := svcSetup(t)
+	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}},
+		WithHostLimits(Limits{MaxCalls: 5}))
+	t.Cleanup(func() { svcClose(t, capped) })
+	err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts())
+	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "limits.max_calls: 10 is above the host ceiling of 5") {
+		t.Errorf("Validate above the ceiling = %v", err)
+	}
+	if id, err := capped.Launch(t.Context(), []byte(svcSimpleJSON), e.opts()); err == nil || id != "" {
+		t.Errorf("Launch above the ceiling = %q, %v", id, err)
+	}
+}
+
+func TestSvcModels(t *testing.T) {
+	e := svcSetup(t)
+	got, err := e.svc.Models(t.Context(), "launcher")
+	if err != nil || len(got) != 2 || got[0].Name != "default" {
+		t.Errorf("Models = %v, %v", got, err)
+	}
+}
+
+func TestSvcStatusAndList(t *testing.T) {
+	e := svcSetup(t)
+	first, _ := e.launch("")
+	time.Sleep(2 * time.Millisecond)
+	second, _ := e.launch(svcSimpleJSON)
+
+	sum, err := e.svc.Status(t.Context(), e.scope, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ForumID != first || sum.Name != "svc-test" || sum.Status != StatusRunning || sum.MaxCalls != 20 {
+		t.Errorf("summary = %+v", sum)
+	}
+	if len(sum.Layers) != 2 || sum.Layers[0].LayerID != "talk" || !sum.Layers[0].Enabled ||
+		sum.Layers[0].MaxRounds != 2 || sum.Layers[1].Enabled {
+		t.Errorf("layers = %+v", sum.Layers)
+	}
+
+	list, err := e.svc.List(t.Context(), e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ForumID != second || list[1].ForumID != first {
+		t.Errorf("list is not newest first: %+v", list)
+	}
+
+	// Another agent's scope sees none of them, live or not.
+	other := Scope{AgentID: "other", BaseDirectory: filepath.Join(t.TempDir(), "forums")}
+	if list, err := e.svc.List(t.Context(), other); err != nil || len(list) != 0 {
+		t.Errorf("other scope list = %v, %v", list, err)
+	}
+	if _, err := e.svc.Status(t.Context(), other, first); !errors.Is(err, ErrNotFound) {
+		t.Errorf("other scope status = %v", err)
+	}
+	if err := e.svc.Pause(t.Context(), other, first); !errors.Is(err, ErrNotFound) {
+		t.Errorf("other scope pause = %v", err)
+	}
+	for _, id := range []string{uuid.NewString(), "not-a-uuid", "../x"} {
+		if _, err := e.svc.Status(t.Context(), e.scope, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("status %q = %v", id, err)
+		}
+	}
+
+	// A paused (not live) forum is read from disk.
+	if err := e.svc.Pause(t.Context(), e.scope, first); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(first, StatusPaused)
+}
+
+func TestSvcListSkipsUnreadableForums(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch(svcSimpleJSON)
+	e.restart()
+	if err := os.WriteFile(e.store(id).Path(fileSnapshot), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list, err := e.svc.List(t.Context(), e.scope)
+	if err != nil || len(list) != 0 {
+		t.Errorf("List = %v, %v", list, err)
+	}
+	if !e.logger.has("forum " + id + ": status") {
+		t.Error("the unreadable forum was not logged")
+	}
+}
+
+func TestSvcPauseResumeCancelLifecycle(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.running(id)
+
+	for range 2 {
+		if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+			t.Fatalf("pause: %v", err)
+		}
+	}
+	e.settled(id, StatusPaused)
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Errorf("pause of a paused forum: %v", err)
+	}
+
+	for range 2 {
+		if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+	}
+	e.running(id)
+	if n := e.ctrls.openCount(); n != 2 {
+		t.Errorf("controller opened %d times, want 2 (launch and one resume)", n)
+	}
+
+	for range 2 {
+		if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+	}
+	e.settled(id, StatusCancelled)
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Errorf("cancel of a cancelled forum: %v", err)
+	}
+	if err := e.svc.Pause(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "is cancelled and cannot be paused") {
+		t.Errorf("pause after cancel: %v", err)
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "cannot be resumed") {
+		t.Errorf("resume after cancel: %v", err)
+	}
+	if e.notifier.count() != 1 {
+		t.Errorf("%d notices, want 1", e.notifier.count())
+	}
+}
+
+func TestSvcCompletedForumRefusesControl(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	if err := e.svc.Cancel(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "already completed") {
+		t.Errorf("cancel: %v", err)
+	}
+	if err := e.svc.Pause(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("pause: %v", err)
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("resume: %v", err)
+	}
+}
+
+func TestSvcCancelPausedForum(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+	if e.keptAlive(id) {
+		t.Error("a cancelled forum is still kept alive")
+	}
+	res, err := e.svc.Results(t.Context(), e.scope, id)
+	if err != nil || res.Status != StatusCancelled || res.Complete {
+		t.Errorf("results = %+v, %v", res, err)
+	}
+	if len(e.agents.deletedIDs()) != 2 {
+		t.Errorf("deleted %v, want both temporary agents", e.agents.deletedIDs())
+	}
+}
+
+func TestSvcCancellationDominates(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.restart() // running on disk, no live controller
+	e.appendCommits(id, Commit{Kind: CommitCancelRequested})
+
+	if err := e.svc.Pause(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "being cancelled") {
+		t.Errorf("pause of a cancelling forum: %v", err)
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "being cancelled") {
+		t.Errorf("resume of a cancelling forum: %v", err)
+	}
+	if e.status(id) != StatusCancelling {
+		t.Fatalf("status = %s, want cancelling", e.status(id))
+	}
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatalf("cancel of a cancelling forum: %v", err)
+	}
+	e.settled(id, StatusCancelled)
+}
+
+func TestSvcLiveCancelWinsOverPendingPause(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	e.running(id)
+	// A pause is pending (the fake does not act on it until woken).
+	if err := c.commit(&Commit{Kind: CommitPauseRequested}); err != nil {
+		t.Fatal(err)
+	}
+	c.pause.Store(true)
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Errorf("pause while pausing: %v", err)
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "still pausing") {
+		t.Errorf("resume while pausing: %v", err)
+	}
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+}
+
+func TestSvcControlOfInterruptedForums(t *testing.T) {
+	t.Run("pause an interrupted running forum", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(id, StatusPaused)
+	})
+	t.Run("pause completes an interrupted pause", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		e.appendCommits(id, Commit{Kind: CommitPauseRequested})
+		if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(id, StatusPaused)
+	})
+	t.Run("resume an interrupted running forum", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.running(id)
+	})
+	t.Run("resume clears an interrupted pause", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		e.appendCommits(id, Commit{Kind: CommitPauseRequested})
+		if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.running(id)
+	})
+	t.Run("cancel an interrupted running forum", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(id, StatusCancelled)
+		if e.notifier.count() != 1 {
+			t.Errorf("%d notices, want 1", e.notifier.count())
+		}
+	})
+}
+
+func TestSvcControlOfLockedForum(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	other := e.store(id)
+	if err := other.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer other.Unlock()
+	for name, op := range map[string]func() error{
+		"pause":  func() error { return e.svc.Pause(t.Context(), e.scope, id) },
+		"resume": func() error { return e.svc.Resume(t.Context(), e.scope, id) },
+		"cancel": func() error { return e.svc.Cancel(t.Context(), e.scope, id) },
+		"delete": func() error { return e.svc.Delete(t.Context(), e.scope, id) },
+	} {
+		if err := op(); !errors.Is(err, ErrLocked) {
+			t.Errorf("%s: %v, want ErrLocked", name, err)
+		}
+	}
+}
+
+func TestSvcControlOfUnknownForum(t *testing.T) {
+	e := svcSetup(t)
+	id := uuid.NewString()
+	for name, op := range map[string]func() error{
+		"pause":  func() error { return e.svc.Pause(t.Context(), e.scope, id) },
+		"resume": func() error { return e.svc.Resume(t.Context(), e.scope, id) },
+		"cancel": func() error { return e.svc.Cancel(t.Context(), e.scope, id) },
+		"results": func() error {
+			_, err := e.svc.Results(t.Context(), e.scope, id)
+			return err
+		},
+	} {
+		if err := op(); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+func TestSvcResults(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	e.running(id)
+	res, err := e.svc.Results(t.Context(), e.scope, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Complete || res.Status != StatusRunning || res.Transcript != fileTranscript ||
+		!slices.Equal(res.Omissions, []string{"layer talk did not start"}) {
+		t.Errorf("partial result = %+v", res)
+	}
+	if _, readErr := e.store(id).ReadResult(); !errors.Is(readErr, ErrNotFound) {
+		t.Errorf("result.json exists while running: %v", readErr)
+	}
+
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	res, err = e.svc.Results(t.Context(), e.scope, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := e.store(id).ReadResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Complete || res.Status != StatusCompleted || res.EndedAt.IsZero() || !res.EndedAt.Equal(onDisk.EndedAt) {
+		t.Errorf("terminal result = %+v", res)
+	}
+}
+
+func TestSvcResultOfOmissions(t *testing.T) {
+	cfg, err := Decode([]byte(svcSimpleJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := &Snapshot{ForumID: "f", Layers: []string{"talk"}, ResultLayers: []string{"talk"}}
+	out := OutputRecord{OutputID: "o1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")}
+	ended := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	st := &State{
+		Status: StatusIncomplete, Reason: EndDeadline, Calls: 3, UpdatedAt: ended,
+		Layers: map[string]*LayerState{"talk": {Started: true, Round: 1, Calls: 3, Outputs: []OutputRecord{out}}},
+	}
+	res := resultOf(cfg, snap, st)
+	if res.Complete || !res.EndedAt.Equal(ended) || res.Calls != 3 || res.Reason != EndDeadline {
+		t.Errorf("result = %+v", res)
+	}
+	want := []string{"layer talk did not end", "layer talk round 1: no output from bob"}
+	if !slices.Equal(res.Omissions, want) {
+		t.Errorf("omissions = %q, want %q", res.Omissions, want)
+	}
+	if len(res.Layers) != 1 || len(res.Layers[0].Outputs) != 1 || res.Layers[0].Outputs[0].OutputID != "o1" {
+		t.Errorf("layers = %+v", res.Layers)
+	}
+
+	st.Status, st.Reason = StatusCompleted, EndCompleted
+	st.Layers["talk"].Ended, st.Layers["talk"].EndReason = true, EndRoundLimit
+	st.Layers["talk"].Outputs = append(st.Layers["talk"].Outputs, OutputRecord{Turn: TurnID(1, "bob"), ParticipantID: "bob", Round: 1})
+	res = resultOf(cfg, snap, st)
+	if !res.Complete || len(res.Omissions) != 0 || res.Layers[0].EndReason != EndRoundLimit {
+		t.Errorf("complete result = %+v", res)
+	}
+}
+
+func TestSvcDelete(t *testing.T) {
+	t.Run("running forum is refused", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.running(id)
+		err := e.svc.Delete(t.Context(), e.scope, id)
+		if !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "pause or cancel it before deleting it") {
+			t.Errorf("delete running: %v", err)
+		}
+	})
+	t.Run("interrupted running forum is refused", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		if err := e.svc.Delete(t.Context(), e.scope, id); !errors.Is(err, ErrInvalidState) {
+			t.Errorf("delete interrupted: %v", err)
+		}
+		if len(e.forumIDs()) != 1 {
+			t.Error("the forum was removed")
+		}
+	})
+	t.Run("paused forum is deleted with its agents", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(id, StatusPaused)
+		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.forumIDs()) != 0 {
+			t.Error("the forum is still listed")
+		}
+		if len(e.agents.deletedIDs()) != 2 {
+			t.Errorf("deleted %v, want both temporary agents", e.agents.deletedIDs())
+		}
+		if e.keptAlive(id) {
+			t.Error("a deleted forum is still kept alive")
+		}
+		if e.notifier.count() != 0 {
+			t.Error("deleting a paused forum sent a completion notice")
+		}
+		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+			t.Errorf("second delete: %v", err)
+		}
+	})
+	t.Run("terminal forum is deleted", func(t *testing.T) {
+		e := svcSetup(t)
+		id, c := e.launch("")
+		c.finish <- StatusFailed
+		e.settled(id, StatusFailed)
+		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.forumIDs()) != 0 {
+			t.Error("the forum is still listed")
+		}
+	})
+	t.Run("agent that cannot be deleted keeps the forum", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(id, StatusPaused)
+		parts, err := e.store(id).ReadParticipants()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stuck := parts.Participants["bob"].AgentID
+		gone := parts.Participants["editor"].AgentID
+		e.agents.setDeleteErr(stuck, errSvcHost)
+		e.agents.setDeleteErr(gone, ErrNotFound)
+		err = e.svc.Delete(t.Context(), e.scope, id)
+		if !errors.Is(err, errSvcHost) || !strings.Contains(err.Error(), id) || !strings.Contains(err.Error(), stuck) {
+			t.Fatalf("delete: %v", err)
+		}
+		if len(e.forumIDs()) != 1 {
+			t.Fatal("the forum was removed")
+		}
+		if m, _ := e.marker(id, CleanupAgents); m != `["`+stuck+`"]` {
+			t.Errorf("agents marker = %s, want only %s (an ErrNotFound delete counts as done)", m, stuck)
+		}
+		e.agents.setDeleteErr(stuck, nil)
+		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if len(e.forumIDs()) != 0 {
+			t.Error("the forum is still listed after the retry")
+		}
+	})
+	t.Run("corrupt forum can be deleted", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		if err := os.WriteFile(e.store(id).Path(fileConfig), []byte(`{"tampered": true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.forumIDs()) != 0 {
+			t.Error("the forum is still listed")
+		}
+	})
+	t.Run("absent and malformed IDs", func(t *testing.T) {
+		e := svcSetup(t)
+		if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
+			t.Errorf("absent forum: %v", err)
+		}
+		if err := e.svc.Delete(t.Context(), e.scope, "../../etc"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("malformed id: %v", err)
+		}
+	})
+}
+
+func TestSvcCompletionNotice(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+	if p := e.notifier.problems(); len(p) != 0 {
+		t.Errorf("notice order: %v", p)
+	}
+	res, origin := e.notifier.last()
+	if res.ForumID != id || res.Status != StatusCompleted || !res.Complete {
+		t.Errorf("notice result = %+v", res)
+	}
+	if origin != (Origin{AgentID: "launcher", Channel: "test", ChatID: "chat-1"}) {
+		t.Errorf("notice origin = %+v", origin)
+	}
+	if _, ok := e.marker(id, cleanupNotice); ok {
+		t.Error("notice marker left behind")
+	}
+	if _, ok := e.marker(id, CleanupAgents); ok {
+		t.Error("agents marker left behind")
+	}
+	if len(e.agents.deletedIDs()) != 2 {
+		t.Errorf("deleted %v", e.agents.deletedIDs())
+	}
+
+	// A restart does not notify or delete again.
+	e.restart()
+	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+		t.Fatal(err)
+	}
+	if e.notifier.count() != 1 || len(e.agents.deletedIDs()) != 2 {
+		t.Errorf("after restart: %d notices, deleted %v", e.notifier.count(), e.agents.deletedIDs())
+	}
+}
+
+func TestSvcNotifyFailureIsLogged(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.err = errSvcHost
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	if !e.logger.has("forum " + id + ": notifying agent launcher") {
+		t.Error("notify failure not logged")
+	}
+	if _, ok := e.marker(id, cleanupNotice); ok {
+		t.Error("a failed notice is retried forever")
+	}
+}
+
+func TestSvcNoNoticeWithoutResult(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	// The controller commits the end but cannot write result.json.
+	if err := os.WriteFile(e.store(id).Path(fileResult), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(e.store(id).Path(fileResult), 0); err != nil {
+		t.Fatal(err)
+	}
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	if e.notifier.count() != 0 {
+		t.Error("notified without a readable result.json")
+	}
+	if _, ok := e.marker(id, cleanupNotice); !ok {
+		t.Error("the notice is no longer pending")
+	}
+	if len(e.agents.deletedIDs()) != 2 {
+		t.Errorf("temporary agents not deleted: %v", e.agents.deletedIDs())
+	}
+}
+
+func TestSvcRecover(t *testing.T) {
+	t.Run("running and queued forums resume", func(t *testing.T) {
+		e := svcSetup(t)
+		running, _ := e.launch("")
+		queued, _ := e.launch(svcSimpleJSON)
+		e.restart()
+		// queued: the launch died between the snapshot and CommitLaunched.
+		s := e.store(queued)
+		for _, f := range []string{commitRel(1), fileState} {
+			if err := os.Remove(s.Path(f)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+		}
+		if e.status(queued) != StatusQueued {
+			t.Fatalf("status = %s, want queued", e.status(queued))
+		}
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		e.running(running)
+		e.running(queued)
+		commits, err := e.store(queued).ReadCommits()
+		if err != nil || len(commits) != 1 || commits[0].Kind != CommitLaunched {
+			t.Errorf("queued commits = %+v (%v)", commits, err)
+		}
+	})
+	t.Run("paused forum stays paused and is kept alive", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		e.appendCommits(id, Commit{Kind: CommitPauseRequested}, Commit{Kind: CommitPaused})
+		opens := e.ctrls.openCount()
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		if e.ctrls.openCount() != opens {
+			t.Error("a paused forum was opened")
+		}
+		e.settled(id, StatusPaused)
+		for _, agentID := range e.agents.createdIDs() {
+			if e.agents.touches(agentID) != 1 {
+				t.Errorf("agent %s touched %d times at recovery, want 1", agentID, e.agents.touches(agentID))
+			}
+		}
+		if !e.keptAlive(id) {
+			t.Error("not registered for keep-alive")
+		}
+	})
+	t.Run("pending pause and cancel are honoured", func(t *testing.T) {
+		e := svcSetup(t)
+		pausing, _ := e.launch("")
+		cancelling, _ := e.launch(svcSimpleJSON)
+		e.restart()
+		e.appendCommits(pausing, Commit{Kind: CommitPauseRequested})
+		e.appendCommits(cancelling, Commit{Kind: CommitCancelRequested})
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		e.settled(pausing, StatusPaused)
+		e.settled(cancelling, StatusCancelled)
+		svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+	})
+	t.Run("terminal forum finishes its cleanup and notice", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		e.appendCommits(id, Commit{Kind: CommitEnded, Status: StatusCompleted, Reason: EndCompleted})
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.store(id).ReadResult(); err != nil {
+			t.Errorf("result.json not written: %v", err)
+		}
+		if len(e.agents.deletedIDs()) != 2 {
+			t.Errorf("deleted %v, want both temporary agents", e.agents.deletedIDs())
+		}
+		if e.notifier.count() != 1 || len(e.notifier.problems()) != 0 {
+			t.Errorf("%d notices, problems %v", e.notifier.count(), e.notifier.problems())
+		}
+		if e.ctrls.openCount() != 1 {
+			t.Error("a terminal forum was opened")
+		}
+	})
+	t.Run("staged removal and abandoned launch are finished", func(t *testing.T) {
+		e := svcSetup(t)
+		base := e.scope.BaseDirectory
+		staged := uuid.NewString()
+		if err := os.MkdirAll(filepath.Join(base, dirCleanup, staged, "layers"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		abandoned := uuid.NewString()
+		s, err := CreateStore(base, abandoned)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.WriteConfig([]byte(svcSimpleJSON)); err != nil {
+			t.Fatal(err)
+		}
+		if err := setAgentsMarker(s, []string{"leftover"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(base, dirCleanup, staged)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("staged root still there: %v", err)
+		}
+		if len(e.forumIDs()) != 0 {
+			t.Errorf("abandoned launch still listed: %v", e.forumIDs())
+		}
+		if !slices.Equal(e.agents.deletedIDs(), []string{"leftover"}) {
+			t.Errorf("deleted %v, want the abandoned launch's agent", e.agents.deletedIDs())
+		}
+	})
+	t.Run("errors are reported and do not stop the scan", func(t *testing.T) {
+		e := svcSetup(t)
+		bad, _ := e.launch(svcSimpleJSON)
+		good, _ := e.launch("")
+		e.restart()
+		if err := os.WriteFile(e.store(bad).Path(fileConfig), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := e.svc.Recover(t.Context(), []Scope{e.scope})
+		if !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), bad) {
+			t.Errorf("Recover = %v", err)
+		}
+		e.running(good)
+	})
+	t.Run("forum locked by another process is left alone", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		other := e.store(id)
+		if err := other.Lock(); err != nil {
+			t.Fatal(err)
+		}
+		defer other.Unlock()
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); !errors.Is(err, ErrLocked) {
+			t.Errorf("Recover = %v, want ErrLocked", err)
+		}
+		if _, ok := e.svc.running(e.scope, id); ok {
+			t.Error("a locked forum was started")
+		}
+	})
+}
+
+func TestSvcKeepAlive(t *testing.T) {
+	e := svcSetup(t)
+	e.svc.keepAliveEvery = 10 * time.Millisecond
+	id, _ := e.launch("")
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	created := e.agents.createdIDs()
+	svcEventually(t, "keep-alive touches", func() bool {
+		for _, a := range created {
+			if e.agents.touches(a) < 2 {
+				return false
+			}
+		}
+		return true
+	})
+	if e.agents.touches("alice") != 0 {
+		t.Error("an existing agent was touched")
+	}
+
+	e.agents.mu.Lock()
+	e.agents.touchErr = errSvcHost
+	e.agents.mu.Unlock()
+	svcEventually(t, "touch failure logged", func() bool { return e.logger.has("keep-alive of temporary agent") })
+
+	if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.running(id)
+	if e.keptAlive(id) {
+		t.Error("a resumed forum is still kept alive")
+	}
+}
+
+func TestSvcCloseLeavesStateAndRefusesWork(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.running(id)
+	svcClose(t, e.svc)
+	if e.status(id) != StatusRunning {
+		t.Errorf("status after close = %s, want running", e.status(id))
+	}
+	if _, err := e.svc.Launch(t.Context(), []byte(svcConfigJSON), e.opts()); !errors.Is(err, errClosed) {
+		t.Errorf("launch after close: %v", err)
+	}
+	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, errClosed) {
+		t.Errorf("resume after close: %v", err)
+	}
+	// The lock was released: another process can take the forum over.
+	if err := e.store(id).Lock(); err != nil {
+		t.Errorf("lock after close: %v", err)
+	}
+}
+
+func TestSvcRunErrorLeavesForumInterrupted(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	// Make the next commit fail: a stray file in commits/ is corruption.
+	if err := os.WriteFile(filepath.Join(c.store.Path(dirCommits), "stray"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.store.idx.loaded = false
+	c.finish <- StatusCompleted
+	svcEventually(t, "run stopped", func() bool {
+		_, ok := e.svc.running(e.scope, id)
+		return !ok
+	})
+	if !e.logger.has("forum " + id + ": run stopped") {
+		t.Error("the run error was not logged")
+	}
+	if e.notifier.count() != 0 {
+		t.Error("notified after a failed run")
+	}
+}
+
+func TestSvcNewPanicsWithoutHost(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("New did not panic")
+		}
+	}()
+	New(Host{})
+}
