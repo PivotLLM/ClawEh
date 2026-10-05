@@ -368,6 +368,67 @@ func (c *Config) EffectiveResultLayers() []string {
 // layer's participants) and nonempty `text`. The result is stored in
 // Snapshot.ModeratorSchemas and sent with every moderator request. It
 // fails only if assessment is not a JSON object.
+//
+// The guidance rule is expressed in the schema itself (if decision is
+// GUIDE then guidance is a nonempty string, else null), so a validator
+// enforces it. An assessment schema without its own `$id` gets
+// assessmentSchemaID, so its internal references ("#/$defs/...") resolve
+// within it rather than against the decision schema's root.
 func EffectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.RawMessage, error) {
-	return nil, errNotImplemented
+	if layer.Moderator == nil {
+		return nil, fmt.Errorf("layer %q has no moderator", layer.ID)
+	}
+	required := []string{"decision", "reason", "guidance"}
+	properties := map[string]any{
+		"decision": map[string]any{"enum": []DecisionKind{DecisionContinue, DecisionGuide, DecisionStop}},
+		"reason":   map[string]any{"type": "string"},
+		"guidance": map[string]any{"type": []string{"string", "null"}},
+	}
+	if assessment != nil {
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(assessment, &members); err != nil || members == nil {
+			return nil, fmt.Errorf("layer %q: moderator schema %q is not a JSON object", layer.ID, layer.Moderator.Schema)
+		}
+		if _, ok := members["$id"]; !ok {
+			members["$id"] = json.RawMessage(`"` + assessmentSchemaID + `"`)
+		}
+		properties["assessment"] = members
+		required = append(required, "assessment")
+	}
+	if layer.Moderator.AllowDirected {
+		to := append([]string{}, layer.Participants...)
+		properties["directed"] = map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"to", "text"},
+				"properties": map[string]any{
+					"to":   map[string]any{"enum": to},
+					"text": map[string]any{"type": "string", "minLength": 1},
+				},
+			},
+		}
+	}
+	schema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             required,
+		"properties":           properties,
+		"if": map[string]any{
+			"required":   []string{"decision"},
+			"properties": map[string]any{"decision": map[string]any{"const": DecisionGuide}},
+		},
+		"then": map[string]any{"properties": map[string]any{"guidance": map[string]any{"type": "string", "minLength": 1}}},
+		"else": map[string]any{"properties": map[string]any{"guidance": map[string]any{"type": "null"}}},
+	}
+	out, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("layer %q: build moderator schema: %w", layer.ID, err)
+	}
+	return out, nil
 }
+
+// assessmentSchemaID is the base URI given to an embedded assessment
+// schema that has none, so its internal references stay internal.
+const assessmentSchemaID = "forum:///assessment.json"

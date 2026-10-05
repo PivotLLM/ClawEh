@@ -1,0 +1,405 @@
+// ClawEh
+// License: MIT
+//
+// Copyright (c) 2026 Tenebris Technologies Inc.
+
+package forum
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestPreflightExample runs the spec example through the whole check path:
+// Decode, ValidateStatic, Preflight.
+func TestPreflightExample(t *testing.T) {
+	cfg, err := Decode([]byte(cfgtExampleJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateStatic(cfg); err != nil {
+		t.Fatal(err)
+	}
+	agents := cfgtNewAgents()
+	res, err := Preflight(context.Background(), cfg, cfgtEnv(agents))
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if len(res.Models) != 2 || res.Models["chair"] != "default" || res.Models["editor"] != "default" {
+		t.Errorf("Models = %v, want chair and editor on default", res.Models)
+	}
+	if _, ok := res.Schemas["findings"]; !ok || len(res.Schemas) != 1 {
+		t.Errorf("Schemas = %v", res.Schemas)
+	}
+	if _, ok := res.ModeratorSchemas["debate"]; !ok || len(res.ModeratorSchemas) != 1 {
+		t.Errorf("ModeratorSchemas = %v", res.ModeratorSchemas)
+	}
+	if len(res.SourceFiles) != 0 {
+		t.Errorf("SourceFiles = %v, want none (inline source)", res.SourceFiles)
+	}
+	for _, call := range []string{"MayTarget launcher alice", "Exists alice", "MayTarget launcher bob", "Exists bob", "Models launcher"} {
+		if !agents.called(call) {
+			t.Errorf("Preflight did not call %s", call)
+		}
+	}
+	if agents.called("Models bob") {
+		t.Error("a clone without a model override needs no model lookup")
+	}
+}
+
+func TestPreflightRejects(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(c *Config, a *cfgtAgents, env *PreflightEnv)
+		path   string
+		want   []string
+	}{
+		{
+			"existing agent not allowed", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.allowed, "alice") },
+			"participants.alice.agent",
+			[]string{`"alice"`, "may not use"},
+		},
+		{
+			"existing agent missing", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.exists, "alice") },
+			"participants.alice.agent",
+			[]string{`"alice"`, "does not exist"},
+		},
+		{
+			"clone source not allowed", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.allowed, "bob") },
+			"participants.bob.clone",
+			[]string{`"bob"`, "may not use"},
+		},
+		{
+			"clone source missing", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.exists, "bob") },
+			"participants.bob.clone",
+			[]string{`"bob"`, "does not exist"},
+		},
+		{"clone model not the source's", func(c *Config, a *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["bob"] = Participant{Clone: "bob", Model: "huge"}
+			a.models["bob"] = []ModelInfo{{Name: "small"}}
+		}, "participants.bob.model", []string{`"huge"`, `agent "bob"`, "small"}},
+		{"clone model the launcher's only", func(c *Config, a *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["bob"] = Participant{Clone: "bob", Model: "large"}
+			a.models["bob"] = nil
+		}, "participants.bob.model", []string{`"large"`, "none"}},
+		{"fresh model unknown", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["editor"] = Participant{Model: "gpt-x"}
+		}, "participants.editor.model", []string{`"gpt-x"`, "launching agent", "default, large"}},
+		{"fresh moderator model unknown", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["chair"] = Participant{Model: "gpt-x"}
+		}, "participants.chair.model", []string{`"gpt-x"`}},
+		{"schema does not compile", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Schemas["findings"] = cfgtRaw(`{"type":7}`)
+		}, "schemas.findings", []string{`"findings"`}},
+		{"schema references outside itself", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Schemas["findings"] = cfgtRaw(`{"$ref":"https://example.com/s.json"}`)
+		}, "schemas.findings", []string{"only references inside the schema"}},
+		{"unused schema still compiles", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Schemas["spare"] = cfgtRaw(`{"minLength":"x"}`)
+		}, "schemas.spare", []string{`"spare"`}},
+		{
+			"max_calls above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxCalls = 29 },
+			"limits.max_calls",
+			[]string{"30", "host ceiling of 29"},
+		},
+		{
+			"duration above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxDurationSeconds = 600 },
+			"limits.max_duration_seconds",
+			[]string{"1800", "600"},
+		},
+		{
+			"call timeout above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.CallTimeoutSeconds = 60 },
+			"limits.call_timeout_seconds",
+			[]string{"host ceiling of 60"},
+		},
+		{
+			"attempts above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxAttemptsPerTurn = 1 },
+			"limits.max_attempts_per_turn",
+			[]string{"host ceiling of 1"},
+		},
+		{
+			"parallel above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxParallelCalls = 1 },
+			"limits.max_parallel_calls",
+			[]string{"host ceiling of 1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := cfgtExample(t)
+			agents := cfgtNewAgents()
+			env := cfgtEnv(agents)
+			tt.mutate(cfg, agents, &env)
+			if err := ValidateStatic(cfg); err != nil {
+				t.Fatalf("the mutated configuration must pass ValidateStatic: %v", err)
+			}
+			res, err := Preflight(context.Background(), cfg, env)
+			if res != nil {
+				t.Error("Preflight returned a result alongside issues")
+			}
+			cfgtWantIssue(t, err, tt.path, tt.want...)
+		})
+	}
+}
+
+func TestPreflightDoesNotProbeForbiddenAgents(t *testing.T) {
+	agents := cfgtNewAgents()
+	delete(agents.allowed, "alice")
+	_, err := Preflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
+	cfgtWantIssue(t, err, "participants.alice.agent", "may not use")
+	if agents.called("Exists alice") {
+		t.Error("existence of an agent the launcher may not use must not be checked (or revealed)")
+	}
+}
+
+func TestPreflightAccepts(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(c *Config, a *cfgtAgents, env *PreflightEnv)
+		check  func(t *testing.T, r *Resolved)
+	}{
+		{"clone model override recorded", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["bob"] = Participant{Clone: "bob", Model: "large"}
+		}, func(t *testing.T, r *Resolved) {
+			t.Helper()
+			if r.Models["bob"] != "large" {
+				t.Errorf("Models[bob] = %q", r.Models["bob"])
+			}
+			if _, ok := r.Models["alice"]; ok {
+				t.Error("an existing agent has no forum model")
+			}
+		}},
+		{"participants of disabled layers are not checked", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["ghost"] = Participant{Agent: "ghost"}
+			c.Participants["spare"] = Participant{Model: "gpt-x"}
+			c.Layers = append(c.Layers, Layer{
+				ID: "extra", Enabled: new(bool), Participants: []string{"ghost", "spare"},
+				Instructions: "x", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText},
+			})
+		}, func(t *testing.T, r *Resolved) {
+			t.Helper()
+			if _, ok := r.Models["spare"]; ok {
+				t.Error("an unused fresh participant must not be resolved")
+			}
+		}},
+		{"moderator of a disabled layer is not checked", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Participants["chair"] = Participant{Model: "gpt-x"}
+			off := false
+			c.Layers[1].Enabled = &off
+		}, func(t *testing.T, r *Resolved) {
+			t.Helper()
+			if len(r.ModeratorSchemas) != 0 {
+				t.Errorf("ModeratorSchemas = %v, want none for a disabled layer", r.ModeratorSchemas)
+			}
+		}},
+		{"limits equal to ceilings", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) {
+			env.HostLimits = Limits{MaxCalls: 30, MaxDurationSeconds: 1800, CallTimeoutSeconds: 300, MaxAttemptsPerTurn: 2, MaxParallelCalls: 2}
+		}, nil},
+		{"zero ceiling is no ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) {
+			env.HostLimits = Limits{MaxCalls: 100}
+		}, nil},
+		{"moderator with assessment and directed", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+			c.Layers[1].Moderator.Schema = "findings"
+			c.Layers[1].Moderator.AllowDirected = true
+		}, func(t *testing.T, r *Resolved) {
+			t.Helper()
+			s := string(r.ModeratorSchemas["debate"])
+			if !strings.Contains(s, `"assessment"`) || !strings.Contains(s, `"directed"`) {
+				t.Errorf("effective schema lacks assessment or directed: %s", s)
+			}
+		}},
+		{"no schemas and no validator", func(c *Config, _ *cfgtAgents, env *PreflightEnv) {
+			c.Schemas = nil
+			c.Layers[0].Output.Schema = ""
+			env.Schemas = nil
+		}, func(t *testing.T, r *Resolved) {
+			t.Helper()
+			if _, ok := r.ModeratorSchemas["debate"]; !ok {
+				t.Error("the effective moderator schema is built even without a validator")
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := cfgtExample(t)
+			agents := cfgtNewAgents()
+			env := cfgtEnv(agents)
+			tt.mutate(cfg, agents, &env)
+			if err := ValidateStatic(cfg); err != nil {
+				t.Fatalf("ValidateStatic: %v", err)
+			}
+			res, err := Preflight(context.Background(), cfg, env)
+			if err != nil {
+				t.Fatalf("Preflight: %v", err)
+			}
+			if tt.check != nil {
+				tt.check(t, res)
+			}
+		})
+	}
+}
+
+func TestPreflightSchemasUnavailable(t *testing.T) {
+	env := cfgtEnv(cfgtNewAgents())
+	env.Schemas = nil
+	_, err := Preflight(context.Background(), cfgtExample(t), env)
+	if !errors.Is(err, ErrSchemasUnavailable) {
+		t.Fatalf("want ErrSchemasUnavailable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "findings") {
+		t.Errorf("the error should name the schemas: %v", err)
+	}
+	if isIssues := errors.As(err, new(*ValidationError)); isIssues {
+		t.Error("ErrSchemasUnavailable is returned directly, not as an issue")
+	}
+}
+
+func TestPreflightHostErrors(t *testing.T) {
+	for _, method := range []string{"MayTarget", "Exists", "Models"} {
+		t.Run(method, func(t *testing.T) {
+			agents := cfgtNewAgents()
+			agents.errOn = method
+			_, err := Preflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
+			if !errors.Is(err, errCfgtHost) {
+				t.Fatalf("want the host error, got %v", err)
+			}
+			if isIssues := errors.As(err, new(*ValidationError)); isIssues {
+				t.Error("a host failure is not a configuration issue")
+			}
+		})
+	}
+}
+
+func TestPreflightRequiresHost(t *testing.T) {
+	cfg := cfgtExample(t)
+	if _, err := Preflight(context.Background(), cfg, PreflightEnv{Launcher: "launcher"}); err == nil {
+		t.Error("nil Agents accepted")
+	}
+	if _, err := Preflight(context.Background(), cfg, PreflightEnv{Agents: cfgtNewAgents()}); err == nil {
+		t.Error("empty launcher accepted")
+	}
+}
+
+// cfgtFileEnv lays out a workspace with source files and returns an env
+// whose ReadAllowed admits exactly the workspace.
+func cfgtFileEnv(t *testing.T) (PreflightEnv, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{filepath.Join(ws, "docs", "sub"), outside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(ws, "docs", "report.md"):   "# Proposal\n",
+		filepath.Join(ws, "facts.json"):          `{"cost": 3}`,
+		filepath.Join(ws, "broken.json"):         `{"cost": `,
+		filepath.Join(ws, "dup.json"):            `{"cost": 1, "cost": 2}`,
+		filepath.Join(ws, "two.json"):            `{} {}`,
+		filepath.Join(outside, "secret.txt"):     "secret",
+		filepath.Join(ws, "docs", "sub", "x.md"): "x",
+	}
+	for p, content := range files {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(ws, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ws, "docs", "report.md"), filepath.Join(ws, "inside-link.md")); err != nil {
+		t.Fatal(err)
+	}
+	env := cfgtEnv(cfgtNewAgents())
+	env.ConfigDir = ws
+	env.ReadAllowed = func(p string) error {
+		if p == ws || strings.HasPrefix(p, ws+string(filepath.Separator)) {
+			return nil
+		}
+		return errors.New("outside the workspace")
+	}
+	return env, ws, outside
+}
+
+func TestPreflightFileSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     Source
+		noRead  bool
+		path    string   // issue path; "" means accepted
+		want    []string // issue substrings
+		resolve string   // accepted: SourceFiles value relative to the workspace
+	}{
+		{"markdown file", Source{Decode: FormatMarkdown, File: "docs/report.md"}, false, "", nil, "docs/report.md"},
+		{"json file", Source{Decode: FormatJSON, File: "facts.json"}, false, "", nil, "facts.json"},
+		{"symlink inside the workspace", Source{Decode: FormatText, File: "inside-link.md"}, false, "", nil, "docs/report.md"},
+		{"missing file", Source{Decode: FormatText, File: "nope.txt"}, false, "sources.report.file", []string{`"nope.txt"`, "does not exist"}, ""},
+		{"directory", Source{Decode: FormatText, File: "docs/sub"}, false, "sources.report.file", []string{"not a regular file"}, ""},
+		{"symlink out of the workspace", Source{Decode: FormatText, File: "link.txt"}, false, "sources.report.file", []string{"links to", "may not read"}, ""},
+		{"no read permission at all", Source{Decode: FormatText, File: "docs/report.md"}, true, "sources.report.file", []string{"not readable"}, ""},
+		{"json file malformed", Source{Decode: FormatJSON, File: "broken.json"}, false, "sources.report.file", []string{`"broken.json"`, "not one valid JSON value"}, ""},
+		{"json file with duplicate keys", Source{Decode: FormatJSON, File: "dup.json"}, false, "sources.report.file", []string{"duplicate key"}, ""},
+		{"json file with two values", Source{Decode: FormatJSON, File: "two.json"}, false, "sources.report.file", []string{"trailing content"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, ws, _ := cfgtFileEnv(t)
+			if tt.noRead {
+				env.ReadAllowed = nil
+			}
+			cfg := cfgtExample(t)
+			cfg.Sources["report"] = tt.src
+			if err := ValidateStatic(cfg); err != nil {
+				t.Fatalf("ValidateStatic: %v", err)
+			}
+			res, err := Preflight(context.Background(), cfg, env)
+			if tt.path != "" {
+				cfgtWantIssue(t, err, tt.path, tt.want...)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Preflight: %v", err)
+			}
+			want, err := filepath.EvalSymlinks(filepath.Join(ws, filepath.FromSlash(tt.resolve)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := res.SourceFiles["report"]; got != want {
+				t.Errorf("SourceFiles[report] = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestPreflightReadAllowedSeesTheLexicalPath(t *testing.T) {
+	env, ws, _ := cfgtFileEnv(t)
+	var asked []string
+	env.ReadAllowed = func(p string) error { asked = append(asked, p); return errors.New("denied") }
+	cfg := cfgtExample(t)
+	cfg.Sources["report"] = Source{Decode: FormatText, File: "docs/report.md"}
+	_, err := Preflight(context.Background(), cfg, env)
+	cfgtWantIssue(t, err, "sources.report.file", "denied")
+	if len(asked) != 1 || asked[0] != filepath.Join(ws, "docs", "report.md") {
+		t.Errorf("ReadAllowed asked %v", asked)
+	}
+}
+
+func TestPreflightConfigDirMustBeAbsolute(t *testing.T) {
+	env := cfgtEnv(cfgtNewAgents())
+	env.ConfigDir = "relative/dir"
+	env.ReadAllowed = func(string) error { return nil }
+	cfg := cfgtExample(t)
+	cfg.Sources["report"] = Source{Decode: FormatText, File: "r.txt"}
+	_, err := Preflight(context.Background(), cfg, env)
+	if err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("want a wiring error for a relative ConfigDir, got %v", err)
+	}
+	if isIssues := errors.As(err, new(*ValidationError)); isIssues {
+		t.Error("a relative ConfigDir is a host wiring error, not a configuration issue")
+	}
+}
