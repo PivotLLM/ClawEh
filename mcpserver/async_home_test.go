@@ -52,7 +52,7 @@ func TestPublishMCPAsyncToLLM_CloneResultGoesHome(t *testing.T) {
 			}
 		}()
 		time.Sleep(20 * time.Millisecond)
-		publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "done"})
+		publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "done"}, 0)
 		select {
 		case m := <-got:
 			if m.Metadata["preresolved_agent_id"] != tc.wantAgent || m.SessionKey != tc.wantSession {

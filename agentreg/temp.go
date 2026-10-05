@@ -40,6 +40,13 @@ type createOptions struct {
 	ttl       time.Duration
 	source    string
 	ephemeral bool
+	owner     string
+}
+
+// OwnedBy records the agent that creates the temporary agent (Spec.Owner),
+// so that agent can be told apart from others after a restart.
+func OwnedBy(agentID string) Option {
+	return func(o *createOptions) { o.owner = routing.NormalizeAgentID(agentID) }
 }
 
 // Temp sets how long the agent may sit idle before the sweep deletes it
@@ -116,6 +123,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	if err != nil {
 		return "", nil, err
 	}
+	spec.Owner = o.owner
 	if missing := missingModels(current, spec.Config); len(missing) > 0 {
 		return "", nil, fmt.Errorf("agentreg: model(s) %v are not configured", missing)
 	}

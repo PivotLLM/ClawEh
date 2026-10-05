@@ -1757,7 +1757,7 @@ func TestProcessSystemMessage_InternalChannel(t *testing.T) {
 		Content:  "Task 'label' completed.\n\nResult:\ntool output",
 	}
 
-	got, err := al.processSystemMessage(context.Background(), msg)
+	got, err := al.processSystemMessage(context.Background(), msg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1776,7 +1776,7 @@ func TestProcessSystemMessage_WrongChannel(t *testing.T) {
 		Content: "should fail",
 	}
 
-	_, err := al.processSystemMessage(context.Background(), msg)
+	_, err := al.processSystemMessage(context.Background(), msg, nil)
 	if err == nil {
 		t.Fatal("expected error for non-system channel, got nil")
 	}

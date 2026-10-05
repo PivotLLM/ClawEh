@@ -31,7 +31,7 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn",
-		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`})
+		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`}, 3)
 
 	select {
 	case m := <-got:
@@ -51,6 +51,10 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 		}
 		if m.Metadata["preresolved_agent_id"] != "penny" {
 			t.Errorf("preresolved_agent_id = %q, want penny", m.Metadata["preresolved_agent_id"])
+		}
+		// The re-entered turn keeps the spawning call's depth.
+		if m.Metadata[bus.MetaSpawnDepth] != "3" {
+			t.Errorf("spawn_depth = %q, want 3", m.Metadata[bus.MetaSpawnDepth])
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected a re-injected system inbound message")
@@ -73,7 +77,7 @@ func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
 	}()
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"})
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"}, 0)
 
 	select {
 	case <-published:

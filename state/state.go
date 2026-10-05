@@ -29,6 +29,11 @@ type PendingTurn struct {
 	Channel  string `json:"channel"`
 	ChatID   string `json:"chat_id"`
 	Attempts int    `json:"attempts,omitempty"` // recovery replays so far
+	// MessageID, ReplyRequired and SpawnDepth are carried back onto the
+	// replayed message (see bus.MetaReplyRequired, bus.MetaSpawnDepth).
+	MessageID     string `json:"message_id,omitempty"`
+	ReplyRequired bool   `json:"reply_required,omitempty"`
+	SpawnDepth    int    `json:"spawn_depth,omitempty"`
 }
 
 // Manager manages persistent state with atomic saves.

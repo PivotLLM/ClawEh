@@ -119,7 +119,7 @@ func TestAgentIsolation_TaskPointerCallbackCarriesOwnerAgent(t *testing.T) {
 		bus: msgBus,
 	}
 
-	cb := al.taskPointerCallback("slack", "C123", "bob")
+	cb := al.taskPointerCallback("slack", "C123", "bob", 2)
 	cb(context.Background(), &tools.ToolResult{
 		ForLLM: "task finished",
 	})
@@ -140,6 +140,9 @@ func TestAgentIsolation_TaskPointerCallbackCarriesOwnerAgent(t *testing.T) {
 	}
 	if msg.ChatID != "slack:C123" {
 		t.Fatalf("expected chatID slack:C123, got %q", msg.ChatID)
+	}
+	if msg.Metadata[bus.MetaSpawnDepth] != "2" {
+		t.Fatalf("spawn_depth = %q, want the spawning turn's 2", msg.Metadata[bus.MetaSpawnDepth])
 	}
 }
 

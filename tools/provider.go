@@ -77,6 +77,10 @@ type ToolDeps struct {
 	SpawnAllowlist    func(callerID, targetID string) bool
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
+	// Agents manages temporary agents on behalf of this agent (see
+	// AgentServices).
+	Agents AgentServices
+
 	// Spawn holds the robust sub-agent launcher (a global.Spawner). The AgentLoop
 	// builds it per agent and sets it here; toGlobalDeps forwards it to
 	// global.Deps.Spawn so any tool package can launch workers by DI. Typed as any

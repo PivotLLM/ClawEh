@@ -95,6 +95,9 @@ type Spec struct {
 	Ephemeral bool
 	// Fresh marks a temporary agent that is not a clone. It gets no tools.
 	Fresh bool
+	// Owner is the agent that created a temporary agent on its own behalf
+	// (see OwnedBy); empty otherwise. Saved across restarts with the agent.
+	Owner string
 }
 
 // IsClone reports whether the spec is a clone of a config agent.
@@ -714,6 +717,7 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 		if err != nil {
 			return spec, err.Error()
 		}
+		next.Owner = spec.Owner
 		spec = next
 	}
 	if missing := missingModels(cfg, spec.Config); len(missing) > 0 {

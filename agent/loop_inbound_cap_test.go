@@ -35,7 +35,7 @@ func TestProcessSystemMessage_CapsAsyncResult(t *testing.T) {
 		SenderID: "async:agent_spawn",
 		ChatID:   "telegram:chat-1",
 		Content:  big,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("processSystemMessage: %v", err)
 	}

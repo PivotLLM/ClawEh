@@ -11,6 +11,7 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/state"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // recoveryMaxAttempts caps how often restarts replay one interrupted turn: a
@@ -98,13 +99,14 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 	}
 	if content == "" {
 		clearPending("No user message found for pending session")
+		al.publishRequiredGiveUp(ctx, src)
 		return
 	}
 
 	fields["attempts"] = src.Attempts
 	if src.Attempts >= recoveryMaxAttempts {
 		clearPending("Recovery attempts exhausted")
-		al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+		al.publishGiveUp(ctx, src)
 		return
 	}
 	src.Attempts++
@@ -112,7 +114,7 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		// Without a persisted count a replay could crash-loop; give up instead.
 		fields["error"] = err.Error()
 		clearPending("Cannot persist recovery attempt count")
-		al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+		al.publishGiveUp(ctx, src)
 		return
 	}
 
@@ -123,11 +125,16 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		SenderID:   "recovery",
 		Content:    content,
 		SessionKey: sessionKey,
+		MessageID:  src.MessageID,
 		IsRetry:    true,
 		Metadata: map[string]string{
 			metadataKeyPreresolvedAgentID: agentID,
 		},
 	}
+	if src.ReplyRequired {
+		msg.Metadata[bus.MetaReplyRequired] = "1"
+	}
+	msg.Metadata = bus.SetSpawnDepth(msg.Metadata, src.SpawnDepth)
 	if err := al.bus.PublishInbound(ctx, msg); err != nil {
 		fields["error"] = err.Error()
 		logger.WarnCF("agent", "Failed to queue recovery message", fields)
@@ -150,13 +157,43 @@ func (al *AgentLoop) publishRecoveryNotice(ctx context.Context, src state.Pendin
 	}
 }
 
+// publishGiveUp tells the chat that recovery gave up on its interrupted turn:
+// the give-up notice, which is the turn's final error reply when the sender
+// required one.
+func (al *AgentLoop) publishGiveUp(ctx context.Context, src state.PendingTurn) {
+	if src.ReplyRequired {
+		al.publishRequiredGiveUp(ctx, src)
+		return
+	}
+	al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+}
+
+// publishRequiredGiveUp sends the final error reply owed to a sender that
+// required one (bus.MetaReplyRequired) for a turn recovery will not replay.
+// Nothing is sent for a turn without the flag.
+func (al *AgentLoop) publishRequiredGiveUp(ctx context.Context, src state.PendingTurn) {
+	if !src.ReplyRequired {
+		return
+	}
+	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		Channel:           src.Channel,
+		ChatID:            src.ChatID,
+		Content:           recoveryGiveUpNotice,
+		OriginalMessageID: src.MessageID,
+		Outcome:           bus.OutcomeError,
+	}); err != nil {
+		logger.WarnCF("agent", "Failed to publish recovery give-up reply",
+			map[string]any{"channel": src.Channel, "chat_id": src.ChatID, "error": err.Error()})
+	}
+}
+
 // recordPendingTurnSource remembers where the turn now in flight came from, so
 // a restart can replay it on the same channel and deliver the reply there.
 // Internal channels have no handler to deliver to, so they are not recorded and
 // an interrupted turn on one is never replayed. Call it when the session
 // store's pending-turn flag is set; clearPendingTurnSource pairs with clearing
 // the flag.
-func (al *AgentLoop) recordPendingTurnSource(agent *AgentInstance, opts processOptions) {
+func (al *AgentLoop) recordPendingTurnSource(ctx context.Context, agent *AgentInstance, opts processOptions) {
 	if opts.Channel == "" || opts.ChatID == "" || constants.IsInternalChannel(opts.Channel) {
 		return
 	}
@@ -164,7 +201,13 @@ func (al *AgentLoop) recordPendingTurnSource(agent *AgentInstance, opts processO
 	if !ok {
 		return
 	}
-	if err := sm.SetPendingTurn(opts.SessionKey, state.PendingTurn{Channel: opts.Channel, ChatID: opts.ChatID}); err != nil {
+	if err := sm.SetPendingTurn(opts.SessionKey, state.PendingTurn{
+		Channel:       opts.Channel,
+		ChatID:        opts.ChatID,
+		MessageID:     opts.MessageID,
+		ReplyRequired: opts.ReplyRequired,
+		SpawnDepth:    toolsagents.SpawnDepth(ctx),
+	}); err != nil {
 		logger.WarnCF("agent", "Failed to record pending turn source",
 			map[string]any{"error": err.Error(), "session": opts.SessionKey})
 	}

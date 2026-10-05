@@ -31,6 +31,7 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -50,6 +51,23 @@ type processOptions struct {
 	IsGroup         bool              // True when the inbound message came from a group/multi-listener chat
 	IterationsOut   *int              // optional: runAgentLoop writes the LLM iteration count here
 	UsageOut        *global.TurnUsage // optional: every successful LLM call's accounting is added here
+	// OutcomeOut, when set, receives bus.OutcomeEmpty when the model produced
+	// no reply (whatever fallback text is returned) or bus.OutcomeError for an
+	// abnormal empty termination. Left untouched for a normal reply, and on an
+	// error return (the caller decides that outcome from the error).
+	OutcomeOut *string
+	// MessageID and ReplyRequired describe the inbound message the turn
+	// answers; they are recorded with the pending turn so a restart's replay
+	// still owes the sender its reply.
+	MessageID     string
+	ReplyRequired bool
+}
+
+// setOutcome records how the turn ended in opts.OutcomeOut, when requested.
+func (opts processOptions) setOutcome(outcome string) {
+	if opts.OutcomeOut != nil {
+		*opts.OutcomeOut = outcome
+	}
 }
 
 // runAgentLoop is the core message processing logic.
@@ -186,7 +204,7 @@ func (al *AgentLoop) runAgentLoop(
 		logger.WarnCF("agent", "Failed to set pending turn flag",
 			map[string]any{"error": setErr.Error(), "session": opts.SessionKey})
 	}
-	al.recordPendingTurnSource(agent, opts)
+	al.recordPendingTurnSource(ctx, agent, opts)
 	// interrupted is set when shutdown cancelled the model loop; the turn is
 	// then left pending so a restart replays it.
 	interrupted := false
@@ -215,6 +233,7 @@ func (al *AgentLoop) runAgentLoop(
 		logger.DebugCF("agent", "LLM declined to respond (no-response sentinel)",
 			map[string]any{"agent_id": agent.ID, "session_key": opts.SessionKey})
 		al.stopTyping(opts.Channel, opts.ChatID)
+		opts.setOutcome(bus.OutcomeEmpty)
 		return "", nil
 	}
 
@@ -224,6 +243,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 5. Handle empty response.
 	isSystemError := false
 	if finalContent == "" {
+		var outcome string
 		switch {
 		case normal && !degenerate && opts.IsGroup:
 			// Legitimate silence: an empty, normal reply in a GROUP chat means the
@@ -236,10 +256,12 @@ func (al *AgentLoop) runAgentLoop(
 					"finish_reason": finishReason,
 				})
 			al.stopTyping(opts.Channel, opts.ChatID)
+			opts.setOutcome(bus.OutcomeEmpty)
 			return "", nil
 		case degenerate:
 			// Model produced reasoning but no reply, even after poking.
 			isSystemError = true
+			outcome = bus.OutcomeEmpty
 			finalContent = "Sorry — I couldn't compose a reply to that. Please try again."
 			logger.WarnCF("agent", "degenerate empty response; sending fallback reply",
 				map[string]any{
@@ -252,6 +274,7 @@ func (al *AgentLoop) runAgentLoop(
 			// and expects an answer, so an empty response is a failure (e.g. a degraded
 			// fallback model returning nothing). Advise rather than swallow it.
 			isSystemError = true
+			outcome = bus.OutcomeEmpty
 			finalContent = "The model returned an empty response. This can happen when a fallback model can't handle the request — please try again."
 			logger.WarnCF("agent", "empty response on a direct message; advising the user",
 				map[string]any{
@@ -262,8 +285,10 @@ func (al *AgentLoop) runAgentLoop(
 		default:
 			// Abnormal termination.
 			isSystemError = true
+			outcome = bus.OutcomeError
 			finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
 		}
+		opts.setOutcome(outcome)
 	}
 
 	// 6. Save final assistant message to session (skip system error strings)
@@ -1243,6 +1268,7 @@ func (al *AgentLoop) runLLMIteration(
 				// fixed now, while the agent exists: a clone's late result goes to
 				// its source's main conversation, as a sub-agent's always has.
 				resultAgentID, resultSessionKey := asyncResultTarget(agent)
+				turnDepth := toolsagents.SpawnDepth(ctx)
 				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
@@ -1291,7 +1317,8 @@ func (al *AgentLoop) runLLMIteration(
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: resultSessionKey,
-						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: resultAgentID},
+						// The re-entered turn runs at this turn's depth, never lower.
+						Metadata: bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth),
 					}); err != nil {
 						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
 							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})

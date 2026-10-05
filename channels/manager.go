@@ -370,6 +370,36 @@ func (m *Manager) initChannel(name, displayName string) {
 	}
 }
 
+// initBuiltins builds every registered built-in channel (see RegisterBuiltin).
+// A configured channel of the same name is kept and the built-in skipped.
+func (m *Manager) initBuiltins() {
+	for _, name := range builtinNames() {
+		f, ok := getBuiltin(name)
+		if !ok {
+			continue
+		}
+		if _, taken := m.channels[name]; taken {
+			logger.WarnCF("channels", "Built-in channel skipped: a configured channel has its name",
+				map[string]any{"channel": name})
+			continue
+		}
+		ch, err := f(m.config, m.bus)
+		if err != nil {
+			logger.ErrorCF("channels", "Failed to initialize built-in channel", map[string]any{
+				"channel": name,
+				"error":   err.Error(),
+			})
+			continue
+		}
+		if ch == nil {
+			continue
+		}
+		m.injectChannelDependencies(ch, name)
+		m.channels[name] = ch
+		logger.InfoCF("channels", "Built-in channel enabled", map[string]any{"channel": name})
+	}
+}
+
 // initTelegramBot initializes a single named Telegram bot and registers it as a channel.
 func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
 	channelName := bot.ChannelName()
@@ -576,6 +606,8 @@ func (m *Manager) initChannels() error {
 		warnEmptyAllowFrom("Device", m.config.Channels.Device.AllowFrom)
 		m.initChannel("device", "Device")
 	}
+
+	m.initBuiltins()
 
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
 		"enabled_channels": len(m.channels),

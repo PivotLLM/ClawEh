@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/state"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // recoveryTestStore is a minimal in-memory SessionStore for recovery tests.
@@ -168,7 +169,7 @@ func TestRecoverSession_ReplaysOnOriginalChannel(t *testing.T) {
 	}
 
 	// The replayed turn re-records its source; the attempt count must survive.
-	tl.al.recordPendingTurnSource(mustGetAgent(t, tl.al), processOptions{
+	tl.al.recordPendingTurnSource(context.Background(), mustGetAgent(t, tl.al), processOptions{
 		SessionKey: testSessionKey, Channel: "webui", ChatID: "chat-7", IsRetry: true,
 	})
 	if pt, _ := sm.GetPendingTurn(testSessionKey); pt.Attempts != 1 {
@@ -293,17 +294,103 @@ func TestRecordPendingTurnSource_SkipsInternalChannels(t *testing.T) {
 	tl := newTestAgentLoop(t)
 	agent := mustGetAgent(t, tl.al)
 	for _, ch := range []string{"cli", "system", "subagent", "recovery", ""} {
-		tl.al.recordPendingTurnSource(agent, processOptions{SessionKey: testSessionKey, Channel: ch, ChatID: "x"})
+		tl.al.recordPendingTurnSource(context.Background(), agent, processOptions{SessionKey: testSessionKey, Channel: ch, ChatID: "x"})
 		if _, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); ok {
 			t.Errorf("channel %q must not be recorded", ch)
 		}
 	}
-	tl.al.recordPendingTurnSource(agent, processOptions{SessionKey: testSessionKey, Channel: "webui", ChatID: "x"})
+	tl.al.recordPendingTurnSource(context.Background(), agent, processOptions{SessionKey: testSessionKey, Channel: "webui", ChatID: "x"})
 	if pt, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); !ok || pt.Channel != "webui" || pt.ChatID != "x" {
 		t.Errorf("recorded = %+v (ok=%v), want webui/x", pt, ok)
 	}
 	tl.al.clearPendingTurnSource("main", testSessionKey)
 	if _, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); ok {
 		t.Error("record should be cleared")
+	}
+}
+
+// TestRecordPendingTurnSource_KeepsReplyContract: the pending turn records the
+// inbound message id, reply_required and the turn's spawn depth.
+func TestRecordPendingTurnSource_KeepsReplyContract(t *testing.T) {
+	tl := newTestAgentLoop(t)
+	ctx := toolsagents.WithSpawnDepth(context.Background(), 2)
+	tl.al.recordPendingTurnSource(ctx, mustGetAgent(t, tl.al), processOptions{
+		SessionKey: testSessionKey, Channel: "forum", ChatID: "f/w/1", MessageID: "m1", ReplyRequired: true,
+	})
+	pt, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey)
+	if !ok || pt.MessageID != "m1" || !pt.ReplyRequired || pt.SpawnDepth != 2 {
+		t.Fatalf("recorded = %+v (ok=%v), want m1, reply required, depth 2", pt, ok)
+	}
+}
+
+// TestRecoverSession_ReplayKeepsReplyContract: a replayed turn carries the
+// original message id, reply_required and spawn_depth again; without them
+// the replay carries neither flag.
+func TestRecoverSession_ReplayKeepsReplyContract(t *testing.T) {
+	for _, flagged := range []bool{false, true} {
+		tl, store := newRecoveryTestLoop(t)
+		pt := state.PendingTurn{Channel: "webui", ChatID: "chat-7", MessageID: "m1"}
+		if flagged {
+			pt.ReplyRequired, pt.SpawnDepth = true, 2
+		}
+		if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey, pt); err != nil {
+			t.Fatal(err)
+		}
+		tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
+		consumeOutbound(t, tl.msgBus) // the replay notice
+		msg, ok := consumeInbound(t, tl.msgBus)
+		if !ok {
+			t.Fatal("no replay")
+		}
+		if msg.MessageID != "m1" || msg.ReplyRequired() != flagged {
+			t.Fatalf("flagged=%v: replay = %+v, want message m1 and reply_required %v", flagged, msg, flagged)
+		}
+		wantDepth := ""
+		if flagged {
+			wantDepth = "2"
+		}
+		if got := msg.Metadata[bus.MetaSpawnDepth]; got != wantDepth {
+			t.Fatalf("flagged=%v: spawn_depth = %q, want %q", flagged, got, wantDepth)
+		}
+	}
+}
+
+// TestRecoverSession_GiveUpOnRequiredReplies: when recovery gives up on a turn
+// whose sender required a reply, that reply is sent: an error outcome
+// addressed to the original message. Without the flag the plain notice goes
+// out, with no outcome.
+func TestRecoverSession_GiveUpOnRequiredReplies(t *testing.T) {
+	for _, flagged := range []bool{false, true} {
+		tl, store := newRecoveryTestLoop(t)
+		pt := state.PendingTurn{Channel: "webui", ChatID: "chat-7", MessageID: "m1", ReplyRequired: flagged, Attempts: recoveryMaxAttempts}
+		if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey, pt); err != nil {
+			t.Fatal(err)
+		}
+		tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
+		out, ok := consumeOutbound(t, tl.msgBus)
+		if !ok || out.Content != recoveryGiveUpNotice {
+			t.Fatalf("flagged=%v: give-up = %+v (ok=%v)", flagged, out, ok)
+		}
+		if flagged && (out.Outcome != bus.OutcomeError || out.OriginalMessageID != "m1") {
+			t.Fatalf("give-up reply = %+v, want an error outcome to m1", out)
+		}
+		if !flagged && (out.Outcome != "" || out.OriginalMessageID != "") {
+			t.Fatalf("give-up notice = %+v, want no outcome", out)
+		}
+		if extra, ok := consumeOutbound(t, tl.msgBus); ok {
+			t.Fatalf("flagged=%v: unexpected second outbound %+v", flagged, extra)
+		}
+	}
+
+	// No user message to replay: a flagged turn still gets its error reply.
+	tl, store := newRecoveryTestLoop(t)
+	store.history = []providers.Message{{Role: "assistant", Content: "hello"}}
+	if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey,
+		state.PendingTurn{Channel: "webui", ChatID: "chat-7", MessageID: "m1", ReplyRequired: true}); err != nil {
+		t.Fatal(err)
+	}
+	tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
+	if out, ok := consumeOutbound(t, tl.msgBus); !ok || out.Outcome != bus.OutcomeError || out.OriginalMessageID != "m1" {
+		t.Fatalf("no-history give-up = %+v (ok=%v), want an error outcome to m1", out, ok)
 	}
 }

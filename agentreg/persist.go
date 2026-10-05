@@ -37,6 +37,7 @@ type tempRecord struct {
 	LastUsed   time.Time           `json:"last_used"`
 	TTLSeconds int64               `json:"ttl_seconds"`
 	Config     *config.AgentConfig `json:"config,omitempty"`
+	Owner      string              `json:"owner,omitempty"`
 }
 
 // persist writes the temporary agents that survive a restart (those without
@@ -63,6 +64,7 @@ func (r *Registry[T]) persist() {
 			Created:    e.meta.created.UTC(),
 			LastUsed:   e.meta.last().UTC(),
 			TTLSeconds: int64(e.meta.ttl / time.Second),
+			Owner:      e.spec.Owner,
 		}
 		if !e.spec.IsClone() {
 			rec.Config = e.spec.Config
@@ -113,7 +115,7 @@ func (r *Registry[T]) restore() {
 			logger.WarnCF("agent", "Ignoring invalid temporary agent record", map[string]any{"agent_id": rec.ID})
 			continue
 		}
-		spec := Spec{ID: id, Origin: OriginTemp, SourceID: rec.SourceID, StateDir: filepath.Join(r.tempRoot, id)}
+		spec := Spec{ID: id, Origin: OriginTemp, SourceID: rec.SourceID, StateDir: filepath.Join(r.tempRoot, id), Owner: rec.Owner}
 		if rec.SourceID == "" {
 			ac := *rec.Config
 			ac.ID = id

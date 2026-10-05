@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,11 +17,13 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -113,10 +116,12 @@ func (al *AgentLoop) pruneSessions() {
 }
 
 // cancel stops the session's running turn, if any, and drops everything queued
-// behind it, recording both for the /cancel reply.
-func (ss *sessionState) cancel() {
+// behind it, recording both for the /cancel reply. It returns the dropped
+// messages.
+func (ss *sessionState) cancel() []bus.InboundMessage {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+	dropped := ss.pending
 	ss.skipCount += len(ss.pending)
 	ss.pending = nil
 	if ss.turnCancel != nil {
@@ -124,6 +129,7 @@ func (ss *sessionState) cancel() {
 		ss.turnCancel = nil
 		ss.cancelledRunning = true
 	}
+	return dropped
 }
 
 // takeCancelResult reads and resets what /cancel recorded for the session:
@@ -147,7 +153,8 @@ func (al *AgentLoop) takeCancelResult(key string) (running bool, skipped int) {
 // merged: the oldest message plus every later message from the same
 // channel:chat, up to the next command in that chat. Messages from other chats
 // stay queued (an agent's session may serve several chats, whose messages are
-// never merged), and a command always runs as a turn of its own.
+// never merged), and a command always runs as a turn of its own, as does a
+// message that requires its own reply (bus.MetaReplyRequired).
 func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
 	queue := *pending
 	if len(queue) == 0 {
@@ -157,10 +164,10 @@ func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
 	chat := first.Channel + ":" + first.ChatID
 	batch := []bus.InboundMessage{first}
 	rest := make([]bus.InboundMessage, 0, len(queue)-1)
-	stop := commands.HasCommandPrefix(first.Content)
+	stop := runsAlone(first)
 	for _, m := range queue[1:] {
 		if !stop && m.Channel+":"+m.ChatID == chat {
-			if !commands.HasCommandPrefix(m.Content) {
+			if !runsAlone(m) {
 				batch = append(batch, m)
 				continue
 			}
@@ -170,6 +177,12 @@ func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
 	}
 	*pending = rest
 	return mergeMessages(batch), true
+}
+
+// runsAlone reports whether a message must be a turn of its own, never merged
+// with others: a command, or a message that requires its own final reply.
+func runsAlone(m bus.InboundMessage) bool {
+	return commands.HasCommandPrefix(m.Content) || m.ReplyRequired()
 }
 
 // mergeMessages joins a batch into one message: the contents newline-separated
@@ -253,7 +266,8 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 	defer al.releaseSession(ss)
 
 	if al.isCancelCommand(msg.Content) {
-		ss.cancel()
+		dropped := ss.cancel()
+		al.publishCancelledReplies(ctx, dropped)
 		al.runTurn(ctx, ctx, msg)
 		return
 	}
@@ -284,6 +298,9 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		if al.acquireTurnSlot(turnCtx) {
 			al.runTurn(ctx, turnCtx, batch)
 			al.releaseTurnSlot()
+		} else if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
+			// Cancelled while waiting for a turn slot: it never ran.
+			al.publishCancelledReplies(ctx, []bus.InboundMessage{batch})
 		}
 
 		ss.mu.Lock()
@@ -311,7 +328,11 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	turnCtx = withTurnID(turnCtx, newTurnID())
 	msgCtx := tools.WithRoundSentFlag(turnCtx, &roundSent)
 
-	response, err := al.processMessageSafely(msgCtx, msg)
+	// outcome is set by the turn only when it did not end in a plain reply
+	// (an empty one); failure and cancellation are decided here from err.
+	var outcome string
+	response, err := al.processMessageSafely(msgCtx, msg, &outcome)
+	replyRequired := msg.ReplyRequired()
 	if err != nil && shuttingDown(turnCtx) {
 		// Interrupted, not failed: the turn stays pending and is replayed on
 		// restart, so nothing is sent now.
@@ -319,30 +340,42 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
 		return
 	}
-	if errors.Is(err, errAgentGone) {
+	switch {
+	case errors.Is(err, errAgentGone):
 		// Addressed to an agent that no longer exists (a deleted temporary
 		// agent): dropped, logged where it was detected, and never handed to
-		// another agent.
-		return
-	}
-	if err != nil {
-		if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
-			response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."
-		} else {
-			assistant := ""
-			if route, _, routeErr := al.resolveMessageRoute(msg); routeErr == nil {
-				assistant = al.agentDisplayName(route.AgentID)
-			}
-			response = renderTurnErrorFor(assistant, turnCtx, turnTimeout, err)
+		// another agent. A sender that requires a reply is told it failed.
+		if !replyRequired {
+			return
 		}
+		response, outcome = err.Error(), bus.OutcomeError
+	case err != nil && errors.Is(context.Cause(turnCtx), errCancelledByUser):
+		response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."
+		outcome = bus.OutcomeCancelled
+	case err != nil:
+		assistant := ""
+		if route, _, routeErr := al.resolveMessageRoute(msg); routeErr == nil {
+			assistant = al.agentDisplayName(route.AgentID)
+		}
+		response, outcome = renderTurnErrorFor(assistant, turnCtx, turnTimeout, err), bus.OutcomeError
+	case response == "" || outcome == bus.OutcomeEmpty:
+		outcome = bus.OutcomeEmpty
+		if replyRequired {
+			// The fallback advice is for a person; the sender gets the bare outcome.
+			response = ""
+		}
+	case outcome == "":
+		outcome = bus.OutcomeOK
 	}
 
-	if response != "" && !roundSent.Load() {
+	// A required reply is always sent, even after msg_send replied in the turn.
+	if replyRequired || (response != "" && !roundSent.Load()) {
 		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel:           msg.Channel,
 			ChatID:            msg.ChatID,
 			Content:           response,
 			OriginalMessageID: msg.MessageID,
+			Outcome:           outcome,
 		}); err != nil {
 			logger.WarnCF("agent", "Failed to publish outbound response",
 				turnFields(turnCtx, map[string]any{
@@ -356,11 +389,33 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 					"channel":     msg.Channel,
 					"chat_id":     msg.ChatID,
 					"content_len": len(response),
+					"outcome":     outcome,
 				}))
 		}
 	} else if roundSent.Load() && response != "" {
 		logger.DebugCF("agent", "Skipped outbound (message tool already sent)",
 			turnFields(turnCtx, map[string]any{"channel": msg.Channel}))
+	}
+}
+
+// publishCancelledReplies sends the final "cancelled" reply for each message
+// that requires one (bus.MetaReplyRequired) and was dropped by /cancel before
+// its turn ran. Messages without the flag get nothing, as before.
+func (al *AgentLoop) publishCancelledReplies(ctx context.Context, msgs []bus.InboundMessage) {
+	for _, m := range msgs {
+		if !m.ReplyRequired() {
+			continue
+		}
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+			Channel:           m.Channel,
+			ChatID:            m.ChatID,
+			Content:           "⚠️ Cancelled by /cancel before it started.",
+			OriginalMessageID: m.MessageID,
+			Outcome:           bus.OutcomeCancelled,
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish cancelled reply",
+				map[string]any{"channel": m.Channel, "chat_id": m.ChatID, "error": err.Error()})
+		}
 	}
 }
 
@@ -448,7 +503,10 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 // instead of crashing the per-message goroutine and leaving the typing indicator
 // stuck. processSessionMessage runs us in our own goroutine, so an unrecovered
 // panic here would otherwise take down the process.
-func (al *AgentLoop) processMessageSafely(ctx context.Context, msg bus.InboundMessage) (resp string, err error) {
+//
+// outcome, when non-nil, receives how the turn ended when that was not a plain
+// reply (see processOptions.OutcomeOut).
+func (al *AgentLoop) processMessageSafely(ctx context.Context, msg bus.InboundMessage, outcome *string) (resp string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.ErrorCF("agent", "panic while processing message",
@@ -462,10 +520,16 @@ func (al *AgentLoop) processMessageSafely(ctx context.Context, msg bus.InboundMe
 			err = fmt.Errorf("internal error while processing the message: %v", r)
 		}
 	}()
-	return al.processMessage(ctx, msg)
+	return al.processMessageOutcome(ctx, msg, outcome)
 }
 
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return al.processMessageOutcome(ctx, msg, nil)
+}
+
+// processMessageOutcome is processMessage reporting through outcome (may be
+// nil) how the turn ended when that was not a plain reply.
+func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundMessage, outcome *string) (string, error) {
 	// Direct callers (CLI, cron, external messages) do not come through runTurn;
 	// give them a turn id too so their logs and audit rows are correlated.
 	if turnIDFrom(ctx) == "" {
@@ -501,9 +565,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		al.channelManager.SendPlaceholder(ctx, msg.Channel, msg.ChatID)
 	}
 
+	maxDepth := config.DefaultMaxSubagentDepth
+	if cfg := al.GetConfig(); cfg != nil {
+		maxDepth = cfg.Agents.Defaults.GetMaxSubagentDepth()
+	}
+	ctx = withInboundSpawnDepth(ctx, msg, maxDepth)
+
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
-		return al.processSystemMessage(ctx, msg)
+		return al.processSystemMessage(ctx, msg, outcome)
 	}
 
 	// Extract agent mention from trigger prefix (e.g. "@alice do X" → routes to alice with "do X")
@@ -565,6 +635,9 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		SenderID:        msg.SenderID,
 		SenderName:      senderSource(msg.SenderID, msg.Sender),
 		IsGroup:         inboundMetadata(msg, "is_group") == "true",
+		OutcomeOut:      outcome,
+		MessageID:       msg.MessageID,
+		ReplyRequired:   msg.ReplyRequired(),
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -683,6 +756,7 @@ func (al *AgentLoop) extractMention(msg *bus.InboundMessage) {
 func (al *AgentLoop) processSystemMessage(
 	ctx context.Context,
 	msg bus.InboundMessage,
+	outcome *string,
 ) (string, error) {
 	if msg.Channel != "system" {
 		return "", fmt.Errorf(
@@ -752,6 +826,7 @@ func (al *AgentLoop) processSystemMessage(
 		UserMessage:     fmt.Sprintf("[System: %s] %s", msg.SenderID, result),
 		DefaultResponse: "Background task completed.",
 		SendResponse:    true,
+		OutcomeOut:      outcome,
 	})
 }
 
@@ -810,6 +885,29 @@ func extractPeer(msg bus.InboundMessage) *routing.RoutePeer {
 		}
 	}
 	return &routing.RoutePeer{Kind: msg.Peer.Kind, ID: peerID}
+}
+
+// withInboundSpawnDepth applies the sender's sub-agent depth
+// (bus.MetaSpawnDepth) to the turn's context. It only ever raises the depth:
+// a value at or below the context's own is ignored, and an invalid one is
+// ignored with a log line. A value above maxDepth (the configured
+// max_subagent_depth) is clamped to it.
+func withInboundSpawnDepth(ctx context.Context, msg bus.InboundMessage, maxDepth int) context.Context {
+	raw := inboundMetadata(msg, bus.MetaSpawnDepth)
+	if raw == "" {
+		return ctx
+	}
+	depth, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || depth < 0 {
+		logger.WarnCF("agent", "Ignoring invalid spawn depth on inbound message",
+			map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID, "spawn_depth": raw})
+		return ctx
+	}
+	depth = min(depth, maxDepth)
+	if depth <= toolsagents.SpawnDepth(ctx) {
+		return ctx
+	}
+	return toolsagents.WithSpawnDepth(ctx, depth)
 }
 
 func inboundMetadata(msg bus.InboundMessage, key string) string {

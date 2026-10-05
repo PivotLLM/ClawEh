@@ -25,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // invalidTokenMessage is what we return when the supplied session_token is
@@ -489,12 +490,14 @@ func dispatchToolCall(
 	// message into the agent's session — so the primary LLM is notified without
 	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
 	// handled below.)
+	// The re-entered turn runs at the dispatching call's spawn depth, never lower.
+	spawnDepth := toolsagents.SpawnDepth(ctx)
 	asyncCb := func(cbCtx context.Context, r *tools.ToolResult) {
 		// The originating request may be long gone when a background tool
 		// finishes; deliver on its values but not its cancellation.
 		deliverCtx := context.WithoutCancel(cbCtx)
 		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
-		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r, spawnDepth)
 	}
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
@@ -521,7 +524,7 @@ func dispatchToolCall(
 // (agent/loop.go). No-op when there is nothing to inject; when there is no
 // recorded channel source to route to, it logs the drop rather than failing
 // silently.
-func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult, spawnDepth int) {
 	if r == nil || msgBus == nil {
 		return
 	}
@@ -559,7 +562,7 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: targetSession,
-		Metadata:   map[string]string{"preresolved_agent_id": targetAgent},
+		Metadata:   bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})

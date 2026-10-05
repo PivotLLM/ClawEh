@@ -735,3 +735,32 @@ func copyStateFile(t *testing.T, from, to string) {
 		t.Fatal(err)
 	}
 }
+
+// TestOwner_SurvivesReloadAndRestart: the agent recorded with OwnedBy stays on
+// a temporary agent through a reload and a restart; an agent created without
+// it has none.
+func TestOwner_SurvivesReloadAndRestart(t *testing.T) {
+	cfg := testConfig(t)
+	h := newFakeHost()
+	r := mustNew(t, cfg, h)
+	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), OwnedBy("Bob"))
+	fresh := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}}, OwnedBy("bob"))
+	unowned := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+
+	check := func(t *testing.T, r *Registry[*fakeInst], when string) {
+		t.Helper()
+		for id, want := range map[string]string{clone: "bob", fresh: "bob", unowned: ""} {
+			if got := mustGet(t, r, id).spec.Owner; got != want {
+				t.Fatalf("%s: owner of %s = %q, want %q", when, id, got, want)
+			}
+		}
+	}
+	check(t, r, "created")
+
+	if err := r.Reload(context.Background(), cfg, h.build, func() bool { return true }); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	check(t, r, "after reload")
+
+	check(t, mustNew(t, cfg, newFakeHost()), "after restart")
+}
