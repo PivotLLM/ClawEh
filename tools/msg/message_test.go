@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -246,5 +247,22 @@ func TestMessageTool_Parameters(t *testing.T) {
 	}
 	if _, present := props["chat_id"]; present {
 		t.Error("'chat_id' must not be a model-facing parameter (target is locked to the session)")
+	}
+}
+
+// TestMessageTool_RefusedInAskedTurn: in an asked turn msg_send has no chat to
+// send to and says so instead of reporting success.
+func TestMessageTool_RefusedInAskedTurn(t *testing.T) {
+	sent := false
+	tool := NewMessageTool()
+	tool.SetSendCallback(func(context.Context, string, string, string) error { sent = true; return nil })
+	ctx := tools.WithToolContext(context.Background(), constants.AgentMessageChannel, "ask-1")
+	res := tool.Execute(ctx, map[string]any{"content": "hi"})
+	if !res.IsError || res.ForLLM != "msg_send needs a target in an asked turn" || sent {
+		t.Fatalf("result = %+v sent=%v, want the refusal and nothing sent", res, sent)
+	}
+	ctx = tools.WithToolContext(context.Background(), "telegram", "chat-1")
+	if res := tool.Execute(ctx, map[string]any{"content": "hi"}); res.IsError || !sent {
+		t.Fatalf("result on a chat = %+v sent=%v, want it sent", res, sent)
 	}
 }

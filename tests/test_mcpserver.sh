@@ -59,7 +59,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # Note: search_tools and get_tool_details are omitted here because they only register
 # when tools.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model required). agent_spawn/agent_status/agent_list (subagent capability) are
+# model required). agent_spawn/agent_status/agent_list/agent_message (subagent capability) are
 # also exposed but only probed when actually present in the catalogue, so this
 # script stays portable.
 EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
@@ -295,6 +295,30 @@ run_test_err_auth() {
         PASS_COUNT=$((PASS_COUNT + 1))
     else
         echo "    ${RED}FAIL${NC}: expected an error but tool succeeded"
+        echo "    Output: $result"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+}
+
+# run_test_err_msg_auth <name> <tool> <params> <expected>
+# Expects a tool error WITH session_token whose text contains <expected>.
+run_test_err_msg_auth() {
+    local test_name="$1"
+    local tool="$2"
+    local params="$3"
+    local expected="$4"
+
+    echo "  ${test_name}"
+    local result
+    result=$(probe_call_auth "$tool" "$params")
+
+    if echo "$result" | grep -qiE "Tool call failed|Failed to call tool|isError|\"error\"" && echo "$result" | grep -qF "$expected"; then
+        echo "    ${GREEN}PASS${NC}: refused with \"$expected\""
+        TIER2_PASS=$((TIER2_PASS + 1))
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: expected an error containing \"$expected\""
         echo "    Output: $result"
         TIER2_FAIL=$((TIER2_FAIL + 1))
         FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -641,6 +665,16 @@ else
             echo "  4b.* $opt_tool not registered on this host (skipped)"
         fi
     done
+
+    # agent_message needs a target in the caller's subagents.allow_agents,
+    # which the test config does not grant: the whisper must be refused with
+    # a tool error (the gating holds on the running binary).
+    if echo "$LIST_OUT" | grep -qw "agent_message"; then
+        run_test_err_msg_auth "4b.8 agent_message — refused without allow_agents" \
+            "agent_message" '{"agent":"alice","message":"probe","wait_seconds":0}' "You may not message alice"
+    else
+        echo "  4b.8 agent_message not registered on this host (skipped)"
+    fi
 
     #---------------------------------------------------------------------------
     # Section 4c: Cognitive-memory tools (cogmem_*). Session-scoped, off by

@@ -301,8 +301,18 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		ss.turnCancel = cancelTurn
 		ss.mu.Unlock()
 
-		if al.acquireTurnSlot(turnCtx) {
+		// An asked turn takes no slot: its asker holds one while it waits, so
+		// with every slot held by askers it could never run. Asks are bounded
+		// by max_subagent_depth instead.
+		if batch.Channel == constants.AgentMessageChannel {
 			al.runTurn(ctx, turnCtx, batch)
+		} else if al.acquireTurnSlot(turnCtx) {
+			// The slot is lent out while the turn waits in an Ask.
+			slotCtx := turnCtx
+			if al.turnSem != nil {
+				slotCtx = withHeldSlot(turnCtx, &heldSlot{al: al})
+			}
+			al.runTurn(ctx, slotCtx, batch)
 			al.releaseTurnSlot()
 		} else if errors.Is(context.Cause(turnCtx), errCancelledByUser) {
 			// Cancelled while waiting for a turn slot: it never ran.
@@ -321,6 +331,13 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 // the reply is published under ctx, the loop's run context, so a cancelled turn
 // can still say so.
 func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMessage) {
+	// An ask nobody waits for any more (timed out, or its asker stopped) is
+	// not answered: no model turn runs for it.
+	if msg.Channel == constants.AgentMessageChannel && !al.asks.isWaiting(msg.ChatID) {
+		logger.InfoCF("agent", "Ask skipped: the asker stopped waiting",
+			map[string]any{"ask_id": msg.ChatID, "agent_id": inboundMetadata(msg, metadataKeyPreresolvedAgentID)})
+		return
+	}
 	var roundSent atomic.Bool
 	// Overall turn budget: a hard backstop so a hung provider or tool can never
 	// leave the user waiting forever. When it elapses the context is cancelled,
@@ -374,6 +391,12 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		outcome = bus.OutcomeOK
 	}
 
+	// An ask's reply goes back to the asker, never to a channel.
+	if msg.Channel == constants.AgentMessageChannel {
+		al.deliverAskReply(msg, response, outcome)
+		return
+	}
+
 	// A required reply is always sent, even after msg_send replied in the turn.
 	if replyRequired || (response != "" && !roundSent.Load()) {
 		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
@@ -410,6 +433,10 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 func (al *AgentLoop) publishCancelledReplies(ctx context.Context, msgs []bus.InboundMessage) {
 	for _, m := range msgs {
 		if !m.ReplyRequired() {
+			continue
+		}
+		if m.Channel == constants.AgentMessageChannel {
+			al.deliverAskReply(m, "Cancelled by /cancel before it started.", bus.OutcomeCancelled)
 			continue
 		}
 		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
@@ -576,6 +603,8 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 		maxDepth = cfg.Agents.Defaults.GetMaxSubagentDepth()
 	}
 	ctx = withInboundSpawnDepth(ctx, msg, maxDepth)
+	ctx = withInboundAskChain(ctx, msg)
+	ctx = withInboundOrigin(ctx, msg)
 
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
@@ -804,8 +833,17 @@ func (al *AgentLoop) processSystemMessage(
 		content = content[idx+8:] // Extract just the result part
 	}
 
+	// A background result of an asked turn: the asker has its reply already,
+	// so the result goes to the agent's own main conversation only. The turn
+	// runs on the ask channel (no chat id): nothing is sent to any chat, no
+	// chat becomes the session's source, and no recovery record is kept.
+	askOrigin := originChannel == constants.AgentMessageChannel
+	if askOrigin {
+		originChatID = ""
+	}
+
 	// Skip internal channels - only log, don't send to user
-	if constants.IsInternalChannel(originChannel) {
+	if !askOrigin && constants.IsInternalChannel(originChannel) {
 		logger.InfoCF("agent", "Subagent completed (internal channel)",
 			map[string]any{
 				"sender_id":   msg.SenderID,
@@ -835,15 +873,22 @@ func (al *AgentLoop) processSystemMessage(
 		})
 	}
 
-	return al.runMeteredTurn(ctx, agent, processOptions{
+	response, err := al.runMeteredTurn(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
 		Channel:         originChannel,
 		ChatID:          originChatID,
 		UserMessage:     fmt.Sprintf("[System: %s] %s", msg.SenderID, result),
 		DefaultResponse: "Background task completed.",
-		SendResponse:    true,
+		SendResponse:    !askOrigin,
 		OutcomeOut:      outcome,
 	})
+	if askOrigin && err == nil {
+		// Kept in the conversation; not sent anywhere.
+		logger.InfoCF("agent", "Background result of an asked turn kept in the main conversation",
+			map[string]any{"agent_id": agent.ID, "sender_id": msg.SenderID, "reply_len": len(response)})
+		return "", nil
+	}
+	return response, err
 }
 
 // runMeteredTurn runs the turn with usage accounting and folds its cost into

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -323,8 +324,42 @@ func TestShellTool_RemoteChannelBlockedByDefault(t *testing.T) {
 	if !result.IsError {
 		t.Fatal("expected remote-channel exec to be blocked")
 	}
-	if !strings.Contains(result.ForLLM, "restricted to internal channels") {
-		t.Errorf("expected 'restricted to internal channels' message, got: %s", result.ForLLM)
+	if result.ForLLM != RemoteRefusal {
+		t.Errorf("expected %q, got: %s", RemoteRefusal, result.ForLLM)
+	}
+}
+
+// TestShellTool_RemoteOriginBlocked: work that began with a remote chat is
+// refused on an internal channel too (an ask, a sub-agent clone), unless
+// allow_remote is on; the same channels with a local origin keep running.
+func TestShellTool_RemoteOriginBlocked(t *testing.T) {
+	for _, channel := range []string{constants.AgentMessageChannel, "subagent", "system"} {
+		for _, tc := range []struct {
+			remote, allowRemote, wantBlocked bool
+		}{
+			{remote: false, allowRemote: false, wantBlocked: false},
+			{remote: true, allowRemote: false, wantBlocked: true},
+			{remote: true, allowRemote: true, wantBlocked: false},
+		} {
+			cfg := &config.Config{}
+			cfg.Tools.Exec.EnableDenyPatterns = true
+			cfg.Tools.Exec.AllowRemote = tc.allowRemote
+
+			tool, err := NewExecToolWithConfig("", false, cfg)
+			if err != nil {
+				t.Fatalf("NewExecToolWithConfig() error: %v", err)
+			}
+			ctx := tools.WithToolContext(context.Background(), channel, "x")
+			if tc.remote {
+				ctx = tools.WithRemoteOrigin(ctx)
+			}
+			result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
+			blocked := result.IsError && result.ForLLM == RemoteRefusal
+			if blocked != tc.wantBlocked {
+				t.Fatalf("%s remote=%v allow_remote=%v: blocked=%v, want %v (%s)",
+					channel, tc.remote, tc.allowRemote, blocked, tc.wantBlocked, result.ForLLM)
+			}
+		}
 	}
 }
 

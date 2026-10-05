@@ -16,8 +16,8 @@ import (
 
 // sensitiveTools are the internal tools that reach beyond the agent's own
 // workspace read: run programs, change files, send messages, install code,
-// or start other agents.
-var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn"}
+// or start other agents (or give them turns).
+var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn", "agent_message"}
 
 // folderRow is one line of the Folder access table before sorting.
 type folderRow struct {

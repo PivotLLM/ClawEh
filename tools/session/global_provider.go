@@ -15,12 +15,14 @@ package session
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
 
 	sessiontools "github.com/PivotLLM/ctxengine/tools"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -50,7 +52,7 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 
 	host := sessiontools.Host{
 		Compact: cd.CompactFn,
-		Clear:   cd.ClearFn,
+		Clear:   refuseClearInAsk(cd.ClearFn),
 		Log:     logToClaw,
 	}
 	if dir := cd.EffectiveStateDir(); dir != "" {
@@ -69,6 +71,25 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		}
 	}
 	return sessiontools.Definitions(host)
+}
+
+// errClearInAsk refuses session_clear in an asked turn: the conversation is
+// the agent's one conversation, and clearing it would hand the asker's message
+// to a fresh turn the asker is not waiting for.
+var errClearInAsk = errors.New("session_clear is not available while answering another agent's message")
+
+// refuseClearInAsk wraps clear so it is refused in an asked turn (its tool
+// channel is the ask), in-process and over MCP alike. nil stays nil.
+func refuseClearInAsk(clearFn func(ctx context.Context, sessionKey, message string) error) func(ctx context.Context, sessionKey, message string) error {
+	if clearFn == nil {
+		return nil
+	}
+	return func(ctx context.Context, sessionKey, message string) error {
+		if tools.ToolChannel(ctx) == constants.AgentMessageChannel {
+			return errClearInAsk
+		}
+		return clearFn(ctx, sessionKey, message)
+	}
 }
 
 // logToClaw routes sessiontools diagnostics into ClawEh's logger.

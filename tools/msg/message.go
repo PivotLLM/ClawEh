@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -70,6 +71,11 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 
 	if channel == "" || chatID == "" {
 		return &tools.ToolResult{ForLLM: "No target channel/chat specified", IsError: true}
+	}
+	// An asked turn's own "chat" is the ask, whose only output is the final
+	// reply: a message sent there would reach no one.
+	if channel == constants.AgentMessageChannel {
+		return &tools.ToolResult{ForLLM: "msg_send needs a target in an asked turn", IsError: true}
 	}
 
 	if t.sendCallback == nil {

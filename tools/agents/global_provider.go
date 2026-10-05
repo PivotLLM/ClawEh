@@ -11,7 +11,8 @@ import (
 
 // GlobalProvider exposes the subagent task tools through the transport-neutral
 // global layer under the "agent" namespace: bare "spawn" → "agent_spawn", bare
-// "status" → "agent_status", bare "list" → "agent_list". The spawn handler
+// "status" → "agent_status", bare "list" → "agent_list", and bare "message" →
+// "agent_message" (asks and whispers to other agents, see message.go). The spawn handler
 // launches workers through the robust global.Spawner injected via Deps.Spawn,
 // supporting two modes: callback (background, file-backed, tracked) and wait (run
 // synchronously and return). status/list query tracked callback tasks through
@@ -194,6 +195,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				return &global.Result{ForLLM: string(b), Silent: true}, nil
 			},
 		},
+		messageTool(hostDeps(deps)),
 	}
 }
 

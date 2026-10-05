@@ -1011,6 +1011,32 @@ func (c *Config) AgentByID(agentID string) *AgentConfig {
 	return nil
 }
 
+// FindAgent returns the configured agent whose id, or else whose name, equals
+// ref (case-insensitively), or nil.
+func (c *Config) FindAgent(ref string) *AgentConfig {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	if a := c.AgentByID(ref); a != nil {
+		return a
+	}
+	for i := range c.Agents.List {
+		if strings.EqualFold(strings.TrimSpace(c.Agents.List[i].Name), ref) {
+			return &c.Agents.List[i]
+		}
+	}
+	return nil
+}
+
+// DisplayName is the agent's name, or its id when it has none.
+func (a *AgentConfig) DisplayName() string {
+	if strings.TrimSpace(a.Name) != "" {
+		return a.Name
+	}
+	return a.ID
+}
+
 // AgentHasFusion reports whether the agent has the Fusion tool suite enabled.
 func (c *Config) AgentHasFusion(agentID string) bool {
 	id := strings.TrimSpace(agentID)

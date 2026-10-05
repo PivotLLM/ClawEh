@@ -7,7 +7,7 @@ agent alice
   deny_tools: shell_exec, wxca_city_hourly
 agent bob
   suites: cogmem=on maestro=off fusion=on
-  native tools: agent_list, agent_spawn, agent_status, common_delete, common_get, common_list, common_put, cron_schedule, file_append, file_copy, file_count, file_delete, file_delete_bytes, file_delete_lines, file_edit, file_edit_bytes, file_edit_lines, file_insert_bytes, file_insert_lines, file_list, file_move, file_read_bytes, file_read_lines, file_search_bytes, file_search_lines, file_view_image, file_write, msg_send, msg_send_file, session_clear, session_compact, session_info, session_messages, session_search, session_summary_get, session_summary_list, shell_exec, skill_find, skill_install, time_now, web_fetch, web_search
+  native tools: agent_list, agent_message, agent_spawn, agent_status, common_delete, common_get, common_list, common_put, cron_schedule, file_append, file_copy, file_count, file_delete, file_delete_bytes, file_delete_lines, file_edit, file_edit_bytes, file_edit_lines, file_insert_bytes, file_insert_lines, file_list, file_move, file_read_bytes, file_read_lines, file_search_bytes, file_search_lines, file_view_image, file_write, msg_send, msg_send_file, session_clear, session_compact, session_info, session_messages, session_search, session_summary_get, session_summary_list, shell_exec, skill_find, skill_install, time_now, web_fetch, web_search
   fusion tools: (none)
   mcp servers: github=no, simpledoc=yes, wxca=no
   mcp_tools: simpledoc

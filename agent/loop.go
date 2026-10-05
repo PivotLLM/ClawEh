@@ -139,6 +139,15 @@ type AgentLoop struct {
 	// runMu.
 	runMu   sync.Mutex
 	stopRun context.CancelCauseFunc
+	// runCtx is the context Run serves under (nil until Run), for background
+	// work that must stop with the service (/ask). Guarded by runMu.
+	runCtx context.Context
+
+	// asks are the asks (Ask) waiting for their reply; whispers the messages
+	// held for each agent's next message (Whisper).
+	asks     askRegistry
+	whispers whisperStore
+	waits    waitGraph
 }
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
@@ -171,6 +180,14 @@ type SessionTokenIssuer interface {
 	// so MCP tool calls made with the session's token (CLI providers) run at
 	// it. No-op when the sessionKey is unknown.
 	SetDepth(sessionKey string, depth int)
+	// SetTurnScope records the ask chain and the remote-origin mark of the
+	// turn starting on sessionKey (see tools.AskChain, tools.RemoteOrigin), so
+	// MCP tool calls made with the session's token carry them. No-op when the
+	// sessionKey is unknown.
+	SetTurnScope(sessionKey string, askChain []string, remote bool)
+	// Source returns the source SetSource last recorded for sessionKey (empty
+	// when none or unknown).
+	Source(sessionKey string) (channel, chatID string)
 }
 
 const (
@@ -304,6 +321,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	defer stopRun(nil)
 	al.runMu.Lock()
 	al.stopRun = stopRun
+	al.runCtx = ctx
 	al.runMu.Unlock()
 
 	if err := al.ensureMCPInitialized(ctx); err != nil {
@@ -347,6 +365,13 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// runContext is the context Run serves under, or nil before Run.
+func (al *AgentLoop) runContext() context.Context {
+	al.runMu.Lock()
+	defer al.runMu.Unlock()
+	return al.runCtx
 }
 
 // Stop ends Run and cancels the turns in flight. A cancelled turn is left
@@ -526,6 +551,13 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 			return fmt.Errorf("registry creation failed: %w", err)
 		}
 	}
+
+	// Whispers held for an agent the new configuration removed are dropped;
+	// rebuilt agents keep theirs.
+	al.whispers.prune(func(id string) bool {
+		_, ok := registry.Get(id)
+		return ok
+	})
 
 	// Rebuild callback managers against the new registry/config. Without this,
 	// the stale managers would keep validating tokens against the OLD config

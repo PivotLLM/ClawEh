@@ -125,6 +125,12 @@ func (al *AgentLoop) buildCommandsRuntime(
 			return nil
 		},
 		Uptime: func() time.Duration { return time.Since(al.startedAt) },
+		AskAgent: func(ctx context.Context, target, text string) string {
+			return al.commandAsk(ctx, msg, target, text)
+		},
+		WhisperAgent: func(ctx context.Context, target, text string) string {
+			return al.commandWhisper(ctx, msg, target, text)
+		},
 		GetSessionStats: func() (int, int, int) {
 			if agent == nil || agent.Sessions == nil || opts == nil {
 				return 0, 0, 0

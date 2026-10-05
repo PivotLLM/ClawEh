@@ -62,6 +62,8 @@ Maestro, but only to a bounded depth so a runaway `spawn → spawn → …` (or
 - A spawn or a Maestro dispatch is **refused once the spawning agent is already at
   the bound** (`depth >= max`). Both `agent_spawn` and Maestro task dispatch share
   the same depth counter, so mixing them cannot bypass it.
+- An ask to another agent (`agent_message` with a wait, `/ask`) counts as one
+  level too; see [agent-messaging.md](agent-messaging.md).
 - The bound is `agents.defaults.max_subagent_depth` (default **3**, minimum 1),
   configurable in the Web UI. It is enforced uniformly for API-model agents and
   for CLI-model agents that reach tools over MCP.

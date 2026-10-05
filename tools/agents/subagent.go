@@ -171,12 +171,14 @@ func candidateNames(candidates []providers.FallbackCandidate) string {
 // status record + .run marker to the launcher's workspace, registers the task as
 // live, and runs the worker on a detached context (so it outlives the launching
 // turn). When the worker finishes, a compact pointer Result is delivered to cb.
-// Returns the task uuid.
+// parentDepth and remote are the spawning turn's sub-agent depth and
+// remote-origin mark, restored on the worker's context. Returns the task uuid.
 func (sm *SubagentManager) SpawnCallback(
 	task, name, agentID, originChannel, originChatID, model string,
 	media []string,
 	cb tools.AsyncCallback,
 	parentDepth int,
+	remote bool,
 ) (string, error) {
 	if strings.TrimSpace(task) == "" {
 		return "", errors.New("task is required")
@@ -199,6 +201,7 @@ func (sm *SubagentManager) SpawnCallback(
 		RetryAfter:   now + retryDelaySecs(),
 		ResultsPath:  relResultsPath(id),
 		SpawnDepth:   parentDepth,
+		RemoteOrigin: remote,
 	}
 	dir := sm.tasksDir()
 	if err := writeStatus(dir, rec); err != nil {
@@ -250,6 +253,9 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	// Restore the spawning agent's depth onto the detached context so the
 	// worker (and any layer it spawns) stays within MaxSpawnDepth.
 	runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
+	if rec.RemoteOrigin {
+		runCtx = tools.WithRemoteOrigin(runCtx)
+	}
 	fr, release, err := sm.runFull(runCtx, target, taskText, rec.Model, rec.Media)
 	defer release()
 	if err != nil {

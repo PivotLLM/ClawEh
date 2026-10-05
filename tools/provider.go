@@ -81,6 +81,9 @@ type ToolDeps struct {
 	// AgentServices).
 	Agents AgentServices
 
+	// Messenger sends this agent's agent_message asks and whispers.
+	Messenger Messenger
+
 	// Spawn holds the robust sub-agent launcher (a global.Spawner). The AgentLoop
 	// builds it per agent and sets it here; toGlobalDeps forwards it to
 	// global.Deps.Spawn so any tool package can launch workers by DI. Typed as any

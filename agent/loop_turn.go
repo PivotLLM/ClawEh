@@ -130,6 +130,15 @@ func (al *AgentLoop) runAgentLoop(
 		sti.SetDepth(opts.SessionKey, toolsagents.SpawnDepth(ctx))
 	}
 
+	// The agents waiting on this turn, the running agent included: none of
+	// them may be asked from it (see Ask). Recorded on the session token with
+	// the turn's remote-origin mark, so a CLI provider's MCP tool calls carry
+	// both too.
+	ctx = tools.WithAskChainAgent(ctx, agent.ID)
+	if sti != nil {
+		sti.SetTurnScope(opts.SessionKey, tools.AskChain(ctx), tools.RemoteOrigin(ctx))
+	}
+
 	// Record the inbound source on the session token record so MCP-routed tool
 	// calls (which bypass the agent loop) can publish their ForUser payloads
 	// back to the originating user. Done after getContextManager so the token
@@ -140,6 +149,15 @@ func (al *AgentLoop) runAgentLoop(
 	// channel/chatID guard rather than dispatching to a nonexistent handler.
 	if sti != nil && !constants.IsInternalChannel(opts.Channel) {
 		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+	}
+	// An asked turn's MCP output (ForUser, breadcrumbs, msg_send with no
+	// target, background results) belongs to the ask, never to the chat the
+	// session last heard from: the source points at the ask for the turn and
+	// is put back after it.
+	if sti != nil && opts.Channel == constants.AgentMessageChannel {
+		prevChannel, prevChatID := sti.Source(opts.SessionKey)
+		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+		defer sti.SetSource(opts.SessionKey, prevChannel, prevChatID)
 	}
 
 	// Session-reset handshake: session_clear publishes an inbound tagged
@@ -167,6 +185,12 @@ func (al *AgentLoop) runAgentLoop(
 			return "", fmt.Errorf("single-shot reset: %w", err)
 		}
 		opts.IsRetry = false
+	}
+
+	// Whispers held for the agent open its next message, once. A retried
+	// message is already in history, so they wait for the next one.
+	if !opts.IsRetry {
+		opts.UserMessage = al.prependWhispers(agent, opts.UserMessage)
 	}
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
@@ -1298,10 +1322,12 @@ func (al *AgentLoop) runLLMIteration(
 				// its source's main conversation, as a sub-agent's always has.
 				resultAgentID, resultSessionKey := asyncResultTarget(agent)
 				turnDepth := toolsagents.SpawnDepth(ctx)
+				turnRemote := tools.RemoteOrigin(ctx)
 				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
-					if !result.Silent && result.ForUser != "" {
+					// An asked turn has no chat: its user-facing output is dropped.
+					if !result.Silent && result.ForUser != "" && opts.Channel != constants.AgentMessageChannel {
 						outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 						defer outCancel()
 						logger.InfoCF("agent", "Async tool completed, delivering to user",
@@ -1347,7 +1373,8 @@ func (al *AgentLoop) runLLMIteration(
 						Content:    content,
 						SessionKey: resultSessionKey,
 						// The re-entered turn runs at this turn's depth, never lower.
-						Metadata: bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth),
+						// and as remote as this turn.
+						Metadata: bus.SetRemoteOrigin(bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth), turnRemote),
 					}); err != nil {
 						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
 							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})

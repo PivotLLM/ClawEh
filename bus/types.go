@@ -65,7 +65,25 @@ const (
 	// runs at. It only ever raises the depth: a sender sets it to the
 	// configured maximum to stop the receiving agent from spawning.
 	MetaSpawnDepth = "spawn_depth"
+	// MetaRemoteOrigin ("1") marks a message that continues work started by a
+	// message from a remote chat (an ask, a background result): the turn is
+	// treated as remote even on an internal channel (see
+	// tools.WithRemoteOrigin).
+	MetaRemoteOrigin = "remote_origin"
 )
+
+// SetRemoteOrigin records MetaRemoteOrigin in meta (allocated when nil) when
+// remote is true, and returns it.
+func SetRemoteOrigin(meta map[string]string, remote bool) map[string]string {
+	if !remote {
+		return meta
+	}
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	meta[MetaRemoteOrigin] = "1"
+	return meta
+}
 
 // SetSpawnDepth records depth under MetaSpawnDepth in meta (allocated when
 // nil) and returns it. A depth of zero or less adds nothing.

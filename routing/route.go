@@ -254,3 +254,59 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 	}
 	return DefaultAgentID
 }
+
+// Reaches reports whether a message with input could be handled by agentID:
+// it routes there (by a binding or as the default agent), or a binding that
+// matches it (channel and account, plus its peer, guild or team when it names
+// one) names agentID as its agent or among its agent_mentions ("*" names
+// every agent). It is the "may this sender talk to that agent" test behind
+// /ask and /whisper. input.MentionedAgent is ignored.
+func (r *RouteResolver) Reaches(input RouteInput, agentID string) bool {
+	target := NormalizeAgentID(agentID)
+	input.MentionedAgent = ""
+	if r.ResolveRoute(input).AgentID == target {
+		return true
+	}
+	channel := strings.ToLower(strings.TrimSpace(input.Channel))
+	for _, b := range r.filterBindings(channel, NormalizeAccountID(input.AccountID)) {
+		if !bindingMatches(b, input) {
+			continue
+		}
+		if r.pickAgentID(b.AgentID) == target {
+			return true
+		}
+		for _, m := range b.AgentMentions {
+			if m == "*" || NormalizeAgentID(m) == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bindingMatches reports whether binding b, already matched on channel and
+// account, also matches input's peer (or parent peer), guild or team — the
+// criterion ResolveRoute would match it on. A binding with none of them
+// matches every message on its channel and account.
+func bindingMatches(b config.AgentBinding, input RouteInput) bool {
+	switch {
+	case b.Match.Peer != nil:
+		kind := strings.ToLower(strings.TrimSpace(b.Match.Peer.Kind))
+		id := strings.TrimSpace(b.Match.Peer.ID)
+		if kind == "" || id == "" {
+			return false
+		}
+		for _, p := range []*RoutePeer{input.Peer, input.ParentPeer} {
+			if p != nil && strings.ToLower(p.Kind) == kind && p.ID == id {
+				return true
+			}
+		}
+		return false
+	case strings.TrimSpace(b.Match.GuildID) != "":
+		return strings.TrimSpace(b.Match.GuildID) == strings.TrimSpace(input.GuildID)
+	case strings.TrimSpace(b.Match.TeamID) != "":
+		return strings.TrimSpace(b.Match.TeamID) == strings.TrimSpace(input.TeamID)
+	default:
+		return true
+	}
+}

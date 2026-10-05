@@ -21,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/agenttoken"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -468,6 +469,11 @@ func dispatchToolCall(
 	// dispatch) arrive here, not through the loop, and would otherwise start at
 	// depth 0 whatever the turn's depth.
 	ctx = toolsagents.WithSpawnDepth(ctx, rec.depth)
+	// Likewise the turn's ask chain and remote-origin mark (SetTurnScope).
+	ctx = tools.WithAskChain(ctx, rec.askChain)
+	if rec.remote {
+		ctx = tools.WithRemoteOrigin(ctx)
+	}
 
 	// Carry the session's source channel/chatID so tools that re-inject a turn
 	// (e.g. session_clear) can route the follow-up back to the originating user
@@ -568,7 +574,7 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: targetSession,
-		Metadata:   bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth),
+		Metadata:   bus.SetRemoteOrigin(bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth), rec.remote),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
@@ -588,7 +594,8 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 // user's channel/chatID over the outbound bus. No-op when the bus is absent or the
 // session has no recorded source (best-effort, like the ForUser side channel).
 func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName, line string) {
-	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" {
+	// An internal source (an asked turn's) has no chat to show it in.
+	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" || constants.IsInternalChannel(rec.channel) {
 		return
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -634,6 +641,18 @@ func publishMCPForUser(
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
 				"reason":      "no_active_channel",
+			})
+		return
+	}
+	if constants.IsInternalChannel(rec.channel) {
+		// An asked turn's source: its output goes to the asker, never a chat.
+		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"reason":      "internal_channel",
+				"channel":     rec.channel,
 			})
 		return
 	}

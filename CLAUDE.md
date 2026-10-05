@@ -183,6 +183,20 @@ production instance directly; test against a dev instance.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
 - **Multiple Telegram bots**: each `telegram_bots[].id` → channel `telegram-<id>`.
 - **Bus turn contract** (`bus/types.go`, `agent/loop_inbound.go` `runTurn`): the final reply answering an inbound message carries `OutboundMessage.Outcome` (`ok`/`error`/`cancelled`/`empty`; interim messages and SendResponse/async replies leave it empty). Inbound metadata `reply_required`=`1` forces exactly one final reply (even after `msg_send`, empty, failed or cancelled; nothing on shutdown), is never merged with other queued messages, and survives restart recovery (a give-up is an `error` reply); `spawn_depth`=N raises the turn's sub-agent depth (never lowers it, clamped to `max_subagent_depth`) and async results re-enter at the spawning turn's depth. A scheduled (cron) job runs at depth 0. Each turn records its depth on the session token (`SessionTokenStore.SetDepth`) and MCP tool calls with that token run at it, so CLI-provider agents are bounded too; service tokens run at 0. Tools manage temporary agents through `ToolDeps.Agents` (`tools.AgentServices`, `agent/agent_services.go`).
+- **Agent messages** (`agent/agent_message.go`, `docs/agent-messaging.md`): `AgentLoop`
+  is the `tools.Messenger` (`Ask`, `Whisper`) behind the `agent_message` tool
+  (`tools/agents/message.go`, gated by `subagents.allow_agents`), the `/ask` and `/whisper`
+  commands (sender must reach the target by routing: `routing.RouteResolver.Reaches`) and
+  the forum. An ask is an inbound message on the internal `constants.AgentMessageChannel`
+  (preresolved agent, `reply_required`, `spawn_depth`+1, the waiting agents in
+  `ask_chain`, `remote_origin`); `runTurn` hands its final reply to the waiting `Ask`,
+  never to the bus; asked turns take no `max_concurrent_turns` slot. Whispers are held
+  in memory and prepended in `runAgentLoop` to the agent's next message.
+- **Turn scope** (`tools/origin.go`): the ask chain and the remote-origin mark
+  (`tools.RemoteOrigin`: the work began with a message on a non-internal channel) ride the
+  context, bus metadata (`bus.MetaRemoteOrigin`), task records and the MCP session token
+  (`SetTurnScope`) like the sub-agent depth. `shell_exec` refuses remote-origin work
+  without `tools.exec.allow_remote`, whatever channel it runs on.
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.

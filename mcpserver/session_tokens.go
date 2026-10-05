@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
@@ -44,6 +45,11 @@ type sessionRecord struct {
 	// this token run at it, so a CLI provider's spawns stay within
 	// max_subagent_depth. Service tokens have no turn and stay at 0.
 	depth int
+	// askChain and remote are the ask chain and remote-origin mark of the
+	// session's current turn (SetTurnScope), applied to tool calls presented
+	// with this token like depth. Service tokens have neither.
+	askChain []string
+	remote   bool
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
@@ -141,6 +147,8 @@ func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		rec.channel = s.tokens[old].channel
 		rec.chatID = s.tokens[old].chatID
 		rec.depth = s.tokens[old].depth
+		rec.askChain = s.tokens[old].askChain
+		rec.remote = s.tokens[old].remote
 		delete(s.tokens, old)
 	}
 	s.tokens[tok] = rec
@@ -279,6 +287,44 @@ func (s *SessionTokenStore) SetDepth(sessionKey string, depth int) {
 	}
 	rec.depth = depth
 	s.tokens[tok] = rec
+}
+
+// SetTurnScope records the ask chain and remote-origin mark of the turn now
+// running on sessionKey on its conversation token, so MCP tool calls made with
+// it (a CLI provider's) carry them as in-process tool calls do: an agent
+// waiting in the exchange cannot be asked, and a turn that began with a remote
+// chat stays remote. Called by the agent loop at the start of every turn.
+// No-op if the session has no token.
+func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string, remote bool) {
+	if sessionKey == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.bySess[sessionKey]
+	if !ok {
+		return
+	}
+	rec, ok := s.tokens[tok]
+	if !ok {
+		return
+	}
+	rec.askChain = slices.Clone(askChain)
+	rec.remote = remote
+	s.tokens[tok] = rec
+}
+
+// Source returns the inbound source SetSource last recorded for sessionKey
+// (empty when none, or the session has no token).
+func (s *SessionTokenStore) Source(sessionKey string) (channel, chatID string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tok, ok := s.bySess[sessionKey]
+	if !ok {
+		return "", ""
+	}
+	rec := s.tokens[tok]
+	return rec.channel, rec.chatID
 }
 
 // Resolve looks up a presented token. Returns the record and true if found.

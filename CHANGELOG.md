@@ -14,6 +14,18 @@ observe does not need an entry.
 
 ### Security
 
+- **BREAKING: `shell_exec` follows where the work began, not only the channel
+  it runs on.** A sub-agent (`agent_spawn`, Maestro dispatch), an ask
+  (`agent_message`, `/ask`) or a background result started from a message on a
+  chat such as Telegram or Slack used to run on an internal channel and could
+  use `shell_exec` even with `tools.exec.allow_remote` off. It is now refused
+  there as it is in the chat itself. Work that began locally (the CLI) is
+  unchanged. To let such work run shell commands again, set
+  `tools.exec.allow_remote: true`, which allows it from chats too. The refusal
+  now reads "shell_exec is off for work started from a chat; set
+  tools.exec.allow_remote to allow it.", and the Check Up page shows a "Shell
+  from chats" row while it applies.
+
 - **Idle connections to the device listener time out.** A plain HTTP
   keep-alive connection that sends nothing for 30 seconds is closed
   (`DeviceIdleTimeout`), and request headers are capped at 64 KiB
@@ -277,6 +289,40 @@ observe does not need an entry.
 
 ### Added
 
+- **Agents can message each other: the `agent_message` tool.**
+  `agent_message(agent, message, wait_seconds)` with `wait_seconds` above 0
+  asks: the other agent gets a normal turn with the message, its own tools
+  included, and the reply comes back as the tool result, or "Bob did not
+  reply within N seconds." after `wait_seconds` or that agent's model
+  `request_timeout`, whichever is shorter. With `wait_seconds` 0 it whispers:
+  the message is added, marked private, to the start of the other agent's next
+  message, and no turn starts. The tool is off by default
+  (`tools.tool_overrides.agent_message`, and like `agent_spawn` it needs
+  `tools.subagent.enabled`), and an agent can message only the agents in its
+  `subagents.allow_agents` (`"*"` for all), so no existing agent can message
+  anyone until both are set. Each ask counts as one level of
+  `agents.defaults.max_subagent_depth`, shared with `agent_spawn`, and an
+  agent cannot ask one that is already waiting on it. The asked agent's reply
+  never reaches a chat; in the asked turn `msg_send` and `session_clear` are
+  refused. An asker lends its `agents.defaults.max_concurrent_turns` slot while
+  it waits and an asked turn needs none, so asks cannot deadlock on slots; an
+  ask that would close a wait cycle is refused, and an ask nobody waits for
+  any more is not answered. Background work an asked turn starts reports to
+  that agent's own main conversation and is not sent to any chat. Whispers not yet delivered are lost on restart. See
+  `docs/agent-messaging.md`.
+- **`/ask` and `/whisper` commands.** From any chat, `/ask Bob <text>` asks
+  Bob and posts his reply to the chat as "Bob: <reply>" (waiting up to his
+  model's `request_timeout`); `/whisper Bob <text>` leaves him a private note
+  for his next message and answers "Whispered to Bob.". The sender must already
+  be allowed to talk to Bob from that chat: the chat routes to Bob, or a
+  binding matching the channel, account and chat names Bob as its agent or in
+  its `agent_mentions`. Otherwise the answer is "You don't have permission to
+  /ask Bob"; an unknown name gets "There is no agent named Bob.". Bob is told
+  the sender is a person and how they wrote ("Alice (a person, via /ask on
+  telegram)"), so a person cannot pass for an agent of the same name. Both
+  commands appear in Telegram's command menu.
+- **Check Up lists `agent_message` among each agent's sensitive tools**, beside
+  `agent_spawn`, since it gives other agents turns.
 - **Check Up rows for the two states that silently cost agents their tools.**
   An agent with Fusion on and no service listed in `mcp_tools` is marked for
   action ("Fusion on with no service"); each CLI provider with "Bypass CLI

@@ -49,7 +49,7 @@ func TestSpawnCallback_ReleasesAfterDelivery(t *testing.T) {
 				order = append(order, "delivered")
 				mu.Unlock()
 			}
-			if _, err := mgr.SpawnCallback("t", "n", "", "cli", "direct", "", nil, cb, 0); err != nil {
+			if _, err := mgr.SpawnCallback("t", "n", "", "cli", "direct", "", nil, cb, 0, false); err != nil {
 				t.Fatalf("SpawnCallback: %v", err)
 			}
 			select {

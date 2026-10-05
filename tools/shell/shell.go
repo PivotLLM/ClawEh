@@ -188,6 +188,11 @@ func (t *ExecTool) Parameters() map[string]any {
 	}
 }
 
+// RemoteRefusal is shell_exec's answer to work started from a chat (the chat
+// itself, or a sub-agent, ask or background result it started) while
+// tools.exec.allow_remote is off.
+const RemoteRefusal = "shell_exec is off for work started from a chat; set tools.exec.allow_remote to allow it."
+
 func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	command, ok := args["command"].(string)
 	if !ok {
@@ -204,8 +209,13 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 			}
 		}
 		channel = strings.TrimSpace(channel)
-		if channel == "" || !constants.IsInternalChannel(channel) {
+		// Work that began with a remote chat stays remote on an internal
+		// channel too: an ask, a sub-agent, a background result.
+		if channel == "" {
 			return tools.ErrorResult("exec is restricted to internal channels")
+		}
+		if !constants.IsInternalChannel(channel) || tools.RemoteOrigin(ctx) {
+			return tools.ErrorResult(RemoteRefusal)
 		}
 	}
 

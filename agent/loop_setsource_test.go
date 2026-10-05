@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -51,6 +52,19 @@ func (r *recordingSTI) SetDepth(sessionKey string, depth int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.depths = append(r.depths, depthCall{sessionKey: sessionKey, depth: depth})
+}
+
+func (r *recordingSTI) SetTurnScope(string, []string, bool) {}
+
+func (r *recordingSTI) Source(sessionKey string) (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range slices.Backward(r.sources) {
+		if c.sessionKey == sessionKey {
+			return c.channel, c.chatID
+		}
+	}
+	return "", ""
 }
 
 func (r *recordingSTI) depthCalls() []depthCall {
