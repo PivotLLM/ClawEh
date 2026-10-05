@@ -895,6 +895,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A sub-agent's memory tools no longer change the parent agent's long-term
+  memory.** `cogmem_memory_create`, `cogmem_memory_forget` and the other
+  `cogmem_*` tools now act only on the sub-agent's throwaway copy, which is
+  deleted when the run ends, and `cogmem_consolidate` is unavailable in a
+  sub-agent.
 - **A config reload no longer cuts off running turns and Maestro workers from
   their tools.** Every reload rebuilt the MCP host with an empty session-token
   store, so each worker or QA sub-agent launched before it, and any turn in

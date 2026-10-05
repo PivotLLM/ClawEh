@@ -10,8 +10,9 @@
 // "cogmem_domain_get" and so on.
 //
 // Every tool operates on the agent's one memory, <workspace>/cogmem, shared by
-// all of its sessions. Cognitive memory is ON by default: every agent gets
-// these tools unless its `cogmem` flag is false.
+// all of its sessions, except in a sub-agent session, where it operates on the
+// sub-agent's throwaway snapshot (cogmemhost.SubagentDir). Cognitive memory is
+// ON by default: every agent gets these tools unless its `cogmem` flag is false.
 package cogmem
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -68,12 +70,13 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 		cfg = v
 	}
 
-	host := cogmemtools.Host{
-		Dir:       cogmemhost.Dir(workspace),
-		Workspace: workspace,
-		CheckAttachment: func(ref string) (int64, error) {
-			return cogmemhost.Check(cfg, workspace, ref)
-		},
+	checkAttachment := func(ref string) (int64, error) {
+		return cogmemhost.Check(cfg, workspace, ref)
+	}
+	primary := cogmemtools.Definitions(cogmemtools.Host{
+		Dir:             cogmemhost.Dir(workspace),
+		Workspace:       workspace,
+		CheckAttachment: checkAttachment,
 		// Read the trigger at call time, not registration time: the gateway
 		// installs it after the tool providers are registered.
 		Consolidate: func(agentID, sessionKey string) {
@@ -81,11 +84,36 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				consolidateTrigger(agentID, sessionKey)
 			}
 		},
+	})
+	// subagentDefinitions binds the tools to a sub-agent's snapshot directory.
+	// Consolidate is left unset: the snapshot is ephemeral (nothing is observed
+	// into its inbox, see agent.wireCognitiveMemory) and deleted after the run,
+	// and the gateway's trigger would consolidate the primary's memory instead.
+	subagentDefinitions := func(sessionKey string) []global.ToolDefinition {
+		return cogmemtools.Definitions(cogmemtools.Host{
+			Dir:             cogmemhost.SubagentDir(workspace, sessionKey),
+			Workspace:       workspace,
+			CheckAttachment: checkAttachment,
+		})
 	}
-	// Sub-agents get the full cogmem toolset, including writes. Their memory is a
-	// snapshot copied onto the sub-agent session's own DB and deleted after the
-	// run (see agent.runSubagentTask), so any writes land on that throwaway copy
-	// and the primary's memory is never touched — the isolation, not tool
-	// withholding, is what protects it.
-	return cogmemtools.Definitions(host)
+
+	// Sub-agents get the full cogmem toolset, including writes, but on a
+	// snapshot of the memory copied into their own directory and deleted after
+	// the run (see agent.runSubagentTask). The module binds each handler to one
+	// directory while this provider is shared by every session of the agent, so
+	// the directory is chosen per call from the call's session key: a sub-agent
+	// session reads and writes its snapshot and never the primary's memory.
+	defs := make([]global.ToolDefinition, len(primary))
+	for i, d := range primary {
+		primaryHandler := d.Handler
+		d.Handler = func(call *global.ToolCall) (*global.Result, error) {
+			if workspace == "" || !routing.IsSubagentSessionKey(call.Session) {
+				return primaryHandler(call)
+			}
+			// Definitions returns the same tools in the same order for any Host.
+			return subagentDefinitions(call.Session)[i].Handler(call)
+		}
+		defs[i] = d
+	}
+	return defs
 }
