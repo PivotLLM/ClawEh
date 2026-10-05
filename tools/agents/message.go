@@ -119,7 +119,7 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 // askResult renders an ask's reply as the tool result.
 func askResult(name string, reply tools.AgentReply) *global.Result {
 	switch reply.Outcome {
-	case tools.OutcomeTimeout:
+	case tools.OutcomeTimeout, tools.OutcomePersonCancelled:
 		return &global.Result{ForLLM: reply.Text}
 	case bus.OutcomeError:
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf("%s's turn failed: %s", name, reply.Text)}

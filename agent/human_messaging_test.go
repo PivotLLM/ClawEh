@@ -234,3 +234,91 @@ func TestHumanAgent_RemoteOriginAndDepthPassThrough(t *testing.T) {
 		t.Fatalf("reply = %+v", r)
 	}
 }
+
+// The person's window never outlasts the asker: an ask waiting less than
+// Bob's request_timeout ends the request at the asker's deadline, and a
+// later answer is told the request timed out.
+func TestHumanAgent_WindowEndsWithTheAsker(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 600), &countingProvider{})
+
+	start := time.Now()
+	result := askInBackground(context.Background(), al, "Quick question?", time.Second)
+	expectPosted(t, msgBus)
+	if r := <-result; r.Outcome != tools.OutcomeTimeout {
+		t.Fatalf("reply = %+v, want a timeout", r)
+	}
+	for al.humans.waiting("bob") {
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("the request outlasted its asker")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	publishIn(t, msgBus, fromBob("b1", "Here you go."))
+	expectInBobChat(t, msgBus, timedOutReply)
+}
+
+// An asker that stops waiting early (its turn cancelled) withdraws the
+// request in the person's chat; a later answer is told it was withdrawn.
+func TestHumanAgent_AskerGivesUpWithdraws(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 600), &countingProvider{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := askInBackground(ctx, al, "Still needed?", time.Minute)
+	expectPosted(t, msgBus)
+	cancel()
+	if r := <-result; r.Outcome != "go-error" {
+		t.Fatalf("reply = %+v, want the ask to end with its context", r)
+	}
+	expectInBobChat(t, msgBus, "Alice no longer needs an answer to that request.")
+	publishIn(t, msgBus, fromBob("b1", "Yes, here."))
+	expectInBobChat(t, msgBus, withdrawnReply)
+}
+
+// An answer taken just as the asker stops waiting reaches nobody: the person
+// is told it is no longer needed, never left with neither.
+func TestHumanAgent_AnswerAfterAskerLeftIsAcknowledged(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	cfg := humanLoopConfig(t, 600)
+	cfg.Agents.Defaults.MaxConcurrentTurns = 1
+	al, msgBus, _ := newHumanLoopWith(t, cfg)
+
+	al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute))
+	// The turn runs with a slot, so after the answer it must take one back
+	// before it can hand the answer on: holding the slot holds it there.
+	slot := &turnSlot{al: al}
+	slot.acquire(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer slot.release()
+		al.runTurn(context.Background(), withTurnSlot(context.Background(), slot), askBob("r1", "Which one?"))
+	}()
+	expectPosted(t, msgBus)
+	al.turnSem <- struct{}{} // another turn takes the lent slot
+	if !al.takeHumanAnswer(context.Background(), fromBob("b1", "The first.")) {
+		t.Fatal("answer not taken")
+	}
+	al.asks.close("ask-r1") // the asker stops waiting meanwhile
+	<-al.turnSem
+	<-done
+	expectInBobChat(t, msgBus, "Alice no longer needs an answer to that request.")
+	noOutbound(t, msgBus)
+}
+
+// /cancel from the person: Alice's agent_message call reads "Bob cancelled
+// the request.".
+func TestHumanAgent_PersonCancelReachesTool(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	_, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 600),
+		callThenText("agent_message", `{"agent":"bob","message":"Can you take this?","wait_seconds":30}`))
+
+	publishIn(t, msgBus, inbound("c2", "a1", "Ask Bob"))
+	expectPosted(t, msgBus)
+	publishIn(t, msgBus, fromBob("b1", "/cancel"))
+	expectInBobChat(t, msgBus, cancelledReply)
+	if got := nextOutbound(t, msgBus); got.ChatID != "c2" || got.Content != "done: Bob cancelled the request." {
+		t.Fatalf("Alice's reply = %+v", got)
+	}
+}

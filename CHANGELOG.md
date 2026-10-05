@@ -331,7 +331,12 @@ observe does not need an entry.
   Slack channel). A question asked by an agent (`agent_message`, `/ask`, a
   forum turn) is posted, with its sender header, to that chat, and the
   person's next text message there is the answer; after the model's
-  `request_timeout` the asker is told the person did not reply. A whisper to
+  `request_timeout`, or once the asker stops waiting if that is sooner, the
+  asker is told the person did not reply. A question whose asker gives up
+  early is withdrawn in the person's chat ("Alice no longer needs an answer
+  to that request."), and an answer that comes too late is told so, so no
+  answer is ever dropped without a word. If the person sends `/cancel`, the
+  asker is told "Bob cancelled the request.". A whisper to
   the agent is shown to the person at the start of their next question.
   Questions are answered one at a time and do not hold a
   `max_concurrent_turns` slot while waiting. In that chat

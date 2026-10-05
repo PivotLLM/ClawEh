@@ -24,6 +24,7 @@ import (
 const (
 	nothingWaitingReply = "Nothing is waiting for your answer."
 	timedOutReply       = "That request has already timed out."
+	withdrawnReply      = "That request was withdrawn."
 	textOnlyReply       = "Please answer with text."
 	cancelledReply      = "Cancelled."
 )
@@ -36,6 +37,11 @@ const humanTurnGrace = 30 * time.Second
 
 // errHumanCancelled is how a request ends when the person sends /cancel.
 var errHumanCancelled = errors.New("the person cancelled the request")
+
+// errAskerStopped ends a request to a person whose asker stopped waiting (it
+// gave up, or its deadline passed): no reply is handed back, the asker has
+// its own outcome.
+var errAskerStopped = errors.New("the asker stopped waiting")
 
 // humanNotAskedError marks a turn routed to a human agent that is not an ask:
 // it is dropped, never posted to the person. Its text is for the sender.
@@ -56,9 +62,15 @@ type humanDesk struct {
 	mu      sync.Mutex
 	slots   map[string]chan struct{}
 	pending map[string]*humanRequest
-	// expired is when each agent's last request timed out unanswered, so a
-	// late answer can be told so.
-	expired map[string]time.Time
+	// expired is how and when each agent's last request ended unanswered
+	// (timed out or withdrawn), so a late answer can be told so.
+	expired map[string]expiry
+}
+
+// expiry is how a request ended unanswered: the reply a late answer gets.
+type expiry struct {
+	at    time.Time
+	reply string
 }
 
 // humanRequest is one request posted to a person's chat.
@@ -126,22 +138,27 @@ func (d *humanDesk) answer(agentID string, msg bus.InboundMessage, a humanAnswer
 	return true
 }
 
-func (d *humanDesk) markExpired(agentID string) {
+// markExpired records that agentID's request ended unanswered; reply is what
+// a late answer is told.
+func (d *humanDesk) markExpired(agentID, reply string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.expired == nil {
-		d.expired = make(map[string]time.Time)
+		d.expired = make(map[string]expiry)
 	}
-	d.expired[agentID] = time.Now()
+	d.expired[agentID] = expiry{at: time.Now(), reply: reply}
 }
 
-// recentlyExpired reports whether agentID's last request timed out within
-// window.
-func (d *humanDesk) recentlyExpired(agentID string, window time.Duration) bool {
+// recentlyExpired returns what a late answer is told when agentID's last
+// request ended unanswered within window.
+func (d *humanDesk) recentlyExpired(agentID string, window time.Duration) (string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	t, ok := d.expired[agentID]
-	return ok && window > 0 && time.Since(t) < window
+	e, ok := d.expired[agentID]
+	if !ok || window <= 0 || time.Since(e.at) >= window {
+		return "", false
+	}
+	return e.reply, true
 }
 
 // inboundDismisser clears what a chat shows for an inbound message that gets
@@ -163,23 +180,55 @@ func sameChat(msg bus.InboundMessage, channel, chatID string) bool {
 // askHuman posts request to the person's chat channel:chatID and waits for
 // their next message there, at most timeout (0 = until ctx ends) from when it
 // is posted. Requests to one human agent are answered one at a time: a second
-// waits for the first to end. The turn's concurrency slot is given up while
-// waiting. It returns context.DeadlineExceeded when timeout passes, ctx's
-// error when ctx ends first, and errHumanCancelled on /cancel.
-func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, request string, timeout time.Duration) (string, error) {
+// waits for the first to end. The turn's concurrency slot is lent while
+// waiting.
+//
+// ask, when the request answers an ask, is its asker: the wait never outlasts
+// the asker's deadline, and a request whose asker stops waiting first is
+// withdrawn in the person's chat with one line. Every answer the person gives
+// is either returned or met with a line saying the request ended.
+//
+// It returns context.DeadlineExceeded when timeout passes, errAskerStopped
+// when the asker's deadline passes or it stops waiting, ctx's error when ctx
+// ends first, and errHumanCancelled on /cancel.
+func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, request string, timeout time.Duration, ask *askWait) (string, error) {
 	if slot := turnSlotFrom(ctx); slot != nil {
 		slot.lend()
 		defer slot.reclaim(ctx)
+	}
+	var gone <-chan struct{}
+	if ask != nil {
+		gone = ask.gone
 	}
 
 	deskSlot := al.humans.slot(agentID)
 	select {
 	case deskSlot <- struct{}{}:
+	case <-gone:
+		return "", errAskerStopped // never posted
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
 	defer func() { <-deskSlot }()
 
+	// The person's window never outlasts the asker.
+	cappedByAsker := false
+	if ask != nil {
+		left := time.Until(ask.deadline)
+		if left <= 0 {
+			return "", errAskerStopped // never posted
+		}
+		if timeout <= 0 || left < timeout {
+			timeout, cappedByAsker = left, true
+		}
+	}
+
+	// Whispers held for the person open the request they see, once. A
+	// person has no tools, so no hint on answering.
+	if ws := al.whispers.take(agentID); len(ws) > 0 {
+		logger.InfoCF("agent", "Delivering whispers", map[string]any{"agent_id": agentID, "count": len(ws)})
+		request = whisperBlock(ws, false) + "\n\n" + request
+	}
 	req := &humanRequest{channel: channel, chatID: chatID, answer: make(chan humanAnswer, 1)}
 	al.humans.set(agentID, req)
 
@@ -196,26 +245,82 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	withdrawn := false
 	select {
 	case a := <-req.answer:
 		return answerResult(a)
 	case <-waitCtx.Done():
+	case <-gone:
+		// An asker that stopped at its deadline is the request timing out,
+		// not a withdrawal (both may be ready at once).
+		withdrawn = ask == nil || time.Now().Before(ask.deadline)
 	}
 	// No answer can arrive once the request is cleared; one that arrived
-	// while the wait was ending is delivered, not lost.
+	// while the wait was ending is returned, not lost.
 	al.humans.clear(agentID, req)
 	select {
 	case a := <-req.answer:
 		return answerResult(a)
 	default:
 	}
-	if ctx.Err() != nil {
+	if withdrawn || ctx.Err() != nil {
+		// The asker stopped waiting, or the turn ended (cancel, shutdown):
+		// the person is told the request is withdrawn.
+		from := ""
+		if ask != nil {
+			from = ask.from
+		}
+		al.humans.markExpired(agentID, withdrawnReply)
+		al.tellNoLongerNeeded(ctx, agentID, channel, chatID, from)
+		if withdrawn {
+			return "", errAskerStopped
+		}
 		return "", ctx.Err()
 	}
-	al.humans.markExpired(agentID)
+	al.humans.markExpired(agentID, timedOutReply)
 	logger.InfoCF("agent", "No answer from the person before the request timed out",
 		turnFields(ctx, map[string]any{"agent_id": agentID, "timeout": timeout.String()}))
+	if cappedByAsker {
+		return "", errAskerStopped
+	}
 	return "", context.DeadlineExceeded
+}
+
+// noLongerNeeded is the line that withdraws a request in the person's chat.
+func noLongerNeeded(from string) string {
+	if strings.TrimSpace(from) == "" {
+		return "That request is no longer needed."
+	}
+	return from + " no longer needs an answer to that request."
+}
+
+// tellNoLongerNeeded posts noLongerNeeded(from) to the person's chat, even
+// when ctx has ended.
+func (al *AgentLoop) tellNoLongerNeeded(ctx context.Context, agentID, channel, chatID, from string) {
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: noLongerNeeded(from)}); err != nil {
+		logger.WarnCF("agent", "Failed to tell the person a request is no longer needed",
+			map[string]any{"agent_id": agentID, "channel": channel, "chat_id": chatID, "error": err.Error()})
+		return
+	}
+	logger.InfoCF("agent", "Request to a person withdrawn: the asker no longer waits",
+		map[string]any{"agent_id": agentID, "channel": channel, "chat_id": chatID})
+}
+
+// humanAnswerUnused tells the person whose answer to msg (an ask) reached
+// nobody, because the asker stopped waiting as it arrived, that it is no
+// longer needed. A no-op when msg was not addressed to a human agent.
+func (al *AgentLoop) humanAnswerUnused(ctx context.Context, msg bus.InboundMessage) {
+	agent := al.humanTarget(msg)
+	if agent == nil {
+		return
+	}
+	channel, chatID, _, ok := al.GetConfig().CronTarget(agent.ID)
+	if !ok {
+		return
+	}
+	al.tellNoLongerNeeded(ctx, agent.ID, channel, chatID, inboundMetadata(msg, metadataKeyAskFrom))
 }
 
 func answerResult(a humanAnswer) (string, error) {
@@ -238,6 +343,12 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 		al.stopTyping(opts.Channel, opts.ChatID)
 		return "", humanNotAskedError{label: agentLabelForUser(agent)}
 	}
+	// The asker, whose wait bounds the person's.
+	w, waiting := al.asks.wait(opts.ChatID)
+	if !waiting {
+		return "", errAskerStopped
+	}
+	ask := &w
 	cfg := al.GetConfig()
 	channel, chatID, _, ok := cfg.CronTarget(agent.ID)
 	if !ok {
@@ -254,13 +365,11 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 	if !ok {
 		return "", fmt.Errorf("model %q is not a person's model", agent.HumanModel)
 	}
-	// Whispers held for the person open the request they see, once.
-	request := al.prependWhispers(agent, opts.UserMessage)
 	relay := func(ctx context.Context, request string, timeout time.Duration) (string, error) {
-		return al.askHuman(ctx, agent.ID, channel, chatID, request, timeout)
+		return al.askHuman(ctx, agent.ID, channel, chatID, request, timeout, ask)
 	}
 	resp, err := hp.Chat(providers.WithHumanRelay(ctx, relay),
-		[]providers.Message{{Role: "user", Content: request}}, nil, agent.HumanModel, nil)
+		[]providers.Message{{Role: "user", Content: opts.UserMessage}}, nil, agent.HumanModel, nil)
 	if errors.Is(err, errHumanCancelled) {
 		return "", humanCancelledError{label: agentLabelForUser(agent)}
 	}
@@ -425,8 +534,8 @@ func (al *AgentLoop) handleHumanChat(ctx context.Context, msg bus.InboundMessage
 		return true
 	}
 	window := time.Duration(al.GetConfig().HumanRequestTimeout(hc.id)) * time.Second
-	if al.humans.recentlyExpired(hc.id, window) {
-		al.replyInHumanChat(ctx, msg, timedOutReply)
+	if reply, ok := al.humans.recentlyExpired(hc.id, window); ok {
+		al.replyInHumanChat(ctx, msg, reply)
 	} else {
 		al.replyInHumanChat(ctx, msg, nothingWaitingReply)
 	}

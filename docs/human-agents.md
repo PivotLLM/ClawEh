@@ -45,13 +45,20 @@ and their next message there is the answer.
   indicator for it is cleared and nothing is sent back. An attachment alone
   is not an answer: they are asked for text.
 - If no answer arrives within the model's `request_timeout` (counted from when
-  the question is posted), the asker is told "Bob did not reply within N
-  seconds.". A late answer is told "That request has already timed out."
+  the question is posted), or before the asker stops waiting if that is
+  sooner, the asker is told "Bob did not reply within N seconds.". A late
+  answer is told "That request has already timed out."
+- If the asker gives up first (its turn is cancelled, or claw shuts down),
+  the question is withdrawn with "Alice no longer needs an answer to that
+  request.", and a later answer is told "That request was withdrawn." An
+  answer that arrives just as the asker gives up gets the same withdrawal
+  line. No answer is dropped without a word.
 - Questions to one person are answered one at a time; the next is posted once
   the current one is answered, cancelled or has timed out. While the person is
   thinking, nothing counts against `agents.defaults.max_concurrent_turns`:
   the asking agent lends its slot while it waits, and the question holds none.
-- `/cancel` ends the waiting question; the asker is told it was cancelled.
+- `/cancel` ends the waiting question; the asker is told "Bob cancelled the
+  request.".
   Any other command (only `/` starts one in this chat) is handled as usual,
   even while a question waits.
 - Text that answers nothing gets "Nothing is waiting for your answer." and

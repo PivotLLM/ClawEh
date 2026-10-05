@@ -413,6 +413,12 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			return
 		}
 		response, outcome = err.Error(), bus.OutcomeError
+	case errors.Is(err, errAskerStopped):
+		// The asker stopped waiting for a person's answer: it has its own
+		// outcome, and the person was told (askHuman).
+		logger.InfoCF("agent", "Request to a person ended: the asker stopped waiting",
+			turnFields(turnCtx, map[string]any{"ask_id": msg.ChatID}))
+		return
 	case errors.Is(err, errHumanCancelled):
 		response, outcome = err.Error(), bus.OutcomeCancelled
 	case err != nil && errors.Is(context.Cause(turnCtx), errCancelledByUser):
@@ -436,7 +442,15 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 
 	// An ask's reply goes back to the asker, never to a channel.
 	if msg.Channel == constants.AgentMessageChannel {
-		al.deliverAskReply(msg, response, outcome)
+		askOutcome := outcome
+		if errors.Is(err, errHumanCancelled) {
+			askOutcome = tools.OutcomePersonCancelled
+		}
+		if !al.deliverAskReply(msg, response, askOutcome) && err == nil && outcome == bus.OutcomeOK {
+			// A person's answer that arrived as the asker stopped waiting:
+			// they are told it is no longer needed rather than left unsure.
+			al.humanAnswerUnused(ctx, msg)
+		}
 		return
 	}
 

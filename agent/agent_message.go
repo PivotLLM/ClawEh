@@ -34,6 +34,11 @@ var _ tools.Messenger = (*AgentLoop)(nil)
 // timeout.
 const metadataKeyAskChain = "ask_chain"
 
+// metadataKeyAskFrom carries, on an ask's inbound message, the asker's name,
+// so a person whose answer arrives after the asker stopped waiting can be
+// told who no longer needs it.
+const metadataKeyAskFrom = "ask_from"
+
 // agentMessageToolName is the tool a whisper's recipient answers with.
 const agentMessageToolName = "agent_message"
 
@@ -66,39 +71,65 @@ func withInboundOrigin(ctx context.Context, msg bus.InboundMessage) context.Cont
 // of the ask's message). The zero value is ready to use.
 type askRegistry struct {
 	mu      sync.Mutex
-	waiting map[string]chan tools.AgentReply
+	waiting map[string]*pendingAsk
 }
 
-// open registers ask id and returns the channel its reply arrives on.
-func (r *askRegistry) open(id string) <-chan tools.AgentReply {
+// pendingAsk is one ask whose asker is waiting.
+type pendingAsk struct {
+	replies  chan tools.AgentReply // buffered: one reply
+	from     string                // the asker's name
+	deadline time.Time             // when the asker stops waiting
+	gone     chan struct{}         // closed once the ask is answered or given up
+}
+
+// askWait is what a turn answering an ask knows of its asker: who it is,
+// when it stops waiting, and a channel closed once it has stopped.
+type askWait struct {
+	from     string
+	deadline time.Time
+	gone     <-chan struct{}
+}
+
+// open registers ask id from the asker from, who waits until deadline, and
+// returns the channel its reply arrives on.
+func (r *askRegistry) open(id, from string, deadline time.Time) <-chan tools.AgentReply {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.waiting == nil {
-		r.waiting = make(map[string]chan tools.AgentReply)
+		r.waiting = make(map[string]*pendingAsk)
 	}
-	ch := make(chan tools.AgentReply, 1)
-	r.waiting[id] = ch
-	return ch
+	p := &pendingAsk{replies: make(chan tools.AgentReply, 1), from: from, deadline: deadline, gone: make(chan struct{})}
+	r.waiting[id] = p
+	return p.replies
+}
+
+// takeLocked removes ask id and marks it gone.
+func (r *askRegistry) takeLocked(id string) (*pendingAsk, bool) {
+	p, ok := r.waiting[id]
+	if ok {
+		delete(r.waiting, id)
+		close(p.gone)
+	}
+	return p, ok
 }
 
 // close forgets ask id; a reply arriving later is discarded.
 func (r *askRegistry) close(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.waiting, id)
+	r.takeLocked(id)
 }
 
 // deliver hands reply to ask id, once. It reports false when nobody is
 // waiting (the asker gave up, or the process restarted).
 func (r *askRegistry) deliver(id string, reply tools.AgentReply) bool {
 	r.mu.Lock()
-	ch, ok := r.waiting[id]
-	delete(r.waiting, id)
+	p, ok := r.takeLocked(id)
 	r.mu.Unlock()
 	if !ok {
 		return false
 	}
-	ch <- reply
+	p.replies <- reply
 	return true
 }
 
@@ -108,6 +139,17 @@ func (r *askRegistry) isWaiting(id string) bool {
 	defer r.mu.Unlock()
 	_, ok := r.waiting[id]
 	return ok
+}
+
+// wait returns what is known of ask id's asker, or false when nobody waits.
+func (r *askRegistry) wait(id string) (askWait, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.waiting[id]
+	if !ok {
+		return askWait{}, false
+	}
+	return askWait{from: p.from, deadline: p.deadline, gone: p.gone}, true
 }
 
 // waitGraph records which agent's turn is waiting on an ask to which, across
@@ -392,10 +434,11 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 	}
 
 	id := "ask-" + uuid.NewString()
-	replies := al.asks.open(id)
+	replies := al.asks.open(id, from.name, time.Now().Add(wait))
 	meta := map[string]string{
 		metadataKeyPreresolvedAgentID: target.ID,
 		bus.MetaReplyRequired:         "1",
+		metadataKeyAskFrom:            from.name,
 	}
 	if len(chain) > 0 {
 		meta[metadataKeyAskChain] = strings.Join(chain, ",")
@@ -463,12 +506,14 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 // deliverAskReply hands the final reply of an ask's turn (a message on
 // constants.AgentMessageChannel) to the waiting asker. A reply nobody waits
 // for any more is discarded with a log line.
-func (al *AgentLoop) deliverAskReply(msg bus.InboundMessage, text, outcome string) {
+// It reports whether the asker got it.
+func (al *AgentLoop) deliverAskReply(msg bus.InboundMessage, text, outcome string) bool {
 	if al.asks.deliver(msg.ChatID, tools.AgentReply{Text: text, Outcome: outcome}) {
-		return
+		return true
 	}
 	logger.InfoCF("agent", "Late ask reply discarded: the asker stopped waiting",
 		map[string]any{"ask_id": msg.ChatID, "agent_id": inboundMetadata(msg, metadataKeyPreresolvedAgentID), "outcome": outcome})
+	return false
 }
 
 // Whisper implements tools.Messenger: message is held for agentID and added,
@@ -627,7 +672,7 @@ func commandAskReply(name string, reply tools.AgentReply, err error) string {
 		return err.Error()
 	case err != nil:
 		return fmt.Sprintf("Could not ask %s: %v", name, err)
-	case reply.Outcome == tools.OutcomeTimeout:
+	case reply.Outcome == tools.OutcomeTimeout || reply.Outcome == tools.OutcomePersonCancelled:
 		return reply.Text
 	case strings.TrimSpace(reply.Text) == "":
 		return name + " gave no reply."

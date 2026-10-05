@@ -14,6 +14,11 @@ import (
 // bus.OutcomeError, bus.OutcomeCancelled, bus.OutcomeEmpty).
 const OutcomeTimeout = "timeout"
 
+// OutcomePersonCancelled is the AgentReply outcome of an ask to a human
+// agent whose person cancelled it (/cancel in their chat). Text says so,
+// naming the agent.
+const OutcomePersonCancelled = "person_cancelled"
+
 // Errors returned by Messenger.
 var (
 	// ErrNoSuchAgent: the addressed agent does not exist.
@@ -30,7 +35,7 @@ type AgentReply struct {
 	// Text is the target's final reply; for OutcomeTimeout, a one-line note
 	// naming the agent and the wait.
 	Text string
-	// Outcome is ok, error, cancelled, empty or timeout.
+	// Outcome is ok, error, cancelled, empty, timeout or person_cancelled.
 	Outcome string
 }
 

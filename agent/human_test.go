@@ -107,6 +107,7 @@ func askBob(id, content string) bus.InboundMessage {
 		Metadata: map[string]string{
 			metadataKeyPreresolvedAgentID: "bob",
 			bus.MetaReplyRequired:         "1",
+			metadataKeyAskFrom:            "Alice",
 		},
 	}
 }
@@ -114,7 +115,7 @@ func askBob(id, content string) bus.InboundMessage {
 // sendAsk registers ask id as core Ask does and dispatches askBob(id,
 // content) in the background; the returned channel gets the ask's reply.
 func sendAsk(al *AgentLoop, id, content string) <-chan tools.AgentReply {
-	replies := al.asks.open("ask-" + id)
+	replies := al.asks.open("ask-"+id, "Alice", time.Now().Add(time.Minute))
 	go dispatch(al, askBob(id, content))
 	return replies
 }
@@ -299,7 +300,7 @@ func TestHumanAgent_PersonCancels(t *testing.T) {
 	deliver(al, fromBob("b1", "/cancel"))
 	expectInBobChat(t, msgBus, cancelledReply)
 	reply := expectAskReply(t, replies)
-	if reply.Outcome != bus.OutcomeCancelled || reply.Text != "Bob cancelled the request." {
+	if reply.Outcome != tools.OutcomePersonCancelled || reply.Text != "Bob cancelled the request." {
 		t.Fatalf("reply = %+v, want a cancelled reply to r1", reply)
 	}
 	al.activeRequests.Wait()
@@ -314,7 +315,7 @@ func TestHumanAgent_ShutdownCancels(t *testing.T) {
 
 	ctx, stop := context.WithCancelCause(context.Background())
 	al.activeRequests.Add(1)
-	replies := al.asks.open("ask-r1")
+	replies := al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute))
 	go al.processSessionMessage(ctx, askBob("r1", "Still there?"))
 	expectPosted(t, msgBus)
 	stop(errShuttingDown)
@@ -322,6 +323,7 @@ func TestHumanAgent_ShutdownCancels(t *testing.T) {
 	if reply.Outcome != bus.OutcomeCancelled {
 		t.Fatalf("reply = %+v, want a cancelled reply to r1", reply)
 	}
+	expectInBobChat(t, msgBus, "Alice no longer needs an answer to that request.")
 	al.activeRequests.Wait()
 	bob, _ := al.GetRegistry().Get("bob")
 	keys, err := bob.Sessions.ListPendingSessions()
@@ -386,9 +388,10 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 
 	results := make(chan string, 2)
 	for _, q := range []string{"first", "second"} {
+		al.asks.open("ask-"+q, "Alice", time.Now().Add(time.Minute))
 		go func() {
 			out, err := al.runAgentLoop(context.Background(), bob, processOptions{
-				SessionKey: key, Channel: constants.AgentMessageChannel, ChatID: "c1", UserMessage: q, ReplyRequired: true,
+				SessionKey: key, Channel: constants.AgentMessageChannel, ChatID: "ask-" + q, UserMessage: q, ReplyRequired: true,
 			})
 			if err != nil {
 				t.Errorf("runAgentLoop: %v", err)
@@ -430,7 +433,7 @@ func TestHumanAgent_TimeoutRunsFromPosting(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := al.askHuman(context.Background(), "bob", "test", bobChat, "question", 300*time.Millisecond)
+		_, err := al.askHuman(context.Background(), "bob", "test", bobChat, "question", 300*time.Millisecond, nil)
 		done <- err
 	}()
 	time.Sleep(600 * time.Millisecond) // queued twice as long as its timeout
@@ -484,7 +487,7 @@ func TestHumanAgent_BufferedAnswerSurvivesCancel(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		a, err := al.askHuman(ctx, "bob", "test", bobChat, "question", time.Minute)
+		a, err := al.askHuman(ctx, "bob", "test", bobChat, "question", time.Minute, nil)
 		done <- result{a, err}
 	}()
 	expectPosted(t, msgBus)
@@ -506,8 +509,9 @@ func TestHumanAgent_RefusesNonHumanProvider(t *testing.T) {
 	other.Providers = []config.Provider{{Name: "People", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:1", APIKey: "k"}}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &countingProvider{}, providers.NewProviderDispatcher(other))
 	bob, _ := al.GetRegistry().Get("bob")
+	al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute))
 	_, err := al.runAgentLoop(context.Background(), bob, processOptions{
-		SessionKey: "agent:bob:main", Channel: constants.AgentMessageChannel, ChatID: "c1", UserMessage: "q", ReplyRequired: true,
+		SessionKey: "agent:bob:main", Channel: constants.AgentMessageChannel, ChatID: "ask-1", UserMessage: "q", ReplyRequired: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "is not a person's model") {
 		t.Fatalf("err = %v", err)
