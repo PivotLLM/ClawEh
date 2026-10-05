@@ -33,6 +33,8 @@ export interface AgentEntry {
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]
+  /** Tools the agent may never call, even when tools / mcp_tools admit them. */
+  deny_tools?: string[]
 }
 
 export interface MountEntry {
@@ -83,25 +85,36 @@ export function splitCsv(s: string): string[] {
     .filter(Boolean)
 }
 
-// MCPAccessServer is one row of the MCP access checkbox list.
+// MCPAccessServer is one row of the MCP access or Fusion services checkbox
+// list.
 export interface MCPAccessServer {
   name: string
   checked: boolean
-  // configured is false for an entry that names no configured server (a
-  // server since removed, or a hand-typed entry from before the checkbox
-  // list); it is shown checked and flagged so it can be removed.
+  // configured is false for an entry that names no configured server or
+  // Fusion service (a server since removed, or a hand-typed entry from before
+  // the checkbox list); it is shown checked and flagged so it can be removed.
   configured: boolean
+}
+
+const norm = (s: string) => s.trim().toLowerCase()
+
+// fusionOwned reports whether an mcp_tools entry belongs to a Fusion service:
+// it names the service, or a group within it (<service>_...).
+function fusionOwned(entry: string, serviceNames: string[]): boolean {
+  const e = norm(entry)
+  return serviceNames.some((s) => e === norm(s) || e.startsWith(norm(s) + "_"))
 }
 
 // mcpAccessView turns an agent's mcp_tools entries into checkbox rows: one
 // per configured server (checked when an entry matches it, case-insensitively)
-// followed by one flagged row per entry that matches no configured server.
-// Access is per server; there is no finer grant.
+// followed by one flagged row per entry that matches no configured server and
+// no Fusion service. Access is per server; there is no finer grant. Entries
+// owned by a Fusion service are left to fusionAccessView.
 export function mcpAccessView(
   entries: string[],
   serverNames: string[],
+  fusionServices: string[] = [],
 ): MCPAccessServer[] {
-  const norm = (s: string) => s.trim().toLowerCase()
   const rows: MCPAccessServer[] = serverNames.map((name) => ({
     name,
     checked: entries.some((e) => norm(e) === norm(name)),
@@ -109,8 +122,38 @@ export function mcpAccessView(
   }))
   for (const raw of entries) {
     const e = raw.trim()
-    if (e && !serverNames.some((n) => norm(n) === norm(e))) {
+    if (
+      e &&
+      !serverNames.some((n) => norm(n) === norm(e)) &&
+      !fusionOwned(e, fusionServices)
+    ) {
       rows.push({ name: e, checked: true, configured: false })
+    }
+  }
+  return rows
+}
+
+// fusionAccessView turns the same entries into the Fusion services rows: one
+// per defined service (checked when an entry names it) followed by one checked
+// row per entry that names a group within a service (microsoft365_calendar),
+// which is a valid finer grant and so is not flagged.
+export function fusionAccessView(
+  entries: string[],
+  serviceNames: string[],
+): MCPAccessServer[] {
+  const rows: MCPAccessServer[] = serviceNames.map((name) => ({
+    name,
+    checked: entries.some((e) => norm(e) === norm(name)),
+    configured: true,
+  }))
+  for (const raw of entries) {
+    const e = raw.trim()
+    if (
+      e &&
+      !serviceNames.some((n) => norm(n) === norm(e)) &&
+      fusionOwned(e, serviceNames)
+    ) {
+      rows.push({ name: e, checked: true, configured: true })
     }
   }
   return rows
@@ -120,6 +163,58 @@ export function mcpAccessView(
 // the checked rows.
 export function mcpAccessEntries(rows: MCPAccessServer[]): string[] {
   return rows.filter((s) => s.checked).map((s) => s.name)
+}
+
+// CLIBypassWarning is one model in an agent's chain whose skip-permissions flag
+// is being ignored: the model's extra_args carries the CLI's bypass flag, but
+// the provider's "Allow CLI to bypass restrictions" is off, so the flag is not
+// passed and the CLI applies its own permission settings.
+export interface CLIBypassWarning {
+  model: string
+  provider: string
+  flag: string
+}
+
+// cliBypassWarnings lists the ignored bypass flags for an agent's model chain
+// (the agent's own list, or the defaults when it has none). models and
+// providers are the raw config arrays; clis is GET /api/system/clis, which
+// carries each CLI protocol's bypass flags.
+export function cliBypassWarnings(
+  chain: string[],
+  defaultChain: string[],
+  models: unknown,
+  providers: unknown,
+  clis: { protocol: string; bypass_args: string[] }[],
+): CLIBypassWarning[] {
+  const effective = chain.length > 0 ? chain : defaultChain
+  const out: CLIBypassWarning[] = []
+  for (const alias of effective) {
+    const model = asArray(models)
+      .map(asRecord)
+      .find((m) => norm(asString(m.model_name)) === norm(alias))
+    if (!model) continue
+    const provider = asArray(providers)
+      .map(asRecord)
+      .find((p) => norm(asString(p.name)) === norm(asString(model.provider)))
+    if (!provider || provider.bypass_restrictions === true) continue
+    const cli = clis.find((c) => c.protocol === asString(provider.protocol))
+    if (!cli) continue
+    const flag = asArray(model.extra_args)
+      .map(asString)
+      .find((a) => cli.bypass_args.includes(a))
+    if (flag) out.push({ model: alias, provider: asString(provider.name), flag })
+  }
+  return out
+}
+
+// toggleAccessEntry adds the name to the entries when absent and removes it
+// (case-insensitively) when present. It works on the entry list, not on the
+// rows, because one entry can back a row in both lists at once: a name that is
+// an MCP server and a Fusion service (simpledoc) is one grant for both, so
+// either checkbox toggles the same entry and both rows follow.
+export function toggleAccessEntry(entries: string[], name: string): string[] {
+  const present = entries.some((e) => norm(e) === norm(name))
+  return present ? entries.filter((e) => norm(e) !== norm(name)) : [...entries, name]
 }
 
 // settingsCardClass groups a set of agent settings into one bordered card.
@@ -146,6 +241,7 @@ export function parseAgent(value: unknown): AgentEntry {
       .filter(Boolean)
       .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
+    deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
     message:
       cbMins > 0
         ? {

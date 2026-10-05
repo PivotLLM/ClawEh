@@ -32,6 +32,11 @@ The alerter has three levels: Normal, Urgent and Emergency. Every ClawEh
 alert is **Normal**. Urgent and Emergency are for something that must reach
 a person now, at any hour; how each level is delivered (for example the
 Pushover priority) is the operator's choice in the `ALERTER_*` variables.
+Each channel can also be limited to a minimum level with
+`ALERTER_PUSHOVER_MIN_PRI`, `ALERTER_SMS_MIN_PRI`, `ALERTER_SMTP_MIN_PRI` and
+`ALERTER_WEBHOOK_MIN_PRI` (0 Normal, 1 Urgent, 2 Emergency): an SMS channel set
+to `1` receives nothing from ClawEh today, since every alert is Normal — the
+alerts log and any channel left at `0` still record them.
 No ClawEh alert qualifies today, so the Priority column in `ALERTS.md` is
 blank throughout; an alert promoted later gets `*` (Urgent) or `**`
 (Emergency) there.
@@ -44,14 +49,18 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 |---|---|---|---|
 | | Model authentication or billing failure | A model is parked for an `auth` or `billing` failure (a CLI logged out, a key revoked, credit exhausted). Reported on the first failure; no retry fixes it | provider/model |
 | | Model parked after repeated failures | A model reaches the settled category cooldown after the 1/3/5-minute escalation | provider/model |
-| | MCP server unreachable | A reconnect or background connect attempt failed and the server is in cooldown | server name |
+| | MCP `<name>` down | A server goes down or its first connect fails; reminded at most hourly while down | server name |
+| | MCP `<name>` up | A server reported down has reconnected | server name + `-up` |
 | | MCP host server stopped | ClawEh's own MCP server died after startup | `mcpserver` |
-| | HTTP listener stopped | The WebUI/API listener failed to bind or died | `http` |
+| | HTTP listener stopped | The loopback or HTTPS listener died after start; ClawEh exits so the service manager restarts it | `http` |
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |
-| | Channel failed to start | A channel exhausted its start retries | channel name |
+| | Channel failed to start | A channel has failed to start ten times in a row; retries continue every five minutes | channel name |
 | | Channel send failed | An outbound message was dropped after its send retries | channel name |
-| | Channel receive loop stopped | Slack, Matrix or the device gateway stopped receiving while still reporting running | channel name |
-| | Telegram polling failed | The long poll fails with 401 (token revoked) or 409 (another poller) | channel name |
+| | Channel receive loop stopped | The device listener failed; it re-listens with backoff while the channel still reports running | channel name |
+| | `<Platform>` down | Channels of one platform have had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`); one alert per platform | platform (`telegram`) |
+| | `<Platform>` up | Every channel in a platform outage has reconnected | platform + `-up` |
+| | Channel credentials rejected | Slack or Matrix rejected the channel's token | channel name |
+| | Telegram polling failed | Telegram rejected the bot token (401) | channel name |
 | | SecMsg account discovery failed | The SecMsg daemon could not be queried; no accounts bound until the next reload | `SecMsg (<name>)` |
 | | SecMsg has no linked accounts | The daemon has no account to bind | `SecMsg (<name>)` |
 | | Scheduled job failed | A cron job's handler returned an error, or the job could not be delivered | job id |
@@ -60,6 +69,7 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Session not saved | A conversation could not be written to its session store | `session-store` |
 | | Service tokens not loaded | The service-token file could not be read | `service-tokens` |
 | | Config file invalid | A config edit on disk could not be loaded or validated and was not applied | `config` |
+| | Agent references a missing model | A model list names a deleted model; it is removed from `config.json` and the next model used | `model-ref:<site>` |
 | | Config reload failed | Applying a valid config failed part way; services may not all be running | `config` |
 | | Nightly backup failed | The configuration backup did not run | `backup` |
 | | Log rotation failed | The midnight log roll failed; file logging may be stopped | `logging` |
@@ -76,6 +86,17 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Device source not started | A device event source failed to start | `devices:<kind>` |
 | | USB device monitor stopped | The udevadm monitor stream ended | `devices:usb` |
 | | Device store unavailable | The paired-device database could not be opened for a request | `device-store` |
+| | Device authentication locked out | A client address failed device authentication five times in ten minutes | client IP |
+| | WebUI login address locked out | A client address failed ten WebUI logins in ten minutes | `auth-lockout-ip` |
+| | WebUI login account locked out | A username failed ten WebUI logins in ten minutes | `auth-lockout-account` |
+| | Daily model spend over threshold | The day's model cost reached `agents.defaults.daily_spend_alert_usd` | `spend:<day>` |
+| | Database failed integrity check | A SQLite store failed `PRAGMA quick_check` during a backup and was skipped | `backup:<path>` |
+| | TLS certificate reload failed | A changed certificate or key file did not load; the old pair keeps serving | `tls-reload` |
+| | TLS certificate expires soon | An operator-supplied certificate is within 14 or 3 days of expiry, or expired | `tls-expiry` |
+| | Self-signed TLS certificate renewal failed | The self-signed certificate could not be regenerated before expiry | `tls-selfsigned` |
+| | Session retention failed | The nightly session-retention pass could not delete an idle archive or a cogmem snapshot | `session-retention` |
+| | Session store write failed | A message could not be written to the session store, so the turn was abandoned | `session-store` |
+| | Context compaction breaker tripped | Three automatic compactions failed in a row; only the safety-net pass still runs | session key |
 
 ## Repeats
 

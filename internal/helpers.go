@@ -78,7 +78,7 @@ func GetConfigPath() string {
 func LoadConfig() (*config.Config, error) {
 	path := GetConfigPath()
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr == nil {
+		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr == nil {
 			defaultCfg := config.DefaultConfig()
 			// Best-effort; keeps default_config marker. LoadConfig below reports the real failure.
 			if seedErr := config.SeedDefaultConfig(path, defaultCfg); seedErr != nil {

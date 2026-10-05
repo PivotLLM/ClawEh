@@ -1,72 +1,105 @@
 import { useState } from "react"
 
 import {
-  mcpAccessEntries,
+  fusionAccessView,
   mcpAccessView,
+  toggleAccessEntry,
+  type MCPAccessServer,
 } from "@/components/agents/agent-model"
 import { Checkbox } from "@/components/ui/checkbox"
 
 interface MCPAccessSelectProps {
   serverNames: string[]
+  fusionServices: string[]
   value: string[]
   onChange: (entries: string[]) => void
 }
 
-// MCPAccessSelect edits an agent's mcp_tools as one checkbox per configured
-// MCP server: checked grants every tool the server publishes. An entry that
-// names no configured server stays visible, checked and flagged, so it can be
-// removed.
+// MCPAccessSelect edits an agent's mcp_tools as two checkbox lists over the one
+// entry list: MCP access, one box per configured MCP server, and Fusion
+// services, one box per Fusion service (applied when the agent's Fusion switch
+// is on). Checked grants every tool of the server or service. A name that is
+// both a server and a service is one entry shown in both lists; either box
+// toggles it. An entry that names neither stays visible under MCP access,
+// checked and flagged, so it can be removed.
 export function MCPAccessSelect({
   serverNames,
+  fusionServices,
   value,
   onChange,
 }: MCPAccessSelectProps) {
   // Local copy so a toggle shows immediately; the parent's value catches up
   // after the debounced save. Resets per agent because the card is keyed.
   const [entries, setEntries] = useState(value)
-  const rows = mcpAccessView(entries, serverNames)
+  const mcpRows = mcpAccessView(entries, serverNames, fusionServices)
+  const fusionRows = fusionAccessView(entries, fusionServices)
 
   const toggle = (name: string) => {
-    const next = mcpAccessEntries(
-      rows.map((s) => (s.name === name ? { ...s, checked: !s.checked } : s)),
-    )
+    const next = toggleAccessEntry(entries, name)
     setEntries(next)
     onChange(next)
   }
 
-  if (rows.length === 0) {
-    return (
-      <span className="text-muted-foreground text-xs">
-        No MCP servers configured
-      </span>
-    )
-  }
-
   return (
-    <div className="space-y-1.5">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
-        {rows.map((s) => (
-          <label
-            key={s.name}
-            className="flex cursor-pointer items-center gap-2 select-none"
-          >
-            <Checkbox
-              checked={s.checked}
-              onCheckedChange={() => toggle(s.name)}
-            />
-            <span className="font-mono text-xs">{s.name}</span>
-            {!s.configured && (
-              <span className="text-muted-foreground text-xs">
-                (not configured)
-              </span>
-            )}
-          </label>
-        ))}
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <p className="text-foreground text-xs font-semibold">MCP access</p>
+        {mcpRows.length === 0 ? (
+          <span className="text-muted-foreground text-xs">
+            No MCP servers configured
+          </span>
+        ) : (
+          <>
+            <AccessGrid rows={mcpRows} onToggle={toggle} />
+            <p className="text-muted-foreground text-xs">
+              A checked server grants all of its tools. Nothing checked = no
+              MCP tools.
+            </p>
+          </>
+        )}
       </div>
-      <p className="text-muted-foreground text-xs">
-        A checked server grants all of its tools. Nothing checked = no MCP
-        tools.
-      </p>
+      {fusionRows.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-foreground text-xs font-semibold">
+            Fusion services
+          </p>
+          <AccessGrid rows={fusionRows} onToggle={toggle} />
+          <p className="text-muted-foreground text-xs">
+            A checked service grants all of its tools when Fusion is on.
+            Nothing checked = no Fusion tools.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AccessGrid({
+  rows,
+  onToggle,
+}: {
+  rows: MCPAccessServer[]
+  onToggle: (name: string) => void
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
+      {rows.map((s) => (
+        <label
+          key={s.name}
+          className="flex cursor-pointer items-center gap-2 select-none"
+        >
+          <Checkbox
+            checked={s.checked}
+            onCheckedChange={() => onToggle(s.name)}
+          />
+          <span className="font-mono text-xs">{s.name}</span>
+          {!s.configured && (
+            <span className="text-muted-foreground text-xs">
+              (not configured)
+            </span>
+          )}
+        </label>
+      ))}
     </div>
   )
 }

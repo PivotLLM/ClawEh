@@ -29,7 +29,7 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 		"entries":    len(reader.File),
 	})
 
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create target dir: %w", err)
 	}
 
@@ -57,14 +57,14 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, 0o755); err != nil {
+			if err := os.MkdirAll(destPath, 0o700); err != nil {
 				return err
 			}
 			continue
 		}
 
 		// Ensure parent directory exists.
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
 			return err
 		}
 
@@ -91,7 +91,7 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	}
 	defer CloseQuietly(rc)
 
-	outFile, err := os.Create(destPath) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
+	outFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
 	if err != nil {
 		return fmt.Errorf("failed to create file %q: %w", destPath, err)
 	}

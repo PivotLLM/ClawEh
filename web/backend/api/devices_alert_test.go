@@ -35,7 +35,7 @@ func (r *alertRecorder) Close(context.Context) error         { return nil }
 func TestDeviceStoreUnavailable_Alerts(t *testing.T) {
 	h := NewHandler(setupTestEnv(t))
 	w := httptest.NewRecorder()
-	h.deviceStoreUnavailable(w, errors.New("open /data/state/gateway.db: locked"))
+	h.deviceStoreUnavailable(w, errors.New("open /data/internal/gateway.db: locked"))
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Code)
 	}
@@ -43,13 +43,13 @@ func TestDeviceStoreUnavailable_Alerts(t *testing.T) {
 	rec := &alertRecorder{}
 	h.SetAlerter(rec)
 	w = httptest.NewRecorder()
-	h.deviceStoreUnavailable(w, errors.New("open /data/state/gateway.db: locked"))
+	h.deviceStoreUnavailable(w, errors.New("open /data/internal/gateway.db: locked"))
 	if w.Code != http.StatusInternalServerError || w.Body.String() != `{"error":"store open failed"}`+"\n" {
 		t.Fatalf("response must hide the error, got %d %q", w.Code, w.Body.String())
 	}
 	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "device-store" ||
 		rec.alerts[0].Title != "Device store unavailable" ||
-		rec.alerts[0].Details != "open /data/state/gateway.db: locked" {
+		rec.alerts[0].Details != "open /data/internal/gateway.db: locked" {
 		t.Fatalf("store failure must alert low once, got %+v", rec.alerts)
 	}
 }

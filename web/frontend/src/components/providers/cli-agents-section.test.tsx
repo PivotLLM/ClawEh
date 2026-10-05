@@ -14,10 +14,12 @@ vi.mock("react-i18next", () => ({
 }))
 
 const setCLIEnabled = vi.fn()
+const setCLIBypassRestrictions = vi.fn()
 const listCLIs = vi.fn()
 vi.mock("@/api/system", async () => ({
   listCLIs: (...a: unknown[]) => listCLIs(...a),
   setCLIEnabled: (...a: unknown[]) => setCLIEnabled(...a),
+  setCLIBypassRestrictions: (...a: unknown[]) => setCLIBypassRestrictions(...a),
 }))
 
 function cli(over: Partial<CLIInfo> = {}): CLIInfo {
@@ -32,7 +34,9 @@ function cli(over: Partial<CLIInfo> = {}): CLIInfo {
     models: 0,
     models_enabled: 0,
     base_args: ["--output-format", "json"],
-    required_args: ["--dangerously-skip-permissions"],
+    required_args: [],
+    bypass_args: ["--dangerously-skip-permissions"],
+    bypass_restrictions: false,
     ...over,
   }
 }
@@ -40,6 +44,7 @@ function cli(over: Partial<CLIInfo> = {}): CLIInfo {
 function renderSection(rows: CLIInfo[]) {
   listCLIs.mockResolvedValue(rows)
   setCLIEnabled.mockResolvedValue(undefined)
+  setCLIBypassRestrictions.mockResolvedValue(undefined)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -107,22 +112,61 @@ describe("CLIAgentsSection", () => {
   })
 
   it("shows the flags it will run with, so nobody has to guess", async () => {
-    // These auto-approve tool use. Someone deciding whether to switch a CLI on
-    // is entitled to read them here rather than find them in a process listing.
+    // Someone deciding whether to switch a CLI on is entitled to read them
+    // here rather than find them in a process listing.
     renderSection([
       cli({
         base_args: ["-p", "--output-format", "json"],
-        required_args: ["--yolo"],
+        required_args: ["--no-chrome"],
+        bypass_args: ["--yolo"],
         extra_args: ["--verbose"],
         trailing_args: ["-"],
       }),
     ])
     const row = await screen.findByTestId("cli-row-antigravity-cli")
     // The whole command line, in invocation order — the provider's own flags
-    // included, not just the ones that live in config.
+    // included, not just the ones that live in config. The bypass flag is
+    // absent while the checkbox is off, because it is not passed.
     expect(row.textContent).toContain(
-      "-p --output-format json --yolo --verbose -",
+      "-p --output-format json --no-chrome --verbose -",
     )
+    expect(row.textContent).not.toContain("--yolo")
+  })
+
+  it("shows the bypass flag in the command line only when the setting is on", async () => {
+    renderSection([
+      cli({
+        base_args: ["-p"],
+        bypass_args: ["--yolo"],
+        bypass_restrictions: true,
+        configured: true,
+      }),
+    ])
+    const row = await screen.findByTestId("cli-row-antigravity-cli")
+    expect(row.textContent).toContain("-p --yolo")
+  })
+
+  it("offers the bypass checkbox, unticked, once a provider exists", async () => {
+    // The setting lives on the provider, so there is nowhere to write it until
+    // the switch has created one.
+    const { unmount } = renderSection([cli()])
+    await screen.findByTestId("cli-row-antigravity-cli")
+    expect(screen.queryByTestId("cli-bypass-antigravity-cli")).toBeNull()
+    unmount()
+
+    renderSection([cli({ configured: true, provider_index: 0 })])
+    const box = await screen.findByTestId("cli-bypass-antigravity-cli")
+    expect(box.getAttribute("data-state")).toBe("unchecked")
+    expect(screen.getByText("providers.cli.bypassHint")).toBeTruthy()
+    fireEvent.click(box)
+    await waitFor(() =>
+      expect(setCLIBypassRestrictions).toHaveBeenCalledWith(
+        "antigravity-cli",
+        true,
+      ),
+    )
+    // Ticking it never touches the enable switch.
+    expect(setCLIEnabled).not.toHaveBeenCalled()
   })
 
   it("offers editing only once a provider exists", async () => {

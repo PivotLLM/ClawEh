@@ -243,7 +243,7 @@ allowlist), over MCP, and in the WebUI catalogue.
 ### Step 3 — add a test probe
 
 `test.sh` / `tests/test_mcpserver.sh` exercise every MCP tool with the external
-`probe` binary. Add your tool to the gateway test config's exposed tool list and
+`probe` binary. Add your tool to ClawEh test config's exposed tool list and
 add a probe case — success for hermetic tools, a graceful-error probe for
 network/LLM tools.
 

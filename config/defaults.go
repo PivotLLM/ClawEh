@@ -40,7 +40,6 @@ func DefaultConfig() *Config {
 		homePath = filepath.Join(userHome, global.DefaultDataDir)
 	}
 	agentsBaseDir := filepath.Join(homePath, "agents")
-	workspacePath := filepath.Join(agentsBaseDir, "default")
 
 	cfg := &Config{
 		// Marks this as an auto-seeded config the user hasn't saved yet; the first
@@ -71,16 +70,16 @@ func DefaultConfig() *Config {
 				Temperature:          nil, // nil means use provider default
 				MaxToolIterations:    50,
 				RequestTimeout:       300, // global default (s); per-model overrides (CLIs set longer)
+				MaxConcurrentTurns:   8,
 				ContextWindow:        128000,
 				ArchiveDays:          365,
 				SummaryRetentionDays: 3650,
 			},
 			List: []AgentConfig{
 				{
-					ID:        "claw",
-					Name:      "Claw",
-					Default:   true,
-					Workspace: workspacePath,
+					ID:      "claw",
+					Name:    "Claw",
+					Default: true,
 					// Tools intentionally omitted (nil): the agent inherits the
 					// install default tool set (DefaultAgentTools, driven by each
 					// provider's DefaultEnabled flag). Using ["*"] here would grant
@@ -90,7 +89,8 @@ func DefaultConfig() *Config {
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
-			Mode: "unified",
+			Mode:          "unified",
+			RetentionDays: 0, // keep every session; see session.retention_days
 		},
 		Channels: ChannelsConfig{
 			Telegram: []TelegramBotConfig{
@@ -203,18 +203,18 @@ func DefaultConfig() *Config {
 			// expects; `provider` names the endpoint above.
 			// ============================================
 
-			// CLI providers (local binaries).
-			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
-			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
-			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"}, Enabled: false},
-			// Antigravity (binary "agy") replaces the deprecated Gemini CLI.
-			// --dangerously-skip-permissions auto-approves tool use, which headless
-			// operation needs. The prompt is piped on stdin and the provider never
-			// passes -p/--print: with either, agy reads the prompt from argv and
-			// ignores stdin.
-			{ModelName: "Antigravity CLI", Model: "antigravity-cli", Provider: "Antigravity CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions"}, Enabled: false},
-			// --yolo runs the Cursor agent without approval prompts (headless use).
-			{ModelName: "Cursor CLI", Model: "cursor-cli", Provider: "Cursor CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Enabled: false},
+			// CLI providers (local binaries). The flags each CLI needs come from the
+			// CLIAgents catalogue (config/clis.go), not from extra_args; the
+			// permission-bypass flag is passed only when the provider's
+			// bypass_restrictions is on.
+			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, Enabled: false},
+			// Antigravity (binary "agy") replaces the deprecated Gemini CLI. The
+			// prompt is piped on stdin and the provider never passes -p/--print:
+			// with either, agy reads the prompt from argv and ignores stdin.
+			{ModelName: "Antigravity CLI", Model: "antigravity-cli", Provider: "Antigravity CLI", RequestTimeout: 3600, Enabled: false},
+			{ModelName: "Cursor CLI", Model: "cursor-cli", Provider: "Cursor CLI", RequestTimeout: 3600, Enabled: false},
 
 			// HTTP providers.
 			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},
@@ -392,9 +392,5 @@ func DefaultConfig() *Config {
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}
 	cfg.dataDir = homePath
-	// Ensure agents/default directory exists on startup
-	if err := os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o755); err != nil { //nolint:gosec // default agent workspace the user browses; existing mode kept
-		logger.WarnCF("config", "failed to create default agent workspace", map[string]any{"error": err.Error()})
-	}
 	return cfg
 }

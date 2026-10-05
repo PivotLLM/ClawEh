@@ -3,6 +3,11 @@
     "summarizationModels": "Memory models (optional)",
     "summarizationModelsAdd": "Add memory model…",
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
+    "denyTools": "Denied tools",
+    "denyToolsHint": "Tools the agent may never call, even if allowed above. Same matching as the allow lists (e.g. google_calendar_event_delete, shell_exec).",
+    "denyToolsPlaceholder": "tool name (e.g. shell_exec)",
+    "denyToolsAdd": "Add denied tool",
+    "denyToolsRemove": "remove denied tool",
     "shareCommon": "Share common directory",
     "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it.",
     "globalCron": "Global cron",
@@ -18,7 +23,7 @@
     "maestroAllowParallel": "Allow parallel runs",
     "maestroAllowParallelHint": "Runs are sequential unless the LLM asks for parallel; turn this off to refuse such requests.",
     "fusion": "Fusion (REST-API tools)",
-    "fusionHint": "Give this agent the full MCPFusion config-driven REST-API tool suite. Service definitions live under the data directory's fusion config; per-agent OAuth tokens are keyed by agent id in the shared fusion token store. Off by default.",
+    "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",
@@ -44,14 +49,16 @@
     "bindings": "Bindings",
     "services": "Services",
     "channels_group": "Channels",
-    "config": "Config",
+    "network": "Network",
+    "system": "System",
     "mcp": "MCP",
     "mcp_config": "Config",
     "mcp_servers": "Servers",
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
-    "report": "Report"
+    "report": "Check Up",
+    "audit": "Audit"
   },
   "chat": {
     "welcome": "How can I help you today?",
@@ -142,7 +149,8 @@
     "delete": {
       "title": "Delete Model?",
       "description": "\"{{name}}\" will be permanently removed from your model list. This cannot be undone.",
-      "confirm": "Delete"
+      "confirm": "Delete",
+      "error": "Failed to delete model"
     },
     "advanced": {
       "toggle": "Advanced options"
@@ -280,7 +288,6 @@
         "replyTimeout": "Reply timeout in seconds.",
         "maxSteps": "Maximum number of processing steps.",
         "welcomeMessage": "Welcome message content for new sessions.",
-        "allowTokenQuery": "Allow token in URL query parameters.",
         "pingInterval": "Connection heartbeat interval in seconds.",
         "readTimeout": "Read timeout in seconds.",
         "writeTimeout": "Write timeout in seconds.",
@@ -296,7 +303,7 @@
     "agent": {
       "load_error": "Failed to load agent support information.",
       "skills": {
-        "description": "Skills are loaded from the workspace, global ClawEh home, and builtin directories.",
+        "description": "Shared skills every agent can use; each agent can also have its own.",
         "empty": "No skills are currently available.",
         "import": "Import Skill",
         "import_success": "Skill imported.",
@@ -304,7 +311,7 @@
         "view": "View",
         "delete": "Delete",
         "delete_title": "Delete Skill?",
-        "delete_description": "\"{{name}}\" will be removed from workspace skills.",
+        "delete_description": "\"{{name}}\" will be removed from the shared skills.",
         "delete_confirm": "Delete",
         "delete_success": "Skill deleted.",
         "delete_error": "Failed to delete skill.",
@@ -346,6 +353,131 @@
           "requires_mcp_discovery": "Enable `tools.mcp.discovery` before MCP discovery tools become available."
         }
       }
+    },
+    "network": {
+      "load_error": "Failed to load the configuration; refresh to try again.",
+      "saving": "Saving…",
+      "saved": "Saved ✓",
+      "save_failed": "Save failed",
+      "restart_required": "Restart required to apply changes.",
+      "urls": {
+        "title": "Addresses",
+        "desc": "Where ClawEh can be opened right now.",
+        "localhost": "On this host",
+        "http": "On the network (plain HTTP)",
+        "http_warning": "Plain-text HTTP exposed to network.",
+        "https": "On the network (HTTPS)",
+        "none": "HTTPS is off — ClawEh is reachable from this host only.",
+        "unavailable": "The listener status could not be read: {{message}}"
+      },
+      "http": {
+        "title": "HTTP (WebUI on this host)",
+        "desc": "The plain-HTTP listener, for this machine by default.",
+        "port": "Port",
+        "port_hint": "Port of the plain-HTTP listener (default 18790).",
+        "scope": "Scope",
+        "scope_hint": "Which addresses the plain-HTTP listener binds.",
+        "scope_localhost": "Localhost only (default)",
+        "scope_localhost_hint": "Reachable from this machine only.",
+        "scope_network": "Network",
+        "scope_network_warning": "Exposing plain-text HTTP to the network is not recommended."
+      },
+      "https": {
+        "title": "HTTPS",
+        "desc": "The encrypted listener for reaching ClawEh from other machines.",
+        "mode": "Listen on",
+        "mode_hint": "Which addresses the HTTPS listener binds.",
+        "mode_all": "All interfaces (default)",
+        "mode_all_hint": "Reachable from the network, subject to the allowed networks below.",
+        "mode_localhost": "Localhost only",
+        "mode_localhost_hint": "HTTPS on this machine only — for a reverse proxy on the same host.",
+        "mode_off": "Off",
+        "mode_off_hint": "No HTTPS listener; ClawEh is reachable from this host only.",
+        "port": "HTTPS port",
+        "port_hint": "Port of the HTTPS listener (default 18443), different from the HTTP port.",
+        "external_url": "Hostname / external URL",
+        "external_url_hint": "The address used to reach this server, e.g. https://claw.example.com; its host name is added to the self-signed certificate.",
+        "extra_names": "Extra certificate names",
+        "extra_names_hint": "Additional DNS names or IP addresses for the self-signed certificate, Enter after each.",
+        "extra_names_placeholder": "claw.home.arpa"
+      },
+      "certificate": {
+        "title": "Certificate",
+        "desc": "The certificate the HTTPS listener presents: self-signed by default, or your own PEM files.",
+        "source": "Source",
+        "source_self_signed": "Self-signed",
+        "source_file": "From file",
+        "subject": "Subject",
+        "names": "Names",
+        "expires": "Expires",
+        "fingerprint": "SHA-256 fingerprint",
+        "none": "Certificate not generated yet; it is created when the HTTPS listener first starts.",
+        "unreadable": "The configured certificate could not be read: {{message}}",
+        "choice": "Certificate",
+        "choice_hint": "Where the certificate comes from.",
+        "self_signed": "Self-signed (default)",
+        "external": "External certificate",
+        "cert_file": "Certificate file",
+        "cert_file_hint": "PEM certificate with its chain; a renewed file is picked up without a restart.",
+        "key_file": "Private key file",
+        "key_file_hint": "PEM private key matching the certificate.",
+        "save": "Save certificate",
+        "save_hint": "The server loads the pair first; the paths are saved only if it can.",
+        "saved": "Certificate saved.",
+        "use_self_signed": "Use self-signed certificate",
+        "use_self_signed_hint": "Drop the configured files and go back to the generated certificate.",
+        "self_signed_saved": "Switched to the self-signed certificate.",
+        "regenerate": "Regenerate certificate",
+        "regenerate_hint": "Issue a new self-signed certificate now.",
+        "regenerated": "Certificate regenerated."
+      },
+      "allowed": {
+        "title": "Allowed networks",
+        "desc": "Network access control for WebUI and API. Localhost is always allowed to connect.",
+        "cidrs": "Allowed network CIDRs",
+        "cidrs_hint": "One network per line, such as 192.168.1.0/24, or * for any address; empty allows localhost only.",
+        "cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)",
+        "lockout_exempt": "Never locked out",
+        "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is.",
+        "trusted_proxies": "Trusted proxies",
+        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted."
+      },
+      "device": {
+        "title": "Device listener",
+        "desc": "The listener for external devices (Rabbit R1, voice apps), on its own port with its own pairing.",
+        "scope": "Scope",
+        "scope_hint": "Which addresses the device listener binds.",
+        "scope_localhost": "Localhost only (default)",
+        "scope_network": "Network",
+        "scope_network_hint": "Reachable from your network (0.0.0.0).",
+        "port": "Port",
+        "port_hint": "Port of the device listener (default 18791).",
+        "external_address": "External address",
+        "external_address_hint": "Where devices connect from outside, for example through a reverse proxy.",
+        "external_address_placeholder": "host or host:port",
+        "cidrs": "Allowed network CIDRs",
+        "cidrs_hint": "Networks that may reach the device listener; empty allows any, localhost is always allowed.",
+        "auto_approve": "Auto-approve pairings",
+        "auto_approve_hint": "Skip approval for new device pairings (trusted home network only).",
+        "tls": "Protocol",
+        "tls_hint": "Devices connect to one port, plain or with the WebUI certificate.",
+        "tls_ws": "ws (unencrypted)",
+        "tls_wss": "wss (HTTPS)",
+        "pairing_link": "Pair and manage devices on the Devices page"
+      },
+      "mcp": {
+        "title": "MCP host",
+        "desc": "The MCP server the CLI providers on this machine call for ClawEh's host-side tools.",
+        "listen": "Listen address",
+        "listen_hint": "Localhost only; change the port on the MCP page.",
+        "link": "MCP config"
+      },
+      "restart_now": "Restart now",
+      "restarting": "Restarting…",
+      "restart_timeout": "ClawEh has not come back yet; reload the page to check."
+    },
+    "system": {
+      "title": "System"
     },
     "config": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
@@ -438,16 +570,6 @@
       "devices_enabled_hint": "Enable hardware-device integrations.",
       "monitor_usb": "Monitor USB",
       "monitor_usb_hint": "Watch USB plug/unplug events when devices are enabled.",
-      "network_access": "Network access",
-      "network_access_hint": "Off (recommended): ClawEh is reachable only from this machine (localhost) — the most secure default. Turn it on only if you need to reach ClawEh — its WebUI and the claw-auth OAuth flow — from another machine on your network. On its own this only makes ClawEh listen on the network: you must also fill in Allowed network CIDRs below, or connections from other machines are still refused. TLS is not built in yet; put a reverse proxy in front for HTTPS.",
-      "network_restart_note": "Changes to network access or the web port require a gateway restart to take effect.",
-      "web_port": "Web port",
-      "web_port_hint": "HTTP port the ClawEh Web server listens on.",
-      "external_url": "External URL",
-      "external_url_hint": "The URL external tools (claw-auth) use to reach this server. Defaults to how you're accessing it now; override with a proxy URL (e.g. https://…) if needed.",
-      "allowed_cidrs": "Allowed network CIDRs",
-      "allowed_cidrs_hint": "Who may reach the WebUI and API from off this machine. One entry per line or comma-separated. Leave empty for loopback only — turning on Network access is not enough on its own, you must list the networks here too. Use a subnet such as 192.168.1.0/24, or * for any address (0.0.0.0/0 covers IPv4 only). This machine can always connect.",
-      "allowed_cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8\n(or * for any address)",
       "sections": {
         "agent": "Agent",
         "agent_defaults": "Agent defaults",
@@ -457,12 +579,11 @@
         "context_management": "Context management",
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
-        "service": "Service",
         "devices": "Devices",
-        "backup": "Configuration backup"
+        "backup": "Backup"
       },
       "open_raw": "Raw config",
-      "back_to_visual": "Visual config",
+      "back_to_visual": "System settings",
       "raw_json_title": "Raw JSON configuration",
       "json_placeholder": "Enter valid JSON configuration...",
       "save_success": "Configuration saved successfully.",
@@ -477,13 +598,16 @@
       "unsaved_changes": "You have unsaved changes.",
       "log_retention_days": "Log retention (days)",
       "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever.",
-      "backup_desc": "Nightly configuration backup: snapshot config.json and the cron jobs file into backup/YYYYMMDD/. Configuration only — not workspaces, sessions, or memory. On by default.",
+      "backup_desc": "Nightly backup: config.json, the cron jobs file, credentials, TLS material, state and every SQLite database (sessions, memory) written as one claw-backup-<timestamp>.tar.gz archive. Agent workspace files are not included. On by default.",
       "backup_enabled": "Nightly backup",
-      "backup_enabled_hint": "When on, copy config.json and the cron jobs file into <data dir>/backup/YYYYMMDD/ once a day.",
+      "backup_enabled_hint": "When on, write a claw-backup-<timestamp>.tar.gz archive to the destination directory once a day.",
       "backup_at": "Backup time",
       "backup_at_hint": "Local time of day to run the nightly backup (default 03:00).",
       "backup_retain_days": "Keep backups (days)",
-      "backup_retain_days_hint": "Delete backup folders older than this many days (default 30).",
+      "backup_retain_days_hint": "Delete backup archives older than this many days (default 30).",
+      "backup_dest": "Destination directory",
+      "backup_dest_hint": "Where the archives are written, e.g. an off-host mount. Leave blank for <CLAW_HOME>/backup.",
+      "backup_dest_placeholder": "<CLAW_HOME>/backup",
       "backup_now": "Back up now",
       "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
       "backup_now_running": "Backing up…",
@@ -496,8 +620,34 @@
       "lines": "Show",
       "refresh": "Refresh",
       "source": "Log",
-      "source_log": "Gateway log",
+      "source_log": "ClawEh log",
       "source_alerts": "Alerts"
+    },
+    "audit": {
+      "filter_kind": "Kind",
+      "all_kinds": "All kinds",
+      "filter_agent": "Agent",
+      "refresh": "Refresh",
+      "empty": "No audit events",
+      "loading": "Loading...",
+      "load_more": "Load more",
+      "dropped_one": "{{count}} event was dropped because the audit write queue was full; the trail has a gap.",
+      "dropped_other": "{{count}} events were dropped because the audit write queue was full; the trail has gaps.",
+      "kind": {
+        "tool_call": "Tool call",
+        "config_write": "Config write",
+        "auth": "Auth",
+        "restart": "Restart"
+      },
+      "col": {
+        "time": "Time",
+        "kind": "Kind",
+        "who": "Actor / agent",
+        "channel": "Channel",
+        "what": "Tool / summary",
+        "outcome": "Outcome",
+        "duration": "Duration"
+      }
     },
     "mcp": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
@@ -640,6 +790,23 @@
       "environment": "Environment",
       "mcp_host": "MCP host",
       "cli_providers": "CLI providers"
+    },
+    "report": {
+      "title": "Check Up",
+      "load_error": "Failed to load the security assessment.",
+      "build": "build",
+      "legend": "This is a summary of key items. For a full report, use the \"Full report\" button below.",
+      "col": {
+        "action": "Action",
+        "item": "Item",
+        "status": "Status"
+      },
+      "action_needed": "Action recommended",
+      "no_action": "No action needed",
+      "download": "Full report"
+    },
+    "devices": {
+      "connect_to": "Devices will connect to"
     }
   },
   "providers": {
@@ -656,7 +823,9 @@
       "args": "Args: {{args}}",
       "modelCount": "{{enabled}} of {{count}} model on",
       "modelCount_other": "{{enabled}} of {{count}} models on",
-      "toggleError": "Failed to change the CLI agent"
+      "toggleError": "Failed to change the CLI agent",
+      "bypass": "Allow CLI to bypass restrictions",
+      "bypassHint": "Passes the CLI's skip-permissions / sandbox-bypass flag. It can then run commands and edit files anywhere the service user can, without asking."
     },
     "status": {
       "configured": "Configured",
@@ -728,14 +897,14 @@
     },
     "network": {
       "title": "Network access",
-      "body": "Choose how ClawEh can be reached. The defaults are safe — click Next to accept them, or adjust below. You can change all of this later in Settings.",
+      "body": "Choose how ClawEh can be reached; the defaults are safe and can be changed later in Settings.",
       "accessLabel": "Enable network access",
-      "accessHint": "Off (recommended): ClawEh is reachable only from this machine (localhost) — the most secure default. Turn it on only if you need to reach ClawEh — its WebUI and the claw-auth OAuth flow — from another machine on your network. TLS is not built in yet; put a reverse proxy in front for HTTPS.",
+      "accessHint": "Off (recommended): ClawEh is reachable only from this machine; turn it on to reach the WebUI from other machines on your network over HTTPS.",
       "portLabel": "Web port",
       "portHint": "HTTP port the ClawEh Web server listens on.",
       "externalLabel": "External URL",
-      "externalHint": "The URL external tools (claw-auth) use to reach this server. Defaults to how you're accessing it now; override with a proxy URL (e.g. https://…) if needed.",
-      "restartNote": "Changes to network access or the web port require a gateway restart to take effect."
+      "externalHint": "The URL external tools use to reach this server; defaults to how you are accessing it now.",
+      "restartNote": "Restart required to apply changes."
     },
     "welcome": {
       "title": "Let's get you set up",
@@ -783,5 +952,29 @@
       "title": "Review and finish",
       "body": "Here's what will be configured. Go back to make changes, or finish to apply."
     }
+  },
+  "connection": {
+    "lost": "Connection lost. Reconnecting…"
+  },
+  "auth": {
+    "login": {
+      "title": "ClawEh",
+      "checking": "Checking the server...",
+      "unreachable": "The server could not be reached. Is ClawEh running?",
+      "username": "Username",
+      "password": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in...",
+      "invalid": "Invalid username or password.",
+      "locked": "Too many failed sign-ins. Try again in {{seconds}} seconds.",
+      "failed": "Sign-in failed: {{message}}"
+    },
+    "noAdmin": {
+      "title": "No admin account",
+      "body": "On the server run:",
+      "hint": "Then check again. ClawEh picks the account up within a minute.",
+      "retry": "Check again"
+    },
+    "logout": "Sign out"
   }
 }

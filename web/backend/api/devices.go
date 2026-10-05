@@ -13,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -37,6 +38,21 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
+// SetDeviceDisconnector wires the running device channel's DisconnectDevice,
+// so removing a device ends its open connections at once. The gateway resolves
+// the channel per call, which survives a channel manager rebuild.
+func (h *Handler) SetDeviceDisconnector(fn func(deviceID string)) {
+	h.reloadMu.Lock()
+	h.deviceDisconnect = fn
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) deviceDisconnector() func(deviceID string) {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	return h.deviceDisconnect
+}
+
 // deviceStoreFor returns the cached pairing-DB handle, opening it on first use.
 // The channel and this admin API share the same WAL database file.
 //
@@ -45,15 +61,15 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 // on every single request — and raced the device channel for the same file. The
 // caller must NOT close what it gets back; the handle lives for the process.
 //
-// The config is still loaded per call, because callers use it for live values
-// and it is cheap. A data dir change (config reload) reopens against the new
-// path rather than serving the old database.
+// The live config is read per call, because callers use it for live values
+// and it is a snapshot. A data dir change (config reload) reopens against the
+// new path rather than serving the old database.
 func (h *Handler) openDeviceStore(ctx context.Context) (*device.Store, *config.Config, error) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		return nil, nil, err
 	}
-	stateDir := filepath.Join(cfg.DataDir(), "state")
+	stateDir := filepath.Join(cfg.DataDir(), global.InternalDir)
 	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
 		return nil, nil, mkErr
 	}
@@ -103,10 +119,39 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // handleDevicePair provisions the device gateway (generates+persists a shared token
 // and enables the channel if needed), reloads the gateway, and returns the device
 // setup payload plus a rendered QR (PNG data-URL + ASCII).
-func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
-	cfg, changed, err := device.EnsureProvisioned(h.configPath)
+func (h *Handler) handleDevicePair(w http.ResponseWriter, r *http.Request) {
+	changed := false
+	err := h.updateConfig(r, func(c *config.Config) error {
+		d := &c.Channels.Device
+		if d.Token == "" {
+			tok, terr := device.GenerateSharedToken()
+			if terr != nil {
+				return terr
+			}
+			d.Token, changed = tok, true
+		}
+		if d.WordToken == "" {
+			wtok, werr := device.GenerateWordToken()
+			if werr != nil {
+				return werr
+			}
+			d.WordToken, changed = wtok, true
+		}
+		if !d.Enabled {
+			d.Enabled, changed = true, true
+		}
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
 	// Only reload when provisioning actually changed config (first-time token/enable).
@@ -115,7 +160,7 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
 	if changed {
 		if reload := h.reloadFunc(); reload != nil {
 			if reloadErr := reload(); reloadErr != nil {
-				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+				logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 			}
 		}
 	}
@@ -135,43 +180,49 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	cfg, err := config.LoadConfig(h.configPath)
+	// Only persist + reload (which re-binds the device listener) when something
+	// actually changed, so saving with no edits is a cheap no-op.
+	changed := false
+	err := h.updateConfig(r, func(c *config.Config) error {
+		d := &c.Channels.Device
+		if body.ListenLAN != nil {
+			newHost := "127.0.0.1"
+			if *body.ListenLAN {
+				newHost = "0.0.0.0"
+			}
+			if d.Host != newHost {
+				d.Host = newHost
+				changed = true
+			}
+		}
+		if body.ExternalURL != nil {
+			if v := strings.TrimSpace(*body.ExternalURL); v != d.ExternalURL {
+				d.ExternalURL = v
+				changed = true
+			}
+		}
+		if body.Enabled != nil && d.Enabled != *body.Enabled {
+			d.Enabled = *body.Enabled
+			changed = true
+		}
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
-	d := &cfg.Channels.Device
-	changed := false
-	if body.ListenLAN != nil {
-		newHost := "127.0.0.1"
-		if *body.ListenLAN {
-			newHost = "0.0.0.0"
-		}
-		if d.Host != newHost {
-			d.Host = newHost
-			changed = true
-		}
-	}
-	if body.ExternalURL != nil {
-		if v := strings.TrimSpace(*body.ExternalURL); v != d.ExternalURL {
-			d.ExternalURL = v
-			changed = true
-		}
-	}
-	if body.Enabled != nil && d.Enabled != *body.Enabled {
-		d.Enabled = *body.Enabled
-		changed = true
-	}
-	// Only persist + reload (which re-binds the device listener) when something
-	// actually changed, so saving with no edits is a cheap no-op.
 	if changed {
-		if err := config.SaveConfig(h.configPath, cfg); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
-			return
-		}
 		if reload := h.reloadFunc(); reload != nil {
 			if reloadErr := reload(); reloadErr != nil {
-				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+				logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 			}
 		}
 	}
@@ -181,25 +232,28 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 // handleDeviceWordTokenRegenerate mints a fresh word passphrase, persists it, reloads
 // the gateway so the new value takes effect, and returns the refreshed pairing status.
 // The long QR token is left untouched.
-func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
-		return
-	}
+func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, r *http.Request) {
 	wtok, werr := device.GenerateWordToken()
 	if werr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "word token generation failed"})
 		return
 	}
-	cfg.Channels.Device.WordToken = wtok
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
+	err := h.updateConfig(r, func(c *config.Config) error {
+		c.Channels.Device.WordToken = wtok
+		return nil
+	})
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	cfg, err := h.currentConfig()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
 	if reload := h.reloadFunc(); reload != nil {
 		if reloadErr := reload(); reloadErr != nil {
-			logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+			logger.WarnCF("api", "config reload failed", map[string]any{"error": reloadErr.Error()})
 		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
@@ -207,7 +261,7 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http
 
 // handleDevicePairStatus returns the current pairing config without mutating it.
 func (h *Handler) handleDevicePairStatus(w http.ResponseWriter, _ *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
@@ -231,7 +285,8 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	}
 	token := dev.Token
 
-	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token)
+	lanIPs := device.LANIPv4s()
+	payload, perr := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, lanIPs, devicePort, token, dev.TLS)
 	encoded := ""
 	if perr == nil {
 		encoded, perr = payload.Encode()
@@ -239,7 +294,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 
 	warnings := []string{}
 	if device.IsLoopbackHost(host) {
-		warnings = append(warnings, "Device gateway listens on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
+		warnings = append(warnings, "The device listener is on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
 	}
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
 		warnings = append(warnings, "No routable LAN IPv4 address detected; set an External URL.")
@@ -259,7 +314,9 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 		"listen_host":  host,
 		"listen_port":  devicePort,
 		"listen_lan":   !device.IsLoopbackHost(host),
+		"tls":          dev.TLS, // channels.device.tls: the listener speaks wss://
 		"external_url": dev.ExternalURL,
+		"connect_url":  device.ConnectURL(dev, cfg.Gateway.ExternalURL, lanIPs), // the address devices connect to, as the QR advertises it
 		"warnings":     warnings,
 	}
 	if render && token != "" && encoded != "" {
@@ -438,6 +495,10 @@ func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	if err := store.RemovePaired(r.Context(), deviceID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "remove failed"})
 		return
+	}
+	// The device's tokens are gone; end any connection it still has open.
+	if disconnect := h.deviceDisconnector(); disconnect != nil {
+		disconnect(deviceID)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

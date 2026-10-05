@@ -94,7 +94,7 @@ func TestManagerSetAlerter_PropagatesToChannels(t *testing.T) {
 
 	after := &mockChannel{}
 	after.name = "after"
-	m.injectChannelDependencies(after)
+	m.injectChannelDependencies(after, "test")
 
 	before.Alert(alerter.Alert{Title: "a"})
 	after.Alert(alerter.Alert{Title: "b"})

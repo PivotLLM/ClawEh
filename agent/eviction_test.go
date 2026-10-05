@@ -40,6 +40,7 @@ func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Me
 func (m *trackingContextManager) Assemble(_ context.Context, _ ctxengine.AssembleRequest) (ctxengine.Assembly, error) {
 	return ctxengine.Assembly{}, nil
 }
+func (m *trackingContextManager) ObserveUsage(_, _ int)                             {}
 func (m *trackingContextManager) Compact(_ context.Context) error                   { return nil }
 func (m *trackingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
 func (m *trackingContextManager) RenderedSummary() string                           { return "" }
@@ -53,34 +54,40 @@ func (m *trackingContextManager) Close(_ context.Context) error {
 
 // makeEntry is a test helper that inserts a cmEntry directly into the sync.Map.
 func makeEntry(al *AgentLoop, key string, cm ctxengine.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
-	entry := &cmEntry{
-		cm:           cm,
-		lastAccessed: lastAccessed,
-	}
+	entry := &cmEntry{cm: cm}
+	entry.lastAccessed.Store(lastAccessed.UnixNano())
 	entry.refcount.Store(refcount)
 	al.contextManagers.Store(key, entry)
 	return entry
 }
 
-// TestInvalidateContextManagers verifies a config reload clears every cached
-// context manager (so the summarization chain rebuilds) WITHOUT closing them or
-// disturbing active sessions.
+// TestInvalidateContextManagers verifies a config reload evicts (and closes)
+// every idle cached context manager, and only marks one still in use as stale,
+// leaving it cached and open for the turn holding it.
 func TestInvalidateContextManagers(t *testing.T) {
 	al := &AgentLoop{}
-	cm1 := &trackingContextManager{}
-	cm2 := &trackingContextManager{}
-	makeEntry(al, "a:main", cm1, time.Now(), 0)
-	makeEntry(al, "b:main", cm2, time.Now(), 1) // refcount>0: still in-flight
+	idle := &trackingContextManager{}
+	busy := &trackingContextManager{}
+	makeEntry(al, "a:main", idle, time.Now(), 0)
+	busyEntry := makeEntry(al, "b:main", busy, time.Now(), 1) // refcount>0: still in-flight
 
-	al.invalidateContextManagers()
+	al.invalidateContextManagers(context.Background())
 
-	remaining := 0
-	al.contextManagers.Range(func(_, _ any) bool { remaining++; return true })
-	if remaining != 0 {
-		t.Fatalf("expected all entries cleared, %d remain", remaining)
+	if _, ok := al.contextManagers.Load("a:main"); ok {
+		t.Error("idle entry still cached after reload")
 	}
-	if cm1.closed.Load() || cm2.closed.Load() {
-		t.Error("invalidation must not Close managers (in-flight holders keep using them)")
+	if !idle.closed.Load() {
+		t.Error("idle entry not closed after reload")
+	}
+	v, ok := al.contextManagers.Load("b:main")
+	if !ok || v != busyEntry {
+		t.Fatal("in-use entry must stay cached across a reload")
+	}
+	if busy.closed.Load() {
+		t.Error("in-use entry must not be closed by a reload")
+	}
+	if !busyEntry.stale.Load() {
+		t.Error("in-use entry not marked stale")
 	}
 }
 
@@ -167,12 +174,47 @@ func TestDrainContextManagers(t *testing.T) {
 		makeEntry(al, "agent:drain"+string(rune('0'+i)), cms[i], time.Now(), 0)
 	}
 
-	al.drainContextManagers()
+	al.drainContextManagers(context.Background())
 
 	for i, cm := range cms {
 		if !cm.closed.Load() {
 			t.Errorf("entry %d not closed after drain", i)
 		}
+	}
+}
+
+// blockingContextManager is a context manager whose Close never returns
+// until released, like one whose engine lock a stuck turn still holds.
+type blockingContextManager struct {
+	trackingContextManager
+	release chan struct{}
+}
+
+func (m *blockingContextManager) Close(context.Context) error {
+	<-m.release
+	return nil
+}
+
+// TestDrainContextManagers_BoundedByContext verifies a context manager that
+// never finishes closing cannot hold up the shutdown drain past its context,
+// and that the others are still closed.
+func TestDrainContextManagers_BoundedByContext(t *testing.T) {
+	al := &AgentLoop{evictStop: make(chan struct{})}
+	stuck := &blockingContextManager{release: make(chan struct{})}
+	defer close(stuck.release)
+	ok := &trackingContextManager{}
+	makeEntry(al, "agent:stuck", stuck, time.Now(), 1)
+	makeEntry(al, "agent:ok", ok, time.Now(), 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	al.drainContextManagers(ctx)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("drain took %v; it must stop waiting when its context ends", elapsed)
+	}
+	if !ok.closed.Load() {
+		t.Error("the idle session was not closed")
 	}
 }
 
@@ -204,7 +246,7 @@ func TestGetContextManager_RefcountLifecycle(t *testing.T) {
 	}
 
 	// With refcount==0 and stale time, eviction should fire.
-	entry.lastAccessed = time.Now().Add(-3 * time.Hour)
+	entry.lastAccessed.Store(time.Now().Add(-3 * time.Hour).UnixNano())
 	al.runEvictionPass(defaultEvictTTL)
 	if !cm.closed.Load() {
 		t.Error("expected eviction after refcount drops to 0 and TTL exceeded")

@@ -69,9 +69,10 @@ func TestDefaultConfig_SeedsAntigravityNotGemini(t *testing.T) {
 	if model.Provider != "Antigravity CLI" {
 		t.Errorf("provider = %q, want %q", model.Provider, "Antigravity CLI")
 	}
-	// Headless operation needs approval bypass, exactly as the other CLI models do.
-	if !slices.Contains(model.ExtraArgs, "--dangerously-skip-permissions") {
-		t.Errorf("extra_args = %v, want --dangerously-skip-permissions", model.ExtraArgs)
+	// The permission-bypass flag is not seeded: it is passed only when the
+	// provider's bypass_restrictions is on (config/clis.go), never from a model.
+	if slices.Contains(model.ExtraArgs, "--dangerously-skip-permissions") {
+		t.Errorf("extra_args = %v, must not seed --dangerously-skip-permissions", model.ExtraArgs)
 	}
 	// -p / --print must never be seeded: with either, agy reads the prompt from
 	// argv and ignores stdin, silently dropping the conversation.

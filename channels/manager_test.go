@@ -418,14 +418,32 @@ func TestSendWithRetry_ExponentialBackoff(t *testing.T) {
 	totalElapsed := time.Since(start)
 
 	// With maxRetries=3: attempts at 0, ~500ms, ~1.5s, ~3.5s
-	// Total backoff: 500ms + 1s + 2s = 3.5s
-	// Allow some margin
-	if totalElapsed < 3*time.Second {
-		t.Fatalf("expected total elapsed >= 3s for exponential backoff, got %v", totalElapsed)
+	// Total backoff: 500ms + 1s + 2s = 3.5s, jittered by ±20% → at least 2.8s
+	if totalElapsed < 2800*time.Millisecond {
+		t.Fatalf("expected total elapsed >= 2.8s for exponential backoff, got %v", totalElapsed)
 	}
 
 	if int(callCount.Load()) != maxRetries+1 {
 		t.Fatalf("expected %d calls, got %d", maxRetries+1, callCount.Load())
+	}
+}
+
+func TestJitter_StaysWithinBounds(t *testing.T) {
+	const base = 5 * time.Second
+	lo, hi := time.Duration(float64(base)*(1-backoffJitter)), time.Duration(float64(base)*(1+backoffJitter))
+	seen := map[time.Duration]bool{}
+	for range 1000 {
+		d := jitter(base)
+		if d < lo || d > hi {
+			t.Fatalf("jitter(%v) = %v, want within [%v, %v]", base, d, lo, hi)
+		}
+		seen[d] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("jitter returned a constant; expected spread")
+	}
+	if jitter(0) != 0 {
+		t.Error("jitter(0) must be 0")
 	}
 }
 

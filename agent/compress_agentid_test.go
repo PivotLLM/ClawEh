@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/PivotLLM/ctxengine"
 
@@ -66,6 +65,7 @@ func (c *capturingContextManager) Assemble(ctx context.Context, req ctxengine.As
 	c.mu.Unlock()
 	return ctxengine.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
 }
+func (c *capturingContextManager) ObserveUsage(_, _ int)                             {}
 func (c *capturingContextManager) Compact(_ context.Context) error                   { return nil }
 func (c *capturingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
 func (c *capturingContextManager) RenderedSummary() string                           { return "" }
@@ -121,10 +121,10 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	// without depending on real compression heuristics firing.
 	stub := &capturingContextManager{}
 	entry := &cmEntry{
-		cm:           stub,
-		sessionKey:   sessionKey,
-		lastAccessed: time.Now(),
+		cm:         stub,
+		sessionKey: sessionKey,
 	}
+	entry.touch()
 	entry.refcount.Store(0)
 	al.contextManagers.Store(agent.ID+":"+sessionKey, entry)
 

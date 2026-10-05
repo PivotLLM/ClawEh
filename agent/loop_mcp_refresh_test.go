@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -42,17 +43,18 @@ func newMCPAgentLoop(t *testing.T, url string) *AgentLoop {
 		"svc": {Enabled: true, Type: "http", URL: url},
 	}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
-	t.Cleanup(al.Close)
+	t.Cleanup(func() { al.Close(context.Background()) })
 	if err := al.EnsureMCPInitialized(context.Background()); err != nil {
 		t.Fatalf("EnsureMCPInitialized: %v", err)
 	}
 	return al
 }
 
-// catalogueCounter records how often the host was asked to refresh.
-type catalogueCounter struct{ refreshes int }
+// catalogueCounter records how often the host was asked to refresh. The
+// tools-changed notifier refreshes from its own goroutine, so it is atomic.
+type catalogueCounter struct{ refreshes atomic.Int32 }
 
-func (c *catalogueCounter) RefreshCatalogue() { c.refreshes++ }
+func (c *catalogueCounter) RefreshCatalogue() { c.refreshes.Add(1) }
 
 // After the tools-changed handler runs (here driven through RefreshMCPServer,
 // which reconnects and re-registers), the old mcp_svc_ping name is gone from the
@@ -81,7 +83,7 @@ func TestRefreshMCPServer_ReplacesRenamedTools(t *testing.T) {
 		t.Errorf("renamed tool mcp_svc_ping should be gone; got %v", names)
 	}
 	assertHasTool(t, names, "mcp_svc_pong")
-	if host.refreshes == 0 {
+	if host.refreshes.Load() == 0 {
 		t.Error("the MCP host catalogue should have been refreshed")
 	}
 }
@@ -98,7 +100,7 @@ func TestRefreshMCPServer_UnknownServer(t *testing.T) {
 // With no MCP manager at all (MCP not configured) every name is unknown.
 func TestRefreshMCPServer_NoManager(t *testing.T) {
 	al := mustNewAgentLoop(t, toolRegTestConfig(t), bus.NewMessageBus(), &mockProvider{}, nil)
-	t.Cleanup(al.Close)
+	t.Cleanup(func() { al.Close(context.Background()) })
 
 	if err := al.RefreshMCPServer(context.Background(), "svc"); !errors.Is(err, clawmcp.ErrUnknownServer) {
 		t.Fatalf("RefreshMCPServer without a manager = %v, want ErrUnknownServer", err)

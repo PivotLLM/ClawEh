@@ -59,7 +59,7 @@ EOFMOCK
 		if i%2 == 1 {
 			role = "assistant"
 		}
-		store.AddMessage(sessionKey, role,
+		addMessage(t, store, sessionKey, role,
 			fmt.Sprintf("msg %d payload %s", i, strings.Repeat("token ", 200)))
 	}
 

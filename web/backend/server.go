@@ -3,20 +3,25 @@ package webserver
 import (
 	"net/http"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/web/backend/api"
 )
 
 // Options configures the in-process web server before it is mounted on the
 // gateway's shared HTTP mux.
 type Options struct {
-	// ConfigPath is the absolute path of the active claw config.json. The web
-	// API handlers load/save this file when serving CRUD requests, so it must
-	// match the config that the surrounding gateway loaded at boot.
+	// Store is the gateway's live configuration. The API handlers read and
+	// write through it, so the WebUI shows and edits the same in-memory config
+	// the gateway runs on. When nil, a store is opened on ConfigPath instead.
+	Store *config.Store
+
+	// ConfigPath is the absolute path of the active claw config.json, used only
+	// when Store is nil.
 	ConfigPath string
 
 	// ListenPort is the port the gateway HTTP server listens on. It is
 	// surfaced via SetServerOptions so that /api/* responses that report the
-	// "current" listen address (e.g. /api/webui/token's ws_url) are accurate.
+	// "current" listen address are accurate.
 	ListenPort int
 
 	// Public mirrors the gateway's all-interfaces bind (Gateway.Host ==
@@ -43,7 +48,12 @@ type Server struct {
 // once RegisterRoutes has been called; the underlying api.Handler holds its
 // own mutexes for OAuth state and config writes.
 func New(opts Options) *Server {
-	h := api.NewHandler(opts.ConfigPath)
+	var h *api.Handler
+	if opts.Store != nil {
+		h = api.NewHandlerWithStore(opts.Store)
+	} else {
+		h = api.NewHandler(opts.ConfigPath)
+	}
 	h.SetServerOptions(opts.ListenPort, opts.Public)
 	return &Server{apiHandler: h, opts: opts}
 }

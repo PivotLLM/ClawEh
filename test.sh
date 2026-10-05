@@ -364,6 +364,8 @@ fi
 
 INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
+CLI_SMOKE_STATUS="skipped (set CLAW_TEST_CLI=1)"
+CLI_SMOKE_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
 declare -a INTEGRATION_FAILS=()   # one reason per failed check, repeated in the final summary
@@ -389,11 +391,12 @@ integ_fail() {
 # --deny-warnings: oxlint exits 0 on warnings by default, so without it this
 # check could never fail and would be decorative.
 #
-# Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
-# must still be able to run this suite.
+# Failed, not skipped, when pnpm or node_modules are absent: the gate covers
+# the whole suite, and a skipped section would let it pass untested. The gate
+# does not install them itself; the message names the command that does.
 FRONTEND_RAN=false
 FRONTEND_PASSED=true
-FRONTEND_SKIP_REASON=""
+FRONTEND_MISSING=""
 LINT_STATUS="not run"
 FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
 
@@ -404,13 +407,14 @@ echo "${BOLD}============================================${NC}"
 echo ""
 
 if ! command -v pnpm >/dev/null 2>&1; then
-    FRONTEND_SKIP_REASON="pnpm not on PATH"
+    FRONTEND_MISSING="pnpm not on PATH; install pnpm, then run: make frontend-deps"
 elif [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-    FRONTEND_SKIP_REASON="node_modules missing (run: make frontend-deps)"
+    FRONTEND_MISSING="node_modules missing; run: make frontend-deps (or pnpm install --frozen-lockfile in web/frontend)"
 fi
 
-if [ -n "$FRONTEND_SKIP_REASON" ]; then
-    echo "${DIM}Skipped: ${FRONTEND_SKIP_REASON}${NC}"
+if [ -n "$FRONTEND_MISSING" ]; then
+    echo "${RED}ERROR: frontend checks cannot run: ${FRONTEND_MISSING}${NC}"
+    FRONTEND_PASSED=false
 else
     FRONTEND_RAN=true
     if (cd "$FRONTEND_DIR" && pnpm exec tsc -b --noEmit); then
@@ -437,8 +441,11 @@ else
             FRONTEND_PASSED=false
         fi
     else
-        echo "${DIM}  lint skipped: oxlint not installed (npm i -g oxlint)${NC}"
-        LINT_STATUS="skipped"
+        # A missing linter fails the gate: a run that skipped a stage cannot be
+        # reported as passing.
+        echo "${RED}  lint FAILED: oxlint not installed (npm i -g oxlint)${NC}"
+        LINT_STATUS="failed"
+        FRONTEND_PASSED=false
     fi
 fi
 
@@ -517,6 +524,21 @@ PY
                 # Passed only via environment — never written to a config file.
                 TEST_SESSION_TOKEN="SST$(openssl rand -hex 32)"
 
+                # One Fusion service (the MCPFusion module's own wxca sample, no
+                # credentials) so the probe suite can check per-agent Fusion
+                # gating on the running binary: main lists the service, alice
+                # has Fusion on but lists nothing and must get none of its tools.
+                FUSION_SAMPLE="$(go list -m -f '{{.Dir}}' github.com/PivotLLM/MCPFusion 2>/dev/null)/configs/wxca.json"
+                FUSION_SERVICE=""
+                if [ -f "$FUSION_SAMPLE" ]; then
+                    mkdir -p "$INTEG_HOME/fusion"
+                    cp "$FUSION_SAMPLE" "$INTEG_HOME/fusion/wxca.json"
+                    chmod 600 "$INTEG_HOME/fusion/wxca.json"
+                    FUSION_SERVICE="wxca"
+                else
+                    integ_fail "MCPFusion sample service not found at $FUSION_SAMPLE; Fusion gating checks cannot run"
+                fi
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
@@ -526,12 +548,15 @@ PY
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*", "cogmem_*"]
+        "tools": ["*", "cogmem_*"],
+        "fusion": true,
+        "mcp_tools": ["wxca"]
       },
       {
         "id": "alice",
         "name": "alice",
-        "tools": ["*", "cogmem_*"]
+        "tools": ["*", "cogmem_*"],
+        "fusion": true
       }
     ]
   },
@@ -550,7 +575,8 @@ PY
   },
   "gateway": {
     "host": "127.0.0.1",
-    "port": $GATEWAY_PORT
+    "port": $GATEWAY_PORT,
+    "tls": { "mode": "off" }
   },
   "tools": {
     "web": {
@@ -655,18 +681,22 @@ PY
       "common_get",
       "common_put",
       "common_delete",
-      "time_now"
+      "time_now",
+      "wxca"
     ]
   }
 }
 EOF
+                # The gateway refuses a config.json readable by other users.
+                chmod 600 "$INTEG_HOME/config.json"
 
                 # Pre-seed a long-lived service token for the default agent so the
                 # gateway loads it at boot (exercises loadServiceTokens + the
                 # headless service session on /mcp + /internal).
                 TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
-                mkdir -p "$INTEG_HOME/state"
-                printf '{"main":"%s"}\n' "$TEST_SERVICE_TOKEN" > "$INTEG_HOME/state/service-tokens.json"
+                ALICE_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
+                mkdir -p "$INTEG_HOME/internal"
+                printf '{"main":"%s","alice":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
@@ -704,11 +734,11 @@ EOF
                     # The port probe above can win a race with the write, so
                     # poll briefly rather than testing once.
                     for _ in $(seq 1 20); do
-                        [ -f "$INTEG_HOME/claw.pid" ] && break
+                        [ -f "$INTEG_HOME/internal/claw.pid" ] && break
                         sleep 0.25
                     done
-                    if [ -f "$INTEG_HOME/claw.pid" ]; then
-                        PIDFILE_CONTENT=$(cat "$INTEG_HOME/claw.pid" 2>/dev/null | tr -d ' \n')
+                    if [ -f "$INTEG_HOME/internal/claw.pid" ]; then
+                        PIDFILE_CONTENT=$(cat "$INTEG_HOME/internal/claw.pid" 2>/dev/null | tr -d ' \n')
                         if [ "$PIDFILE_CONTENT" = "$INTEG_PID" ]; then
                             echo "  ${GREEN}PASS${NC}: claw.pid written at startup (pid $PIDFILE_CONTENT)"
                             INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
@@ -752,6 +782,8 @@ EOF
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
+                       FUSION_SERVICE="$FUSION_SERVICE" \
+                       UNGRANTED_SERVICE_TOKEN="$ALICE_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        GATEWAY_LOG="$INTEG_LOG" \
@@ -765,6 +797,18 @@ EOF
                     fi
 
                     # ---- Workspace re-population: delete alice's dir and restart ----
+                    if [ "${CLAW_TEST_CLI:-}" = "1" ]; then
+                        echo ""
+                        echo "${BOLD}--- CLI provider smoke (opt-in) ---${NC}"
+                        echo ""
+                        if bash "$SCRIPT_DIR/tests/test_cli_provider.sh" "$INTEG_BIN"; then
+                            CLI_SMOKE_STATUS="passed"
+                        else
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI provider smoke (tests/test_cli_provider.sh) failed; see its output above"
+                        fi
+                    fi
                     echo ""
                     echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
                     echo ""
@@ -792,7 +836,7 @@ EOF
                     # reaches.
                     if ! $TERM_CLEAN; then
                         integ_fail "ClawEh did not exit within 5s of SIGTERM"
-                    elif [ -f "$INTEG_HOME/claw.pid" ]; then
+                    elif [ -f "$INTEG_HOME/internal/claw.pid" ]; then
                         integ_fail "claw.pid survived SIGTERM — shutdown did not run"
                     else
                         echo "  ${GREEN}PASS${NC}: SIGTERM ran graceful shutdown (claw.pid removed)"
@@ -898,13 +942,10 @@ if $RUN_RACE; then
 fi
 
 if ! $FRONTEND_RAN; then
-    echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
+    echo "Frontend:    ${RED}failed (${FRONTEND_MISSING})${NC}"
+    OVERALL_PASS=false
 elif $FRONTEND_PASSED; then
-    if [ "$LINT_STATUS" = "skipped" ]; then
-        echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests) ${DIM}— lint skipped: oxlint not installed${NC}"
-    else
-        echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
-    fi
+    echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
 else
     echo "Frontend:    ${RED}failed${NC}"
     OVERALL_PASS=false
@@ -932,6 +973,7 @@ else
     echo "MCP integ:   ${RED}failed (probe not found)${NC}"
     OVERALL_PASS=false
 fi
+echo "CLI smoke:   ${CLI_SMOKE_STATUS}"
 
 echo ""
 

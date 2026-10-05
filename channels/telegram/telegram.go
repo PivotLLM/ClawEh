@@ -2,11 +2,13 @@ package telegram
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mymmrac/telego"
+	ta "github.com/mymmrac/telego/telegoapi"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/tenebris-tech/alerter"
@@ -63,33 +66,30 @@ const hRuleSubstitute = "──────────────────�
 // long-poll goroutine to exit. var (not const) so tests can shorten it.
 var pollExitTimeout = 10 * time.Second
 
-// longPollRetryTimeout is how long telego sleeps before retrying getUpdates
-// after an error. telego's retry sleep is NOT context-aware (long_polling.go),
-// so the default 8s can keep the old poller alive past Stop()'s wait on a config
-// reload — overlapping the new poller and triggering Telegram 409 "terminated by
-// other getUpdates" errors. A short value drains the old poller well within
-// pollExitTimeout so the new one starts cleanly, while still retrying genuine
-// transient errors.
-var longPollRetryTimeout = 2 * time.Second
+// pollTimeoutSeconds is the getUpdates long-poll timeout Telegram holds each
+// request open for.
+const pollTimeoutSeconds = 30
+
+// httpHeaderMargin is how long past the long-poll timeout a request may wait
+// for Telegram's response headers before the transport gives up on it.
+const httpHeaderMargin = 15 * time.Second
+
+// pollBuffer is the capacity of the updates channel between the poll loop and
+// the bot handler.
+const pollBuffer = 100
 
 // isTransientPollError reports whether a telego log message describes a
-// recoverable, auto-retried long-poll failure — a transient Telegram 5xx or a
-// network blip during getUpdates — rather than a genuine fault. telego emits
-// these via Errorf at ERROR; they are demoted to WARN because the poll loop
-// retries automatically and no updates are lost (the offset is not advanced on
-// a failed call). Genuine faults — 401 unauthorized, 409 conflict, 4xx bad
-// request — are left at ERROR. Wired into the telego logger via
-// WithErrorDowngrade.
+// recoverable long-poll failure — a transient Telegram 5xx or a network blip
+// during getUpdates — rather than a genuine fault. telego logs these itself via
+// Errorf at ERROR; they are demoted to WARN because pollUpdates retries them
+// and no updates are lost (the offset is not advanced on a failed call).
+// Wired into the telego logger via WithErrorDowngrade.
 func isTransientPollError(msg string) bool {
 	m := strings.ToLower(msg)
 	// Restrict to the long-poll update path so unrelated telego errors are
 	// never downgraded.
-	if !strings.Contains(m, "getupdates") && !strings.Contains(m, "getting updates") {
+	if !strings.Contains(m, "getupdates") {
 		return false
-	}
-	// telego's own "Retrying getting updates in Ns..." recovery notice.
-	if strings.Contains(m, "retrying getting updates") {
-		return true
 	}
 	// A transient HTTP 5xx from Telegram's API (telego formats these as
 	// "internal server error: <code>"), or a transport-level blip that means the
@@ -117,6 +117,33 @@ func isTransientPollError(msg string) bool {
 	return false
 }
 
+// telegoLogger passes telego's log lines to ours, except that a getUpdates
+// aborted by cancellation (every Stop cuts the in-flight long poll short) is
+// logged at DEBUG: it is the expected way a poll ends, not an error.
+type telegoLogger struct {
+	*logger.Logger
+}
+
+func (l telegoLogger) Errorf(format string, args ...any) {
+	msg := RedactToken(fmt.Sprintf(format, args...))
+	if isCancelledPoll(msg) {
+		l.Debugf("%s", msg)
+		return
+	}
+	l.Logger.Errorf("%s", msg)
+}
+
+// Debugf logs telego's request traces, whose URLs carry the bot token.
+func (l telegoLogger) Debugf(format string, args ...any) {
+	l.Logger.Debugf("%s", RedactToken(fmt.Sprintf(format, args...)))
+}
+
+// isCancelledPoll reports whether a telego log message is a getUpdates request
+// that ended because its context was cancelled.
+func isCancelledPoll(msg string) bool {
+	return strings.Contains(msg, "getUpdates") && strings.HasSuffix(msg, context.Canceled.Error())
+}
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -140,31 +167,58 @@ type TelegramChannel struct {
 	commandRegCancel context.CancelFunc
 }
 
+// newHTTPTransport returns the transport for the bot's API calls: net/http
+// rather than telego's default fasthttp caller: fasthttp checks the
+// context only before sending, so cancelling it could not abort the 30 s
+// getUpdates long poll and every Stop waited out pollExitTimeout. The cloned
+// default transport keeps HTTP(S)_PROXY support; a configured proxy replaces it.
+func newHTTPTransport(proxy string) (*http.Transport, error) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("default HTTP transport is not an *http.Transport")
+	}
+	transport = transport.Clone()
+	if proxy != "" {
+		proxyURL, parseErr := url.Parse(proxy)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxy, parseErr)
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	// Bounds the wait for response headers, which a long poll holds back for up
+	// to pollTimeoutSeconds. Not an overall client timeout, so a slow upload of a
+	// large file is not cut off while its body is still being sent.
+	transport.ResponseHeaderTimeout = pollTimeoutSeconds*time.Second + httpHeaderMargin
+	// HTTP/1.1 only. A dead HTTP/2 connection is not detected until a request
+	// on it times out, so every poll hung for the full ResponseHeaderTimeout
+	// during a network outage; HTTP/1.1 fails fast and opens a new connection.
+	// The previous fasthttp transport was HTTP/1.1 as well. Protocols limits
+	// the transport to HTTP/1; the ALPN list must be pinned too, because once
+	// the default transport has been used its TLS config advertises h2, and the
+	// clone inherits that list. Advertising h2 without an HTTP/2 handler made
+	// the server answer in HTTP/2 to a client parsing HTTP/1.1 ("malformed HTTP
+	// response \x00\x00\x12\x04...").
+	transport.ForceAttemptHTTP2 = false
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetHTTP1(true)
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	}
+	transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	return transport, nil
+}
+
 // NewTelegramChannelFromConfig creates a TelegramChannel from a TelegramBotConfig.
 // The channel name is derived from botCfg.ChannelName().
 func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.MessageBus) (*TelegramChannel, error) {
 	if botCfg.Token == "" {
 		return nil, errors.New("telegram bot token is required")
 	}
-	var opts []telego.BotOption
-
-	if botCfg.Proxy != "" {
-		proxyURL, parseErr := url.Parse(botCfg.Proxy)
-		if parseErr != nil {
-			return nil, fmt.Errorf("invalid proxy URL %q: %w", botCfg.Proxy, parseErr)
-		}
-		opts = append(opts, telego.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
-		}))
-	} else if os.Getenv("HTTP_PROXY") != "" || os.Getenv("HTTPS_PROXY") != "" {
-		opts = append(opts, telego.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}))
+	transport, err := newHTTPTransport(botCfg.Proxy)
+	if err != nil {
+		return nil, err
 	}
+	opts := []telego.BotOption{telego.WithHTTPClient(&http.Client{Transport: transport})}
 
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
 		opts = append(opts, telego.WithAPIServer(baseURL))
@@ -186,13 +240,10 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		chatIDs:        make(map[string]int64),
 	}
 
-	// The channel is built before the bot so telego's logger can alert through
-	// it: telego reports long-poll failures only via Errorf.
-	opts = append(opts, telego.WithLogger(
+	opts = append(opts, telego.WithLogger(telegoLogger{
 		logger.NewLogger("telego").WithContentSensitive().
-			WithErrorDowngrade(isTransientPollError).
-			WithErrorHook(ch.alertPollFailure),
-	))
+			WithErrorDowngrade(isTransientPollError),
+	}))
 
 	bot, err := telego.NewBot(botCfg.Token, opts...)
 	if err != nil {
@@ -206,10 +257,10 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 // pollAlertMsgLimit bounds the telego message carried in a polling alert.
 const pollAlertMsgLimit = 200
 
-// alertPollFailure raises a high alert for a telego error that is not a
-// transient long-poll blip — a revoked token (401) or a second poller on the
-// same token (409). telego repeats the error every retry; the alerter
-// de-duplicates on the channel name (EventID, filled in by Alert).
+// alertPollFailure raises an alert for a long-poll failure that no retry can
+// fix: Telegram rejecting the bot token (401). The poll loop keeps retrying at
+// its slowest rate in case the token is restored; the alerter de-duplicates
+// the repeats on the channel name (EventID, filled in by Alert).
 func (c *TelegramChannel) alertPollFailure(msg string) {
 	if r := []rune(msg); len(r) > pollAlertMsgLimit {
 		msg = string(r[:pollAlertMsgLimit]) + "..."
@@ -233,16 +284,13 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		c.coalescer = nil
 	}
 
-	rawUpdates, err := c.bot.UpdatesViaLongPolling(pollCtx, &telego.GetUpdatesParams{
-		Timeout: 30,
-	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
-	if err != nil {
-		c.cancel()
-		return fmt.Errorf("failed to start long polling: %w", err)
-	}
-
-	updates, pollDone := watchLongPoll(pollCtx, rawUpdates)
+	updates := make(chan telego.Update, pollBuffer)
+	pollDone := make(chan struct{})
 	c.pollDone = pollDone
+	go func() {
+		defer close(pollDone)
+		c.pollUpdates(pollCtx, updates)
+	}()
 
 	bh, err := th.NewBotHandler(c.bot, updates)
 	if err != nil {
@@ -265,7 +313,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	go func() {
 		if err = bh.Start(); err != nil {
 			logger.ErrorCF("telegram", "Bot handler failed", map[string]any{
-				"error": err.Error(),
+				"error": redactErr(err).Error(),
 			})
 		}
 	}()
@@ -294,12 +342,12 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 		if c.bh != nil {
 			if err := c.bh.StopWithContext(ctx); err != nil {
 				logger.DebugCF("telegram", "Bot handler stop returned error", map[string]any{
-					"error": err.Error(),
+					"error": redactErr(err).Error(),
 				})
 			}
 		}
 
-		// Block until telego's long-poll goroutine has actually exited.
+		// Block until the long-poll goroutine has actually exited.
 		// Without this, the next Start() (e.g. during config reload) races
 		// into a 409 "terminated by other getUpdates request" against an
 		// in-flight HTTP poll on Telegram's side.
@@ -317,39 +365,82 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-// watchLongPoll relays telego's long-poll updates channel through a goroutine
-// we own. The returned done channel is closed only after the upstream channel
-// is closed — which telego does from a defer inside doLongPolling — giving
-// Stop() a reliable signal that the long-poll goroutine has exited. Once ctx
-// is cancelled the relay drains the upstream so doLongPolling isn't blocked
-// on send.
-func watchLongPoll(ctx context.Context, src <-chan telego.Update) (<-chan telego.Update, chan struct{}) {
-	dst := make(chan telego.Update, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer close(dst)
-		for {
+// pollUpdates is the long-poll loop; it closes updates when it returns. It
+// replaces telego's UpdatesViaLongPolling, which retries after a fixed delay,
+// ignores Telegram's retry_after, and sleeps without watching ctx. Every
+// failure is retried: a 429 waits the retry_after Telegram asked for plus
+// channels.RetryAfterPadding, anything else backs off from
+// channels.ConnRetryMin to channels.ConnRetryMax. Waits end at once when ctx is
+// cancelled, so Stop() is not held up by a sleeping retry.
+func (c *TelegramChannel) pollUpdates(ctx context.Context, updates chan<- telego.Update) {
+	defer close(updates)
+	params := &telego.GetUpdatesParams{Timeout: pollTimeoutSeconds}
+	var backoff time.Duration
+	for ctx.Err() == nil {
+		batch, err := c.bot.GetUpdates(ctx, params)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			var wait time.Duration
+			wait, backoff = pollRetryWait(err, backoff)
+			c.pollFailed(err, wait)
 			select {
 			case <-ctx.Done():
-				for range src {
-				}
 				return
-			case u, ok := <-src:
-				if !ok {
-					return
-				}
-				select {
-				case dst <- u:
-				case <-ctx.Done():
-					for range src {
-					}
-					return
-				}
+			case <-time.After(wait):
+			}
+			continue
+		}
+		backoff = 0
+		c.ReportConnected()
+		for _, u := range batch {
+			if u.UpdateID < params.Offset {
+				continue
+			}
+			params.Offset = u.UpdateID + 1
+			select {
+			case <-ctx.Done():
+				return
+			case updates <- u.WithContext(ctx):
 			}
 		}
-	}()
-	return dst, done
+	}
+}
+
+// pollRetryWait returns how long to wait after a failed getUpdates, and the
+// backoff to carry into the next failure. A server-given retry_after is
+// honoured, padded, and leaves the backoff where it was.
+func pollRetryWait(err error, backoff time.Duration) (wait, next time.Duration) {
+	var apiErr *ta.Error
+	if errors.As(err, &apiErr) && apiErr.Parameters != nil && apiErr.Parameters.RetryAfter > 0 {
+		return time.Duration(apiErr.Parameters.RetryAfter)*time.Second + channels.RetryAfterPadding, backoff
+	}
+	next = channels.NextConnRetry(backoff)
+	return next, next
+}
+
+// pollFailed records a failed getUpdates. A rejected token (401) cannot be
+// fixed by retrying, so it alerts at once; every other failure feeds the
+// channel's outage tracker, which alerts only if the outage outlasts
+// channels.ConnDownAlertAfter.
+func (c *TelegramChannel) pollFailed(err error, wait time.Duration) {
+	err = redactErr(err)
+	var apiErr *ta.Error
+	if errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusUnauthorized {
+		logger.ErrorCF("telegram", "Telegram rejected the bot token", map[string]any{
+			"channel": c.Name(),
+			"error":   err.Error(),
+		})
+		c.alertPollFailure(err.Error())
+		return
+	}
+	logger.WarnCF("telegram", "Telegram poll failed; retrying", map[string]any{
+		"channel": c.Name(),
+		"error":   err.Error(),
+		"retry":   wait.String(),
+	})
+	c.ReportConnFailure(err)
 }
 
 func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
@@ -418,7 +509,7 @@ func (c *TelegramChannel) sendHTMLChunk(
 
 	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
 		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		tgMsg.Text = mdFallback
 		tgMsg.ParseMode = ""
@@ -445,7 +536,7 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 	// Send the first typing action immediately
 	if err := c.bot.SendChatAction(ctx, action); err != nil {
 		logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
-			"chat_id": cid, "error": err.Error(),
+			"chat_id": cid, "error": redactErr(err).Error(),
 		})
 	}
 
@@ -462,7 +553,7 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 				a.MessageThreadID = threadID
 				if err := c.bot.SendChatAction(typingCtx, a); err != nil {
 					logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
-						"chat_id": cid, "error": err.Error(),
+						"chat_id": cid, "error": redactErr(err).Error(),
 					})
 				}
 			}
@@ -486,7 +577,7 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 	editMsg := tu.EditMessageText(tu.ID(cid), mid, htmlContent)
 	editMsg.ParseMode = telego.ModeHTML
 	_, err = c.bot.EditMessageText(ctx, editMsg)
-	return err
+	return redactErr(err)
 }
 
 // SendPlaceholder implements channels.PlaceholderCapable.
@@ -512,7 +603,7 @@ func (c *TelegramChannel) SendPlaceholder(ctx context.Context, chatID string) (s
 	phMsg.MessageThreadID = threadID
 	pMsg, err := c.bot.SendMessage(ctx, phMsg)
 	if err != nil {
-		return "", err
+		return "", redactErr(err)
 	}
 
 	return strconv.Itoa(pMsg.MessageID), nil
@@ -593,7 +684,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
 				"type":  part.Type,
-				"error": err.Error(),
+				"error": redactErr(err).Error(),
 			})
 			return fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
 		}
@@ -819,7 +910,7 @@ func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) stri
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		logger.ErrorCF("telegram", "Failed to get photo file", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		return ""
 	}
@@ -833,20 +924,31 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	}
 
 	url := c.bot.FileDownloadURL(file.FilePath)
-	logger.DebugCF("telegram", "File URL", map[string]any{"url": url})
+	logURL := RedactToken(url)
+	logger.DebugCF("telegram", "File URL", map[string]any{"url": logURL})
 
-	// Use FilePath as filename for better identification
-	filename := file.FilePath + ext
-	return utils.DownloadFile(url, filename, utils.DownloadOptions{
+	return utils.DownloadFile(url, localFilename(file.FilePath, ext), utils.DownloadOptions{
 		LoggerPrefix: "telegram",
+		LogURL:       logURL,
 	})
+}
+
+// localFilename names a downloaded file after Telegram's own path, which
+// usually already carries the real extension (voice/file_3.oga,
+// photos/file_1.jpg). The caller's type-based extension is a fallback for the
+// rare path without one, not a suffix: appending it produced file_3.oga.ogg.
+func localFilename(filePath, fallbackExt string) string {
+	if filepath.Ext(filePath) != "" {
+		return filePath
+	}
+	return filePath + fallbackExt
 }
 
 func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) string {
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		logger.ErrorCF("telegram", "Failed to get file", map[string]any{
-			"error": err.Error(),
+			"error": redactErr(err).Error(),
 		})
 		return ""
 	}

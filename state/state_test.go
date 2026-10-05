@@ -224,3 +224,18 @@ func TestNewManager_MkdirFailureDoesNotCrash(t *testing.T) {
 		t.Fatalf("NewManager should not crash when state dir creation fails, got: %v", err)
 	}
 }
+
+func TestNewManagerInDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "internal")
+
+	sm := NewManagerInDir(dir)
+	if err := sm.SetLastChannel("telegram"); err != nil {
+		t.Fatalf("SetLastChannel: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.json")); err != nil {
+		t.Fatalf("state.json not written in dir: %v", err)
+	}
+	if got := NewManagerInDir(dir).GetLastChannel(); got != "telegram" {
+		t.Errorf("reloaded LastChannel = %q, want telegram", got)
+	}
+}

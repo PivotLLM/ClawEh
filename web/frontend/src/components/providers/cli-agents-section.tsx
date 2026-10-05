@@ -4,8 +4,14 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ProviderInfo } from "@/api/providers"
-import { type CLIInfo, listCLIs, setCLIEnabled } from "@/api/system"
+import {
+  type CLIInfo,
+  listCLIs,
+  setCLIBypassRestrictions,
+  setCLIEnabled,
+} from "@/api/system"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 
 /**
@@ -58,6 +64,18 @@ export function CLIAgentsSection({
       setError(e instanceof Error ? e.message : t("providers.cli.toggleError")),
   })
 
+  const bypass = useMutation({
+    mutationFn: ({ protocol, on }: { protocol: string; on: boolean }) =>
+      setCLIBypassRestrictions(protocol, on),
+    onMutate: () => setError(""),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["system-clis"] })
+      void queryClient.invalidateQueries({ queryKey: ["providers"] })
+    },
+    onError: (e: unknown) =>
+      setError(e instanceof Error ? e.message : t("providers.cli.toggleError")),
+  })
+
   if (isPending) {
     return (
       <div className="flex items-center gap-2 py-6">
@@ -92,6 +110,7 @@ export function CLIAgentsSection({
             onToggle={(enabled) =>
               toggle.mutate({ protocol: cli.protocol, enabled })
             }
+            onBypass={(on) => bypass.mutate({ protocol: cli.protocol, on })}
             onEdit={() => {
               // The switch covers everything most people need. Editing is for
               // the rest — chiefly pinning an explicit binary path — and reuses
@@ -110,20 +129,24 @@ function CLIRow({
   cli,
   busy,
   onToggle,
+  onBypass,
   onEdit,
 }: {
   cli: CLIInfo
   busy: boolean
   onToggle: (enabled: boolean) => void
+  onBypass: (on: boolean) => void
   onEdit: () => void
 }) {
   const { t } = useTranslation()
   // The whole command line, in the order it is actually built: the provider's
-  // own flags, the permission flags, whatever the models add, then the stdin
-  // marker. Showing only the configured part would answer "what runs on my
-  // machine" with the smaller half of the truth.
+  // own flags, the bypass flag only when the checkbox is ticked, the headless
+  // flags, whatever the models add, then the stdin marker. Showing only the
+  // configured part would answer "what runs on my machine" with the smaller
+  // half of the truth.
   const args = [
     ...cli.base_args,
+    ...(cli.bypass_restrictions ? cli.bypass_args : []),
     ...cli.required_args,
     ...(cli.extra_args ?? []),
     ...(cli.trailing_args ?? []),
@@ -162,6 +185,32 @@ function CLIRow({
           <div className="text-muted-foreground/70 truncate font-mono text-xs">
             {t("providers.cli.args", { args: args.join(" ") })}
           </div>
+        )}
+        {/* Off by default. The setting lives on the provider, so it needs one;
+            the switch creates it. */}
+        {cli.configured && (
+          <label
+            htmlFor={`cli-bypass-${cli.protocol}`}
+            className="mt-2 flex cursor-pointer items-start gap-2 select-none"
+          >
+            <Checkbox
+              id={`cli-bypass-${cli.protocol}`}
+              className="mt-0.5"
+              checked={cli.bypass_restrictions}
+              disabled={busy}
+              onCheckedChange={(v) => onBypass(v === true)}
+              aria-label={t("providers.cli.bypass")}
+              data-testid={`cli-bypass-${cli.protocol}`}
+            />
+            <span className="text-xs">
+              <span className="text-foreground">
+                {t("providers.cli.bypass")}
+              </span>
+              <span className="text-muted-foreground block">
+                {t("providers.cli.bypassHint")}
+              </span>
+            </span>
+          </label>
         )}
       </div>
 

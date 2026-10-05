@@ -776,7 +776,7 @@ func (h *hostFs) Remove(path string) error {
 }
 
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
@@ -891,7 +891,7 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
-			if err := root.MkdirAll(dir, 0o755); err != nil {
+			if err := root.MkdirAll(dir, 0o700); err != nil {
 				return fmt.Errorf("failed to create parent directories: %w", err)
 			}
 		}
@@ -946,7 +946,7 @@ func (r *sandboxFs) WriteFileExclMode(path string, data []byte, mode os.FileMode
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
-			if err := root.MkdirAll(dir, 0o755); err != nil {
+			if err := root.MkdirAll(dir, 0o700); err != nil {
 				return fmt.Errorf("failed to create parent directories: %w", err)
 			}
 		}

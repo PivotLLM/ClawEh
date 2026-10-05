@@ -143,7 +143,7 @@ func TestCreateProviderFromConfig_ClaudeCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if _, ok := provider.(*ClaudeCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*ClaudeCliProvider); !ok {
 		t.Fatalf("expected *ClaudeCliProvider, got %T", provider)
 	}
 	if modelID != "claude-sonnet-4.6" {
@@ -163,7 +163,7 @@ func TestCreateProviderFromConfig_CodexCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if _, ok := provider.(*CodexCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*CodexCliProvider); !ok {
 		t.Fatalf("expected *CodexCliProvider, got %T", provider)
 	}
 	if modelID != "codex" {
@@ -183,7 +183,7 @@ func TestCreateProviderFromConfig_GeminiCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if _, ok := provider.(*AntigravityCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*AntigravityCliProvider); !ok {
 		t.Fatalf("expected *AntigravityCliProvider, got %T", provider)
 	}
 	if modelID != "gemini-2.5-flash" {

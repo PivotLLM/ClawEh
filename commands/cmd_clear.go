@@ -17,7 +17,7 @@ func clearCommand() Definition {
 			}
 			var cancelNote string
 			if rt.CancelPending != nil {
-				if skipped := rt.CancelPending(); skipped > 0 {
+				if _, skipped := rt.CancelPending(); skipped > 0 {
 					cancelNote = fmt.Sprintf(" (%d pending message(s) cancelled)", skipped)
 				}
 			}

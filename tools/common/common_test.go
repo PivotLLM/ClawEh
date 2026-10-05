@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -124,8 +125,22 @@ func TestPutCreatesCommonDir(t *testing.T) {
 	if res := call(t, findTool(t, defs, "put"), map[string]any{"path": "a.txt"}); res.IsError {
 		t.Fatalf("put failed: %s", res.ForLLM)
 	}
-	if _, err := os.Stat(filepath.Join(commonDir, "a.txt")); err != nil {
+	fi, err := os.Stat(filepath.Join(commonDir, "a.txt"))
+	if err != nil {
 		t.Fatalf("expected common dir created with file: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		// The common dir lives under CLAW_HOME: created owner-only.
+		di, err := os.Stat(commonDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := di.Mode().Perm(); got != 0o700 {
+			t.Errorf("common dir mode = %04o, want 0700", got)
+		}
+		if got := fi.Mode().Perm(); got != 0o600 {
+			t.Errorf("common file mode = %04o, want 0600", got)
+		}
 	}
 }
 

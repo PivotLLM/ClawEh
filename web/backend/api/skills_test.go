@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -24,7 +25,8 @@ func TestHandleListSkills(t *testing.T) {
 
 	base := t.TempDir()
 	cfg.Agents.BaseDir = base
-	workspace := filepath.Join(base, "default")
+	// A per-agent skill is not part of the shared view.
+	workspace := filepath.Join(base, "claw")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -41,7 +43,7 @@ func TestHandleListSkills(t *testing.T) {
 		t.Fatalf("WriteFile(workspace skill) error = %v", err)
 	}
 
-	globalSkillDir := filepath.Join(globalConfigDir(), "skills", "global-skill")
+	globalSkillDir := filepath.Join(os.Getenv("CLAW_HOME"), "skills", "global-skill")
 	if err := os.MkdirAll(globalSkillDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(global skill) error = %v", err)
 	}
@@ -84,16 +86,16 @@ func TestHandleListSkills(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if len(resp.Skills) != 3 {
-		t.Fatalf("skills count = %d, want 3", len(resp.Skills))
+	if len(resp.Skills) != 2 {
+		t.Fatalf("skills count = %d, want 2: %#v", len(resp.Skills), resp.Skills)
 	}
 
 	gotSkills := make(map[string]string, len(resp.Skills))
 	for _, skill := range resp.Skills {
 		gotSkills[skill.Name] = skill.Source
 	}
-	if gotSkills["workspace-skill"] != "workspace" {
-		t.Fatalf("workspace-skill source = %q, want workspace", gotSkills["workspace-skill"])
+	if _, ok := gotSkills["workspace-skill"]; ok {
+		t.Fatal("workspace-skill from an agent workspace must not be listed")
 	}
 	if gotSkills["global-skill"] != "global" {
 		t.Fatalf("global-skill source = %q, want global", gotSkills["global-skill"])
@@ -111,15 +113,13 @@ func TestHandleGetSkill(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	base := t.TempDir()
-	cfg.Agents.BaseDir = base
-	workspace := filepath.Join(base, "default")
+	shared := filepath.Join(os.Getenv("CLAW_HOME"), "skills")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
 
-	skillDir := filepath.Join(workspace, "skills", "viewer-skill")
+	skillDir := filepath.Join(shared, "viewer-skill")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -149,7 +149,7 @@ func TestHandleGetSkill(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if resp.Name != "viewer-skill" || resp.Source != "workspace" || resp.Description != "Viewable skill" {
+	if resp.Name != "viewer-skill" || resp.Source != "global" || resp.Description != "Viewable skill" {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
 	if resp.Content != "# Viewer Skill\n\nThis is visible content.\n" {
@@ -165,15 +165,13 @@ func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	base := t.TempDir()
-	cfg.Agents.BaseDir = base
-	workspace := filepath.Join(base, "default")
+	shared := filepath.Join(os.Getenv("CLAW_HOME"), "skills")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
 
-	skillDir := filepath.Join(workspace, "skills", "folder-name")
+	skillDir := filepath.Join(shared, "folder-name")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -260,6 +258,23 @@ func TestHandleImportSkill(t *testing.T) {
 	if string(content) != expected {
 		t.Fatalf("saved skill content mismatch:\n%s", string(content))
 	}
+	if runtime.GOOS != "windows" {
+		// Imported skills live under CLAW_HOME: directory and SKILL.md are owner-only.
+		di, err := os.Stat(filepath.Dir(skillFile))
+		if err != nil {
+			t.Fatalf("Stat(skill dir) error = %v", err)
+		}
+		if got := di.Mode().Perm(); got != 0o700 {
+			t.Errorf("skill dir mode = %04o, want 0700", got)
+		}
+		fi, err := os.Stat(skillFile)
+		if err != nil {
+			t.Fatalf("Stat(SKILL.md) error = %v", err)
+		}
+		if got := fi.Mode().Perm(); got != 0o600 {
+			t.Errorf("SKILL.md mode = %04o, want 0600", got)
+		}
+	}
 
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
@@ -289,14 +304,12 @@ func TestHandleDeleteSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	base := t.TempDir()
-	cfg.Agents.BaseDir = base
-	workspace := filepath.Join(base, "default")
+	shared := filepath.Join(os.Getenv("CLAW_HOME"), "skills")
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
 
-	skillDir := filepath.Join(workspace, "skills", "delete-me")
+	skillDir := filepath.Join(shared, "delete-me")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}

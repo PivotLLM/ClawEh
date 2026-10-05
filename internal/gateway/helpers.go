@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -29,7 +27,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/channels/secmsg"
 	_ "github.com/PivotLLM/ClawEh/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/channels/telegram"
-	_ "github.com/PivotLLM/ClawEh/channels/webui"
+	"github.com/PivotLLM/ClawEh/channels/webui"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
@@ -37,7 +35,12 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/admin"
+	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/layout"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 	"github.com/PivotLLM/ClawEh/media"
@@ -52,6 +55,7 @@ import (
 	"github.com/PivotLLM/ClawEh/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 	webapi "github.com/PivotLLM/ClawEh/web/backend/api"
+	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // Timeout constants for service operations
@@ -60,23 +64,82 @@ const (
 	serviceShutdownTimeout  = 30 * time.Second
 	providerReloadTimeout   = 30 * time.Second
 	gracefulShutdownTimeout = 15 * time.Second
+	// shutdownDrainBudget is shared by closing the agent sessions and the MCP
+	// servers at exit; what is still busy after it is abandoned. Keeps the
+	// whole stop well inside systemd's TimeoutStopSec.
+	shutdownDrainBudget = 10 * time.Second
 )
 
+// phaseTimer logs how long each step of a stop took, one INFO line per step.
+// A nil *phaseTimer logs nothing.
+type phaseTimer struct {
+	prefix string
+	start  time.Time
+}
+
+func newPhaseTimer(prefix string) *phaseTimer {
+	return &phaseTimer{prefix: prefix, start: time.Now()}
+}
+
+// done logs what finished and how long it took since the previous step.
+func (p *phaseTimer) done(what string) {
+	if p == nil {
+		return
+	}
+	logger.Infof("%s: %s in %.1fs", p.prefix, what, time.Since(p.start).Seconds())
+	p.start = time.Now()
+}
+
+// runtimeConfig returns the private copy of the store's configuration the
+// gateway runs on. References to models that do not exist are first removed
+// from config.json through the store (pruneStoredModelReferences); if that
+// write fails the reason is logged at WARN and they are dropped from the
+// running copy only, never aborting startup or a reload. Invalid
+// providers/models (a stale/unknown protocol, a model pointing at a missing
+// provider) are then dropped from the copy with a WARN and the rest is kept,
+// rather than failing over one bad entry; those stay in the file so they can
+// be repaired via the WebUI, and a reference to such a model is skipped in the
+// copy only. What was removed or skipped is returned for modelRefAlerts. Boot,
+// the config watcher and the forced reload all build their runtime copy here,
+// so they cannot drift apart.
+func runtimeConfig(store *config.Store) (*config.Config, modelRefPrune, error) {
+	var prune modelRefPrune
+	removed, perr := pruneStoredModelReferences(store)
+	if perr != nil {
+		logger.WarnCF("gateway", "could not remove references to unknown models from the config file; skipping them in the running config only", map[string]any{
+			"path":  store.Path(),
+			"error": perr.Error(),
+		})
+	}
+	prune.removed = removed
+	cfg, err := store.Current().Clone()
+	if err != nil {
+		return nil, modelRefPrune{}, err
+	}
+	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
+		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
+			"providers_dropped": dp,
+			"models_dropped":    dm,
+		})
+	}
+	prune.skipped = pruneModelReferences(cfg)
+	return cfg, prune, nil
+}
+
 // newMergedWebServer constructs the in-process WebUI server bundle (API
-// handler + embedded SPA) configured against the active config file and the
-// merged binary's actual listen settings. The gateway host/port and IP
-// allowlist in cfg.Gateway are the single source of truth.
-func newMergedWebServer(configPath string, cfg *config.Config) *webserver.Server {
-	publicBind := cfg != nil && cfg.Gateway.Host == "0.0.0.0"
+// handler + embedded SPA) on the gateway's live config store and the merged
+// binary's actual listen settings. The gateway host/port and IP allowlist in
+// cfg.Gateway are the single source of truth.
+func newMergedWebServer(store *config.Store, cfg *config.Config) *webserver.Server {
+	// Public: a listener is reachable off-box, so the API advertises the
+	// request's own host rather than the bind host.
+	publicBind := cfg != nil && cfg.Gateway.ReachableOffBox()
 	port := 0
 	if cfg != nil {
-		port = cfg.Gateway.Port
-	}
-	if port == 0 {
-		port = config.DefaultGatewayPort
+		port = cfg.Gateway.EffectivePort()
 	}
 	srv := webserver.New(webserver.Options{
-		ConfigPath: configPath,
+		Store:      store,
 		ListenPort: port,
 		Public:     publicBind,
 	})
@@ -110,7 +173,31 @@ type gatewayServices struct {
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
 	HTTPHost       *httpHost
-	CogmemManager  *consolidate.Manager
+	// TLSCerts is the HTTPS listener's certificate (nil when gateway.tls.mode
+	// is "off"). Like HTTPHost it lives for the whole process; stopTLSWatch
+	// ends its file watcher at shutdown.
+	TLSCerts     *tlscert.Manager
+	stopTLSWatch context.CancelFunc
+	// SessionTokens is the MCP session-token store. Like HTTPHost it lives for
+	// the whole process: every MCP server built (at start and on each config
+	// reload) shares it, so the tokens rendered into running prompts and
+	// Maestro workers keep resolving across a reload. Created by the first
+	// startMCPServer that runs; nil while the MCP host has never been enabled.
+	SessionTokens *mcpserver.SessionTokenStore
+	// bootListeners are the listener settings the process bound at start;
+	// a saved config that differs needs a restart (warnListenerConfigChanged,
+	// GET /api/tls restart_required).
+	bootListeners config.ListenerSettings
+
+	CogmemManager *consolidate.Manager
+	// AuthStore holds the WebUI login sessions and the admin credentials;
+	// stopAuthWatch ends its credentials-file poller at shutdown.
+	AuthStore     *middleware.AuthStore
+	stopAuthWatch context.CancelFunc
+	// fatal is the fail-fast path a dying core service reports to.
+	fatal *fatalNotifier
+	// store is the live configuration, shared with the WebUI API.
+	store *config.Store
 }
 
 func gatewayCmd(debug bool) error {
@@ -140,21 +227,33 @@ func gatewayCmd(debug bool) error {
 	logger.InfoCF("gateway", "Starting", map[string]any{"app": app.Name(), "version": app.Version()})
 
 	configPath := internal.GetConfigPath()
-	cfg, err := internal.LoadConfig()
+	if permErr := enforceDataDirPerms(baseDir, configPath); permErr != nil {
+		return permErr
+	}
+	// internal.LoadConfig seeds a default config.json on first run; the store
+	// is the live configuration from here on, shared with the WebUI API so a
+	// save through it and the gateway's own reads never disagree.
+	if _, loadErr := internal.LoadConfig(); loadErr != nil {
+		return fmt.Errorf("error loading config: %w", loadErr)
+	}
+	store, err := config.NewStore(configPath)
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
 	}
-
-	// Drop invalid providers/models (e.g. a stale/unknown protocol, or a model
-	// pointing at a missing provider) with a WARN and continue on the survivors,
-	// rather than failing startup over one bad entry. The on-disk config is left
-	// untouched so it can be repaired via the WebUI.
-	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
-		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
-			"providers_dropped": dp,
-			"models_dropped":    dm,
-		})
+	// The runtime works on a pruned private copy; the store keeps the full
+	// on-disk config so invalid entries can be repaired through the WebUI.
+	// References to models that no longer exist are removed from the file.
+	cfg, bootDanglingRefs, err := runtimeConfig(store)
+	if err != nil {
+		return fmt.Errorf("error loading config: %w", err)
 	}
+	// Shared by boot, the watcher and the forced reload so a missing-model
+	// reference alerts once per process, not once per reload.
+	refAlerts := &modelRefAlerts{}
+
+	// Lay out the data directory before anything
+	// below opens the files it holds.
+	layout.Prepare(cfg)
 
 	// Re-apply logging config (debug flag overrides level).
 	if cfg.Logging.File {
@@ -193,12 +292,20 @@ func gatewayCmd(debug bool) error {
 	// truth; the MCP-host default below uses the same set).
 	config.SetDefaultAgentTools(tools.DefaultEnabledToolNames())
 
-	dispatcher := providers.NewProviderDispatcher(cfg)
-
 	// Operator alerts: parked models, unreachable MCP servers, channels that
-	// give up, failed jobs and reloads. Closed in shutdownGateway.
+	// give up, failed jobs and reloads. Closed in shutdownGateway. Installed
+	// before anything that can raise one at startup: the dispatcher below
+	// alerts for a CLI provider running without its bypass flag, and an alert
+	// sent before Set reaches the no-op default and is lost.
 	operatorAlerter, alertsPath := newAlerter(baseDir)
 	alerts.Set(operatorAlerter)
+	refAlerts.report(operatorAlerter, bootDanglingRefs)
+
+	dispatcher := providers.NewProviderDispatcher(cfg)
+	openAuditLog(baseDir)
+	// A core service that dies after startup takes the process down through
+	// here, so the service manager restarts it; see fatal.go.
+	fatal := newFatalNotifier(operatorAlerter)
 	msgBus := bus.NewMessageBus()
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 	if err != nil {
@@ -241,15 +348,18 @@ func gatewayCmd(debug bool) error {
 	defer pidfile.Remove(cfg.DataDir())
 
 	// Setup and start all services
-	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath)
+	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath, store, fatal)
 	if err != nil {
 		return err
 	}
 	// The Logs page tails the alerts file the alerter writes.
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())
+	// POST /api/system/restart: a clean shutdown with a non-zero exit, for the
+	// service manager to start the gateway again.
+	services.WebServer.APIHandler().SetRestart(fatal.requestRestart)
 
-	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
+	logger.InfoF("claw started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -260,21 +370,15 @@ func gatewayCmd(debug bool) error {
 
 	go func() {
 		if runErr := agentLoop.Run(ctx); runErr != nil {
-			logger.ErrorCF("agent", "Agent loop exited with error", map[string]any{"error": runErr.Error()})
-			agentLoop.Alerter().Send(alerter.Alert{
-				Title:       "Agent loop stopped",
-				Description: "no inbound messages are processed until the gateway is restarted",
-				Details:     runErr.Error(),
-				EventID:     "agent-loop",
-			})
+			fatal.fatalService("agent-loop", runErr)
 		}
 	}()
 
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(configPath, reloadInterval,
-		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter())
+	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(store, reloadInterval,
+		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter(), refAlerts)
 	defer stopWatch()
 
 	// Force-reload channel: lets POST /api/gateway/reload apply config changes
@@ -289,7 +393,7 @@ func gatewayCmd(debug bool) error {
 			case forceReload <- done:
 				return <-done
 			case <-time.After(5 * time.Second):
-				return errors.New("gateway busy; reload not accepted")
+				return errors.New("claw is busy; reload not accepted")
 			}
 		})
 	}
@@ -316,13 +420,28 @@ func gatewayCmd(debug bool) error {
 			shutdownGateway(services, agentLoop, provider, true)
 			return nil
 
+		case failure := <-fatal.failed:
+			// Same shutdown as SIGTERM; the failure becomes the exit reason and
+			// NewGatewayCommand exits non-zero on it. fatalService has armed a
+			// timer that exits regardless should this hang.
+			logger.Info("Shutting down after a core service stopped...")
+			shutdownGateway(services, agentLoop, provider, true)
+			return failure
+
+		case restart := <-fatal.restart:
+			// POST /api/system/restart: the same shutdown, and a non-zero exit
+			// so the service manager starts the gateway again.
+			logger.Info("Shutting down to restart...")
+			shutdownGateway(services, agentLoop, provider, true)
+			return restart
+
 		case newCfg := <-configReloadChan:
 			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 				agentLoop.Alerter().Send(alerter.Alert{
 					Title:       "Config reload failed",
-					Description: "the reload was aborted part way; check the gateway log, services may not all be running",
+					Description: "the reload was aborted part way; check the claw log, services may not all be running",
 					Details:     err.Error(),
 					EventID:     "config",
 				})
@@ -330,11 +449,16 @@ func gatewayCmd(debug bool) error {
 
 		case done := <-forceReload:
 			logger.Info("Forced config reload requested via API")
-			newCfg, lerr := config.LoadConfig(configPath)
-			if lerr != nil {
+			if _, lerr := store.Reload(); lerr != nil {
 				done <- lerr
 				break
 			}
+			newCfg, dangling, cerr := runtimeConfig(store)
+			if cerr != nil {
+				done <- cerr
+				break
+			}
+			refAlerts.report(agentLoop.Alerter(), dangling)
 			rerr := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if rerr == nil {
 				// Tell the watcher we've applied the current file so it doesn't
@@ -386,28 +510,22 @@ func setupAndStartServices(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	configPath string,
+	store *config.Store,
+	fatal *fatalNotifier,
 ) (*gatewayServices, error) {
-	services := &gatewayServices{}
+	services := &gatewayServices{fatal: fatal, store: store}
 
 	// Ensure the shared "common" directory exists so the common_* tools have a
 	// place to read/write. Idempotent.
 	if commonDir := cfg.ResolveCommonDir(); commonDir != "" {
-		if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		if err := os.MkdirAll(commonDir, 0o700); err != nil {
 			logger.WarnCF("gateway", "Failed to create common directory", map[string]any{"path": commonDir, "error": err.Error()})
 		}
 	}
 
 	// Setup cron tool and service
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool
-	services.CronService, cronTool = setupCronTool(
-		agentLoop,
-		msgBus,
-		cfg.WorkspacePath(),
-		cfg.Agents.Defaults.RestrictToWorkspace,
-		execTimeout,
-		cfg,
-	)
+	services.CronService, cronTool = setupCronTool(agentLoop, msgBus, cfg)
 	if cronTool != nil {
 		agentLoop.RegisterTool(cronTool)
 	}
@@ -441,6 +559,18 @@ func setupAndStartServices(
 		fms.Start()
 	}
 
+	// The HTTPS listener's certificate, unless gateway.tls.mode is "off".
+	// Loaded (a self-signed pair generated or renewed) BEFORE the channels are
+	// built: the device channel reads the certificate's names for its own Host
+	// allowlist (tlscert.NamesForConfig), so the file has to be current first.
+	if cfg.Gateway.HTTPSEnabled() {
+		var err error
+		services.TLSCerts, err = tlscert.Load(tlsOptions(cfg, agentLoop.Alerter()))
+		if err != nil {
+			return nil, fmt.Errorf("HTTPS listener certificate: %w", err)
+		}
+	}
+
 	// Create channel manager
 	var err error
 	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore)
@@ -459,6 +589,8 @@ func setupAndStartServices(
 
 	// Let the device gateway answer operator-client reads (agents.list, chat.history).
 	injectDeviceAgentQuerier(services.ChannelManager, agentLoop)
+	// Let channels.device.tls serve the HTTPS listener's certificate.
+	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
 
 	// Wire up voice transcription if a supported provider is configured.
 	if transcriber := voice.DetectTranscriberWithAlerter(cfg, agentLoop.Alerter()); transcriber != nil {
@@ -473,16 +605,18 @@ func setupAndStartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup shared HTTP listener. The listener is owned by httpHost and stays
-	// up across config reloads; only the handler mux is swapped on reload, so
-	// WebUI WebSocket connections and channel webhooks survive a Manager
-	// rebuild. See rebuildSharedHTTPServer for the swap seam.
-	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	services.WebServer = newMergedWebServer(configPath, cfg)
+	// Setup the shared listeners: plain HTTP on gateway.host (loopback by
+	// default) and HTTPS where gateway.tls.mode places it. They are owned by
+	// httpHost and stay up across config reloads; only the handler mux is
+	// swapped on reload, so WebUI WebSocket connections and channel webhooks
+	// survive a Manager rebuild. See rebuildSharedHTTPServer for the swap seam.
+	services.WebServer = newMergedWebServer(store, cfg)
 	// Share the agent loop's named message-token store with the WebUI API so
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
+	// DELETE /api/sessions/{key} releases the live session and its archive.
+	services.WebServer.APIHandler().SetSessionReleaser(agentLoop.ReleaseSession)
 	// Expose the live outbound-MCP connection state to the WebUI MCP page. Reads the
 	// same manager the agent loop owns (reused in place across reloads).
 	services.WebServer.APIHandler().SetMCPStatusLoop(agentLoop)
@@ -501,19 +635,77 @@ func setupAndStartServices(
 		linker, ok := ch.(webapi.SecMsgLinker)
 		return linker, ok
 	})
+	// Removing a device in the WebUI closes its open connections on the live
+	// device channel (resolved per call, like the linker above).
+	services.WebServer.APIHandler().SetDeviceDisconnector(func(deviceID string) {
+		mgr := services.ChannelManager
+		if mgr == nil {
+			return
+		}
+		ch, ok := mgr.GetChannel("device")
+		if !ok {
+			return
+		}
+		if d, ok := ch.(interface{ DisconnectDevice(deviceID string) }); ok {
+			d.DisconnectDevice(deviceID)
+		}
+	})
 	// IP allowlist for the shared HTTP port. Empty means loopback only (see
 	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
 	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
-	httpHost, hostErr := newHTTPHost(addr, allowedCIDRs)
+	hostOpts := hostOptions{
+		HTTPHosts:      cfg.Gateway.HTTPBindHosts(),
+		Port:           cfg.Gateway.EffectivePort(),
+		AllowedCIDRs:   allowedCIDRs,
+		TrustedProxies: cfg.Gateway.TrustedProxies,
+	}
+	if services.TLSCerts != nil {
+		hostOpts.TLSHosts = cfg.Gateway.HTTPSBindHosts()
+		hostOpts.TLSPort = cfg.Gateway.EffectiveTLSPort()
+		hostOpts.TLSConfig = services.TLSCerts.TLSConfig()
+		hostOpts.HSTS = services.TLSCerts.UserSupplied()
+	}
+	httpHost, hostErr := newHTTPHost(hostOpts)
 	if hostErr != nil {
 		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
 	logAllowlist(allowedCIDRs, cfg.Gateway.Host)
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
-	services.HTTPHost.alerter = agentLoop.Alerter()
-	services.HTTPHost.Start()
+	if services.TLSCerts != nil {
+		services.HTTPHost.SetCertificateNames(services.TLSCerts.Info().Names())
+	}
+	if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+		return nil, err
+	}
+	// WebUI login: one session store shared by the Auth middleware on the
+	// listener, the login endpoints and the WebUI channel's WebSocket
+	// handshake. Created once, like the listener; the poller picks up `claw
+	// admin` changes to the credentials file for the life of the process.
+	authStore := middleware.NewAuthStore(admin.Path(cfg.DataDir()))
+	services.AuthStore = authStore
+	services.HTTPHost.SetAuth(authStore)
+	services.WebServer.APIHandler().SetAuth(authStore)
+	if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
+		return nil, err
+	}
+	webui.SetSessionValidator(authStore.HasSession)
+	authCtx, stopAuthWatch := context.WithCancel(context.Background())
+	services.stopAuthWatch = stopAuthWatch
+	go authStore.Watch(authCtx, middleware.CredentialsPollInterval)
+	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, agentLoop)
+	services.HTTPHost.onFatal = fatal.fatalService
+	if err := services.HTTPHost.Start(); err != nil {
+		return nil, err
+	}
+	if services.TLSCerts != nil {
+		startTLSWatch(services, agentLoop)
+	}
+	// The TLS API (GET /api/tls, regenerate) reads what this process bound
+	// and drives the running certificate manager.
+	services.bootListeners = cfg.Gateway.Listeners()
+	services.WebServer.APIHandler().SetBootListeners(services.bootListeners)
+	services.WebServer.APIHandler().SetTLSManager(services.TLSCerts)
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -527,10 +719,21 @@ func setupAndStartServices(
 	// for the entire life of the process.
 	markReady(services, true)
 
-	logger.InfoF("Health endpoints available", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health", "ready": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/ready"})
+	endpoints := map[string]any{
+		"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health",
+		"ready":  "http://" + services.HTTPHost.LoopbackAddr() + "/ready",
+	}
+	if urls := cfg.Gateway.NetworkHTTPURLs(); len(urls) > 0 {
+		endpoints["http_network"] = urls
+	}
+	if urls := cfg.Gateway.HTTPSURLs(); len(urls) > 0 {
+		endpoints["https"] = urls
+	}
+	endpoints["external_url"] = cfg.Gateway.EffectiveExternalURL()
+	logger.InfoF("Health endpoints available", endpoints)
 
 	// Setup state manager and device service
-	stateManager := state.NewManager(cfg.WorkspacePath())
+	stateManager := state.NewManagerInDir(cfg.InternalPath())
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
@@ -565,6 +768,9 @@ func setupAndStartServices(
 	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
 	// effect without restarting the loop. Inert until backup.enabled is set.
 	startBackupScheduler(agentLoop.GetConfig, configPath, agentLoop.Alerter())
+	// Nightly session retention (session.retention_days) and cogmem snapshot
+	// pruning; boot-only like the backup, reads live config each pass.
+	agentLoop.StartRetention()
 
 	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
 	// those older than 24h, so a crashed worker's artefacts can be inspected first.
@@ -615,7 +821,13 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		agentWorkspaces[agentID] = a.Workspace
 	}
 
+	if services.SessionTokens == nil {
+		services.SessionTokens = mcpserver.NewSessionTokenStore()
+		agentLoop.SetSessionTokenIssuer(services.SessionTokens)
+	}
+
 	srv, err := mcpserver.New(
+		mcpserver.WithSessionTokenStore(services.SessionTokens),
 		mcpserver.WithAgentRegistries(agentRegistries),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
@@ -626,6 +838,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
 		mcpserver.WithSessionMode(cfg.Session.Mode),
 		mcpserver.WithAlerter(agentLoop.Alerter()),
+		mcpserver.WithOnServeError(services.fatal.handlerFor("mcpserver")),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)
@@ -634,7 +847,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		return fmt.Errorf("error starting MCP server: %w", err)
 	}
 	services.MCPServer = srv
-	agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
 	// The host catalogue follows the agent registries from here on: when an
 	// external MCP server's tools are re-registered, the loop asks the host to
 	// refresh, so a renamed tool reaches external clients without a restart.
@@ -705,17 +917,20 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 
 // stopAndCleanupServices stops all services and cleans up resources. The agent
 // loop (nil when there is none) is unhooked from the MCP host it stops, so a
-// tool refresh between here and the host's restart is a no-op.
+// tool refresh between here and the host's restart is a no-op. phases, when
+// not nil, logs how long each step took.
 func stopAndCleanupServices(
 	services *gatewayServices,
 	agentLoop *agent.AgentLoop,
 	shutdownTimeout time.Duration,
+	phases *phaseTimer,
 ) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
 	if services.CogmemManager != nil {
 		services.CogmemManager.Stop()
+		phases.done("memory consolidation stopped")
 	}
 	if services.MCPServer != nil {
 		if agentLoop != nil {
@@ -724,15 +939,18 @@ func stopAndCleanupServices(
 		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
 		}
+		phases.done("MCP host stopped")
 	}
 	markReady(services, false)
 	if services.ChannelManager != nil {
 		if stopErr := services.ChannelManager.StopAll(shutdownCtx); stopErr != nil {
 			logger.WarnCF("channels", "Channel manager shutdown error", map[string]any{"error": stopErr.Error()})
 		}
+		phases.done("channels stopped")
 	}
 	if services.DeviceService != nil {
 		services.DeviceService.Stop()
+		phases.done("device service stopped")
 	}
 	if services.MountWatcher != nil {
 		services.MountWatcher.Stop()
@@ -742,6 +960,7 @@ func stopAndCleanupServices(
 	}
 	if services.CronService != nil {
 		services.CronService.Stop()
+		phases.done("cron stopped")
 	}
 	if services.MediaStore != nil {
 		// Stop the media store if it's a FileMediaStore with cleanup
@@ -751,31 +970,52 @@ func stopAndCleanupServices(
 	}
 }
 
-// shutdownGateway performs a complete gateway shutdown
+// shutdownGateway performs a complete gateway shutdown. MCP probes stop first,
+// so a server the stop signal killed is not respawned. Once the channels have
+// stopped delivering messages, the turns in flight are cancelled, so the
+// session and MCP close that follows is not left waiting on them.
 func shutdownGateway(
 	services *gatewayServices,
 	agentLoop *agent.AgentLoop,
 	provider providers.LLMProvider,
 	fullShutdown bool,
 ) {
+	begin := time.Now()
+	phases := newPhaseTimer("Shutdown")
+	agentLoop.BeginMCPShutdown()
+
 	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
 		cp.Close()
+		phases.done("provider closed")
 	}
 
-	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout)
+	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout, phases)
+	agentLoop.Stop()
 
+	if services.stopTLSWatch != nil {
+		services.stopTLSWatch()
+	}
+	if services.stopAuthWatch != nil {
+		services.stopAuthWatch()
+	}
 	if services.HTTPHost != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 		if err := services.HTTPHost.Stop(shutdownCtx); err != nil {
 			logger.WarnCF("gateway", "Shared HTTP listener shutdown error", map[string]any{"error": err.Error()})
 		}
 		cancel()
+		phases.done("HTTP listeners stopped")
 	}
 
-	agentLoop.Stop()
-	agentLoop.Close()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainBudget)
+	agentLoop.Close(drainCtx)
+	drainCancel()
+	phases.done("agent loop closed")
+	if err := audit.Close(); err != nil {
+		logger.WarnCF("gateway", "audit log close failed", map[string]any{"error": err.Error()})
+	}
 
-	logger.Info("✓ Gateway stopped")
+	logger.Infof("✓ claw stopped in %.1fs", time.Since(begin).Seconds())
 	if fullShutdown {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := agentLoop.Alerter().Close(closeCtx); err != nil {
@@ -803,7 +1043,7 @@ func handleConfigReload(
 
 	// Stop all services before reloading
 	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(services, al, serviceShutdownTimeout) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
+	stopAndCleanupServices(services, al, serviceShutdownTimeout, nil) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
 
 	// Create new provider from updated config first to ensure validity
 	// This will use the correct API key and settings from newCfg.Models
@@ -865,16 +1105,8 @@ func restartServices(
 
 	// Re-create and start cron service with new config, then re-register the
 	// cron tool with all agents so it is available after the registry is rebuilt.
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool
-	services.CronService, cronTool = setupCronTool( //nolint:contextcheck // cron jobs are fired by the scheduler, not by the reload; ExecuteJob runs on a detached context by design, as on the initial setup path
-		al,
-		msgBus,
-		cfg.WorkspacePath(),
-		cfg.Agents.Defaults.RestrictToWorkspace,
-		execTimeout,
-		cfg,
-	)
+	services.CronService, cronTool = setupCronTool(al, msgBus, cfg) //nolint:contextcheck // cron jobs are fired by the scheduler, not by the reload; ExecuteJob runs on a detached context by design, as on the initial setup path
 	if cronTool != nil {
 		al.RegisterTool(cronTool)
 	}
@@ -929,6 +1161,7 @@ func restartServices(
 	// its querier after the first config reload and sessionScopeKey falls back to a
 	// bogus "main" agent id — breaking device/ACP turn routing.
 	injectDeviceAgentQuerier(services.ChannelManager, al)
+	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
 
 	enabledChannels := services.ChannelManager.GetEnabledChannels()
 	if len(enabledChannels) > 0 {
@@ -941,7 +1174,14 @@ func restartServices(
 	// and swap it into the long-lived httpHost. The listener is NOT recreated
 	// — keeping it alive is what lets WebUI WebSocket connections survive a
 	// config reload (investigation 7a5377d9, option #1).
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
+	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
+	warnListenerConfigChanged(services, cfg.Gateway)
+	// Names saved since start (extra_names, external_url) reach the running
+	// certificate manager, so a regeneration or renewal covers them.
+	if services.TLSCerts != nil {
+		opts := tlscert.OptionsFromConfig(cfg)
+		services.TLSCerts.UpdateNames(opts.ExtraNames, opts.ExternalHost)
+	}
 
 	// Re-apply the IP allowlist on the live listener. This is what makes
 	// `claw network` a recovery path: an operator locked out by an empty
@@ -955,6 +1195,23 @@ func restartServices(
 		} else {
 			logAllowlist(allowedCIDRs, cfg.Gateway.Host)
 		}
+		if err := services.HTTPHost.SetTrustedProxies(cfg.Gateway.TrustedProxies); err != nil {
+			logger.WarnF("Invalid trusted proxy list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
+		}
+		// Same for the Host and cross-origin policy: external_url and the LINE
+		// webhook path can change on reload, and a bad external_url keeps the
+		// previous policy rather than dropping to loopback-only.
+		if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+			logger.WarnF("Invalid gateway.external_url in reloaded config; keeping the previous host policy", map[string]any{"error": err.Error()})
+		}
+	}
+	// The login limiter outlives the reload like the listener, so the lockout
+	// exemption list is swapped into it here. The device channel is rebuilt
+	// above and reads the list from the new config itself.
+	if services.WebServer != nil {
+		if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
+			logger.WarnF("Invalid lockout exemption list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
+		}
 	}
 
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
@@ -963,10 +1220,10 @@ func restartServices(
 	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
 	// not-ready, so readiness is re-asserted after every reload.
 	markReady(services, true)
-	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health"})
+	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
 
 	// Re-create device service with new config
-	stateManager := state.NewManager(cfg.WorkspacePath())
+	stateManager := state.NewManagerInDir(cfg.InternalPath())
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
@@ -1003,12 +1260,17 @@ func restartServices(
 	return nil
 }
 
-// setupConfigWatcherPolling sets up a simple polling-based config file watcher.
-// interval controls how often the file is polled; callers should pass
-// cfg.ConfigReloadInterval() so the value honours the config override and
-// MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
-// and a stop function.
-func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool, a alerter.Alerter) (chan *config.Config, func(), func()) {
+// setupConfigWatcherPolling sets up a simple polling-based watcher on the
+// store's config file; a change is re-read into the store and a pruned copy
+// (runtimeConfig) is emitted for the reload. A reference to a model that does
+// not exist does not reject the reload: runtimeConfig removes it from the file
+// and refAlerts raises one alert for it; the watcher takes that rewrite as
+// already applied, so it does not reload for it again. interval controls how often the
+// file is polled; callers should pass cfg.ConfigReloadInterval() so the value
+// honours the config override and MinConfigReloadIntervalSeconds floor.
+// Returns a channel for config updates and a stop function.
+func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) (chan *config.Config, func(), func()) {
+	configPath := store.Path()
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
@@ -1064,12 +1326,27 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					continue
 				}
 
-				newCfg, err := config.LoadConfig(configPath)
-				if err != nil {
+				if _, err := store.Reload(); err != nil {
 					logger.Errorf("⚠ Error loading new config: %v", err)
 					logger.Warn("  Using previous valid config")
 					alertConfigFileInvalid(a, configPath, err)
 					continue
+				}
+				newCfg, dangling, err := runtimeConfig(store)
+				if err != nil {
+					logger.Errorf("⚠ Error copying new config: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
+				if dangling.persisted() {
+					// runtimeConfig just rewrote the file to drop missing-model
+					// references. What it wrote is what is being applied, so
+					// take it as the baseline: our own write must not trigger
+					// another reload.
+					currentModTime = getFileModTime(configPath)
+					currentSize = getFileSize(configPath)
+					observedModTime = currentModTime
+					observedSize = currentSize
 				}
 				if err := newCfg.ValidateModels(); err != nil {
 					logger.Errorf("  ⚠ New config validation failed: %v", err)
@@ -1083,6 +1360,7 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
+				refAlerts.report(a, dangling)
 
 				// Only mark the change applied once it has actually been handed to
 				// the reload consumer. If the consumer is still busy with a previous
@@ -1156,9 +1434,6 @@ func getFileSize(path string) int64 {
 func setupCronTool(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
-	workspace string,
-	restrict bool,
-	execTimeout time.Duration,
 	cfg *config.Config,
 ) (*cron.CronService, *toolschedule.CronTool) {
 	cronStorePath := filepath.Join(cfg.CronPath(), "jobs.json")
@@ -1212,11 +1487,6 @@ func setupCronTool(
 // because the health server is nil until the shared HTTP server is first built,
 // and is replaced on every config reload.
 func markReady(services *gatewayServices, ready bool) {
-	logger.InfoF("DEBUG markReady", map[string]any{
-		"ready": ready, "services_nil": services == nil,
-		"health_nil": services == nil || services.HealthServer == nil,
-		"ptr":        fmt.Sprintf("%p", services.HealthServer),
-	})
 	if services != nil && services.HealthServer != nil {
 		services.HealthServer.SetReady(ready)
 	}
@@ -1239,12 +1509,79 @@ func logAllowlist(allowedCIDRs []string, host string) {
 	// "*" rather than 0.0.0.0/0: the latter is an IPv4 prefix and still refuses
 	// IPv6 clients, which on a dual-stack host reads as the allowlist being
 	// broken. See middleware.AllowAnyAddress.
-	logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
+	logger.WarnF("The WebUI/API is bound to a network address but the network allowlist is empty, so only loopback will be served. "+
 		"Run `"+internal.BinaryName+" network` to allow the private LAN ranges, "+
 		"`"+internal.BinaryName+" network <cidr>` for a specific subnet, or "+
 		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
-		"A running gateway applies the change on its next config reload, about 15 seconds.",
+		"A running "+internal.BinaryName+" applies the change on its next config reload, about 15 seconds.",
 		map[string]any{"host": host})
+}
+
+// tlsOptions maps the gateway config onto the certificate manager's options,
+// with the gateway's alerter for reload and expiry alerts.
+func tlsOptions(cfg *config.Config, a alerter.Alerter) tlscert.Options {
+	opts := tlscert.OptionsFromConfig(cfg)
+	opts.Alerter = a
+	return opts
+}
+
+// startTLSWatch logs the certificate in use and starts the manager's file
+// watcher (poll every minute, expiry check daily). A swapped-in certificate
+// re-applies the Host policy so the new names are answered to; the device
+// gateway's own Host allowlist follows on the next config reload.
+func startTLSWatch(services *gatewayServices, agentLoop *agent.AgentLoop) {
+	info := services.TLSCerts.Info()
+	logger.InfoCF("gateway", "HTTPS listener certificate", map[string]any{
+		"source":      string(info.Source),
+		"cert_file":   info.CertFile,
+		"names":       info.Names(),
+		"not_after":   info.NotAfter.Format(time.RFC3339),
+		"fingerprint": info.Fingerprint,
+		"hsts":        services.TLSCerts.UserSupplied(),
+	})
+	services.TLSCerts.OnChange(func(info tlscert.Info) {
+		if services.AuthStore != nil {
+			services.AuthStore.Reload()
+		}
+		services.HTTPHost.SetCertificateNames(info.Names())
+		if err := services.HTTPHost.ApplyPolicy(agentLoop.GetConfig().Gateway, services.ChannelManager); err != nil {
+			logger.WarnCF("gateway", "Host policy not re-applied after certificate change", map[string]any{"error": err.Error()})
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	services.stopTLSWatch = cancel
+	services.TLSCerts.Watch(ctx, tlscert.DefaultPollInterval)
+}
+
+// warnListenerConfigChanged says so when a reloaded config would bind the
+// listeners differently. They are created once at boot, so the change waits
+// for a restart; without this line the operator sees the edit accepted and
+// nothing happen.
+func warnListenerConfigChanged(services *gatewayServices, gw config.GatewayConfig) {
+	if services.HTTPHost == nil {
+		return
+	}
+	if gw.Listeners() != services.bootListeners {
+		logger.WarnCF("gateway", "gateway.host, port, tls_port, tls.mode or the certificate files changed; the listeners are bound at start, so restart "+internal.BinaryName+" to apply", nil)
+	}
+}
+
+// enforceDataDirPerms makes CLAW_HOME private before anything in it is read:
+// the directory and its secret-bearing files are tightened, and a config file
+// other users can read is a refusal to start, with the chmod that fixes it.
+func enforceDataDirPerms(baseDir, configPath string) error {
+	if err := perms.Enforce(baseDir, configPath, func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) }); err != nil {
+		return fmt.Errorf("startup aborted: %w", err)
+	}
+	return nil
+}
+
+// openAuditLog opens <CLAW_HOME>/internal/audit.db as the process-wide audit store. A
+// gateway that cannot open it still serves, without an audit trail.
+func openAuditLog(baseDir string) {
+	if err := audit.Init(baseDir); err != nil {
+		logger.WarnCF("gateway", "audit log disabled", map[string]any{"error": err.Error()})
+	}
 }
 
 // alertConfigFileInvalid reports a config file the watcher could not apply.

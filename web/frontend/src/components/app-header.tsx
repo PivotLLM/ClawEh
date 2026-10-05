@@ -27,6 +27,7 @@ export function AppHeader() {
             href="https://github.com/PivotLLM/ClawEh"
             target="_blank"
             rel="noreferrer"
+            aria-label="ClawEh on GitHub"
           >
             <IconBook className="size-4.5" />
           </a>
@@ -37,6 +38,7 @@ export function AppHeader() {
           size="icon"
           className="size-8"
           onClick={toggleTheme}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
         >
           {theme === "dark" ? (
             <IconSun className="size-4.5" />

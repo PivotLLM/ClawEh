@@ -65,8 +65,15 @@ const InternalEndpointPath = "/internal"
 // the token in the call body resolves to an agent identity, the per-agent
 // ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
-	// alerter hears when the listener dies after startup; nothing restarts it.
-	alerter         alerter.Alerter
+	// alerter hears when the listener dies after startup and no onServeError
+	// handler is installed; nothing restarts it.
+	alerter alerter.Alerter
+	// onServeError, when set, is handed a Serve error after startup instead of
+	// the alerter: the gateway uses it to shut the process down. serving is
+	// set once Start has returned success, so a failure inside Start's own
+	// window is still returned by Start rather than handed off.
+	onServeError    func(error)
+	serving         atomic.Bool
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	internalAllow   []string                       // tools/list visibility filter for /internal
 	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
@@ -79,7 +86,8 @@ type MCPServer struct {
 	endpointPath string // bearer endpoint (/mcp)
 	internalPath string // session-token-parameter endpoint (/internal)
 
-	sessionTokens *sessionTokenStore   // SST-prefixed per-session tokens for session-scoped tools
+	sessionTokens *SessionTokenStore   // SST-prefixed per-session tokens for session-scoped tools
+	sessionMode   routing.SessionScope // applied to sessionTokens in New, so option order does not matter
 	workspaces    map[string]string    // agentID → workspace (for boot/first-call logging)
 	policy        acl.Policy           // per-agent tools/call ACL; defaults to acl.Default
 	msgBus        *bus.MessageBus      // outbound publish target for tool ForUser payloads (optional)
@@ -218,12 +226,32 @@ func WithAlerter(a alerter.Alerter) Option {
 	return func(m *MCPServer) { m.alerter = a }
 }
 
+// WithOnServeError hands a listener death after startup to fn instead of the
+// alerter. The error names the listen address. The gateway installs its
+// fail-fast path here so a dead MCP host takes the process down for the
+// service manager to restart.
+func WithOnServeError(fn func(error)) Option {
+	return func(m *MCPServer) { m.onServeError = fn }
+}
+
 // WithSessionMode tells the server which session scope is configured. Under the
 // unified default a long-lived service token operates on the agent's MAIN
 // session — one agent, one conversation, one memory, whatever is driving it —
 // rather than on a headless session of its own. See docs/service-tokens.md.
 func WithSessionMode(mode string) Option {
-	return func(m *MCPServer) { m.sessionTokens.setSessionMode(routing.SessionScope(mode)) }
+	return func(m *MCPServer) { m.sessionMode = routing.SessionScope(mode) }
+}
+
+// WithSessionTokenStore makes the server use s instead of a store of its own.
+// The store is process-lifetime: the server is rebuilt on every config reload,
+// but the tokens already rendered into running prompts (Maestro workers, turns
+// in flight) are not, so they must keep resolving. A nil s is ignored.
+func WithSessionTokenStore(s *SessionTokenStore) Option {
+	return func(m *MCPServer) {
+		if s != nil {
+			m.sessionTokens = s
+		}
+	}
 }
 
 // WithACLPolicy installs a per-agent ACL policy consulted on every
@@ -253,6 +281,7 @@ func New(opts ...Option) (*MCPServer, error) {
 	if m.policy == nil {
 		m.policy = acl.Default
 	}
+	m.sessionTokens.setSessionMode(m.sessionMode)
 
 	// Boot-log assertion: emit one line per registered agent so any
 	// mis-bindings are visible at startup.
@@ -330,7 +359,7 @@ func (m *MCPServer) EndpointPath() string { return m.endpointPath }
 // SessionTokens returns the session token store. Callers (e.g. the AgentLoop)
 // use it to issue tokens when a new session context manager is created and to
 // revoke tokens on session clear or eviction.
-func (m *MCPServer) SessionTokens() *sessionTokenStore { return m.sessionTokens }
+func (m *MCPServer) SessionTokens() *SessionTokenStore { return m.sessionTokens }
 
 // RefreshCatalogue recomputes the union of the agent registries and brings each
 // endpoint's published tools in step with it: tools that appeared are added,
@@ -373,12 +402,17 @@ func (m *MCPServer) Start() error {
 	errCh := make(chan error, 1)
 	go func() {
 		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if m.serving.Load() && m.onServeError != nil {
+				m.onServeError(fmt.Errorf("%s: %w", m.listen, err))
+				errCh <- err
+				return
+			}
 			logger.ErrorCF("mcpserver", "MCP server exited",
 				map[string]any{"error": err.Error()})
 			if m.alerter != nil {
 				m.alerter.Send(alerter.Alert{
 					Title:       "MCP host server stopped",
-					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until the gateway is restarted",
+					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until claw is restarted",
 					Details:     err.Error(),
 					EventID:     "mcpserver",
 				})
@@ -397,6 +431,7 @@ func (m *MCPServer) Start() error {
 		}
 		return nil
 	case <-time.After(150 * time.Millisecond):
+		m.serving.Store(true)
 		return nil
 	}
 }

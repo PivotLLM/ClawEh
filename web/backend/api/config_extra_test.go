@@ -277,6 +277,7 @@ func validConfigForValidation() *config.Config {
 		Provider:  "OpenAI", // must match a DefaultConfig provider name exactly
 		Enabled:   true,
 	}}
+	cfg.Agents.Defaults.Models = []string{"m"} // the template's CLI aliases are not in Models above
 	return cfg
 }
 
@@ -342,6 +343,22 @@ func TestValidateConfig_SurfacesCIDRErrors(t *testing.T) {
 	errs := validateConfig(cfg)
 	if !anyContains(errs, "gateway.allowed_cidrs") {
 		t.Fatalf("errs = %v, want an error naming gateway.allowed_cidrs", errs)
+	}
+}
+
+// TestValidateConfig_SurfacesLockoutExemptErrors checks that a WebUI save
+// with a bad gateway.lockout_exempt entry is refused.
+func TestValidateConfig_SurfacesLockoutExemptErrors(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Gateway.LockoutExempt = []string{"192.0.2.1", "10.0.0.0/8", "not-an-ip"}
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "gateway.lockout_exempt") {
+		t.Fatalf("errs = %v, want an error naming gateway.lockout_exempt", errs)
+	}
+	cfg.Gateway.LockoutExempt = cfg.Gateway.LockoutExempt[:2]
+	if errs := validateConfig(cfg); anyContains(errs, "gateway.lockout_exempt") {
+		t.Fatalf("valid list rejected: %v", errs)
 	}
 }
 

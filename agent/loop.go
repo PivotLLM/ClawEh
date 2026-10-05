@@ -56,23 +56,29 @@ type AgentLoop struct {
 	alerter         alerter.Alerter
 	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
 	// namedTokens holds the long-lived, user-named message-API tokens (one store
-	// for all agents, persisted under state/message-api-tokens.json). It is
+	// for all agents, persisted under internal/message-api-tokens.json). It is
 	// separate from the rotating messageManagers: named tokens never expire and
 	// are minted/revoked from the WebUI. The same instance is shared with the API
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
 	namedTokens *msgtoken.NamedStore
 	agentStates map[string]*state.Manager // agentID -> per-agent state manager
-	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
-	// The scope key is resolved via resolveMessageRoute before locking so that
-	// multiple channel:chatID pairs that map to the same agent session share one
-	// mutex and never process concurrently. Entries are never evicted; for typical
-	// deployments with a bounded number of active sessions the cost is negligible
-	// (one *sync.Mutex per session key).
-	sessionMus          sync.Map
-	sessionCancelStates sync.Map // scope key → *sessionCancelState
-	lastSelfClear       sync.Map // session key → time.Time, rate-limits session_clear
-	dumpsDir            string
-	startedAt           time.Time
+	// sessions holds the per-session dispatch state (session scope key →
+	// *sessionState): the goroutine running the session's turns, the messages
+	// queued behind it and the /cancel bookkeeping. The scope key is resolved via
+	// resolveMessageRoute before dispatch so that multiple channel:chatID pairs
+	// that map to the same agent session share one entry and never process
+	// concurrently. sessionsMu guards the map and every entry's refs/lastUsed;
+	// pruneSessions drops entries idle for sessionIdleTTL with no holder.
+	sessionsMu sync.Mutex
+	sessions   map[string]*sessionState
+	// turnSem bounds the turns running at once across all sessions
+	// (agents.defaults.max_concurrent_turns); nil = unlimited.
+	turnSem chan struct{}
+	// spend sums dispatch cost per UTC day for the daily-spend alert.
+	spend         dailySpend
+	lastSelfClear sync.Map // session key → time.Time, rate-limits session_clear
+	dumpsDir      string
+	startedAt     time.Time
 
 	// activeModelIdx caches the per-session active model index (write-through to
 	// the session store's CompactionState). Key = agent.ID + "\x00" + sessionKey.
@@ -90,8 +96,8 @@ type AgentLoop struct {
 	showToolActivityCache map[string]bool
 
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
-	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
-	// MCP host is not configured.
+	// once via SetSessionTokenIssuer with the process-lifetime store every MCP
+	// server shares; nil when the MCP host is not configured.
 	sessionTokenIssuer SessionTokenIssuer
 
 	// cogmemManager schedules background cognitive-memory consolidation. Wired in
@@ -122,11 +128,27 @@ type AgentLoop struct {
 	spawnMu       sync.Mutex
 	spawnManagers map[string]*toolsagents.SubagentManager
 	superStop     chan struct{}
+
+	// stopRun cancels the context Run derives for every turn it starts, with
+	// errShuttingDown as the cause; set by Run, called by Stop. Guarded by
+	// runMu.
+	runMu   sync.Mutex
+	stopRun context.CancelCauseFunc
+}
+
+// errShuttingDown is the cause Stop gives the turn context. A turn ended by it
+// is an interrupted turn: no reply is sent and its pending-turn flag is kept,
+// so it is replayed when the gateway starts again.
+var errShuttingDown = errors.New("claw shutting down")
+
+// shuttingDown reports whether ctx was cancelled by Stop.
+func shuttingDown(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errShuttingDown)
 }
 
 // SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
 // session-scoped MCP tools (get_session_messages, search_session_messages).
-// mcpserver.sessionTokenStore satisfies this interface.
+// mcpserver.SessionTokenStore satisfies this interface.
 type SessionTokenIssuer interface {
 	// Issue generates and stores a new token for the given session. Returns
 	// the SST<64hex> token, or "" on failure.
@@ -228,6 +250,7 @@ func NewAgentLoop(
 		agentStates:           agentStates,
 		messageManagers:       messageManagers,
 		namedTokens:           namedTokens,
+		sessions:              make(map[string]*sessionState),
 		startedAt:             time.Now(),
 		evictStop:             make(chan struct{}),
 		mcpRetryStop:          make(chan struct{}),
@@ -240,6 +263,9 @@ func NewAgentLoop(
 		spawnManagers:         make(map[string]*toolsagents.SubagentManager),
 		superStop:             make(chan struct{}),
 	}
+	if n := cfg.Agents.Defaults.MaxConcurrentTurns; n > 0 {
+		al.turnSem = make(chan struct{}, n)
+	}
 
 	// Register runtime-dependent tools via providers (session closures,
 	// spawn/subagent, msg with shared MessageTool).
@@ -251,12 +277,23 @@ func NewAgentLoop(
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
+	// Every turn runs under this context, so Stop can abort the model requests,
+	// CLI subprocesses and tool calls still in flight.
+	ctx, stopRun := context.WithCancelCause(ctx)
+	defer stopRun(nil)
+	al.runMu.Lock()
+	al.stopRun = stopRun
+	al.runMu.Unlock()
+
 	if err := al.ensureMCPInitialized(ctx); err != nil {
 		return err
 	}
 
 	// Start the background context-manager eviction goroutine.
 	go al.evictContextManagers() //nolint:contextcheck // idle eviction closes managers on a fresh context so the archive flush completes regardless of the run context
+
+	// Drop dispatch state for sessions that have been idle for an hour.
+	go al.pruneSessions()
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).
@@ -285,12 +322,32 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	return nil
 }
 
+// Stop ends Run and cancels the turns in flight. A cancelled turn is left
+// pending, so it is replayed on the next start.
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	al.runMu.Lock()
+	stopRun := al.stopRun
+	al.runMu.Unlock()
+	if stopRun != nil {
+		stopRun(errShuttingDown)
+	}
+}
+
+// BeginMCPShutdown stops the MCP liveness probes and refuses reconnects, so
+// servers the stop signal killed are not respawned while the gateway shuts
+// down. The first step of a shutdown; Close closes the servers.
+func (al *AgentLoop) BeginMCPShutdown() {
+	if mgr := al.mcp.peekManager(); mgr != nil {
+		mgr.BeginShutdown()
+	}
 }
 
 // Close releases resources held by agent session stores. Call after Stop.
-func (al *AgentLoop) Close() {
+// Closing the sessions and the MCP servers shares ctx as their time budget:
+// what is still busy when it ends is logged and abandoned, since the process
+// is exiting.
+func (al *AgentLoop) Close(ctx context.Context) {
 	// Signal the eviction goroutine to stop and drain all remaining managers.
 	// Use a non-blocking close in case Close() is called before Run().
 	select {
@@ -311,17 +368,19 @@ func (al *AgentLoop) Close() {
 	default:
 		close(al.superStop)
 	}
-	al.drainContextManagers()
+	start := time.Now()
+	al.drainContextManagers(ctx)
+	logger.Infof("Shutdown: sessions closed in %.1fs", time.Since(start).Seconds())
 
-	mcpManager := al.mcp.takeManager()
-
-	if mcpManager != nil {
-		if err := mcpManager.Close(); err != nil {
+	if mcpManager := al.mcp.takeManager(); mcpManager != nil {
+		start = time.Now()
+		if err := mcpManager.Close(ctx); err != nil {
 			logger.ErrorCF("agent", "Failed to close MCP manager",
 				map[string]any{
 					"error": err.Error(),
 				})
 		}
+		logger.Infof("Shutdown: MCP servers closed in %.1fs", time.Since(start).Seconds())
 	}
 
 	for _, mgr := range al.messageManagers {
@@ -331,7 +390,7 @@ func (al *AgentLoop) Close() {
 	al.GetRegistry().Close()
 }
 
-// SetSessionTokenIssuer wires the MCP server's session token store into the
+// SetSessionTokenIssuer wires the MCP session token store into the
 // agent loop so that session tokens are issued when a new ContextManager is
 // created and revoked on eviction or session clear.
 func (al *AgentLoop) SetSessionTokenIssuer(sti SessionTokenIssuer) {
@@ -459,10 +518,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		al.dispatcher.Flush(cfg)
 	}
 
-	// Drop cached ContextManagers so per-session config baked in at creation —
-	// notably the summarization model chain — is rebuilt from the new config on
-	// next use.
-	al.invalidateContextManagers()
+	// Have cached ContextManagers rebuilt from the new config, since per-session
+	// config is baked in at creation (notably the summarization model chain).
+	// Idle sessions are evicted now; sessions in use keep their manager and
+	// session token until released, then rebuild on their next access.
+	al.invalidateContextManagers(ctx)
 
 	// Close old provider after releasing the lock
 	// This prevents blocking readers while closing

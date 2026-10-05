@@ -27,11 +27,11 @@ func assembleWithLayers(t *testing.T, cb *ContextBuilder, history []providers.Me
 	}
 	defer closeT(t, store)
 	for _, m := range history {
-		store.AddFullMessage(key, m)
+		addFullMessage(t, store, key, m)
 	}
-	store.AddFullMessage(key, providers.Message{Role: "user", Content: message})
+	addFullMessage(t, store, key, providers.Message{Role: "user", Content: message})
 	if summary != "" {
-		store.SetSummary(key, summary)
+		setSummary(t, store, key, summary)
 	}
 	cm := ctxengine.New(key, store, ctxengine.WithContextWindow(200_000))
 	asm, err := cm.Assemble(context.Background(), ctxengine.AssembleRequest{Layers: cb.PromptLayers(channel, chatID)})
@@ -155,14 +155,17 @@ func TestSingleSystemMessage(t *testing.T) {
 
 			// Summary handling
 			if tt.summary != "" {
-				if !strings.Contains(sys, "CONTEXT_SUMMARY:") {
-					t.Error("summary present but CONTEXT_SUMMARY prefix missing")
+				if !strings.Contains(sys, "<<<CONTEXT_SUMMARY>>>") || !strings.Contains(sys, "<<<END_CONTEXT_SUMMARY>>>") {
+					t.Error("summary present but CONTEXT_SUMMARY data markers missing")
+				}
+				if !strings.HasSuffix(strings.TrimSpace(sys), "<<<END_CONTEXT_SUMMARY>>>") {
+					t.Error("summary block must be the last part of the system message")
 				}
 				if !strings.Contains(sys, tt.summary[:20]) {
 					t.Error("summary content not found in system message")
 				}
 			} else {
-				if strings.Contains(sys, "CONTEXT_SUMMARY:") {
+				if strings.Contains(sys, "<<<CONTEXT_SUMMARY>>>") {
 					t.Error("CONTEXT_SUMMARY should not appear without summary")
 				}
 			}

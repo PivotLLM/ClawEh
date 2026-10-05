@@ -38,7 +38,13 @@ export function VoicePage() {
   // Editable copy of the fetched rows, reseeded whenever a fresh fetch lands.
   // Adjusted during render rather than in an effect so a refetch never paints
   // the previous rows for a frame before correcting itself.
-  const [rows, setRows] = useState<STTProvider[]>([])
+  //
+  // The initial rows come from the query too: when the page is revisited the
+  // cache already holds the answer on the first render, so the "new data"
+  // comparison below never fires. Seeding rows from [] in that case showed an
+  // empty list — and the next edit saved that empty list over the real
+  // configuration.
+  const [rows, setRows] = useState<STTProvider[]>(() => stt.data?.stt ?? [])
   const [syncedData, setSyncedData] = useState(stt.data)
   if (stt.data && stt.data !== syncedData) {
     setSyncedData(stt.data)
@@ -170,6 +176,7 @@ export function VoicePage() {
                       <Switch
                         checked={row.enabled}
                         onCheckedChange={(v) => update(i, { enabled: v })}
+                        aria-label={`${row.provider} enabled`}
                       />
                       <span className="text-sm font-medium">
                         {row.enabled ? "Enabled" : "Disabled"}
@@ -191,8 +198,9 @@ export function VoicePage() {
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="flex flex-col gap-1.5">
-                      <Label>Provider</Label>
+                      <Label htmlFor={`stt-provider-${i}`}>Provider</Label>
                       <select
+                        id={`stt-provider-${i}`}
                         className="border-input bg-background h-9 rounded-md border px-3 text-sm"
                         value={row.provider}
                         onChange={(e) =>
@@ -207,8 +215,9 @@ export function VoicePage() {
                       </select>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <Label>API key</Label>
+                      <Label htmlFor={`stt-api-key-${i}`}>API key</Label>
                       <Input
+                        id={`stt-api-key-${i}`}
                         type="password"
                         value={row.api_key ?? ""}
                         placeholder="required"
@@ -216,8 +225,11 @@ export function VoicePage() {
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <Label>Endpoint (base URL)</Label>
+                      <Label htmlFor={`stt-base-url-${i}`}>
+                        Endpoint (base URL)
+                      </Label>
                       <Input
+                        id={`stt-base-url-${i}`}
                         value={row.base_url ?? ""}
                         placeholder={preset?.base_url ?? "https://.../v1"}
                         onChange={(e) =>
@@ -226,8 +238,9 @@ export function VoicePage() {
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <Label>Model</Label>
+                      <Label htmlFor={`stt-model-${i}`}>Model</Label>
                       <Input
+                        id={`stt-model-${i}`}
                         value={row.model ?? ""}
                         placeholder={preset?.model ?? "whisper-1"}
                         onChange={(e) => update(i, { model: e.target.value })}

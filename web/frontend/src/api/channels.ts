@@ -78,6 +78,9 @@ export interface AgentMCPServer {
 export interface AgentToolCatalogResponse {
   tools: AgentToolEntry[]
   mcp_servers?: AgentMCPServer[]
+  // Fusion services defined in the fusion config folder. An mcp_tools entry
+  // naming one grants the service's tools when the agent's Fusion switch is on.
+  fusion_services?: string[]
   default_tools: string[]
 }
 
@@ -137,6 +140,10 @@ export interface MCPServerStatus {
   transport?: string
   tool_count: number
   cooldown_until?: string
+  // last_error is why the last connection attempt failed and last_error_at
+  // (RFC3339) when; both absent while the server is healthy.
+  last_error?: string
+  last_error_at?: string
 }
 
 interface MCPStatusResponse {

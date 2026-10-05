@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -20,15 +21,16 @@ import (
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // NewACPCommand builds the `claw acp` subcommand: an Agent Client Protocol (ACP)
 // agent that speaks JSON-RPC 2.0 over stdio and bridges to the ALREADY-RUNNING
-// gateway over its localhost WebSocket (the device gateway on 127.0.0.1:<port>).
+// claw over its localhost WebSocket (the device listener on 127.0.0.1:<port>).
 // It is intended to be spawned by an ACP client (e.g. rabbit-agent for the Rabbit
-// R1). The bridge holds no agent loop of its own — the one running gateway does
+// R1). The bridge holds no agent loop of its own — the one running claw does
 // the work, so there is exactly one ClawEh instance.
 func NewACPCommand() *cobra.Command {
 	var debug bool
@@ -36,12 +38,12 @@ func NewACPCommand() *cobra.Command {
 	var noAutoPair bool
 	cmd := &cobra.Command{
 		Use:   "acp",
-		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local gateway",
+		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local " + app.Name(),
 		Long: "Serve the Agent Client Protocol over stdin/stdout for an ACP client (such as\n" +
 			"rabbit-agent for the Rabbit R1) and forward prompts to the already-running\n" +
-			"gateway over its localhost WebSocket. The client spawns this process and\n" +
+			"" + app.Name() + " over its localhost WebSocket. The client spawns this process and\n" +
 			"exchanges JSON-RPC 2.0 messages on the pipe; stdin EOF shuts it down.\n\n" +
-			"The bridge authenticates to the gateway as a paired device (Ed25519 identity\n" +
+			"The bridge authenticates to " + app.Name() + " as a paired device (Ed25519 identity\n" +
 			"+ the configured device token). Because it is a local same-user process, it\n" +
 			"auto-approves its own pairing in the local store on first connect (disable\n" +
 			"with --no-auto-pair to require a manual `claw devices approve`).\n\n" +
@@ -53,7 +55,7 @@ func NewACPCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging (written to the log file, never stdout)")
-	cmd.Flags().StringVar(&url, "url", "", "Gateway WebSocket URL (default ws://127.0.0.1:<device-port>/)")
+	cmd.Flags().StringVar(&url, "url", "", "Device listener WebSocket URL (default ws://127.0.0.1:<device-port>/, wss:// with channels.device.tls)")
 	cmd.Flags().BoolVar(&noAutoPair, "no-auto-pair", false, "Require manual pairing approval instead of self-approving the local bridge")
 	return cmd
 }
@@ -91,31 +93,12 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		authToken = dev.WordToken
 	}
 	if wsURL == "" {
-		wsURL = defaultDeviceWSURL(dev.Host, dev.Port)
+		wsURL = defaultDeviceWSURL(dev.Host, dev.Port, dev.TLS)
 	}
-
-	// Persisted Ed25519 device identity + issued device token (survives across the
-	// short-lived spawns rabbit-agent makes, so pairing happens only once).
-	idDir := filepath.Join(cfg.DataDir(), "state", "acp-bridge")
-	if mkErr := os.MkdirAll(idDir, 0o700); mkErr != nil {
-		return fmt.Errorf("acp: create identity dir: %w", mkErr)
+	var tlsConfig *tls.Config
+	if strings.HasPrefix(wsURL, "wss://") {
+		tlsConfig = pinnedGatewayTLS(tlscert.OptionsFromConfig(cfg))
 	}
-	idStore, err := identity.NewStore(idDir)
-	if err != nil {
-		return fmt.Errorf("acp: open identity store: %w", err)
-	}
-	id, err := idStore.LoadOrGenerate()
-	if err != nil {
-		return fmt.Errorf("acp: load device identity: %w", err)
-	}
-	deviceToken := idStore.LoadDeviceToken()
-
-	logger.InfoCF("acp", "Starting ACP↔gateway bridge", map[string]any{
-		"app": app.Name(), "version": app.Version(), "url": wsURL, "deviceId": id.DeviceID,
-	})
-	// Human-facing progress goes to stderr — stdout is the ACP protocol wire, so it
-	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
-	fmt.Fprintf(os.Stderr, "claw acp: connecting to gateway %s (device %s)…\n", wsURL, id.DeviceID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,10 +106,96 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	// The event callback is registered at client-construction time but needs the
 	// bridge, and the bridge needs the client — close over a late-bound pointer.
 	var br *acpBridge
+	conn, err := connectBridge(ctx, cfg.DataDir(), wsURL, authToken, tlsConfig, autoPair, func(ev protocol.Event) {
+		if br != nil {
+			br.handleGatewayEvent(ev)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	client := conn.client
+	defer utils.CloseQuietly(client)
+
+	br = newACPBridge(&abortSessionKeyClient{Client: client})
+	server := acplib.NewServer(br, os.Stdin, os.Stdout)
+	br.setNotifier(server)
+
+	logger.InfoC("acp", "ACP stdio server ready (bridged to claw)")
+	srvInfo := ""
+	if hello := client.Hello(); hello != nil {
+		srvInfo = fmt.Sprintf(" (server %s, protocol %d)", hello.Server.Version, hello.Protocol)
+	}
+	fmt.Fprintf(os.Stderr, "claw acp: connected%s — ACP ready, reading JSON-RPC on stdin (Ctrl-D to exit)\n", srvInfo)
+
+	// Serve blocks until stdin closes (client disconnect), the gateway drops, or
+	// the context is cancelled.
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(ctx) }()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("acp serve: %w", err)
+		}
+		logger.InfoC("acp", "ACP stdio client disconnected; shutting down")
+	case <-client.Done():
+		logger.WarnC("acp", "Connection to claw closed; shutting down")
+	}
+	return nil
+}
+
+// bridgeConn is the bridge's live, paired connection to the device listener.
+type bridgeConn struct {
+	client   *gateway.Client
+	identity *identity.Identity
+	// selfApproved reports that this connect found the device unpaired and
+	// approved its own pairing request.
+	selfApproved bool
+}
+
+// connectBridge connects the bridge to the device listener at wsURL as a paired
+// node. Its Ed25519 identity and issued device token persist under
+// <dataDir>/internal/acp-bridge, so pairing happens once across the short-lived
+// spawns an ACP client makes. authToken is the shared device token (empty for
+// open loopback auth); tlsConfig is nil for ws://. With autoPair, a not-paired
+// rejection is answered by approving this device's own pending request in
+// <dataDir>/internal/gateway.db and reconnecting. onEvent receives gateway events.
+func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsConfig *tls.Config, autoPair bool, onEvent func(protocol.Event)) (*bridgeConn, error) {
+	// Persisted Ed25519 device identity + issued device token (survives across the
+	// short-lived spawns rabbit-agent makes, so pairing happens only once).
+	idDir := filepath.Join(dataDir, global.InternalDir, "acp-bridge")
+	if mkErr := os.MkdirAll(idDir, 0o700); mkErr != nil {
+		return nil, fmt.Errorf("acp: create identity dir: %w", mkErr)
+	}
+	idStore, err := identity.NewStore(idDir)
+	if err != nil {
+		return nil, fmt.Errorf("acp: open identity store: %w", err)
+	}
+	id, err := idStore.LoadOrGenerate()
+	if err != nil {
+		return nil, fmt.Errorf("acp: load device identity: %w", err)
+	}
+	deviceToken := idStore.LoadDeviceToken()
+
+	logger.InfoCF("acp", "Starting ACP↔claw bridge", map[string]any{
+		"app": app.Name(), "version": app.Version(), "url": wsURL, "deviceId": id.DeviceID,
+	})
+	// Human-facing progress goes to stderr — stdout is the ACP protocol wire, so it
+	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
+	fmt.Fprintf(os.Stderr, "claw acp: connecting to %s (device %s)…\n", wsURL, id.DeviceID)
+
+	// The client sends one token. A stored device token is tried on its own: the
+	// options apply in order, so adding the shared token as well would override
+	// it, and a shared-token connect makes the gateway rotate the device's tokens
+	// on every launch. The shared token is sent only when there is no device
+	// token to try.
 	makeClient := func(tok string) *gateway.Client {
-		return gateway.NewClient(
-			gateway.WithIdentity(id, tok),
-			gateway.WithToken(authToken),
+		opts := []gateway.Option{gateway.WithIdentity(id, tok)}
+		if tok == "" {
+			opts = append(opts, gateway.WithToken(authToken))
+		}
+		opts = append(opts,
 			gateway.WithRole(protocol.RoleNode),
 			gateway.WithClientInfo(protocol.ClientInfo{
 				ID: protocol.ClientIDGateway,
@@ -135,12 +204,12 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 				Platform: "go",
 				Mode:     protocol.ClientModeNode,
 			}),
-			gateway.WithOnEvent(func(ev protocol.Event) {
-				if br != nil {
-					br.handleGatewayEvent(ev)
-				}
-			}),
+			gateway.WithOnEvent(onEvent),
 		)
+		if tlsConfig != nil {
+			opts = append(opts, gateway.WithTLSConfig(tlsConfig))
+		}
+		return gateway.NewClient(opts...)
 	}
 
 	tryConnect := func(tok string) (*gateway.Client, error) {
@@ -157,11 +226,11 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	// one no longer authenticates and the failure is an auth error, NOT NOT_PAIRED):
 	//   1. try the cached device token, if any;
 	//   2. on any failure, drop the cached token and retry with the shared token
-	//      (WithIdentity overrides the shared token with the device token, so a dead
-	//      token must be cleared for the shared token to take effect and re-pair);
+	//      (a dead token must be cleared so the shared token is sent and re-pairs);
 	//   3. if that says NOT_PAIRED, self-approve our own pending pairing and reconnect.
 	var client *gateway.Client
 	var connErr error
+	selfApproved := false
 	if deviceToken != "" {
 		client, connErr = tryConnect(deviceToken)
 		if connErr != nil {
@@ -182,9 +251,9 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	// state on the reconnect. This does not touch the network/proxy device path.
 	if connErr != nil && isPairingError(connErr) && autoPair {
 		logger.WarnCF("acp", "Device not paired; auto-approving local bridge", map[string]any{"deviceId": id.DeviceID})
-		tok, perr := autoApproveLocalDevice(ctx, cfg.DataDir(), id.DeviceID)
+		tok, perr := autoApproveLocalDevice(ctx, dataDir, id.DeviceID)
 		if perr != nil {
-			return fmt.Errorf("acp: auto-pair failed for device %s (approve manually with `claw devices`): %w", id.DeviceID, perr)
+			return nil, fmt.Errorf("acp: auto-pair failed for device %s (approve manually with `claw devices`): %w", id.DeviceID, perr)
 		}
 		if tok != "" {
 			deviceToken = tok
@@ -193,14 +262,14 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 			}
 		}
 		client, connErr = tryConnect(deviceToken)
+		selfApproved = true
 	}
 	if connErr != nil {
 		if isPairingError(connErr) {
-			return fmt.Errorf("this device (%s) is not paired with the gateway yet — approve it once with `claw devices`, then re-run: %w", id.DeviceID, connErr)
+			return nil, fmt.Errorf("this device (%s) is not paired yet — approve it once with `claw devices`, then re-run: %w", id.DeviceID, connErr)
 		}
-		return fmt.Errorf("acp: connect to gateway %s: %w", wsURL, connErr)
+		return nil, fmt.Errorf("acp: connect to %s: %w", wsURL, connErr)
 	}
-	defer utils.CloseQuietly(client)
 
 	// Persist a freshly issued device token so future spawns skip the shared secret.
 	if hello := client.Hello(); hello != nil && hello.Auth != nil && hello.Auth.DeviceToken != "" && hello.Auth.DeviceToken != deviceToken {
@@ -208,33 +277,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 			logger.WarnCF("acp", "Failed to persist issued device token", map[string]any{"error": err.Error()})
 		}
 	}
-
-	br = newACPBridge(&abortSessionKeyClient{Client: client})
-	server := acplib.NewServer(br, os.Stdin, os.Stdout)
-	br.setNotifier(server)
-
-	logger.InfoC("acp", "ACP stdio server ready (bridged to gateway)")
-	srvInfo := ""
-	if hello := client.Hello(); hello != nil {
-		srvInfo = fmt.Sprintf(" (server %s, protocol %d)", hello.Server.Version, hello.Protocol)
-	}
-	fmt.Fprintf(os.Stderr, "claw acp: connected%s — ACP ready, reading JSON-RPC on stdin (Ctrl-D to exit)\n", srvInfo)
-
-	// Serve blocks until stdin closes (client disconnect), the gateway drops, or
-	// the context is cancelled.
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.Serve(ctx) }()
-
-	select {
-	case err := <-serveErr:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			return fmt.Errorf("acp serve: %w", err)
-		}
-		logger.InfoC("acp", "ACP stdio client disconnected; shutting down")
-	case <-client.Done():
-		logger.WarnC("acp", "Gateway connection closed; shutting down")
-	}
-	return nil
+	return &bridgeConn{client: client, identity: id, selfApproved: selfApproved}, nil
 }
 
 // abortSessionKeyClient adapts *gateway.Client to gatewaySender, defaulting the
@@ -254,7 +297,7 @@ func (c *abortSessionKeyClient) ChatAbort(ctx context.Context, params protocol.C
 // bridge is a local same-user process that already owns the data dir; it only
 // approves its OWN device id, never another device's pending request.
 func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (string, error) {
-	store, err := device.OpenStore(ctx, filepath.Join(dataDir, "state", "gateway.db"))
+	store, err := device.OpenStore(ctx, filepath.Join(dataDir, global.InternalDir, "gateway.db"))
 	if err != nil {
 		return "", fmt.Errorf("open device store: %w", err)
 	}
@@ -284,16 +327,45 @@ func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (stri
 	return "", nil
 }
 
-// defaultDeviceWSURL builds the loopback WebSocket URL for the device listener.
-// A 0.0.0.0 bind is dialed on 127.0.0.1 (the bridge is always local).
-func defaultDeviceWSURL(host string, port int) string {
+// defaultDeviceWSURL builds the loopback WebSocket URL for the device listener,
+// wss:// when channels.device.tls is on. A 0.0.0.0 bind is dialed on
+// 127.0.0.1 (the bridge is always local).
+func defaultDeviceWSURL(host string, port int, useTLS bool) string {
 	if host == "" || host == "0.0.0.0" {
 		host = "127.0.0.1"
 	}
 	if port == 0 {
 		port = device.DefaultDevicePort
 	}
-	return "ws://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/"
+	scheme := "ws"
+	if useTLS {
+		scheme = "wss"
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/"
+}
+
+// pinnedGatewayTLS trusts exactly the certificate the gateway serves, read
+// from its file: the bridge dials 127.0.0.1, which a self-signed or
+// user-supplied certificate need not name, so the chain and name checks are
+// replaced by a fingerprint match against the file on this machine.
+func pinnedGatewayTLS(opts tlscert.Options) *tls.Config {
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, //nolint:gosec // verified by VerifyConnection against the local certificate file
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("acp: the device listener presented no certificate")
+			}
+			want, err := tlscert.InspectFile(opts)
+			if err != nil {
+				return fmt.Errorf("acp: read the TLS certificate: %w", err)
+			}
+			if got := tlscert.Fingerprint(cs.PeerCertificates[0]); got != want.Fingerprint {
+				return fmt.Errorf("acp: certificate %s does not match %s", got, want.CertFile)
+			}
+			return nil
+		},
+	}
 }
 
 // isPairingError reports whether a connect error is the gateway's not-paired

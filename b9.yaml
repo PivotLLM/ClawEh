@@ -36,6 +36,15 @@ build:
     - linux/amd64
     - linux/arm64
 
+# checksums.txt (SHA-256 of every archive) and checksums.txt.minisig are
+# published with the archives. `claw upgrade` verifies the signature against the
+# keys in app/keys.go and refuses a release without it; this is the key the
+# release host signs with (the secret half is ~/.minisign/minisign.key there).
+signing:
+  minisign:
+    enabled:    true
+    public_key: RWS4LMzQBg4PUnmdFHlaHFkUt+mm9PLPGvkE812t8Ew4YK5fL8zWqbuN
+
 artifacts:
   - name: claw
     from: 'build/claw-{os}-{arch}'

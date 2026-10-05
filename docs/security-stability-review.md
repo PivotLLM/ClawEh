@@ -8,7 +8,7 @@ have since been closed and are marked as such with the reason.
 
 ## Scope
 
-- Focus: core stability and security of the shared gateway HTTP surface, device gateway, credentials on disk, agent-loop resilience, and tool/channel blast radius.
+- Focus: core stability and security of the shared WebUI/API HTTP surface, device listener, credentials on disk, agent-loop resilience, and tool/channel blast radius.
 - **Non-goal / do not change:** MCP host auth. `/mcp` (Bearer SST) and `/internal` (`session_token` tool arg) stay as designed. MCP remains loopback-oriented (`127.0.0.1:5911` by default).
 
 ## Current trust model
@@ -16,7 +16,7 @@ have since been closed and are marked as such with the reason.
 | Surface | Default bind | Network ACL | App-level auth | TLS |
 |---------|--------------|-------------|----------------|-----|
 | WebUI + `/api/*` + `/webui/ws` | `127.0.0.1:18790` | Loopback always; else `gateway.allowed_cidrs` (empty ⇒ loopback only, as of 0.4.72) | **None** for REST; chat WS has a channel token (see below); secrets masked on `GET /api/config` | None in-process |
-| Device gateway WS | `127.0.0.1:18791` | Optional CIDRs (empty = any IP) | Shared / word / device token + Ed25519 + pairing | None in-process |
+| Device listener WS | `127.0.0.1:18791` | Optional CIDRs (empty = any IP) | Shared / word / device token + Ed25519 + pairing | None in-process |
 | MCP host | `127.0.0.1:5911` | Loopback by default | SST session token | None (leave as-is) |
 
 Access control for the management port today is **bind address + CIDR allowlist only** (`internal/gateway/httphost.go`, `web/backend/middleware/access_control.go`). There is no operator password, session, or basic auth on `/api/*`. As of 0.4.72 the allowlist is empty by default, which means loopback only, so a fresh install grants no off-box access until one is configured. Documented in README and `docs/remote-access.md`.
@@ -38,12 +38,12 @@ Edge TLS (Cloudflare Tunnel, nginx, Tailscale) is the supported HTTPS path today
 
 **Verdict:** WebUI WS is token-gated at the socket, but the token is trivially obtainable once the management port is reachable. Password-protecting the WebUI/API closes this gap without changing the channel-token model itself.
 
-### Device gateway — separate listener (default 18791)
+### Device listener — separate listener (default 18791)
 
 **Real auth stack** (unchanged by WebUI password work):
 
 1. Optional CIDR allowlist.
-2. Shared gateway token and/or BIP39 `word_token` (constant-time compare), and/or issued device token.
+2. Shared device token and/or BIP39 `word_token` (constant-time compare), and/or issued device token.
 3. Ed25519 device identity + signed challenge.
 4. Pairing approval (unless `auto_approve`).
 
@@ -59,17 +59,17 @@ Out of scope. SST-based auth on `/mcp` and `/internal` must not change.
 
 | # | Issue | Recommendation | Status |
 |---|-------|----------------|--------|
-| 1 | **No operator auth on the management port.** Reachability (bind + CIDR) is still the only gate on the WebUI and `/api/*`: any peer inside the configured allowlist can read and rewrite config, mint message tokens, and approve devices. Partially mitigated in 0.4.72 — `GET /api/config` now masks credentials, and the allowlist defaults to loopback only — but `GET /api/webui/token` still hands the chat token to any allowed peer, so the `/webui/ws` gate is not independent auth. | Optional `gateway.auth.password_hash` (argon2id/bcrypt) enforced by middleware after the IP allowlist, covering the static UI and `/api/*`. Mask secrets on `GET /api/config` as defence in depth. See [Proposal: WebUI password](#proposal-webui-password). | Open |
-| 2 | **No in-process TLS.** Edge termination (Cloudflare, nginx, Tailscale) is the only HTTPS path; `gateway.external_url` advertises `https://` without terminating it. | `gateway.tls.{enabled,cert_file,key_file}` with `GetCertificate` and mtime/fsnotify reload so ACME renewals are picked up live; a failed reload keeps the previous cert. Reverse-proxy path stays supported. See [Proposal: native HTTPS](#proposal-native-https). | Open |
-| 3 | **WebUI chat transport defaults are permissive.** Setup force-enables `allow_token_query` and sets `allow_origins: ["*"]` (`web/backend/api/webui.go:88`). Tokens in query strings leak via logs and `Referer`. | Bearer-only by default, a concrete origin instead of `*`, and keep query-token strictly opt-in. | Open |
-| 4 | **Data-dir permissions are not enforced.** Agent dirs are created `0755` and session/media files `0644`; config is written `0600` but load does not refuse a world-readable one. | At startup enforce `CLAW_HOME` `0700`, warn or refuse a loose `config.json`, and tighten session/token/DB files to `0600`. | Open |
-| 5 | **Hot-reload is not concurrency-safe and has no drain.** Several agent-loop paths read `al.cfg` directly while reload swaps it under `al.mu`. Reload also stops and rebuilds services, so in-flight turns can fail mid-tool. | Read config and registry only through `GetConfig()` / `GetRegistry()` (or hold the RLock). Drain or cancel in-flight turns behind a clear "gateway reloading" outbound, and add an integration test for a message arriving mid-reload. | Open |
+| 1 | **No operator auth on the management port.** Reachability (bind + CIDR) is still the only gate on the WebUI and `/api/*`: any peer inside the configured allowlist can read and rewrite config, mint message tokens, and approve devices. Partially mitigated in 0.4.72 — `GET /api/config` now masks credentials, and the allowlist defaults to loopback only — but `GET /api/webui/token` still hands the chat token to any allowed peer, so the `/webui/ws` gate is not independent auth. | Optional `gateway.auth.password_hash` (argon2id/bcrypt) enforced by middleware after the IP allowlist, covering the static UI and `/api/*`. Mask secrets on `GET /api/config` as defence in depth. See [Proposal: WebUI password](#proposal-webui-password). | **Closed** (0.6.0). Admin login via `claw admin` (argon2id credentials file, cookie sessions, lockout); every `/api/*` request and `/webui/ws` require it, loopback included. `GET /api/webui/token` removed. See `docs/webui-auth.md`. |
+| 2 | **No in-process TLS.** Edge termination (Cloudflare, nginx, Tailscale) is the only HTTPS path; `gateway.external_url` advertises `https://` without terminating it. | `gateway.tls.{enabled,cert_file,key_file}` with `GetCertificate` and mtime/fsnotify reload so ACME renewals are picked up live; a failed reload keeps the previous cert. Reverse-proxy path stays supported. See [Proposal: native HTTPS](#proposal-native-https). | **Closed** (0.6.0). HTTPS on `gateway.tls_port` (18443), on every interface by default (`gateway.tls.mode`: `all`, `localhost` or `off`), with a self-signed or user-supplied certificate, hot-reloaded from disk; plain HTTP stays on loopback unless `gateway.host` says otherwise. See `docs/tls.md`. |
+| 3 | **WebUI chat transport defaults are permissive.** Setup force-enables `allow_token_query` and sets `allow_origins: ["*"]` (`web/backend/api/webui.go:88`). Tokens in query strings leak via logs and `Referer`. | Bearer-only by default, a concrete origin instead of `*`, and keep query-token strictly opt-in. | **Closed** (0.6.0). `allow_token_query` and the WebUI `allow_origins` are removed; the browser uses the login session and the origin check is same-origin only. |
+| 4 | **Data-dir permissions are not enforced.** Agent dirs are created `0755` and session/media files `0644`; config is written `0600` but load does not refuse a world-readable one. | At startup enforce `CLAW_HOME` `0700`, warn or refuse a loose `config.json`, and tighten session/token/DB files to `0600`. | **Closed** (0.6.0). `internal/perms` enforces `CLAW_HOME` 0700 and owner-only secrets/DBs at startup and refuses a group/world-readable `config.json`; files ClawEh creates are 0700/0600. |
+| 5 | **Hot-reload is not concurrency-safe and has no drain.** Several agent-loop paths read `al.cfg` directly while reload swaps it under `al.mu`. Reload also stops and rebuilds services, so in-flight turns can fail mid-tool. | Read config and registry only through `GetConfig()` / `GetRegistry()` (or hold the RLock). Drain or cancel in-flight turns behind a clear "ClawEh reloading" outbound, and add an integration test for a message arriving mid-reload. | Open |
 | 6 | **CIDR allowlist is fixed for the listener's lifetime** (`internal/gateway/httphost.go:31`), so an allowlist change needs a full restart. | Re-apply the allowlist on reload without restarting the process. Safe to do once #1 exists. | Open |
 | 7 | **Device shared-token compare leaks length.** `subtle.ConstantTimeCompare` returned early on a length mismatch, so the call's duration depended on the secret's length. | — | **Closed**. `authorizeGateway` now SHA-256s both operands before comparing (`channels/device/server.go:394-414`), pinning them to 32 bytes so the length branch never fires. Impact was low — the QR token is always 64 hex chars, so its length was fixed by construction — but the fix is a few lines. |
 | 8 | **Shared-host `WriteTimeout: 30s`** (`internal/gateway/httphost.go:39`) is fine after a WebSocket hijack but can still cut long non-WS responses. | Raise it, or exempt streaming paths. | Open |
-| 9 | **Blast-radius footguns are documented, not enforced.** Channel `allow_from: ["*"]` plus a discoverable bot is catastrophic with tools; CLI provider defaults ship vendor sandbox bypasses (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`); `shell_exec` deny-regex is UX, not a sandbox. | Stronger first-run and WebUI warnings on wildcard `allow_from` and on enabling a CLI provider. Keep documenting that the real gates are the deny-regex plus `allow_remote: false`, not the regex alone. | Open |
-| 10 | **Doc drift on ports.** `docs/remote-access.md` described the WebUI and device gateway as sharing port 18790. | — | **Closed** (`66e5eea`) |
-| 11 | **Device gateway open when both shared secrets are empty.** | — | **Closed**. `EnsureProvisioned` now generates both the QR token and the BIP39 `word_token` when either is empty (`channels/device/provision.go:61-76`), and `authorizeGateway` guards each candidate with `secret != ""`, so an empty secret can never match — the path fails closed. |
+| 9 | **Blast-radius footguns are documented, not enforced.** Channel `allow_from: ["*"]` plus a discoverable bot is catastrophic with tools; CLI provider defaults ship vendor sandbox bypasses (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`); `shell_exec` deny-regex is UX, not a sandbox. | Stronger first-run and WebUI warnings on wildcard `allow_from` and on enabling a CLI provider. Keep documenting that the real gates are the deny-regex plus `allow_remote: false`, not the regex alone. | **Closed** (0.6.0). CLI bypass flags are off unless *Bypass CLI restrictions* is ticked (reported in the assessment); `deny_tools` denies specific tools per agent; `allow_from: ["*"]` and shell exposure are assessment rows. |
+| 10 | **Doc drift on ports.** `docs/remote-access.md` described the WebUI and device listener as sharing port 18790. | — | **Closed** (`66e5eea`) |
+| 11 | **Device listener open when both shared secrets are empty.** | — | **Closed**. `EnsureProvisioned` now generates both the QR token and the BIP39 `word_token` when either is empty (`channels/device/provision.go:61-76`), and `authorizeGateway` guards each candidate with `secret != ""`, so an empty secret can never match — the path fails closed. |
 
 Suggested order: **1 + 2 together** (they close the documented P0 for headless/LAN use and each is weaker alone), then **4**, then **5**, then **3**.
 
@@ -99,7 +99,7 @@ Suggested order: **1 + 2 together** (they close the documented P0 for headless/L
 
 ## Proposal: native HTTPS
 
-**Goal:** Let the operator point ClawEh at **existing** certificate files and pick up renewals without a full gateway restart — compatible with Let’s Encrypt tooling (certbot, acme.sh, lego) that writes or atomically replaces files on disk.
+**Goal:** Let the operator point ClawEh at **existing** certificate files and pick up renewals without a full restart — compatible with Let’s Encrypt tooling (certbot, acme.sh, lego) that writes or atomically replaces files on disk.
 
 ### Config sketch
 
@@ -169,7 +169,7 @@ Prefer storing a **hash** (argon2id or bcrypt), not a plaintext password. Settin
    - Leave open (recommended): `/health`, `/ready` if present; channel webhooks that use their own secrets/signatures (LINE, etc.) — document which paths are exempt.
 3. Auth mechanism: HTTP Basic **or** session cookie after a login form. Cookie + HTTPS is preferred for browsers; Basic is simpler for scripts. Either is acceptable for v1 if documented.
 4. WebUI **chat** channel token stays for `/webui/ws`. Once `/api/webui/token` is password-gated, LAN peers can no longer mint or read that token without the operator password.
-5. Device gateway listener (18791) is **not** covered by this password — it already has its own credential + pairing model.
+5. Device listener (18791) is **not** covered by this password — it already has its own credential + pairing model.
 6. MCP listener is **not** covered — SST remains the only identity.
 
 ### UX / security notes
@@ -196,7 +196,7 @@ Prefer storing a **hash** (argon2id or bcrypt), not a plaintext password. Settin
 | Unauthenticated config API | `web/backend/api/config.go` |
 | WebUI WS token API | `web/backend/api/webui.go` |
 | WebUI WS authenticate | `channels/webui/webui.go` |
-| Device gateway auth | `channels/device/server.go`, `channels/device/gateway.go` |
+| Device listener auth | `channels/device/server.go`, `channels/device/gateway.go` |
 | MCP auth (do not change) | `mcpserver/` |
 | Remote access docs | `docs/remote-access.md` |
 | Documented no-auth posture | `README.md` (security section) |

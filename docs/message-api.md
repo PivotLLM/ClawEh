@@ -23,7 +23,7 @@ POST http(s)://<host>:<port>/api/message/<token>
   token, `400 Bad Request` for an empty body.
 
 The full URL a caller uses is the endpoint base shown in the Web UI with the
-token appended, e.g. `https://gateway.example.com:18790/api/message/ab12…`.
+token appended, e.g. `https://claw.example.com:18790/api/message/ab12…`.
 
 ---
 
@@ -39,7 +39,7 @@ Named tokens are managed **per agent** in the Web UI:
 
 Each agent can have any number of named tokens; each is a long-lived secret that
 does not expire until revoked. Tokens are stored in plaintext under the data
-directory at `state/message-api-tokens.json` so they can be displayed for copying.
+directory at `internal/message-api-tokens.json` so they can be displayed for copying.
 
 ---
 
@@ -59,21 +59,21 @@ external input as untrusted and does not blindly follow instructions inside it.
 GPS tracker geofence alert:
 
 ```bash
-curl -X POST "https://gateway.example.com:18790/api/message/$TOKEN" \
+curl -X POST "https://claw.example.com:18790/api/message/$TOKEN" \
   --data "Vehicle 7 left the depot geofence at 14:32 (45.42, -75.69)."
 ```
 
 Alarm system trip:
 
 ```bash
-curl -X POST "https://gateway.example.com:18790/api/message/$TOKEN" \
+curl -X POST "https://claw.example.com:18790/api/message/$TOKEN" \
   --data "ALARM: zone 3 (garage) motion detected. System is armed-away."
 ```
 
 Monitoring webhook (payload as the message body):
 
 ```bash
-curl -X POST "https://gateway.example.com:18790/api/message/$TOKEN" \
+curl -X POST "https://claw.example.com:18790/api/message/$TOKEN" \
   -H "Content-Type: text/plain" \
   --data "check=disk-space host=web01 status=CRITICAL used=96%"
 ```
@@ -82,16 +82,16 @@ curl -X POST "https://gateway.example.com:18790/api/message/$TOKEN" \
 
 ## Reachability
 
-By default the gateway HTTP server binds to loopback. To accept posts from other
+By default the WebUI/API HTTP listener binds to loopback. To accept posts from other
 hosts:
 
-- Start the gateway with `--host 0.0.0.0` (or set `gateway.host`) so it listens on
+- Start ClawEh with `--host 0.0.0.0` (or set `gateway.host`) so it listens on
   the LAN.
 - Set the network allowlist (`--allowed-cidrs` / `gateway.allowed_cidrs`). This is
   required, not just advisable: it is empty by default, which means loopback only,
   so binding to `0.0.0.0` alone still refuses every off-box post. Keep it tight —
   only the source ranges that must reach the endpoint.
-- Prefer putting the gateway behind a TLS-terminating reverse proxy for any access
+- Prefer putting ClawEh behind a TLS-terminating reverse proxy for any access
   beyond the local network; the token is bearer access control, not a substitute
   for transport security.
 

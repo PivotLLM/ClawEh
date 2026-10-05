@@ -12,20 +12,33 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/report"
 )
 
 func (h *Handler) registerReportRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/report/pdf", h.handleReportPDF)
+	mux.HandleFunc("GET /api/report/assessment", h.handleReportAssessment)
+}
+
+// handleReportAssessment returns the identity line and the security
+// assessment table as JSON — the same rows the PDF renders, for the Report
+// page to show inline. Never cached, for the same reason as the PDF.
+func (h *Handler) handleReportAssessment(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.currentConfig()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to load config: "+err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, report.Assess(r.Context(), cfg, reportEnvironment(h.configPath, cfg.DataDir(), time.Now())))
 }
 
 // handleReportPDF streams the configuration report for this install: the
 // configuration as loaded plus facts about the running process. Served inline
 // so the browser renders it, and never cached.
 func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		http.Error(w, "Failed to load config: "+err.Error(), http.StatusInternalServerError)
 		return

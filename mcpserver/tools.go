@@ -111,7 +111,7 @@ func (t *firstCallTracker) workspace(agentName string) string {
 
 // dispatchDeps are the collaborators every tool handler closes over at call time.
 type dispatchDeps struct {
-	sessionTokens    *sessionTokenStore
+	sessionTokens    *SessionTokenStore
 	resolver         AgentResolver
 	tracker          *firstCallTracker
 	policy           acl.Policy
@@ -175,7 +175,7 @@ func addToolsToServer(
 	mode authMode,
 	agentRegistries map[string]*tools.ToolRegistry,
 	allowPatterns []string,
-	sessionTokens *sessionTokenStore,
+	sessionTokens *SessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
@@ -378,13 +378,13 @@ func dispatchToolCall(
 	ctx context.Context,
 	toolName string,
 	args map[string]any,
-	sessionTokens *sessionTokenStore,
+	sessionTokens *SessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
 	toolActivity ToolActivityNotifier,
-) (string, bool) {
+) (out string, isErr bool) {
 	var rawSessTok string
 	if v, ok := args[sessionTokenParam].(string); ok {
 		rawSessTok = v
@@ -414,6 +414,15 @@ func dispatchToolCall(
 			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
 		return invalidTokenMessage, true
 	}
+	defer func() {
+		// A panicking tool leaves the named results unset: count it as a failure
+		// and let the panic continue to the server's recovery.
+		if p := recover(); p != nil {
+			tools.RecordToolResult(rec.sessionKey, toolName, tools.ErrorResult("tool "+toolName+" panicked"))
+			panic(p)
+		}
+		tools.RecordToolResult(rec.sessionKey, toolName, &tools.ToolResult{ForLLM: out, IsError: isErr})
+	}()
 
 	agentName := rec.agentID
 	logger.InfoCF("mcpserver", "MCP session token verified",
@@ -501,7 +510,7 @@ func dispatchToolCall(
 	// (Async completions are handled by asyncCb above.)
 	publishMCPForUser(ctx, msgBus, rec, toolName, result)
 
-	out := agenttoken.Redact(result.ForLLM)
+	out = agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
 }
 

@@ -18,10 +18,12 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// namedFileName is the state file under the data dir's state/ directory that
+// namedFileName is the state file under the data dir's internal/ directory that
 // holds the long-lived named message-API tokens for every agent.
 const namedFileName = "message-api-tokens.json"
 
@@ -36,9 +38,9 @@ const (
 
 // NamedTokenPath returns the absolute path to the named-token state file for the
 // given data directory (e.g. $CLAW_HOME or ~/.claw). It mirrors servicetoken.Path
-// so all long-lived token state lives together under state/.
+// so all long-lived token state lives together under internal/.
 func NamedTokenPath(dataDir string) string {
-	return filepath.Join(dataDir, "state", namedFileName)
+	return filepath.Join(dataDir, global.InternalDir, namedFileName)
 }
 
 // NamedToken is a single long-lived, user-named message-API token. Unlike the
@@ -131,6 +133,14 @@ func NewNamedStore(path string) (*NamedStore, error) {
 			return s, nil
 		}
 		return nil, fmt.Errorf("msgtoken: read %s: %w", path, err)
+	}
+	// The file holds the tokens themselves — the WebUI must be able to show
+	// them again — so it has to stay private. Tighten one left loose by an
+	// earlier release or a copy; a failure is logged, not fatal, since the
+	// store still works.
+	if permErr := perms.EnsurePrivateFile(path); permErr != nil {
+		logger.WarnCF("msgtoken", "Could not tighten token store permissions",
+			map[string]any{"path": path, "error": permErr.Error()})
 	}
 	if err := json.Unmarshal(data, &s.tokens); err != nil || s.tokens == nil {
 		s.tokens = map[string][]NamedToken{}
@@ -426,7 +436,7 @@ func (s *NamedStore) Quota(agentID string) []TokenQuota {
 }
 
 // saveLocked writes the whole token map atomically (0600), creating the parent
-// state/ directory if needed. An empty path means an in-memory-only fallback
+// internal/ directory if needed. An empty path means an in-memory-only fallback
 // store, so persistence is skipped. Must be called with s.mu held.
 func (s *NamedStore) saveLocked() error {
 	if s.path == "" {

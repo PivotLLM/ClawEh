@@ -46,15 +46,15 @@ func (c *TelegramChannel) RegisterCommands(ctx context.Context, defs []commands.
 	if err != nil {
 		// If we can't read current commands, fall through to set them.
 		logger.WarnCF("telegram", "Failed to get current commands, will set unconditionally",
-			map[string]any{"error": err.Error()})
+			map[string]any{"error": redactErr(err).Error()})
 	} else if slices.Equal(current, botCommands) {
 		logger.DebugCF("telegram", "Bot commands are up to date", nil)
 		return nil
 	}
 
-	return c.bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
+	return redactErr(c.bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: botCommands,
-	})
+	}))
 }
 
 func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []commands.Definition) {

@@ -56,7 +56,10 @@ func TestPrintProcess_TreatsAStalePidFileAsNotRunning(t *testing.T) {
 	dir := t.TempDir()
 	// Pid 1 exists on every Linux host and is emphatically not claw, which is
 	// the case the comm check exists to reject.
-	if err := os.WriteFile(filepath.Join(dir, "claw.pid"), []byte("1\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "claw.pid"), []byte("1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,12 +2,17 @@ package telegram
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/mymmrac/telego"
+	"github.com/stretchr/testify/require"
 
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // TestStopBlocksUntilLongPollExits is the regression test for the telegram-409
@@ -111,75 +116,55 @@ func TestStopIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestWatchLongPollDoneClosesOnSrcClose verifies the wrapping primitive:
-// done must not close until src is closed, regardless of ctx state.
-func TestWatchLongPollDoneClosesOnSrcClose(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+// TestStopAbortsInFlightLongPoll is the regression test for the 10 s stop: a
+// getUpdates long poll the server never answers must be abandoned as soon as
+// Stop cancels the channel, not after pollExitTimeout.
+func TestStopAbortsInFlightLongPoll(t *testing.T) {
+	orig := pollExitTimeout
+	pollExitTimeout = 5 * time.Second
+	t.Cleanup(func() { pollExitTimeout = orig })
 
-	src := make(chan telego.Update)
-	_, done := watchLongPoll(ctx, src)
-
-	// done must not close yet
-	select {
-	case <-done:
-		t.Fatal("done closed before src closed")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	// Cancelling ctx alone must NOT close done — the doLongPolling
-	// goroutine may still be mid-getUpdates.
-	cancel()
-	select {
-	case <-done:
-		t.Fatal("done closed on ctx cancel — must wait for src close")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	// Closing src (simulating doLongPolling's defer) must close done.
-	close(src)
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("done did not close after src closed")
-	}
-}
-
-// TestWatchLongPollDrainsAfterCtxCancel verifies that once ctx is cancelled
-// and the downstream consumer has stopped reading, the relay drains src so
-// telego's doLongPolling can finish sending and close.
-func TestWatchLongPollDrainsAfterCtxCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	src := make(chan telego.Update)
-	_, done := watchLongPoll(ctx, src)
-
-	cancel()
-
-	// Producer can still push and then close — relay must drain, not block.
-	pushed := make(chan struct{})
-	go func() {
-		defer close(pushed)
-		for i := range 5 {
+	polling := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
 			select {
-			case src <- telego.Update{UpdateID: i}:
-			case <-time.After(500 * time.Millisecond):
-				t.Errorf("producer blocked on src send %d — relay did not drain", i)
-				return
+			case polling <- struct{}{}:
+			default:
+			}
+			// Never answered while the client is connected.
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		case strings.HasSuffix(r.URL.Path, "/getMe"):
+			if _, err := w.Write([]byte(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"t","username":"t_bot"}}`)); err != nil {
+				t.Errorf("write getMe: %v", err)
+			}
+		default:
+			if _, err := w.Write([]byte(`{"ok":true,"result":true}`)); err != nil {
+				t.Errorf("write %s: %v", r.URL.Path, err)
 			}
 		}
-		close(src)
-	}()
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+
+	ch, err := NewTelegramChannelFromConfig(config.TelegramBotConfig{Token: testToken, BaseURL: srv.URL}, bus.NewMessageBus())
+	require.NoError(t, err)
+	require.NoError(t, ch.Start(context.Background()))
 
 	select {
-	case <-pushed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("producer never finished")
+	case <-polling:
+	case <-time.After(5 * time.Second):
+		t.Fatal("getUpdates never reached the fake server")
 	}
 
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("done did not close after src closed")
-	}
+	start := time.Now()
+	require.NoError(t, ch.Stop(context.Background()))
+	require.Less(t, time.Since(start), time.Second, "Stop waited for the long poll instead of aborting it")
 }

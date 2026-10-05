@@ -91,7 +91,7 @@ export function SkillsPage() {
       setSkillPendingDelete(null)
       if (
         selectedSkill?.name === deletedName &&
-        selectedSkill.source === "workspace"
+        selectedSkill.source === "global"
       ) {
         setSelectedSkill(null)
       }
@@ -188,7 +188,7 @@ export function SkillsPage() {
                             >
                               <IconFileInfo className="size-4" />
                             </Button>
-                            {skill.source === "workspace" ? (
+                            {skill.source === "global" ? (
                               <Button
                                 variant="ghost"
                                 size="icon-sm"

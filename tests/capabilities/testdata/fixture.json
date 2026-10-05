@@ -1,0 +1,40 @@
+{
+  "providers": [
+    {"name": "OpenRouter", "protocol": "openai-chat", "base_url": "https://openrouter.ai/api/v1", "api_key": "test-key"},
+    {"name": "Claude CLI", "protocol": "claude-cli"},
+    {"name": "Codex CLI", "protocol": "codex-cli", "bypass_restrictions": true}
+  ],
+  "models": [
+    {"model_name": "OR Flash", "model": "deepseek/deepseek-flash", "provider": "OpenRouter", "enabled": true},
+    {"model_name": "Claude CLI Opus", "model": "claude-opus-4-7", "provider": "Claude CLI", "enabled": true,
+     "extra_args": ["--dangerously-skip-permissions", "--no-chrome"], "env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"}},
+    {"model_name": "Codex CLI", "model": "codex-cli", "provider": "Codex CLI", "enabled": true,
+     "extra_args": ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]}
+  ],
+  "agents": {
+    "defaults": {"models": ["OR Flash"]},
+    "list": [
+      {"id": "alice", "name": "Alice", "default": true,
+       "tools": ["file_read_lines", "file_list", "web_search", "time_now", "shell_exec"],
+       "fusion": true,
+       "mcp_tools": ["github", "wxca", "simpledoc_document"],
+       "deny_tools": ["shell_exec", "wxca_city_hourly"]},
+      {"id": "bob", "name": "Bob", "models": ["Claude CLI Opus", "Codex CLI"],
+       "tools": ["*"],
+       "fusion": true,
+       "mcp_tools": ["simpledoc"]},
+      {"id": "carol", "name": "Carol",
+       "tools": ["file_read_lines"],
+       "mcp_tools": ["wxca"]}
+    ]
+  },
+  "tools": {
+    "mcp": {
+      "servers": {
+        "github": {"type": "http", "url": "http://127.0.0.1:1/mcp", "enabled": true},
+        "simpledoc": {"type": "http", "url": "http://127.0.0.1:1/simpledoc", "enabled": true},
+        "wxca": {"type": "stdio", "command": "wxca-mcp", "enabled": true}
+      }
+    }
+  }
+}

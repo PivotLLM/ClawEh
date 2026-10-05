@@ -29,6 +29,7 @@ type ProviderDispatcher struct {
 
 // NewProviderDispatcher creates a new dispatcher with the given config.
 func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
+	logBypassEnabled(cfg)
 	return &ProviderDispatcher{
 		cache: make(map[string]LLMProvider),
 		cfg:   cfg,
@@ -69,6 +70,10 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 			matched = &cp
 			break
 		}
+	}
+	// A model with no workspace runs its CLI in <CLAW_HOME>/cli.
+	if matched != nil && matched.Workspace == "" && cfgSnapshot.DataDir() != "" {
+		matched.Workspace = cfgSnapshot.CLIPath()
 	}
 	if matched != nil && matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
 		matched.RequestTimeout = cfgSnapshot.Agents.Defaults.RequestTimeout

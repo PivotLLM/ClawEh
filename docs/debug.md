@@ -3,7 +3,7 @@
 ClawEh performs multiple complex interactions under the hood for every single request it receives—from routing messages and evaluating complexity, to executing tools and adapting to model failures. Being able to see exactly what is happening is crucial, not just for troubleshooting potential issues, but also for truly understanding how the agent operates.
 ## Starting ClawEh in Debug Mode
 
-To get detailed information about what the agent is doing (LLM requests, tool calls, message routing), you can start the ClawEh gateway with the debug flag:
+To get detailed information about what the agent is doing (LLM requests, tool calls, message routing), you can start ClawEh with the debug flag:
 
 ```bash
 claw gateway --debug

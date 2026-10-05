@@ -15,6 +15,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 )
@@ -273,6 +274,9 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+	// The child gets an allowlisted environment, not the service's: CLAW_* and
+	// ALERTER_* carry tokens and credentials that a shell command must not read.
+	cmd.Env = childenv.Base()
 
 	prepareCommandForTermination(cmd)
 

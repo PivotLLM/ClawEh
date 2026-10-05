@@ -94,34 +94,45 @@ type WebUIChannel struct {
 // "claw-token", never the token.
 const TokenSubprotocol = "claw-token"
 
+// maxMessageBytes caps one inbound WebSocket message. The socket carries chat
+// text and control messages only; a larger frame closes the connection. The
+// token is checked on the HTTP request before the upgrade, so every frame read
+// here is already authenticated.
+const maxMessageBytes = 1 << 20
+
+// sessionValidator reports whether a WebSocket handshake carries a live WebUI
+// login session. The gateway installs it with SetSessionValidator; until then
+// (and in tests) only the channel token authenticates.
+var sessionValidator atomic.Pointer[func(*http.Request) bool]
+
+// SetSessionValidator installs the login-session check the channel consults
+// before the token: the browser holds a session cookie from /api/auth/login
+// and nothing else, so this is how the bundled UI reaches the chat socket.
+// The channel is built by the channel manager from config, which is why this
+// is a package-level hook rather than a constructor argument.
+func SetSessionValidator(fn func(*http.Request) bool) {
+	if fn == nil {
+		sessionValidator.Store(nil)
+		return
+	}
+	sessionValidator.Store(&fn)
+}
+
 // originAllowed implements the WebSocket origin policy, which is what stands
 // between this socket and a cross-site WebSocket hijack: any page in the
 // browser can open a WebSocket to localhost, and unlike fetch, it is not
 // stopped by CORS.
 //
-// An empty allowOrigins means SAME ORIGIN — the Origin's host must match the
-// Host the request was sent to. Same-origin rather than a fixed list because
-// the operator may reach the UI as localhost, a LAN address, or a proxied
+// The policy is SAME ORIGIN — the Origin's host must match the Host the
+// request was sent to. Same-origin rather than a fixed list because the
+// operator may reach the UI as localhost, a LAN address, or a proxied
 // hostname, and all of those are legitimately "this UI talking to itself".
-// A request with no Origin header at all is not a browser, so it is allowed and
-// left to token authentication.
-//
-// An explicit list is honoured verbatim, with "*" still meaning any origin —
-// which is what a frontend dev server on another port needs.
-func originAllowed(r *http.Request, allowOrigins []string) bool {
+// A request with no Origin header at all is not a browser, so it is allowed
+// and left to authentication.
+func originAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-
-	if len(allowOrigins) > 0 {
-		for _, allowed := range allowOrigins {
-			if allowed == "*" || allowed == origin {
-				return true
-			}
-		}
-		return false
-	}
-
 	if origin == "" {
-		return true // not a browser; the token is the gate
+		return true // not a browser; the session or token is the gate
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -138,13 +149,11 @@ func NewWebUIChannel(cfg config.WebUIConfig, messageBus *bus.MessageBus) (*WebUI
 
 	base := channels.NewBaseChannel("webui", cfg, messageBus, cfg.AllowFrom)
 
-	allowOrigins := cfg.AllowOrigins
-
 	return &WebUIChannel{
 		BaseChannel: base,
 		config:      cfg,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return originAllowed(r, allowOrigins) },
+			CheckOrigin: originAllowed,
 			// The browser WebSocket API cannot set request headers, so the token
 			// travels as a subprotocol instead of a query parameter (see
 			// authenticate). Advertising the name here makes gorilla echo it in
@@ -329,6 +338,7 @@ func (c *WebUIChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	conn.SetReadLimit(maxMessageBytes)
 
 	// Determine session ID from query param or generate one
 	sessionID := r.URL.Query().Get("session_id")
@@ -353,9 +363,16 @@ func (c *WebUIChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go c.readLoop(pc)
 }
 
-// authenticate checks the Bearer token from the Authorization header.
-// Query parameter authentication is only allowed when AllowTokenQuery is explicitly enabled.
+// authenticate admits a WebSocket handshake that carries a WebUI login session
+// (the browser's cookie, checked through SetSessionValidator) or the channel
+// token as a Bearer header or subprotocol (non-browser clients). The token is
+// never accepted from the URL: a query string is recorded by proxies, access
+// logs and browser history.
 func (c *WebUIChannel) authenticate(r *http.Request) bool {
+	if validate := sessionValidator.Load(); validate != nil && (*validate)(r) {
+		return true
+	}
+
 	token := c.config.Token
 	if token == "" {
 		return false
@@ -364,25 +381,17 @@ func (c *WebUIChannel) authenticate(r *http.Request) bool {
 	// Check Authorization header
 	auth := r.Header.Get("Authorization")
 	if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
-		if after == token {
+		if subtle.ConstantTimeCompare([]byte(after), []byte(token)) == 1 {
 			return true
 		}
 	}
 
-	// Subprotocol form, used by the browser: ["claw-token", "<token>"].
+	// Subprotocol form: ["claw-token", "<token>"].
 	for _, proto := range websocket.Subprotocols(r) {
 		if proto == TokenSubprotocol {
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(proto), []byte(token)) == 1 {
-			return true
-		}
-	}
-
-	// Query parameter, only when explicitly allowed. Off by default: a token in
-	// a URL is recorded by proxies, access logs and browser history.
-	if c.config.AllowTokenQuery {
-		if r.URL.Query().Get("token") == token {
 			return true
 		}
 	}

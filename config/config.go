@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,11 @@ type Config struct {
 	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
 
 	dataDir string // runtime-only: base data directory, not serialized
+
+	// secretRefs records every "env:"/"file:" secret reference this config was
+	// loaded with, so a save writes the reference back rather than the value it
+	// resolved to. Runtime-only; see secrets.go.
+	secretRefs []secretRef
 }
 
 // MarshalJSON implements custom JSON marshaling for Config to omit the session
@@ -143,7 +149,7 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 	}
 
 	// Only include session if not empty
-	if c.Session.Mode != "" || len(c.Session.IdentityLinks) > 0 {
+	if c.Session.Mode != "" || len(c.Session.IdentityLinks) > 0 || c.Session.RetentionDays > 0 {
 		aux.Session = &c.Session
 	}
 
@@ -152,14 +158,15 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 
 type AgentsConfig struct {
 	// BaseDir is the base directory under which every agent's workspace lives:
-	// each agent resolves to <base_dir>/<agent-id> (the routing-default agent
-	// uses <base_dir>/default). A per-agent `workspace` overrides this. Empty
+	// each agent resolves to <base_dir>/<agent-id> (an agent with an empty id
+	// or the id "main" uses <base_dir>/default). A per-agent `workspace`
+	// overrides this. Empty
 	// defaults to <data_dir>/agents. Point it at another volume to relocate all
 	// agent files at once.
 	BaseDir string `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
 	// CommonDir is the global path to the shared directory that agents can read
 	// from and write to via the "common" tools. Empty defaults to
-	// <agents base>/common (see Config.ResolveCommonDir).
+	// <data_dir>/common (see Config.ResolveCommonDir).
 	CommonDir string        `json:"common_dir,omitempty" env:"CLAW_AGENTS_COMMON_DIR"`
 	Defaults  AgentDefaults `json:"defaults"`
 	List      []AgentConfig `json:"list,omitempty"`
@@ -304,7 +311,9 @@ type AgentConfig struct {
 	// the block are passed to Maestro; unset ones take Maestro's defaults.
 	Maestro *MaestroConfig `json:"maestro,omitempty"`
 
-	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
+	// Fusion switches on the MCPFusion config-driven REST-API tool suite for the
+	// agent; which services it then gets is decided by MCPTools (see
+	// FusionToolAllowed). It remains the master switch for the MCPFusion
 	// tool suite. Off by default. When on, the agent gets every tool defined by the
 	// JSON config files under <dataDir>/fusion, with per-agent OAuth tokens keyed by
 	// agent id in the shared fusion token store.
@@ -376,15 +385,28 @@ type AgentConfig struct {
 	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
 	Mounts []MountConfig `json:"mounts,omitempty"`
 
-	// MCPTools is the per-agent allow-list for external MCP-client tools, kept
-	// separate from the generic Tools allowlist so MCP access is per-tool rather
-	// than all-or-nothing per server. Each entry is matched (case-insensitively)
-	// against a tool's <server>_<tool> name (i.e. the published mcp_<server>_<tool>
-	// with the mcp_ prefix stripped): an entry allows the tool when it equals or is
-	// a prefix of that name. So "fusion" admits every tool on servers named/
-	// starting "fusion"; "fusion_gcwx" admits just the gcwx tools. Empty ⇒ the
-	// agent gets no MCP tools. The mcp_ prefix and wildcards are never needed.
+	// MCPTools is the per-agent allow-list for external MCP-client tools and,
+	// when Fusion is on, for Fusion services. It is kept separate from the
+	// generic Tools allowlist so this access is per server or service rather
+	// than all-or-nothing. Each entry is matched (case-insensitively) against a
+	// tool's <server>_<tool> name (the published mcp_<server>_<tool> with the
+	// mcp_ prefix stripped) or a Fusion tool's <service>_<tool> name: an entry
+	// allows the tool when it equals or is a prefix of that name. So "github"
+	// admits every tool on the github server, "wxca" every tool of the wxca
+	// Fusion service, "microsoft365_calendar" one group of the microsoft365
+	// service. Empty ⇒ the agent gets no MCP tools and, Fusion on or off, no
+	// Fusion tools. The mcp_ prefix and wildcards are never needed.
 	MCPTools []string `json:"mcp_tools,omitempty"`
+
+	// DenyTools lists tools this agent may never call, even when Tools or
+	// MCPTools admits them. It is evaluated after the allow lists and deny wins.
+	// Each entry uses the matching rule of the list the tool belongs to: a
+	// generic tool is matched under MatchToolPattern (case-insensitive exact, or
+	// prefix with a trailing "*"), an external MCP tool under MCPToolAllowed's
+	// rule (mcp_ stripped, underscore runs collapsed, equality-or-prefix). So
+	// "shell_exec" blocks that local tool and "google_calendar_event_delete"
+	// blocks that MCP tool under a broader "google" grant. Empty ⇒ no denials.
+	DenyTools []string `json:"deny_tools,omitempty"`
 }
 
 // MountConfig mounts an external directory tree as a top-level name in an agent's
@@ -743,6 +765,9 @@ func MatchToolPattern(patterns []string, name string) bool {
 // single source of truth shared by both the registration gate and the
 // execution-time defense-in-depth check (they must agree, or a tool can be
 // registered yet rejected on call).
+//
+// DenyTools is applied after the allow list, with the same matching rule as
+// that list; a denied tool is never allowed.
 func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if a == nil {
 		return false
@@ -752,10 +777,30 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	}
 	// nil Tools (key absent in config) → use install defaults.
 	// Empty Tools (tools: [] in config) → deny all intentionally.
-	if a.Tools == nil {
-		return MatchToolPattern(DefaultAgentTools, name)
+	allow := a.Tools
+	if allow == nil {
+		allow = DefaultAgentTools
 	}
-	return MatchToolPattern(a.Tools, name)
+	// DenyTools is checked after the allow list, under the same rule; deny wins.
+	return MatchToolPattern(allow, name) && !a.IsToolDenied(name)
+}
+
+// IsToolDenied reports whether deny_tools names the tool, independent of any
+// allow list or suite grant. It is the deny-only check for tools that are not
+// gated per tool on the allow side (suite tools: Fusion, Maestro, cogmem, the
+// discovery meta tools), so an operator's explicit deny wins however the tool
+// arrived. An mcp_ name is matched under MCPToolAllowed's rule, anything else
+// under MatchToolPattern (case-insensitive exact, or prefix with a trailing
+// "*"). A nil agent or empty DenyTools denies nothing.
+func (a *AgentConfig) IsToolDenied(name string) bool {
+	if a == nil || len(a.DenyTools) == 0 {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), "mcp_") {
+		bare := strings.ToLower(strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(name, "_"), "mcp_"))
+		return matchMCPEntry(a.DenyTools, bare)
+	}
+	return MatchToolPattern(a.DenyTools, name)
 }
 
 // mcpUnderscoreRun collapses any run of 2+ underscores to a single one before
@@ -769,7 +814,8 @@ var mcpUnderscoreRun = regexp.MustCompile(`_{2,}`)
 // <server>_<tool> is matched (case-insensitively) against each MCPTools entry:
 // an entry admits the tool when it equals or is a prefix of that name. An empty
 // MCPTools list admits nothing. Unlike the generic tools allowlist, no wildcard
-// or mcp_ prefix is used.
+// or mcp_ prefix is used. DenyTools entries are matched by the same rule after
+// the allow list, and a denied tool is never allowed.
 func (a *AgentConfig) MCPToolAllowed(name string) bool {
 	if a == nil || len(a.MCPTools) == 0 {
 		return false
@@ -777,7 +823,30 @@ func (a *AgentConfig) MCPToolAllowed(name string) bool {
 	// Collapse underscores on the full name first, THEN strip mcp_, so a doubled
 	// prefix (mcp__…) reduces to a single mcp_ before stripping.
 	bare := strings.ToLower(strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(name, "_"), "mcp_"))
-	for _, entry := range a.MCPTools {
+	// DenyTools is checked after the allow list, under the same rule; deny wins.
+	return matchMCPEntry(a.MCPTools, bare) && !matchMCPEntry(a.DenyTools, bare)
+}
+
+// FusionToolAllowed reports whether a Fusion tool (named <service>_<tool>, no
+// mcp_ prefix) is granted to this agent: the Fusion suite must be on and an
+// MCPTools entry must equal or prefix the name under matchMCPEntry's rule, so
+// "wxca" admits every wxca tool and "microsoft365_calendar" one group of the
+// microsoft365 service. Fusion on with no matching entry admits nothing.
+// DenyTools is applied by the caller through IsToolDenied, as for every suite
+// tool.
+func (a *AgentConfig) FusionToolAllowed(name string) bool {
+	if a == nil || !a.Fusion || len(a.MCPTools) == 0 {
+		return false
+	}
+	return matchMCPEntry(a.MCPTools, mcpUnderscoreRun.ReplaceAllString(strings.ToLower(name), "_"))
+}
+
+// matchMCPEntry reports whether any entry equals or is a prefix of bare (an
+// MCP tool's lowercased <server>_<tool> name with underscore runs collapsed).
+// Entries are lowercased, trimmed and underscore-collapsed; blank ones are
+// skipped. Empty entries matches nothing.
+func matchMCPEntry(entries []string, bare string) bool {
+	for _, entry := range entries {
 		e := mcpUnderscoreRun.ReplaceAllString(strings.ToLower(strings.TrimSpace(entry)), "_")
 		if e == "" {
 			continue
@@ -878,6 +947,10 @@ type AgentBinding struct {
 type SessionConfig struct {
 	Mode          string              `json:"mode,omitempty"`
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
+	// RetentionDays deletes a session's archive database once its last
+	// activity is older than this many days (checked nightly). 0 keeps every
+	// session forever. An agent's main and service sessions are never deleted.
+	RetentionDays int `json:"retention_days,omitempty"`
 }
 
 // DefaultBinding returns the agent's binding marked Default, or false if none.
@@ -1081,9 +1154,11 @@ type AgentDefaults struct {
 	// (legacy), which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the
 	// agent already receives in its prompt or should never read.
 	WorkspaceReadSubdirs []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
-	Models               []string `json:"models,omitempty"`
-	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks  []string `json:"image_model_fallbacks,omitempty"`
+	// Models is not omitempty: the defaults template fills it, so an emptied
+	// list must be written out or the next load would bring the template back.
+	Models              []string `json:"models"`
+	ImageModel          string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks []string `json:"image_model_fallbacks,omitempty"`
 	// VisionModel is the side-model used to describe images for a text-only
 	// primary model (vision off): when the active model can't see images, they
 	// are dispatched to this model for a one-shot text description that is then
@@ -1111,6 +1186,12 @@ type AgentDefaults struct {
 	// the spawning agent is already at this depth. 0 falls back to
 	// DefaultMaxSubagentDepth. Applies to both agent_spawn and maestro dispatch.
 	MaxSubagentDepth int `json:"max_subagent_depth,omitempty"    env:"CLAW_AGENTS_DEFAULTS_MAX_SUBAGENT_DEPTH"`
+	// MaxConcurrentTurns caps how many turns run at once across all sessions;
+	// further turns wait for a free slot. 0 = unlimited. Read at startup.
+	MaxConcurrentTurns int `json:"max_concurrent_turns,omitempty"  env:"CLAW_AGENTS_DEFAULTS_MAX_CONCURRENT_TURNS"`
+	// DailySpendAlertUSD raises one operator alert the first time the day's
+	// (UTC) summed model cost reaches this amount. 0 = off.
+	DailySpendAlertUSD float64 `json:"daily_spend_alert_usd,omitempty" env:"CLAW_AGENTS_DEFAULTS_DAILY_SPEND_ALERT_USD"`
 	// ProgressInterval is how often (seconds) a long-running turn emits a
 	// lightweight progress update so it never looks dead. 0 falls back to
 	// DefaultProgressInterval; a negative value disables progress updates.
@@ -1311,11 +1392,17 @@ func (d *AgentDefaults) DefaultModelName() string {
 }
 
 // SetDefaultModel makes modelName the first entry in the model list,
-// preserving any existing remaining entries.
+// preserving any existing remaining entries. An empty modelName removes the
+// first entry instead, so the list never holds a blank slot.
 func (d *AgentDefaults) SetDefaultModel(modelName string) {
-	if len(d.Models) == 0 {
+	switch {
+	case modelName == "":
+		if len(d.Models) > 0 {
+			d.Models = d.Models[1:]
+		}
+	case len(d.Models) == 0:
 		d.Models = []string{modelName}
-	} else {
+	default:
 		d.Models[0] = modelName
 	}
 }
@@ -1563,16 +1650,14 @@ type LINEConfig struct {
 }
 
 type WebUIConfig struct {
-	Enabled         bool                `json:"enabled"                     env:"CLAW_CHANNELS_WEBUI_ENABLED"`
-	Token           string              `json:"token"                       env:"CLAW_CHANNELS_WEBUI_TOKEN"`
-	AllowTokenQuery bool                `json:"allow_token_query,omitempty"`
-	AllowOrigins    []string            `json:"allow_origins,omitempty"`
-	PingInterval    int                 `json:"ping_interval,omitempty"`
-	ReadTimeout     int                 `json:"read_timeout,omitempty"`
-	WriteTimeout    int                 `json:"write_timeout,omitempty"`
-	MaxConnections  int                 `json:"max_connections,omitempty"`
-	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"CLAW_CHANNELS_WEBUI_ALLOW_FROM"`
-	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"`
+	Enabled        bool                `json:"enabled"                     env:"CLAW_CHANNELS_WEBUI_ENABLED"`
+	Token          string              `json:"token"                       env:"CLAW_CHANNELS_WEBUI_TOKEN"`
+	PingInterval   int                 `json:"ping_interval,omitempty"`
+	ReadTimeout    int                 `json:"read_timeout,omitempty"`
+	WriteTimeout   int                 `json:"write_timeout,omitempty"`
+	MaxConnections int                 `json:"max_connections,omitempty"`
+	AllowFrom      FlexibleStringSlice `json:"allow_from"                  env:"CLAW_CHANNELS_WEBUI_ALLOW_FROM"`
+	Placeholder    PlaceholderConfig   `json:"placeholder,omitempty"`
 }
 
 type DevicesConfig struct {
@@ -1604,9 +1689,14 @@ type DeviceChannelConfig struct {
 	// http://<lan-ip>:<port>. Set to e.g. https://claw.example.com behind a reverse
 	// proxy / Cloudflare (https maps to wss).
 	ExternalURL string `json:"external_url,omitempty"`
-	// AutoApprove skips operator approval for fresh device pairings. Intended for
-	// trusted home-LAN setups (matches the Rabbit setup-script UX); default off.
-	AutoApprove  bool                `json:"auto_approve,omitempty"`
+	// AutoApprove skips operator approval for fresh device pairings; default
+	// off. Allowed only with Host on loopback (see ValidateExposure).
+	AutoApprove bool `json:"auto_approve,omitempty"`
+	// TLS serves the device listener over TLS (wss://) on the same port, with
+	// the certificate the WebUI HTTPS listener uses. Default off, so existing
+	// installs and paired devices keep connecting over ws://. Requires
+	// gateway.tls.mode other than "off" (see validateListeners).
+	TLS          bool                `json:"tls"`
 	AllowOrigins []string            `json:"allow_origins,omitempty"`
 	AllowFrom    FlexibleStringSlice `json:"allow_from"             env:"CLAW_CHANNELS_DEVICE_ALLOW_FROM"`
 }
@@ -1689,6 +1779,13 @@ type Provider struct {
 	ResponseFormatJSON      bool `json:"response_format_json,omitempty"`
 	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
 	Command string `json:"command,omitempty"`
+	// BypassRestrictions ("Allow CLI to bypass restrictions" in the WebUI) passes the
+	// CLI's skip-permissions / sandbox-bypass flag on every invocation, so it
+	// can run commands and edit files anywhere the service user can, without
+	// asking. Off by default: the CLI then runs under its own permission
+	// settings, and a tool call it cannot approve is refused. One setting per
+	// CLI provider, shared by all of its models.
+	BypassRestrictions bool `json:"bypass_restrictions,omitempty"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
@@ -1820,13 +1917,29 @@ func (c *ModelConfig) Validate() error {
 }
 
 type GatewayConfig struct {
+	// Host is the plain-HTTP listener's bind address. Loopback ("",
+	// 127.0.0.1, localhost, ::1) — the default — binds 127.0.0.1 and [::1]
+	// only. Anything else (a LAN address, a hostname, 0.0.0.0) serves plain
+	// HTTP on the network too; that is allowed but unencrypted, and the
+	// configuration report marks it. The HTTPS listener does not follow Host:
+	// it is placed by TLS.Mode. See HTTPBindHosts and HTTPSBindHosts.
 	Host string `json:"host" env:"CLAW_GATEWAY_HOST"`
-	Port int    `json:"port" env:"CLAW_GATEWAY_PORT"`
+	// Port is the plain-HTTP listener's port (default 18790).
+	Port int `json:"port" env:"CLAW_GATEWAY_PORT"`
+	// TLSPort is the HTTPS listener's port (default 18443). It is separate from
+	// Port because the two listeners bind different addresses; they share one
+	// handler chain.
+	TLSPort int `json:"tls_port,omitempty" env:"CLAW_GATEWAY_TLS_PORT"`
+	// TLS places the HTTPS listener (Mode) and names the certificate it
+	// presents. Empty means HTTPS on all interfaces with a self-signed
+	// certificate generated under <CLAW_HOME>/tls.
+	TLS TLSConfig `json:"tls,omitempty"`
 	// ExternalURL is the base URL advertised to external clients (e.g. the
-	// claw-auth OAuth utility) for reaching this gateway's HTTP API. Empty
-	// derives http://<host>:<port> from the bind address; set it to e.g.
-	// https://claw.example.com when a reverse proxy / TLS terminator sits in
-	// front. See EffectiveExternalURL.
+	// claw-auth OAuth utility) for reaching this gateway's HTTP API, and the
+	// name the operator browses to. Empty derives it from the listeners (see
+	// EffectiveExternalURL); set it to e.g. https://claw.example.com:18443 to
+	// reach the WebUI by a host name, or to a reverse proxy's URL. Its host is
+	// added to the self-signed certificate and to the accepted Host names.
 	ExternalURL string `json:"external_url,omitempty" env:"CLAW_GATEWAY_EXTERNAL_URL"`
 	// AllowedCIDRs is the IP allowlist for the shared HTTP server (WebUI/API +
 	// health). Empty means loopback only: the WebUI and /api/* have no operator
@@ -1840,11 +1953,208 @@ type GatewayConfig struct {
 	// "0.0.0.0/0" is an IPv4 prefix and still refuses IPv6 clients. Loopback is
 	// always allowed.
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	// LockoutExempt lists client addresses (IPs or CIDRs) that are never
+	// locked out by a per-address lockout: the WebUI login limiter's address
+	// table and the device gateway's auth-failure lockout. Loopback is always
+	// exempt. Per-account login locks still apply. See LockoutExemptSet.
+	LockoutExempt []string `json:"lockout_exempt,omitempty"`
+	// TrustedProxies lists reverse-proxy addresses (IPs or CIDRs). A request
+	// whose TCP peer is one of them is attributed to the address in its
+	// X-Real-IP header (else the first X-Forwarded-For entry) for the IP
+	// allowlists, the per-address lockouts, lockout_exempt, logs and the audit
+	// log, on the WebUI/API listeners and the device gateway. Those headers are
+	// ignored from anyone else. Loopback is not implied. See TrustedProxySet.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+}
+
+// TLSConfig is the HTTPS listener's placement and certificate. Mode says
+// where HTTPS is served (TLSModeAll, the default; TLSModeLocalhost;
+// TLSModeOff). CertFile and KeyFile are PEM paths (anywhere on disk) and go
+// together: setting one without the other is a config error. With neither set
+// the gateway generates and maintains a self-signed certificate under
+// <CLAW_HOME>/tls whose names are localhost, the loopback addresses, the host
+// name, its FQDN, every non-loopback interface address, the host of
+// external_url and ExtraNames.
+type TLSConfig struct {
+	// Mode is "all" (HTTPS on every interface; empty means this), "localhost"
+	// (127.0.0.1 and [::1] only) or "off" (no HTTPS listener).
+	Mode     string `json:"mode,omitempty" env:"CLAW_GATEWAY_TLS_MODE"`
+	CertFile string `json:"cert_file,omitempty" env:"CLAW_GATEWAY_TLS_CERT_FILE"`
+	KeyFile  string `json:"key_file,omitempty"  env:"CLAW_GATEWAY_TLS_KEY_FILE"`
+	// ExtraNames are additional DNS names or IP addresses for the self-signed
+	// certificate (a DNS alias, a NAT address). Ignored with a user certificate.
+	ExtraNames []string `json:"extra_names,omitempty"`
+}
+
+// HTTPS listener placements, the values of gateway.tls.mode.
+const (
+	TLSModeAll       = "all"
+	TLSModeLocalhost = "localhost"
+	TLSModeOff       = "off"
+)
+
+// EffectiveMode is Mode with the default applied: empty means TLSModeAll.
+// An unknown value is returned as is; Validate rejects it.
+func (t TLSConfig) EffectiveMode() string {
+	m := strings.ToLower(strings.TrimSpace(t.Mode))
+	if m == "" {
+		return TLSModeAll
+	}
+	return m
+}
+
+// UserSupplied reports whether the operator provides the certificate.
+func (t TLSConfig) UserSupplied() bool {
+	return t.CertFile != "" && t.KeyFile != ""
+}
+
+// Validate rejects an unknown mode and a half-configured certificate.
+func (t TLSConfig) Validate() error {
+	switch t.EffectiveMode() {
+	case TLSModeAll, TLSModeLocalhost, TLSModeOff:
+	default:
+		return fmt.Errorf("gateway.tls.mode %q: must be %q, %q or %q", t.Mode, TLSModeAll, TLSModeLocalhost, TLSModeOff)
+	}
+	if (t.CertFile == "") != (t.KeyFile == "") {
+		return errors.New("gateway.tls.cert_file and gateway.tls.key_file must be set together (or both left empty for a self-signed certificate)")
+	}
+	return nil
 }
 
 // DefaultGatewayPort is the default port for the merged claw HTTP server
 // (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
 const DefaultGatewayPort = 18790
+
+// DefaultGatewayTLSPort is the default port of the HTTPS listener.
+const DefaultGatewayTLSPort = 18443
+
+// IsLoopbackHost reports whether host names the local host only. Empty is
+// loopback: it is what an unset gateway.host means.
+func IsLoopbackHost(host string) bool {
+	switch strings.TrimSpace(host) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	default:
+		return false
+	}
+}
+
+// HTTPSEnabled reports whether the HTTPS listener is on: it is unless
+// gateway.tls.mode is "off".
+func (g GatewayConfig) HTTPSEnabled() bool {
+	return g.TLS.EffectiveMode() != TLSModeOff
+}
+
+// EffectivePort is the loopback HTTP port, defaulting to DefaultGatewayPort.
+func (g GatewayConfig) EffectivePort() int {
+	if g.Port == 0 {
+		return DefaultGatewayPort
+	}
+	return g.Port
+}
+
+// EffectiveTLSPort is the HTTPS port, defaulting to DefaultGatewayTLSPort.
+func (g GatewayConfig) EffectiveTLSPort() int {
+	if g.TLSPort == 0 {
+		return DefaultGatewayTLSPort
+	}
+	return g.TLSPort
+}
+
+// Validate rejects listener settings the gateway would refuse to start on.
+func (g GatewayConfig) Validate() error {
+	if err := g.TLS.Validate(); err != nil {
+		return err
+	}
+	if _, err := CompileLockoutExempt(g.LockoutExempt); err != nil {
+		return err
+	}
+	if _, err := CompileTrustedProxies(g.TrustedProxies); err != nil {
+		return err
+	}
+	for _, p := range []struct {
+		key  string
+		port int
+	}{{"gateway.port", g.Port}, {"gateway.tls_port", g.TLSPort}} {
+		if p.port < 0 || p.port > 65535 {
+			return fmt.Errorf("%s %d is out of valid range (1-65535)", p.key, p.port)
+		}
+	}
+	if g.HTTPSEnabled() && g.EffectiveTLSPort() == g.EffectivePort() {
+		return fmt.Errorf("gateway.tls_port %d must differ from gateway.port", g.EffectiveTLSPort())
+	}
+	return nil
+}
+
+// ValidateMCPHostListen rejects an MCP host listen address that is not
+// loopback. The MCP host speaks plain HTTP and is meant for CLI providers on
+// this machine; anything off-box goes through the HTTPS gateway or a proxy.
+// Empty means the default (127.0.0.1:5911).
+func ValidateMCPHostListen(listen string) error {
+	listen = strings.TrimSpace(listen)
+	if listen == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("mcp_host.listen %q: must be host:port", listen)
+	}
+	if !IsLoopbackHost(host) {
+		return fmt.Errorf("mcp_host.listen %q: the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)", listen)
+	}
+	return nil
+}
+
+// validateListeners is the load-time check for every setting a listener is
+// bound from: the gateway refuses to start on a failure here rather than
+// coming up half-configured.
+func (c *Config) validateListeners() error {
+	if err := c.Gateway.Validate(); err != nil {
+		return err
+	}
+	if err := c.Channels.Device.validateTLS(c.Gateway); err != nil {
+		return err
+	}
+	if err := c.Channels.Device.ValidateExposure(); err != nil {
+		return err
+	}
+	return ValidateMCPHostListen(c.MCPHost.Listen)
+}
+
+// ValidateExposure refuses an enabled device listener on a network address
+// (anything but loopback) that would pair or admit devices without a secret:
+// auto_approve on, or neither token nor word_token set.
+func (d DeviceChannelConfig) ValidateExposure() error {
+	if !d.Enabled || IsLoopbackHost(d.Host) {
+		return nil
+	}
+	if d.AutoApprove {
+		return errors.New("channels.device.auto_approve must be off when the device listener is on a network address")
+	}
+	if strings.TrimSpace(d.Token) == "" && strings.TrimSpace(d.WordToken) == "" {
+		return errors.New("channels.device.token or channels.device.word_token must be set when the device listener is on a network address")
+	}
+	return nil
+}
+
+// validateTLS refuses channels.device.tls on an enabled device listener when
+// gateway.tls.mode is "off": the device listener borrows the HTTPS listener's
+// certificate, and with HTTPS off there is none to borrow.
+func (d DeviceChannelConfig) validateTLS(gw GatewayConfig) error {
+	if d.Enabled && d.TLS && !gw.HTTPSEnabled() {
+		return errors.New(`channels.device.tls needs the HTTPS certificate: set gateway.tls.mode to "all" or "localhost", or turn channels.device.tls off`)
+	}
+	return nil
+}
+
+// WebSocketScheme is the scheme devices use to reach the device listener
+// directly: "wss" with channels.device.tls, "ws" otherwise.
+func (d DeviceChannelConfig) WebSocketScheme() string {
+	if d.TLS {
+		return "wss"
+	}
+	return "ws"
+}
 
 // AllowAnyAddress is the Gateway.AllowedCIDRs entry meaning "any client
 // address, IPv4 or IPv6". Mirrors middleware.AllowAnyAddress; declared here so
@@ -1890,29 +2200,45 @@ func ValidateAllowedCIDRs(cidrs []string) error {
 
 // EffectiveExternalURL returns the base URL external clients should use to reach
 // the gateway HTTP API. A non-empty ExternalURL is returned verbatim (operators
-// may point it at an https proxy). Otherwise it derives http://<host>:<port>
-// from the bind address, resolving the LAN IP when bound to 0.0.0.0 so the URL
-// is reachable off-box.
+// may point it at a host name or an https proxy). Otherwise it follows the
+// listeners: with HTTPS on all interfaces it is https://<host name>:<tls_port>
+// (the self-signed certificate carries the host name; when that is unknown,
+// the primary LAN IP); with HTTPS on localhost only it is
+// https://127.0.0.1:<tls_port>; with HTTPS off it is the plain-HTTP listener,
+// http://<host>:<port>, where a wildcard bind is replaced by the host name as
+// above and a loopback one is 127.0.0.1.
 func (g GatewayConfig) EffectiveExternalURL() string {
 	if g.ExternalURL != "" {
 		return g.ExternalURL
 	}
-
-	host := g.Host
-	switch host {
-	case "", "127.0.0.1", "localhost":
+	switch g.TLS.EffectiveMode() {
+	case TLSModeAll:
+		return "https://" + net.JoinHostPort(advertisedHostName(), strconv.Itoa(g.EffectiveTLSPort()))
+	case TLSModeLocalhost:
+		return "https://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(g.EffectiveTLSPort()))
+	}
+	host := strings.Trim(strings.TrimSpace(g.Host), "[]")
+	switch {
+	case IsLoopbackHost(host):
 		host = "127.0.0.1"
-	case "0.0.0.0":
-		// Bind-all ("network access on"): advertise the primary LAN IP so the
-		// URL works from other machines; fall back to loopback if none found.
-		if ip := primaryLANIP(); ip != "" {
-			host = ip
-		} else {
-			host = "127.0.0.1"
+	case isWildcardHost(host):
+		host = advertisedHostName()
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(g.EffectivePort()))
+}
+
+// advertisedHostName is the name a wildcard-bound gateway advertises: the
+// machine's host name, else its primary LAN IP, else loopback.
+func advertisedHostName() string {
+	if h, err := os.Hostname(); err == nil {
+		if h = strings.TrimSpace(h); h != "" && !IsLoopbackHost(h) {
+			return h
 		}
 	}
-
-	return "http://" + net.JoinHostPort(host, strconv.Itoa(g.Port))
+	if ip := primaryLANIP(); ip != "" {
+		return ip
+	}
+	return "127.0.0.1"
 }
 
 // NetworkAccess reports whether the gateway binds to all interfaces (0.0.0.0),
@@ -2170,9 +2496,10 @@ const DefaultMCPLivenessProbeSeconds = 60
 type MCPConfig struct {
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
-	// ReconnectCooldownSeconds is the backoff applied to a server after a failed
-	// reconnect, before another reconnect is attempted for it. Prevents hammering a
-	// dead upstream on every call. 0 uses the default (30s).
+	// ReconnectCooldownSeconds is the wait applied to a server after a failed
+	// connect, before another attempt is made for it; it doubles per further
+	// failure up to 10 minutes and resets on success. Prevents hammering a dead
+	// upstream on every call. 0 uses the default (30s).
 	ReconnectCooldownSeconds int `json:"reconnect_cooldown_seconds,omitempty"`
 	// CallTimeoutSeconds is a backstop deadline applied to a tool call only when the
 	// caller's context carries no deadline, so a hung server cannot block forever.
@@ -2245,6 +2572,25 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Probe pass over the generic document: warn about keys no field decodes
+	// (a typo would otherwise be ignored silently), and resolve "env:"/"file:"
+	// secret references so the struct below carries the real values while the
+	// reference itself is remembered for the next save.
+	doc, err := decodeDocument(data)
+	if err != nil {
+		return nil, err
+	}
+	warnUnknownKeys(doc)
+	refs, err := resolveSecretRefs(doc)
+	if err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	if len(refs) > 0 {
+		if data, err = json.Marshal(doc); err != nil {
+			return nil, err
+		}
+	}
+
 	// Pre-scan the JSON to check how many models / agents.list entries the
 	// user provided. Go's JSON decoder reuses existing slice backing-array
 	// elements rather than zero-initializing them, so fields absent from the
@@ -2276,11 +2622,19 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	cfg.secretRefs = refs
 
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
 
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+
+	// Listener settings are checked at load: the gateway must not start on a
+	// half-configured certificate or an off-box MCP host, and the config
+	// watcher turns this into a "Config file invalid" alert on a live gateway.
+	if err := cfg.validateListeners(); err != nil {
 		return nil, err
 	}
 
@@ -2471,13 +2825,19 @@ func SeedDefaultConfig(path string, cfg *Config) error {
 }
 
 func writeConfig(path string, cfg *Config) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// Secret references go back in place of the values they resolved to, so a
+	// save never copies an env var or key file into config.json.
+	compact, err := MarshalWithSecretRefs(cfg)
 	if err != nil {
+		return err
+	}
+	var data bytes.Buffer
+	if err := json.Indent(&data, compact, "", "  "); err != nil {
 		return err
 	}
 
 	// Use unified atomic write utility with explicit sync for flash storage reliability.
-	return fileutil.WriteFileAtomic(path, data, 0o600)
+	return fileutil.WriteFileAtomic(path, data.Bytes(), 0o600)
 }
 
 // HasCLIProvider reports whether any enabled model in ModelList uses a
@@ -2534,26 +2894,31 @@ func (c *Config) BaseDir() string {
 
 // ResolveCommonDir returns the global shared directory agents read/write via the
 // "common" tools. An explicit agents.common_dir wins; otherwise it defaults to
-// <agents base>/common.
+// <data_dir>/common.
 func (c *Config) ResolveCommonDir() string {
 	if c.Agents.CommonDir != "" {
 		return expandHome(c.Agents.CommonDir)
 	}
-	return filepath.Join(c.BaseDir(), "common")
+	return filepath.Join(c.dataDir, global.CommonDir)
 }
 
-// WorkspacePath returns the primary/default-agent workspace (<base_dir>/default).
-// It is used for gateway-global operations (skills view, gateway state, MCP
-// config) and as the CLI-provider working-dir fallback. Per-agent workspaces are
-// resolved by agent.resolveAgentWorkspace.
-func (c *Config) WorkspacePath() string {
-	return filepath.Join(c.BaseDir(), "default")
+// InternalPath returns the directory for claw's own state that nobody edits
+// by hand (<data_dir>/internal): state.json, token stores, the device
+// database.
+func (c *Config) InternalPath() string {
+	return filepath.Join(c.dataDir, global.InternalDir)
+}
+
+// CLIPath returns the working directory CLI providers run in when their model
+// sets no workspace (<data_dir>/cli).
+func (c *Config) CLIPath() string {
+	return filepath.Join(c.dataDir, global.CLIDir)
 }
 
 // AgentSessionDirs returns the sessions subdirectory for every configured
 // agent, deduped. This mirrors the workspace resolution logic in
 // agent/instance.go:resolveAgentWorkspace. The result is used by the
-// WebUI to enumerate sessions across all agents, not just the defaults workspace.
+// WebUI to enumerate sessions across all configured agents.
 func (c *Config) AgentSessionDirs() []string {
 	base := c.BaseDir()
 
@@ -2582,10 +2947,6 @@ func (c *Config) AgentSessionDirs() []string {
 		add(filepath.Join(base, id))
 	}
 
-	// Always include the default workspace — covers agents that were removed
-	// from config but left files on disk.
-	add(filepath.Join(base, "default"))
-
 	return dirs
 }
 
@@ -2611,9 +2972,9 @@ func (c *Config) FusionPath() string {
 }
 
 // FusionTokensPath returns the shared SQLite store for fusion OAuth tokens and
-// auth codes (~/.claw/state/fusion-tokens.db).
+// auth codes (~/.claw/internal/fusion-tokens.db).
 func (c *Config) FusionTokensPath() string {
-	return filepath.Join(c.dataDir, "state", "fusion-tokens.db")
+	return filepath.Join(c.InternalPath(), "fusion-tokens.db")
 }
 
 // BackupConfig controls the nightly configuration backup of key files
@@ -2623,7 +2984,10 @@ type BackupConfig struct {
 	// false to turn the nightly backup off.
 	Enabled    *bool  `json:"enabled,omitempty"`
 	At         string `json:"at,omitempty"`          // "HH:MM" local time; default 03:00
-	RetainDays int    `json:"retain_days,omitempty"` // prune older day-folders; default 30
+	RetainDays int    `json:"retain_days,omitempty"` // prune older archives; default 30
+	// Dest is the directory archives are written to (an off-host mount, for
+	// example). Empty means <data dir>/backup.
+	Dest string `json:"dest,omitempty"`
 }
 
 // IsEnabled reports whether the nightly configuration backup runs. It defaults
@@ -2825,15 +3189,12 @@ func (c *Config) RenameModelReferences(oldName, newName string) {
 	if oldName == "" || oldName == newName {
 		return
 	}
-	renameInSlice(c.Agents.Defaults.Models, oldName, newName)
-	c.Agents.Defaults.ImageModel = renameScalar(c.Agents.Defaults.ImageModel, oldName, newName)
-	renameInSlice(c.Agents.Defaults.ImageModelFallbacks, oldName, newName)
-	c.Agents.Defaults.VisionModel = renameScalar(c.Agents.Defaults.VisionModel, oldName, newName)
-	renameInSlice(c.Agents.Defaults.VisionModelFallbacks, oldName, newName)
-	renameInSlice(c.Summarization.Models, oldName, newName)
-	for i := range c.Agents.List {
-		renameInSlice(c.Agents.List[i].Models, oldName, newName)
-		renameInSlice(c.Agents.List[i].SummarizationModels, oldName, newName)
+	for _, site := range c.modelRefSites() {
+		if site.slice != nil {
+			renameInSlice(*site.slice, oldName, newName)
+		} else {
+			*site.scalar = renameScalar(*site.scalar, oldName, newName)
+		}
 	}
 }
 

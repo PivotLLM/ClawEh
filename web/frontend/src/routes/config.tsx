@@ -1,7 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Outlet, createFileRoute, redirect } from "@tanstack/react-router"
 
-import { ConfigLayout } from "@/components/config/config-layout"
-
+// The Config page was split into Network (/network) and System (/system). The
+// old address still works: it lands on System. /config/raw stays where it is,
+// so the redirect is for this path alone, not for the children.
 export const Route = createFileRoute("/config")({
-  component: ConfigLayout,
+  beforeLoad: ({ location }) => {
+    if (location.pathname.replace(/\/+$/, "") === "/config") {
+      throw redirect({ to: "/system", replace: true })
+    }
+  },
+  component: Outlet,
 })

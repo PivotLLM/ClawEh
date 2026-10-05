@@ -89,9 +89,15 @@ func (sl *SkillsLoader) SkillRoots() []string {
 }
 
 func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string) *SkillsLoader {
+	// An empty workspace means no workspace layer: the shared view lists the
+	// shared and builtin roots only.
+	workspaceSkills := ""
+	if workspace != "" {
+		workspaceSkills = filepath.Join(workspace, "skills")
+	}
 	return &SkillsLoader{
 		workspace:       workspace,
-		workspaceSkills: filepath.Join(workspace, "skills"),
+		workspaceSkills: workspaceSkills,
 		globalSkills:    globalSkills, // ~/.claw/skills
 		builtinSkills:   builtinSkills,
 	}

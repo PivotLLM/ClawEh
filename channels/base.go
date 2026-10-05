@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,50 @@ func init() {
 		binary.BigEndian.PutUint64(b[:], uint64(time.Now().UnixNano()))
 	}
 	uniqueIDPrefix = hex.EncodeToString(b[:])
+}
+
+const (
+	inboundDedupeSize = 1024
+	inboundDedupeTTL  = 30 * time.Minute
+)
+
+// inboundDedupe remembers recently seen inbound message ids so a redelivery
+// (a Slack retry, a replayed update) does not run the same message twice. It
+// is bounded to inboundDedupeSize entries, evicted oldest-first, and an entry
+// expires after inboundDedupeTTL.
+type inboundDedupe struct {
+	mu    sync.Mutex
+	seen  map[string]time.Time
+	order []string // insertion order, for capacity eviction
+	now   func() time.Time
+}
+
+func newInboundDedupe() *inboundDedupe {
+	return &inboundDedupe{seen: make(map[string]time.Time), now: time.Now}
+}
+
+// duplicate reports whether key was seen within the TTL, recording it otherwise.
+func (d *inboundDedupe) duplicate(key string) bool {
+	if d == nil {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	if t, ok := d.seen[key]; ok {
+		if now.Sub(t) < inboundDedupeTTL {
+			return true
+		}
+		delete(d.seen, key)
+		d.order = slices.DeleteFunc(d.order, func(k string) bool { return k == key })
+	}
+	d.seen[key] = now
+	d.order = append(d.order, key)
+	for len(d.order) > inboundDedupeSize {
+		delete(d.seen, d.order[0])
+		d.order = d.order[1:]
+	}
+	return false
 }
 
 // audioAnnotationRe matches audio/voice annotations injected by channels (e.g. [voice], [audio: file.ogg]).
@@ -110,6 +155,15 @@ type BaseChannel struct {
 	// the channel's receive goroutines.
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter
+	// conn tracks connection outages; see ReportConnFailure.
+	conn connWatch
+	// platform groups connection outages across channels; see SetPlatform.
+	platform string
+	// outages aggregates connection outages per platform (connOutages;
+	// replaced in tests).
+	outages *connAggregator
+	// seen drops redelivered inbound messages; see inboundDedupe.
+	seen *inboundDedupe
 }
 
 func NewBaseChannel(
@@ -124,6 +178,8 @@ func NewBaseChannel(
 		bus:       bus,
 		name:      name,
 		allowList: allowList,
+		seen:      newInboundDedupe(),
+		outages:   connOutages,
 	}
 	for _, opt := range opts {
 		opt(bc)
@@ -281,6 +337,14 @@ func (c *BaseChannel) HandleMessage(
 		}
 	}
 
+	// Platforms number messages per chat, so the id is only unique with the chat.
+	if messageID != "" && c.seen.duplicate(chatID+"\x00"+messageID) {
+		logger.DebugCF("channels", "inbound dropped: duplicate delivery", map[string]any{
+			"channel": c.name, "chat_id": chatID, "message_id": messageID,
+		})
+		return
+	}
+
 	// Set SenderID to canonical if available, otherwise keep the raw senderID
 	resolvedSenderID := senderID
 	if sender.CanonicalID != "" {
@@ -345,8 +409,13 @@ func (c *BaseChannel) HandleMessage(
 	}
 }
 
+// SetRunning records whether the channel is running. Stopping ends any
+// connection outage in progress: a stopped channel no longer retries.
 func (c *BaseChannel) SetRunning(running bool) {
 	c.running.Store(running)
+	if !running {
+		c.connStopped()
+	}
 }
 
 // SetMediaStore injects a MediaStore into the channel.

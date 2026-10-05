@@ -1,11 +1,13 @@
 package gateway
 
 import (
+	"crypto/tls"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
@@ -49,10 +51,11 @@ func (q deviceAgentQuerier) SessionMode() string {
 	return cfg.Session.Mode
 }
 
-// History returns the user/assistant text turns stored for a session key.
+// History returns the user/assistant text turns stored for a session key. A
+// key whose agent is not registered returns nothing: reading it would create a
+// session database in some other agent's store.
 func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMessage {
-	reg := q.al.GetRegistry()
-	inst := agentForSessionKey(reg, sessionKey)
+	inst := agentForSessionKey(q.al.GetRegistry(), sessionKey)
 	if inst == nil || inst.Sessions == nil {
 		return nil
 	}
@@ -70,18 +73,18 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	return out
 }
 
-// agentForSessionKey resolves the agent that owns a session key of the form
-// "agent:<id>:...", falling back to the default agent.
+// agentForSessionKey resolves the registered agent that owns a session key of
+// the form "agent:<id>:...", or nil when there is none.
 func agentForSessionKey(reg *agent.AgentRegistry, sessionKey string) *agent.AgentInstance {
-	if strings.HasPrefix(sessionKey, "agent:") {
-		parts := strings.SplitN(sessionKey, ":", 3)
-		if len(parts) >= 2 {
-			if inst, ok := reg.GetAgent(parts[1]); ok {
-				return inst
-			}
-		}
+	parts := strings.SplitN(sessionKey, ":", 3)
+	if len(parts) < 2 || parts[0] != "agent" {
+		return nil
 	}
-	return reg.GetDefaultAgent()
+	inst, ok := reg.GetAgent(parts[1])
+	if !ok {
+		return nil
+	}
+	return inst
 }
 
 // injectDeviceAgentQuerier wires the agent loop into the device channel (if
@@ -93,5 +96,23 @@ func injectDeviceAgentQuerier(cm *channels.Manager, al *agent.AgentLoop) {
 	}
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
+	}
+}
+
+// injectDeviceTLS lends the gateway certificate manager to the device channel
+// (if enabled), so channels.device.tls serves the WebUI HTTPS certificate and
+// follows its reloads. certs is nil when HTTPS was off at start; the channel
+// then refuses to start with channels.device.tls on. Like the querier, it is
+// re-injected after every channel manager rebuild.
+func injectDeviceTLS(cm *channels.Manager, certs *tlscert.Manager) {
+	if certs == nil {
+		return
+	}
+	ch, ok := cm.Channel("device")
+	if !ok {
+		return
+	}
+	if setter, ok := ch.(interface{ SetTLSConfig(cfg *tls.Config) }); ok {
+		setter.SetTLSConfig(certs.TLSConfig())
 	}
 }

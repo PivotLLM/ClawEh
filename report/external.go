@@ -41,7 +41,7 @@ func mcpServerRows(cfg *config.Config) [][]string {
 }
 
 func skillRows(cfg *config.Config) [][]string {
-	loader := skills.NewSkillsLoader(cfg.WorkspacePath(), cfg.SkillsPath(), "")
+	loader := skills.NewSkillsLoader("", cfg.SkillsPath(), "")
 	var rows [][]string
 	for _, s := range loader.ListSkills() {
 		rows = append(rows, row(s.Name, s.Source, s.Description))
@@ -123,7 +123,7 @@ func collectExternal(_ context.Context, cfg *config.Config, _ Environment) Secti
 				Rows:    mcpServerRows(cfg),
 			},
 			{
-				Caption: "Skills installed (" + cfg.SkillsPath() + " and the default workspace)",
+				Caption: "Skills installed (" + cfg.SkillsPath() + ")",
 				Columns: []string{"Skill", "Source", "Description"},
 				Rows:    skillRows(cfg),
 			},

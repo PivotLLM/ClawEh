@@ -142,7 +142,7 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	// MCP fully disabled now: tear down whatever is running and clear.
 	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
 		if old := al.mcp.takeManager(); old != nil {
-			if err := old.Close(); err != nil {
+			if err := old.Close(context.WithoutCancel(ctx)); err != nil {
 				logger.WarnCF("agent", "Failed to close previous MCP manager on reload",
 					map[string]any{"error": err.Error()})
 			}
@@ -165,14 +165,14 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	// Reuse the live manager: reconcile connections so unchanged servers keep
 	// running (no relaunch, no profile-lock race), then re-register tools onto the
 	// freshly-rebuilt agent registry.
-	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
+	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
 		logger.WarnCF("agent", "Some MCP servers failed to reconcile on reload",
 			map[string]any{"error": err.Error()})
 	}
 	if err := al.registerMCPToolsFromManager(mgr); err != nil {
 		al.mcp.setInitErr(err)
 		if old := al.mcp.takeManager(); old != nil {
-			if closeErr := old.Close(); closeErr != nil {
+			if closeErr := old.Close(context.WithoutCancel(ctx)); closeErr != nil {
 				logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
 			}
 		}
@@ -211,7 +211,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		al.refreshMCPServerTools(mcpManager, server)
 	})
 
-	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
+	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
 		// A failed initial connect is NOT fatal: keep the manager alive so the
 		// background retry loop (mcpRetryLoop) can reconnect these servers without a
 		// restart. Its desired set was recorded before the connect attempts, and
@@ -227,23 +227,13 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	if err := al.registerMCPToolsFromManager(mcpManager); err != nil {
 		al.mcp.takeManager()
 		al.mcp.setInitErr(err)
-		if closeErr := mcpManager.Close(); closeErr != nil {
+		if closeErr := mcpManager.Close(context.WithoutCancel(ctx)); closeErr != nil {
 			logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
 		}
 		return nil
 	}
 
 	return mcpManager
-}
-
-// mcpWorkspacePath is the workspace used to resolve relative MCP envFile paths:
-// the default agent's workspace when set, otherwise the global workspace.
-func (al *AgentLoop) mcpWorkspacePath() string {
-	workspacePath := al.cfg.WorkspacePath()
-	if defaultAgent := al.registry.GetDefaultAgent(); defaultAgent != nil && defaultAgent.Workspace != "" {
-		workspacePath = defaultAgent.Workspace
-	}
-	return workspacePath
 }
 
 // registerMCPToolsFromManager registers every connected server's tools onto each

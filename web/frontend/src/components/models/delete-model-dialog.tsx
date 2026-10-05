@@ -27,6 +27,16 @@ export function DeleteModelDialog({
 }: DeleteModelDialogProps) {
   const { t } = useTranslation()
   const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState("")
+
+  // Clear a stale error when a different model is targeted. Adjusted during
+  // render rather than in an effect so the previous model's error is never
+  // shown against the new one, even for a frame.
+  const [syncedModel, setSyncedModel] = useState(model)
+  if (model && model !== syncedModel) {
+    setSyncedModel(model)
+    setError("")
+  }
 
   const handleConfirm = async () => {
     if (!model) return
@@ -35,14 +45,17 @@ export function DeleteModelDialog({
       return
     }
     setDeleting(true)
+    setError("")
     try {
       await deleteModel(model.index)
       onDeleted()
-    } catch {
-      // ignore, user can retry from list
+      onClose()
+    } catch (e) {
+      // A 409 here means an agent, default or summarization chain still
+      // references the model — surface it so the operator knows what to repoint.
+      setError(e instanceof Error ? e.message : t("models.delete.error"))
     } finally {
       setDeleting(false)
-      onClose()
     }
   }
 
@@ -55,6 +68,11 @@ export function DeleteModelDialog({
             {t("models.delete.description", { name: model?.model_name })}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {error && (
+          <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+            {error}
+          </p>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose} disabled={deleting}>
             {t("common.cancel")}

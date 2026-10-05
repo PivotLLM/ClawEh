@@ -194,7 +194,7 @@ SHARED_VAR=from_file`
 	}
 }
 
-func TestLoadFromMCPConfig_EmptyWorkspaceWithRelativeEnvFile(t *testing.T) {
+func TestLoadFromMCPConfig_EmptyDataDirWithRelativeEnvFile(t *testing.T) {
 	mgr := NewManager()
 
 	mcpCfg := config.MCPConfig{
@@ -210,11 +210,30 @@ func TestLoadFromMCPConfig_EmptyWorkspaceWithRelativeEnvFile(t *testing.T) {
 
 	err := mgr.LoadFromMCPConfig(context.Background(), mcpCfg, "")
 	if err == nil {
-		t.Fatal("expected error for relative env_file with empty workspace path, got nil")
+		t.Fatal("expected error for relative env_file with an empty data directory, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "workspace path is empty") {
-		t.Fatalf("expected workspace path validation error, got: %v", err)
+	if !strings.Contains(err.Error(), "data directory is empty") {
+		t.Fatalf("expected data directory validation error, got: %v", err)
+	}
+}
+
+// A relative env_file resolves against the data directory; an absolute one is
+// kept as written.
+func TestResolveServerEnvFile(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"fusion.env", "/claw-home/fusion.env"},
+		{"secrets/x.env", "/claw-home/secrets/x.env"},
+		{"/etc/x.env", "/etc/x.env"},
+		{"", ""},
+	} {
+		got, err := resolveServerEnvFile("s", config.MCPServerConfig{EnvFile: tc.in}, "/claw-home")
+		if err != nil {
+			t.Fatalf("resolveServerEnvFile(%q): %v", tc.in, err)
+		}
+		if got.EnvFile != tc.want {
+			t.Errorf("resolveServerEnvFile(%q) = %q, want %q", tc.in, got.EnvFile, tc.want)
+		}
 	}
 }
 
@@ -302,10 +321,10 @@ func TestCallTool_ErrorsForClosedOrMissingServer(t *testing.T) {
 func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 	mgr := NewManager()
 
-	if err := mgr.Close(); err != nil {
+	if err := mgr.Close(context.Background()); err != nil {
 		t.Fatalf("first close should succeed, got: %v", err)
 	}
-	if err := mgr.Close(); err != nil {
+	if err := mgr.Close(context.Background()); err != nil {
 		t.Fatalf("second close should be idempotent, got: %v", err)
 	}
 }
@@ -360,7 +379,7 @@ func TestReconnectCooldownGating(t *testing.T) {
 		t.Fatal("no cooldown expected initially")
 	}
 
-	mgr.markReconnectFailed("svc")
+	mgr.recordFailure("svc", errors.New("connection refused"))
 	if _, ok := mgr.reconnectCooldownUntil("svc"); !ok {
 		t.Fatal("cooldown expected after a failed reconnect")
 	}
@@ -373,7 +392,7 @@ func TestReconnectCooldownGating(t *testing.T) {
 		t.Fatal("expired cooldown must not gate")
 	}
 
-	mgr.markReconnectFailed("svc")
+	mgr.recordFailure("svc", errors.New("connection refused"))
 	mgr.clearReconnectCooldown("svc")
 	if _, ok := mgr.reconnectCooldownUntil("svc"); ok {
 		t.Fatal("cooldown must clear after a successful reconnect")
@@ -432,7 +451,7 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -471,7 +490,7 @@ func TestReconnect_RespectsCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -516,7 +535,7 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	mgr := NewManager()
 	mgr.probeInterval = time.Second
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -548,7 +567,7 @@ func TestStatus_ReportsConnectedAndCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -595,7 +614,7 @@ func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -654,7 +673,7 @@ func TestRetryDisconnected_ConnectsDesiredServer(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -683,7 +702,7 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 	mgr := NewManager()
 	mgr.reconnectCooldown = time.Minute
 	defer func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	}()
@@ -718,4 +737,57 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 
 func containsStr(s []string, v string) bool {
 	return slices.Contains(s, v)
+}
+
+// TestBuildStdioEnv_AllowlistedBaseWithOverlay verifies that a stdio server's
+// environment starts from the allowlisted parent environment (no CLAW_* or
+// ALERTER_*), with env_file values overlaid and config env winning over both.
+func TestBuildStdioEnv_AllowlistedBaseWithOverlay(t *testing.T) {
+	t.Setenv("CLAW_GATEWAY_TOKEN", "secret")
+	t.Setenv("ALERTER_SMTP_PASSWORD", "secret")
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("HOME", "/home/alice")
+	t.Setenv("NVM_DIR", "/home/alice/.nvm")
+	t.Setenv("SHARED_VAR", "from_parent")
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("API_KEY=from_file\nSHARED_VAR=from_file\nHOME=/from/file\n"), 0o644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	env, err := buildStdioEnv(config.MCPServerConfig{
+		Command: "npx",
+		EnvFile: envFile,
+		Env:     map[string]string{"SHARED_VAR": "from_config", "NEW_VAR": "from_config"},
+	})
+	if err != nil {
+		t.Fatalf("buildStdioEnv: %v", err)
+	}
+
+	got := make(map[string]string, len(env))
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		if _, dup := got[k]; dup {
+			t.Errorf("duplicate key %s in %v", k, env)
+		}
+		got[k] = v
+	}
+	for _, k := range []string{"CLAW_GATEWAY_TOKEN", "ALERTER_SMTP_PASSWORD"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("stdio env leaked %s", k)
+		}
+	}
+	want := map[string]string{
+		"PATH":       "/usr/bin:/bin",
+		"NVM_DIR":    "/home/alice/.nvm",
+		"HOME":       "/from/file",  // env_file overrides the parent
+		"API_KEY":    "from_file",   // env_file adds
+		"SHARED_VAR": "from_config", // config overrides env_file and the parent
+		"NEW_VAR":    "from_config",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
 }

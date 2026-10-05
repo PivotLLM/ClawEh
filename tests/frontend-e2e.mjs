@@ -1,20 +1,26 @@
 #!/usr/bin/env node
 // ClawEh WebUI regression suite.
 //
-// Executes docs/frontend-test-plan.md. Every check here maps to a numbered step
+// Executes docs/webui-test-plan.md. Every check here maps to a numbered step
 // in that document; keep the two in step.
 //
 //   node tests/frontend-e2e.mjs                     # against http://127.0.0.1:8077
 //   node tests/frontend-e2e.mjs --base http://host:port
 //   node tests/frontend-e2e.mjs --only C,F          # run selected groups
 //
+// The WebUI and /api/* sit behind the admin login, so the suite signs in first
+// and every page and API probe carries that session. Create the account on the
+// dev instance with `claw admin` and export CLAW_E2E_USER / CLAW_E2E_PASSWORD.
+//
 // Requires Playwright and a Chromium build. Both come with the playwright-mcp
 // install; override with PLAYWRIGHT_MODULE / CHROME_PATH if they live elsewhere.
 //
 // SAFETY: this mutates configuration, so point it at a DEV instance. Every
-// mutation is reverted — the agent it creates is deleted, and every field it
-// edits is restored to the value read beforehand. It refuses to run against the
-// production port (18790) unless --allow-prod is passed.
+// mutation is reverted — the agent it creates is deleted, every field it edits
+// is restored to the value read beforehand, and the certificate it regenerates
+// (group R, only when the instance already uses a self-signed one) is replaced
+// by another self-signed one. It refuses to run against the production port
+// (18790) unless --allow-prod is passed.
 
 import { existsSync } from "node:fs"
 
@@ -48,12 +54,27 @@ if (!existsSync(CHROME)) {
   console.error(`Chromium not found at ${CHROME}. Set CHROME_PATH.`)
   process.exit(2)
 }
+
+const USER = process.env.CLAW_E2E_USER ?? ""
+const PASSWORD = process.env.CLAW_E2E_PASSWORD ?? ""
+if (!USER || !PASSWORD) {
+  console.error(
+    "CLAW_E2E_USER and CLAW_E2E_PASSWORD are not set.\n" +
+      "The WebUI requires an admin login. On the dev instance run `claw admin` to create\n" +
+      "the account, then export CLAW_E2E_USER and CLAW_E2E_PASSWORD before running this suite.",
+  )
+  process.exit(2)
+}
 const { chromium } = await import(PW)
 
 // ---------------------------------------------------------------- harness ---
 
 const results = []
 let browser
+// The one signed-in BrowserContext. Every page the suite opens and every API
+// probe it makes goes through it, so the session cookie from the login carries
+// to both — the same way a browser tab and its fetches share one session.
+let ctx
 let group = ""
 
 function useGroup(id, title) {
@@ -80,7 +101,29 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
-async function api(path, init) {
+// api calls the gateway as the signed-in operator. It goes through the browser
+// context's request client, which shares the session cookie with the pages, so
+// a probe here sees exactly what the page's own fetch would. `using` selects
+// another context (a second login, for the sign-out check).
+async function api(path, init = {}, using = ctx) {
+  const res = await using.request.fetch(BASE + path, {
+    method: init.method ?? "GET",
+    headers: init.headers,
+    data: init.body,
+  })
+  const text = await res.text()
+  let json
+  try {
+    json = JSON.parse(text)
+  } catch {
+    /* not json */
+  }
+  return { status: res.status(), text, json, headers: res.headers() }
+}
+
+// apiAnonymous calls the gateway with no session at all — for the probes and
+// the login-page checks that must see what an unauthenticated peer sees.
+async function apiAnonymous(path, init) {
   const res = await fetch(BASE + path, init)
   const text = await res.text()
   let json
@@ -92,12 +135,57 @@ async function api(path, init) {
   return { status: res.status, text, json }
 }
 
+// login opens a session in `context` with the operator credentials. Returns the
+// login response so the caller can decide what a refusal means.
+async function login(context, username = USER, password = PASSWORD) {
+  return api(
+    "/api/auth/login",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    },
+    context,
+  )
+}
+
+// signIn is the harness prerequisite: wait for the gateway, then log the shared
+// context in. Fails fast with what the operator has to do — every check after
+// this needs the session, so running on without it would fail them all for the
+// same reason.
+async function signIn() {
+  const deadline = Date.now() + 30000
+  for (;;) {
+    const r = await apiAnonymous("/ready")
+    if (r.status === 200) break
+    if (Date.now() > deadline) {
+      console.error(`Gateway at ${BASE} is not ready (/ready = ${r.status}); cannot sign in.`)
+      await browser.close()
+      process.exit(2)
+    }
+    await new Promise((res) => setTimeout(res, 500))
+  }
+  const r = await login(ctx)
+  if (r.status === 204) return
+  const hint =
+    r.json?.error === "no admin account"
+      ? "The dev instance has no admin account. Run `claw admin` on it, then export CLAW_E2E_USER / CLAW_E2E_PASSWORD."
+      : r.status === 401
+        ? `The gateway refused CLAW_E2E_USER=${JSON.stringify(USER)}. Run \`claw admin\` on the dev instance and export the credentials it creates.`
+        : r.status === 429
+          ? `Login is locked out (${r.json?.error ?? "too many failures"}). Wait, then retry.`
+          : r.text.slice(0, 200)
+  console.error(`Sign-in failed: POST /api/auth/login → ${r.status}\n${hint}`)
+  await browser.close()
+  process.exit(2)
+}
+
 async function config() {
   const { json } = await api("/api/config")
   return json
 }
 
-// Groups F and G write configuration, which the gateway picks up on a debounced
+// Groups F, G and R write configuration, which the gateway picks up on a debounced
 // reload (~15s later) that briefly stops the channels. Anything loading a page
 // during that window sees the chat WebSocket handshake fail with 503 and logs a
 // console error — a real effect of a reload, not a defect, but it makes later
@@ -117,10 +205,11 @@ async function settleAfterConfigWrites() {
   }
 }
 
-// Opens a page with console/error capture attached.
-async function open(path, { wait = "networkidle" } = {}) {
-  const ctx = await browser.newContext()
-  const page = await ctx.newPage()
+// Opens a page in the signed-in context with console/error capture attached.
+// `context` swaps in another BrowserContext (a fresh one for the login-page
+// checks). close() closes the page only; the context lives for the whole run.
+async function open(path, { wait = "networkidle", context = ctx } = {}) {
+  const page = await context.newPage()
   const problems = []
   page.on("console", (m) => {
     if (m.type() === "error") problems.push(m.text())
@@ -128,12 +217,18 @@ async function open(path, { wait = "networkidle" } = {}) {
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message))
   await page.goto(BASE + path, { waitUntil: wait, timeout: 20000 })
   await page.waitForTimeout(500)
-  return { ctx, page, problems, text: () => page.locator("body").innerText() }
+  return {
+    close: () => page.close(),
+    page,
+    problems,
+    text: () => page.locator("body").innerText(),
+  }
 }
 
 const ROUTES = [
   "/",
   "/agents",
+  "/audit",
   "/agent/bindings",
   "/agent/tools",
   "/agent/skills",
@@ -146,7 +241,10 @@ const ROUTES = [
   "/mcp/servers",
   "/memory",
   "/models",
+  "/network",
   "/providers",
+  "/report",
+  "/system",
   "/voice",
   "/setup",
   "/status",
@@ -159,7 +257,10 @@ const I18N_KEY =
 // ------------------------------------------------------------------ suite ---
 
 browser = await chromium.launch({ executablePath: CHROME })
+ctx = await browser.newContext()
 console.log(`ClawEh WebUI regression suite — ${BASE}`)
+await signIn()
+console.log(`   signed in as ${USER}`)
 
 // A. Preconditions
 if (useGroup("A", "Preconditions")) {
@@ -194,6 +295,175 @@ if (useGroup("A", "Preconditions")) {
   })
 }
 
+// P. Authentication — the login page, the refusals, the session, sign-out.
+// These run in contexts of their own: the shared one stays signed in for the
+// rest of the suite.
+if (useGroup("P", "Authentication")) {
+  const anon = await browser.newContext()
+
+  await check(1, "a visitor without a session lands on the login page", async () => {
+    const { close, page, problems } = await open("/agents", { context: anon })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    const url = new URL(page.url())
+    const fields = await page.locator("#login-username, #login-password").count()
+    const submit = await page.getByRole("button", { name: "Sign in" }).count()
+    const heading = (await page.locator("h1").first().innerText()).trim()
+    const body = await page.locator("body").innerText()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // The frontend gate sends the visitor to /login and remembers where they
+    // were going, so a bookmark still works after signing in.
+    assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
+    assert(url.searchParams.get("next") === "/agents", `next = ${url.searchParams.get("next")}`)
+    assert(fields === 2, `${fields} of 2 credential fields rendered`)
+    assert(submit === 1, "no Sign in button")
+    // The card is headed by the product name; the button still says Sign in.
+    assert(heading === "ClawEh", `heading reads ${JSON.stringify(heading)}, want ClawEh`)
+    assert(
+      !/Use the admin account created on the server/.test(body),
+      "the removed 'Use the admin account…' line is back",
+    )
+    return url.pathname + url.search
+  })
+
+  await check(2, "a wrong password shows the generic error and opens no session", async () => {
+    const { close, page } = await open("/login", { context: anon })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    await page.locator("#login-username").fill(USER)
+    await page.locator("#login-password").fill(`${PASSWORD}-wrong-${Date.now()}`)
+    await page.getByRole("button", { name: "Sign in" }).click()
+    const error = page.locator("[data-testid=login-error]")
+    await error.waitFor({ state: "visible", timeout: 10000 })
+    const message = (await error.innerText()).trim()
+    const path = new URL(page.url()).pathname
+    await close()
+    // One message for a bad username and a bad password alike, so the form
+    // never confirms which half was right.
+    assert(message === "Invalid username or password.", `error reads ${JSON.stringify(message)}`)
+    assert(path === "/login", `left the login page for ${path}`)
+    const st = await api("/api/auth/status", {}, anon)
+    assert(st.json?.authenticated === false, `status after refusal: ${st.text}`)
+  })
+
+  await check(3, "GET /api/config without a session is 401", async () => {
+    const r = await apiAnonymous("/api/config")
+    assert(r.status === 401, `status = ${r.status}, want 401`)
+    assert(typeof r.json?.error === "string", `body = ${r.text.slice(0, 120)}`)
+    assert(!r.text.includes("agents"), "the refusal leaked configuration")
+    return r.json.error
+  })
+
+  await check(4, "the signed-in session is reported by /api/auth/status", async () => {
+    const r = await api("/api/auth/status")
+    assert(r.status === 200, `status = ${r.status}`)
+    assert(r.json?.configured === true, "configured should be true")
+    assert(r.json?.authenticated === true, `authenticated = ${r.json?.authenticated}`)
+    assert(r.json?.username === USER, `username = ${r.json?.username}, want ${USER}`)
+    return r.json.username
+  })
+
+  await check(5, "Sign out ends the session and returns to the login page", async () => {
+    // A second login of its own: signing the shared context out would take the
+    // rest of the suite down with it.
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `second login: ${l.status} ${l.text}`)
+    const { close, page, problems } = await open("/agents", { context: other })
+    const button = page.locator("[data-testid=nav-logout]")
+    await button.waitFor({ state: "visible", timeout: 10000 })
+    await button.click()
+    await page.waitForURL(/\/login(\?|$)/, { timeout: 10000 })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    await close()
+    const st = await api("/api/auth/status", {}, other)
+    const cfg = await api("/api/config", {}, other)
+    await other.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // Ended on the server, not just forgotten by the browser.
+    assert(st.json?.authenticated === false, `still authenticated after sign-out: ${st.text}`)
+    assert(cfg.status === 401, `GET /api/config after sign-out = ${cfg.status}, want 401`)
+  })
+
+  // Sessions live in memory on the server, so a gateway restart forgets them
+  // all. Deleting the cookie in the browser context is the same thing seen from
+  // the page: its next request finds no session.
+  await check(6, "a session removed on the server sends the page to login, not an error", async () => {
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `login: ${l.status} ${l.text}`)
+    const { close, page, problems } = await open("/agents", { context: other })
+    await other.clearCookies()
+    // Navigate within the SPA: the route gate asks the server and must send
+    // the visitor to login with where they were going, not render an error.
+    await page.getByRole("button", { name: "Models", exact: true }).click()
+    await page.locator('a[href="/models"]').first().click()
+    await page.waitForURL(/\/login\?/, { timeout: 10000 })
+    await page.locator("[data-testid=login-form]").waitFor({ state: "visible", timeout: 10000 })
+    const url = new URL(page.url())
+    const errors = await page.locator("[data-testid=route-error]").count()
+    await close()
+    await other.close()
+    // The dead session is refused with 401 by design; the browser itself
+    // reports that refused request in the console. Anything else is a defect.
+    const unexpected = problems.filter((p) => !/Failed to load resource: .*401/.test(p))
+    assert(unexpected.length === 0, `console: ${unexpected[0]}`)
+    assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
+    assert(url.searchParams.get("next") === "/models", `next = ${url.searchParams.get("next")}`)
+    assert(errors === 0, "an error state was rendered instead of the login page")
+    return url.pathname + url.search
+  })
+
+  await check(7, "a lost session stops the chat reconnect loop at the login page", async () => {
+    const other = await browser.newContext()
+    const l = await login(other)
+    assert(l.status === 204, `login: ${l.status} ${l.text}`)
+    const page = await other.newPage()
+    const problems = []
+    page.on("console", (m) => {
+      if (m.type() === "error") problems.push(m.text())
+    })
+    page.on("pageerror", (e) => problems.push("pageerror: " + e.message))
+    let attempts = 0
+    page.on("websocket", () => {
+      attempts += 1
+    })
+    // Keep a handle on the live socket so the test can drop it, the way a
+    // restarting gateway does.
+    await page.addInitScript(() => {
+      const Real = window.WebSocket
+      window.__live = []
+      // @ts-ignore
+      window.WebSocket = function (url, protocols) {
+        const s = protocols === undefined ? new Real(url) : new Real(url, protocols)
+        window.__live.push(s)
+        return s
+      }
+      window.WebSocket.prototype = Real.prototype
+      Object.assign(window.WebSocket, Real)
+    })
+    await page.goto(BASE + "/", { waitUntil: "networkidle", timeout: 20000 })
+    await page.waitForTimeout(1500)
+    assert(attempts >= 1, "chat opened no WebSocket")
+    await other.clearCookies()
+    await page.evaluate(() => window.__live.forEach((s) => s.close()))
+    // The controller asks /api/auth/status once, learns the session is gone
+    // and leaves for the login page instead of retrying for ever.
+    await page.waitForURL(/\/login(\?|$)/, { timeout: 10000 })
+    const atRedirect = attempts
+    await page.waitForTimeout(3000)
+    const path = new URL(page.url()).pathname
+    const after = attempts
+    await page.close()
+    await other.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/login", `left the login page for ${path}`)
+    assert(after - atRedirect <= 1, `${after - atRedirect} more socket attempts after the redirect`)
+    return `${after} socket attempt(s) in all`
+  })
+
+  await anon.close()
+}
+
 // B. Every route renders
 if (useGroup("B", "Route smoke — every page renders, console clean")) {
   for (const route of ROUTES) {
@@ -201,9 +471,9 @@ if (useGroup("B", "Route smoke — every page renders, console clean")) {
       ROUTES.indexOf(route) + 1,
       `GET ${route}`,
       async () => {
-        const { ctx, problems, text } = await open(route)
+        const { close, problems, text } = await open(route)
         const body = await text()
-        await ctx.close()
+        await close()
         assert(body.trim().length > 40, `page nearly empty (${body.length} chars)`)
         assert(problems.length === 0, `console errors: ${problems[0]}`)
         return `${body.length} chars`
@@ -215,23 +485,28 @@ if (useGroup("B", "Route smoke — every page renders, console clean")) {
 // C. Shell and navigation
 if (useGroup("C", "Shell and navigation")) {
   await check(1, "sidebar exposes the primary sections", async () => {
-    const { ctx, text } = await open("/agents")
+    const { close, page, text } = await open("/agents")
     const body = await text()
-    await ctx.close()
+    // Chat is a single page: a direct link, not a disclosure group.
+    const chatLinks = await page.locator('a[href="/"]', { hasText: "Chat" }).count()
+    const chatButtons = await page.getByRole("button", { name: "Chat", exact: true }).count()
+    await close()
     for (const item of ["Chat", "Agents", "Models", "Channels", "Services"]) {
       assert(body.includes(item), `sidebar missing "${item}"`)
     }
+    assert(chatLinks === 1, `Chat links to "/": ${chatLinks}`)
+    assert(chatButtons === 0, "Chat is a disclosure button, not a link")
   })
   await check(2, "sidebar shows the running version", async () => {
-    const { ctx, text } = await open("/agents")
+    const { close, text } = await open("/agents")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/ClawEh v\d+\.\d+\.\d+/.test(body), "version not shown in sidebar")
   })
   await check(3, "sidebar groups expand and their links navigate client-side", async () => {
     // The top-level sidebar entries are collapsible GROUPS (aria-expanded),
     // not links — clicking one reveals the routes beneath it.
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     const group = page.getByRole("button", { name: "Models", exact: true })
     assert(
       (await group.getAttribute("aria-expanded")) !== null,
@@ -246,7 +521,7 @@ if (useGroup("C", "Shell and navigation")) {
     await page.locator('a[href="/models"]').first().click()
     await page.waitForTimeout(800)
     const url = page.url()
-    await ctx.close()
+    await close()
     assert(url.endsWith("/models"), `expected /models, got ${url}`)
   })
   await check(4, "unknown route renders the app, not a server error", async () => {
@@ -260,9 +535,16 @@ if (useGroup("D", "i18n integrity")) {
   await check(1, "no untranslated keys on any route", async () => {
     const leaked = []
     for (const route of ROUTES) {
-      const { ctx, text } = await open(route)
-      const body = await text()
-      await ctx.close()
+      const { close, page } = await open(route)
+      // The log viewer (role="log") shows raw log lines, and those name
+      // config keys such as agents.defaults.models that share a prefix with
+      // the locale namespaces. Only the UI around it is scanned.
+      const body = await page.evaluate(() => {
+        const clone = document.body.cloneNode(true)
+        for (const el of clone.querySelectorAll('[role="log"]')) el.remove()
+        return clone.innerText ?? clone.textContent ?? ""
+      })
+      await close()
       const hits = [...new Set(body.match(I18N_KEY) || [])]
       if (hits.length) leaked.push(`${route}: ${hits.join(", ")}`)
     }
@@ -270,57 +552,63 @@ if (useGroup("D", "i18n integrity")) {
     return `${ROUTES.length} routes clean`
   })
   await check(2, "tool categories all have labels", async () => {
-    const { ctx, text } = await open("/agent/tools")
+    const { close, text } = await open("/agent/tools")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(!/categories\./.test(body), "a raw category key is rendered")
   })
 }
 
-// E. Chat and the WebSocket token
+// E. Chat and the WebSocket session
 if (useGroup("E", "Chat and WebSocket auth")) {
-  await check(1, "token endpoint issues a token and a ws url", async () => {
+  await check(1, "the WebUI token endpoint is gone", async () => {
+    // GET /api/webui/token handed the chat token to any peer inside the CIDR
+    // allowlist, which made the /webui/ws gate no gate at all. The socket now
+    // rides the login session cookie; the endpoint must not come back.
     const r = await api("/api/webui/token")
-    assert(r.status === 200, `expected 200, got ${r.status}`)
-    assert(r.json?.token, "no token issued")
-    assert(/^wss?:\/\//.test(r.json?.ws_url ?? ""), "ws_url malformed")
+    assert(r.status === 404, `expected 404, got ${r.status}`)
   })
-  await check(2, "chat opens its socket with the token as a SUBPROTOCOL, never in the URL", async () => {
-    const ctx = await browser.newContext()
+  await check(2, "chat opens its socket on the page origin with the session cookie, no token", async () => {
     const page = await ctx.newPage()
-    const sockets = []
     await page.addInitScript(() => {
       const Real = window.WebSocket
       window.__sockets = []
       // @ts-ignore
       window.WebSocket = function (url, protocols) {
         window.__sockets.push({ url: String(url), protocols })
-        return new Real(url, protocols)
+        return protocols === undefined ? new Real(url) : new Real(url, protocols)
       }
       window.WebSocket.prototype = Real.prototype
       Object.assign(window.WebSocket, Real)
     })
     await page.goto(BASE + "/", { waitUntil: "networkidle", timeout: 20000 })
     await page.waitForTimeout(2500)
-    const seen = await page.evaluate(() => window.__sockets ?? [])
-    sockets.push(...seen)
-    const { token } = (await api("/api/webui/token")).json ?? {}
-    await ctx.close()
+    const sockets = await page.evaluate(() => window.__sockets ?? [])
+    await page.close()
     assert(sockets.length > 0, "chat opened no WebSocket")
     const s = sockets[0]
-    assert(!/[?&]token=/.test(s.url), `token found in URL: ${s.url}`)
-    if (token) assert(!s.url.includes(token), "token value present in URL")
+    const host = new URL(BASE).host.replace(/[.]/g, "\\.")
     assert(
-      Array.isArray(s.protocols) && s.protocols[0] === "claw-token",
-      `expected claw-token subprotocol, got ${JSON.stringify(s.protocols)}`,
+      new RegExp(`^wss?://${host}/webui/ws\\?session_id=`).test(s.url),
+      `unexpected socket url: ${s.url}`,
     )
-    return `subprotocols ${JSON.stringify(s.protocols?.[0])}`
+    // A token in a query string is recorded by proxies, access logs, Referer
+    // headers and browser history; the cookie is HttpOnly and never in a URL.
+    assert(!/[?&]token=/.test(s.url), `token found in URL: ${s.url}`)
+    assert(
+      s.protocols === undefined || s.protocols === null || s.protocols.length === 0,
+      `expected no subprotocols, got ${JSON.stringify(s.protocols)}`,
+    )
+    // The cookie is the gate: the same path with no session is refused.
+    const anon = await apiAnonymous("/webui/ws")
+    assert(anon.status === 401, `anonymous GET /webui/ws = ${anon.status}, want 401`)
+    return s.url.replace(/session_id=.*$/, "session_id=…")
   })
   await check(3, "chat reaches connected state", async () => {
-    const { ctx, page, text } = await open("/")
+    const { close, page, text } = await open("/")
     await page.waitForTimeout(2500)
     const body = await text()
-    await ctx.close()
+    await close()
     assert(!/disconnected|connection error/i.test(body), "chat reports disconnected")
   })
 }
@@ -331,32 +619,32 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
   let created = false
 
   await check(1, "create an agent through the UI", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: "Add Agent" }).click()
     await page.waitForTimeout(400)
     await page.getByRole("textbox", { name: /Agent ID/i }).fill(PROBE)
     await page.getByRole("button", { name: "Add", exact: true }).click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
     const c = await config()
     created = (c.agents.list ?? []).some((a) => a.id === PROBE)
     assert(created, `${PROBE} not present in config after Add`)
   })
 
   await check(2, "edit a field and confirm the debounced autosave persists it", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     await page.locator('input[type=number][placeholder="default"]').first().fill("0.77")
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
     assert(a?.temperature === 0.77, `temperature = ${a?.temperature}, expected 0.77`)
   })
 
   await check(3, "a second field on the same agent also persists (no clobber)", async () => {
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     // A second, unrelated field on the same card: the time_now internal tool.
@@ -364,7 +652,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const was = await box.isChecked()
     await box.click()
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
     // The toggle must persist an explicit tools list (a default-only agent has
@@ -384,7 +672,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     // labelled "Claw".
     const rail = (c.agents.list ?? []).map((a) => a.name || a.id)
     assert(rail.length >= 2, "need at least two agents for this check")
-    const { ctx, page } = await open("/agents")
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(500)
     const probeTemp = await page
@@ -398,15 +686,137 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       .locator('input[type=number][placeholder="default"]')
       .first()
       .inputValue()
-    await ctx.close()
+    await close()
     assert(probeTemp === "0.77", `probe showed ${probeTemp}`)
     assert(otherTemp !== "0.77", `"${other}" showed the probe's value (${otherTemp})`)
     return `${PROBE}=0.77, ${other}=${otherTemp || "unset"}`
   })
 
-  await check(5, "delete the agent and confirm it is gone", async () => {
+  await check(5, "ticking a Fusion service adds it to mcp_tools and unticking removes it", async () => {
     if (!created) return "skipped, never created"
-    const { ctx, page } = await open("/agents")
+    const catalog = await api("/api/agents/tools")
+    const service = catalog.json?.fusion_services?.[0]
+    if (!service) return "skipped, no Fusion service defined on this instance"
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
+    const box = page.getByLabel(service, { exact: true }).first()
+    assert((await box.count()) > 0, `no "${service}" checkbox under Fusion services`)
+    assert(!(await box.isChecked()), `"${service}" already ticked on a new agent`)
+    await box.click()
+    await page.waitForTimeout(2000)
+    let c = await config()
+    let a = (c.agents.list ?? []).find((x) => x.id === PROBE)
+    assert((a?.mcp_tools ?? []).includes(service), `mcp_tools = ${JSON.stringify(a?.mcp_tools)}; expected ${service}`)
+    await box.click()
+    await page.waitForTimeout(2000)
+    await close()
+    c = await config()
+    a = (c.agents.list ?? []).find((x) => x.id === PROBE)
+    assert(!(a?.mcp_tools ?? []).includes(service), `mcp_tools = ${JSON.stringify(a?.mcp_tools)}; ${service} should be gone`)
+    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
+  })
+
+  await check(6, "returning to the Agents page through the sidebar shows the agents", async () => {
+    // A return visit mounts the page with its query already cached. It used to
+    // seed the editable list only when a new fetch landed, so the cached list
+    // never showed and the page said "No agents yet" until a browser reload.
+    const { close, page } = await open("/agents")
+    const c = await config()
+    const rail = (c.agents.list ?? []).map((a) => a.name || a.id)
+    assert(rail.length >= 1, "need at least one agent for this check")
+    await page.locator('a[href="/report"]').first().click()
+    await page.waitForTimeout(700)
+    const link = page.locator('a[href="/agents"]').first()
+    if (!(await link.isVisible().catch(() => false))) {
+      await page.getByRole("button", { name: "Agents", exact: true }).first().click()
+      await page.waitForTimeout(300)
+    }
+    await link.click()
+    await page.waitForTimeout(700)
+    const text = await page.locator("main").innerText()
+    const shown = await page.getByRole("button", { name: rail[0], exact: true }).count()
+    await close()
+    assert(!/No agents yet/.test(text), "the page says 'No agents yet' on a return visit")
+    assert(shown > 0, `the rail does not list "${rail[0]}" on a return visit`)
+  })
+
+  await check(7, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
+    if (!created) return "skipped, never created"
+    const clis = (await api("/api/system/clis")).json ?? []
+    const c = await config()
+    const byName = Object.fromEntries((c.providers ?? []).map((p) => [p.name, p]))
+    const model = (c.models ?? []).find((m) => {
+      const p = byName[m.provider]
+      const cli = p && clis.find((x) => x.protocol === p.protocol)
+      return cli && !p.bypass_restrictions && (m.extra_args ?? []).some((a) => (cli.bypass_args ?? []).includes(a))
+    })
+    if (!model) return "skipped, no CLI model carries an ignored bypass flag on this instance"
+    const list = (c.agents.list ?? []).map((a) => (a.id === PROBE ? { ...a, models: [model.model_name] } : a))
+    const r = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agents: { list } }) })
+    assert(r.status === 200, `setting the model = ${r.status}`)
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(500)
+    const text = await page.locator("main").innerText()
+    const link = await page.getByRole("link", { name: "Allow it" }).count()
+    await close()
+    const provider = model.provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    assert(new RegExp(`${provider} is not allowed to bypass its restrictions\\.`).test(text), `no warning for ${model.provider}:\n${text.slice(0, 400)}`)
+    assert(link > 0, 'the warning has no "Allow it" link to the Providers page')
+  })
+
+  await check(8, "a long dropdown keeps its size and scroll position while scrolling", async () => {
+    // Radix Select's item-aligned mode grows the popup and rewrites the scroll
+    // position on every scroll event; on a phone the list flickers and snaps
+    // back to the top on release. The wheel goes through the same code, so this
+    // desktop check catches a return to that mode. The list is made long with
+    // twenty temporary models, removed again afterwards.
+    const c = await config()
+    const origModels = c.models ?? []
+    const base = origModels.find((m) => m.enabled)
+    if (!base) return "skipped, no enabled model to clone"
+    const rail = (c.agents.list ?? []).map((a) => a.name || a.id).filter((n) => n !== PROBE)
+    assert(rail.length >= 1, "need an agent")
+    const extra = Array.from({ length: 20 }, (_, i) => ({ ...base, model_name: `zz-e2e-scroll-${String(i + 1).padStart(2, "0")}`, enabled: true }))
+    const added = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: [...origModels, ...extra] }) })
+    assert(added.status === 200, `adding models = ${added.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: rail[0], exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("combobox").filter({ hasText: /Add model/ }).first().click()
+      await page.waitForTimeout(400)
+      const viewport = page.locator("[data-radix-select-viewport]").first()
+      const content = page.locator("[data-slot=select-content]").first()
+      const size = async () => (await content.boundingBox())?.height ?? 0
+      const top = () => viewport.evaluate((v) => Math.round(v.scrollTop))
+      const before = await size()
+      const scrollbar = await viewport.evaluate((v) => getComputedStyle(v).scrollbarWidth)
+      assert(scrollbar !== "none", "the list hides its scrollbar, so a long list looks cut off")
+      const box = await viewport.boundingBox()
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.wheel(0, 240)
+      await page.waitForTimeout(150)
+      const during = await top()
+      await page.mouse.wheel(0, 240)
+      await page.waitForTimeout(600)
+      const after = await top()
+      const afterSize = await size()
+      await page.keyboard.press("Escape")
+      await close()
+      assert(during > 0, "the list did not scroll")
+      assert(after >= during, `the list jumped back: ${during} then ${after}`)
+      assert(Math.abs(afterSize - before) < 2, `the popup resized while scrolling: ${Math.round(before)} -> ${Math.round(afterSize)}`)
+      return `scrolled to ${after}px, popup ${Math.round(before)}px throughout`
+    } finally {
+      await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: origModels }) })
+    }
+  })
+
+  await check(9, "delete the agent and confirm it is gone", async () => {
+    if (!created) return "skipped, never created"
+    const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
     page.on("dialog", (d) => d.accept())
@@ -418,7 +828,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert((await trash.count()) > 0, "no labelled delete control on the agent card")
     await trash.click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
     const c = await config()
     const still = (c.agents.list ?? []).some((a) => a.id === PROBE)
     if (still) {
@@ -435,81 +845,474 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
   })
 }
 
-// G. Config page
-if (useGroup("G", "Config page — load, edit, persist, restore")) {
+// G. System page (the old Config page minus the listeners, which are group R)
+if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
   let original
-  await check(1, "config page renders its sections", async () => {
-    const { ctx, text } = await open("/config")
+  await check(1, "system page renders the moved sections", async () => {
+    const { close, text, problems } = await open("/system")
     const body = await text()
-    await ctx.close()
-    for (const s of ["Service", "Runtime", "Backup", "Devices"]) {
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    for (const s of ["Agent defaults", "Context management", "Runtime", "Backup", "Devices"]) {
       assert(body.includes(s), `missing section "${s}"`)
     }
+    // The listeners moved to /network; a Service card here would be a second
+    // writer of gateway.* fighting the Network page.
+    assert(!body.includes("Allowed network CIDRs"), "the listener settings are still on /system")
   })
   await check(2, "an edited field autosaves", async () => {
     const c = await config()
-    original = c?.gateway?.external_url ?? ""
-    const { ctx, page } = await open("/config")
-    const field = page.locator('input[placeholder^="http"]').first()
-    await field.fill("http://e2e-probe.invalid:9999")
+    original = c?.backup?.dest ?? ""
+    const { close, page } = await open("/system")
+    const field = page.locator("[data-testid=backup-dest]")
+    await field.fill("/tmp/e2e-probe-backup")
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const after = await config()
     assert(
-      after?.gateway?.external_url === "http://e2e-probe.invalid:9999",
-      `external_url = ${after?.gateway?.external_url}`,
+      after?.backup?.dest === "/tmp/e2e-probe-backup",
+      `backup.dest = ${after?.backup?.dest}`,
     )
   })
   await check(3, "restore the original value", async () => {
-    const { ctx, page } = await open("/config")
-    const field = page.locator('input[placeholder^="http"]').first()
+    const { close, page } = await open("/system")
+    const field = page.locator("[data-testid=backup-dest]")
     await field.fill(original)
     await page.waitForTimeout(2000)
-    await ctx.close()
+    await close()
     const after = await config()
     assert(
-      (after?.gateway?.external_url ?? "") === original,
-      `external_url = ${after?.gateway?.external_url}, expected ${original}`,
+      (after?.backup?.dest ?? "") === original,
+      `backup.dest = ${after?.backup?.dest}, expected ${original}`,
     )
     return `restored to "${original}"`
   })
   await check(4, "raw config view returns the document", async () => {
-    const { ctx, text } = await open("/config/raw")
+    const { close, text } = await open("/config/raw")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(body.length > 100, "raw config appears empty")
+  })
+  await check(5, "/config redirects to /system", async () => {
+    const { close, page, problems, text } = await open("/config")
+    await page.waitForURL(/\/system$/, { timeout: 10000 })
+    const body = await text()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(body.includes("Backup"), "the System page did not render after the redirect")
   })
 }
 
-// Settle the reload caused by F and G before the read-only groups below.
-if (!ONLY.length || ONLY.includes("F") || ONLY.includes("G")) {
+// R. Network page — listeners, HTTPS and the certificate. Writes: R10 changes
+// the HTTPS port and puts it back; R8 regenerates the self-signed certificate
+// (a new self-signed one replaces it — nothing to restore, and it is skipped
+// when the instance uses its own certificate or has HTTPS off).
+if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
+  const radioChecked = async (page, id) =>
+    (await page.locator(`#${id}`).getAttribute("aria-checked")) === "true"
+
+  await check(1, "every listener control is present", async () => {
+    const { close, page, problems, text } = await open("/network")
+    await page.locator("[data-testid=network-mcp-listen]").waitFor({ state: "visible", timeout: 10000 })
+    const body = await text()
+    const ids = [
+      "network-http-port",
+      "network-http-scope",
+      "network-https-mode",
+      "network-tls-port",
+      "network-external-url",
+      "network-extra-names",
+      "cert-current",
+      "cert-source",
+      "network-allowed-cidrs",
+      "network-lockout-exempt",
+      "network-trusted-proxies",
+      "network-device-scope",
+      "network-device-port",
+      "network-device-tls",
+      "network-device-external-url",
+      "network-device-cidrs",
+      "network-mcp-listen",
+      "network-urls",
+    ]
+    const missing = []
+    for (const id of ids) {
+      if ((await page.locator(`[data-testid=${id}]`).count()) !== 1) missing.push(id)
+    }
+    // Fields autosave; a Save button here would be the old page.
+    const saveButtons = await page.locator("[data-testid=network-save]").count()
+    const radios = await page.getByRole("radio").count()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(missing.length === 0, `controls missing: ${missing.join(", ")}`)
+    assert(saveButtons === 0, "a Save button is present; the page autosaves")
+    for (const label of [
+      "Localhost only (default)",
+      "Network",
+      "All interfaces (default)",
+      "Off",
+      "Self-signed (default)",
+      "External certificate",
+      "Never locked out",
+      "ws (unencrypted)",
+      "wss (HTTPS)",
+      "Auto-approve pairings",
+    ]) {
+      assert(body.includes(label), `missing label "${label}"`)
+    }
+    // HTTP scope (2) + HTTPS mode (3) + certificate source (2) + device
+    // protocol (2) + device scope (2).
+    assert(radios === 11, `${radios} radios, want 11`)
+    return `${ids.length} controls, ${radios} radios`
+  })
+
+  await check(2, "the HTTP scope radio reflects gateway.host", async () => {
+    const c = await config()
+    const host = (c?.gateway?.host ?? "").toLowerCase()
+    const loopback = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-http-scope]").waitFor({ timeout: 10000 })
+    const localhostOn = await radioChecked(page, "network-http-scope-localhost")
+    const networkOn = await radioChecked(page, "network-http-scope-network")
+    const port = await page.locator("[data-testid=network-http-port]").inputValue()
+    await close()
+    assert(localhostOn === loopback && networkOn === !loopback, `host=${JSON.stringify(host)} but localhost=${localhostOn} network=${networkOn}`)
+    assert(port === String(c?.gateway?.port ?? 18790), `HTTP port field = ${port}`)
+    return `${loopback ? "Localhost only" : "Network"}, port ${port}`
+  })
+
+  await check(3, "the HTTPS mode and port reflect gateway.tls", async () => {
+    const c = await config()
+    const mode = c?.gateway?.tls?.mode ?? "all"
+    const tlsPort = String(c?.gateway?.tls_port ?? 18443)
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-https-mode]").waitFor({ timeout: 10000 })
+    const on = {}
+    for (const m of ["all", "localhost", "off"]) on[m] = await radioChecked(page, `network-https-mode-${m}`)
+    const port = await page.locator("[data-testid=network-tls-port]").inputValue()
+    await close()
+    for (const m of ["all", "localhost", "off"]) {
+      assert(on[m] === (m === mode), `mode ${mode}: radio ${m} checked=${on[m]}`)
+    }
+    assert(port === tlsPort, `HTTPS port field = ${port}, config ${tlsPort}`)
+    return `${mode}, port ${port}`
+  })
+
+  await check(4, "the hostname field reflects gateway.external_url", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-external-url]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    assert(v === (c?.gateway?.external_url ?? ""), `field = ${JSON.stringify(v)}, config ${JSON.stringify(c?.gateway?.external_url)}`)
+    return v || "(blank)"
+  })
+
+  await check(5, "the certificate card shows the fingerprint, or says none is generated", async () => {
+    const t = await api("/api/tls")
+    assert(t.status === 200, `GET /api/tls = ${t.status}`)
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-current]").waitFor({ timeout: 10000 })
+    const fp = await page.locator("[data-testid=cert-fingerprint]").count()
+    const none = await page.locator("[data-testid=cert-none]").count()
+    const shown = fp ? (await page.locator("[data-testid=cert-fingerprint]").innerText()).trim() : ""
+    await close()
+    const cert = t.json?.certificate
+    if (cert?.present) {
+      assert(fp === 1 && none === 0, `certificate present but fingerprint=${fp} none=${none}`)
+      assert(shown === cert.fingerprint, `page shows ${shown}, API says ${cert.fingerprint}`)
+      return shown
+    }
+    assert(fp === 0 && none === 1, `no certificate but fingerprint=${fp} none=${none}`)
+    return "not generated"
+  })
+
+  await check(6, "Self-signed ↔ External reveals the path inputs only under External", async () => {
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-source]").waitFor({ timeout: 10000 })
+    await page.locator("#cert-source-self-signed").click()
+    await page.waitForTimeout(200)
+    const selfPaths = await page.locator("[data-testid=cert-file], [data-testid=cert-key-file]").count()
+    const selfRegen = await page.locator("[data-testid=cert-regenerate]").count()
+    await page.locator("#cert-source-file").click()
+    await page.waitForTimeout(200)
+    const filePaths = await page.locator("[data-testid=cert-file], [data-testid=cert-key-file]").count()
+    const fileRegen = await page.locator("[data-testid=cert-regenerate]").count()
+    const saveBtn = await page.locator("[data-testid=cert-save]").count()
+    await close()
+    assert(selfPaths === 0 && selfRegen === 1, `self-signed: ${selfPaths} path inputs, ${selfRegen} regenerate`)
+    assert(filePaths === 2 && fileRegen === 0 && saveBtn === 1, `external: ${filePaths} path inputs, ${fileRegen} regenerate, ${saveBtn} save`)
+  })
+
+  await check(7, "Save certificate with a bogus path is refused and changes nothing", async () => {
+    const before = await config()
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-source]").waitFor({ timeout: 10000 })
+    await page.locator("#cert-source-file").click()
+    await page.locator("[data-testid=cert-file]").fill("/nonexistent/e2e-probe/fullchain.pem")
+    await page.locator("[data-testid=cert-key-file]").fill("/nonexistent/e2e-probe/privkey.pem")
+    await page.locator("[data-testid=cert-save]").click()
+    const err = page.locator("[data-testid=cert-error]")
+    await err.waitFor({ state: "visible", timeout: 10000 })
+    const message = (await err.innerText()).trim()
+    await close()
+    const after = await config()
+    assert(message.length > 0, "the validation error is empty")
+    assert(
+      JSON.stringify(after?.gateway) === JSON.stringify(before?.gateway),
+      `gateway config changed: ${JSON.stringify(after?.gateway?.tls)}`,
+    )
+    return message
+  })
+
+  await check(8, "Regenerate changes the self-signed certificate's fingerprint", async () => {
+    const t = (await api("/api/tls")).json ?? {}
+    if (t.source !== "self-signed") return "skipped: the instance uses its own certificate"
+    if (t.mode === "off") return "skipped: HTTPS is off (gateway.tls.mode)"
+    if (!t.certificate?.present) return "skipped: no certificate yet (enable HTTPS and restart)"
+    const before = t.certificate.fingerprint
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=cert-regenerate]").waitFor({ timeout: 10000 })
+    await page.locator("[data-testid=cert-regenerate]").click()
+    await page.waitForFunction(
+      (prev) => document.querySelector("[data-testid=cert-fingerprint]")?.textContent?.trim() !== prev,
+      before,
+      { timeout: 15000 },
+    )
+    const shown = (await page.locator("[data-testid=cert-fingerprint]").innerText()).trim()
+    await close()
+    const after = (await api("/api/tls")).json?.certificate?.fingerprint
+    assert(after && after !== before, `API fingerprint unchanged: ${after}`)
+    assert(shown === after, `page shows ${shown}, API says ${after}`)
+    return `${before.slice(0, 11)}… → ${after.slice(0, 11)}…`
+  })
+
+  await check(9, "the address list shows what to open", async () => {
+    const t = (await api("/api/tls")).json ?? {}
+    const { close, page } = await open("/network")
+    const urls = page.locator("[data-testid=network-urls]")
+    await urls.waitFor({ timeout: 10000 })
+    const body = await urls.innerText()
+    const marks = await urls.locator("[data-testid=network-http-warning]").count()
+    await close()
+    assert(t.urls?.localhost, `GET /api/tls has no urls.localhost: ${JSON.stringify(t.urls)}`)
+    assert(body.includes(t.urls.localhost), `localhost URL ${t.urls.localhost} not listed: ${body}`)
+    for (const u of t.urls.http ?? []) assert(body.includes(u), `HTTP URL ${u} not listed: ${body}`)
+    for (const u of t.urls.https ?? []) assert(body.includes(u), `HTTPS URL ${u} not listed: ${body}`)
+    const http = t.urls.http ?? []
+    assert(marks === http.length, `${marks} warning marks for ${http.length} plain-HTTP network addresses`)
+    for (const u of [...http, ...(t.urls.https ?? [])]) {
+      const host = new URL(u).hostname
+      assert(!/^172\.(1[7-9]|2\d|3[01])\.0\.1$/.test(host), `Docker bridge address advertised: ${u}`)
+    }
+    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked)`
+  })
+
+  await check(10, "changing the HTTPS port autosaves and shows the restart banner; then restore it", async () => {
+    const c = await config()
+    const original = c?.gateway?.tls_port ?? 18443
+    const httpPort = c?.gateway?.port ?? 18790
+    let probe = original + 1
+    if (probe === httpPort) probe += 1
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-tls-port]")
+    await field.waitFor({ timeout: 10000 })
+    assert(
+      (await page.locator("[data-testid=network-restart-banner]").count()) === 0,
+      "the restart banner is already showing before any change (restart the dev instance)",
+    )
+    // Autosave: the field is committed ~0.6 s after the last keystroke.
+    await field.fill(String(probe))
+    const banner = page.locator("[data-testid=network-restart-banner]")
+    await banner.waitFor({ state: "visible", timeout: 10000 })
+    const bannerText = (await banner.innerText()).trim()
+    const restartButtons = await page.locator("[data-testid=network-restart]").count()
+    const mid = await config()
+    assert(mid?.gateway?.tls_port === probe, `tls_port after save = ${mid?.gateway?.tls_port}, want ${probe}`)
+    assert(
+      bannerText.startsWith("Restart required to apply changes."),
+      `banner reads ${JSON.stringify(bannerText)}`,
+    )
+    assert(restartButtons === 1, `${restartButtons} Restart now buttons, want 1`)
+    // Restore on the same page. The button is never clicked: the suite must
+    // not restart the instance it is driving.
+    await field.fill(String(original))
+    let after
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(500)
+      after = await config()
+      if ((after?.gateway?.tls_port ?? 18443) === original) break
+    }
+    await close()
+    assert(
+      (after?.gateway?.tls_port ?? 18443) === original,
+      `tls_port = ${after?.gateway?.tls_port}, expected ${original}`,
+    )
+    return `18443-style probe ${probe}, restored ${original}; banner + Restart now present`
+  })
+
+  await check(11, "the allowed-networks editor reflects gateway.allowed_cidrs", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-allowed-cidrs]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.allowed_cidrs ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(loopback only)"
+  })
+
+  await check(12, "the device listener section reflects channels.device", async () => {
+    const c = await config()
+    const d = c?.channels?.device ?? {}
+    const host = (d.host ?? "").toLowerCase()
+    const loopback = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
+    const { close, page } = await open("/network")
+    await page.locator("[data-testid=network-device-scope]").waitFor({ timeout: 10000 })
+    // The ws/wss choice is the first control of the section: it precedes
+    // every other device control in the document.
+    const tlsFirst = await page.evaluate(() => {
+      const tls = document.querySelector("[data-testid=network-device-tls]")
+      return ["scope", "port", "external-url", "cidrs"].every((k) => {
+        const other = document.querySelector(`[data-testid=network-device-${k}]`)
+        return !!tls && !!other && !!(tls.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING)
+      })
+    })
+    const wssOn = await radioChecked(page, "network-device-tls-wss")
+    const wsOn = await radioChecked(page, "network-device-tls-ws")
+    const localhostOn = await radioChecked(page, "network-device-scope-localhost")
+    const port = await page.locator("[data-testid=network-device-port]").inputValue()
+    const ext = await page.locator("[data-testid=network-device-external-url]").inputValue()
+    await close()
+    assert(tlsFirst, "the ws/wss radio is not the first control of the device section")
+    const tls = d.tls === true
+    assert(wssOn === tls && wsOn === !tls, `tls=${JSON.stringify(d.tls)} but ws=${wsOn} wss=${wssOn}`)
+    assert(localhostOn === loopback, `device host=${JSON.stringify(host)} but localhost radio=${localhostOn}`)
+    assert(port === String(d.port || 18791), `device port field = ${port}`)
+    const wantExt = String(d.external_url ?? "").trim().replace(/^(https?|wss?):\/\//i, "").replace(/\/+$/, "")
+    assert(ext === wantExt, `device external address field = ${JSON.stringify(ext)}, want ${JSON.stringify(wantExt)}`)
+    return `${tls ? "wss" : "ws"}, ${loopback ? "Localhost only" : "Network"}, port ${port}`
+  })
+
+  await check(13, "the MCP host address is shown read-only", async () => {
+    const c = await config()
+    const want = c?.mcp_host?.listen || "127.0.0.1:5911"
+    const { close, page } = await open("/network")
+    const el = page.locator("[data-testid=network-mcp-listen]")
+    await el.waitFor({ timeout: 10000 })
+    const shown = (await el.innerText()).trim()
+    const tag = await el.evaluate((n) => n.tagName.toLowerCase())
+    await close()
+    assert(shown === want, `shows ${shown}, config ${want}`)
+    assert(tag !== "input" && tag !== "textarea", `rendered as an editable <${tag}>`)
+    return shown
+  })
+
+  await check(14, "the device ws/wss radio reflects channels.device.tls", async () => {
+    const c = await config()
+    const want = c?.channels?.device?.tls === true
+    const { close, page, text } = await open("/network")
+    await page.locator("[data-testid=network-device-tls]").waitFor({ timeout: 10000 })
+    const wssOn = await radioChecked(page, "network-device-tls-wss")
+    const wsOn = await radioChecked(page, "network-device-tls-ws")
+    const radios = await page.locator("[data-testid=network-device-tls]").getByRole("radio").count()
+    const body = await text()
+    await close()
+    assert(radios === 2, `${radios} protocol radios, want 2`)
+    assert(wssOn === want && wsOn === !want, `ws=${wsOn} wss=${wssOn}, config tls=${JSON.stringify(c?.channels?.device?.tls)}`)
+    assert(
+      body.includes("Devices connect to one port, plain or with the WebUI certificate."),
+      "the one-sentence hint is missing",
+    )
+    return want ? "wss (HTTPS)" : "ws (unencrypted)"
+  })
+
+  await check(15, "the device external address is shown without its scheme and refuses one", async () => {
+    const before = await config()
+    const stored = String(before?.channels?.device?.external_url ?? "")
+    const { close, page, text } = await open("/network")
+    const field = page.locator("[data-testid=network-device-external-url]")
+    await field.waitFor({ timeout: 10000 })
+    const shown = await field.inputValue()
+    // Type a URL: the page refuses it under the field and sends nothing. The
+    // page is closed without a save, so nothing needs restoring.
+    await field.fill("wss://e2e-probe.invalid:18791")
+    await page.waitForTimeout(1200)
+    const body = await text()
+    await close()
+    const after = await config()
+    assert(!/^(https?|wss?):\/\//i.test(shown), `field shows a scheme: ${JSON.stringify(shown)}`)
+    assert(
+      shown === stored.trim().replace(/^(https?|wss?):\/\//i, "").replace(/\/+$/, ""),
+      `field = ${JSON.stringify(shown)}, config ${JSON.stringify(stored)}`,
+    )
+    assert(
+      body.includes("Enter a host name or IP address, with an optional :port."),
+      "no validation message under the field",
+    )
+    assert(
+      (after?.channels?.device?.external_url ?? "") === (before?.channels?.device?.external_url ?? ""),
+      `external_url changed to ${JSON.stringify(after?.channels?.device?.external_url)}`,
+    )
+    return `${shown || "(blank)"}; wss:// refused`
+  })
+
+  await check(16, "the Never locked out editor reflects gateway.lockout_exempt", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-lockout-exempt]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.lockout_exempt ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(none)"
+  })
+
+  await check(17, "the Trusted proxies editor reflects gateway.trusted_proxies", async () => {
+    const c = await config()
+    const { close, page } = await open("/network")
+    const field = page.locator("[data-testid=network-trusted-proxies]")
+    await field.waitFor({ timeout: 10000 })
+    const v = await field.inputValue()
+    await close()
+    const want = (c?.gateway?.trusted_proxies ?? []).join("\n")
+    assert(v === want, `editor = ${JSON.stringify(v)}, config ${JSON.stringify(want)}`)
+    return want || "(none)"
+  })
+}
+
+// Settle the reload caused by F, G and R before the read-only groups below.
+if (!ONLY.length || ONLY.includes("F") || ONLY.includes("G") || ONLY.includes("R")) {
   await settleAfterConfigWrites()
 }
 
 // H. Channels
 if (useGroup("H", "Channels — config form and allow_from typing")) {
   await check(1, "channel list renders the known channels", async () => {
-    const { ctx, text } = await open("/channels")
+    const { close, text } = await open("/channels")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/web/i.test(body), "channel list looks empty")
   })
   await check(2, "a channel config page loads for its param", async () => {
-    const { ctx, text } = await open("/channels/slack")
+    const { close, text } = await open("/channels/slack")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/slack/i.test(body), "slack page did not render its channel")
     assert(!/not found/i.test(body), "slack page reported not found")
   })
   await check(3, "a different param renders a different channel", async () => {
-    const { ctx, text } = await open("/channels/telegram")
+    const { close, text } = await open("/channels/telegram")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(/telegram/i.test(body), "telegram page did not render")
     assert(!/slack/i.test(body), "telegram page leaked slack content")
   })
   await check(4, "typing a trailing separator in allow_from is not eaten", async () => {
-    const { ctx, page } = await open("/channels/discord")
+    const { close, page } = await open("/channels/discord")
     const field = page.locator('input').filter({ hasNot: page.locator('[type=number]') })
     const allow = page
       .locator("input")
@@ -525,7 +1328,7 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
       if (/allow|user id|\*/i.test(ph)) target = i
     }
     if (!target) {
-      await ctx.close()
+      await close()
       return "skipped: allow_from field not found on this channel"
     }
     const before = await target.inputValue()
@@ -534,49 +1337,58 @@ if (useGroup("H", "Channels — config form and allow_from typing")) {
     const after = await target.inputValue()
     await target.fill(before)
     await page.waitForTimeout(900)
-    await ctx.close()
+    await close()
     assert(after === "111,", `trailing comma was eaten: field shows "${after}"`)
   })
 }
 
 // I. Models and providers
 if (useGroup("I", "Models and providers")) {
+  // A page that threw during render shows the route error boundary, whose
+  // only fixed text is its "Show error" button.
+  const noBoundary = (body, route) =>
+    assert(!/Show error/i.test(body), `${route} rendered the error boundary`)
+
   await check(1, "models page lists configured models", async () => {
-    const { ctx, text } = await open("/models")
+    const { close, text, problems } = await open("/models")
     const body = await text()
-    await ctx.close()
+    await close()
+    noBoundary(body, "/models")
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
     const r = await api("/api/models")
     const first = r.json?.models?.[0]?.model_name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
   })
   await check(2, "providers page lists configured providers", async () => {
-    const { ctx, text } = await open("/providers")
+    const { close, text, problems } = await open("/providers")
     const body = await text()
-    await ctx.close()
+    await close()
+    noBoundary(body, "/providers")
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
     const r = await api("/api/providers")
     const first = r.json?.providers?.[0]?.name
     if (first) assert(body.includes(first), `"${first}" not shown on the page`)
   })
   await check(3, "the add-model sheet opens and closes without error", async () => {
-    const { ctx, page, problems } = await open("/models")
+    const { close, page, problems } = await open("/models")
     await page.getByRole("button", { name: /Add Model/i }).click()
     await page.waitForTimeout(700)
     const open1 = await page.locator("text=/Provider/i").count()
     await page.keyboard.press("Escape")
     await page.waitForTimeout(400)
-    await ctx.close()
+    await close()
     assert(open1 > 0, "sheet did not open")
     assert(problems.length === 0, `console errors: ${problems[0]}`)
   })
   await check(4, "every provider card says whether it is configured", async () => {
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.getByText(/Configured|Not configured/).first().waitFor({
       state: "visible",
       timeout: 10000,
     })
     const labels = await page.getByText(/^(Configured|Not configured)$/).count()
     const cards = await page.locator("[data-testid=provider-card]").count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // Every card says what it is. The label is the backend's `ready`, so it
@@ -587,7 +1399,7 @@ if (useGroup("I", "Models and providers")) {
     return `${labels} labelled`
   })
   await check(5, "the wire-protocol picker leaves CLIs to their own section", async () => {
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.getByRole("button", { name: /Add Provider/i }).first().click()
     await page.waitForTimeout(700)
     // Radix renders the options into a portal only once the trigger is opened.
@@ -595,7 +1407,7 @@ if (useGroup("I", "Models and providers")) {
     await page.waitForTimeout(500)
     const options = await page.locator("[role=option]").allInnerTexts()
     await page.keyboard.press("Escape")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     assert(options.length > 0, "the protocol picker is empty")
@@ -609,7 +1421,7 @@ if (useGroup("I", "Models and providers")) {
 
   await check(6, "every supported CLI has a row, installed or not", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     const rows = await page.locator("[data-testid^=cli-row-]").count()
     const switches = await page.locator("[data-testid^=cli-switch-]").count()
@@ -629,18 +1441,18 @@ if (useGroup("I", "Models and providers")) {
         `${c.protocol} row shows no model count: ${JSON.stringify(row)}`,
       )
     }
-    await ctx.close()
+    await close()
     return `${rows} CLIs, ${clis.filter((c) => c.installed).length} installed`
   })
 
   await check(7, "CLI providers appear in the section, not in the grid", async () => {
     const providers = (await api("/api/providers")).json?.providers ?? []
     const cliProviders = providers.filter((p) => p.protocol.endsWith("-cli"))
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.waitForTimeout(500)
     const cards = await page.locator("[data-testid=provider-card]").count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // One CLI is one thing to the person using it; showing it twice under two
@@ -655,12 +1467,12 @@ if (useGroup("I", "Models and providers")) {
   await check(8, "a CLI row shows the whole command line", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const withArgs = clis.find((c) => (c.required_args ?? []).length > 0)
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     const row = await page
       .locator(`[data-testid=cli-row-${withArgs.protocol}]`)
       .innerText()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // The provider's own flags as well as the configured ones: an operator
@@ -684,13 +1496,13 @@ if (useGroup("I", "Models and providers")) {
   await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const configured = clis.find((c) => c.configured)
-    const { ctx, page, problems } = await open("/providers")
+    const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()
     await page.waitForTimeout(700)
     const sheet = await page.locator("[data-slot=sheet-content]").innerText()
     await page.keyboard.press("Escape")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     // strict_compat, require_reasoning_content, no_parallel_tool_calls,
@@ -705,16 +1517,64 @@ if (useGroup("I", "Models and providers")) {
     assert(/Command/i.test(sheet), "the CLI edit sheet lost its Command field")
     return configured.protocol
   })
+
+  await check(10, "both pages render with a CLI provider present, no error boundary", async () => {
+    // A CLI row carries argument lists the server encodes as null when empty
+    // (no bypass flags, no extra_args); spreading one of those threw straight
+    // into the error boundary. The page must survive whatever the API returns.
+    const clis = (await api("/api/system/clis")).json ?? []
+    const cli = clis.find((c) => c.configured)
+    if (!cli) return "skipped: no CLI provider configured on this instance"
+    for (const route of ["/providers", "/models"]) {
+      const { close, page, text, problems } = await open(route)
+      if (route === "/providers") {
+        await page.locator(`[data-testid=cli-row-${cli.protocol}]`).waitFor({ timeout: 10000 })
+      }
+      const body = await text()
+      await close()
+      noBoundary(body, route)
+      assert(problems.length === 0, `${route} console: ${problems[0]}`)
+    }
+    return cli.protocol
+  })
+  await check(11, "a configured CLI offers Allow CLI to bypass restrictions, reflecting the provider", async () => {
+    // The checkbox is the only way to grant a CLI its permission-bypass flag.
+    // It must be there for every configured CLI, and what it shows must be
+    // what the provider actually has (off unless the operator turned it on).
+    const clis = (await api("/api/system/clis")).json ?? []
+    const configured = clis.filter((c) => c.configured)
+    if (configured.length === 0) return "skipped: no CLI provider configured on this instance"
+    const { close, page } = await open("/providers")
+    const seen = []
+    for (const cli of configured) {
+      const box = page.locator(`[data-testid=cli-bypass-${cli.protocol}]`)
+      await box.waitFor({ timeout: 10000 })
+      const state = await box.getAttribute("aria-checked")
+      const want = cli.bypass_restrictions ? "true" : "false"
+      assert(state === want, `${cli.protocol}: checkbox ${state}, provider bypass_restrictions=${cli.bypass_restrictions}`)
+      seen.push(`${cli.protocol}=${cli.bypass_restrictions ? "on" : "off"}`)
+    }
+    await close()
+    return seen.join(", ")
+  })
 }
 
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
-  await check(1, "devices page renders", async () => {
-    const { ctx, text, problems } = await open("/devices")
+  await check(1, "devices page renders and shows the connect URL", async () => {
+    const pair = await api("/api/devices/pair")
+    assert(pair.status === 200, `/api/devices/pair ${pair.status}`)
+    const connectURL = pair.json?.connect_url
+    assert(typeof connectURL === "string" && /^wss?:\/\/.+:\d+$/.test(connectURL), `connect_url = ${JSON.stringify(connectURL)}`)
+    const { close, page, text, problems } = await open("/devices")
     const body = await text()
-    await ctx.close()
+    const shown = await page.locator("[data-testid=devices-connect-url]").innerText()
+    await close()
     assert(/device/i.test(body), "devices page looks empty")
+    assert(body.includes("Devices will connect to"), "no 'Devices will connect to' line")
+    assert(shown === connectURL, `page shows ${shown}, API says ${connectURL}`)
     assert(problems.length === 0, `console errors: ${problems[0]}`)
+    return connectURL
   })
   await check(2, "/api/devices does not fail under concurrent load", async () => {
     // Regression: the handler opened its own SQLite handle per request and lost
@@ -737,47 +1597,65 @@ if (useGroup("J", "Devices")) {
 // K. Remaining pages with live data
 if (useGroup("K", "Logs, MCP, memory, voice, report")) {
   await check(1, "logs page shows log lines", async () => {
-    const { ctx, text } = await open("/logs")
+    const { close, text } = await open("/logs")
     const body = await text()
-    await ctx.close()
+    await close()
     assert(body.length > 500, `logs page thin (${body.length} chars)`)
   })
   await check(2, "mcp config and servers pages render", async () => {
     for (const p of ["/mcp", "/mcp/servers"]) {
-      const { ctx, text, problems } = await open(p)
+      const { close, text, problems } = await open(p)
       const body = await text()
-      await ctx.close()
+      await close()
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
   })
   await check(3, "memory and voice pages render", async () => {
     for (const p of ["/memory", "/voice"]) {
-      const { ctx, text, problems } = await open(p)
+      const { close, text, problems } = await open(p)
       const body = await text()
-      await ctx.close()
+      await close()
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
   })
 
-  await check(4, "the report page renders and the sidebar links to it", async () => {
-    const { ctx, page, problems } = await open("/agents")
-    await page.getByTestId("nav-report").click()
+  await check(4, "the Check Up page shows the identity line, the assessment table and the PDF button", async () => {
+    const { close, page, problems } = await open("/agents")
+    const nav = page.getByTestId("nav-report")
+    const navLabel = (await nav.innerText()).trim()
+    await nav.click()
     await page.waitForURL(/\/report$/)
-    await page.getByRole("link", { name: /Open report/ }).waitFor()
-    await ctx.close()
+    const download = page.getByTestId("report-download")
+    await download.waitFor()
+    const heading = (await page.locator("h2").first().innerText()).trim()
+    const identity = (await page.getByTestId("report-identity").innerText()).trim()
+    const headers = await page.locator('[data-testid="report-table"] thead th').allInnerTexts()
+    const rows = await page.getByTestId("report-row").count()
+    const href = await download.getAttribute("href")
+    const label = (await download.innerText()).trim()
+    await close()
+    assert(navLabel === "Check Up", `sidebar label = ${JSON.stringify(navLabel)}`)
+    assert(heading === "Check Up", `page heading = ${JSON.stringify(heading)}`)
+    assert(/^ClawEh \d+\.\d+\.\d+/.test(identity), `identity line = ${JSON.stringify(identity)}`)
+    assert(identity.includes(" on "), `identity line names no platform: ${identity}`)
+    assert(headers.join("|") === "Action|Item|Status", `table headers = ${headers.join("|")}`)
+    assert(rows > 0, "the assessment table has no rows")
+    assert(href === "/api/report/pdf", `download href = ${href}`)
+    assert(label === "Full report", `download label = ${JSON.stringify(label)}`)
     assert(problems.length === 0, `/report console: ${problems[0]}`)
+    return `${rows} rows`
   })
 
   await check(5, "the configuration report is a PDF served inline", async () => {
-    const res = await fetch(BASE + "/api/report/pdf")
-    assert(res.status === 200, `status = ${res.status}`)
-    const ct = res.headers.get("content-type") ?? ""
+    const res = await ctx.request.get(BASE + "/api/report/pdf")
+    assert(res.status() === 200, `status = ${res.status()}`)
+    const ct = res.headers()["content-type"] ?? ""
     assert(ct.startsWith("application/pdf"), `content-type = ${ct}`)
-    const cd = res.headers.get("content-disposition") ?? ""
+    const cd = res.headers()["content-disposition"] ?? ""
     assert(cd.startsWith("inline;"), `content-disposition = ${cd}`)
-    const head = Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()
+    const head = (await res.body()).subarray(0, 5).toString()
     assert(head === "%PDF-", `body starts with ${JSON.stringify(head)}`)
   })
 
@@ -791,6 +1669,202 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     const { status, json } = await api("/api/gateway/alerts?lines=10")
     assert(status === 200, `status = ${status}`)
     assert(Array.isArray(json?.logs), `body = ${JSON.stringify(json)}`)
+  })
+
+  await check(8, "the assessment JSON carries the identity and the PDF's rows, and no secret", async () => {
+    const { status, json, text, headers } = await api("/api/report/assessment")
+    assert(status === 200, `status = ${status}`)
+    assert(headers["cache-control"] === "no-store", `cache-control = ${headers["cache-control"]}`)
+    const id = json?.identity ?? {}
+    for (const k of ["name", "version", "build", "platform", "generated_at"]) {
+      assert(k in id, `identity.${k} missing: ${JSON.stringify(id)}`)
+    }
+    assert(id.name === "ClawEh", `identity.name = ${id.name}`)
+    assert(Array.isArray(json.assessment) && json.assessment.length > 0, "no assessment rows")
+    for (const row of json.assessment) {
+      assert(typeof row.action === "boolean", `row.action = ${JSON.stringify(row)}`)
+      assert(typeof row.item === "string" && row.item, `row.item = ${JSON.stringify(row)}`)
+      assert(typeof row.status === "string" && row.status, `row.status = ${JSON.stringify(row)}`)
+    }
+    // Tokens are reported as set/not set; a credential-shaped value is a leak.
+    assert(!/sk-[A-Za-z0-9]{8}|xoxb-|xapp-/.test(text), "credential-shaped value in the assessment JSON")
+    return `${json.assessment.length} rows`
+  })
+
+  await check(9, "the Speech page lists the configured backends on first load", async () => {
+    // Before any click. The page used to seed its rows from an empty list when
+    // the query was already cached, said nothing was configured, and the first
+    // "Add backend" then saved that empty list over the real configuration.
+    const stt = (await api("/api/voice/stt")).json?.stt ?? []
+    const { close, page, problems } = await open("/voice")
+    await page.getByText("Transcription backends").waitFor({ timeout: 10000 })
+    const selects = page.locator("select[id^=stt-provider-]")
+    if (stt.length > 0) {
+      await selects.first().waitFor({ state: "visible", timeout: 10000 })
+    }
+    const rows = await selects.count()
+    const providers = rows ? await selects.evaluateAll((els) => els.map((e) => e.value)) : []
+    const empty = await page.getByText(/No transcription backends configured/).count()
+    await close()
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(rows === stt.length, `${rows} backend rows for ${stt.length} configured`)
+    assert(empty === (stt.length === 0 ? 1 : 0), `empty-state shown ${empty} times with ${stt.length} configured`)
+    for (let i = 0; i < stt.length; i++) {
+      assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
+    }
+    return rows ? providers.join(", ") : "none configured — empty state shown"
+  })
+
+  await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {
+    // The three pages seed their form from the config query. Reached from a
+    // page that has already loaded it, the query is answered from the cache and
+    // they used to keep their empty defaults — which the next edit saved over
+    // the real configuration. Bindings shares the MCP pages' query and Network
+    // the System page's, so each is read with a warm cache.
+    const cfg = (await api("/api/config")).json ?? {}
+    const servers = Object.keys(cfg.tools?.mcp?.servers ?? {}).sort()
+    const listen = cfg.mcp_host?.listen || "127.0.0.1:5911"
+    const hostEnabled = cfg.mcp_host?.enabled === true
+    const backupDest = cfg.backup?.dest ?? ""
+    const maxTokens = String(cfg.agents?.defaults?.max_tokens ?? 32768)
+
+    const { close, page, problems } = await open("/agent/bindings")
+    const expand = async (name) => {
+      const group = page.getByRole("button", { name, exact: true })
+      if ((await group.getAttribute("aria-expanded")) !== "true") {
+        await group.click()
+        await page.waitForTimeout(400)
+      }
+    }
+    const go = async (href, pattern) => {
+      await page.locator(`a[href="${href}"]`).first().click()
+      await page.waitForURL(pattern, { timeout: 10000 })
+      await page.waitForTimeout(800)
+    }
+
+    await expand("Services")
+    await expand("MCP")
+    await go("/mcp/servers", /\/mcp\/servers$/)
+    const empty = await page.getByText("No external servers configured.").count()
+    const missing = []
+    for (const name of servers) {
+      if ((await page.getByRole("button", { name, exact: true }).count()) === 0) missing.push(name)
+    }
+
+    await go("/mcp/config", /\/mcp\/config$/)
+    const listenInput = page.getByPlaceholder("127.0.0.1:5911")
+    await listenInput.waitFor({ state: "visible", timeout: 10000 })
+    const shownListen = await listenInput.inputValue()
+    const shownEnabled = await page.getByRole("switch", { name: "Enabled", exact: true }).first().getAttribute("aria-checked")
+
+    await go("/network", /\/network$/)
+    await page.locator("[data-testid=network-mcp-listen]").waitFor({ state: "visible", timeout: 10000 })
+    await go("/system", /\/system$/)
+    const destInput = page.getByTestId("backup-dest")
+    await destInput.waitFor({ state: "visible", timeout: 10000 })
+    const shownDest = await destInput.inputValue()
+    const numbers = await page.getByRole("spinbutton").evaluateAll((els) => els.map((e) => e.value))
+    await close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(missing.length === 0, `/mcp/servers does not list ${missing.join(", ")}`)
+    assert(empty === (servers.length === 0 ? 1 : 0), `/mcp/servers empty state shown ${empty} times with ${servers.length} configured`)
+    assert(shownListen === listen, `/mcp/config listen shows ${shownListen}, config ${listen}`)
+    assert(shownEnabled === String(hostEnabled), `/mcp/config enabled shows ${shownEnabled}, config ${hostEnabled}`)
+    assert(shownDest === backupDest, `/system backup dest shows ${JSON.stringify(shownDest)}, config ${JSON.stringify(backupDest)}`)
+    assert(numbers.includes(maxTokens), `/system shows no max tokens ${maxTokens} (${numbers.join(", ")})`)
+    return `${servers.length} servers, listen ${listen}, max tokens ${maxTokens}`
+  })
+}
+
+// Q. Audit page
+if (useGroup("Q", "Audit page")) {
+  const HEADERS = ["Time", "Kind", "Actor / agent", "Channel", "Tool / summary", "Outcome", "Duration"]
+
+  await check(1, "the sidebar links to the audit page under Services", async () => {
+    const { close, page, problems } = await open("/agents")
+    const group = page.getByRole("button", { name: "Services", exact: true })
+    if ((await group.getAttribute("aria-expanded")) !== "true") {
+      await group.click()
+      await page.waitForTimeout(400)
+    }
+    const link = page.locator('a[href="/audit"]').first()
+    assert((await link.count()) > 0, "no Audit entry under Services")
+    await link.click()
+    await page.waitForURL(/\/audit$/, { timeout: 10000 })
+    await page.waitForTimeout(800)
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/audit", `clicking Audit went to ${path}`)
+  })
+
+  await check(2, "the audit page renders the table and its headers", async () => {
+    const { close, page, problems, text } = await open("/audit")
+    // The suite's own login is an auth event, so the trail is never empty by
+    // the time this runs; an empty state here means events are not recorded.
+    const headers = page.locator("thead th")
+    await headers.first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {})
+    const got = (await headers.allInnerTexts()).map((h) => h.trim())
+    const body = await text()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(got.length > 0, `no table rendered — page reads: ${body.slice(0, 160)}`)
+    for (const h of HEADERS) assert(got.includes(h), `missing column ${JSON.stringify(h)} in ${JSON.stringify(got)}`)
+    return `${got.length} columns`
+  })
+
+  await check(3, "the kind filter is sent to the API and narrows the rows", async () => {
+    const page = await ctx.newPage()
+    const requests = []
+    page.on("request", (r) => {
+      if (r.url().includes("/api/audit")) requests.push(r.url())
+    })
+    await page.goto(BASE + "/audit", { waitUntil: "networkidle", timeout: 20000 })
+    await page.waitForTimeout(500)
+    const before = requests.length
+    // Radix renders the options into a portal only once the trigger is opened.
+    await page.locator('button[role=combobox][aria-label="Kind"]').click()
+    await page.locator('[role=option]:has-text("Auth")').first().click()
+    const isAuth = (u) => /[?&]kind=auth\b/.test(u)
+    const deadline = Date.now() + 10000
+    while (!requests.slice(before).some(isAuth) && Date.now() < deadline) {
+      await page.waitForTimeout(200)
+    }
+    await page.waitForTimeout(800)
+    const kinds = await page.locator("tbody tr td:nth-child(2)").allInnerTexts()
+    await page.close()
+    assert(
+      requests.slice(before).some(isAuth),
+      `no /api/audit request carried kind=auth; saw ${JSON.stringify(requests)}`,
+    )
+    // Every row shown is the kind asked for — the filter is applied by the
+    // server, not by hiding rows on the page.
+    assert(kinds.length > 0, "no rows after filtering to Auth (the suite's login is one)")
+    const other = kinds.map((k) => k.trim()).filter((k) => k !== "Auth")
+    assert(other.length === 0, `rows of other kinds shown: ${JSON.stringify(other)}`)
+    return `${kinds.length} auth rows`
+  })
+
+  await check(4, "Load more appears exactly when an older page exists", async () => {
+    // The page asks for 100 rows and offers Load more only when it got a full
+    // page and a cursor. next_before_id is 0 on a fresh instance, so the
+    // assertion is presence-or-absence against the API, not presence.
+    const r = await api("/api/audit?limit=100")
+    assert(r.status === 200, `GET /api/audit = ${r.status} ${r.text.slice(0, 120)}`)
+    const events = r.json?.events ?? []
+    const expectMore = events.length === 100 && r.json.next_before_id > 0
+    const { close, page, problems } = await open("/audit")
+    await page.locator("thead th").first().waitFor({ state: "visible", timeout: 10000 })
+    await page.waitForTimeout(500)
+    const buttons = await page.getByRole("button", { name: "Load more" }).count()
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(
+      (buttons > 0) === expectMore,
+      `Load more ${buttons > 0 ? "shown" : "absent"} with ${events.length} events and next_before_id=${r.json.next_before_id}`,
+    )
+    return `${events.length} events, next_before_id=${r.json.next_before_id}, Load more ${expectMore ? "shown" : "absent"}`
   })
 }
 
@@ -831,7 +1905,7 @@ if (useGroup("O", "Status page")) {
   })
 
   await check(3, "the sidebar links to it from the bottom", async () => {
-    const { ctx, page, problems } = await open("/")
+    const { close, page, problems } = await open("/")
     const link = page.locator("[data-testid=nav-status]")
     await link.waitFor({ state: "visible", timeout: 10000 });
     // It sits in the footer, below the collapsible groups — reachable without
@@ -842,21 +1916,21 @@ if (useGroup("O", "Status page")) {
     await link.click()
     await page.waitForTimeout(1500)
     const path = new URL(page.url()).pathname
-    await ctx.close()
+    await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(inFooter, "the Status link is not in the sidebar footer")
     assert(path === "/status", `clicking Status went to ${path}`)
   })
 
   await check(4, "the page renders live figures", async () => {
-    const { ctx, page, problems } = await open("/status")
+    const { close, page, problems } = await open("/status")
     await page.locator("[data-testid=status-grid]").waitFor({ state: "visible", timeout: 10000 })
     const read = async (id) =>
       (await page.locator(`[data-testid=${id}]`).innerText()).trim()
     const memory = await read("status-memory")
     const assistants = await read("status-assistants")
     const uptime = await read("status-uptime")
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(/\d+(\.\d+)?\s*(KB|MB|GB)/.test(memory), `memory tile reads ${JSON.stringify(memory)}`)
@@ -866,14 +1940,14 @@ if (useGroup("O", "Status page")) {
   })
 
   await check(5, "the detail box identifies the build and the host", async () => {
-    const { ctx, page, problems } = await open("/status")
+    const { close, page, problems } = await open("/status")
     const detail = page.locator("[data-testid=status-detail]")
     await detail.waitFor({ state: "visible", timeout: 10000 })
     const text = (await detail.innerText()).replace(/\s+/g, " ").trim()
     const memory = (await page
       .locator("[data-testid=status-memory]")
       .innerText()).trim()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     // "Compiler go1.27.1" and "Environment Ubuntu 24.04.4 LTS on amd64" — the
@@ -1051,22 +2125,22 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(10, "export downloads a YAML document that import can read", async () => {
-    const res = await fetch(`${BASE}/api/memory/${store}/export`)
-    assert(res.status === 200, `export: ${res.status}`)
-    const ct = res.headers.get("content-type") ?? ""
+    const res = await ctx.request.get(`${BASE}/api/memory/${store}/export`)
+    assert(res.status() === 200, `export: ${res.status()}`)
+    const ct = res.headers()["content-type"] ?? ""
     assert(ct.includes("yaml"), `content-type = ${ct}`)
     const body = await res.text()
     assert(body.includes("format_version"), "no format_version in the export")
     assert(body.includes("e2e probe fact"), "the export is missing a memory that exists")
 
     // Merge-importing what was just exported must change nothing.
-    const back = await fetch(`${BASE}/api/memory/${store}/import?mode=merge`, {
+    const back = await api(`/api/memory/${store}/import?mode=merge`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body,
     })
     assert(back.status === 200, `import: ${back.status}`)
-    const result = await back.json()
+    const result = back.json
     assert(result.memories_created === 0,
       `re-importing created ${result.memories_created} duplicates, want none`)
     return `${body.length} bytes, ${result.memories_skipped} already present`
@@ -1099,16 +2173,16 @@ if (useGroup("N", "Memory curation")) {
   }
 
   await check(11, "the memory page renders the probe domain", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const rows = await card.locator("[data-testid=memory-row]").count()
-    await ctx.close()
+    await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(rows === 3, `${rows} rows in the probe domain, want 3`)
     return `${rows} rows`
   })
 
   await check(12, "retype a memory from the dropdown on its row", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const row = card.locator("[data-testid=memory-row]").first()
     const id = await row.getAttribute("data-memory-id")
 
@@ -1116,7 +2190,7 @@ if (useGroup("N", "Memory curation")) {
     await page.locator('[role=option]:has-text("preference")').first().click()
     // The row re-renders from the refetch, so wait on the stored value.
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     const got = await typeOf(id)
@@ -1125,7 +2199,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(13, "select the whole domain from its header, then retype it", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     assert(
       (await page.locator("[data-testid=bulk-bar]").count()) === 0,
       "the bulk bar is visible with nothing selected",
@@ -1147,7 +2221,7 @@ if (useGroup("N", "Memory curation")) {
     await bar.locator("button[role=combobox]").click()
     await page.locator('[role=option]:has-text("event")').first().click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     for (const id of ids) {
@@ -1158,7 +2232,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(14, "add a memory through the page, tagged origin=user", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     await card.getByRole("button", { name: /Add a memory to e2e-probe/i }).click()
     const form = page.locator("[data-testid=add-memory-form]")
     await form.waitFor({ state: "visible", timeout: 5000 })
@@ -1166,7 +2240,7 @@ if (useGroup("N", "Memory curation")) {
     await form.locator("textarea").fill("written from the browser")
     await form.getByRole("button", { name: "Add", exact: true }).click()
     await page.waitForTimeout(1500)
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     const doc = await api(`/api/memory/${store}`)
@@ -1178,7 +2252,7 @@ if (useGroup("N", "Memory curation")) {
   })
 
   await check(15, "retire from the row, then reveal it with show-retired", async () => {
-    const { ctx, page, problems, card } = await openProbe()
+    const { close, page, problems, card } = await openProbe()
     const row = card.locator("[data-testid=memory-row]").first()
     const id = await row.getAttribute("data-memory-id")
     await row.getByRole("button", { name: /Retire this memory/i }).click()
@@ -1194,7 +2268,7 @@ if (useGroup("N", "Memory curation")) {
     await page.getByRole("button", { name: /Show retired/i }).click()
     await page.waitForTimeout(1500)
     visible = await page.locator(`[data-memory-id="${id}"]`).count()
-    await ctx.close()
+    await close()
 
     assert(problems.length === 0, `console: ${problems[0]}`)
     assert(visible === 1, "show-retired did not reveal the retired memory")
@@ -1218,7 +2292,7 @@ if (useGroup("N", "Memory curation")) {
 // L. Setup wizard
 if (useGroup("L", "Setup wizard")) {
   await check(1, "wizard walks all six steps and reflects the choices", async () => {
-    const { ctx, page } = await open("/setup")
+    const { close, page } = await open("/setup")
     const body0 = await page.locator("body").innerText()
     assert(/Welcome/i.test(body0), "welcome step not shown")
 
@@ -1262,7 +2336,7 @@ if (useGroup("L", "Setup wizard")) {
     await page.waitForTimeout(600)
 
     const review = await page.locator("body").innerText()
-    await ctx.close()
+    await close()
     assert(/Review/i.test(review), "review step not reached")
     assert(review.includes("Alice"), "review did not carry the agent name")
     assert(/CLI/i.test(review), "review did not carry the provider")
@@ -1288,7 +2362,7 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
     ["/api/skills", 200],
     ["/api/devices", 200],
     ["/api/devices/pending", 200],
-    ["/api/webui/token", 200],
+    ["/api/auth/status", 200],
     ["/health", 200],
     ["/ready", 200],
   ]
@@ -1326,6 +2400,220 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
 }
 
 // ----------------------------------------------------------------- report ---
+
+
+// S. Keyboard — every check below drives the page with the keyboard only.
+if (useGroup("S", "Keyboard")) {
+  // focused() describes document.activeElement: an accessible name (aria-label,
+  // aria-labelledby, an associated <label>, an image's alt, text, title or
+  // placeholder), whether a focus ring is painted (outline or box-shadow), and
+  // a per-element id so a walk can tell a repeat from a new stop.
+  const focused = async (page) => {
+    const f = await describeFocus(page)
+    // A control that fades in on focus (transition-opacity) reads as opacity 0
+    // for the first frames; give the transition a moment before judging it.
+    if (!f.body && f.opacity === "0") {
+      await page.waitForTimeout(300)
+      return describeFocus(page)
+    }
+    return f
+  }
+  const describeFocus = (page) =>
+    page.evaluate(() => {
+      const el = document.activeElement
+      if (!el || el === document.body) return { body: true }
+      if (!el.dataset.e2eStop) {
+        window.__e2eStop = (window.__e2eStop || 0) + 1
+        el.dataset.e2eStop = String(window.__e2eStop)
+      }
+      const byId = el.getAttribute("aria-labelledby")
+      const label =
+        el.getAttribute("aria-label") ||
+        (byId && document.getElementById(byId)?.textContent) ||
+        (el.labels && el.labels[0]?.textContent) ||
+        el.querySelector("img[alt]")?.getAttribute("alt") ||
+        el.textContent ||
+        el.getAttribute("title") ||
+        el.getAttribute("placeholder") ||
+        ""
+      const cs = getComputedStyle(el)
+      return {
+        id: el.dataset.e2eStop,
+        tag: el.tagName.toLowerCase(),
+        name: label.trim().replace(/\s+/g, " ").slice(0, 60),
+        ring: (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none"),
+        opacity: cs.opacity,
+        html: el.outerHTML.slice(0, 120).replace(/\s+/g, " "),
+      }
+    })
+
+  // tabUntil presses Tab until pred(stop) holds; null when the tab order
+  // wrapped without a match.
+  const tabUntil = async (page, pred, max = 200) => {
+    let first = null
+    for (let i = 0; i < max; i++) {
+      await page.keyboard.press("Tab")
+      const f = await focused(page)
+      if (f.body) continue
+      if (first === null) first = f.id
+      else if (f.id === first) return null
+      if (pred(f)) return f
+    }
+    return null
+  }
+
+  await check(1, "log in with the keyboard only", async () => {
+    const fresh = await browser.newContext()
+    const page = await fresh.newPage()
+    await page.goto(BASE + "/login", { waitUntil: "networkidle" })
+    let f = await focused(page)
+    for (let i = 0; i < 8 && (f.body || f.tag !== "input"); i++) {
+      await page.keyboard.press("Tab")
+      f = await focused(page)
+    }
+    assert(f.tag === "input", "Tab does not reach the username field")
+    await page.keyboard.type(USER)
+    await page.keyboard.press("Tab")
+    f = await focused(page)
+    assert(f.tag === "input", `Tab from the username lands on ${f.tag} "${f.name}", not the password field`)
+    await page.keyboard.type(PASSWORD)
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(1500)
+    const path = new URL(page.url()).pathname
+    await fresh.close()
+    assert(path !== "/login", "Enter in the password field did not submit the login form")
+  })
+
+  await check(2, "navigate to the Agents page with the keyboard only", async () => {
+    const { close, page } = await open("/")
+    const group = await tabUntil(page, (f) => f.name === "Agents")
+    assert(group, "Tab never reaches the Agents entry in the sidebar")
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(500)
+    if (new URL(page.url()).pathname !== "/agents") {
+      // A disclosure: the first link inside it is the next stop.
+      await page.keyboard.press("Tab")
+      await page.keyboard.press("Enter")
+      await page.waitForTimeout(700)
+    }
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(path === "/agents", `keyboard navigation from the sidebar ended at ${path}`)
+  })
+
+  await check(3, "every page: Tab cycles through all controls with no trap and a focus ring on each", async () => {
+    const problems = []
+    for (const route of ROUTES) {
+      const { close, page } = await open(route)
+      const seen = new Set()
+      let first = null
+      let last = null
+      let noRing = 0
+      let invisible = 0
+      for (let i = 0; i < 260; i++) {
+        await page.keyboard.press("Tab")
+        const f = await focused(page)
+        if (f.body) continue
+        // A date or time input keeps the element focused while Tab moves
+        // between its own parts, so a consecutive repeat is not a trap.
+        if (f.id === last) continue
+        last = f.id
+        if (first === null) first = f.id
+        else if (f.id === first) break
+        if (seen.has(f.id)) {
+          problems.push(`${route}: focus trap at ${f.tag} "${f.name}"`)
+          break
+        }
+        seen.add(f.id)
+        if (!f.ring) noRing++
+        if (f.opacity === "0") invisible++
+      }
+      await close()
+      if (noRing) problems.push(`${route}: ${noRing} focus stop(s) without a focus ring`)
+      if (invisible) problems.push(`${route}: ${invisible} focus stop(s) invisible (opacity 0) while focused`)
+      if (seen.size === 0) problems.push(`${route}: nothing takes focus`)
+    }
+    assert(problems.length === 0, problems.join("; "))
+    return `${ROUTES.length} pages`
+  })
+
+  await check(4, "every focus stop has an accessible name", async () => {
+    const problems = []
+    for (const route of ROUTES) {
+      const { close, page } = await open(route)
+      let first = null
+      let last = null
+      const unnamed = []
+      for (let i = 0; i < 260; i++) {
+        await page.keyboard.press("Tab")
+        const f = await focused(page)
+        if (f.body) continue
+        if (f.id === last) continue
+        last = f.id
+        if (first === null) first = f.id
+        else if (f.id === first) break
+        // A text field is named by its label or placeholder; textContent is
+        // not a name for it, so an unlabelled one is reported too.
+        if (!f.name) unnamed.push(f.html)
+      }
+      await close()
+      if (unnamed.length) problems.push(`${route}: ${unnamed.length} unnamed: ${[...new Set(unnamed)].slice(0, 3).join(" | ")}`)
+    }
+    assert(problems.length === 0, problems.join("\n"))
+    return `${ROUTES.length} pages`
+  })
+
+  await check(5, "Space on a tool checkbox persists the change (on a throwaway agent)", async () => {
+    const ID = "e2e-kbd"
+    const before = await config()
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [] }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      const rail = await tabUntil(page, (f) => f.name === ID)
+      assert(rail, `Tab never reaches the ${ID} entry in the rail`)
+      await page.keyboard.press("Enter")
+      await page.waitForTimeout(400)
+      const box = await tabUntil(page, (f) => f.name === "time_now" || (f.tag === "button" && /time_now/.test(f.name)))
+      assert(box, "Tab never reaches the time_now checkbox")
+      await page.keyboard.press("Space")
+      await page.waitForTimeout(2000)
+      await close()
+      const c = await config()
+      const a = (c.agents.list ?? []).find((x) => x.id === ID)
+      assert(a && Array.isArray(a.tools) && a.tools.includes("time_now"), `tools = ${JSON.stringify(a?.tools)}; Space did not add time_now`)
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
+
+  await check(6, "Add Agent by keyboard: Enter focuses the ID field, Escape cancels", async () => {
+    const { close, page } = await open("/agents")
+    const add = await tabUntil(page, (f) => /Add Agent/i.test(f.name))
+    assert(add, "Tab never reaches the Add Agent button")
+    await page.keyboard.press("Enter")
+    await page.waitForTimeout(400)
+    const f = await focused(page)
+    const idField = !f.body && f.tag === "input" && /Agent ID/i.test(f.name)
+    await page.keyboard.press("Escape")
+    await page.waitForTimeout(400)
+    const still = await page.getByRole("textbox", { name: /Agent ID/i }).count()
+    await close()
+    assert(idField, `after Enter on Add Agent, focus is on ${f.body ? "the page body" : `${f.tag} "${f.name}"`}, not the Agent ID field`)
+    assert(still === 0, "Escape does not close the Add Agent form")
+  })
+}
 
 await browser.close()
 

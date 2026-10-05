@@ -44,6 +44,18 @@ func TestWriteFileAtomic_CreatesParentDirs(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("file not created: %v", err)
 	}
+	if runtime.GOOS != "windows" {
+		// Parents the helper creates are owner-only; callers write under CLAW_HOME.
+		for _, d := range []string{filepath.Join(dir, "nested"), filepath.Join(dir, "nested", "deep")} {
+			fi, err := os.Stat(d)
+			if err != nil {
+				t.Fatalf("stat %s: %v", d, err)
+			}
+			if got := fi.Mode().Perm(); got != 0o700 {
+				t.Errorf("%s mode = %04o, want 0700", d, got)
+			}
+		}
+	}
 }
 
 func TestWriteFileAtomic_OverwritesAtomically_NoTempLeft(t *testing.T) {

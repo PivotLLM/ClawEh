@@ -56,9 +56,13 @@ func (m *mockExternalTool) ExternalName() string { return m.external }
 
 // mockAllowChecker only permits the exact internal names it is given, mirroring
 // how AgentConfig routes bare vs mcp_ names through the real allow-lists.
-type mockAllowChecker struct{ allowed map[string]bool }
+type mockAllowChecker struct {
+	allowed map[string]bool
+	denied  map[string]bool
+}
 
-func (c mockAllowChecker) IsToolAllowed(name string) bool { return c.allowed[name] }
+func (c mockAllowChecker) IsToolAllowed(name string) bool { return c.allowed[name] && !c.denied[name] }
+func (c mockAllowChecker) IsToolDenied(name string) bool  { return c.denied[name] }
 
 // --- helpers ---
 

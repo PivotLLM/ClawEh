@@ -2,19 +2,23 @@ package device
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
-// stubQuerier is an AgentQuerier that reports a fixed default agent and session
-// mode; the read methods are unused by session-scope resolution.
+// stubQuerier is an AgentQuerier with the agents amber, wendy and bob, a fixed
+// default agent and session mode; History is unused by session-scope resolution.
 type stubQuerier struct {
 	defaultAgent string
 	mode         string
 }
 
 func (q stubQuerier) Agents() ([]DeviceAgentInfo, string, string) {
-	return nil, q.defaultAgent, "agent:" + q.defaultAgent + ":main"
+	agents := []DeviceAgentInfo{{ID: "amber"}, {ID: "wendy"}, {ID: "bob"}}
+	return agents, q.defaultAgent, "agent:" + q.defaultAgent + ":main"
 }
 func (q stubQuerier) DefaultAgentID() string                { return q.defaultAgent }
 func (q stubQuerier) SessionMode() string                   { return q.mode }
@@ -34,13 +38,23 @@ func newScopeServer(t *testing.T, mode string) *Server {
 	return &Server{store: st, querier: stubQuerier{defaultAgent: "amber", mode: mode}}
 }
 
+// scopeKey resolves lc's declared session key and fails the test on a refusal.
+func scopeKey(t *testing.T, s *Server, lc *liveConn) string {
+	t.Helper()
+	got, err := s.sessionScopeKeyFor(context.Background(), lc, lc.sessionKey)
+	if err != nil {
+		t.Fatalf("sessionScopeKeyFor(%q): %v", lc.sessionKey, err)
+	}
+	return got
+}
+
 // Under unified, a node client (the R1 sends the bare "main" sentinel) joins the
 // default agent's main conversation rather than a per-device one.
 func TestSessionScopeKeyUnifiedNodeClient(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:amber:main" {
+	if got := scopeKey(t, s, lc); got != "agent:amber:main" {
 		t.Fatalf("session key = %q, want agent:amber:main", got)
 	}
 }
@@ -49,8 +63,8 @@ func TestSessionScopeKeyUnifiedNodeClient(t *testing.T) {
 // history, same memory.
 func TestSessionScopeKeyUnifiedDevicesShareSession(t *testing.T) {
 	s := newScopeServer(t, "unified")
-	a := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"})
-	b := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev2", sessionKey: "main"})
+	a := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: "main"})
+	b := scopeKey(t, s, &liveConn{deviceID: "dev2", sessionKey: "main"})
 
 	if a != b {
 		t.Fatalf("devices must share a session under unified: %q != %q", a, b)
@@ -63,7 +77,7 @@ func TestSessionScopeKeyUnifiedOperatorClient(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
 
-	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:wendy:main" {
+	if got := scopeKey(t, s, lc); got != "agent:wendy:main" {
 		t.Fatalf("session key = %q, want agent:wendy:main", got)
 	}
 }
@@ -87,23 +101,38 @@ func TestSessionScopeKeyUnifiedHonorsDeviceAssignment(t *testing.T) {
 	}
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:wendy:main" {
+	if got := scopeKey(t, s, lc); got != "agent:wendy:main" {
 		t.Fatalf("session key = %q, want agent:wendy:main", got)
 	}
 }
 
-// With an isolating mode the previous behavior stands: per-device for node
-// clients, verbatim for operator clients.
+// With an isolating mode a node client gets its own per-device session, and an
+// operator client's agent-scoped key selects the agent for its own per-device
+// session; any other session key is refused.
 func TestSessionScopeKeyIsolatingMode(t *testing.T) {
 	s := newScopeServer(t, "per-user")
 
-	node := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"})
+	node := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: "main"})
 	if node != "agent:amber:device:dev1" {
 		t.Errorf("node key = %q, want agent:amber:device:dev1", node)
 	}
-	op := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"})
-	if op != "agent:wendy:slack:work" {
-		t.Errorf("operator key = %q, want it honored verbatim", op)
+	op := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:main"})
+	if op != "agent:wendy:device:dev1" {
+		t.Errorf("operator key = %q, want agent:wendy:device:dev1", op)
+	}
+	if _, err := s.sessionScopeKeyFor(context.Background(), &liveConn{deviceID: "dev1"}, "agent:wendy:slack:work"); !errors.Is(err, routing.ErrDeviceSessionKeyNotAllowed) {
+		t.Errorf("foreign key: err = %v, want ErrDeviceSessionKeyNotAllowed", err)
+	}
+}
+
+// A key naming an agent that does not exist is refused in every mode, before
+// anything reads a session.
+func TestSessionScopeKeyUnknownAgent(t *testing.T) {
+	for _, mode := range []string{"unified", "per-platform"} {
+		s := newScopeServer(t, mode)
+		if _, err := s.sessionScopeKeyFor(context.Background(), &liveConn{deviceID: "dev1"}, "agent:nobody:main"); !errors.Is(err, errUnknownAgent) {
+			t.Errorf("%s: err = %v, want errUnknownAgent", mode, err)
+		}
 	}
 }
 
@@ -113,10 +142,13 @@ func TestHistoryKeyMatchesSendKey(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
 
-	send := s.sessionScopeKey(context.Background(), lc)
+	send := scopeKey(t, s, lc)
 	// The operator client asks for its own key; resolution must land on the same
 	// session the turn was written to.
-	history := s.sessionScopeKeyFor(context.Background(), lc, "agent:wendy:slack:work")
+	history, err := s.sessionScopeKeyFor(context.Background(), lc, "agent:wendy:slack:work")
+	if err != nil {
+		t.Fatalf("sessionScopeKeyFor: %v", err)
+	}
 	if send != history {
 		t.Fatalf("history key %q != send key %q", history, send)
 	}
@@ -136,7 +168,7 @@ func TestSessionScopeKeyWithoutQuerier(t *testing.T) {
 	}()
 	s := &Server{store: st}
 
-	if got := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"}); got != "agent:main:main" {
+	if got := scopeKey(t, s, &liveConn{deviceID: "dev1", sessionKey: "main"}); got != "agent:main:main" {
 		t.Fatalf("session key = %q, want agent:main:main", got)
 	}
 }

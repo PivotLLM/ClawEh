@@ -6,10 +6,13 @@ import {
   IconBrain,
   IconCpu,
   IconDeviceMobile,
+  IconHistory,
   IconListDetails,
+  IconLogout,
   IconMessageCircle,
   IconMessages,
   IconMicrophone,
+  IconNetwork,
   IconPlugConnected,
   IconReport,
   IconRobot,
@@ -23,6 +26,7 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
+import { logout } from "@/api/auth"
 import { getVersion } from "@/api/system"
 import {
   Collapsible,
@@ -42,6 +46,8 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { useSidebarChannels } from "@/hooks/use-sidebar-channels"
+import { LOGIN_PATH } from "@/lib/auth-redirect"
+import { teardownChatStore } from "@/lib/claw-chat-controller"
 
 interface NavSubItem {
   title: string
@@ -68,11 +74,6 @@ interface NavGroup {
 }
 
 const baseNavGroups: Omit<NavGroup, "items">[] = [
-  {
-    label: "navigation.chat",
-    icon: IconMessageCircle,
-    defaultOpen: false,
-  },
   {
     label: "navigation.model_group",
     icon: IconCpu,
@@ -105,21 +106,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       .catch(() => {})
   }, [])
 
+  // Sign out: end the server session, drop the chat socket, and load the
+  // login page fresh so no authenticated state lingers in memory.
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await logout()
+    } catch {
+      // On failure the session may still be live; the login page reports
+      // that through /api/auth/status and sends the user back in.
+    }
+    teardownChatStore()
+    window.location.assign(LOGIN_PATH)
+  }, [])
+
   const navGroups: NavGroup[] = React.useMemo(() => {
     return [
       {
-        ...baseNavGroups[0],
-        items: [
-          {
-            title: "navigation.chat",
-            url: "/",
-            icon: IconMessageCircle,
-            translateTitle: true,
-          },
-        ],
-      },
-      {
-        ...baseNavGroups[2],
+        ...baseNavGroups[1],
         items: [
           {
             title: "navigation.agents",
@@ -154,7 +157,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         ],
       },
       {
-        ...baseNavGroups[1],
+        ...baseNavGroups[0],
         items: [
           {
             title: "navigation.providers",
@@ -184,7 +187,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           .sort((a, b) => a.title.localeCompare(b.title)),
       },
       {
-        ...baseNavGroups[3],
+        ...baseNavGroups[2],
         items: [
           {
             title: "Devices",
@@ -199,8 +202,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             translateTitle: false,
           },
           {
-            title: "navigation.config",
-            url: "/config",
+            title: "navigation.network",
+            url: "/network",
+            icon: IconNetwork,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.system",
+            url: "/system",
             icon: IconSettings,
             translateTitle: true,
           },
@@ -228,6 +237,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             icon: IconListDetails,
             translateTitle: true,
           },
+          {
+            title: "navigation.audit",
+            url: "/audit",
+            icon: IconHistory,
+            translateTitle: true,
+          },
         ],
       },
     ]
@@ -239,6 +254,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       className="bg-background border-r-border/20 border-r pt-3"
     >
       <SidebarContent className="bg-background">
+        {/* Chat is a single page, so it is a direct link rather than a
+            disclosure group with one child. */}
+        <SidebarMenu className="mb-1 px-2">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={currentPath === "/"}
+              tooltip={t("navigation.chat")}
+              className={`h-9 px-3 ${currentPath === "/" ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+            >
+              <Link to="/" data-testid="nav-chat">
+                <IconMessageCircle
+                  className={`size-4 ${currentPath === "/" ? "opacity-100" : "opacity-60"}`}
+                />
+                <span>{t("navigation.chat")}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         {navGroups.map((group) => (
           <Collapsible
             key={group.label}
@@ -401,8 +435,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <div className="text-muted-foreground px-3 pb-2 text-xs">
-          ClawEh{version ? ` v${version}` : ""}
+        <div className="text-muted-foreground flex items-center justify-between px-3 pb-2 text-xs">
+          <span>ClawEh{version ? ` v${version}` : ""}</span>
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            title={t("auth.logout")}
+            data-testid="nav-logout"
+            className="hover:text-foreground flex items-center gap-1 rounded px-1 py-0.5 transition-colors"
+          >
+            <IconLogout className="size-3.5" />
+            <span>{t("auth.logout")}</span>
+          </button>
         </div>
       </SidebarFooter>
       <SidebarRail />

@@ -17,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/tools/untrusted"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -789,7 +790,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *tools
 	// Silent: the model's final answer presents the results; the raw search
 	// payload is not streamed to the user as a separate message.
 	return &tools.ToolResult{
-		ForLLM: result,
+		ForLLM: untrusted.Wrap(result),
 		Silent: true,
 	}
 }
@@ -831,6 +832,9 @@ func NewWebFetchToolWithProxy(maxChars int, proxy string, fetchLimitBytes int64)
 		}
 		if isObviousPrivateHost(req.URL.Hostname()) {
 			return errors.New("redirect target is private or local network host")
+		}
+		if proxy != "" {
+			return checkProxiedTarget(req.Context(), req.URL.Hostname())
 		}
 		return nil
 	}
@@ -895,6 +899,12 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	hostname := parsedURL.Hostname()
 	if isObviousPrivateHost(hostname) {
 		return tools.ErrorResult("fetching private or local network hosts is not allowed")
+	}
+	// With a proxy the dial-time guard sees the proxy's address, not the target's.
+	if t.proxy != "" {
+		if err = checkProxiedTarget(ctx, hostname); err != nil {
+			return tools.ErrorResult(err.Error())
+		}
 	}
 
 	maxChars := t.maxChars
@@ -967,6 +977,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if truncated {
 		text = text[:maxChars]
 	}
+	// Neutralise before JSON encoding: the encoder escapes '<' and '>', which
+	// would hide control tokens from the wrapper's pass over the encoded result.
+	text = untrusted.Neutralise(text)
 
 	result := map[string]any{
 		"url":       urlStr,
@@ -988,7 +1001,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	// Silent: the "Fetched N bytes…" status is telemetry, not user content.
 	// The model's final answer carries the fetched information.
 	return &tools.ToolResult{
-		ForLLM: string(resultJSON),
+		ForLLM: untrusted.Wrap(string(resultJSON)),
 		Silent: true,
 	}
 }
@@ -1078,6 +1091,35 @@ func newSafeDialContext(dialer *net.Dialer) func(context.Context, string, string
 	}
 }
 
+// lookupIPAddr resolves a hostname; tests replace it to simulate DNS answers.
+var lookupIPAddr = net.DefaultResolver.LookupIPAddr
+
+// checkProxiedTarget resolves host and rejects it if any address is private or
+// restricted. It is only used when a proxy is configured: the proxy makes the
+// real connection, so newSafeDialContext checks the proxy's address and never
+// sees the target. This is a pre-flight check, not a connect-time one, so a
+// DNS-rebinding window remains (the proxy resolves the name again and may get
+// a different answer); that is accepted — the goal is to stop obvious private
+// targets. A resolution failure is not fatal: a proxy-only network may have no
+// local DNS for the target, and blocking there would break every proxied fetch.
+func checkProxiedTarget(ctx context.Context, host string) error {
+	if allowPrivateWebFetchHosts.Load() {
+		return nil
+	}
+	ipAddrs, err := lookupIPAddr(ctx, host)
+	if err != nil {
+		logger.DebugCF("web", "proxied target did not resolve locally; deferring to proxy",
+			map[string]any{"host": host, "error": err.Error()})
+		return nil //nolint:nilerr // no local answer is not a private target; the proxy resolves it
+	}
+	for _, ipAddr := range ipAddrs {
+		if isPrivateOrRestrictedIP(ipAddr.IP) {
+			return fmt.Errorf("fetching private or local network hosts is not allowed (%s resolves to %s)", host, ipAddr.IP)
+		}
+	}
+	return nil
+}
+
 // isObviousPrivateHost performs a lightweight, no-DNS check for obviously private hosts.
 // It catches localhost, literal private IPs, and empty hosts. It does NOT resolve DNS —
 // the real SSRF guard is newSafeDialContext which checks IPs at connect time.
@@ -1105,7 +1147,9 @@ func isObviousPrivateHost(host string) bool {
 
 // isPrivateOrRestrictedIP returns true for IPs that should never be reached via web_fetch:
 // RFC 1918, loopback, link-local (incl. cloud metadata 169.254.x.x), carrier-grade NAT,
-// IPv6 unique-local (fc00::/7), 6to4 (2002::/16), and Teredo (2001:0000::/32).
+// IETF protocol assignments (192.0.0.0/24), benchmarking (198.18.0.0/15), reserved
+// (240.0.0.0/4), IPv6 unique-local (fc00::/7), 6to4 (2002::/16), Teredo (2001:0000::/32),
+// and NAT64 (64:ff9b::/96). IPv4-mapped IPv6 forms are handled by To4.
 func isPrivateOrRestrictedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -1124,7 +1168,10 @@ func isPrivateOrRestrictedIP(ip net.IP) bool {
 			(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
 			(ip4[0] == 192 && ip4[1] == 168) ||
 			(ip4[0] == 169 && ip4[1] == 254) ||
-			(ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127) {
+			(ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127) ||
+			(ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 0) ||
+			(ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19)) ||
+			ip4[0] >= 240 {
 			return true
 		}
 		return false
@@ -1144,6 +1191,12 @@ func isPrivateOrRestrictedIP(ip net.IP) bool {
 		if ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x00 && ip[3] == 0x00 {
 			client := net.IPv4(ip[12]^0xff, ip[13]^0xff, ip[14]^0xff, ip[15]^0xff)
 			return isPrivateOrRestrictedIP(client)
+		}
+		// NAT64 well-known prefix (64:ff9b::/96): a translator would forward to the
+		// embedded IPv4 at bytes [12:16], so block the prefix outright.
+		if ip[0] == 0x00 && ip[1] == 0x64 && ip[2] == 0xff && ip[3] == 0x9b &&
+			bytes.Equal(ip[4:12], make([]byte, 8)) {
+			return true
 		}
 	}
 

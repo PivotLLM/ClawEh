@@ -226,7 +226,7 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 		channels.WithReasoningChannelID(cfg.ReasoningChannelID),
 	)
 
-	return &MatrixChannel{
+	ch := &MatrixChannel{
 		BaseChannel:       base,
 		client:            client,
 		config:            cfg,
@@ -236,7 +236,73 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 		roomKindCache:     newRoomKindCache(roomKindCacheMaxEntries, roomKindCacheTTL),
 		localpartMentionR: localpartMentionRegexp(matrixLocalpart(client.UserID)),
 		typingMu:          sync.Mutex{},
-	}, nil
+	}
+	client.Syncer = healthSyncer{DefaultSyncer: syncer, ch: ch}
+	return ch, nil
+}
+
+// healthSyncer reports each /sync outcome to the channel's outage tracker.
+// mautrix retries a failed /sync itself (every 10s); only the errors it treats
+// as fatal end SyncWithContext, and runSync handles those.
+type healthSyncer struct {
+	*mautrix.DefaultSyncer
+	ch *MatrixChannel
+}
+
+func (s healthSyncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, since string) error {
+	s.ch.ReportConnected()
+	return s.DefaultSyncer.ProcessResponse(ctx, res, since)
+}
+
+func (s healthSyncer) OnFailedSync(res *mautrix.RespSync, err error) (time.Duration, error) {
+	wait, fatal := s.DefaultSyncer.OnFailedSync(res, err)
+	if fatal == nil {
+		s.ch.ReportConnFailure(err)
+	}
+	return wait, fatal
+}
+
+// runSync keeps the Matrix sync running until the channel stops, restarting it
+// with backoff whenever it ends. A revoked access token cannot be fixed by
+// retrying: it alerts at once, and the loop keeps retrying at its slowest rate
+// in case the token is restored.
+func (c *MatrixChannel) runSync() {
+	var backoff time.Duration
+	for {
+		err := c.client.SyncWithContext(c.ctx)
+		if c.ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			err = errors.New("sync stopped")
+		}
+		if errors.Is(err, mautrix.MUnknownToken) {
+			backoff = channels.ConnRetryMax
+			logger.ErrorCF("matrix", "Matrix rejected the access token", map[string]any{
+				"error": err.Error(),
+			})
+			c.Alert(alerter.Alert{
+				Title:       "Channel credentials rejected",
+				Description: c.Name() + ": the homeserver rejected the access token; no messages are received until it is replaced",
+				Details:     err.Error(),
+			})
+		} else {
+			if c.ConnDownSince().IsZero() {
+				backoff = 0 // it was working until now: retry fast
+			}
+			backoff = channels.NextConnRetry(backoff)
+			c.ReportConnFailure(err)
+			logger.WarnCF("matrix", "Matrix sync stopped; restarting", map[string]any{
+				"error": err.Error(),
+				"retry": backoff.String(),
+			})
+		}
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+	}
 }
 
 func (c *MatrixChannel) Start(ctx context.Context) error {
@@ -252,18 +318,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 	c.SetRunning(true)
 	go c.runRoomKindCacheJanitor(runCtx)
 
-	go func() {
-		if err := c.client.SyncWithContext(c.ctx); err != nil && c.ctx.Err() == nil {
-			logger.ErrorCF("matrix", "Matrix sync stopped unexpectedly", map[string]any{
-				"error": err.Error(),
-			})
-			c.Alert(alerter.Alert{
-				Title:       "Channel receive loop stopped",
-				Description: c.Name() + ": Matrix sync stopped (a revoked access token stops it for good); no messages are received until the gateway is restarted",
-				Details:     err.Error(),
-			})
-		}
-	}()
+	go c.runSync()
 
 	logger.InfoC("matrix", "Matrix channel started")
 	return nil

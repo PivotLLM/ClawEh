@@ -337,10 +337,8 @@ func (al *AgentLoop) buildCommandsRuntime(
 		}
 		if opts != nil {
 			sessionKey := opts.SessionKey
-			rt.CancelPending = func() int {
-				cs := al.getOrCreateCancelState(sessionKey)
-				cs.pending.Store(false)
-				return int(cs.skipCount.Swap(0))
+			rt.CancelPending = func() (bool, int) {
+				return al.takeCancelResult(sessionKey)
 			}
 		}
 		rt.RetriggerLastMessage = func(ctx context.Context) error {

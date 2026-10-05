@@ -19,7 +19,7 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 		t.Fatalf("CreateProvider(claude-cli) error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*ClaudeCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(claude-cli) returned %T, want *ClaudeCliProvider", provider)
 	}
@@ -35,19 +35,18 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		{ModelName: "claude-cli", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("claude-cli")
-	cfg.Agents.BaseDir = ""
 
 	provider, _, err := CreateProvider(cfg)
 	if err != nil {
 		t.Fatalf("CreateProvider error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*ClaudeCliProvider)
 	if !ok {
 		t.Fatalf("returned %T, want *ClaudeCliProvider", provider)
 	}
-	if cliProvider.Workspace() != "." {
-		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), ".")
+	if cliProvider.Workspace() != cfg.CLIPath() {
+		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), cfg.CLIPath())
 	}
 }
 
@@ -64,7 +63,7 @@ func TestCreateProvider_CursorCli(t *testing.T) {
 		t.Fatalf("CreateProvider(cursor-cli) error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*CursorCliProvider)
+	cliProvider, ok := unwrapCLI(provider).(*CursorCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(cursor-cli) returned %T, want *CursorCliProvider", provider)
 	}
@@ -86,7 +85,7 @@ func TestCreateProvider_AntigravityCli(t *testing.T) {
 		t.Fatalf("CreateProvider(antigravity-cli) error = %v", err)
 	}
 
-	agyProvider, ok := provider.(*AntigravityCliProvider)
+	agyProvider, ok := unwrapCLI(provider).(*AntigravityCliProvider)
 	if !ok {
 		t.Fatalf("CreateProvider(antigravity-cli) returned %T, want *AntigravityCliProvider", provider)
 	}
@@ -111,7 +110,7 @@ func TestCreateProvider_AntigravityCliWithModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider(antigravity-cli/gemini-2.5-flash) error = %v", err)
 	}
-	if _, ok := provider.(*AntigravityCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*AntigravityCliProvider); !ok {
 		t.Fatalf("CreateProvider returned %T, want *AntigravityCliProvider", provider)
 	}
 	// modelID should carry through the actual model name
@@ -122,7 +121,6 @@ func TestCreateProvider_AntigravityCliWithModel(t *testing.T) {
 
 func TestCreateProvider_AntigravityCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Agents.BaseDir = "" // clear base dir so the "." fallback is exercised
 	cfg.Providers = []config.Provider{{Name: "antigravity-cli", Protocol: "antigravity-cli"}}
 	cfg.Models = []config.ModelConfig{
 		{ModelName: "antigravity-cli", Model: "antigravity-cli", Provider: "antigravity-cli", Enabled: true},
@@ -133,12 +131,12 @@ func TestCreateProvider_AntigravityCliDefaultWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider error = %v", err)
 	}
-	agyProvider, ok := provider.(*AntigravityCliProvider)
+	agyProvider, ok := unwrapCLI(provider).(*AntigravityCliProvider)
 	if !ok {
 		t.Fatalf("returned %T, want *AntigravityCliProvider", provider)
 	}
-	if agyProvider.Workspace() != "." {
-		t.Errorf("workspace = %q, want %q (default)", agyProvider.Workspace(), ".")
+	if agyProvider.Workspace() != cfg.CLIPath() {
+		t.Errorf("workspace = %q, want %q (default)", agyProvider.Workspace(), cfg.CLIPath())
 	}
 }
 
@@ -161,7 +159,7 @@ func TestCreateProvider_GeminiCliIsAnAliasForAntigravity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a config naming gemini-cli no longer starts: %v", err)
 	}
-	if _, ok := provider.(*AntigravityCliProvider); !ok {
+	if _, ok := unwrapCLI(provider).(*AntigravityCliProvider); !ok {
 		t.Fatalf("gemini-cli produced %T, want *AntigravityCliProvider", provider)
 	}
 	if modelID != "gemini-2.5-pro" {
@@ -175,6 +173,33 @@ func TestGeminiCliStillCountsAsACLIProvider(t *testing.T) {
 	for _, proto := range []string{"antigravity-cli", "gemini-cli"} {
 		if !config.IsCLIProtocol(proto) {
 			t.Errorf("IsCLIProtocol(%q) = false; the MCP host would not auto-start", proto)
+		}
+	}
+}
+
+// The dispatcher, which serves every agent turn, gives a model with no
+// workspace the same <CLAW_HOME>/cli working directory, and leaves a model's
+// own workspace alone.
+func TestProviderDispatcher_CLIWorkspace(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "claude-cli", Protocol: "claude-cli"}}
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "plain", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
+		{ModelName: "own", Model: "claude-sonnet", Provider: "claude-cli", Workspace: "/test/ws", Enabled: true},
+	}
+	d := NewProviderDispatcher(cfg)
+
+	for alias, want := range map[string]string{"plain": cfg.CLIPath(), "own": "/test/ws"} {
+		p, err := d.Get(alias)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", alias, err)
+		}
+		cli, ok := unwrapCLI(p).(*ClaudeCliProvider)
+		if !ok {
+			t.Fatalf("Get(%s) returned %T", alias, p)
+		}
+		if cli.Workspace() != want {
+			t.Errorf("%s workspace = %q, want %q", alias, cli.Workspace(), want)
 		}
 	}
 }

@@ -17,13 +17,8 @@ type Logger struct {
 	// it returns true for the formatted message, the line is logged at WARN
 	// instead of ERROR. Used to demote a 3rd-party library's recoverable,
 	// auto-retried transient errors (e.g. telego long-poll getUpdates 5xx) so
-	// they don't read as fatal or trip alerts.
+	// they don't read as fatal.
 	errorDowngrade func(msg string) bool
-	// errorHook, when non-nil, is called with the formatted message for every
-	// Error/Errorf that is NOT downgraded — the genuine faults. Used to raise an
-	// alert from a 3rd-party library that reports failures only through its
-	// logger.
-	errorHook func(msg string)
 }
 
 // WithContentSensitive marks the logger so that its debug-level output is
@@ -41,13 +36,6 @@ func (b *Logger) WithErrorDowngrade(fn func(msg string) bool) *Logger {
 	return b
 }
 
-// WithErrorHook installs fn, called with the formatted message for every
-// Error/Errorf that the downgrade predicate does not demote. Pass nil to clear.
-func (b *Logger) WithErrorHook(fn func(msg string)) *Logger {
-	b.errorHook = fn
-	return b
-}
-
 // errorLevel returns WARN when the downgrade predicate matches msg, else ERROR.
 func (b *Logger) errorLevel(msg string) LogLevel {
 	if b.errorDowngrade != nil && b.errorDowngrade(msg) {
@@ -56,14 +44,9 @@ func (b *Logger) errorLevel(msg string) LogLevel {
 	return ERROR
 }
 
-// logError logs msg at its downgraded-or-not level and, when it stays at
-// ERROR, hands it to the error hook.
+// logError logs msg at its downgraded-or-not level.
 func (b *Logger) logError(msg string) {
-	level := b.errorLevel(msg)
-	logMessage(level, b.component, msg, nil)
-	if level == ERROR && b.errorHook != nil {
-		b.errorHook(msg)
-	}
+	logMessage(b.errorLevel(msg), b.component, msg, nil)
 }
 
 // Debug logs debug messages

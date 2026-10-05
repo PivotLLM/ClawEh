@@ -12,17 +12,21 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as DevicesRouteImport } from './routes/devices'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as NetworkRouteImport } from './routes/network'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as ReportRouteImport } from './routes/report'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StatusRouteImport } from './routes/status'
+import { Route as SystemRouteImport } from './routes/system'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
@@ -47,6 +51,11 @@ const AgentsRoute = AgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuditRoute = AuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
   id: '/channels',
   path: '/channels',
@@ -60,6 +69,11 @@ const ConfigRoute = ConfigRouteImport.update({
 const DevicesRoute = DevicesRouteImport.update({
   id: '/devices',
   path: '/devices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsRoute = LogsRouteImport.update({
@@ -82,6 +96,11 @@ const ModelsRoute = ModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NetworkRoute = NetworkRouteImport.update({
+  id: '/network',
+  path: '/network',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -100,6 +119,11 @@ const SetupRoute = SetupRouteImport.update({
 const StatusRoute = StatusRouteImport.update({
   id: '/status',
   path: '/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemRoute = SystemRouteImport.update({
+  id: '/system',
+  path: '/system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VoiceRoute = VoiceRouteImport.update({
@@ -148,16 +172,20 @@ export interface FileRoutesByFullPath {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -172,16 +200,20 @@ export interface FileRoutesByTo {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -197,16 +229,20 @@ export interface FileRoutesById {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
+  '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
+  '/network': typeof NetworkRoute
   '/providers': typeof ProvidersRoute
   '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
+  '/system': typeof SystemRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -223,16 +259,20 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -247,16 +287,20 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -271,16 +315,20 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
+    | '/login'
     | '/logs'
     | '/mcp'
     | '/memory'
     | '/models'
+    | '/network'
     | '/providers'
     | '/report'
     | '/setup'
     | '/status'
+    | '/system'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -296,16 +344,20 @@ export interface RootRouteChildren {
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
   AgentRoute: typeof AgentRouteWithChildren
   AgentsRoute: typeof AgentsRoute
+  AuditRoute: typeof AuditRoute
   ConfigRoute: typeof ConfigRouteWithChildren
   DevicesRoute: typeof DevicesRoute
+  LoginRoute: typeof LoginRoute
   LogsRoute: typeof LogsRoute
   McpRoute: typeof McpRouteWithChildren
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
+  NetworkRoute: typeof NetworkRoute
   ProvidersRoute: typeof ProvidersRoute
   ReportRoute: typeof ReportRoute
   SetupRoute: typeof SetupRoute
   StatusRoute: typeof StatusRoute
+  SystemRoute: typeof SystemRoute
   VoiceRoute: typeof VoiceRoute
 }
 
@@ -332,6 +384,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/audit': {
+      id: '/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/channels': {
       id: '/channels'
       path: '/channels'
@@ -351,6 +410,13 @@ declare module '@tanstack/react-router' {
       path: '/devices'
       fullPath: '/devices'
       preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs': {
@@ -381,6 +447,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/network': {
+      id: '/network'
+      path: '/network'
+      fullPath: '/network'
+      preLoaderRoute: typeof NetworkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/providers': {
       id: '/providers'
       path: '/providers'
@@ -407,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/status'
       fullPath: '/status'
       preLoaderRoute: typeof StatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/system': {
+      id: '/system'
+      path: '/system'
+      fullPath: '/system'
+      preLoaderRoute: typeof SystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/voice': {
@@ -522,16 +602,20 @@ const rootRouteChildren: RootRouteChildren = {
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
   AgentRoute: AgentRouteWithChildren,
   AgentsRoute: AgentsRoute,
+  AuditRoute: AuditRoute,
   ConfigRoute: ConfigRouteWithChildren,
   DevicesRoute: DevicesRoute,
+  LoginRoute: LoginRoute,
   LogsRoute: LogsRoute,
   McpRoute: McpRouteWithChildren,
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
+  NetworkRoute: NetworkRoute,
   ProvidersRoute: ProvidersRoute,
   ReportRoute: ReportRoute,
   SetupRoute: SetupRoute,
   StatusRoute: StatusRoute,
+  SystemRoute: SystemRoute,
   VoiceRoute: VoiceRoute,
 }
 export const routeTree = rootRouteImport

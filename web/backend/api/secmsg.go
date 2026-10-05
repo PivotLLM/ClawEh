@@ -74,7 +74,7 @@ func findSecMsgDaemon(cfg *config.Config, name string) (config.SecMsgConfig, boo
 //
 //	GET /api/channels/secmsg/{name}/accounts
 func (h *Handler) handleSecMsgAccounts(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.LoadConfig(h.configPath)
+	cfg, err := h.currentConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load config"})
 		return

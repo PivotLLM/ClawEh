@@ -16,8 +16,13 @@ type Tool interface {
 // ToolAllowChecker is implemented by any type that can determine whether a
 // named tool is permitted. config.AgentConfig satisfies this interface.
 // Keeping it here avoids importing config into tools.
+//
+// IsToolAllowed is the full per-tool decision (allow list minus deny list).
+// IsToolDenied is the deny-only half, applied even to suite tools that are
+// exempt from the allow list, so an explicit deny wins however a tool arrived.
 type ToolAllowChecker interface {
 	IsToolAllowed(name string) bool
+	IsToolDenied(name string) bool
 }
 
 // --- Request-scoped tool context (channel / chatID / allow checker) ---

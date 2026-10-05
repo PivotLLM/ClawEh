@@ -66,9 +66,13 @@ at.
 
 ## Token model (shared by both endpoints)
 
-- One `sessionTokenStore`. `Resolve(token)` returns the `{agentID, sessionKey,
+- One `SessionTokenStore`. `Resolve(token)` returns the `{agentID, sessionKey,
   archiveDir, channel, chatID}` record regardless of how the token arrived
   (parameter on `/internal`, or `Authorization: Bearer` on `/mcp`).
+- The store lives for the whole process, not for one MCP server: the gateway
+  creates it once and hands it to every server it builds (at start and on each
+  config reload), so a reload does not invalidate the tokens already rendered
+  into running turns and Maestro workers.
 - A bearer token **is** a session token, just transported in the header — not a
   new credential type. The same `SST<64 hex>` value is accepted both ways.
 - Issuance: `Issue()` mints per-session tokens; `Register()` pre-mints a known
@@ -112,7 +116,7 @@ ACL behavior, differing only by the `session_token` parameter.
 
 The tools an external MCP server offers are listed when ClawEh connects to it,
 registered onto every agent whose `mcp_tools` admits them, and published by the
-host catalogue above. That list is refreshed, without a gateway restart, when:
+host catalogue above. That list is refreshed, without restarting ClawEh, when:
 
 - the server sends `notifications/tools/list_changed` (on a streamable HTTP
   connection under protocol 2026-07-28 ClawEh opens a `subscriptions/listen`

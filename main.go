@@ -13,7 +13,9 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/admincmd"
 	"github.com/PivotLLM/ClawEh/internal/agent"
+	"github.com/PivotLLM/ClawEh/internal/backup"
 	"github.com/PivotLLM/ClawEh/internal/cron"
 	"github.com/PivotLLM/ClawEh/internal/devicegw"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
@@ -25,6 +27,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/skills"
 	"github.com/PivotLLM/ClawEh/internal/status"
 	"github.com/PivotLLM/ClawEh/internal/test"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/internal/token"
 	"github.com/PivotLLM/ClawEh/internal/upgrade"
 	"github.com/PivotLLM/ClawEh/internal/version"
@@ -47,6 +50,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 	cmd.Flags().AddFlagSet(defaultCmd.Flags())
 
 	cmd.AddCommand(
+		admincmd.NewAdminCommand(),
 		agent.NewAgentCommand(),
 		defaultCmd,
 		gateway.NewACPCommand(),
@@ -61,7 +65,10 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		network.NewNetworkCommand(),
 		test.NewTestCommand(),
 		token.NewTokenCommand(),
+		tlscert.NewTLSCommand(),
 		devicegw.NewDevicesCommand(),
+		backup.NewBackupCommand(),
+		backup.NewRestoreCommand(),
 		upgrade.NewUpgradeCommand(),
 		version.NewVersionCommand(),
 	)

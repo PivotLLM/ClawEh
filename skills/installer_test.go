@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +292,17 @@ func TestSkillInstaller_DownloadFile(t *testing.T) {
 
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("file permissions = %o, want %o", info.Mode().Perm(), 0o600)
+		}
+
+		// The skill directory it created is owner-only too.
+		if runtime.GOOS != "windows" {
+			dirInfo, err := os.Stat(filepath.Dir(localPath))
+			if err != nil {
+				t.Fatalf("failed to stat skill dir: %v", err)
+			}
+			if dirInfo.Mode().Perm() != 0o700 {
+				t.Errorf("skill dir permissions = %o, want %o", dirInfo.Mode().Perm(), 0o700)
+			}
 		}
 	})
 

@@ -39,7 +39,7 @@ func newChangeCapturingManager(t *testing.T) (*Manager, chan string) {
 	changed := make(chan string, 8)
 	mgr.SetToolsChangedHandler(func(server string) { changed <- server })
 	t.Cleanup(func() {
-		if err := mgr.Close(); err != nil {
+		if err := mgr.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -175,7 +175,7 @@ func TestReconnect_KnownServerFiresHandlerWhenChanged(t *testing.T) {
 	srv.AddTool(mcp.NewTool("pong", mcp.WithDescription("no-op")), noopHandler)
 
 	// An explicit reconnect is forced through a post-failure cooldown.
-	mgr.markReconnectFailed("svc")
+	mgr.recordFailure("svc", errors.New("connection refused"))
 	if err := mgr.Reconnect(ctx, "svc"); err != nil {
 		t.Fatalf("Reconnect: %v", err)
 	}

@@ -23,6 +23,19 @@ type State struct {
 
 	// Timestamp is the last time this state was updated
 	Timestamp time.Time `json:"timestamp"`
+
+	// PendingTurns records, per session key, where the turn now in flight came
+	// from and how often recovery has replayed it. An entry exists only while
+	// the session store's pending-turn flag is set.
+	PendingTurns map[string]PendingTurn `json:"pending_turns,omitempty"`
+}
+
+// PendingTurn is the source of an in-flight turn, kept so a restart can replay
+// the interrupted message and deliver the reply where the user is waiting.
+type PendingTurn struct {
+	Channel  string `json:"channel"`
+	ChatID   string `json:"chat_id"`
+	Attempts int    `json:"attempts,omitempty"` // recovery replays so far
 }
 
 // Manager manages persistent state with atomic saves.
@@ -76,6 +89,26 @@ func NewManager(workspace string) *Manager {
 	return sm
 }
 
+// NewManagerInDir creates a state manager whose file is <dir>/state.json,
+// creating dir if missing. claw's own state lives in <CLAW_HOME>/internal; an
+// agent's state uses NewManager with its workspace.
+func NewManagerInDir(dir string) *Manager {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		logger.WarnCF("state", "failed to create state directory",
+			map[string]any{"path": dir, "error": err.Error()})
+	}
+	sm := &Manager{
+		workspace: dir,
+		stateFile: filepath.Join(dir, "state.json"),
+		state:     &State{},
+	}
+	if err := sm.load(); err != nil {
+		logger.WarnCF("state", "failed to load state",
+			map[string]any{"error": err.Error()})
+	}
+	return sm
+}
+
 // SetLastChannel atomically updates the last channel and saves the state.
 // This method uses a temp file + rename pattern for atomic writes,
 // ensuring that the state file is never corrupted even if the process crashes.
@@ -124,6 +157,55 @@ func (sm *Manager) GetLastChatID() string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.state.LastChatID
+}
+
+// SetPendingTurn records the source of the turn in flight for sessionKey and
+// saves the state. It keeps the existing Attempts count so a recovery replay
+// does not reset its own counter; pass the returned record back to
+// SetPendingTurn with Attempts changed to update the count.
+func (sm *Manager) SetPendingTurn(sessionKey string, pt PendingTurn) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.state.PendingTurns == nil {
+		sm.state.PendingTurns = make(map[string]PendingTurn)
+	}
+	if pt.Attempts == 0 {
+		pt.Attempts = sm.state.PendingTurns[sessionKey].Attempts
+	}
+	sm.state.PendingTurns[sessionKey] = pt
+	sm.state.Timestamp = time.Now()
+
+	if err := sm.saveAtomic(); err != nil {
+		return fmt.Errorf("failed to save state atomically: %w", err)
+	}
+	return nil
+}
+
+// GetPendingTurn returns the recorded source of sessionKey's in-flight turn.
+func (sm *Manager) GetPendingTurn(sessionKey string) (PendingTurn, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	pt, ok := sm.state.PendingTurns[sessionKey]
+	return pt, ok
+}
+
+// ClearPendingTurn forgets sessionKey's in-flight turn and saves the state.
+// A no-op when nothing is recorded.
+func (sm *Manager) ClearPendingTurn(sessionKey string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if _, ok := sm.state.PendingTurns[sessionKey]; !ok {
+		return nil
+	}
+	delete(sm.state.PendingTurns, sessionKey)
+	sm.state.Timestamp = time.Now()
+
+	if err := sm.saveAtomic(); err != nil {
+		return fmt.Errorf("failed to save state atomically: %w", err)
+	}
+	return nil
 }
 
 // GetTimestamp returns the timestamp of the last state update.

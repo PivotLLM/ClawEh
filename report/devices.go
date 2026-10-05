@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -29,7 +30,7 @@ func msTime(ms int64) string {
 // database. The database is opened only when it already exists, so a fresh
 // install is reported as unavailable rather than created by the report.
 func deviceRows(ctx context.Context, dd string) (paired, pending [][]string) {
-	path := filepath.Join(dd, "state", "gateway.db")
+	path := filepath.Join(dd, global.InternalDir, "gateway.db")
 	if _, err := os.Stat(path); err != nil {
 		msg := "unavailable: no device store at " + path
 		if !os.IsNotExist(err) {
@@ -51,7 +52,7 @@ func deviceRows(ctx context.Context, dd string) (paired, pending [][]string) {
 	} else {
 		for _, d := range list {
 			paired = append(paired, row(orValue(d.DisplayName, unknown)+" ("+orValue(d.Platform, unknown)+")",
-				d.DeviceID, orValue(d.AgentID, "(gateway default)"), msTime(d.ApprovedAtMs)))
+				d.DeviceID, orValue(d.AgentID, "(default agent)"), msTime(d.ApprovedAtMs)))
 		}
 		if len(paired) == 0 {
 			paired = append(paired, row(none, "", "", ""))
@@ -81,7 +82,7 @@ func collectDevices(ctx context.Context, cfg *config.Config, env Environment) Se
 			pairs("Settings",
 				row("USB device monitor (devices.enabled)", onOff(cfg.Devices.Enabled)),
 				row("Monitor USB hot-plug", onOff(cfg.Devices.MonitorUSB)),
-				row("Device gateway (channels.device)", onOff(dev.Enabled)),
+				row("Device listener (channels.device)", onOff(dev.Enabled)),
 				row("Auto-approve pairings", onOff(dev.AutoApprove)),
 			),
 			{Caption: "Paired devices", Columns: []string{"Device", "Device ID", "Agent", "Approved"}, Rows: paired},

@@ -6,6 +6,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/tools/fusion"
 )
 
 type agentToolEntry struct {
@@ -22,9 +23,13 @@ type agentMCPServer struct {
 }
 
 type agentToolCatalogResponse struct {
-	Tools        []agentToolEntry `json:"tools"`
-	MCPServers   []agentMCPServer `json:"mcp_servers,omitempty"`
-	DefaultTools []string         `json:"default_tools"`
+	Tools      []agentToolEntry `json:"tools"`
+	MCPServers []agentMCPServer `json:"mcp_servers,omitempty"`
+	// FusionServices are the Fusion services defined in the fusion config
+	// folder; an mcp_tools entry naming one grants the agent that service's
+	// tools when its Fusion switch is on.
+	FusionServices []string `json:"fusion_services,omitempty"`
+	DefaultTools   []string `json:"default_tools"`
 }
 
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
@@ -53,7 +58,7 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 
 	// MCP servers: one entry per configured server; selecting it grants mcp_name_* access
 	var mcpServers []agentMCPServer
-	if cfg, err := config.LoadConfig(h.configPath); err == nil && cfg.Tools.MCPClientEffectivelyEnabled() {
+	if cfg, err := h.currentConfig(); err == nil && cfg.Tools.MCPClientEffectivelyEnabled() {
 		for name := range cfg.Tools.MCP.Servers {
 			mcpServers = append(mcpServers, agentMCPServer{
 				Name:    name,
@@ -66,16 +71,19 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	effectiveDefaults := config.DefaultAgentTools
-	if cfg, cfgErr := config.LoadConfig(h.configPath); cfgErr == nil {
+	var fusionServices []string
+	if cfg, cfgErr := h.currentConfig(); cfgErr == nil {
 		if len(cfg.Agents.Defaults.DefaultTools) > 0 {
 			effectiveDefaults = cfg.Agents.Defaults.DefaultTools
 		}
+		fusionServices = fusion.ServiceNames(cfg) //nolint:contextcheck // the engine is process-wide and built once, outside any request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, agentToolCatalogResponse{
-		Tools:        builtinTools,
-		MCPServers:   mcpServers,
-		DefaultTools: effectiveDefaults,
+		Tools:          builtinTools,
+		MCPServers:     mcpServers,
+		FusionServices: fusionServices,
+		DefaultTools:   effectiveDefaults,
 	})
 }

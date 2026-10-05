@@ -56,7 +56,7 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 	if err != nil {
 		return fmt.Errorf("error creating agent loop: %w", err)
 	}
-	defer agentLoop.Close()
+	defer agentLoop.Close(context.Background())
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()

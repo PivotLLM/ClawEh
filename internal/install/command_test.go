@@ -11,6 +11,42 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 )
 
+// An existing service decides the mode: re-running the installer at the wrong
+// privilege level is refused instead of writing a second unit of the other
+// kind for the same install.
+func TestCheckExistingMode(t *testing.T) {
+	system := &ExistingInstall{ServiceType: "systemd-system", ServicePath: "/etc/systemd/system/claw.service", User: "ai"}
+	userSvc := &ExistingInstall{ServiceType: "systemd-user", ServicePath: "/home/ai/.config/systemd/user/claw.service", User: "ai"}
+	daemon := &ExistingInstall{ServiceType: "launchd-daemon", ServicePath: "/Library/LaunchDaemons/com.pivotllm.claweh.plist"}
+	agent := &ExistingInstall{ServiceType: "launchd-agent", ServicePath: "/Users/ai/Library/LaunchAgents/com.pivotllm.claweh.plist", User: "ai"}
+	binaryOnly := &ExistingInstall{BinaryPath: "/opt/claw/claw"}
+
+	cases := []struct {
+		name     string
+		existing *ExistingInstall
+		isRoot   bool
+		wantErr  string
+	}{
+		{"system service without sudo", system, false, "run `sudo claw install`"},
+		{"system service with sudo", system, true, ""},
+		{"user service with sudo", userSvc, true, "as ai, without sudo"},
+		{"user service without sudo", userSvc, false, ""},
+		{"launchd daemon without sudo", daemon, false, "run `sudo claw install`"},
+		{"launchd agent with sudo", agent, true, "without sudo"},
+		{"binary only, either way", binaryOnly, false, ""},
+		{"nothing installed", nil, true, ""},
+	}
+	for _, c := range cases {
+		err := checkExistingMode(c.existing, c.isRoot)
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("%s: unexpected error %v", c.name, err)
+		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+			t.Errorf("%s: err = %v, want it to contain %q", c.name, err, c.wantErr)
+		}
+	}
+}
+
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 	t.Setenv(global.EnvVarHome, "") // defaults to user's .claw
 	t.Setenv("PATH", "/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/bin")
@@ -21,7 +57,10 @@ func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 		"Group=alice",
 		"ExecStart=/home/alice/bin/claw",
 		"WantedBy=multi-user.target",
+		"KillMode=mixed",
 		"TimeoutStopSec=60",
+		"NoNewPrivileges=yes",
+		"PrivateTmp=yes",
 		"Environment=CLAW_HOME=/home/alice/.claw",
 		"Environment=PATH=/home/alice/bin:/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin:/bin",
 	}
@@ -95,44 +134,51 @@ func TestApplyAllowlist_WritesCIDRs(t *testing.T) {
 	}
 }
 
-func TestAccessURL(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv(global.EnvVarHome, dir)
-	write := func(host string, port int) {
-		cfg := config.DefaultConfig()
-		cfg.Gateway.Host = host
-		cfg.Gateway.Port = port
-		if err := config.SaveConfig(internal.GetConfigPath(), cfg); err != nil {
-			t.Fatalf("SaveConfig: %v", err)
+func TestPrintListenerSummary(t *testing.T) {
+	var b strings.Builder
+	printListenerSummary(&b, config.GatewayConfig{Host: "127.0.0.1", Port: 18790})
+	got := b.String()
+	for _, want := range []string{
+		"WebUI on this machine:  http://127.0.0.1:18790/",
+		"HTTPS on the network:   https://",
+		"Allowed networks:       localhost only",
+		"Certificate:            self-signed",
+		"Network and certificate settings can be changed in the WebUI or config.json.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("default summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "unencrypted") {
+		t.Errorf("loopback HTTP reported as network HTTP:\n%s", got)
+	}
+	// No paragraph: every line is one short labelled fact.
+	for l := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
+		if len(l) > 100 {
+			t.Errorf("summary line too long: %q", l)
 		}
 	}
 
-	write("127.0.0.1", 18790)
-	if got := accessURL(); got != "http://localhost:18790" {
-		t.Errorf("loopback URL = %q, want http://localhost:18790", got)
+	b.Reset()
+	printListenerSummary(&b, config.GatewayConfig{Host: "192.168.1.5", Port: 9000, AllowedCIDRs: []string{"192.168.1.0/24"}, TLS: config.TLSConfig{Mode: config.TLSModeOff}})
+	got = b.String()
+	for _, want := range []string{"WebUI on the network:   http://192.168.1.5:9000/  (HTTP, unencrypted, not recommended)", "HTTPS:                  off", "Allowed networks:       192.168.1.0/24"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("network HTTP summary missing %q:\n%s", want, got)
+		}
 	}
-	write("192.168.1.5", 9000)
-	if got := accessURL(); got != "http://192.168.1.5:9000" {
-		t.Errorf("specific-host URL = %q, want http://192.168.1.5:9000", got)
+	if strings.Contains(got, "Certificate:") {
+		t.Errorf("certificate line with HTTPS off:\n%s", got)
 	}
-	// All-interfaces: resolves to a LAN IP (or the <server-ip> placeholder), but
-	// always carries the right scheme and port.
-	write("0.0.0.0", 8080)
-	if got := accessURL(); !strings.HasPrefix(got, "http://") || !strings.HasSuffix(got, ":8080") {
-		t.Errorf("all-interfaces URL = %q, want http://…:8080", got)
-	}
-}
 
-func TestIsPublicBind(t *testing.T) {
-	for _, h := range []string{"", "127.0.0.1", "localhost", "::1"} {
-		if isPublicBind(h) {
-			t.Errorf("isPublicBind(%q) = true, want false", h)
-		}
+	b.Reset()
+	printListenerSummary(&b, config.GatewayConfig{TLSPort: 9443, TLS: config.TLSConfig{Mode: config.TLSModeLocalhost, CertFile: "/etc/claw/my.crt"}})
+	got = b.String()
+	if !strings.Contains(got, "HTTPS on this machine:  https://127.0.0.1:9443/") || !strings.Contains(got, "Certificate:            /etc/claw/my.crt") {
+		t.Errorf("localhost HTTPS summary:\n%s", got)
 	}
-	for _, h := range []string{"0.0.0.0", "192.168.1.10", "::"} {
-		if !isPublicBind(h) {
-			t.Errorf("isPublicBind(%q) = false, want true", h)
-		}
+	if strings.Contains(got, "Allowed networks") {
+		t.Errorf("allowlist shown with nothing on the network:\n%s", got)
 	}
 }
 
@@ -210,6 +256,15 @@ func TestBuildUserUnit(t *testing.T) {
 	}
 	if !strings.Contains(unit, "TimeoutStopSec=60") {
 		t.Errorf("user unit missing TimeoutStopSec=60:\n%s", unit)
+	}
+	if !strings.Contains(unit, "KillMode=mixed") {
+		t.Errorf("user unit missing KillMode=mixed:\n%s", unit)
+	}
+	if !strings.Contains(unit, "NoNewPrivileges=yes") {
+		t.Errorf("user unit missing NoNewPrivileges=yes:\n%s", unit)
+	}
+	if strings.Contains(unit, "PrivateTmp=") {
+		t.Errorf("user unit must not set PrivateTmp= (needs unprivileged user namespaces in a per-user manager):\n%s", unit)
 	}
 	if !strings.Contains(unit, "Environment=CLAW_HOME=/home/alice/.claw") {
 		t.Errorf("user unit missing Environment=CLAW_HOME:\n%s", unit)

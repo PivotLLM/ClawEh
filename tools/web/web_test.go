@@ -206,7 +206,7 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 
 	// ForLLM should contain truncated content (not the full 20000 chars)
 	resultMap := make(map[string]any)
-	if err := json.Unmarshal([]byte(result.ForLLM), &resultMap); err != nil {
+	if err := json.Unmarshal([]byte(untrustedBody(t, result.ForLLM)), &resultMap); err != nil {
 		t.Fatalf("ForLLM is not JSON: %v", err)
 	}
 	if text, ok := resultMap["text"].(string); ok {
@@ -606,6 +606,20 @@ func TestIsPrivateOrRestrictedIP_Table(t *testing.T) {
 		{"169.254.169.254", true, "link-local / cloud metadata"},
 		{"100.64.0.1", true, "carrier-grade NAT"},
 		{"0.0.0.0", true, "unspecified"},
+		{"192.0.0.1", true, "IETF protocol assignments 192.0.0.0/24"},
+		{"192.0.1.1", false, "just outside 192.0.0.0/24"},
+		{"198.18.0.1", true, "benchmarking 198.18.0.0/15"},
+		{"198.19.255.254", true, "benchmarking 198.18.0.0/15 upper"},
+		{"198.20.0.1", false, "just outside 198.18.0.0/15"},
+		{"240.0.0.1", true, "reserved 240.0.0.0/4"},
+		{"255.255.255.255", true, "broadcast (in 240.0.0.0/4)"},
+		{"239.255.255.255", true, "multicast, not 240/4"},
+		{"::ffff:198.18.0.1", true, "IPv4-mapped benchmarking"},
+		{"::ffff:240.0.0.1", true, "IPv4-mapped reserved"},
+		{"::ffff:192.0.0.1", true, "IPv4-mapped protocol assignments"},
+		{"64:ff9b::a00:1", true, "NAT64 well-known prefix (embeds 10.0.0.1)"},
+		{"64:ff9b::808:808", true, "NAT64 well-known prefix (embeds 8.8.8.8)"},
+		{"64:ff9b:1::1", false, "outside 64:ff9b::/96"},
 		{"8.8.8.8", false, "public DNS"},
 		{"1.1.1.1", false, "public DNS"},
 		{"::1", true, "IPv6 loopback"},

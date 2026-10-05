@@ -4,16 +4,21 @@
 package providers
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/PivotLLM/spawnllm"
 	anthropicmessages "github.com/PivotLLM/spawnllm/anthropic_messages"
 	"github.com/PivotLLM/spawnllm/azure"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 	"github.com/PivotLLM/spawnllm/openai_responses"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/childenv"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // compatOpts builds the openai_compat options from the endpoint-scoped provider
@@ -116,12 +121,14 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 // comes from the model.
 //
 // Arguments and environment are the protocol's required ones plus whatever the
-// model adds. They are supplied here rather than stored on every model because
-// leaving out a CLI's permission flag is invisible: the CLI auto-denies the
-// tool call it cannot prompt for and returns success with an empty answer, so
-// the assistant goes silent instead of reporting a problem. Any model written
-// before this — or added through the WebUI, which has no field for them — works
-// without being edited.
+// model adds, with the permission-bypass flag included only when the provider's
+// bypass_restrictions is on. They are supplied here rather than stored on every
+// model so the catalogue, not each model entry, decides what a CLI runs with.
+//
+// With bypass off, a CLI that cannot approve a tool call refuses it and returns
+// success with an empty answer, so the assistant would go silent instead of
+// reporting a problem. The returned provider is wrapped to turn that into an
+// error naming the setting.
 func newCLIProvider[T LLMProvider](
 	plain func(command, workspace string, extraArgs []string, env map[string]string) T,
 	withTimeout func(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) T,
@@ -132,10 +139,118 @@ func newCLIProvider[T LLMProvider](
 	if workspace == "" {
 		workspace = "."
 	}
-	args := config.CLIArgs(prov.Protocol, model.ExtraArgs)
+	args := config.CLIArgs(prov.Protocol, prov.BypassRestrictions, model.ExtraArgs)
 	env := config.CLIEnv(prov.Protocol, model.Env)
+	var p LLMProvider
 	if model.RequestTimeout > 0 {
-		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, args, env)
+		p = withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, args, env)
+	} else {
+		p = plain(prov.Command, workspace, args, env)
 	}
-	return plain(prov.Command, workspace, args, env)
+	// The CLI starts from the allowlisted environment, not the host's whole one,
+	// so the service's own secrets never reach the subprocess; the per-model env
+	// is overlaid on top by spawnllm.
+	if s, ok := p.(spawnllm.BaseEnvSetter); ok {
+		s.SetBaseEnv(childenv.CLI())
+	}
+	if prov.BypassRestrictions {
+		return p
+	}
+	label := prov.Protocol
+	if agent := config.CLIAgentByProtocol(prov.Protocol); agent != nil {
+		label = agent.Label
+	}
+	return &cliDeclinedGuard{LLMProvider: p, label: label, protocol: prov.Protocol}
+}
+
+// cliDeclinedGuard wraps a CLI provider running without its permission-bypass
+// flag. A CLI that refuses a tool call it cannot prompt for reports success:
+// with no text (agy also names the denied action), or, for the Claude CLI,
+// with a prose answer explaining the refusal and the refused calls listed
+// under permission_denials. Either would reach the user as silence or as an
+// apology with no cause. The guard turns each into an error that says what to
+// change. It is not an alert: the CLI did what its settings say.
+type cliDeclinedGuard struct {
+	LLMProvider
+	label    string
+	protocol string
+}
+
+// IsCLI marks the wrapped provider as a CLI, as the agent loop checks.
+func (g *cliDeclinedGuard) IsCLI() bool { return true }
+
+func (g *cliDeclinedGuard) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any) (*LLMResponse, error) {
+	resp, err := g.LLMProvider.Chat(ctx, messages, tools, model, options)
+	var denied []string
+	if resp != nil && resp.Status != nil {
+		denied = resp.Status.DeniedTools
+	}
+	switch {
+	case err != nil && strings.Contains(err.Error(), "denied"):
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil), Cause: err}
+	case err == nil && len(denied) > 0:
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(denied)}
+	case err == nil && resp != nil && strings.TrimSpace(resp.Content) == "" && len(resp.ToolCalls) == 0:
+		return resp, &CLIDeclinedError{Message: g.declinedMessage(nil)}
+	}
+	return resp, err
+}
+
+// CLIDeclinedError is the guard's error for a CLI that refused a tool call.
+// Its text is written for the user, so the failover renderer shows it verbatim
+// instead of the classification the fallback chain would otherwise report.
+type CLIDeclinedError struct {
+	Message string // what to change, naming the WebUI setting
+	Cause   error  // the CLI's own error (e.g. the denied action), when it gave one
+}
+
+func (e *CLIDeclinedError) Error() string {
+	if e.Cause != nil {
+		return e.Message + ": " + e.Cause.Error()
+	}
+	return e.Message
+}
+
+func (e *CLIDeclinedError) Unwrap() error { return e.Cause }
+
+func (g *cliDeclinedGuard) declinedMessage(denied []string) string {
+	msg := "The " + g.label + " declined to use tools"
+	if len(denied) > 0 {
+		msg += " (" + strings.Join(shortToolNames(denied), ", ") + ")"
+	}
+	return msg + ". Tick *Allow CLI to bypass restrictions* for this CLI on the Providers page, or allow the tools in the CLI's own settings."
+}
+
+// shortToolNames strips the MCP client prefix (mcp__<server>__) the CLI puts on
+// claw's own tools, so a message reads maestro_file_get, not
+// mcp__claw__maestro_file_get. Other names are returned unchanged.
+func shortToolNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if rest, ok := strings.CutPrefix(n, "mcp__"); ok {
+			if _, tool, found := strings.Cut(rest, "__"); found {
+				n = tool
+			}
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// logBypassEnabled writes one INFO line per CLI provider running with its
+// permission-bypass flag, so a startup log states what the CLI may do. A CLI
+// running without it is not reported here: it applies its own permission
+// settings, as directed, and a refusal reaches the user through the
+// declined-tools error.
+func logBypassEnabled(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if p.BypassRestrictions && config.IsCLIProtocol(p.Protocol) {
+			logger.InfoCF("provider", "Allow CLI to bypass restrictions is on: the CLI can run commands and edit files anywhere the service user can, without asking",
+				map[string]any{"provider": p.Name, "protocol": p.Protocol})
+		}
+	}
 }

@@ -183,6 +183,10 @@ func isSensitive(name string) bool {
 func agentMCPTable(cfg *config.Config, a *config.AgentConfig) Table {
 	t := Table{Caption: "MCP access", Columns: []string{"mcp_tools entry", "Servers reached"}}
 	if len(a.MCPTools) == 0 {
+		if a.Fusion {
+			t.Rows = append(t.Rows, row(none, "no MCP tools; Fusion is on but no service is listed, so no Fusion tools"))
+			return t
+		}
 		t.Rows = append(t.Rows, row(none, "no MCP tools"))
 		return t
 	}
@@ -195,6 +199,12 @@ func agentMCPTable(cfg *config.Config, a *config.AgentConfig) Table {
 			}
 		}
 		if len(reach) == 0 {
+			if a.Fusion {
+				// With Fusion on the entry may name a Fusion service or a group
+				// within one; the services are only known to the running engine.
+				t.Rows = append(t.Rows, row(e, "no MCP server; Fusion tools named "+e+"…"))
+				continue
+			}
 			t.Highlight = append(t.Highlight, len(t.Rows))
 			t.Rows = append(t.Rows, row(e, "matches no configured server"))
 			continue
@@ -237,6 +247,9 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		row("Shared common directory", onOff(a.SharesCommon())),
 		row("Global cron (schedules for other agents)", onOff(a.GlobalCron)),
 	)
+	if len(a.DenyTools) > 0 {
+		settings.Rows = append(settings.Rows, row("Denied tools (deny_tools, wins over every grant incl. suites)", joinLines(a.DenyTools, none)))
+	}
 	return Section{
 		Title:  title,
 		Tables: []Table{settings, agentToolsTable(a), agentMCPTable(cfg, a), agentFolderAccess(cfg, env, a)},

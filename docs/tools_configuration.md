@@ -167,7 +167,7 @@ Use it only for small services/servers — a large group can exceed `visible_bud
 | `command`  | string | stdio    | Executable command for stdio transport     |
 | `args`     | array  | no       | Command arguments for stdio transport      |
 | `env`      | object | no       | Environment variables for stdio process    |
-| `env_file` | string | no       | Path to environment file for stdio process |
+| `env_file` | string | no       | Path to environment file for stdio process; a relative path is relative to `CLAW_HOME` |
 | `url`      | string | sse/http | Endpoint URL for `sse`/`http` transport    |
 | `headers`  | object | no       | HTTP headers for `sse`/`http` transport    |
 
@@ -178,6 +178,13 @@ Use it only for small services/servers — a large group can exceed `visible_bud
     - `command` is set → `stdio`
 - `http` and `sse` both use `url` + optional `headers`.
 - `env` and `env_file` are only applied to `stdio` servers.
+- A `stdio` server does **not** inherit ClawEh's environment. It starts
+  from an allowlist (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`,
+  `LC_*`, `TERM`, `TMPDIR`, `TZ`, `XDG_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, the
+  proxy variables, and the `NODE_*`/`NVM_*`/`npm_config_*` variables `npx`
+  needs); `CLAW_*` and `ALERTER_*` never reach it. Anything else the server
+  needs — an API token, for example — must be set in its `env` or `env_file`.
+  The same allowlist applies to `shell_exec` commands.
 
 ### Configuration Examples
 
@@ -316,9 +323,13 @@ The skills tool configures skill discovery and installation via registries like 
 
 ## Per-Agent Tool Allowlist
 
-ClawEh enforces a **deny-by-default** tool allowlist for each named agent. If an agent in `agents.list` does not have a `tools` field configured, it receives **no tools** — regardless of what is enabled in the global `tools` section.
+Each named agent has a tool allowlist. An agent in `agents.list` with no `tools`
+key receives the install defaults (`agents.defaults.tools`, which ClawEh
+seeds from the enabled tool providers); an agent with `"tools": []` receives no
+tools at all.
 
-This is an intentional security boundary: the global `tools` section controls which tools are available to the system, but each agent must explicitly opt in to the tools it is permitted to use.
+The global `tools` section controls which tools exist in the system; each
+agent's list controls which of them that agent may use.
 
 ### Allowlist values
 
@@ -327,7 +338,8 @@ This is an intentional security boundary: the global `tools` section controls wh
 | `["*"]` | Allow all tools that are globally enabled |
 | `["read_file", "exec"]` | Allow only the listed tools |
 | `["read_*"]` | Allow all tools whose names start with `read_` (case-insensitive prefix match) |
-| _(absent or empty)_ | Deny all tools |
+| `[]` (present but empty) | Deny all tools |
+| _(absent)_ | Use the install defaults |
 
 ### Configuration example
 
@@ -350,7 +362,61 @@ This is an intentional security boundary: the global `tools` section controls wh
 
 In this example, Alice can use any globally-enabled tool, while Bob is restricted to three specific tools.
 
-> **Note:** This applies only to agents defined in `agents.list`. When no agents are configured, a single default agent is created implicitly, and it also receives no tools unless explicitly configured.
+### MCP servers and Fusion services (`mcp_tools`)
+
+`mcp_tools` is the agent's access list for the tools that come from outside
+the built-in set: external MCP servers (`tools.mcp.servers`) and Fusion
+services (the definitions under the data directory's `fusion/` folder). Each
+entry is matched, case-insensitively, as equal to or a prefix of the tool's
+`<server>_<tool>` or `<service>_<tool>` name, so `"github"` admits every tool of
+the github server, `"wxca"` every tool of the wxca Fusion service and
+`"microsoft365_calendar"` only the calendar group of the microsoft365 service.
+No `mcp_` prefix or wildcard is needed. An empty or absent list admits nothing.
+
+Fusion tools also need the agent's `fusion` switch on. The switch alone grants
+nothing: an agent with `"fusion": true` and no matching entry has no Fusion
+tools. On the Agents page the same list is edited as two sets of checkboxes,
+**MCP access** (one per configured server) and **Fusion services** (one per
+defined service).
+
+```json
+{
+  "id": "alice",
+  "fusion": true,
+  "mcp_tools": ["github", "wxca", "microsoft365_calendar"]
+}
+```
+
+### Denying specific tools (`deny_tools`)
+
+`tools` and `mcp_tools` are allow lists that match by prefix, and the suite
+toggles (`maestro`, `cogmem`) grant a whole suite at once, so a grant such as
+`"mcp_tools": ["google"]` admits every Google tool, including destructive ones.
+`deny_tools` lists the tools the agent may never call. It is evaluated after
+every grant and deny always wins, however the tool arrived; an empty or absent
+list denies nothing.
+
+Internal and suite tools match case-insensitively by exact published name or by
+prefix with a trailing `*` (`shell_exec`, `google_calendar_event_delete`,
+`google_drive_*`, `maestro_task_*`). MCP-client tools match `<server>_<tool>` by
+equality or prefix with underscore runs collapsed, without the `mcp_` prefix
+(`google_drive_file_share`, or `google_calendar` for the whole group). A denied
+tool is not registered for the agent and is refused if called anyway, on every
+turn the agent runs — cron jobs and sub-agents spawned by `agent_spawn` or
+Maestro share the agent's tool set and inherit the denial.
+
+```json
+{
+  "id": "assistant",
+  "tools": ["*"],
+  "fusion": true,
+  "mcp_tools": ["google"],
+  "deny_tools": ["shell_exec", "google_drive_file_share", "google_calendar_event_delete"]
+}
+```
+
+The same list is edited on the Agents page under Tools → "Denied tools", and
+the configuration report shows it in the agent's Settings table.
 
 ---
 
@@ -384,7 +450,7 @@ is no global switch and no per-tool allowlist for it.
 | `rate_limit_requests` / `rate_limit_period` | int | `10` / `60` | At most this many task dispatches per period (seconds) |
 | `allow_parallel` | bool | `true` | Whether a parallel run may be honoured when the LLM asks for one. Runs are sequential unless requested; `false` refuses requests and runs sequentially |
 
-The retired boolean form `"maestro": true` is not honoured: the gateway logs a
+The retired boolean form `"maestro": true` is not honoured: ClawEh logs a
 warning for the agent and runs it without Maestro until the block is set. The
 WebUI agent page edits the block.
 
@@ -409,7 +475,7 @@ How the suite behaves inside ClawEh:
   visible so the model can read the guide and search for the rest; pin
   `"maestro"` in `always_shown_namespaces` to keep the whole suite visible.
 - **Testing.** `make test-maestro-host` runs Maestro's MCP regression suite
-  against a live gateway with a stub model (needs `probe`, `jq`, `zip`).
+  against a live ClawEh instance with a stub model (needs `probe`, `jq`, `zip`).
 
 ## Environment Variables
 

@@ -2,6 +2,8 @@ package device
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
@@ -43,15 +46,26 @@ type DeviceChannel struct {
 	host         string
 	port         int
 	allowedCIDRs []string
-	httpSrv      *http.Server
-	ctx          context.Context
-	cancel       context.CancelFunc
+	allowedHosts hostAllowlist
+	// trusted is gateway.trusted_proxies; the channel is rebuilt on every
+	// config reload, so it is fixed for the channel's life.
+	trusted *config.TrustedProxySet
+	// useTLS is channels.device.tls; tlsConfig is the gateway certificate
+	// manager's configuration, injected by SetTLSConfig before Start.
+	useTLS    bool
+	tlsConfig *tls.Config
+	loopDone  chan struct{}
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
-// NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
+// NewDeviceChannel opens the pairing store under <dataDir>/internal and builds the
 // gateway protocol server. logMessages enables full inbound/outbound content logs.
-func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus) (*DeviceChannel, error) {
-	stateDir := filepath.Join(dataDir, "state")
+// The listener answers only to Host names it is known by: localhost, its bind
+// host, the hosts of cfg.ExternalURL and gatewayExternalURL, any IP literal,
+// and extraHosts (reserved for TLS certificate names).
+func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus, gatewayExternalURL string, extraHosts []string) (*DeviceChannel, error) {
+	stateDir := filepath.Join(dataDir, global.InternalDir)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
 	}
@@ -94,7 +108,10 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		host:         host,
 		port:         port,
 		allowedCIDRs: cfg.AllowedCIDRs,
+		useTLS:       cfg.TLS,
+		allowedHosts: newHostAllowlist(host, []string{cfg.ExternalURL, gatewayExternalURL}, extraHosts),
 	}
+	srv.SetAlerter(dc.Alert)
 	// Bridge each device utterance into the message bus. The agent's reply returns
 	// via Send -> server.DeliverReply.
 	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey, sessionKey string, attachments []InboundAttachment) {
@@ -206,11 +223,35 @@ func extForMIME(mime string) string {
 // internal/gateway (which owns the agent loop) after the channel is built.
 func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q) }
 
+// errNoCertificate is Start's refusal when channels.device.tls is on but the
+// gateway has no certificate manager to lend (HTTPS was off at start).
+var errNoCertificate = errors.New("device: channels.device.tls is on but there is no TLS certificate " +
+	"(gateway.tls.mode was \"off\" when ClawEh started); restart ClawEh after turning HTTPS on")
+
+// SetTLSConfig hands the channel the gateway certificate manager's TLS
+// configuration (tlscert.Manager.TLSConfig), so the device listener serves
+// the same certificate as the WebUI HTTPS listener and follows its reloads.
+// Used only when channels.device.tls is on; call before Start.
+func (c *DeviceChannel) SetTLSConfig(cfg *tls.Config) {
+	if cfg == nil {
+		c.tlsConfig = nil
+		return
+	}
+	cfg = cfg.Clone()
+	// gorilla/websocket upgrades HTTP/1.1 only; never negotiate h2.
+	cfg.NextProtos = []string{"http/1.1"}
+	c.tlsConfig = cfg
+}
+
 // Start launches the device gateway's own HTTP listener.
 func (c *DeviceChannel) Start(ctx context.Context) error {
+	if c.useTLS && c.tlsConfig == nil {
+		return errNoCertificate
+	}
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	// WebSocket upgrade at any path (devices connect to ws://host:port/ with no path).
+	// WebSocket upgrade at any path (devices connect to ws://host:port/, or
+	// wss:// with channels.device.tls, with no path).
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !websocket.IsWebSocketUpgrade(r) {
 			http.NotFound(w, r)
@@ -218,52 +259,140 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 		}
 		c.server.HandleWS(w, r)
 	})
-	wrapped, err := ipAllowlistHandler(c.allowedCIDRs, handler)
+	allowlisted, err := ipAllowlistHandler(c.allowedCIDRs, hostCheckHandler(c.allowedHosts, handler))
 	if err != nil {
 		return fmt.Errorf("device: %w", err)
 	}
+	wrapped := trustedProxyHandler(c.trusted, allowlisted)
 
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := c.listen(addr)
 	if err != nil {
 		return fmt.Errorf("device: listen %s: %w", addr, err)
 	}
-	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
-	// deadlines after the gorilla upgrade hijacks the conn.
-	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped, ReadHeaderTimeout: 10 * time.Second}
+	c.loopDone = make(chan struct{})
 	c.SetRunning(true)
-	go func() {
-		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
-			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
-			c.Alert(alerter.Alert{
-				Title:       "Channel receive loop stopped",
-				Description: c.Name() + ": device gateway listener error; devices cannot connect until the gateway is restarted",
-				Details:     serveErr.Error(),
-			})
-		}
-	}()
-	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})
+	go c.serveLoop(ln, addr, wrapped)
+	logger.InfoCF("device", "Device channel listening", map[string]any{"addr": addr, "tls": c.useTLS})
 	return nil
 }
 
-// Stop shuts down the device listener and store.
+// listen binds addr, wrapped in TLS when channels.device.tls is on.
+func (c *DeviceChannel) listen(addr string) (net.Listener, error) {
+	ln, err := listenTCP(addr)
+	if err != nil || !c.useTLS {
+		return ln, err
+	}
+	return tls.NewListener(ln, c.tlsConfig), nil
+}
+
+// Test seams: listenTCP binds the listener and retryAfter waits between
+// re-listen attempts.
+var (
+	listenTCP  = func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
+	retryAfter = time.After
+)
+
+// serveLoop serves ln until the channel's context is cancelled. If Serve fails
+// it re-listens on addr with channels.NextConnRetry backoff (a failed re-bind,
+// such as the port being in use, waits the same way), raising "Channel receive
+// loop stopped" once per outage and logging when the listener is back.
+func (c *DeviceChannel) serveLoop(ln net.Listener, addr string, handler http.Handler) {
+	defer close(c.loopDone)
+	var backoff time.Duration
+	for {
+		err := c.serve(ln, addr, handler)
+		if c.ctx.Err() != nil {
+			return
+		}
+		// Each Serve failure opens an outage: alert once here, not on the
+		// re-bind attempts that follow.
+		backoff = channels.NextConnRetry(backoff)
+		logger.ErrorCF("device", "Device channel listener error; re-listening", map[string]any{
+			"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
+		})
+		c.Alert(alerter.Alert{
+			Title:       "Channel receive loop stopped",
+			Description: c.Name() + ": device listener error; re-listening on " + addr + " with backoff until it is back",
+			Details:     err.Error(),
+		})
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-retryAfter(backoff):
+			}
+			ln, err = c.listen(addr)
+			if err == nil {
+				break
+			}
+			backoff = channels.NextConnRetry(backoff)
+			logger.WarnCF("device", "Device channel re-listen failed", map[string]any{
+				"addr": addr, "error": err.Error(), "retry_in": backoff.String(),
+			})
+		}
+		logger.InfoCF("device", "Device channel listener restored", map[string]any{"addr": addr})
+		backoff = 0
+	}
+}
+
+// serve runs one http.Server on ln until it fails or the channel's context is
+// cancelled, which closes the server (and ln) so Serve returns. It always
+// returns a non-nil error; the caller decides whether it was a stop or a fault.
+func (c *DeviceChannel) serve(ln net.Listener, addr string, handler http.Handler) error {
+	srv := newDeviceServer(addr, handler)
+	// Close immediately rather than graceful Shutdown: a live device WebSocket
+	// would otherwise block the shutdown (and a config reload) for seconds. The
+	// device reconnects after the listener re-binds.
+	stop := context.AfterFunc(c.ctx, func() { utils.CloseQuietly(srv) })
+	defer stop()
+	return srv.Serve(ln)
+}
+
+// newDeviceServer builds the listener's http.Server. No Read/WriteTimeout:
+// long-lived WebSocket connections manage their own deadlines after the
+// gorilla upgrade hijacks the conn. The idle timeout and header cap apply to
+// the plain HTTP side only (the handshake and anything that is not a
+// WebSocket), where an unauthenticated client could otherwise park
+// connections forever.
+func newDeviceServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       channels.DeviceIdleTimeout,
+		MaxHeaderBytes:    channels.DeviceMaxHeaderBytes,
+	}
+}
+
+// Stop shuts down the device listener, closes every open device connection
+// (http.Server.Close does not track the hijacked WebSockets, so they would
+// otherwise stay attached to a dead channel) and closes the store. It returns
+// once the serve loop has exited, so the port is free for a restarted channel
+// to bind.
 func (c *DeviceChannel) Stop(_ context.Context) error {
 	c.SetRunning(false)
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.httpSrv != nil {
-		// Close immediately rather than graceful Shutdown: a live device WebSocket
-		// would otherwise block the shutdown (and a config reload) for seconds. The
-		// device reconnects after the listener re-binds.
-		utils.CloseQuietly(c.httpSrv)
+	if c.loopDone != nil {
+		<-c.loopDone
 	}
+	c.server.CloseAll()
 	if c.store != nil {
 		utils.CloseQuietly(c.store)
 	}
-	logger.InfoC("device", "Device gateway stopped")
+	logger.InfoC("device", "Device channel stopped")
 	return nil
 }
+
+// SetTrustedProxies sets gateway.trusted_proxies: peers whose X-Real-IP /
+// X-Forwarded-For headers name the client. Call before Start.
+func (c *DeviceChannel) SetTrustedProxies(set *config.TrustedProxySet) { c.trusted = set }
+
+// DisconnectDevice closes every open connection of deviceID, at once. The
+// WebUI calls it when the device is removed.
+func (c *DeviceChannel) DisconnectDevice(deviceID string) { c.server.DisconnectDevice(deviceID) }
 
 // StreamDelta implements channels.StreamCapable — forwards a partial-assistant-
 // text delta to the connected device as incremental chat/agent stream events.
@@ -287,6 +416,21 @@ func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
 		return nil
 	}
 	return channels.ErrSendFailed
+}
+
+// trustedProxyHandler attributes a request from a trusted proxy to the client
+// named by its X-Real-IP (else first X-Forwarded-For) header by rewriting
+// r.RemoteAddr, so the allowlist, the auth lockout, lockout_exempt, the
+// pending-pairing address and logs all see that client. Headers from any other
+// peer are ignored. It must be the outermost handler.
+func trustedProxyHandler(trusted *config.TrustedProxySet, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addr := trusted.ClientAddr(r.RemoteAddr, r.Header.Get("X-Real-IP"), r.Header.Get("X-Forwarded-For"))
+		if addr != remoteHost(r) {
+			r.RemoteAddr = addr
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ipAllowlistHandler restricts the device listener to the given CIDRs (loopback

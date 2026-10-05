@@ -1,39 +1,62 @@
 # Remote access
 
-ClawEh listens on **two separate HTTP ports**, both bound to localhost by default:
+ClawEh has **two separate services**:
 
-| Port | Default | Serves | Authentication |
+| Listener | Default | Serves | Authentication |
 |---|---|---|---|
-| **WebUI port** (`gateway.port`) | `18790` | WebUI, `/api/*`, the WebUI chat WebSocket | **None** on `/api/*` |
-| **Device gateway port** (`channels.device.port`) | `18791` | The OpenClaw Gateway WebSocket for paired devices (Rabbit R1, Claw to Talk) | Shared or per-device token + Ed25519 pairing |
+| **WebUI/API** (`gateway.port` plain HTTP on `gateway.host`, loopback by default; `gateway.tls_port` HTTPS where `gateway.tls.mode` says, all interfaces by default) | `18790` / `18443` | WebUI, `/api/*`, the WebUI chat WebSocket, the LINE webhook | Admin login (`claw admin`, see `docs/webui-auth.md`) |
+| **Device listener port** (`channels.device.port`) | `18791` | The OpenClaw Gateway WebSocket for paired devices (Rabbit R1, Claw to Talk) | Shared or per-device token + Ed25519 pairing |
 
 They are **independent listeners** — publishing one does not publish the other.
 Decide which you actually need before you expose anything:
 
 - Reaching the **web console** from outside the machine → publish the WebUI port.
-- Letting an **external device** connect to the gateway → publish the device
-  gateway port. This is the common case, and it does **not** require exposing the
+- Letting an **external device** connect to ClawEh → publish the device
+  listener port. This is the common case, and it does **not** require exposing the
   WebUI.
 
 Three common approaches are below. All of them work because both surfaces are
 ordinary HTTP + WebSocket; you are just publishing a port.
 
-> **Security note:** The WebUI and API have **no authentication** — access control
-> is the bind address plus `gateway.allowed_cidrs`, which are two independent
-> gates. `allowed_cidrs` is empty by default, meaning **loopback only**: binding
-> to `0.0.0.0` alone will not serve a network client, and you must add the
-> networks you want to reach it from — a subnet such as `192.168.1.0/24`, or `*`
-> for any address. Use `*` rather than `0.0.0.0/0` when you mean "everything":
-> that is an IPv4 prefix, so it still refuses IPv6 clients. `claw network` sets
-> this from a shell on the host without editing the config, and a running gateway
-> applies it on its next config reload (about 15 seconds). Whichever method you
-> choose, treat an exposed WebUI endpoint as sensitive and restrict access at the
-> edge (client certificates, SSO, an allowlist, or a private overlay network)
-> until in-app auth is in place. The device gateway authenticates every client, so
-> it is the safer of the two to publish.
+> **Security note:** The WebUI and API require the admin login created with
+> `claw admin` (loopback included). By default the WebUI/API is served off-box
+> over **HTTPS** only, on `gateway.tls_port` (default 18443) with a self-signed
+> or your own certificate (see `docs/tls.md`); plain HTTP stays on loopback
+> unless you set `gateway.host` to a network address, which the configuration
+> report marks as unencrypted. Network access
+> is further gated by `gateway.allowed_cidrs`, empty by default meaning
+> **loopback only**: listening on every interface alone will not serve a network client,
+> and you must add the networks you want to reach it from — a subnet such as
+> `192.168.1.0/24`, or `*` for any address. Use `*` rather than `0.0.0.0/0` when
+> you mean "everything": that is an IPv4 prefix, so it still refuses IPv6
+> clients. `claw network` sets this from a shell on the host without editing
+> the config, and a running ClawEh applies it on its next config reload (about
+> 15 seconds). ClawEh answers only to its own host names (`localhost`, the
+> bind address, the host of `gateway.external_url`, the certificate's names);
+> anything else gets `421`, so when you publish it under a public name, set
+> `gateway.external_url` to that URL.
 
-Replace `<port>` with the port you are publishing — `18790` for the WebUI,
-`18791` for the device gateway — throughout.
+Replace `<port>` with the port you are publishing — `18790` for the WebUI behind
+a proxy on the same host, `18791` for the device listener — throughout.
+
+## Behind a reverse proxy (any of the methods below)
+
+Keep `gateway.host` at `127.0.0.1` so ClawEh serves plain HTTP on loopback only,
+terminate TLS at the proxy, and point it at `http://127.0.0.1:18790`
+(`gateway.tls.mode` can be `"localhost"` or `"off"` if you do not want ClawEh's
+own HTTPS listener on the network). Set
+`gateway.external_url` to the public URL (for example
+`https://claw.example.com`) so links, the Host check and cross-origin trust use
+it. By default ClawEh's IP allowlist matches the TCP peer, so with a proxy on
+the same box every request arrives from loopback — enforce network access
+control at the proxy; the admin login still applies to every request. To have
+ClawEh see the real client instead (for the allowlist, the login lockout, logs
+and the audit log), list the proxy in `gateway.trusted_proxies` (for example
+`["127.0.0.1"]`) and have it send `X-Real-IP`, as the example below does; the
+allowlist then judges the forwarded address, so set `gateway.allowed_cidrs` to
+cover your clients (`["*"]` for anyone). Without a proxy, add
+your networks with `claw network` and use `https://<host>:18443` — HTTPS is on
+every interface by default (see `docs/tls.md`).
 
 ---
 
@@ -118,7 +141,7 @@ server {
         # e.g. http://10.0.0.5:<port>
         proxy_pass http://127.0.0.1:<port>;
 
-        # WebSocket upgrade — required for the device gateway and WebUI live updates
+        # WebSocket upgrade — required for the device listener and WebUI live updates
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -140,19 +163,19 @@ Notes:
 
 - A single `location /` covers the WebUI, the API, and the WebUI chat WebSocket —
   the `Upgrade`/`Connection` headers route plain HTTP and WebSocket correctly.
-  The **device gateway is a different port** and needs its own `server` block (see
-  [Device gateway](#device-gateway) below).
+  The **device listener is a different port** and needs its own `server` block (see
+  [Device listener](#device-listener) below).
 - ClawEh's built-in IP allowlist matches the TCP peer, which behind NGINX is
-  NGINX itself. Enforce access control at NGINX, and allow NGINX's source address
-  in ClawEh's `--allowed-cidrs` (or set `*` and rely on NGINX).
-- If a WebSocket Origin allowlist is configured, include your public origin
-  (e.g. `https://claw.example.com`).
+  NGINX itself (loopback, always allowed). Enforce network access control at
+  NGINX; the admin login still applies.
+- Set `gateway.external_url` to `https://claw.example.com` so the Host check
+  accepts the public name and the WebUI's cross-origin protection trusts it.
 
 ---
 
-## Device gateway
+## Device listener
 
-The device gateway is a **separate listener** (`channels.device.port`, default
+The device listener is a **separate listener** (`channels.device.port`, default
 `18791`) that speaks the OpenClaw Gateway WebSocket protocol. Publish this port —
 not the WebUI port — when the goal is to let a Rabbit R1 or the Claw to Talk app
 reach your agents from outside the LAN.
@@ -171,10 +194,10 @@ TLS is **not** terminated in ClawEh. Put a reverse proxy in front that terminate
 ```nginx
 server {
     listen 443 ssl;
-    server_name gateway.example.com;
+    server_name devices.example.com;
 
-    ssl_certificate     /etc/letsencrypt/live/gateway.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/gateway.example.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/devices.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/devices.example.com/privkey.pem;
 
     location / {
         proxy_pass http://127.0.0.1:18791;
@@ -207,7 +230,7 @@ hand out the public endpoint rather than a LAN address:
       "enabled": true,
       "host": "127.0.0.1",
       "port": 18791,
-      "external_url": "https://gateway.example.com"
+      "external_url": "https://devices.example.com"
     }
   }
 }
@@ -221,5 +244,13 @@ Cloudflare Tunnel and Tailscale work here too — point the ingress/funnel at
 `127.0.0.1:18791` instead of the WebUI port. Both carry WebSockets transparently.
 
 > `channels.device.allowed_cidrs` matches the TCP peer, which behind a reverse
-> proxy is the proxy itself. Leave it empty (the gateway authenticates every
-> client anyway) or allow the proxy's source address.
+> proxy is the proxy itself. Leave it empty (ClawEh authenticates every
+> client anyway) or allow the proxy's source address. With the proxy listed in
+> `gateway.trusted_proxies`, the device listener takes the client from
+> `X-Real-IP` instead, for the allowlist, the per-address lockout, the pending
+> pairing's address and the logs; without it, every Internet client shares the
+> proxy's address for all of these.
+>
+> A device listener on a network address (anything but loopback) must have
+> `channels.device.token` or `word_token` set and `auto_approve` off; ClawEh
+> refuses to start otherwise.

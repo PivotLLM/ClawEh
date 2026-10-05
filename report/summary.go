@@ -136,7 +136,7 @@ func displayChannel(id string) string {
 
 func devicesSummary(ctx context.Context, cfg *config.Config, env Environment) string {
 	if !cfg.Channels.Device.Enabled {
-		return "Device gateway off"
+		return "Device listener off"
 	}
 	paired, _ := deviceRows(ctx, dataDir(cfg, env))
 	count := "paired devices unknown (store unavailable)"
@@ -149,7 +149,7 @@ func devicesSummary(ctx context.Context, cfg *config.Config, env Environment) st
 	default:
 		count = itoa(len(paired)) + " devices paired"
 	}
-	return "Device gateway on\n" + count
+	return "Device listener on\n" + count
 }
 
 func externalExecSummary(cfg *config.Config) string {

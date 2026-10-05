@@ -9,6 +9,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // newTestChannel builds a channel wired to a real bus with a fixed resolved
@@ -172,5 +173,34 @@ func TestAttachmentLabel(t *testing.T) {
 		if got := attachmentLabel(tt.a); got != tt.want {
 			t.Errorf("attachmentLabel(%+v)=%q want %q", tt.a, got, tt.want)
 		}
+	}
+}
+
+// An unreachable daemon is reported to the outage tracker while the channel
+// keeps retrying.
+func TestRun_UnreachableDaemonReportsOutage(t *testing.T) {
+	ch, err := NewFromConfig(config.SecMsgConfig{Address: "127.0.0.1:1"}, config.SecMsgAccountConfig{}, bus.NewMessageBus())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := ch.(*SecMsgChannel)
+	if !ok {
+		t.Fatalf("NewFromConfig returned %T", ch)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := c.Stop(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for c.ConnDownSince().IsZero() {
+		if time.Now().After(deadline) {
+			t.Fatal("dial failure was not reported to the outage tracker")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

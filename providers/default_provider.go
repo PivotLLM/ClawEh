@@ -32,11 +32,9 @@ func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 		return nil, "", fmt.Errorf("model %q: %w", model, err)
 	}
 
-	// Inject global workspace and timeout if not set in model config.
-	// Only inject workspace when a base dir is explicitly configured.
-	// CLI providers fall back to "." when workspace is unset.
-	if modelCfg.Workspace == "" && cfg.Agents.BaseDir != "" {
-		modelCfg.Workspace = cfg.WorkspacePath()
+	// A model with no workspace runs its CLI in <CLAW_HOME>/cli.
+	if modelCfg.Workspace == "" && cfg.DataDir() != "" {
+		modelCfg.Workspace = cfg.CLIPath()
 	}
 	if modelCfg.RequestTimeout == 0 {
 		modelCfg.RequestTimeout = cfg.Agents.Defaults.RequestTimeout

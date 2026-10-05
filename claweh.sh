@@ -148,4 +148,6 @@ else
 	printf 'License and third-party notices: in the release archive and at https://github.com/%s\n' "$REPO"
 fi
 
-printf '\nDone. Next: run `claw install` to set up the service (Linux), or `claw --help`.\n'
+printf '\nDone. Next: run `claw install` to set up the service and create the WebUI admin\n'
+printf 'account (Linux), or `claw --help`. Running `claw` without the service? Create the\n'
+printf 'account with `claw admin` first; the WebUI requires it.\n'

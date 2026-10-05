@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -627,5 +628,34 @@ func TestShellTool_URLBypassPrevented(t *testing.T) {
 		if !result.IsError || !strings.Contains(result.ForLLM, "path outside working dir") {
 			t.Errorf("bypass attempt should be blocked: %q\n  got: %s", cmd, result.ForLLM)
 		}
+	}
+}
+
+// TestShellTool_ChildEnvIsAllowlisted verifies that a command does not inherit
+// the service's CLAW_* / ALERTER_* variables, while the basics still reach it.
+func TestShellTool_ChildEnvIsAllowlisted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses the POSIX env command")
+	}
+	t.Setenv("CLAW_GATEWAY_TOKEN", "secret-token")
+	t.Setenv("ALERTER_PUSHOVER_TOKEN", "secret-alerter")
+	t.Setenv("CLAWEH_TEST_MARKER", "visible-only-if-inherited")
+
+	tool, err := NewExecTool("", false)
+	if err != nil {
+		t.Fatalf("unable to configure exec tool: %s", err)
+	}
+
+	result := tool.Execute(context.Background(), map[string]any{"command": "env"})
+	if result.IsError {
+		t.Fatalf("Expected success, got IsError=true: %s", result.ForLLM)
+	}
+	for line := range strings.SplitSeq(result.ForLLM, "\n") {
+		if strings.HasPrefix(line, "CLAW_") || strings.HasPrefix(line, "ALERTER_") || strings.HasPrefix(line, "CLAWEH_TEST_MARKER=") {
+			t.Errorf("child inherited %q", line)
+		}
+	}
+	if !strings.Contains(result.ForLLM, "PATH=") {
+		t.Errorf("child has no PATH:\n%s", result.ForLLM)
 	}
 }

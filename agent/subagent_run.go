@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
@@ -62,7 +63,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	src := cogmemstore.DBPath(cogmemhost.Dir(agent.Workspace))
 	dstDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if _, statErr := os.Stat(src); statErr == nil {
-		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		if err := os.MkdirAll(dstDir, 0o700); err != nil {
 			logger.WarnCF("agent", "subagent cogmem snapshot dir failed", map[string]any{
 				"agent": agentID, "error": err.Error(),
 			})
@@ -108,6 +109,13 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		"task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
+	// Tally the worker's tool calls (in the loop and over MCP) under its session
+	// key, so a caller can tell a worker whose every tool call failed from one
+	// that did its work. The deferred End removes the entry if the run never
+	// reaches the read below (a panic); after the read it is a no-op.
+	tools.BeginToolStats(sessionKey)
+	defer tools.EndToolStats(sessionKey)
+
 	res := &global.SyncResult{}
 	content, err := al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:    sessionKey,
@@ -119,16 +127,21 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		IterationsOut: &res.Iterations,
 		UsageOut:      &res.TurnUsage,
 	})
+	toolCalls, toolErrors, lastToolError := tools.EndToolStats(sessionKey)
 	if err != nil {
 		logger.WarnCF("agent", "subagent.run.end", map[string]any{
 			"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "error": err.Error(),
+			"tool_calls": toolCalls, "tool_errors": toolErrors,
 		})
 		return nil, err
 	}
 	res.Content = content
+	res.ToolCalls, res.ToolErrors, res.LastToolError = toolCalls, toolErrors, lastToolError
+	res.SessionKey = sessionKey
 	logger.InfoCF("agent", "subagent.run.end", map[string]any{
 		"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "content_len": len(content),
 		"model": res.Model, "input_tokens": res.InputTokens, "output_tokens": res.OutputTokens,
+		"tool_calls": toolCalls, "tool_errors": toolErrors,
 	})
 	return res, nil
 }
@@ -137,7 +150,10 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 // its DB handles), removes the memory snapshot directory and the ephemeral
 // session's archive files. Best-effort.
 func (al *AgentLoop) cleanupSubagentSession(ctx context.Context, agent *AgentInstance, sessionKey string) {
-	al.dropContextManager(ctx, agent, sessionKey)
+	if !al.dropContextManager(ctx, agent, sessionKey, evictReasonSubagent) {
+		logger.DebugCF("agent", "sub-agent session still in use; the idle sweep will reclaim it",
+			map[string]any{"session": sessionKey})
+	}
 	al.releaseSessionPins(sessionKey)
 	snapshotDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if err := os.RemoveAll(snapshotDir); err != nil {

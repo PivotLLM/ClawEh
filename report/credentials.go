@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/msgtoken"
 	"github.com/PivotLLM/ClawEh/servicetoken"
 )
@@ -91,7 +92,7 @@ func channelCredentialRows(cfg *config.Config) [][]string {
 		rows = append(rows, row("WebUI", "token "+setOrNot(ch.WebUI.Token)))
 	}
 	if ch.Device.Enabled {
-		rows = append(rows, row("Device gateway", "token "+setOrNot(ch.Device.Token)+", word_token "+setOrNot(ch.Device.WordToken)))
+		rows = append(rows, row("Device listener", "token "+setOrNot(ch.Device.Token)+", word_token "+setOrNot(ch.Device.WordToken)))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, row("(no channel enabled)", ""))
@@ -113,16 +114,15 @@ func collectCredentials(_ context.Context, cfg *config.Config, env Environment) 
 	}
 	t.Rows = append(t.Rows,
 		row("WebUI token", setOrNot(cfg.Channels.WebUI.Token)),
-		row("WebUI token accepted in the query string", yesNo(cfg.Channels.WebUI.AllowTokenQuery)),
-		row("Device gateway shared token", setOrNot(cfg.Channels.Device.Token)),
-		row("Device gateway word token", setOrNot(cfg.Channels.Device.WordToken)),
+		row("Device listener shared token", setOrNot(cfg.Channels.Device.Token)),
+		row("Device listener word token", setOrNot(cfg.Channels.Device.WordToken)),
 	)
 
 	return Section{
 		Title: "Credentials and tokens",
 		Notes: []string{
 			"Values are never shown: a credential is reported as set or not set, by name, or by count. " +
-				"Token stores live under " + filepath.Join(dd, "state") + ".",
+				"Token stores live under " + filepath.Join(dd, global.InternalDir) + ".",
 		},
 		Tables: []Table{
 			t,

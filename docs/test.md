@@ -12,11 +12,13 @@ produces a binary. It runs, in order:
 - `go generate ./...`
 - `gofmt`/`gofumpt` formatting check (`make fmt-check`)
 - `go vet ./...`
+- `golangci-lint` (`make lint`)
+- `govulncheck ./...` (`make govulncheck`; installs a pinned binary into
+  `bin/` when missing, needs network access to the vulnerability database, and
+  fails the gate on a vulnerability reachable from the code)
 - `./test.sh`, the suite proper (below)
 
-The exit code is 0 only when every stage passes. `golangci-lint` (`make lint`)
-is currently outside the gate while the remaining findings are worked off; the
-Makefile has a note on restoring it.
+The exit code is 0 only when every stage passes.
 
 ## What `test.sh` runs
 
@@ -27,15 +29,37 @@ package. The race detector is on by default, and overall coverage must be at
 least 50% (`COVERAGE_MIN` in `test.sh`).
 
 **Frontend.** For the SPA under `web/frontend`: TypeScript typecheck
-(`tsc -b --noEmit`), unit tests (`pnpm run test`), and `oxlint`. Skipped, not
-failed, when `pnpm` or `node_modules` are missing, so a Go-only checkout still
-passes. A missing `oxlint` skips only the lint step.
+(`tsc -b --noEmit`), unit tests (`pnpm run test`), and `oxlint`. A missing
+`pnpm` or `node_modules` fails the stage (and the run), naming the fix: `make
+frontend-deps`, or `pnpm install --frozen-lockfile` in `web/frontend`; the gate
+does not install them itself. A missing `oxlint` skips only the lint step.
 
-**MCP integration.** Builds the binary, starts a real gateway in a temporary
-`CLAW_HOME` with the MCP host enabled, drives it with the `probe` tool
-(MCPProbe) and checks workspace, PID-file and restart behaviour, then tears
-everything down. `probe` must be on `PATH` (or set `PROBE_PATH`); if it is not
-found this section counts as a failure, because the full suite did not run.
+**MCP integration.** Builds the binary, starts a real ClawEh instance in a temporary
+`CLAW_HOME` with the MCP host enabled and one Fusion service (the MCPFusion
+module's `wxca` sample), drives it with the `probe` tool (MCPProbe) and checks
+workspace, PID-file and restart behaviour, then tears everything down. Section 8
+of `tests/test_mcpserver.sh` checks per-agent Fusion gating on the running
+binary: the agent whose `mcp_tools` lists the service can call its tools, the
+agent with Fusion on and nothing listed is refused. `probe` must be on `PATH`
+(or set `PROBE_PATH`); if it is not found this section counts as a failure,
+because the full suite did not run.
+
+**Effective capabilities (part of the Go tests).** `tests/capabilities` loads a
+production-shaped fixture and pins, per agent and per CLI model, what it may do:
+native tools, suites, the Fusion tools the real engine registers, MCP grants,
+CLI command lines and environment. It fails when any of that changes until
+`testdata/effective.golden` is regenerated (`UPDATE_GOLDEN=1 go test
+./tests/capabilities/`), which is the moment to write the BREAKING changelog
+entry. See "Capability changes" in `CLAUDE.md`.
+
+**CLI provider smoke (opt-in).** With `CLAW_TEST_CLI=1`, `test.sh` also runs
+`tests/test_cli_provider.sh` against the built binary: one turn through a real
+Claude CLI with "Allow CLI to bypass restrictions" off, asking for a tool call the CLI
+must approve. It passes when the tool ran or when the turn ended with the
+"declined to use tools" error naming the setting; silence or a timeout fails.
+It costs one model call on the CLI account, so it is off by default and the
+summary prints `CLI smoke: skipped`. `CLAW_TEST_CLI_COMMAND` names another CLI
+binary.
 
 Useful flags:
 
@@ -44,7 +68,7 @@ Useful flags:
 | `-f` | Fast: no race detector, no coverage. For quick iteration only. |
 | `-c` | Coverage only, no race detector. |
 | `-s` | Skip the MCP integration section. |
-| `-x` | Keep test artifacts (coverage file, integration home and gateway log). |
+| `-x` | Keep test artifacts (coverage file, integration home and ClawEh log). |
 | `-n` | No colour. |
 
 ## Where to look when it fails
@@ -79,7 +103,7 @@ scrolling.
 `typecheck FAILED`, `unit tests FAILED` or `lint FAILED` line.
 
 **MCP integration** failures print one `FAIL:` line per check in that section.
-The gateway's log for the run is in the temporary directory, which is deleted
+ClawEh's log for the run is in the temporary directory, which is deleted
 unless you pass `-x`; the path is printed when artifacts are kept.
 
 **Coverage** below the minimum fails the run with a one-line message in the
@@ -92,7 +116,7 @@ These are deliberately outside `make test` because they bind ports, need extra
 tools, or need a running instance:
 
 - `make test-maestro-host`: runs Maestro's MCP regression suite against a live
-  ClawEh gateway with Maestro embedded (needs `probe`, `jq`, `zip`).
+  ClawEh with Maestro embedded (needs `probe`, `jq`, `zip`).
 - `make check-webui`: the browser end-to-end plan in
   `tests/frontend-e2e.mjs`, following `docs/webui-test-plan.md`, against a
   running WebUI.

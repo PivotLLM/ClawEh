@@ -197,6 +197,12 @@ func (al *AgentLoop) registerRuntimeTools(
 					if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
 						currentAgent.Tools.Register(t)
 					}
+				case agentCfg.IsToolDenied(t.Name()):
+					// Suite tools skip the allow list (gated as a unit by their
+					// toggle) but never the agent's deny list. Mirrors the
+					// execution-time check in tools.ToolRegistry.ExecuteWithContext.
+					logger.DebugCF("agent", "Skipping suite tool registration: denied by agent deny_tools",
+						map[string]any{"agent_id": agentID, "tool": t.Name(), "suite": suite})
 				case suite == suiteCogmem:
 					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
 				case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
@@ -263,8 +269,16 @@ func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *confi
 	if maxHits <= 0 {
 		maxHits = config.DefaultDiscoveryMaxSearchHits
 	}
-	agent.Tools.RegisterSuite(tools.NewSearchTool(agent.Tools, maxHits))
-	agent.Tools.RegisterSuite(tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget))
+	// Suite-exempt from the allow list, but the agent's deny list still applies.
+	for _, t := range []tools.Tool{
+		tools.NewSearchTool(agent.Tools, maxHits),
+		tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget),
+	} {
+		if agent.Config.IsToolDenied(t.Name()) {
+			continue
+		}
+		agent.Tools.RegisterSuite(t)
+	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

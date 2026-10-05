@@ -209,7 +209,7 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 	}
 	defer removeTempFile(tmpPath)
 
-	if err := os.MkdirAll(localDir, 0o755); err != nil {
+	if err := os.MkdirAll(localDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
 	}
 
@@ -236,7 +236,7 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 	}
 	defer removeTempFile(tmpPath)
 
-	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
 		return err
 	}
 

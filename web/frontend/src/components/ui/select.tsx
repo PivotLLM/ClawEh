@@ -55,10 +55,16 @@ function SelectTrigger({
   )
 }
 
+// position defaults to "popper": an ordinary dropdown under the trigger, sized
+// to the space available, scrolled by the browser. Radix's "item-aligned" mode
+// centres the list on the current value and then "expands on scroll", growing
+// the popup and rewriting the scroll position on every scroll event; with a
+// long list on a phone that flickers under the finger and jumps back to the
+// top on release.
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  position = "popper",
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
@@ -73,11 +79,16 @@ function SelectContent({
         {...props}
       >
         <SelectScrollUpButton />
+        {/* Radix hides the list's scrollbar and leaves a small chevron as the
+            only sign that it continues; a long list then looks cut off. Show a
+            thin scrollbar instead. Inline for scrollbar-width (Radix sets it
+            from an injected stylesheet), a forced class for WebKit's pseudo-element. */}
         <SelectPrimitive.Viewport
           data-position={position}
+          style={{ scrollbarWidth: "thin" }}
           className={cn(
             "data-[position=popper]:h-(--radix-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
-            position === "popper" && ""
+            "[&::-webkit-scrollbar]:block! [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-foreground/25",
           )}
         >
           {children}

@@ -6,7 +6,7 @@ package install
 import (
 	"bufio"
 	"fmt"
-	"net"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -23,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/network"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -67,6 +68,11 @@ func NewInstallCommand() *cobra.Command {
 			"    • Linux: registers a systemd system service (/etc/systemd/system/claw.service)\n" +
 			"    • macOS: registers a launchd LaunchDaemon (/Library/LaunchDaemons/com.pivotllm.claweh.plist)\n" +
 			"    • Binary copied to /usr/local/bin\n\n" +
+			"The WebUI requires an admin login. If <CLAW_HOME>/credentials.json does not exist, the\n" +
+			"installer creates the account before starting the service: from CLAW_ADMIN_USER and\n" +
+			"CLAW_ADMIN_PASSWORD when both are exported, else by prompting on the terminal (/dev/tty\n" +
+			"when stdin is a pipe). With neither it stops without starting the service. --yes does\n" +
+			"not skip this. An existing account is never changed; use `claw admin` to replace it.\n\n" +
 			"On a headless host, pass --host 0.0.0.0 so the WebUI listens on the network, AND\n" +
 			"--allowed-cidrs to define allowed network clients (e.g. --allowed-cidrs 192.168.1.0/24).",
 		Args:         cobra.NoArgs,
@@ -75,8 +81,8 @@ func NewInstallCommand() *cobra.Command {
 			return runInstall(host, port, allowedCIDRs, targetUser, customBinDir, yes)
 		},
 	}
-	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
-	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
+	cmd.Flags().StringVar(&host, "host", "", "Plain-HTTP bind address for the WebUI/API (default 127.0.0.1; 0.0.0.0 serves unencrypted HTTP on every interface). HTTPS is placed by gateway.tls.mode. Empty keeps the current/seeded value.")
+	cmd.Flags().IntVar(&port, "port", 0, "Plain-HTTP port for the WebUI/API. 0 keeps the current/seeded value.")
 	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
 		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
 			"Empty means loopback only. Give explicit CIDRs (192.168.1.0/24), or a shorthand: "+
@@ -161,6 +167,34 @@ func resolveTargetUser(explicitUser string) (*TargetUser, error) {
 	}, nil
 }
 
+// checkExistingMode refuses to install alongside a service of the other kind.
+// The mode is otherwise decided by whether the installer runs as root, and an
+// existing service must win over that: re-running `claw install` as the
+// service account against a system service would have written a second,
+// user-level unit for the same data directory and ports.
+func checkExistingMode(existing *ExistingInstall, isRoot bool) error {
+	if existing == nil || existing.ServicePath == "" {
+		return nil
+	}
+	switch existing.ServiceType {
+	case "systemd-system", "launchd-daemon":
+		if !isRoot {
+			return fmt.Errorf("%s is installed as a system service (%s); run `sudo %s install`",
+				app.Name(), existing.ServicePath, internal.BinaryName)
+		}
+	case "systemd-user", "launchd-agent":
+		if isRoot {
+			who := existing.User
+			if who == "" {
+				who = "the user it belongs to"
+			}
+			return fmt.Errorf("%s is installed as a user service (%s); run `%s install` as %s, without sudo",
+				app.Name(), existing.ServicePath, internal.BinaryName, who)
+		}
+	}
+	return nil
+}
+
 // resolveBinDir selects the destination directory for the installed binary.
 func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
 	if customDir != "" {
@@ -230,6 +264,9 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// Detect any pre-existing installation or service
 	existing := DetectExistingInstall(tu.HomeDir)
+	if err = checkExistingMode(existing, tu.IsRoot); err != nil {
+		return err
+	}
 	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
 		// Preserve user from existing service
 		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
@@ -270,6 +307,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	}
 
 	clawHome := resolveClawHome(tu, binDir, existing)
+	homeExisted := dirExists(clawHome)
 
 	// Explicitly set CLAW_HOME in process environment so any config access or helper uses clawHome
 	if envErr := os.Setenv(global.EnvVarHome, clawHome); envErr != nil {
@@ -310,7 +348,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		return fmt.Errorf("copying binary to %s: %w", targetBin, err)
 	}
 	fixOwnership(targetBin, tu)
-	fmt.Printf("Installed binary: %s\n", targetBin)
+	fmt.Printf("\nInstalled binary: %s\n", targetBin)
 
 	// 2b. Symlink openclaw -> claw (for Rabbit R1 ACP connection)
 	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
@@ -344,7 +382,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 					"Pass --allowed-cidrs as well:\n"+
 					"  --allowed-cidrs 192.168.1.0/24   your LAN subnet (recommended)\n"+
 					"  --allowed-cidrs private          all RFC1918 private ranges\n"+
-					"  --allowed-cidrs any              any address — the WebUI has no password yet\n"+
+					"  --allowed-cidrs any              any address (the admin login is still required)\n"+
 					"Loopback is always allowed, so --host 127.0.0.1 needs none of this",
 				host, serviceName)
 		}
@@ -356,21 +394,18 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		fixOwnership(filepath.Join(clawHome, "config.json"), tu)
 	}
 
-	// 4. Register and start background service
-	switch runtime.GOOS {
-	case "linux":
-		if err := installSystemd(tu, targetBin, binDir, clawHome); err != nil {
-			return fmt.Errorf("installing systemd service: %w", err)
-		}
-	case "darwin":
-		if err := installLaunchd(tu, targetBin, binDir, clawHome); err != nil {
-			return fmt.Errorf("installing launchd service: %w", err)
-		}
+	// 4. Make sure the admin account exists, then register and start the
+	// background service. Without the account the service is not started.
+	adminUser, provErr := provisionAndRegister(tu, targetBin, binDir, clawHome, homeExisted)
+	if provErr != nil {
+		return provErr
 	}
 	fixOwnership(filepath.Join(clawHome, "logs"), tu)
 
 	fmt.Println("\nInstalled and running.")
-	fmt.Printf("Web interface is at: %s\n\n", accessURL(clawHome))
+	printInstalledURLs(clawHome)
+	fmt.Printf("Admin account: %s (%s)\n", adminUser, admin.Path(clawHome))
+	fmt.Println()
 	fmt.Println("Hints:")
 	switch runtime.GOOS {
 	case "linux":
@@ -393,6 +428,75 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		fmt.Printf("  Uninstall:    sudo %s uninstall\n", targetBin)
 	} else {
 		fmt.Printf("  Uninstall:    %s uninstall\n", targetBin)
+	}
+	return nil
+}
+
+// registerService writes the service definition and enables and starts it.
+// It is replaced in tests.
+var registerService = func(tu *TargetUser, targetBin, binDir, clawHome string) error {
+	switch runtime.GOOS {
+	case "linux":
+		if err := installSystemd(tu, targetBin, binDir, clawHome); err != nil {
+			return fmt.Errorf("installing systemd service: %w", err)
+		}
+	case "darwin":
+		if err := installLaunchd(tu, targetBin, binDir, clawHome); err != nil {
+			return fmt.Errorf("installing launchd service: %w", err)
+		}
+	}
+	return nil
+}
+
+// adminTerminal opens the terminal the account prompt uses; nil means the
+// real one (stdin, else /dev/tty). It is replaced in tests.
+var adminTerminal func(io.Writer) (*admin.Terminal, error)
+
+// provisionAndRegister ensures clawHome holds an admin account and only then
+// registers and starts the service, so an install never leaves a WebUI that
+// nobody can sign in to. It returns the account's username. homeExisted says
+// whether clawHome was there before the install began; a directory the
+// installer created as root is handed to the service account.
+func provisionAndRegister(tu *TargetUser, targetBin, binDir, clawHome string, homeExisted bool) (string, error) {
+	if err := os.MkdirAll(clawHome, 0o700); err != nil {
+		return "", fmt.Errorf("creating %s: %w", clawHome, err)
+	}
+	if !homeExisted {
+		fixOwnership(clawHome, tu)
+	}
+	opts := admin.EnsureOptions{Home: clawHome, OpenTerminal: adminTerminal}
+	if tu.IsRoot {
+		opts.Chown = func(path string) error { return chownToTarget(path, tu) }
+	}
+	username, created, err := admin.EnsureAccount(opts)
+	if err != nil {
+		return "", fmt.Errorf("%w\nThe %s service was not registered or started. Rerunning the installer is safe", err, serviceName)
+	}
+	if created {
+		fmt.Printf("Created admin account %q (%s)\n", username, admin.Path(clawHome))
+	} else {
+		fmt.Printf("Admin account %q already exists (%s); left unchanged\n", username, admin.Path(clawHome))
+	}
+	if err := registerService(tu, targetBin, binDir, clawHome); err != nil {
+		return "", err
+	}
+	return username, nil
+}
+
+// chownToTarget hands path to the service account; unlike fixOwnership a
+// failure is an error, because the service cannot read a 0600 file it does
+// not own.
+func chownToTarget(path string, tu *TargetUser) error {
+	uid, err := strconv.Atoi(tu.UID)
+	if err != nil {
+		return fmt.Errorf("service user %s: uid %q: %w", tu.Username, tu.UID, err)
+	}
+	gid, err := strconv.Atoi(tu.GID)
+	if err != nil {
+		return fmt.Errorf("service user %s: gid %q: %w", tu.Username, tu.GID, err)
+	}
+	if err := os.Chown(path, uid, gid); err != nil {
+		return fmt.Errorf("chown %s to %s: %w", path, tu.Username, err)
 	}
 	return nil
 }
@@ -499,54 +603,6 @@ func buildUnit(username, group, execPath, binDir string) string {
 	return buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome)
 }
 
-// accessURL returns the web UI URL to print after install, derived from the
-// active bind host/port. For an all-interfaces bind it uses the host's primary
-// private IP so a headless user gets a reachable address, not "0.0.0.0".
-func accessURL(optionalClawHome ...string) string {
-	host, port := "127.0.0.1", config.DefaultGatewayPort
-	cfgPath := internal.GetConfigPath()
-	if len(optionalClawHome) > 0 && optionalClawHome[0] != "" {
-		cfgPath = filepath.Join(optionalClawHome[0], "config.json")
-	}
-	if cfg, err := config.LoadConfig(cfgPath); err == nil {
-		if cfg.Gateway.Host != "" {
-			host = cfg.Gateway.Host
-		}
-		if cfg.Gateway.Port != 0 {
-			port = cfg.Gateway.Port
-		}
-	}
-	switch strings.TrimSpace(host) {
-	case "0.0.0.0", "::", "":
-		if ip := primaryLANIP(); ip != "" {
-			return "http://" + net.JoinHostPort(ip, strconv.Itoa(port))
-		}
-		return fmt.Sprintf("http://<server-ip>:%d", port)
-	case "127.0.0.1", "localhost", "::1":
-		return fmt.Sprintf("http://localhost:%d", port)
-	default:
-		return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
-	}
-}
-
-// primaryLANIP returns the host's first non-loopback private IPv4, or "".
-func primaryLANIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, a := range addrs {
-		ipnet, ok := a.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() {
-			continue
-		}
-		if ip4 := ipnet.IP.To4(); ip4 != nil && ip4.IsPrivate() {
-			return ip4.String()
-		}
-	}
-	return ""
-}
-
 // applyServerSettings writes the requested bind host/port into the config (a
 // blank/zero value leaves the existing one untouched), creating the config from
 // defaults if it doesn't exist yet. It warns when binding a non-loopback address
@@ -572,13 +628,64 @@ func applyServerSettings(host string, port int, optionalClawHome ...string) erro
 	if err := config.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	fmt.Printf("Server bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
-	if isPublicBind(cfg.Gateway.Host) {
-		fmt.Printf("Note: %s has no WebUI authentication. Access is restricted to loopback +\n", app.Name())
-		fmt.Println("      the private-network IP allowlist (RFC1918). If you widen the allowlist to")
-		fmt.Println("      public ranges, put it behind a firewall or an authenticated reverse proxy.")
-	}
+	fmt.Printf("Plain-HTTP bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
 	return nil
+}
+
+// printListenerSummary says where the WebUI is served after install: plain
+// HTTP on this machine (and on the network when gateway.host is not
+// loopback), and HTTPS where gateway.tls.mode puts it.
+func printListenerSummary(w io.Writer, gw config.GatewayConfig) {
+	var b strings.Builder
+	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+	line("")
+	line("WebUI on this machine:  %s", gw.LocalHTTPURL())
+	for _, u := range gw.NetworkHTTPURLs() {
+		line("WebUI on the network:   %s  (HTTP, unencrypted, not recommended)", u)
+	}
+	switch gw.TLS.EffectiveMode() {
+	case config.TLSModeOff:
+		line("HTTPS:                  off")
+	case config.TLSModeLocalhost:
+		line("HTTPS on this machine:  https://127.0.0.1:%d/", gw.EffectiveTLSPort())
+	default:
+		for _, u := range gw.HTTPSURLs() {
+			line("HTTPS on the network:   %s", u)
+		}
+	}
+	if gw.HTTPOnNetwork() || gw.HTTPSOnNetwork() {
+		allowed := "localhost only"
+		if cidrs := gw.EffectiveAllowedCIDRs(); len(cidrs) > 0 {
+			allowed = strings.Join(cidrs, ", ")
+		}
+		line("Allowed networks:       %s", allowed)
+	}
+	if gw.HTTPSEnabled() {
+		cert := "self-signed (the browser warns once)"
+		if strings.TrimSpace(gw.TLS.CertFile) != "" {
+			cert = strings.TrimSpace(gw.TLS.CertFile)
+		}
+		line("Certificate:            %s", cert)
+	}
+	line("")
+	line("Network and certificate settings can be changed in the WebUI or config.json.")
+	if _, err := io.WriteString(w, b.String()); err != nil {
+		return // stdout gone; nothing useful left to do
+	}
+}
+
+// printInstalledURLs prints the listener summary for the installed config,
+// or for the defaults when it cannot be read.
+func printInstalledURLs(clawHome string) {
+	gw := config.DefaultConfig().Gateway
+	cfgPath := internal.GetConfigPath()
+	if clawHome != "" {
+		cfgPath = filepath.Join(clawHome, "config.json")
+	}
+	if cfg, err := config.LoadConfig(cfgPath); err == nil {
+		gw = cfg.Gateway
+	}
+	printListenerSummary(os.Stdout, gw)
 }
 
 // linkOpenClawAlias points <binDir>/openclaw at the installed binary. The link is
@@ -611,16 +718,6 @@ func applyAllowlist(csv string) error {
 	}
 	fmt.Printf("Network allowlist set to %s (loopback always allowed) (%s)\n", network.Describe(cidrs), path)
 	return nil
-}
-
-// isPublicBind reports whether host exposes the server beyond the local machine.
-func isPublicBind(host string) bool {
-	switch strings.TrimSpace(host) {
-	case "", "127.0.0.1", "localhost", "::1":
-		return false
-	default:
-		return true
-	}
 }
 
 // servicePATH builds the PATH baked into the systemd unit or launchd plist.

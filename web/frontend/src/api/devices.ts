@@ -1,4 +1,5 @@
-// API client for the external-device gateway (pairing + network settings).
+// API client for the external-device gateway (pairing). The listener settings
+// are edited on the Network page through PATCH /api/config.
 
 export interface DeviceStatus {
   payload: string
@@ -12,6 +13,7 @@ export interface DeviceStatus {
   listen_port: number
   listen_lan: boolean
   external_url: string
+  connect_url: string
   warnings: string[]
   qr_png?: string
   qr_ascii?: string
@@ -75,14 +77,6 @@ export const getDeviceStatus = () => request<DeviceStatus>("/api/devices/pair")
 export const generateDevicePairing = () =>
   request<DeviceStatus>("/api/devices/pair", { method: "POST" })
 
-export interface DeviceSettings {
-  listen_lan?: boolean
-  external_url?: string
-  enabled?: boolean
-}
-export const saveDeviceSettings = (s: DeviceSettings) =>
-  request<DeviceStatus>("/api/devices/settings", jsonPost(s))
-
 // regenerateWordToken mints a fresh typeable passphrase (the long QR token is
 // unchanged) and returns the refreshed status.
 export const regenerateWordToken = () =>
@@ -103,7 +97,7 @@ export const rejectDevice = (id: string) =>
 
 export const listPairedDevices = () =>
   request<{ devices: PairedDevice[]; agents: AgentOption[] }>("/api/devices")
-// assignDeviceAgent sets the agent a device routes to ("" = gateway default).
+// assignDeviceAgent sets the agent a device routes to ("" = default agent).
 export const assignDeviceAgent = (id: string, agentId: string) =>
   request<unknown>(
     `/api/devices/${encodeURIComponent(id)}/agent`,

@@ -74,6 +74,18 @@ export function BackupSection({ form, onFieldChange }: BackupSectionProps) {
         />
       </Field>
       <Field
+        label={t("pages.config.backup_dest")}
+        hint={t("pages.config.backup_dest_hint")}
+        layout="setting-row"
+      >
+        <Input
+          data-testid="backup-dest"
+          placeholder={t("pages.config.backup_dest_placeholder")}
+          value={form.backupDest}
+          onChange={(e) => onFieldChange("backupDest", e.target.value)}
+        />
+      </Field>
+      <Field
         label={t("pages.config.backup_now")}
         hint={t("pages.config.backup_now_hint")}
         layout="setting-row"

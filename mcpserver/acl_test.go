@@ -14,8 +14,8 @@ import (
 )
 
 // seedSessionToken is a test helper that issues a session token for the given
-// agent and registers it in a fresh sessionTokenStore.
-func seedSessionToken(agentID string) (*sessionTokenStore, string) {
+// agent and registers it in a fresh SessionTokenStore.
+func seedSessionToken(agentID string) (*SessionTokenStore, string) {
 	st := newSessionTokenStore()
 	tok := st.Issue(agentID, "test:"+agentID+":main", "/tmp/archive/"+agentID)
 	return st, tok

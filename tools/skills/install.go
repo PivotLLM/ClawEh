@@ -126,7 +126,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *to
 	}
 
 	// Ensure skills directory exists.
-	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillsDir, 0o700); err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to create skills directory: %v", err))
 	}
 

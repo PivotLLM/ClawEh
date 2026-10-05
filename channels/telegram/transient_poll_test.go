@@ -11,10 +11,9 @@ func TestIsTransientPollError(t *testing.T) {
 		msg  string
 		want bool
 	}{
-		// Real telego long-poll churn from the field (502/504 + retry notice).
+		// Real telego long-poll churn from the field (502/504).
 		{"exec error 502", "Execution error getUpdates: request call: internal server error: 502", true},
 		{"getting updates 502", "Getting updates: telego: getUpdates: internal execution: request call: internal server error: 502", true},
-		{"retry notice", "Retrying getting updates in 2s...", true},
 		{"exec error 504", "Execution error getUpdates: request call: internal server error: 504", true},
 		{"503", "Getting updates: telego: getUpdates: request call: internal server error: 503", true},
 		// Transport-level blips during getUpdates.
@@ -34,6 +33,25 @@ func TestIsTransientPollError(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := isTransientPollError(c.msg); got != c.want {
 				t.Fatalf("isTransientPollError(%q) = %v, want %v", c.msg, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsCancelledPoll(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{"stop mid poll", `Execution error getUpdates: request call: http do request: Post "http://x/bot1:a/getUpdates": context canceled`, true},
+		{"other method", `Execution error sendMessage: request call: http do request: Post "http://x/bot1:a/sendMessage": context canceled`, false},
+		{"poll failure", "Execution error getUpdates: request call: internal server error: 502", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isCancelledPoll(c.msg); got != c.want {
+				t.Fatalf("isCancelledPoll(%q) = %v, want %v", c.msg, got, c.want)
 			}
 		})
 	}

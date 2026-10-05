@@ -205,3 +205,22 @@ func toolMarkers(tb Table) map[string]string {
 	}
 	return out
 }
+
+// With Fusion on, an mcp_tools entry that reaches no MCP server may name a
+// Fusion service, so it is described, not flagged; and an empty list says that
+// the switch alone grants no Fusion tools.
+func TestCollectAgents_MCPAccess_Fusion(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Fusion = true
+	mcp := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "MCP access")
+	i, nothing := findRow(t, mcp, "nothing")
+	if !strings.Contains(nothing[1], "Fusion tools named nothing") || isHighlighted(mcp, i) {
+		t.Errorf("fusion entry row = %v highlighted=%v", nothing, isHighlighted(mcp, i))
+	}
+
+	cfg.Agents.List[0].MCPTools = nil
+	mcp = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "MCP access")
+	if len(mcp.Rows) != 1 || !strings.Contains(mcp.Rows[0][1], "no Fusion tools") {
+		t.Errorf("empty list with Fusion on = %v", mcp.Rows)
+	}
+}

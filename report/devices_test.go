@@ -18,19 +18,19 @@ func TestCollectDevices_NoStoreIsUnavailableNotCreated(t *testing.T) {
 	s := collectDevices(t.Context(), cfg, env)
 	paired := findTable(t, s, "Paired devices")
 	contains(t, paired.Rows[0][0], "unavailable: no device store at", "missing store")
-	if _, err := os.Stat(filepath.Join(env.DataDir, "state", "gateway.db")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(env.DataDir, "internal", "gateway.db")); !os.IsNotExist(err) {
 		t.Error("the report must not create the device store")
 	}
 	st := findTable(t, s, "Settings")
-	_, gw := findRow(t, st, "Device gateway")
+	_, gw := findRow(t, st, "Device listener")
 	if gw[1] != "on" {
-		t.Errorf("device gateway = %q", gw[1])
+		t.Errorf("device listener = %q", gw[1])
 	}
 }
 
 func TestCollectDevices_ListsPairedAndPending(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	stateDir := filepath.Join(env.DataDir, "state")
+	stateDir := filepath.Join(env.DataDir, "internal")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}

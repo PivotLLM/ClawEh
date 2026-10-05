@@ -37,7 +37,7 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 				map[string]any{"path": c.FusionTokensPath(), "error": err.Error()})
 			alerts.Send(alerter.Alert{
 				Title:       "Fusion token store unavailable",
-				Description: c.FusionTokensPath() + ": every Google and Microsoft tool is disabled until the gateway is restarted with a readable store",
+				Description: c.FusionTokensPath() + ": every Google and Microsoft tool is disabled until claw is restarted with a readable store",
 				Details:     err.Error(),
 				EventID:     "fusion",
 			})

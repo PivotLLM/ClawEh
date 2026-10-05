@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -37,15 +38,20 @@ type sessionRecord struct {
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
+	// hashed marks a record keyed by tokenhash.Hash(token) rather than by the
+	// token itself: service tokens loaded from disk, where only the hash is
+	// kept. Resolve hashes the presented token to reach these, and never lets
+	// the stored hash string itself authenticate.
+	hashed bool
 }
 
-// sessionTokenStore maps SST<64hex> tokens to session records.
+// SessionTokenStore maps SST<64hex> tokens to session records.
 // Tokens are generated on first session use and rotated on clear.
 //
 // Session-scoped tools (get_session_messages, search_session_messages) require a
 // session_token so the MCP server can inject the correct session key into the
 // tool's execution context regardless of which HTTP request carries the call.
-type sessionTokenStore struct {
+type SessionTokenStore struct {
 	mu     sync.RWMutex
 	tokens map[string]sessionRecord // token → record
 	bySess map[string]string        // conversation sessionKey → token (rotation/revocation)
@@ -61,17 +67,23 @@ type sessionTokenStore struct {
 	sessionMode routing.SessionScope
 }
 
-func newSessionTokenStore() *sessionTokenStore {
-	return &sessionTokenStore{
+// NewSessionTokenStore returns an empty store. The gateway creates one for the
+// life of the process and hands it to every MCP server it builds (see
+// WithSessionTokenStore), so a config reload does not invalidate the tokens
+// already rendered into running prompts.
+func NewSessionTokenStore() *SessionTokenStore { return newSessionTokenStore() }
+
+func newSessionTokenStore() *SessionTokenStore {
+	return &SessionTokenStore{
 		tokens: make(map[string]sessionRecord),
 		bySess: make(map[string]string),
 		bySvc:  make(map[string]string),
 	}
 }
 
-// setSessionMode records the configured session scope. Called from New via
-// WithSessionMode before the server serves traffic.
-func (s *sessionTokenStore) setSessionMode(mode routing.SessionScope) {
+// setSessionMode records the configured session scope. Called from New with
+// the WithSessionMode value before the server serves traffic.
+func (s *SessionTokenStore) setSessionMode(mode routing.SessionScope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionMode = mode
@@ -79,14 +91,14 @@ func (s *sessionTokenStore) setSessionMode(mode routing.SessionScope) {
 
 // serviceSessionKey is the session a service token for agentID operates on.
 // Caller must hold at least a read lock.
-func (s *sessionTokenStore) serviceSessionKey(agentID string) string {
+func (s *SessionTokenStore) serviceSessionKey(agentID string) string {
 	return routing.ResolveServiceSessionKey(s.sessionMode, agentID)
 }
 
 // Issue generates a new token for the given session and stores the mapping.
 // If a token already exists for this sessionKey, it is revoked first.
 // Returns the new SST<64hex> token.
-func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string {
+func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string {
 	tok, err := generateSessionToken()
 	if err != nil {
 		// crypto/rand failure is catastrophic; return empty so callers can fail
@@ -127,7 +139,7 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 // string. If a token already exists for this sessionKey, it is revoked first.
 // Intended for test setups where a known token must be registered before
 // any LLM session has started.
-func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir string) {
+func (s *SessionTokenStore) Register(token, agentID, sessionKey, archiveDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -146,7 +158,7 @@ func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 // it is pinned (never rotated by Issue); unlike a conversation token it is never
 // evicted, because no ContextManager ever uses the service session key. The
 // caller supplies the exact token (minted/persisted by the `claw token` CLI).
-func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
+func (s *SessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -172,8 +184,11 @@ func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 // agents present have their service token (re)registered; service tokens for
 // agents no longer present are revoked. archiveDirFor maps an agentID to its
 // archive dir; agents it returns "" for (unknown) are skipped. This is what lets
-// `claw token` changes take effect without a restart.
-func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveDirFor func(agentID string) string) {
+// `claw token` changes take effect without a restart. The values are the
+// stored form from servicetoken.Load — hashes — so the record is keyed by the
+// hash and Resolve hashes the presented token to find it; a plaintext value
+// (tests) is keyed as-is.
+func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveDirFor func(agentID string) string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -195,6 +210,7 @@ func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 			sessionKey: s.serviceSessionKey(agentID),
 			archiveDir: archiveDir,
 			pinned:     true,
+			hashed:     tokenhash.IsHashed(tok),
 		}
 		s.bySvc[agentID] = tok
 	}
@@ -206,7 +222,7 @@ func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 // publish a tool's ForUser payload back to the originating user. No-op if
 // the sessionKey is unknown — Issue() may not yet have been called for this
 // session, which is normal during early startup.
-func (s *sessionTokenStore) SetSource(sessionKey, channel, chatID string) {
+func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 	if sessionKey == "" {
 		return
 	}
@@ -225,16 +241,23 @@ func (s *sessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 	s.tokens[tok] = rec
 }
 
-// Resolve looks up a token. Returns the record and true if found.
-func (s *sessionTokenStore) Resolve(token string) (sessionRecord, bool) {
+// Resolve looks up a presented token. Returns the record and true if found.
+// A record stored under the token's hash is reached by hashing the presented
+// value; presenting the hash string itself matches nothing.
+func (s *SessionTokenStore) Resolve(token string) (sessionRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rec, ok := s.tokens[token]
-	return rec, ok
+	if rec, ok := s.tokens[token]; ok && !rec.hashed {
+		return rec, true
+	}
+	if rec, ok := s.tokens[tokenhash.Hash(token)]; ok && rec.hashed {
+		return rec, true
+	}
+	return sessionRecord{}, false
 }
 
 // Revoke removes the token for a given session key (called on clear/eviction).
-func (s *sessionTokenStore) Revoke(sessionKey string) {
+func (s *SessionTokenStore) Revoke(sessionKey string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if tok, ok := s.bySess[sessionKey]; ok {
@@ -244,7 +267,7 @@ func (s *sessionTokenStore) Revoke(sessionKey string) {
 }
 
 // RevokeAgent removes all tokens for a given agent (called on agent removal).
-func (s *sessionTokenStore) RevokeAgent(agentID string) {
+func (s *SessionTokenStore) RevokeAgent(agentID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for tok, rec := range s.tokens {

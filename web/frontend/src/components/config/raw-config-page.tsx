@@ -122,7 +122,7 @@ export function RawConfigPage() {
     <div className="flex h-full flex-col">
       <PageHeader title={t("pages.config.raw_json_title")}>
         <Button variant="outline" asChild>
-          <Link to="/config">
+          <Link to="/system">
             <IconAdjustments className="size-4" />
             {t("pages.config.back_to_visual")}
           </Link>

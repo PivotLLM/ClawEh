@@ -55,13 +55,29 @@ const BASE_URL = ""
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, options)
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`)
+    // Surface the server's error body (e.g. 409 "model is still referenced
+    // by ...") so callers can show a meaningful message.
+    let detail = ""
+    try {
+      detail = (await res.text()).trim()
+    } catch {
+      // ignore
+    }
+    throw new Error(detail || `API error: ${res.status} ${res.statusText}`)
   }
   return res.json() as Promise<T>
 }
 
+// getModels normalises the list at the boundary: Go encodes an empty slice as
+// null, and the page spreads and sorts `models` as an array.
 export async function getModels(): Promise<ModelsListResponse> {
-  return request<ModelsListResponse>("/api/models")
+  const data = await request<Partial<ModelsListResponse>>("/api/models")
+  const models = data.models ?? []
+  return {
+    models,
+    total: data.total ?? models.length,
+    default_model: data.default_model ?? "",
+  }
 }
 
 export async function addModel(

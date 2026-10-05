@@ -5,8 +5,11 @@ import {
   maestroEditsFromAgent,
   maestroFromRaw,
   maestroPayload,
+  cliBypassWarnings,
+  fusionAccessView,
   mcpAccessEntries,
   mcpAccessView,
+  toggleAccessEntry,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -116,5 +119,92 @@ describe("mcp access", () => {
       s.name === "fusion" ? { ...s, checked: false } : s,
     )
     expect(mcpAccessEntries(rows)).toEqual(["GitHub"])
+  })
+
+  it("leaves entries owned by a Fusion service to the Fusion list", () => {
+    const rows = mcpAccessView(
+      ["github", "wxca", "microsoft365_calendar", "old"],
+      servers,
+      ["wxca", "microsoft365"],
+    )
+    expect(rows.slice(2)).toEqual([{ name: "old", checked: true, configured: false }])
+  })
+})
+
+describe("fusion services", () => {
+  const services = ["microsoft365", "wxca"]
+
+  it("checks named services case-insensitively and ignores MCP entries", () => {
+    expect(fusionAccessView(["WXCA", "github"], services)).toEqual([
+      { name: "microsoft365", checked: false, configured: true },
+      { name: "wxca", checked: true, configured: true },
+    ])
+  })
+
+  it("shows a group within a service as its own unflagged row", () => {
+    const rows = fusionAccessView(["microsoft365_calendar"], services)
+    expect(rows).toEqual([
+      { name: "microsoft365", checked: false, configured: true },
+      { name: "wxca", checked: false, configured: true },
+      { name: "microsoft365_calendar", checked: true, configured: true },
+    ])
+  })
+
+  it("ticking a service adds it beside the MCP entries", () => {
+    expect(toggleAccessEntry(["github"], "wxca")).toEqual(["github", "wxca"])
+  })
+
+  it("a name that is both a server and a service is one entry shown in both lists", () => {
+    const servers = ["simpledoc", "github"]
+    const both = ["simpledoc", ...services]
+    let entries = ["simpledoc"]
+    expect(mcpAccessView(entries, servers, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
+    expect(fusionAccessView(entries, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
+    // Unticking it in either list removes the one entry, so both rows clear.
+    entries = toggleAccessEntry(entries, "simpledoc")
+    expect(entries).toEqual([])
+    expect(mcpAccessView(entries, servers, both)[0].checked).toBe(false)
+    expect(fusionAccessView(entries, both)[0].checked).toBe(false)
+    // Ticking it again restores both.
+    entries = toggleAccessEntry(entries, "simpledoc")
+    expect(fusionAccessView(entries, both)[0].checked).toBe(true)
+  })
+
+  it("toggling removes case-insensitively and never duplicates", () => {
+    expect(toggleAccessEntry(["WXCA", "github"], "wxca")).toEqual(["github"])
+    expect(toggleAccessEntry(["github"], "github")).toEqual([])
+  })
+})
+
+describe("cli bypass warnings", () => {
+  const models = [
+    { model_name: "Claude CLI Opus", provider: "Claude CLI", extra_args: ["--dangerously-skip-permissions", "--no-chrome"] },
+    { model_name: "Codex", provider: "Codex CLI", extra_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+    { model_name: "OR Flash", provider: "OpenRouter" },
+  ]
+  const providers = [
+    { name: "Claude CLI", protocol: "claude-cli" },
+    { name: "Codex CLI", protocol: "codex-cli", bypass_restrictions: true },
+    { name: "OpenRouter", protocol: "openai-chat" },
+  ]
+  const clis = [
+    { protocol: "claude-cli", bypass_args: ["--dangerously-skip-permissions"] },
+    { protocol: "codex-cli", bypass_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+  ]
+
+  it("flags a model whose bypass flag is dropped because the provider setting is off", () => {
+    expect(cliBypassWarnings(["Claude CLI Opus", "Codex", "OR Flash"], [], models, providers, clis)).toEqual([
+      { model: "Claude CLI Opus", provider: "Claude CLI", flag: "--dangerously-skip-permissions" },
+    ])
+  })
+
+  it("falls back to the default chain when the agent has none", () => {
+    expect(cliBypassWarnings([], ["Claude CLI Opus"], models, providers, clis)).toHaveLength(1)
+    expect(cliBypassWarnings([], ["OR Flash"], models, providers, clis)).toEqual([])
+  })
+
+  it("is quiet for unknown models, HTTP providers and missing data", () => {
+    expect(cliBypassWarnings(["Nope"], [], models, providers, clis)).toEqual([])
+    expect(cliBypassWarnings(["Claude CLI Opus"], [], undefined, undefined, [])).toEqual([])
   })
 })

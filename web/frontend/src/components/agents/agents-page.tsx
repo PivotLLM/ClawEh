@@ -10,6 +10,7 @@ import {
   getAppConfig,
   patchAppConfig,
 } from "@/api/channels"
+import { listCLIs } from "@/api/system"
 import { type ModelInfo, getModels } from "@/api/models"
 import { AgentCard } from "@/components/agents/agent-card"
 import {
@@ -23,6 +24,7 @@ import {
   parseAgentBindings,
   parseAgentsConfig,
   sortAgentList,
+  cliBypassWarnings,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -72,15 +74,19 @@ export function AgentsPage() {
   } = useQuery({
     queryKey: ["agents-page"],
     queryFn: async () => {
-      const [appConfig, modelsData, skillsData, toolsData] = await Promise.all([
+      const [appConfig, modelsData, skillsData, toolsData, clis] = await Promise.all([
         getAppConfig(),
         getModels(),
         fetchSkills(),
         getAgentTools(),
+        listCLIs(),
       ])
       return {
         agentsCfg: parseAgentsConfig(appConfig),
         bindings: parseAgentBindings(appConfig),
+        rawModels: appConfig.models,
+        rawProviders: appConfig.providers,
+        clis,
         models: modelsData.models,
         availableSkills: [...skillsData].sort((a, b) =>
           a.name.localeCompare(b.name),
@@ -106,8 +112,12 @@ export function AgentsPage() {
 
   // Seed the editable config when a fetch lands. Adjusted during render rather
   // than in an effect so the page is never painted with an empty agent list for
-  // a frame, and it fires only for a genuinely new fetch result.
-  const [syncedLoad, setSyncedLoad] = useState(loaded)
+  // a frame, and it fires only for a genuinely new fetch result. syncedLoad
+  // starts undefined, not at `loaded`: when the page mounts with the query
+  // already cached (a return visit through the sidebar), `loaded` is set on the
+  // first render, and seeding it here means the cached list shows at once
+  // instead of "No agents yet" until a reload.
+  const [syncedLoad, setSyncedLoad] = useState<typeof loaded>(undefined)
   if (loaded && loaded !== syncedLoad) {
     setSyncedLoad(loaded)
     setAgentsCfg(loaded.agentsCfg)
@@ -152,6 +162,9 @@ export function AgentsPage() {
         // Always sent (like tools/mounts) so clearing the box persists; the
         // backend drops an empty slice on save (omitempty).
         mcp_tools: a.mcp_tools ?? [],
+        // Always sent so clearing the list persists; blank rows (an entry
+        // being typed) are dropped. The backend drops an empty slice on save.
+        deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
         // Always sent (like tools) so removing all mounts persists; the backend
         // drops an empty slice on save (omitempty).
         mounts: (a.mounts ?? [])
@@ -190,6 +203,7 @@ export function AgentsPage() {
       share_common: edits.shareCommon,
       mounts: edits.mounts,
       mcp_tools: edits.mcpTools,
+      deny_tools: edits.denyTools,
       maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -401,6 +415,21 @@ export function AgentsPage() {
   // or empty selection and then again with the corrected one, and everything
   // below keys off this value.
   const agentList = agentsCfg.list ?? []
+
+  // cancelAdd closes the Add Agent form and clears its fields; the Cancel
+  // button and Escape in the form's text fields both use it.
+  const cancelAdd = () => {
+    setShowAdd(false)
+    setAddingId("")
+    setAddingName("")
+    setAddingModels([])
+    setAddingSkills([])
+    setAddingTools([])
+    setAddingToolsExpanded(false)
+  }
+  const escapeCancelsAdd = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") cancelAdd()
+  }
   const activeId =
     agentList.length === 0
       ? ""
@@ -495,6 +524,13 @@ export function AgentsPage() {
                       name={agent.name}
                       enabled={agent.enabled !== false}
                       selectedModels={e.models}
+                      bypassWarnings={cliBypassWarnings(
+                        e.models,
+                        agentsCfg.defaults.models ?? [],
+                        loaded?.rawModels,
+                        loaded?.rawProviders,
+                        loaded?.clis ?? [],
+                      )}
                       skills={e.skills}
                       tools={e.tools}
                       availableSkills={availableSkills}
@@ -539,6 +575,8 @@ export function AgentsPage() {
                       onMountsChange={(ms) => edit(i, { mounts: ms })}
                       mcpTools={e.mcpTools}
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}
+                      denyTools={e.denyTools}
+                      onDenyToolsChange={(dt) => edit(i, { denyTools: dt })}
                       agentBindings={bindingViewsForAgent(bindings, agent.id)}
                       onSetDefaultBinding={(target, deliverTo) =>
                         handleSetDefaultBinding(agent.id, target, deliverTo)
@@ -556,11 +594,20 @@ export function AgentsPage() {
                       <Input
                         value={addingId}
                         onChange={(e) => setAddingId(e.target.value)}
+                        onKeyDown={escapeCancelsAdd}
                         placeholder="Agent ID (e.g. alice)"
+                        aria-label="Agent ID"
+                        // Deliberate: the form only exists because the user
+                        // just activated Add Agent, so focus belongs in its
+                        // first field; without it a keyboard user is left on
+                        // the page body and has to Tab back to find the form.
+                        // oxlint-disable-next-line no-autofocus
+                        autoFocus
                       />
                       <Input
                         value={addingName}
                         onChange={(e) => setAddingName(e.target.value)}
+                        onKeyDown={escapeCancelsAdd}
                         placeholder="Display name (optional, e.g. Sam)"
                       />
                       <div className="space-y-1.5">
@@ -587,7 +634,8 @@ export function AgentsPage() {
                         </div>
                       )}
                       {(availableTools.tools.length > 0 ||
-                        (availableTools.mcp_servers?.length ?? 0) > 0) && (
+                        (availableTools.mcp_servers?.length ?? 0) > 0 ||
+                        (availableTools.fusion_services?.length ?? 0) > 0) && (
                         <div className="space-y-1.5">
                           <button
                             type="button"
@@ -620,15 +668,7 @@ export function AgentsPage() {
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="outline"
-                        onClick={() => {
-                          setShowAdd(false)
-                          setAddingId("")
-                          setAddingName("")
-                          setAddingModels([])
-                          setAddingSkills([])
-                          setAddingTools([])
-                          setAddingToolsExpanded(false)
-                        }}
+                        onClick={cancelAdd}
                         disabled={saving === "add"}
                       >
                         Cancel

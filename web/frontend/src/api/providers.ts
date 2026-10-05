@@ -51,8 +51,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// getProviders normalises the list at the boundary: Go encodes an empty slice
+// as null, and every consumer spreads `providers` as an array.
 export async function getProviders(): Promise<ProvidersListResponse> {
-  return request<ProvidersListResponse>("/api/providers")
+  const data = await request<Partial<ProvidersListResponse>>("/api/providers")
+  const providers = data.providers ?? []
+  return { providers, total: data.total ?? providers.length }
 }
 
 export async function addProvider(

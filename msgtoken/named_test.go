@@ -5,9 +5,40 @@ package msgtoken
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
+
+// TestNewNamedStore_TightensLoosePermissions: the file holds plaintext tokens
+// (the WebUI shows them again), so loading it must leave it owner-only.
+func TestNewNamedStore_TightensLoosePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits")
+	}
+	path := NamedTokenPath(t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"amber":[{"id":"a1","name":"gps","token":"tok","created_at_ms":1}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewNamedStore(path)
+	if err != nil {
+		t.Fatalf("NewNamedStore: %v", err)
+	}
+	if got := s.List("amber"); len(got) != 1 || got[0].Token != "tok" {
+		t.Fatalf("List = %+v, want the one stored token", got)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("token store perm = %o after load, want 600", perm)
+	}
+}
 
 func TestNamedStore_CreateListValidateDelete_RoundTrip(t *testing.T) {
 	path := NamedTokenPath(t.TempDir())

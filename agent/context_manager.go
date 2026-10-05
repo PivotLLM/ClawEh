@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/spawnllm/openai_compat"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
@@ -350,16 +352,103 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (ctxengine.ContextManager, *cogmem.Session, func()) {
 	key := agent.ID + ":" + sessionKey
 
-	// Fast path: entry already exists.
-	v, _ := al.contextManagers.Load(key)
-	if entry, ok := v.(*cmEntry); ok {
-		entry.refcount.Add(1)
-		entry.lastAccessed = time.Now()
+	for {
+		// Fast path: entry already exists. A stale entry (marked by a config
+		// reload) is only handed out under the build slot below, where the
+		// refcount decides between sharing it and rebuilding it. The reference
+		// is taken before the mark is checked — the reverse of
+		// tryEvictEntry — so an evictor either counts this caller or
+		// is seen by it. An entry already marked is skipped without touching
+		// the refcount: a transient reference would look like a holder to
+		// takeCachedEntry and have it share a released stale entry instead of
+		// rebuilding it.
+		v, _ := al.contextManagers.Load(key)
+		if entry, ok := v.(*cmEntry); ok && !entry.stale.Load() {
+			entry.refcount.Add(1)
+			if !entry.stale.Load() {
+				entry.touch()
+				release := func() { entry.refcount.Add(-1) }
+				return entry.cm, entry.mem, release
+			}
+			entry.refcount.Add(-1)
+		}
+
+		// Slow path: exactly one caller builds the entry; everyone else waits
+		// for it and then takes the fast path. Issuing a session token rotates
+		// the session's previous one, so two concurrent builders would each
+		// issue and the loser's Revoke (or its own later Issue) would kill the
+		// token the winner had just rendered into its prompt.
+		bk := sessionBuildKey{al: al, key: key}
+		done := make(chan struct{})
+		if inflight, loaded := sessionBuilds.LoadOrStore(bk, done); loaded {
+			// sessionBuilds only ever holds the done channels stored here.
+			if ch, ok := inflight.(chan struct{}); ok {
+				<-ch
+			}
+			continue
+		}
+		entry := al.buildSessionEntry(bk, done, agent, sessionKey)
 		release := func() { entry.refcount.Add(-1) }
 		return entry.cm, entry.mem, release
 	}
+}
 
-	// Slow path: create a new ContextManager and wrap it in a cmEntry.
+// takeCachedEntry is the build-slot holder's second look at the cache. A live
+// entry — or a stale one still held by an in-flight turn, whose token running
+// sub-agents carry — is shared: its refcount is taken and it is returned. A
+// stale entry nobody holds is evicted so the caller builds a fresh one from the
+// current config. The caller holds the build slot for key; since the fast path
+// never uses a stale entry (it backs its reference out when it sees the mark),
+// nobody can start using one between the refcount check here and its eviction.
+// A fast-path caller's transient reference (possible only while an evictor is
+// marking the entry at that moment) can only make this share an entry that is
+// still open, never evict one in use. Every other evictor also holds
+// the slot (tryEvictEntry), so none can race this one.
+func (al *AgentLoop) takeCachedEntry(key string) (*cmEntry, bool) {
+	v, _ := al.contextManagers.Load(key)
+	entry, ok := v.(*cmEntry)
+	if !ok {
+		return nil, false
+	}
+	if entry.stale.Load() && entry.refcount.Load() == 0 {
+		al.evictEntry(context.Background(), key, entry, evictReasonStaleRebuild)
+		return nil, false
+	}
+	entry.refcount.Add(1)
+	entry.touch()
+	return entry, true
+}
+
+// sessionBuildKey identifies one in-flight context-manager build: the loop it
+// belongs to and the agentID:sessionKey being built.
+type sessionBuildKey struct {
+	al  *AgentLoop
+	key string
+}
+
+// sessionBuilds holds the in-flight builds of getSessionContext: sessionBuildKey
+// to a channel closed once the entry is in contextManagers. An entry exists only
+// for the duration of one build.
+var sessionBuilds sync.Map
+
+// buildSessionEntry creates the ContextManager, session token and cognitive
+// memory session for one agent+session pair, stores the entry in
+// contextManagers with refcount 1 (the caller's reference), and then releases
+// the waiters registered under bk. The caller holds the build slot for bk.
+// When the cache already holds an entry the caller may share (a stale one still
+// in use, see takeCachedEntry), that entry is returned with the caller's
+// reference taken instead of building a new one.
+func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, agent *AgentInstance, sessionKey string) *cmEntry {
+	// Release waiters even if the build panics, so they retry instead of
+	// hanging; finding no entry, one of them becomes the builder.
+	defer func() {
+		sessionBuilds.Delete(bk)
+		close(done)
+	}()
+
+	if entry, ok := al.takeCachedEntry(bk.key); ok {
+		return entry
+	}
 
 	// The summarization model chain. Per-agent models let an agent use
 	// specialised summarizers when the default ones refuse its content; see
@@ -416,6 +505,16 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 		// Repeated fires of one scheduled job differ only by timestamp; the
 		// engine collapses them by the cron collapse key.
 		ctxengine.WithNoiseKey(cronmsg.CollapseKey),
+		// The engine stops automatic compaction for a session after repeated
+		// summarization failures; the context then grows until the safety-net
+		// pass, so an operator should know.
+		ctxengine.WithBreakerTrippedHook(func(sessionKey string, failures int) {
+			al.Alerter().Send(alerter.Alert{
+				Title:       "Context compaction breaker tripped",
+				Description: fmt.Sprintf("%d consecutive automatic compactions failed for agent %s; normal compaction is suspended for this session and only the safety-net pass still runs", failures, agent.ID),
+				EventID:     sessionKey,
+			})
+		}),
 	}, agent.CompressOpts...)
 	cm := ctxengine.New(sessionKey, agent.Sessions, opts...)
 
@@ -435,31 +534,18 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	mem := al.wireCognitiveMemory(agent, sessionKey)
 
 	newEntry := &cmEntry{
-		cm:           cm,
-		sessionKey:   sessionKey,
-		store:        agent.Sessions,
-		lastAccessed: time.Now(),
-		mem:          mem,
+		cm:         cm,
+		sessionKey: sessionKey,
+		store:      agent.Sessions,
+		mem:        mem,
 	}
+	newEntry.touch()
 	newEntry.setToken(token)
 	newEntry.refcount.Store(1)
 
-	actual, loaded := al.contextManagers.LoadOrStore(key, newEntry)
-	if entry, ok := actual.(*cmEntry); loaded && ok {
-		// Another goroutine beat us; use theirs and discard ours.
-		// The one we created (cm) is not stored and will be GC'd.
-		// Revoke the token we just issued since we won't use this CM.
-		if sti != nil {
-			sti.Revoke(sessionKey)
-		}
-		// Release the cogmem store handle we may have opened for the discarded CM.
-		mem.Close()
-		entry.refcount.Add(1)
-		entry.lastAccessed = time.Now()
-		release := func() { entry.refcount.Add(-1) }
-		return entry.cm, entry.mem, release
-	}
-
-	release := func() { newEntry.refcount.Add(-1) }
-	return newEntry.cm, newEntry.mem, release
+	// We hold the build slot for bk, so no other builder can have stored this
+	// key since takeCachedEntry found nothing to share; a plain Store clobbers
+	// nobody.
+	al.contextManagers.Store(bk.key, newEntry)
+	return newEntry
 }

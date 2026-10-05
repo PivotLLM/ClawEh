@@ -454,6 +454,7 @@ export function BindingsPage() {
                                   variant="ghost"
                                   onClick={cancelEditMentions}
                                   className="text-muted-foreground shrink-0"
+                                  aria-label="Cancel"
                                 >
                                   <IconX className="size-3.5" />
                                 </Button>
@@ -471,7 +472,11 @@ export function BindingsPage() {
                                 <button
                                   type="button"
                                   onClick={() => startEditMentions(i)}
-                                  className="text-muted-foreground hover:text-foreground cursor-pointer bg-transparent opacity-0 transition-opacity group-hover/mentions:opacity-100"
+                                  aria-label="Edit mentions"
+                                  // Hidden until the row is hovered, and shown
+                                  // again when it has keyboard focus: a focused
+                                  // control must be visible.
+                                  className="text-muted-foreground hover:text-foreground cursor-pointer bg-transparent opacity-0 transition-opacity group-hover/mentions:opacity-100 focus-visible:opacity-100"
                                 >
                                   <IconEdit className="size-3.5" />
                                 </button>
@@ -482,6 +487,7 @@ export function BindingsPage() {
                             <Button
                               variant="ghost"
                               size="icon-sm"
+                              aria-label="Delete binding"
                               onClick={() => handleDelete(i)}
                               disabled={saving === `delete-${i}`}
                               className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"

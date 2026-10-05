@@ -28,14 +28,14 @@ func TestCollectSummary_Confined(t *testing.T) {
 	contains(t, out[1], "1 API provider endpoints (details below)", "outbound providers")
 	contains(t, out[1], "MCP servers:\n"+bullet+"fusion (fusion.example.com)", "outbound mcp")
 	_, in := findRow(t, tb, "Inbound network")
-	contains(t, in[1], "Gateway (WebUI and HTTP API) on 0.0.0.0:18790", "inbound gateway")
+	contains(t, in[1], "WebUI/API on 127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 0.0.0.0:18443 (HTTPS)", "inbound gateway")
 	contains(t, in[1], "MCP host on 127.0.0.1:5911/mcp", "inbound mcp host (auto_enable with a CLI provider)")
 	_, msg := findRow(t, tb, "Messaging")
 	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, Line, WebUI, Device" {
 		t.Errorf("Messaging = %q", msg[1])
 	}
 	_, dev := findRow(t, tb, "Devices")
-	if dev[1] != "Device gateway on\npaired devices unknown (store unavailable)" {
+	if dev[1] != "Device listener on\npaired devices unknown (store unavailable)" {
 		t.Errorf("Devices = %q", dev[1])
 	}
 	_, ext := findRow(t, tb, "External execution")

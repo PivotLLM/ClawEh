@@ -11,10 +11,14 @@ import {
   type MountEntry,
   type SkillInfo,
   settingsCardClass,
+  type CLIBypassWarning,
 } from "@/components/agents/agent-model"
+import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
 import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
+import { Link } from "@tanstack/react-router"
+
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
@@ -49,10 +53,14 @@ export interface AgentCardProps {
   onMountsChange?: (mounts: MountEntry[]) => void
   mcpTools?: string[]
   onMCPToolsChange?: (mcpTools: string[]) => void
+  denyTools?: string[]
+  onDenyToolsChange?: (denyTools: string[]) => void
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
+  /** Models in the chain whose skip-permissions flag is ignored (see cliBypassWarnings). */
+  bypassWarnings?: CLIBypassWarning[]
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
@@ -96,10 +104,13 @@ export function AgentCard({
   onMountsChange = undefined,
   mcpTools = [],
   onMCPToolsChange = undefined,
+  denyTools = [],
+  onDenyToolsChange = undefined,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
   onModelsChange,
+  bypassWarnings = [],
   onSkillsChange,
   onToolsChange,
   onMessageChange,
@@ -185,6 +196,19 @@ export function AgentCard({
             models={models}
             onChange={onModelsChange}
           />
+          {/* One line per CLI, however many of the chain's models run on it:
+              the state, and the means to change it. */}
+          {[...new Map(bypassWarnings.map((w) => [w.provider, w])).values()].map((w) => (
+            <p
+              key={w.provider}
+              className="text-xs text-amber-600 dark:text-amber-400"
+            >
+              {w.provider} is not allowed to bypass its restrictions.{" "}
+              <Link to="/providers" className="underline">
+                Allow it
+              </Link>
+            </p>
+          ))}
         </div>
 
         {onSummarizationModelsChange !== undefined && (
@@ -219,21 +243,19 @@ export function AgentCard({
         </div>
       )}
 
-      {(onMCPToolsChange !== undefined || availableTools.tools.length > 0) && (
+      {(onMCPToolsChange !== undefined ||
+        onDenyToolsChange !== undefined ||
+        availableTools.tools.length > 0) && (
         <div className={settingsCardClass}>
           <p className="text-foreground text-sm font-semibold">Tools</p>
 
           {onMCPToolsChange !== undefined && (
-            <div className="space-y-1.5">
-              <p className="text-foreground text-xs font-semibold">
-                MCP access
-              </p>
-              <MCPAccessSelect
-                serverNames={mcpServers.map((s) => s.name)}
-                value={mcpTools}
-                onChange={onMCPToolsChange}
-              />
-            </div>
+            <MCPAccessSelect
+              serverNames={mcpServers.map((s) => s.name)}
+              fusionServices={availableTools.fusion_services ?? []}
+              value={mcpTools}
+              onChange={onMCPToolsChange}
+            />
           )}
 
           {availableTools.tools.length > 0 && (
@@ -257,6 +279,18 @@ export function AgentCard({
                 catalog={availableTools}
                 onChange={onToolsChange}
               />
+            </div>
+          )}
+
+          {onDenyToolsChange !== undefined && (
+            <div className="space-y-1.5">
+              <p className="text-foreground text-xs font-semibold">
+                {t("agents.denyTools")}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {t("agents.denyToolsHint")}
+              </p>
+              <DenyToolsEditor value={denyTools} onChange={onDenyToolsChange} />
             </div>
           )}
         </div>
@@ -365,6 +399,7 @@ export function AgentCard({
                   )
                 }
                 className="h-7 w-20 text-xs"
+                aria-label="Token rotation (minutes, 0 = disabled)"
               />
               <span className="text-muted-foreground text-xs">
                 Token rotation (minutes, 0 = disabled)
@@ -383,6 +418,7 @@ export function AgentCard({
                     )
                   }
                   className="h-7 w-20 text-xs"
+                  aria-label="Number of tokens retained"
                 />
                 <span className="text-muted-foreground text-xs">
                   Number of tokens retained
@@ -607,6 +643,7 @@ export function AgentCard({
                       <input
                         type="radio"
                         name={`default-channel-${label}`}
+                        aria-label={`Default channel: ${b.channel}`}
                         checked={b.isDefault}
                         disabled={noDefault}
                         onChange={() => {
