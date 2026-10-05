@@ -12,7 +12,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -368,9 +367,6 @@ func initSessionStore(dir string) (session.SessionStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
-	// Repeated fires of one scheduled job differ only by timestamp; the store
-	// counts them as noise by the cron collapse key.
-	store.SetNoiseKey(cronmsg.CollapseKey)
 	return store, nil
 }
 

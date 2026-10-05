@@ -21,7 +21,6 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
-	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -502,9 +501,6 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		ctxengine.WithCompactDebug(debugCapture),
 		ctxengine.WithFailureDump(failureDump),
 		ctxengine.WithCompactionReporter(reporter),
-		// Repeated fires of one scheduled job differ only by timestamp; the
-		// engine collapses them by the cron collapse key.
-		ctxengine.WithNoiseKey(cronmsg.CollapseKey),
 		// The engine stops automatic compaction for a session after repeated
 		// summarization failures; the context then grows until the safety-net
 		// pass, so an operator should know.
