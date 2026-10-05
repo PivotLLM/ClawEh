@@ -38,8 +38,8 @@ func TestPreflightExample(t *testing.T) {
 	if _, ok := res.ModeratorSchemas["debate"]; !ok || len(res.ModeratorSchemas) != 1 {
 		t.Errorf("ModeratorSchemas = %v", res.ModeratorSchemas)
 	}
-	if len(res.SourceFiles) != 0 {
-		t.Errorf("SourceFiles = %v, want none (inline source)", res.SourceFiles)
+	if len(res.SourceContents) != 0 {
+		t.Errorf("SourceContents = %v, want none (inline source)", res.SourceContents)
 	}
 	for _, call := range []string{"MayTarget launcher alice", "Exists alice", "MayTarget launcher bob", "Exists bob", "Models launcher"} {
 		if !agents.called(call) {
@@ -333,7 +333,7 @@ func TestPreflightFileSources(t *testing.T) {
 		noRead  bool
 		path    string   // issue path; "" means accepted
 		want    []string // issue substrings
-		resolve string   // accepted: SourceFiles value relative to the workspace
+		resolve string   // accepted: the file, relative to the workspace, whose content SourceContents holds
 	}{
 		{"markdown file", Source{Decode: FormatMarkdown, File: "docs/report.md"}, false, "", nil, "docs/report.md"},
 		{"json file", Source{Decode: FormatJSON, File: "facts.json"}, false, "", nil, "facts.json"},
@@ -365,12 +365,12 @@ func TestPreflightFileSources(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Preflight: %v", err)
 			}
-			want, err := filepath.EvalSymlinks(filepath.Join(ws, filepath.FromSlash(tt.resolve)))
+			want, err := os.ReadFile(filepath.Join(ws, filepath.FromSlash(tt.resolve)))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := res.SourceFiles["report"]; got != want {
-				t.Errorf("SourceFiles[report] = %q, want %q", got, want)
+			if got := res.SourceContents["report"]; string(got) != string(want) {
+				t.Errorf("SourceContents[report] = %q, want %q", got, want)
 			}
 		})
 	}
@@ -401,5 +401,23 @@ func TestPreflightConfigDirMustBeAbsolute(t *testing.T) {
 	}
 	if isIssues := errors.As(err, new(*ValidationError)); isIssues {
 		t.Error("a relative ConfigDir is a host wiring error, not a configuration issue")
+	}
+}
+
+// A file source is read once, at Preflight: the content handed over is
+// what was checked, and a later change to the file does not reach it.
+func TestPreflightReadsSourcesOnce(t *testing.T) {
+	env, ws, _ := cfgtFileEnv(t)
+	cfg := cfgtExample(t)
+	cfg.Sources["report"] = Source{Decode: FormatMarkdown, File: "docs/report.md"}
+	res, err := Preflight(context.Background(), cfg, env)
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "docs", "report.md"), []byte("# Changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res.SourceContents["report"]); got != "# Proposal\n" {
+		t.Errorf("SourceContents[report] = %q, want the content read at Preflight", got)
 	}
 }

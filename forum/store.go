@@ -50,11 +50,15 @@ import (
 //
 // Locks and cleanup staging sit beside the roots, not inside them (rev 3
 // §8), so removing a root never removes the lock protecting it. Every write
-// of a whole file is atomic and durable (writeFileDurable). Appends
-// (transcript.md) are fsynced after each write. Directories are created
-// 0700 and files 0600, as everywhere under CLAW_HOME. Methods never follow
-// a path outside the root; IDs used in paths (layer, participant, turn)
-// are checked with ValidID, forum IDs must be canonical UUIDs.
+// of a whole file is atomic and durable (writeFileAt): an exclusive write
+// links its temporary file to the target, so a racing second writer fails
+// with os.ErrExist instead of replacing the first. Appends (transcript.md)
+// are fsynced after each write. Directories are created 0700 and files
+// 0600, as everywhere under CLAW_HOME. Every read and write inside the root
+// goes through os.Root and refuses a symbolic link anywhere on the path
+// below the root (noSymlinks), so nothing is read from or written to
+// outside it; IDs used in paths (layer, participant, turn) are checked
+// with ValidID, forum IDs must be canonical UUIDs.
 //
 // The store keeps an index of the commit log (last sequence number,
 // reserved attempts, turns with a committed output). It is what lets the
@@ -118,14 +122,30 @@ type turnKey struct {
 	turn  string
 }
 
-// commitIndex is what the store derives from the commit log for its own
-// checks. It is loaded lazily and dropped (loaded false) whenever a commit
-// write fails, so the next use re-reads the log from disk.
+// commitIndex is what the commit log says about work IDs: the last
+// sequence number, the reserved attempts, the turns with a reservation and
+// those with a committed output, and each layer's last published round. The
+// store keeps one for its own checks (loaded lazily and dropped, loaded
+// false, whenever a commit write fails, so the next use re-reads the log
+// from disk); Replay builds one as it folds, and both pass it to
+// checkCommit.
 type commitIndex struct {
-	loaded   bool
-	last     int
-	attempts map[attemptKey]bool
-	outputs  map[turnKey]bool
+	loaded    bool
+	last      int
+	attempts  map[attemptKey]bool
+	reserved  map[turnKey]bool
+	outputs   map[turnKey]bool
+	published map[string]int
+}
+
+// newCommitIndex is the index of an empty log.
+func newCommitIndex() *commitIndex {
+	return &commitIndex{
+		attempts:  map[attemptKey]bool{},
+		reserved:  map[turnKey]bool{},
+		outputs:   map[turnKey]bool{},
+		published: map[string]int{},
+	}
 }
 
 // Store is one forum directory. It is safe for concurrent use by the
@@ -135,9 +155,13 @@ type Store struct {
 	id   string
 	root string
 
-	mu   sync.Mutex // guards lock and idx, and serialises commits and transcript appends
+	mu   sync.Mutex // guards lock, idx, cfg and snap, and serialises commits and transcript appends
 	lock *os.File
 	idx  commitIndex
+	// cfg and snap are forum.json and snapshot.json as AppendCommit reads
+	// them for checkCommit; both are immutable once written.
+	cfg  *Config
+	snap *Snapshot
 }
 
 // validForumID reports whether id is a canonical (lower-case, hyphenated)
@@ -346,7 +370,10 @@ func (s *Store) cleanupPath(name string) string {
 const lockAttempts = 5
 
 // Lock takes the exclusive advisory lock on lockPath (flock, non-blocking)
-// and writes the PID into it. It returns ErrLocked when another process,
+// and writes the PID into it. Once it holds the lock it removes every
+// temporary file or directory (tmpPrefix) a crashed writer left under the
+// root (sweepTemp): no other writer can be mid-write while the lock is
+// held. It returns ErrLocked when another process,
 // or another Store of the same forum in this process, holds it. Exactly
 // one controller may run a forum at a time; Service holds the lock from
 // Launch or Recover until the run pauses or ends. Locking a store this
@@ -384,6 +411,9 @@ func (s *Store) Lock() error {
 			if err := writePID(f); err != nil {
 				return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, releaseFile(f)))
 			}
+			if err := s.sweepTemp(); err != nil {
+				return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, releaseFile(f)))
+			}
 			s.lock = f
 			return nil
 		}
@@ -393,6 +423,53 @@ func (s *Store) Lock() error {
 		}
 	}
 	return fmt.Errorf("lock forum %s: the lock file kept changing", s.id)
+}
+
+// sweepTemp removes every entry under the root whose name starts with
+// tmpPrefix. A missing root (a forum staged for removal) has nothing to
+// sweep. Symbolic links are not followed.
+func (s *Store) sweepTemp() error {
+	var found []string
+	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == s.root && errors.Is(err, fs.ErrNotExist) {
+				return filepath.SkipAll
+			}
+			return err
+		}
+		if p != s.root && strings.HasPrefix(d.Name(), tmpPrefix) {
+			rel, relErr := filepath.Rel(s.root, p)
+			if relErr != nil {
+				return relErr
+			}
+			found = append(found, rel)
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("sweep temporary files: %w", err)
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	return s.inRoot(func(r *os.Root) error {
+		for _, rel := range found {
+			if err := r.RemoveAll(rel); err != nil {
+				return fmt.Errorf("sweep temporary files: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// locked reports whether this Store holds the forum's lock.
+func (s *Store) locked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lock != nil
 }
 
 // writePID replaces the lock file's content with this process's PID.
@@ -444,14 +521,14 @@ func (s *Store) unlock() error {
 // fails if the file already exists (the configuration never changes after
 // launch, §3.2).
 func (s *Store) WriteConfig(raw []byte) error {
-	return s.writeFileDurable(s.Path(fileConfig), raw, true)
+	return s.writeRel(fileConfig, raw, true)
 }
 
-// ReadConfig returns forum.json verbatim.
+// ReadConfig returns forum.json verbatim; ErrNotFound if absent.
 func (s *Store) ReadConfig() ([]byte, error) {
-	data, err := os.ReadFile(s.Path(fileConfig))
+	data, err := s.ReadFile(fileConfig)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", fileConfig, notFound(err))
+		return nil, notFound(err)
 	}
 	return data, nil
 }
@@ -502,7 +579,7 @@ func (s *Store) WriteSource(id string, format Format, content []byte) (SourceRec
 		return SourceRecord{}, fmt.Errorf("write source: %q is not a source ID", id)
 	}
 	rel := path.Join(dirSources, id+format.Extension())
-	if err := s.writeFileDurable(s.Path(rel), content, true); err != nil {
+	if err := s.writeRel(rel, content, true); err != nil {
 		return SourceRecord{}, err
 	}
 	return SourceRecord{Decode: format, File: rel, Digest: digest(content)}, nil
@@ -515,8 +592,7 @@ func (s *Store) WriteLayerInputs(in *LayerInputs) error {
 	if !ValidID(in.LayerID) {
 		return fmt.Errorf("write layer inputs: %q is not a layer ID", in.LayerID)
 	}
-	dir := s.Path(path.Join(dirLayers, in.LayerID))
-	if err := mkdirDurable(dir); err != nil {
+	if err := s.inRoot(func(r *os.Root) error { return mkdirAt(r, path.Join(dirLayers, in.LayerID)) }); err != nil {
 		return fmt.Errorf("write layer inputs: %w", err)
 	}
 	return s.writeJSON(path.Join(dirLayers, in.LayerID, fileInputs), in, true)
@@ -571,25 +647,31 @@ func (s *Store) WriteAttemptRequest(req *AttemptRequest) error {
 	if s.idx.attempts[attemptKey{req.Layer, req.Turn, req.Attempt}] {
 		return fmt.Errorf("write attempt request %s: %w", rel, os.ErrExist)
 	}
-	final := s.Path(rel)
-	turnDir := filepath.Dir(final)
-	if mkErr := mkdirDurable(turnDir); mkErr != nil {
-		return fmt.Errorf("write attempt request: %w", mkErr)
-	}
-	tmp, err := os.MkdirTemp(turnDir, tmpPrefix+"attempt-*")
+	err = s.inRoot(func(r *os.Root) error {
+		turnDir := path.Dir(rel)
+		if mkErr := mkdirAt(r, turnDir); mkErr != nil {
+			return mkErr
+		}
+		tmp := path.Join(turnDir, tmpPrefix+"attempt-"+uuid.NewString())
+		if mkErr := r.Mkdir(tmp, dirPerm); mkErr != nil {
+			return mkErr
+		}
+		// Each step's failure removes the temporary directory as well.
+		for _, step := range []func() error{
+			func() error { return writeFileAt(r, path.Join(tmp, fileRequest), data, true) },
+			func() error { return r.RemoveAll(rel) }, // an unreserved orphan, see above
+			func() error { return r.Rename(tmp, rel) },
+		} {
+			if stepErr := step(); stepErr != nil {
+				return errors.Join(stepErr, r.RemoveAll(tmp))
+			}
+		}
+		return syncDirAt(r, turnDir)
+	})
 	if err != nil {
 		return fmt.Errorf("write attempt request: %w", err)
 	}
-	if err := s.writeFileDurable(filepath.Join(tmp, fileRequest), data, true); err != nil {
-		return errors.Join(err, os.RemoveAll(tmp))
-	}
-	if err := os.RemoveAll(final); err != nil { // an unreserved orphan, see above
-		return fmt.Errorf("write attempt request: %w", errors.Join(err, os.RemoveAll(tmp)))
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		return fmt.Errorf("write attempt request: %w", errors.Join(err, os.RemoveAll(tmp)))
-	}
-	return syncDir(turnDir)
+	return nil
 }
 
 // WriteAttemptReply writes reply.json beside the matching request.json. It
@@ -610,7 +692,7 @@ func (s *Store) WriteAttemptReply(layerID, turn string, attempt int, reply *Atte
 	if !reserved {
 		return fmt.Errorf("write attempt reply %s: %w: the attempt is not reserved", rel, ErrInvalidState)
 	}
-	if _, err := os.Stat(s.Path(path.Join(rel, fileRequest))); err != nil {
+	if err := s.statRegular(path.Join(rel, fileRequest)); err != nil {
 		return fmt.Errorf("write attempt reply %s: %w", rel, err)
 	}
 	return s.writeJSON(path.Join(rel, fileReply), reply, true)
@@ -671,7 +753,8 @@ func (s *Store) ListAttempts(layerID string) ([]AttemptRecord, error) {
 // (layers/<layer>/calls/<turn>/<attempt>/output<ext>) and, when published
 // is non-nil, the projection beside it (published<ext>); it fills
 // out.ContentFile, out.PublishedFile (the same as ContentFile when
-// published is nil) and out.Digest (SHA-256 of full).
+// published is nil), out.Digest (SHA-256 of full) and out.PublishedDigest
+// (SHA-256 of what PublishedFile holds).
 //
 // It fails if the attempt is not reserved or the turn already has a
 // committed output (one output per work ID). Files written for an attempt
@@ -697,41 +780,56 @@ func (s *Store) WriteOutput(out *OutputRecord, full, published []byte) error {
 	}
 	ext := out.Format.Extension()
 	contentRel := path.Join(rel, fileOutput+ext)
-	publishedRel := contentRel
-	if err := s.writeFileDurable(s.Path(contentRel), full, false); err != nil {
+	publishedRel, publishedDigest := contentRel, digest(full)
+	if err := s.writeRel(contentRel, full, false); err != nil {
 		return err
 	}
 	if published != nil {
-		publishedRel = path.Join(rel, filePublished+ext)
-		if err := s.writeFileDurable(s.Path(publishedRel), published, false); err != nil {
+		publishedRel, publishedDigest = path.Join(rel, filePublished+ext), digest(published)
+		if err := s.writeRel(publishedRel, published, false); err != nil {
 			return err
 		}
 	}
 	out.ContentFile = contentRel
 	out.PublishedFile = publishedRel
 	out.Digest = digest(full)
+	out.PublishedDigest = publishedDigest
 	return nil
 }
 
-// ReadFile reads a file by its root-relative path (output content, a
-// source, the transcript). The read is confined to the root: a path or a
-// symbolic link leading outside it fails.
+// ReadFile reads a regular file by its root-relative path (output
+// content, a source, the transcript, a record). The read is confined to
+// the root and follows no symbolic link: a path leading outside the root,
+// or one with a link anywhere below the root, fails.
 func (s *Store) ReadFile(rel string) ([]byte, error) {
-	if s.Path(rel) == "" {
-		return nil, fmt.Errorf("read %q: path escapes the forum root", rel)
-	}
-	r, err := os.OpenRoot(s.root)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", rel, err)
-	}
-	data, err := r.ReadFile(filepath.Clean(rel))
-	if closeErr := r.Close(); err == nil && closeErr != nil {
-		err = closeErr
-	}
+	var data []byte
+	err := s.inRoot(func(r *os.Root) error {
+		clean, err := rootRel(rel)
+		if err != nil {
+			return err
+		}
+		if err = lstatRegular(r, clean); err != nil {
+			return err
+		}
+		data, err = r.ReadFile(clean)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
 	return data, nil
+}
+
+// statRegular checks that the root-relative rel is a regular file reached
+// without following a symbolic link.
+func (s *Store) statRegular(rel string) error {
+	return s.inRoot(func(r *os.Root) error {
+		clean, err := rootRel(rel)
+		if err != nil {
+			return err
+		}
+		return lstatRegular(r, clean)
+	})
 }
 
 // AppendCommit assigns c.Seq = last seq + 1 and c.At = now, writes
@@ -740,11 +838,11 @@ func (s *Store) ReadFile(rel string) ([]byte, error) {
 // second writer fails rather than overwriting. The caller writes State
 // afterwards (WriteState); a crash between the two is what Replay repairs.
 //
-// It enforces the log's invariants at the source: a CommitAttempt needs
-// its request.json and must not repeat an attempt; a CommitTurn needs an
-// Output naming the same layer and turn, a CommitModerated a Decision;
-// and neither may give a turn ID a second output. On failure c.Seq and
-// c.At are left as they were.
+// It enforces the log's invariants at the source with checkCommit, the
+// same check Replay applies (so the store never writes a log Replay
+// refuses), plus that a CommitAttempt's request.json exists. That needs
+// forum.json and snapshot.json, so a commit before WriteSnapshot fails
+// with ErrInvalidState. On failure c.Seq and c.At are left as they were.
 func (s *Store) AppendCommit(c *Commit) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -761,7 +859,7 @@ func (s *Store) AppendCommit(c *Commit) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("append commit: %w", err)
 	}
-	if err := s.writeFileDurable(s.Path(commitRel(rec.Seq)), data, true); err != nil {
+	if err := s.writeRel(commitRel(rec.Seq), data, true); err != nil {
 		// The file may exist even though the write reported an error (a
 		// failed directory sync); re-read the log before the next commit.
 		s.idx.loaded = false
@@ -775,40 +873,42 @@ func (s *Store) AppendCommit(c *Commit) (int, error) {
 // checkCommitLocked rejects a commit that would break the log's
 // invariants (see AppendCommit).
 func (s *Store) checkCommitLocked(c *Commit) error {
-	if c.Kind == "" {
-		return errors.New("append commit: no kind")
+	if err := s.contractLocked(); err != nil {
+		return fmt.Errorf("append commit: %w", err)
 	}
-	switch c.Kind {
-	case CommitAttempt:
+	if err := checkCommit(s.cfg, s.snap, &s.idx, c); err != nil {
+		return fmt.Errorf("append commit: %w", err)
+	}
+	if c.Kind == CommitAttempt {
 		rel := attemptRel(c.Layer, c.Turn, c.Attempt)
-		if rel == "" {
-			return fmt.Errorf("append commit: bad attempt %q/%q/%d", c.Layer, c.Turn, c.Attempt)
-		}
-		if s.idx.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] {
-			return fmt.Errorf("append commit: attempt %s: %w", rel, os.ErrExist)
-		}
-		if _, err := os.Stat(s.Path(path.Join(rel, fileRequest))); err != nil {
+		if err := s.statRegular(path.Join(rel, fileRequest)); err != nil {
 			return fmt.Errorf("append commit: attempt %s has no request: %w", rel, err)
 		}
-	case CommitTurn:
-		if c.Output == nil || c.Output.LayerID != c.Layer || c.Output.Turn != c.Turn {
-			return fmt.Errorf("append commit: turn %q/%q needs an output of that layer and turn", c.Layer, c.Turn)
-		}
-		if s.idx.outputs[turnKey{c.Layer, c.Turn}] {
-			return fmt.Errorf("append commit: turn %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
-		}
-	case CommitModerated:
-		if c.Decision == nil {
-			return fmt.Errorf("append commit: moderation %q/%q has no decision", c.Layer, c.Turn)
-		}
-		if s.idx.outputs[turnKey{c.Layer, c.Turn}] {
-			return fmt.Errorf("append commit: moderation %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
-		}
-	case CommitLaunched, CommitLayerStarted, CommitRoundPublished, CommitLayerEnded,
-		CommitPauseRequested, CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
-	default:
-		return fmt.Errorf("append commit: unknown kind %q", c.Kind)
 	}
+	return nil
+}
+
+// contractLocked loads forum.json and snapshot.json for checkCommit once.
+func (s *Store) contractLocked() error {
+	if s.snap != nil {
+		return nil
+	}
+	snap, err := s.ReadSnapshot()
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("%w: %s is not written yet", ErrInvalidState, fileSnapshot)
+	}
+	if err != nil {
+		return err
+	}
+	raw, err := s.ReadConfig()
+	if err != nil {
+		return err
+	}
+	cfg, err := Decode(raw)
+	if err != nil {
+		return corrupt("%s: %v", fileConfig, err)
+	}
+	s.cfg, s.snap = cfg, snap
 	return nil
 }
 
@@ -822,8 +922,26 @@ func commitRel(seq int) string {
 // unreadable file is ErrCorrupt; an empty log is an empty list. Temporary
 // files a crash left behind are ignored.
 func (s *Store) ReadCommits() ([]Commit, error) {
-	dir := s.Path(dirCommits)
-	entries, err := os.ReadDir(dir)
+	var entries []fs.DirEntry
+	err := s.inRoot(func(r *os.Root) error {
+		fi, err := r.Lstat(dirCommits)
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%s/ is not a directory", dirCommits)
+		}
+		d, err := r.Open(dirCommits)
+		if err != nil {
+			return err
+		}
+		entries, err = d.ReadDir(-1)
+		if closeErr := d.Close(); err == nil {
+			err = closeErr
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		return err
+	})
 	if err != nil {
 		return nil, corrupt("read commits: %v", err)
 	}
@@ -840,7 +958,7 @@ func (s *Store) ReadCommits() ([]Commit, error) {
 		if err != nil {
 			return nil, corrupt("commits/%s: %v", name, err)
 		}
-		data, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // a commit file under the forum root
+		data, err := s.ReadFile(path.Join(dirCommits, name))
 		if err != nil {
 			return nil, corrupt("commits/%s: %v", name, err)
 		}
@@ -871,7 +989,7 @@ func (s *Store) loadIndexLocked() error {
 	if err != nil {
 		return err
 	}
-	s.idx = commitIndex{attempts: map[attemptKey]bool{}, outputs: map[turnKey]bool{}}
+	s.idx = *newCommitIndex()
 	for i := range commits {
 		s.idx.add(&commits[i])
 	}
@@ -893,15 +1011,23 @@ func (x *commitIndex) add(c *Commit) {
 	switch c.Kind {
 	case CommitAttempt:
 		x.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] = true
+		x.reserved[turnKey{c.Layer, c.Turn}] = true
 	case CommitTurn, CommitModerated:
 		x.outputs[turnKey{c.Layer, c.Turn}] = true
-	case CommitLaunched, CommitLayerStarted, CommitRoundPublished, CommitLayerEnded,
+	case CommitRoundPublished:
+		x.published[c.Layer] = c.Round
+	case CommitLaunched, CommitLayerStarted, CommitLayerEnded,
 		CommitPauseRequested, CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
 	}
 }
 
-// WriteState rewrites state.json. It is a cache; see Replay.
+// WriteState rewrites state.json. It is a cache; see Replay. Only the
+// lock holder writes it: on a Store that does not hold the lock it fails
+// with ErrInvalidState.
 func (s *Store) WriteState(st *State) error {
+	if !s.locked() {
+		return fmt.Errorf("write %s: %w: the forum is not locked by this store", fileState, ErrInvalidState)
+	}
 	return s.writeJSON(fileState, st, false)
 }
 
@@ -937,30 +1063,53 @@ func (s *Store) ReadResult() (*Result, error) {
 func (s *Store) AppendTranscript(text string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p := s.Path(fileTranscript)
-	_, statErr := os.Lstat(p)
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePerm) //nolint:gosec // transcript under the forum root
+	err := s.inRoot(func(r *os.Root) error {
+		statErr := lstatRegular(r, fileTranscript)
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			return statErr
+		}
+		f, err := r.OpenFile(fileTranscript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePerm)
+		if err != nil {
+			return err
+		}
+		if _, err := f.WriteString(text); err != nil {
+			return errors.Join(err, f.Close())
+		}
+		if err := f.Sync(); err != nil {
+			return errors.Join(err, f.Close())
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		if statErr != nil {
+			return syncDirAt(r, ".")
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("append transcript: %w", err)
-	}
-	if _, err := f.WriteString(text); err != nil {
-		return fmt.Errorf("append transcript: %w", errors.Join(err, f.Close()))
-	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("append transcript: %w", errors.Join(err, f.Close()))
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("append transcript: %w", err)
-	}
-	if errors.Is(statErr, fs.ErrNotExist) {
-		return syncDir(s.root)
 	}
 	return nil
 }
 
 // SetCleanup writes the marker <base>/.cleanup/<id>.<name> with data.
 func (s *Store) SetCleanup(name string, data []byte) error {
-	return s.writeFileDurable(s.cleanupPath(name), data, false)
+	p := s.cleanupPath(name)
+	if p == "" {
+		return fmt.Errorf("write cleanup marker: bad name %q", name)
+	}
+	r, err := os.OpenRoot(filepath.Dir(p))
+	if err != nil {
+		return fmt.Errorf("write cleanup marker %s: %w", name, err)
+	}
+	err = writeFileAt(r, filepath.Base(p), data, false)
+	if closeErr := r.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write cleanup marker %s: %w", name, err)
+	}
+	return nil
 }
 
 // Cleanup reads a marker; ok is false when it is absent.
@@ -1037,17 +1186,13 @@ func (s *Store) writeJSON(rel string, v any, exclusive bool) error {
 	if err != nil {
 		return fmt.Errorf("write %s: %w", rel, err)
 	}
-	return s.writeFileDurable(s.Path(rel), data, exclusive)
+	return s.writeRel(rel, data, exclusive)
 }
 
 // readJSON reads the root-relative rel into v. A missing file is
 // ErrNotFound and an undecodable one ErrCorrupt, both wrapped with rel.
 func (s *Store) readJSON(rel string, v any) error {
-	p := s.Path(rel)
-	if p == "" {
-		return fmt.Errorf("read %q: path escapes the forum root", rel)
-	}
-	data, err := os.ReadFile(p) //nolint:gosec // a record under the forum root
+	data, err := s.ReadFile(rel)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", rel, notFound(err))
 	}
@@ -1081,58 +1226,147 @@ func digest(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// mkdirDurable creates dir (and missing parents, 0700) and fsyncs the
-// parent of each directory it created.
-func mkdirDurable(dir string) error {
-	if dir == "" {
-		return errors.New("path escapes the forum root")
-	}
-	if fi, err := os.Stat(dir); err == nil {
-		if !fi.IsDir() {
-			return fmt.Errorf("%s is not a directory", dir)
-		}
-		return nil
-	}
-	if err := mkdirDurable(filepath.Dir(dir)); err != nil {
+// inRoot runs fn with the forum root opened as an os.Root, so nothing fn
+// does can reach outside the root.
+func (s *Store) inRoot(fn func(r *os.Root) error) error {
+	r, err := os.OpenRoot(s.root)
+	if err != nil {
 		return err
 	}
-	if err := os.Mkdir(dir, dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
+	err = fn(r)
+	if closeErr := r.Close(); err == nil {
+		err = closeErr
 	}
-	return syncDir(filepath.Dir(dir))
+	return err
 }
 
-// writeFileDurable writes data to target atomically: a temporary file in
-// the same directory is written, fsynced and renamed over target, and the
-// directory is fsynced so the rename itself is durable. With exclusive
-// true it fails with os.ErrExist if target already exists (checked before
-// the rename; two writers racing on the same path is a controller bug the
-// run lock prevents).
-func (s *Store) writeFileDurable(target string, data []byte, exclusive bool) error {
-	if target == "" {
-		return errors.New("write forum file: path escapes the forum root")
+// writeRel writes data to the root-relative rel (writeFileAt).
+func (s *Store) writeRel(rel string, data []byte, exclusive bool) error {
+	clean, err := rootRel(rel)
+	if err != nil {
+		return fmt.Errorf("write forum file: %w", err)
 	}
-	if exclusive {
-		if _, err := os.Lstat(target); err == nil {
-			return fmt.Errorf("write %s: %w", filepath.Base(target), os.ErrExist)
+	return s.inRoot(func(r *os.Root) error { return writeFileAt(r, clean, data, exclusive) })
+}
+
+// rootRel cleans a root-relative path, refusing one that is absolute or
+// escapes the root.
+func rootRel(rel string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if rel == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the forum root", rel)
+	}
+	return clean, nil
+}
+
+// noSymlinks checks that every existing directory on the way to rel (rel
+// itself excluded) is a real directory, not a symbolic link. Missing
+// components are not an error; the operation that needs them fails.
+func noSymlinks(r *os.Root, rel string) error {
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return nil
+	}
+	cur := ""
+	for elem := range strings.SplitSeq(dir, string(filepath.Separator)) {
+		cur = filepath.Join(cur, elem)
+		fi, err := r.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symbolic link", cur)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%s is not a directory", cur)
 		}
 	}
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, tmpPrefix+"*")
-	if err != nil {
-		return fmt.Errorf("write %s: %w", filepath.Base(target), err)
+	return nil
+}
+
+// lstatRegular checks that rel, reached without a symbolic link, is a
+// regular file. A missing file wraps fs.ErrNotExist.
+func lstatRegular(r *os.Root, rel string) error {
+	if err := noSymlinks(r, rel); err != nil {
+		return err
 	}
-	tmpPath := tmp.Name()
+	fi, err := r.Lstat(rel)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", rel)
+	}
+	return nil
+}
+
+// mkdirAt creates the root-relative dir (and missing parents, 0700),
+// fsyncing the parent of each directory it creates. An existing component
+// that is a symbolic link or not a directory fails.
+func mkdirAt(r *os.Root, dir string) error {
+	clean, err := rootRel(dir)
+	if err != nil {
+		return err
+	}
+	if clean == "." {
+		return nil
+	}
+	parent := "."
+	for elem := range strings.SplitSeq(clean, string(filepath.Separator)) {
+		cur := filepath.Join(parent, elem)
+		fi, err := r.Lstat(cur)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if err = r.Mkdir(cur, dirPerm); err != nil {
+				return err
+			}
+			if err = syncDirAt(r, parent); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return fmt.Errorf("%s is a symbolic link", cur)
+		case !fi.IsDir():
+			return fmt.Errorf("%s is not a directory", cur)
+		}
+		parent = cur
+	}
+	return nil
+}
+
+// writeFileAt writes data to the r-relative target atomically and
+// durably: a new temporary file (tmpPrefix, created exclusively) in the
+// target's directory is written and fsynced, then published, and the
+// directory is fsynced. Without exclusive the temporary file is renamed
+// over target. With exclusive it is hard-linked to target, which fails
+// with os.ErrExist if target exists (even when created by a racing
+// writer an instant earlier), and then removed. The target's directory
+// must exist and no directory on the way may be a symbolic link.
+func writeFileAt(r *os.Root, target string, data []byte, exclusive bool) error {
+	name := filepath.Base(target)
+	if err := noSymlinks(r, target); err != nil {
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	dir := filepath.Dir(target)
+	tmpPath := filepath.Join(dir, tmpPrefix+uuid.NewString())
+	tmp, err := r.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", name, err)
+	}
 	// abandon discards the temporary file after a failure, keeping every
 	// error so nothing is silently dropped.
 	abandon := func(err error, closeFirst bool) error {
 		if closeFirst {
 			err = errors.Join(err, tmp.Close())
 		}
-		if rmErr := os.Remove(tmpPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		if rmErr := r.Remove(tmpPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 			err = errors.Join(err, rmErr)
 		}
-		return fmt.Errorf("write %s: %w", filepath.Base(target), err)
+		return fmt.Errorf("write %s: %w", name, err)
 	}
 	if err := tmp.Chmod(filePerm); err != nil {
 		return abandon(err, true)
@@ -1146,10 +1380,29 @@ func (s *Store) writeFileDurable(target string, data []byte, exclusive bool) err
 	if err := tmp.Close(); err != nil {
 		return abandon(err, false)
 	}
-	if err := os.Rename(tmpPath, target); err != nil {
+	if exclusive {
+		if err := r.Link(tmpPath, target); err != nil {
+			return abandon(err, false)
+		}
+		if err := r.Remove(tmpPath); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
+	} else if err := r.Rename(tmpPath, target); err != nil {
 		return abandon(err, false)
 	}
-	return syncDir(dir)
+	return syncDirAt(r, dir)
+}
+
+// syncDirAt fsyncs the r-relative directory dir.
+func syncDirAt(r *os.Root, dir string) error {
+	d, err := r.Open(dir)
+	if err != nil {
+		return fmt.Errorf("sync %s: %w", dir, err)
+	}
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", dir, errors.Join(err, d.Close()))
+	}
+	return d.Close()
 }
 
 // syncDir fsyncs a directory so a rename or create inside it is durable.

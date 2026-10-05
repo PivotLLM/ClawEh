@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Seam (a): validation. ValidateStatic needs nothing but the configuration;
@@ -59,7 +61,9 @@ func (e *ValidationError) Error() string {
 // §3 IDs and references
 //   - every participant, source, schema and layer ID matches ValidID; layer
 //     IDs are unique (participant, source and schema duplicates are already
-//     rejected by Decode);
+//     rejected by Decode); no two participant, source or layer IDs are
+//     equal ignoring case (strings.EqualFold), since they name files and a
+//     case-insensitive filesystem would merge them;
 //   - brief.purpose and brief.task are nonempty;
 //   - each source has a valid decode and exactly one of inline / file; for
 //     decode text or markdown, inline is a JSON string; for decode json,
@@ -75,7 +79,13 @@ func (e *ValidationError) Error() string {
 //     on its own model); on the clone form it is an optional override;
 //   - system_prompt and mode only on the fresh form; mode is one of
 //     FreshMode's values; a fresh participant has a nonempty model;
-//   - instructions and name are optional.
+//   - instructions and name are optional; names (a participant's name,
+//     else its ID) are unique ignoring case, so the transcript attributes
+//     each entry to one participant;
+//   - no two `agent` entries name the same real agent, anywhere in the
+//     forum (a moderator entry included): an agent has one conversation,
+//     so it can hold only one seat. Clones of one source are separate
+//     agents and are allowed.
 //
 // §3.2 layers
 //   - participants nonempty, unique, each naming a configured participant;
@@ -96,8 +106,9 @@ func (e *ValidationError) Error() string {
 //   - select, view and distribute are known values or empty;
 //   - select, authors, view and same_participant are rejected on a source
 //     route (a source contributes one record, authorless);
-//   - view full requires a nonempty to (a moderator route names its one
-//     recipient by being the moderator's, so it may use view full);
+//   - view full requires a nonempty to on a layer input; a moderator input
+//     may use view full without to, since the moderator is its one
+//     explicit recipient (the router applies the same rule);
 //   - authors name participants of the producing layer; to names
 //     participants of the consuming layer and is rejected on a moderator
 //     route (the moderator is the only recipient); neither repeats an ID;
@@ -164,9 +175,10 @@ type Resolved struct {
 	// (EffectiveModeratorSchema), for every enabled layer with a moderator;
 	// Launch stores them in Snapshot.ModeratorSchemas.
 	ModeratorSchemas map[string]json.RawMessage
-	// SourceFiles maps a file source's ID to the absolute path that was
-	// checked; Launch reads and copies it.
-	SourceFiles map[string]string
+	// SourceContents maps a file source's ID to the content Preflight read
+	// (once, from the path it checked); Launch materialises exactly these
+	// bytes and never reopens the file by path.
+	SourceContents map[string][]byte
 }
 
 // Preflight checks the configuration against the host without creating
@@ -184,8 +196,10 @@ type Resolved struct {
 //     compiles too; a nil Schemas with any schema configured is
 //     ErrSchemasUnavailable (returned directly, not as an issue);
 //   - each file source resolves under ConfigDir to a path ReadAllowed
-//     accepts and that exists as a regular file; a json source's content
-//     (inline or file) parses as one JSON value;
+//     accepts (both the named path and, through any symbolic link, its
+//     target) and that exists as a regular file; it is read once, here,
+//     into Resolved.SourceContents; a json file source's content parses
+//     as one JSON value;
 //   - each limit is within HostLimits.
 func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, error) {
 	if env.Agents == nil || env.Launcher == "" {
@@ -198,7 +212,7 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 		Models:           map[string]string{},
 		Schemas:          map[string]CompiledSchema{},
 		ModeratorSchemas: map[string]json.RawMessage{},
-		SourceFiles:      map[string]string{},
+		SourceContents:   map[string][]byte{},
 	}}
 	if err := p.participants(ctx); err != nil {
 		return nil, err
@@ -246,6 +260,7 @@ func (v *staticValidator) brief() {
 }
 
 func (v *staticValidator) sources() {
+	v.caseCollisions("sources", "source", sortedKeys(v.cfg.Sources))
 	for _, id := range sortedKeys(v.cfg.Sources) {
 		src := v.cfg.Sources[id]
 		path := "sources." + id
@@ -295,7 +310,11 @@ func (v *staticValidator) participants() {
 	if len(v.cfg.Participants) == 0 {
 		v.addf("participants", "at least one participant is required")
 	}
-	for _, id := range sortedKeys(v.cfg.Participants) {
+	ids := sortedKeys(v.cfg.Participants)
+	v.caseCollisions("participants", "participant", ids)
+	v.participantNames(ids)
+	v.realAgents(ids)
+	for _, id := range ids {
 		p := v.cfg.Participants[id]
 		path := "participants." + id
 		if !ValidID(id) {
@@ -319,6 +338,59 @@ func (v *staticValidator) participants() {
 		} else if p.Mode != "" && !validMode(p.Mode) {
 			v.addf(path+".mode", "participant %q: %q is not one of memory, context, single_shot", id, p.Mode)
 		}
+	}
+}
+
+// caseCollisions reports each pair of IDs (sorted, distinct) that are
+// equal ignoring case. path is the map's path; the issue is at the later
+// ID's entry and names both.
+func (v *staticValidator) caseCollisions(path, kind string, ids []string) {
+	for i, id := range ids {
+		for _, prev := range ids[:i] {
+			if prev != id && strings.EqualFold(prev, id) {
+				v.addf(path+"."+id, "%s IDs %q and %q differ only in letter case; make them differ in more than case", kind, prev, id)
+			}
+		}
+	}
+}
+
+// participantNames reports participants whose transcript names (name,
+// else ID) are equal ignoring case. Two participants that both fall back
+// to IDs differing only in case are already reported by caseCollisions.
+func (v *staticValidator) participantNames(ids []string) {
+	seen := map[string]string{} // lower-cased name -> first participant ID
+	for _, id := range ids {
+		p := v.cfg.Participants[id]
+		name := p.Name
+		if name == "" {
+			name = id
+		}
+		key := strings.ToLower(name)
+		prev, dup := seen[key]
+		if !dup {
+			seen[key] = id
+			continue
+		}
+		if p.Name == "" && v.cfg.Participants[prev].Name == "" {
+			continue
+		}
+		v.addf("participants."+id+".name", "participants %q and %q are both named %q (names must differ, ignoring case)", prev, id, name)
+	}
+}
+
+// realAgents reports two `agent` entries naming the same real agent.
+func (v *staticValidator) realAgents(ids []string) {
+	seen := map[string]string{} // agent ID -> first participant ID
+	for _, id := range ids {
+		p := v.cfg.Participants[id]
+		if p.Agent == "" || p.Clone != "" {
+			continue
+		}
+		if prev, dup := seen[p.Agent]; dup {
+			v.addf("participants."+id+".agent", "participants %q and %q are both agent %q; an agent can take one seat in a forum (use clone for another)", prev, id, p.Agent)
+			continue
+		}
+		seen[p.Agent] = id
 	}
 }
 
@@ -360,6 +432,11 @@ func (v *staticValidator) layers() {
 	enabled := 0
 	for i, l := range v.cfg.Layers {
 		path := layerPath(i)
+		for k, prev := range v.cfg.Layers[:i] {
+			if prev.ID != l.ID && strings.EqualFold(prev.ID, l.ID) {
+				v.addf(path+".id", "layer IDs %q (%s) and %q differ only in letter case; make them differ in more than case", prev.ID, layerPath(k), l.ID)
+			}
+		}
 		if !ValidID(l.ID) {
 			v.addf(path+".id", "layer ID %q: %s", l.ID, idRule)
 		}
@@ -586,20 +663,20 @@ func (v *staticValidator) authorRefs(path string, authors []string, producer Lay
 }
 
 // withinShare reports whether pointer p can resolve inside a projection
-// built from share: p equals, lies under, or encloses a shared member.
-// Pointers that are not "/"-prefixed are left to CheckProjection.
+// built from share: p equals, lies under, or encloses a shared member,
+// compared token-wise after unescaping (pointerTokens), so "/a~1b" and
+// "/a/b" differ. Invalid pointers are left to CheckProjection.
 func withinShare(p string, share []string) bool {
-	if !strings.HasPrefix(p, "/") {
+	pt, err := pointerTokens(p)
+	if err != nil {
 		return true
 	}
-	pt := strings.Split(p[1:], "/")
 	for _, s := range share {
-		if !strings.HasPrefix(s, "/") {
+		st, err := pointerTokens(s)
+		if err != nil {
 			return true
 		}
-		st := strings.Split(s[1:], "/")
-		n := min(len(pt), len(st))
-		if slices.Equal(pt[:n], st[:n]) {
+		if tokensPrefix(pt, st) || tokensPrefix(st, pt) {
 			return true
 		}
 	}
@@ -840,7 +917,8 @@ func (p *preflight) schemas() {
 	}
 }
 
-// sources checks every file source and the content of json file sources.
+// sources checks every file source, reads it once into
+// Resolved.SourceContents, and checks the content of json file sources.
 func (p *preflight) sources() error {
 	for _, id := range sortedKeys(p.cfg.Sources) {
 		src := p.cfg.Sources[id]
@@ -852,25 +930,60 @@ func (p *preflight) sources() error {
 		}
 		path := "sources." + id + ".file"
 		abs := filepath.Join(p.env.ConfigDir, filepath.FromSlash(src.File))
-		resolvedPath, err := p.readable(abs)
+		data, err := p.readSource(abs)
 		if err != nil {
 			p.addf(path, "source %q: %q %v", id, src.File, err)
 			continue
 		}
 		if src.Decode == FormatJSON {
-			data, err := os.ReadFile(resolvedPath) //nolint:gosec // the path passed ReadAllowed for the launching agent
-			if err != nil {
-				p.addf(path, "source %q: %q cannot be read: %v", id, src.File, err)
-				continue
-			}
 			if err := checkDuplicateKeys(data); err != nil {
 				p.addf(path, "source %q: %q is not one valid JSON value: %v", id, src.File, issueText(err))
 				continue
 			}
 		}
-		p.res.SourceFiles[id] = resolvedPath
+		p.res.SourceContents[id] = data
 	}
 	return nil
+}
+
+// readSource resolves abs (following symbolic links), checks that the
+// launching agent may read both the named path and its target, and reads
+// the target, which must be a regular file. The target is opened without
+// following a link (a link swapped in after the check fails) and its type
+// is checked on the open file, so what is returned is what was checked.
+func (p *preflight) readSource(abs string) ([]byte, error) {
+	target, err := p.readable(abs)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // the path passed ReadAllowed for the launching agent
+	if err != nil {
+		return nil, fmt.Errorf("cannot be read: %w", err)
+	}
+	data, err := readRegular(f)
+	if closeErr := f.Close(); err == nil && closeErr != nil {
+		err = fmt.Errorf("cannot be read: %w", closeErr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// readRegular reads all of f, which must be a regular file.
+func readRegular(f *os.File) ([]byte, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("cannot be read: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("is not a regular file")
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("cannot be read: %w", err)
+	}
+	return data, nil
 }
 
 // readable resolves abs (following symbolic links) and checks that the

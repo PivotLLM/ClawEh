@@ -64,7 +64,7 @@ tool call ──► (e) Service.Launch
                  │  Lock → Open                                  (d)
                  ▼
             (d) Controller.Run            ← the SAME path a restart takes
-                 │  Verify, LoadState (Replay), ListAttempts     (b)
+                 │  Verify, ReplayState, ListAttempts            (b)
                  │  per layer: Router.Resolve → WriteLayerInputs (c)(b)
                  │  per turn : composeTurnMessage → ask:
                  │               WriteAttemptRequest → Commit(attempt)
@@ -84,8 +84,12 @@ What crosses each boundary:
   accessors (`Layer`, `EnabledLayers`, `Route.Producer`,
   `EffectiveModeratorSchema`). (a) ← (c): `ValidPointer`,
   `CheckProjection` for `share`/`paths` syntax.
-- (b) → (d),(e): `Store` methods; `Verify`, `LoadState`, `Replay`. (d) never
-  reads `state.json` directly; it goes through `LoadState`.
+- (b) → (d),(e): `Store` methods; `Verify`, `ReplayState`, `LoadState`,
+  `Replay`. Nothing reads `state.json` directly. (d) opens with
+  `ReplayState`, which always rebuilds `State` from the commit log and
+  rewrites `state.json` (lock holder only); (e)'s read-only callers
+  (status, results) use `LoadState`, which may use `state.json` as a
+  cache and never writes it.
 - (c) → (d): `Router.Resolve(layer, produced) → *LayerInputs`, called once
   per layer by `startLayer`; `Project` for published projections.
 - (d) → (e): `Open`, `Controller.Run/RequestPause/RequestCancel/State/
@@ -124,7 +128,7 @@ atomic rename out of `ListForums` followed by a plain delete.
    is a commit (`CommitAttempt`) written before its Ask, so `State.Calls`
    and each layer's budget come from the log, replied or not.
 2. **One output per work ID.** A turn ID (`r<round>-<participant>`,
-   `r<round>-moderator`) gets exactly one `CommitTurn` / `CommitModerated`,
+   `m<round>` for a moderator check) gets exactly one `CommitTurn` / `CommitModerated`,
    however many attempts were reserved. `Run` skips any turn with a
    committed output, which is how a resume lands on the first unfinished
    action.
@@ -157,8 +161,10 @@ atomic rename out of `ListForums` followed by a plain delete.
    forum `max_calls`, layer `max_calls`), never only between rounds, and
    repairs and moderator checks count like any other call.
 10. **Hashes are verified, never regenerated.** `Verify` checks
-    `forum.json`, every source and every committed output against the
-    recorded SHA-256; a mismatch fails recovery with `ErrCorrupt`.
+    `forum.json`, every source and every committed output and published
+    projection against the recorded SHA-256, reading through the root
+    without following symbolic links; a mismatch fails recovery with
+    `ErrCorrupt`.
 11. **Terminal before notice.** `result.json` is written by `end`, then the
     service deletes temporary agents, then notifies (§9 Completion).
 12. **Temporary agents are created at launch and deleted at a terminal
@@ -174,7 +180,7 @@ it only for integration tests, not to start.
 | Step | Work | Needs |
 | --- | --- | --- |
 | 1 | (a) `Decode` + `checkDuplicateKeys`, `ValidateStatic`, `EffectiveModeratorSchema`, adapter tests; (b) `Store` writes/reads, `Lock`, `AppendCommit`/`ReadCommits`, `Remove`/`ListStaged`; (c) `jsonpointer.go` | nothing |
-| 2 | (a) `Preflight` against a fake `Agents`; (b) `Replay`, `Verify`, `LoadState`; (c) `Router.Resolve` and helpers against hand-built `OutputRecord`s | step 1 of the same seam |
+| 2 | (a) `Preflight` against a fake `Agents`; (b) `Replay`, `Verify`, `ReplayState`, `LoadState`; (c) `Router.Resolve` and helpers against hand-built `OutputRecord`s | step 1 of the same seam |
 | 3 | (d) `ask`, `validateOutput`, `parseDecision`, `repairMessage`, `composeTurnMessage`, `composeModeratorMessage`, `eligibleEvents`, `pendingDirected`, `applyCommit`, `runRoundAfterRound`, transcript writers, `compileSchemas`, `checkCreated`, `hostFailure` | (b) store for tests; (c) `Project` |
 | 4 | (e) `allocate`, `createParticipants`, `resume`, `Cancel` (paused path), `recoverOne`, `deleteTempAgents`, `touchPaused`, `summaryOf`, `resultOf`, `launchOptions`, `toolOutcome`, the remaining handlers | (b), (d) |
 | 5 | Integration: a fake `Messenger` driving a two-layer forum end to end; crash-and-resume at every commit boundary (kill after each `AppendCommit`, reopen, assert `Replay` equals the pre-crash state and the run completes); pause/cancel races; limits | all |

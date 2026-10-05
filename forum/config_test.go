@@ -182,6 +182,8 @@ func TestEffectiveModeratorSchemaValidates(t *testing.T) {
 		{"stop with guidance", plain, `{"decision":"STOP","reason":"r","guidance":"x"}`, false},
 		{"guide with null guidance", plain, `{"decision":"GUIDE","reason":"r","guidance":null}`, false},
 		{"guide with empty guidance", plain, `{"decision":"GUIDE","reason":"r","guidance":""}`, false},
+		{"guide with blank guidance", plain, `{"decision":"GUIDE","reason":"r","guidance":" \n\t "}`, false},
+		{"guide with padded guidance", plain, `{"decision":"GUIDE","reason":"r","guidance":"  Examine rollback.  "}`, true},
 		{"unknown decision", plain, `{"decision":"PAUSE","reason":"r","guidance":null}`, false},
 		{"lowercase decision", plain, `{"decision":"continue","reason":"r","guidance":null}`, false},
 		{"missing reason", plain, `{"decision":"CONTINUE","guidance":null}`, false},
@@ -244,5 +246,30 @@ func TestEffectiveModeratorSchemaKeepsAssessmentID(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), assessmentSchemaID) {
 		t.Errorf("an assessment without $id gets %s: %s", assessmentSchemaID, raw)
+	}
+}
+
+func TestGuidanceIssue(t *testing.T) {
+	text := func(s string) *string { return &s }
+	tests := []struct {
+		name string
+		d    Decision
+		want string // substring; "" means the rule holds
+	}{
+		{"guide", Decision{Decision: DecisionGuide, Guidance: text("Examine rollback.")}, ""},
+		{"guide null", Decision{Decision: DecisionGuide}, "nonblank"},
+		{"guide empty", Decision{Decision: DecisionGuide, Guidance: text("")}, "nonblank"},
+		{"guide blank", Decision{Decision: DecisionGuide, Guidance: text(" \n\t")}, "nonblank"},
+		{"continue null", Decision{Decision: DecisionContinue}, ""},
+		{"continue with guidance", Decision{Decision: DecisionContinue, Guidance: text("x")}, "CONTINUE requires guidance to be null"},
+		{"stop with guidance", Decision{Decision: DecisionStop, Guidance: text("")}, "STOP requires guidance to be null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := guidanceIssue(&tt.d)
+			if tt.want == "" && got != "" || tt.want != "" && !strings.Contains(got, tt.want) {
+				t.Errorf("guidanceIssue = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

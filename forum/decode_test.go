@@ -78,6 +78,7 @@ func TestDecodeRejects(t *testing.T) {
 		{"missing version", `{}`, "version", []string{"version 0 is not supported", "want 1"}},
 		{"future version", `{"version":2}`, "version", []string{"version 2 is not supported"}},
 		{"explicit zero layer max_calls", minimal(`,"layers":[{"id":"a"},{"id":"b","max_calls":0}]`), "layers[1].max_calls", []string{"positive", "omit it"}},
+		{"explicit null share", minimal(`,"layers":[{"id":"a"},{"id":"b","output":{"format":"json","share":null}}]`), "layers[1].output.share", []string{"not null", "omit it"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

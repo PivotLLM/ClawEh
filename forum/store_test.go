@@ -354,7 +354,14 @@ func TestStoreRecordsRoundTrip(t *testing.T) {
 		Status: StatusRunning, Seq: 1, Layers: map[string]*LayerState{"debate": {Outputs: []OutputRecord{}}},
 		Participants: map[string]*ParticipantState{}, UpdatedAt: time.Now().UTC().Round(0),
 	}
-	for range 2 { // state.json is rewritten freely
+	if err = s.WriteState(st); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("WriteState without the lock: %v, want ErrInvalidState", err)
+	}
+	if err = s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock()
+	for range 2 { // the lock holder rewrites state.json freely
 		if err = s.WriteState(st); err != nil {
 			t.Fatal(err)
 		}
@@ -576,7 +583,8 @@ func TestStoreWriteOutput(t *testing.T) {
 		t.Fatalf("WriteOutput: %v", err)
 	}
 	dir := "layers/debate/calls/" + turn + "/1/"
-	if out.ContentFile != dir+"output.json" || out.PublishedFile != dir+"published.json" || out.Digest != digest(full) {
+	if out.ContentFile != dir+"output.json" || out.PublishedFile != dir+"published.json" ||
+		out.Digest != digest(full) || out.PublishedDigest != digest(published) {
 		t.Errorf("record %+v", out)
 	}
 	if got, err := s.ReadFile(out.ContentFile); err != nil || string(got) != string(full) {
@@ -600,7 +608,8 @@ func TestStoreWriteOutput(t *testing.T) {
 	if err := s.WriteOutput(mdOut, []byte("# Summary\n"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if mdOut.PublishedFile != mdOut.ContentFile || !strings.HasSuffix(mdOut.ContentFile, "/output.md") {
+	if mdOut.PublishedFile != mdOut.ContentFile || !strings.HasSuffix(mdOut.ContentFile, "/output.md") ||
+		mdOut.PublishedDigest != mdOut.Digest {
 		t.Errorf("markdown record %+v", mdOut)
 	}
 }
@@ -610,16 +619,21 @@ func TestStoreAppendCommit(t *testing.T) {
 	if got, err := s.ReadCommits(); err != nil || len(got) != 0 {
 		t.Fatalf("empty log = %v, %v", got, err)
 	}
+	// checkCommit needs the snapshot: nothing commits before it is written.
+	if _, err := s.AppendCommit(&Commit{Kind: CommitLaunched}); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("AppendCommit before the snapshot: %v, want ErrInvalidState", err)
+	}
 	before := time.Now().UTC()
-	c := &Commit{Kind: CommitLaunched}
-	seq, err := s.AppendCommit(c)
-	if err != nil || seq != 1 || c.Seq != 1 || c.At.Before(before) {
-		t.Fatalf("AppendCommit = %d, %v; commit %+v", seq, err, c)
+	stLaunch(t, s, stConfig())
+	commits0, err := s.ReadCommits()
+	if err != nil || len(commits0) != 1 || commits0[0].Seq != 1 || commits0[0].At.Before(before) {
+		t.Fatalf("launched commit %+v, %v", commits0, err)
 	}
 	if _, err = os.Stat(s.Path("commits/00000001.json")); err != nil {
 		t.Errorf("commit file: %v", err)
 	}
-	if seq, err = s.AppendCommit(&Commit{Kind: CommitLayerStarted, Layer: "debate"}); err != nil || seq != 2 {
+	seq, err := s.AppendCommit(&Commit{Kind: CommitLayerStarted, Layer: "debate"})
+	if err != nil || seq != 2 {
 		t.Errorf("second seq %d, %v", seq, err)
 	}
 
@@ -645,9 +659,13 @@ func TestStoreAppendCommit(t *testing.T) {
 	}
 }
 
+// The store refuses every commit that breaks the log's invariants
+// (checkCommit), and Replay refuses the same commits, so the store never
+// writes a log Replay would reject.
 func TestStoreAppendCommitInvariants(t *testing.T) {
 	s := stNewStore(t)
-	stLaunch(t, s, stConfig())
+	cfg := stConfig()
+	snap := stLaunch(t, s, cfg)
 	turn := TurnID(1, "alice")
 	stReserve(t, s, "debate", 1, turn, TurnParticipant, "alice", 1, 1, "m")
 	out := &OutputRecord{LayerID: "debate", Round: 1, ParticipantID: "alice", Format: FormatJSON, Turn: turn, Attempt: 1}
@@ -657,6 +675,7 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	if _, err := s.AppendCommit(&Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}); err != nil {
 		t.Fatal(err)
 	}
+	stReserve(t, s, "debate", 1, ModeratorTurnID(1), TurnModerator, "mod", 1, 1, "m")
 	guide := "look again"
 	if _, err := s.AppendCommit(&Commit{
 		Kind: CommitModerated, Layer: "debate", Round: 1, Turn: ModeratorTurnID(1),
@@ -664,42 +683,108 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	valid, err := s.ReadCommits()
+	if err != nil {
+		t.Fatal(err)
+	}
 
+	bob := TurnID(1, "bob")
+	bobOut := &OutputRecord{LayerID: "debate", Round: 1, ParticipantID: "bob", Turn: bob, Attempt: 1}
+	attempt := func(layer string, round int, turn string, kind TurnKind, pid string, n int) Commit {
+		return Commit{Kind: CommitAttempt, Layer: layer, Round: round, Turn: turn, TurnKind: kind, Participant: pid, Attempt: n}
+	}
+	cont := &Decision{Decision: DecisionContinue}
 	tests := []struct {
 		name string
 		c    Commit
+		want string
+		// storeOnly marks a check that needs the attempt directory, which
+		// Replay (working from the log alone) does not see.
+		storeOnly bool
 	}{
-		{"no kind", Commit{}},
-		{"unknown kind", Commit{Kind: "rewind"}},
-		{"attempt without request", Commit{Kind: CommitAttempt, Layer: "debate", Turn: TurnID(1, "bob"), Attempt: 1}},
-		{"attempt reserved twice", Commit{Kind: CommitAttempt, Layer: "debate", Turn: turn, Attempt: 1}},
-		{"attempt with bad IDs", Commit{Kind: CommitAttempt, Layer: "../x", Turn: turn, Attempt: 1}},
-		{"turn without output", Commit{Kind: CommitTurn, Layer: "debate", Turn: turn}},
-		{"turn output of another turn", Commit{Kind: CommitTurn, Layer: "debate", Turn: TurnID(1, "bob"), Output: out}},
-		{"second output for a turn", Commit{Kind: CommitTurn, Layer: "debate", Turn: turn, Output: out}},
-		{"moderated without decision", Commit{Kind: CommitModerated, Layer: "debate", Turn: ModeratorTurnID(2)}},
-		{"second decision for a check", Commit{Kind: CommitModerated, Layer: "debate", Turn: ModeratorTurnID(1), Decision: &Decision{Decision: DecisionContinue}}},
+		{"no kind", Commit{}, "no kind", false},
+		{"unknown kind", Commit{Kind: "rewind"}, "unknown kind", false},
+		{"layer commit without layer", Commit{Kind: CommitLayerStarted}, "names no layer", false},
+		{"layer not configured", attempt("../x", 1, turn, TurnParticipant, "alice", 2), "not in the configuration", false},
+		{"attempt without request", attempt("debate", 1, bob, TurnParticipant, "bob", 1), "has no request", true},
+		{"attempt reserved twice", attempt("debate", 1, ModeratorTurnID(1), TurnModerator, "mod", 1), "exists", false},
+		{"attempt for a committed turn", attempt("debate", 1, turn, TurnParticipant, "alice", 2), "already has a committed output", false},
+		{"attempt not positive", attempt("debate", 1, bob, TurnParticipant, "bob", 0), "not positive", false},
+		{"attempt turn of another participant", attempt("debate", 1, bob, TurnParticipant, "alice", 3), `is not "r001-alice"`, false},
+		{"attempt by a non-member", attempt("debate", 1, TurnID(1, "mod"), TurnParticipant, "mod", 1), `"mod" is not in layer`, false},
+		{"attempt round above max_rounds", attempt("debate", 3, TurnID(3, "bob"), TurnParticipant, "bob", 1), "outside 1..2", false},
+		{"attempt round zero", attempt("debate", 0, TurnID(0, "bob"), TurnParticipant, "bob", 1), "outside 1..2", false},
+		{"attempt with unknown turn kind", attempt("debate", 1, bob, "", "bob", 1), "unknown turn kind", false},
+		{"moderator attempt by a participant", attempt("debate", 2, ModeratorTurnID(2), TurnModerator, "alice", 1), "is not the moderator", false},
+		{"moderator attempt with a turn ID", attempt("debate", 2, TurnID(2, "mod"), TurnModerator, "mod", 1), `is not "m002"`, false},
+		{"moderator attempt without a moderator", attempt("summary", 1, ModeratorTurnID(1), TurnModerator, "mod", 1), "is not the moderator", false},
+		{"turn without output", Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: bob}, "needs an output", false},
+		{"turn output of another turn", Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: bob, Output: out}, "needs an output", false},
+		{"turn output of another round", Commit{Kind: CommitTurn, Layer: "debate", Round: 2, Turn: turn, Output: out}, "needs an output", false},
+		{"second output for a turn", Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: turn, Output: out}, "exists", false},
+		{"turn without a reserved attempt", Commit{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: bob, Output: bobOut}, "attempt 1 is not reserved", false},
+		{"moderated without decision", Commit{Kind: CommitModerated, Layer: "debate", Round: 2, Turn: ModeratorTurnID(2)}, "no decision", false},
+		{"second decision for a check", Commit{Kind: CommitModerated, Layer: "debate", Round: 1, Turn: ModeratorTurnID(1), Decision: cont}, "exists", false},
+		{"moderated without a reserved attempt", Commit{Kind: CommitModerated, Layer: "debate", Round: 2, Turn: ModeratorTurnID(2), Decision: cont}, "no reserved attempt", false},
+		{"moderated under a turn ID", Commit{Kind: CommitModerated, Layer: "debate", Round: 1, Turn: TurnID(1, "mod"), Decision: cont}, `is not "m001"`, false},
+		{"moderated without a moderator", Commit{Kind: CommitModerated, Layer: "summary", Round: 1, Turn: ModeratorTurnID(1), Decision: cont}, "has no moderator", false},
+		{"round_published before every turn", Commit{Kind: CommitRoundPublished, Layer: "debate", Round: 1}, "before bob's turn", false},
+		{"round_published out of order", Commit{Kind: CommitRoundPublished, Layer: "debate", Round: 2}, "published after round 0", false},
+		{"round_published above max_rounds", Commit{Kind: CommitRoundPublished, Layer: "debate", Round: 3}, "outside 1..2", false},
+		{"round_published for per_turn", Commit{Kind: CommitRoundPublished, Layer: "summary", Round: 1}, "per_turn", false},
 	}
-	last := 4
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := tt.c
-			if seq, err := s.AppendCommit(&c); err == nil {
-				t.Errorf("AppendCommit succeeded with seq %d", seq)
+			seq, appendErr := s.AppendCommit(&c)
+			if appendErr == nil || !strings.Contains(appendErr.Error(), tt.want) {
+				t.Errorf("AppendCommit = %d, %v; want an error containing %q", seq, appendErr, tt.want)
 			}
 			if c.Seq != 0 {
 				t.Errorf("rejected commit got seq %d", c.Seq)
 			}
+			if tt.storeOnly {
+				return
+			}
+			bad := tt.c
+			bad.Seq = len(valid) + 1
+			_, replayErr := Replay(cfg, snap, append(slices.Clone(valid), bad))
+			if !errors.Is(replayErr, ErrCorrupt) || !strings.Contains(replayErr.Error(), tt.want) {
+				t.Errorf("Replay: %v; want ErrCorrupt containing %q", replayErr, tt.want)
+			}
 		})
 	}
 	commits, err := s.ReadCommits()
-	if err != nil || len(commits) != last {
-		t.Errorf("log has %d commits (%v), want %d", len(commits), err, last)
+	if err != nil || len(commits) != len(valid) {
+		t.Errorf("log has %d commits (%v), want %d", len(commits), err, len(valid))
+	}
+
+	// The pass path: bob's reserved turn completes the round, which can
+	// then be published, and Replay accepts the whole log.
+	stReserve(t, s, "debate", 1, bob, TurnParticipant, "bob", 1, 1, "m")
+	if err = s.WriteOutput(bobOut, []byte(`{"claim":"b"}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*Commit{
+		{Kind: CommitTurn, Layer: "debate", Round: 1, Turn: bob, Output: bobOut},
+		{Kind: CommitRoundPublished, Layer: "debate", Round: 1},
+	} {
+		if _, err = s.AppendCommit(c); err != nil {
+			t.Fatalf("AppendCommit(%s): %v", c.Kind, err)
+		}
+	}
+	all, err := s.ReadCommits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Replay(cfg, snap, all); err != nil {
+		t.Errorf("Replay of the accepted log: %v", err)
 	}
 }
 
 func TestStoreAppendCommitConcurrent(t *testing.T) {
 	s := stNewStore(t)
+	stLaunch(t, s, stConfig())
 	const n = 32
 	var wg sync.WaitGroup
 	seqs := make(chan int, n)
@@ -722,7 +807,7 @@ func TestStoreAppendCommitConcurrent(t *testing.T) {
 		seen[seq] = true
 	}
 	commits, err := s.ReadCommits()
-	if err != nil || len(commits) != n {
+	if err != nil || len(commits) != n+1 {
 		t.Fatalf("log has %d commits, %v", len(commits), err)
 	}
 }
@@ -766,7 +851,8 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := stNewStore(t)
-			for range 3 {
+			stLaunch(t, s, stConfig())
+			for range 2 {
 				if _, err := s.AppendCommit(&Commit{Kind: CommitResumed}); err != nil {
 					t.Fatal(err)
 				}
@@ -789,9 +875,7 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 // the next write succeeds.
 func TestStoreCrashLeftovers(t *testing.T) {
 	s := stNewStore(t)
-	if _, err := s.AppendCommit(&Commit{Kind: CommitLaunched}); err != nil {
-		t.Fatal(err)
-	}
+	stLaunch(t, s, stConfig())
 	for _, dir := range []string{dirCommits, "."} {
 		if err := os.WriteFile(filepath.Join(s.Path(dir), tmpPrefix+"123"), []byte(`{"seq":2,"kind":"pau`), filePerm); err != nil {
 			t.Fatal(err)
@@ -1078,6 +1162,10 @@ func TestStorePermissions(t *testing.T) {
 	if err := s.WriteOutput(out, []byte(`{"claim":"c"}`), []byte(`{"claim":"c"}`)); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock()
 	if err := s.WriteState(&State{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1090,10 +1178,6 @@ func TestStorePermissions(t *testing.T) {
 	if err := s.SetCleanup(CleanupAgents, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Lock(); err != nil {
-		t.Fatal(err)
-	}
-	defer s.Unlock()
 	base := filepath.Dir(s.Root())
 	files := 0
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
@@ -1117,5 +1201,218 @@ func TestStorePermissions(t *testing.T) {
 	}
 	if files < 14 {
 		t.Errorf("walked only %d files", files)
+	}
+}
+
+// Moderator work IDs have their own prefix: no participant ID, not even
+// "moderator", yields one.
+func TestWorkIDsCannotCollide(t *testing.T) {
+	for _, pid := range []string{"moderator", "m001", "alice", "_", "-"} {
+		for round := 1; round <= 3; round++ {
+			if TurnID(round, pid) == ModeratorTurnID(round) {
+				t.Errorf("TurnID(%d, %q) == ModeratorTurnID(%d)", round, pid, round)
+			}
+		}
+	}
+	if got := ModeratorTurnID(1); got != "m001" || !ValidID(got) {
+		t.Errorf("ModeratorTurnID(1) = %q", got)
+	}
+}
+
+// An exclusive write publishes by hard link, so of several writers racing
+// on one path exactly one wins and the others fail with os.ErrExist; the
+// file holds the winner's bytes and no temporary file is left behind.
+func TestStoreExclusiveWriteRace(t *testing.T) {
+	s := stNewStore(t)
+	const writers = 16
+	for round := range 20 {
+		rel := fmt.Sprintf("sources/race-%d.txt", round)
+		var wg sync.WaitGroup
+		errs := make([]error, writers)
+		for i := range writers {
+			wg.Go(func() { errs[i] = s.writeRel(rel, []byte(strconv.Itoa(i)), true) })
+		}
+		wg.Wait()
+		winner := -1
+		for i, err := range errs {
+			switch {
+			case err == nil && winner >= 0:
+				t.Fatalf("round %d: writers %d and %d both succeeded", round, winner, i)
+			case err == nil:
+				winner = i
+			case !errors.Is(err, os.ErrExist):
+				t.Fatalf("round %d: writer %d: %v, want os.ErrExist", round, i, err)
+			}
+		}
+		if winner < 0 {
+			t.Fatalf("round %d: no writer succeeded", round)
+		}
+		if got, err := s.ReadFile(rel); err != nil || string(got) != strconv.Itoa(winner) {
+			t.Fatalf("round %d: file holds %q (%v), want the winner's %d", round, got, err, winner)
+		}
+	}
+	entries, err := os.ReadDir(s.Path(dirSources))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), tmpPrefix) {
+			t.Errorf("leftover temporary file %s", e.Name())
+		}
+	}
+}
+
+// Writes follow no symbolic link below the root, whether it leads out of
+// the root or back into it, and leave the link's target untouched.
+func TestStoreWritesFollowNoSymlink(t *testing.T) {
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "victim")
+	stWriteVictim := func(t *testing.T) {
+		t.Helper()
+		if err := os.WriteFile(outsideFile, []byte("untouched"), filePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stVictimUntouched := func(t *testing.T) {
+		t.Helper()
+		if got, err := os.ReadFile(outsideFile); err != nil || string(got) != "untouched" {
+			t.Errorf("link target changed: %q, %v", got, err)
+		}
+		entries, err := os.ReadDir(outsideDir)
+		if err != nil || len(entries) != 1 {
+			t.Errorf("files created beside the link target: %v, %v", entries, err)
+		}
+	}
+
+	t.Run("directory link out of the root", func(t *testing.T) {
+		stWriteVictim(t)
+		s := stNewStore(t)
+		if err := os.Symlink(outsideDir, s.Path("layers/debate")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.WriteLayerInputs(&LayerInputs{LayerID: "debate"}); err == nil {
+			t.Error("WriteLayerInputs wrote through a linked directory")
+		}
+		stVictimUntouched(t)
+	})
+	t.Run("directory link within the root", func(t *testing.T) {
+		s := stNewStore(t)
+		if err := os.Symlink(s.Path(dirSources), s.Path("layers/debate")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.WriteLayerInputs(&LayerInputs{LayerID: "debate"}); err == nil {
+			t.Error("WriteLayerInputs wrote through a linked directory")
+		}
+		if entries, err := os.ReadDir(s.Path(dirSources)); err != nil || len(entries) != 0 {
+			t.Errorf("files written into the link target: %v, %v", entries, err)
+		}
+	})
+	t.Run("exclusive target is a link", func(t *testing.T) {
+		stWriteVictim(t)
+		s := stNewStore(t)
+		if err := os.Symlink(outsideFile, s.Path(fileConfig)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.WriteConfig([]byte("{}")); !errors.Is(err, os.ErrExist) {
+			t.Errorf("WriteConfig over a link: %v, want os.ErrExist", err)
+		}
+		stVictimUntouched(t)
+	})
+	t.Run("replaced target is a link", func(t *testing.T) {
+		stWriteVictim(t)
+		s := stNewStore(t)
+		stLaunch(t, s, stConfig())
+		if err := s.Lock(); err != nil {
+			t.Fatal(err)
+		}
+		defer s.Unlock()
+		if err := os.Symlink(outsideFile, s.Path(fileState)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.WriteState(&State{Status: StatusRunning}); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Lstat(s.Path(fileState))
+		if err != nil || !fi.Mode().IsRegular() {
+			t.Errorf("state.json is not a regular file after the write: %v, %v", fi, err)
+		}
+		stVictimUntouched(t)
+	})
+	t.Run("transcript is a link", func(t *testing.T) {
+		stWriteVictim(t)
+		s := stNewStore(t)
+		if err := os.Symlink(outsideFile, s.Path(fileTranscript)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AppendTranscript("entry\n"); err == nil {
+			t.Error("AppendTranscript wrote through a link")
+		}
+		stVictimUntouched(t)
+	})
+	t.Run("record read through a link", func(t *testing.T) {
+		s := stNewStore(t)
+		inside := s.Path("sources/state-copy.json")
+		if err := os.WriteFile(inside, []byte(`{"status":"running"}`), filePerm); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(inside, s.Path(fileState)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ReadState(); err == nil {
+			t.Error("ReadState followed a link")
+		}
+	})
+}
+
+// Taking the lock sweeps the temporary files and directories a crashed
+// writer left anywhere under the root, and nothing else.
+func TestStoreLockSweepsTemporaries(t *testing.T) {
+	s := stNewStore(t)
+	stLaunch(t, s, stConfig())
+	turnDir := s.Path("layers/debate/calls/" + TurnID(1, "alice"))
+	if err := os.MkdirAll(filepath.Join(turnDir, tmpPrefix+"attempt-x"), dirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(turnDir, tmpPrefix+"attempt-x", fileRequest), []byte("{}"), filePerm); err != nil {
+		t.Fatal(err)
+	}
+	leftovers := [...]string{
+		filepath.Join(s.Root(), tmpPrefix+"1"),
+		filepath.Join(s.Path(dirCommits), tmpPrefix+"2"),
+		filepath.Join(s.Path(dirSources), tmpPrefix+"3"),
+		filepath.Join(turnDir, tmpPrefix+"attempt-x"), // a directory, created above
+	}
+	for _, p := range leftovers[:3] {
+		if err := os.WriteFile(p, []byte("partial"), filePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Without the lock nothing is swept (another process may be writing).
+	if _, err := LoadState(s, stConfig(), &Snapshot{Layers: []string{"debate", "summary"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range leftovers {
+		if _, err := os.Lstat(p); err != nil {
+			t.Fatalf("%s swept without the lock: %v", p, err)
+		}
+	}
+
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock()
+	for _, p := range leftovers {
+		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s survived the sweep: %v", p, err)
+		}
+	}
+	for _, rel := range []string{fileConfig, fileSnapshot, fileParticipants, commitRel(1), "sources/notes.txt"} {
+		if _, err := os.Lstat(s.Path(rel)); err != nil {
+			t.Errorf("%s removed by the sweep: %v", rel, err)
+		}
+	}
+	if _, err := os.Lstat(turnDir); err != nil {
+		t.Errorf("turn directory removed by the sweep: %v", err)
 	}
 }

@@ -35,6 +35,9 @@ import (
 //   - a value of the wrong JSON type is an error naming its path;
 //   - an explicit layer `max_calls` of 0 is an error (an absent one means
 //     "no layer budget", and the Go zero value cannot tell the two apart);
+//   - an explicit `"share": null` is an error: an absent share publishes
+//     the whole output and `[]` publishes nothing, and a null would be
+//     silently read as absent;
 //   - Version must equal ConfigVersion.
 //
 // Decode does not validate references or limits; call ValidateStatic next.
@@ -57,6 +60,7 @@ func Decode(data []byte) (*Config, error) {
 		issues = append(issues, Issue{Path: "version", Message: fmt.Sprintf("version %d is not supported (want %d)", cfg.Version, ConfigVersion)})
 	}
 	issues = append(issues, explicitZeroLayerBudgets(data)...)
+	issues = append(issues, explicitNullShares(data)...)
 	if len(issues) > 0 {
 		return nil, &ValidationError{Issues: issues}
 	}
@@ -78,6 +82,28 @@ func explicitZeroLayerBudgets(data []byte) []Issue {
 	for i, l := range presence.Layers {
 		if l.MaxCalls != nil && *l.MaxCalls == 0 {
 			issues = append(issues, Issue{Path: fmt.Sprintf("layers[%d].max_calls", i), Message: "must be a positive integer (omit it for no layer budget)"})
+		}
+	}
+	return issues
+}
+
+// explicitNullShares reports every layer whose output `share` is present
+// and null. The document has already decoded, so the error is ignored.
+func explicitNullShares(data []byte) []Issue {
+	var presence struct {
+		Layers []struct {
+			Output struct {
+				Share json.RawMessage `json:"share"`
+			} `json:"output"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(data, &presence); err != nil {
+		return nil
+	}
+	var issues []Issue
+	for i, l := range presence.Layers {
+		if string(l.Output.Share) == "null" {
+			issues = append(issues, Issue{Path: fmt.Sprintf("layers[%d].output.share", i), Message: "must be an array of JSON pointers, not null (omit it to publish the whole output)"})
 		}
 	}
 	return issues

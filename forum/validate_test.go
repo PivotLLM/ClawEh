@@ -50,6 +50,7 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"file absolute", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "/etc/passwd"} }, "sources.report.file", []string{"relative"}},
 		{"file escapes", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "docs/../../secret.txt"} }, "sources.report.file", []string{`".."`}},
 		{"file is dot-dot", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: ".."} }, "sources.report.file", []string{`".."`}},
+		{"source IDs differing in case", func(c *Config) { c.Sources["Report"] = Source{Decode: FormatText, Inline: cfgtRaw(`"x"`)} }, "sources.report", []string{`"Report"`, `"report"`, "letter case"}},
 
 		// participants
 		{"no participants", func(c *Config) { c.Participants = nil }, "participants", []string{"at least one"}},
@@ -61,6 +62,14 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"system_prompt on clone", func(c *Config) { c.Participants["bob"] = Participant{Clone: "bob", SystemPrompt: "x"} }, "participants.bob.system_prompt", []string{"fresh"}},
 		{"mode on clone", func(c *Config) { c.Participants["bob"] = Participant{Clone: "bob", Mode: FreshModeContext} }, "participants.bob.mode", []string{"fresh"}},
 		{"unknown mode", func(c *Config) { c.Participants["chair"] = Participant{Model: "default", Mode: "forever"} }, "participants.chair.mode", []string{`"forever"`, "single_shot"}},
+		{"participant IDs differing in case", func(c *Config) { c.Participants["Alice"] = Participant{Model: "default"} }, "participants.alice", []string{`"Alice"`, `"alice"`, "letter case"}},
+		{"one real agent twice", func(c *Config) { c.Participants["editor"] = Participant{Agent: "alice"} }, "participants.editor.agent", []string{`"alice"`, `"editor"`, "one seat"}},
+		{"moderator is a participant's real agent", func(c *Config) { c.Participants["chair"] = Participant{Agent: "alice"} }, "participants.chair.agent", []string{`"alice"`, `"chair"`, "one seat"}},
+		{"name equals another's ID", func(c *Config) { c.Participants["editor"] = Participant{Model: "default", Name: "ALICE"} }, "participants.editor.name", []string{`"alice"`, `"editor"`, `"ALICE"`}},
+		{"names equal ignoring case", func(c *Config) {
+			c.Participants["chair"] = Participant{Model: "default", Name: "Reviewer"}
+			c.Participants["editor"] = Participant{Model: "default", Name: "reviewer"}
+		}, "participants.editor.name", []string{`"chair"`, `"editor"`, `"reviewer"`}},
 
 		// schemas
 		{"schema ID syntax", func(c *Config) { c.Schemas["2x"] = cfgtRaw(`{}`) }, "schemas.2x", []string{`"2x"`}},
@@ -84,6 +93,7 @@ func TestValidateStaticRejects(t *testing.T) {
 		}, "layers", []string{"every layer is disabled"}},
 		{"layer ID syntax", func(c *Config) { c.Layers[0].ID = "re view"; c.Layers[1].Inputs = c.Layers[1].Inputs[:1] }, "layers[0].id", []string{`"re view"`}},
 		{"duplicate layer ID", func(c *Config) { c.Layers[2].ID = "review"; c.ResultLayers = nil }, "layers[2].id", []string{`"review"`, "layers[0]"}},
+		{"layer IDs differing in case", func(c *Config) { c.Layers[2].ID = "Review"; c.ResultLayers = nil }, "layers[2].id", []string{`"review"`, `"Review"`, "layers[0]", "letter case"}},
 		{"layer without participants", func(c *Config) { c.Layers[2].Participants = nil }, "layers[2].participants", []string{`"report"`, "at least one"}},
 		{"layer participant unknown", func(c *Config) { c.Layers[0].Participants = []string{"alice", "carol"} }, "layers[0].participants[1]", []string{`"carol"`, "not configured"}},
 		{"layer participant twice", func(c *Config) { c.Layers[0].Participants = []string{"alice", "alice"} }, "layers[0].participants[1]", []string{`"alice"`, "twice"}},
@@ -196,6 +206,14 @@ func TestValidateStaticAccepts(t *testing.T) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large", Name: "Bob (clone)"}
 		}},
 		{"no instructions", func(c *Config) { c.Participants["alice"] = Participant{Agent: "alice"} }},
+		{"two clones of one agent", func(c *Config) {
+			c.Participants["chair"] = Participant{Clone: "alice"}
+			c.Participants["editor"] = Participant{Clone: "alice", Name: "Alice (editor)"}
+		}},
+		{"names that differ beyond case", func(c *Config) {
+			c.Participants["chair"] = Participant{Model: "default", Name: "Alice's chair"}
+			c.Participants["editor"] = Participant{Model: "default", Name: "Bob's editor"}
+		}},
 		{"unused participant", func(c *Config) { c.Participants["spare"] = Participant{Model: "default"} }},
 		{"json inline source", func(c *Config) {
 			c.Sources["facts"] = Source{Decode: FormatJSON, Inline: cfgtRaw(`[1,{"a":null}]`)}
@@ -341,7 +359,12 @@ func TestWithinShare(t *testing.T) {
 		{"/b", []string{"/a", "/c"}, false},
 		{"/b", []string{"/a", "/b/c"}, true},
 		{"/a", nil, false},
-		{"bad", []string{"/a"}, true}, // left to CheckProjection
+		{"bad", []string{"/a"}, true},    // left to CheckProjection
+		{"/a~1b", []string{"/a"}, false}, // the member "a/b", not "a" then "b"
+		{"/a/b", []string{"/a~1b"}, false},
+		{"/a~1b", []string{"/a~1b"}, true},
+		{"/a~0/x", []string{"/a~0"}, true},
+		{"/a", []string{"bad"}, true}, // left to CheckProjection
 	}
 	for _, tt := range tests {
 		if got := withinShare(tt.p, tt.share); got != tt.want {

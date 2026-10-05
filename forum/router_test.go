@@ -732,13 +732,32 @@ func TestRouterModerator(t *testing.T) {
 			t.Error("the moderator appears among the participants")
 		}
 	})
+	// The moderator is a moderator input's one explicit recipient, so view
+	// full needs no `to` there (ValidateStatic agrees); the moderator sees
+	// the private members a published view drops.
+	t.Run("view full without to reaches the moderator", func(t *testing.T) {
+		f := routerNewFixture(t)
+		f.routerStandardOutputs()
+		layer := newLayer(f, Route{From: "layer:review", View: ViewFull, Authors: []string{"alice"}})
+		got, err := f.routerResolve(layer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Moderator) == 0 {
+			t.Fatal("the moderator received nothing")
+		}
+		for _, it := range got.Moderator {
+			if !strings.Contains(it.Content, `"private":"p-alice"`) {
+				t.Errorf("moderator item %s is not the full output: %s", it.OutputID, it.Content)
+			}
+		}
+	})
 	tests := []struct {
 		name    string
 		route   Route
 		wantErr string
 	}{
 		{"to is rejected", Route{From: "source:spec", To: []string{"alice"}}, "takes no to"},
-		{"view full is rejected", Route{From: "layer:review", View: ViewFull}, "view full requires explicit to"},
 		{"empty required route fails", Route{From: "layer:review", Authors: []string{"chair"}}, "selects nothing"},
 		{"same_participant leaves the moderator nothing", Route{From: "layer:review", Distribute: DistributeSameParticipant}, `recipient "chair" receives nothing`},
 	}

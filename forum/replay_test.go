@@ -50,6 +50,11 @@ func rpNewRun(t *testing.T) *rpRun {
 	s := stNewStore(t)
 	cfg := stConfig()
 	snap := stLaunch(t, s, cfg)
+	// The controller holds the lock; only the lock holder writes state.json.
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Unlock)
 	r := &rpRun{
 		t: t, s: s, cfg: cfg, snap: snap, st: replayInitialState(snap),
 		private: []string{"PRIVATE-INSTRUCTIONS-ALICE", "PRIVATE-INSTRUCTIONS-BOB"},
@@ -396,14 +401,21 @@ func TestReplayPerTurnRounds(t *testing.T) {
 	snap := &Snapshot{Layers: []string{"summary"}}
 	log := make([]Commit, 0, 4)
 	log = append(log, Commit{Seq: 1, Kind: CommitLaunched}, Commit{Seq: 2, Kind: CommitLayerStarted, Layer: "summary"})
-	for i, pid := range []string{"bob", "alice"} {
+	for _, pid := range []string{"bob", "alice"} {
 		turn := TurnID(1, pid)
 		log = append(log, Commit{
-			Seq: 3 + i, Kind: CommitTurn, Layer: "summary", Round: 1, Turn: turn,
-			Output: &OutputRecord{LayerID: "summary", Round: 1, ParticipantID: pid, Turn: turn},
+			Seq: len(log) + 1, Kind: CommitAttempt, Layer: "summary", Round: 1, Turn: turn,
+			TurnKind: TurnParticipant, Participant: pid, Attempt: 1,
 		})
 	}
-	st, err := Replay(cfg, snap, log[:3])
+	for _, pid := range []string{"bob", "alice"} {
+		turn := TurnID(1, pid)
+		log = append(log, Commit{
+			Seq: len(log) + 1, Kind: CommitTurn, Layer: "summary", Round: 1, Turn: turn,
+			Output: &OutputRecord{LayerID: "summary", Round: 1, ParticipantID: pid, Turn: turn, Attempt: 1},
+		})
+	}
+	st, err := Replay(cfg, snap, log[:5])
 	if err != nil || st.Layers["summary"].RoundsPublished != 0 {
 		t.Fatalf("after one turn: %+v, %v", st, err)
 	}
@@ -414,7 +426,8 @@ func TestReplayPerTurnRounds(t *testing.T) {
 }
 
 // LoadState uses state.json only when it matches the log, and otherwise
-// replays and writes the result back.
+// replays; it never writes state.json (read-only callers do not hold the
+// lock).
 func TestLoadStateCache(t *testing.T) {
 	r := rpFullRun(t)
 	last := r.st.Seq
@@ -446,9 +459,13 @@ func TestLoadStateCache(t *testing.T) {
 			if got, want := rpJSON(t, st), r.states[len(r.states)-1]; got != want {
 				t.Errorf("LoadState:\n got %s\nwant %s", got, want)
 			}
-			written, err := r.s.ReadState()
-			if err != nil || rpJSON(t, written) != r.states[len(r.states)-1] {
-				t.Errorf("state.json not rewritten: %v", err)
+			before, beforeErr := os.ReadFile(r.s.Path(fileState))
+			if _, err := LoadState(r.s, r.cfg, r.snap); err != nil {
+				t.Fatal(err)
+			}
+			after, afterErr := os.ReadFile(r.s.Path(fileState))
+			if string(before) != string(after) || (beforeErr == nil) != (afterErr == nil) {
+				t.Errorf("LoadState wrote state.json:\nbefore %q (%v)\nafter  %q (%v)", before, beforeErr, after, afterErr)
 			}
 		})
 	}
@@ -458,6 +475,42 @@ func TestLoadStateCache(t *testing.T) {
 	}
 	if _, err := LoadState(r.s, r.cfg, r.snap); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("LoadState over a log with a gap: %v, want ErrCorrupt", err)
+	}
+}
+
+// ReplayState (the controller's path at Open) never trusts state.json: it
+// replays the log even when the cache claims to be current, rewrites
+// state.json with the result, and refuses to run without the lock.
+func TestReplayStateIgnoresTheCache(t *testing.T) {
+	r := rpFullRun(t)
+	want := r.states[len(r.states)-1]
+	forged := *r.st
+	forged.Reason = "forged"
+	forged.Calls = 999
+	if err := r.s.WriteState(&forged); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReplayState(r.s, r.cfg, r.snap)
+	if err != nil {
+		t.Fatalf("ReplayState: %v", err)
+	}
+	if got := rpJSON(t, st); got != want {
+		t.Errorf("ReplayState:\n got %s\nwant %s", got, want)
+	}
+	written, err := r.s.ReadState()
+	if err != nil || rpJSON(t, written) != want {
+		t.Errorf("state.json not rewritten: %v", err)
+	}
+
+	unlocked, err := OpenStore(filepath.Dir(r.s.Root()), r.s.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReplayState(unlocked, r.cfg, r.snap); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("ReplayState without the lock: %v, want ErrInvalidState", err)
+	}
+	if err := unlocked.WriteState(st); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("WriteState without the lock: %v, want ErrInvalidState", err)
 	}
 }
 
@@ -588,6 +641,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 		{"committed output changed", func(r *rpRun) string { return committedOutput(r, "debate", false) }, false},
 		{"committed output missing", func(r *rpRun) string { return committedOutput(r, "summary", false) }, true},
 		{"published projection missing", func(r *rpRun) string { return committedOutput(r, "debate", true) }, true},
+		{"published projection changed", func(r *rpRun) string { return committedOutput(r, "debate", true) }, false},
 		{"commit missing", func(*rpRun) string { return commitRel(5) }, true},
 		{"commit truncated", func(*rpRun) string { return commitRel(5) }, false},
 	}
@@ -616,6 +670,33 @@ func TestVerifyDetectsDamage(t *testing.T) {
 			after, afterErr := os.ReadFile(target)
 			if string(before) != string(after) || (beforeErr == nil) != (afterErr == nil) {
 				t.Error("Verify changed the damaged artifact")
+			}
+		})
+	}
+
+	// A committed artifact replaced by a symbolic link to identical content
+	// is still damage: Verify follows no link, inside the root or out.
+	for _, published := range []bool{false, true} {
+		t.Run(fmt.Sprintf("symlinked artifact published=%v", published), func(t *testing.T) {
+			r := rpFullRun(t)
+			rel := committedOutput(r, "debate", published)
+			target := r.s.Path(rel)
+			data, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "copy")
+			if err := os.WriteFile(outside, data, filePerm); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(target); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, target); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := Verify(r.s); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("Verify: %v, want ErrCorrupt", err)
 			}
 		})
 	}

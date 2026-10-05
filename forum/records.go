@@ -179,16 +179,18 @@ const (
 	TurnModerator   TurnKind = "moderator"
 )
 
-// TurnID is the work ID of one participant turn within a layer; it names
-// the directory layers/<layer>/calls/<turn-id>/. One output is ever
-// committed per turn ID.
+// TurnID is the work ID of one participant turn within a layer
+// ("r<round>-<participant>"); it names the directory
+// layers/<layer>/calls/<turn-id>/. One output is ever committed per turn ID.
 func TurnID(round int, participantID string) string {
 	return fmt.Sprintf("r%03d-%s", round, participantID)
 }
 
-// ModeratorTurnID is the work ID of the moderator check after a round.
+// ModeratorTurnID is the work ID of the moderator check after a round
+// ("m<round>"). Its prefix differs from TurnID's, so no participant ID
+// (not even "moderator") can produce a moderator work ID.
 func ModeratorTurnID(round int) string {
-	return fmt.Sprintf("r%03d-moderator", round)
+	return fmt.Sprintf("m%03d", round)
 }
 
 // AttemptRequest (calls/<turn>/<attempt>/request.json) records exactly what
@@ -249,9 +251,12 @@ type OutputRecord struct {
 	// output.
 	PublishedFile string `json:"published_file"`
 	// Digest is the hex SHA-256 of ContentFile; Verify checks it.
-	Digest  string `json:"digest"`
-	Turn    string `json:"turn"`
-	Attempt int    `json:"attempt"`
+	Digest string `json:"digest"`
+	// PublishedDigest is the hex SHA-256 of PublishedFile (equal to Digest
+	// when the two are the same file); Verify checks it.
+	PublishedDigest string `json:"published_digest"`
+	Turn            string `json:"turn"`
+	Attempt         int    `json:"attempt"`
 }
 
 // CommitKind is the kind of one commit-log entry.

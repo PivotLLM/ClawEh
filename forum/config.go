@@ -370,8 +370,8 @@ func (c *Config) EffectiveResultLayers() []string {
 // fails only if assessment is not a JSON object.
 //
 // The guidance rule is expressed in the schema itself (if decision is
-// GUIDE then guidance is a nonempty string, else null), so a validator
-// enforces it. An assessment schema without its own `$id` gets
+// GUIDE then guidance is a string with a non-space character, else null),
+// so a validator enforces it; guidanceIssue states the same rule in Go. An assessment schema without its own `$id` gets
 // assessmentSchemaID, so its internal references ("#/$defs/...") resolve
 // within it rather than against the decision schema's root.
 func EffectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.RawMessage, error) {
@@ -419,7 +419,7 @@ func EffectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.Raw
 			"required":   []string{"decision"},
 			"properties": map[string]any{"decision": map[string]any{"const": DecisionGuide}},
 		},
-		"then": map[string]any{"properties": map[string]any{"guidance": map[string]any{"type": "string", "minLength": 1}}},
+		"then": map[string]any{"properties": map[string]any{"guidance": map[string]any{"type": "string", "pattern": guidancePattern}}},
 		"else": map[string]any{"properties": map[string]any{"guidance": map[string]any{"type": "null"}}},
 	}
 	out, err := json.Marshal(schema)
@@ -427,6 +427,29 @@ func EffectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.Raw
 		return nil, fmt.Errorf("layer %q: build moderator schema: %w", layer.ID, err)
 	}
 	return out, nil
+}
+
+// guidancePattern is the effective schema's rule for GUIDE guidance: at
+// least one non-space character (blank guidance guides nobody).
+const guidancePattern = `\S`
+
+// guidanceIssue checks the engine-owned guidance rule on a parsed
+// decision and returns the problem, or "" when it holds: GUIDE needs
+// guidance that is not blank after strings.TrimSpace; CONTINUE and STOP
+// need it null. It is the Go form of the rule the effective schema
+// carries (guidancePattern), for parseDecision.
+func guidanceIssue(d *Decision) string {
+	switch d.Decision {
+	case DecisionGuide:
+		if d.Guidance == nil || strings.TrimSpace(*d.Guidance) == "" {
+			return "decision GUIDE requires nonblank guidance"
+		}
+	case DecisionContinue, DecisionStop:
+		if d.Guidance != nil {
+			return fmt.Sprintf("decision %s requires guidance to be null", d.Decision)
+		}
+	}
+	return ""
 }
 
 // assessmentSchemaID is the base URI given to an embedded assessment

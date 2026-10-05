@@ -62,8 +62,10 @@ func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error
 //     Missing.
 //
 // Moderator routes are resolved the same way with the moderator as the
-// only recipient (they take no `to`, so they cannot use view full); an
-// optional moderator route that selects nothing is not listed in Missing,
+// only recipient. They take no `to`, and may use view full without it:
+// the moderator is their one explicit recipient (ValidateStatic applies
+// the same rule). An optional moderator route that selects nothing is not
+// listed in Missing,
 // whose indexes refer to the layer's inputs. Each recipient's list is then
 // deduplicated (dedupe), keeping route order and then record order.
 func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*LayerInputs, error) {
@@ -74,7 +76,7 @@ func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*Laye
 		if len(recipients) == 0 {
 			recipients = layer.Participants
 		}
-		if err := r.checkRoute(layer, route, recipients); err != nil {
+		if err := r.checkRoute(layer, route, recipients, false); err != nil {
 			return nil, routeError(layer.ID, "input", i, route, err)
 		}
 		items, err := r.routeItems(layer, route, i, produced)
@@ -102,7 +104,7 @@ func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*Laye
 			if len(route.To) > 0 {
 				return nil, routeError(layer.ID, "moderator input", i, route, errors.New("a moderator route takes no to"))
 			}
-			if err := r.checkRoute(layer, route, recipients); err != nil {
+			if err := r.checkRoute(layer, route, recipients, true); err != nil {
 				return nil, routeError(layer.ID, "moderator input", i, route, err)
 			}
 			items, err := r.routeItems(layer, route, i, produced)
@@ -129,10 +131,12 @@ func routeError(layerID, what string, index int, route Route, err error) error {
 }
 
 // checkRoute enforces the access rules that must hold at run time whatever
-// static validation did: view full only with explicit recipients, and
+// static validation did: view full only with explicit recipients (a
+// layer input's `to`; a moderator input's one recipient is the moderator,
+// so moderator marks a moderator input, which may use view full), and
 // recipients that belong to the consuming layer (or are its moderator).
-func (r *Router) checkRoute(layer Layer, route Route, recipients []string) error {
-	if route.View == ViewFull && len(route.To) == 0 {
+func (r *Router) checkRoute(layer Layer, route Route, recipients []string, moderator bool) error {
+	if route.View == ViewFull && len(route.To) == 0 && !moderator {
 		return errors.New("view full requires explicit to recipients")
 	}
 	for _, pid := range route.To {
