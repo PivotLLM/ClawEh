@@ -73,13 +73,7 @@ func TestAgentConfig_FullParse(t *testing.T) {
 					"peer": {"kind": "direct", "id": "user123"}
 				}
 			}
-		],
-		"session": {
-			"mode": "per-user",
-			"identity_links": {
-				"john": ["telegram:123", "discord:john#1234"]
-			}
-		}
+		]
 	}`
 
 	cfg := DefaultConfig()
@@ -119,17 +113,6 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	}
 	if binding.Match.Peer == nil || binding.Match.Peer.Kind != "direct" || binding.Match.Peer.ID != "user123" {
 		t.Errorf("binding.Match.Peer = %+v", binding.Match.Peer)
-	}
-
-	if cfg.Session.Mode != "per-user" {
-		t.Errorf("Session.Mode = %q", cfg.Session.Mode)
-	}
-	if len(cfg.Session.IdentityLinks) != 1 {
-		t.Errorf("Session.IdentityLinks = %v", cfg.Session.IdentityLinks)
-	}
-	links := cfg.Session.IdentityLinks["john"]
-	if len(links) != 2 {
-		t.Errorf("john links = %v", links)
 	}
 }
 
@@ -435,14 +418,6 @@ func TestDefaultConfig_SummarizationThresholds(t *testing.T) {
 	}
 	if got := (&AgentConfig{}).EffectiveCompression(cfg.Agents.Defaults.Compression); got.Trigger != nil || got.Retain != nil {
 		t.Errorf("EffectiveCompression on an empty config = %+v, want no trigger/retain overrides", got)
-	}
-}
-
-func TestDefaultConfig_SessionMode(t *testing.T) {
-	cfg := DefaultConfig()
-
-	if cfg.Session.Mode != "unified" {
-		t.Errorf("Session.Mode = %q, want 'unified'", cfg.Session.Mode)
 	}
 }
 

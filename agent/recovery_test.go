@@ -61,7 +61,7 @@ func (s *recoveryTestStore) ListPendingSessions() ([]string, error) {
 func (s *recoveryTestStore) Save(_ string) error { return nil }
 func (s *recoveryTestStore) Close() error        { return nil }
 
-const testSessionKey = "agent:main:webui:direct:webui:test-session"
+const testSessionKey = "agent:main:main"
 
 // recoveryTestChannel is a registered-but-inert channel so the manager reports it configured.
 type recoveryTestChannel struct{ *channels.BaseChannel }
@@ -245,6 +245,32 @@ func TestRecoverSession_NoSourceClears(t *testing.T) {
 	}
 	if _, ok := consumeInbound(t, tl.msgBus); ok {
 		t.Error("no replay expected without a recorded source")
+	}
+}
+
+// A pending turn in a session no turn runs in any more (a per-sender key from
+// an earlier release) is cleared, not replayed into the main session.
+func TestRecoverSession_UnusedSessionClears(t *testing.T) {
+	tl, store := newRecoveryTestLoop(t)
+	const oldKey = "agent:main:webui:direct:webui:test-session"
+	sm := tl.al.agentStates["main"]
+	if err := sm.SetPendingTurn(oldKey, state.PendingTurn{Channel: "webui", ChatID: "chat-7"}); err != nil {
+		t.Fatalf("SetPendingTurn: %v", err)
+	}
+
+	tl.al.recoverSession(context.Background(), "main", oldKey, store)
+
+	if !store.clearCalled || store.pendingCleared != oldKey {
+		t.Errorf("ClearPendingTurn not called for %q (called=%v key=%q)", oldKey, store.clearCalled, store.pendingCleared)
+	}
+	if _, ok := sm.GetPendingTurn(oldKey); ok {
+		t.Error("recorded source not cleared")
+	}
+	if _, ok := consumeInbound(t, tl.msgBus); ok {
+		t.Error("no replay expected for an unused session")
+	}
+	if _, ok := consumeOutbound(t, tl.msgBus); ok {
+		t.Error("no notice expected for an unused session")
 	}
 }
 

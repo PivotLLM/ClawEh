@@ -273,7 +273,7 @@ func TestSessionTokenStore_SetSourceWritesChannelChatID(t *testing.T) {
 		t.Errorf("expected chatID=C123, got %q", rec.chatID)
 	}
 
-	// A second SetSource overwrites — unified-mode sessions follow the user
+	// A second SetSource overwrites — an agent's one session follows the user
 	// across channels by overwriting on each inbound turn.
 	s.SetSource("agent:alice:main", "telegram", "789")
 	rec, ok = s.Resolve(tok)

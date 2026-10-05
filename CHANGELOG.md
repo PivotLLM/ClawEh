@@ -532,6 +532,15 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING: every agent runs in unified mode — one conversation per agent.**
+  The per-user, per-platform and per-account session modes are removed, with
+  the `session.mode` setting (`session_scope` in the docs) and
+  `session.identity_links`; a config that still sets them loads with an
+  unknown-key warning. Migration: create a separate agent where a separate
+  conversation is wanted.
+- **USB device notifications go to the default agent's default channel**
+  instead of the last channel used. Without a default binding for the default
+  agent they are not sent.
 - **Every configuration save made through the WebUI is audited.** Each one now
   writes a `config_write` audit entry naming the changed top-level keys (never
   their values). Previously only saves from the configuration editor were

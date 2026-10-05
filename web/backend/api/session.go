@@ -382,7 +382,7 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 // handleEraseSessions deletes every session archive belonging to one sender
 // on one channel, across agents, and answers with the erase report: the keys
-// removed, any left in place (a turn in flight), the shared unified session
+// removed, any left in place (a turn in flight), the shared main session
 // that was kept unless all=true, and the cogmem note.
 //
 //	DELETE /api/sessions?channel=<ch>&chat_id=<id>[&all=true]

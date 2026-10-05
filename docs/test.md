@@ -84,8 +84,8 @@ It lists each failed test with its package, source file and line, and a
 paste-ready rerun command, for example:
 
 ```
-✗ github.com/PivotLLM/ClawEh/agent  TestRecordLastChannel  loop_test.go:82
-    go test -race -count=1 -run '^TestRecordLastChannel$' ./agent
+✗ github.com/PivotLLM/ClawEh/agent  TestPruneSessions  retention_test.go:82
+    go test -race -count=1 -run '^TestPruneSessions$' ./agent
 ```
 
 A compile error shows as `(build failed)` and a crash outside any test as

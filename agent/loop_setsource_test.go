@@ -99,8 +99,8 @@ func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
 }
 
 // TestRunAgentLoop_SourceOverwritesAcrossTurns confirms that a second turn on
-// the same session updates source — modelling unified-mode where a single
-// session follows the user across channels (e.g. Slack → Telegram).
+// the same session updates source — an agent's one session follows the user
+// across channels (e.g. Slack → Telegram).
 func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
 	al := newTestAgentLoop(t).al
 

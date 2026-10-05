@@ -89,7 +89,6 @@ func DefaultConfig() *Config {
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
-			Mode:          "unified",
 			RetentionDays: 0, // keep every session; see session.retention_days
 		},
 		Channels: ChannelsConfig{

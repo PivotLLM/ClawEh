@@ -263,8 +263,8 @@ its speech pipeline) and **complete the turn** on `stream:"lifecycle"` with `dat
 
 ## Agent selection & session scope
 
-A client picks **which agent** handles a turn; the configured `session.session_scope`
-decides **which conversation** that turn joins. The two are independent.
+A client picks **which agent** handles a turn; the turn always joins that agent's one
+conversation.
 
 - **`agents.list`** returns every registered agent as `{id, name}` plus `defaultId`/`mainKey`.
   Agent ids are lowercased (`Bob` → `bob`). When an agent has no configured name we fall
@@ -274,30 +274,25 @@ decides **which conversation** that turn joins. The two are independent.
   `agent:<selectedId>:<peer>:<profile>` (the clawtotalk app uses `agent:<id>:clawtotalk:primary`,
   and the sentinel `main` when nothing is selected). A node client (the R1) has no picker and
   sends `main`; its agent comes from the per-device assignment, else the default agent.
-- **`unified` (the default): the device joins the selected agent's MAIN conversation**,
-  `agent:<agentId>:main`. There is no device-scoped or profile-scoped session — the R1, the
-  phone app, Slack, and Telegram are one assistant with one history, one tool set, and one
-  memory. Tell her something on the R1 and she knows it in Slack. **Isolation is a property
-  of the agent**: to keep a device separate, point it at a different agent (`/agent <name>`
-  or the WebUI Devices page) rather than expecting the transport to isolate it.
-- **Isolating modes (`per-user`, `per-platform`, `per-account`)**: every device gets its own
-  conversation per agent, `agent:<agentId>:device:<deviceId>`, so two devices never share a
-  transcript. The only agent-scoped keys a device may send are `agent:<id>:main` (selects the
-  agent) and its own `agent:<id>:device:<deviceId>`; any other key (another device's session,
-  a Telegram chat, a profile key such as `agent:<id>:clawtotalk:primary`) is refused with
-  `INVALID_REQUEST` "session key not allowed". Profile-scoped conversations are no longer kept.
-- In every mode a key must name a configured agent: an unknown id is refused with
-  `INVALID_REQUEST` "unknown agent" before any session is read.
+- **The device joins the selected agent's MAIN conversation**, `agent:<agentId>:main`,
+  whatever the rest of the key says. There is no device-scoped or profile-scoped session —
+  the R1, the phone app, Slack, and Telegram are one assistant with one history, one tool
+  set, and one memory. Tell her something on the R1 and she knows it in Slack. **Isolation
+  is a property of the agent**: to keep a device separate, point it at a different agent
+  (`/agent <name>` or the WebUI Devices page) rather than expecting the transport to
+  isolate it.
+- A key must name a configured agent: an unknown id is refused with `INVALID_REQUEST`
+  "unknown agent" before any session is read.
 - `chat.history` resolves through the **same** rule as `chat.send`, so a client always reads
-  the transcript its turns are written to — under `unified` a client asking for its own
-  profile key is answered with the agent's main conversation; a refused key is refused by
-  both.
-- Mechanism: `Server.sessionScopeKeyFor` → `routing.ResolveDeviceSessionKey(mode, requested,
-  fallbackAgent, deviceID)`. The device channel passes the resolved key as
+  the transcript its turns are written to — a client asking for its own profile key is
+  answered with the agent's main conversation.
+- Mechanism: `Server.sessionScopeKeyFor` picks the agent and returns
+  `routing.BuildAgentMainSessionKey(agent)`. The device channel passes the resolved key as
   `metadata["session_key"]` (honored by `BaseChannel.HandleMessage` →
   `bus.InboundMessage.SessionKey`) and the agent as `metadata["preresolved_agent_id"]`. The
-  agent loop's `resolveScopeKey` honors any `agent:`-prefixed `SessionKey`; routing logs
-  `matched_by=preresolved` for the chosen agent.
+  agent loop's `resolveScopeKey` resolves any `SessionKey` to the agent's main session
+  (only the agent's own sub-agent session is kept); routing logs `matched_by=preresolved`
+  for the chosen agent.
 
 ### `/agent` command (node clients switch assistants)
 

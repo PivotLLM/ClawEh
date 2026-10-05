@@ -366,8 +366,8 @@ func (c *BaseChannel) HandleMessage(
 		Metadata:   metadata,
 	}
 	// A channel may pin the conversation session explicitly (the device gateway
-	// uses this to isolate each device/agent and to align with the session a client
-	// reads history from). The agent loop honors an agent-scoped SessionKey.
+	// uses this to select the agent and to align with the session a client reads
+	// history from). The agent loop resolves it to that agent's main session.
 	if sk := metadata["session_key"]; sk != "" {
 		msg.SessionKey = sk
 	}

@@ -8,7 +8,7 @@
 //
 // The layout, by purpose:
 //
-//	internal/  claw's own state nobody edits (state.json, token stores, the device database, audit.db, claw.pid, claw.lock)
+//	internal/  claw's own state nobody edits (token stores, the device database, audit.db, claw.pid, claw.lock)
 //	cli/       working directory for CLI providers whose model sets no workspace
 //	skills/    shared skills every agent can use
 //	common/    shared directory for the common_* tools (unless agents.common_dir is set)

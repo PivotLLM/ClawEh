@@ -27,7 +27,6 @@ import (
 // recordingQuerier knows the agents amber, wendy and bob and counts History
 // reads (each would open that session's store).
 type recordingQuerier struct {
-	mode    string
 	mu      sync.Mutex
 	history []string
 }
@@ -36,7 +35,6 @@ func (q *recordingQuerier) Agents() ([]DeviceAgentInfo, string, string) {
 	return []DeviceAgentInfo{{ID: "amber"}, {ID: "wendy"}, {ID: "bob"}}, "amber", "agent:amber:main"
 }
 func (q *recordingQuerier) DefaultAgentID() string { return "amber" }
-func (q *recordingQuerier) SessionMode() string    { return q.mode }
 func (q *recordingQuerier) History(key string) []DeviceHistoryMessage {
 	q.mu.Lock()
 	q.history = append(q.history, key)
@@ -260,54 +258,49 @@ func TestSlowReaderDisconnectedWithoutBlocking(t *testing.T) {
 	}
 }
 
-func newQuerierServer(t *testing.T, mode string) (*Server, *recordingQuerier, *atomic.Int32, string) {
+func newQuerierServer(t *testing.T) (*Server, *recordingQuerier, *atomic.Int32, string) {
 	t.Helper()
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
-	q := &recordingQuerier{mode: mode}
+	q := &recordingQuerier{}
 	srv.SetQuerier(q)
 	var inbound atomic.Int32
 	srv.SetInbound(func(string, string, string, string, string, []InboundAttachment) { inbound.Add(1) })
 	return srv, q, &inbound, wsURL
 }
 
-// H3: under an isolating mode a device cannot read or write another session
-// (the report's probe: a Telegram chat), but reads its own.
-func TestForeignSessionKeyRefused(t *testing.T) {
-	_, q, inbound, wsURL := newQuerierServer(t, "per-platform")
+// H3: a device cannot read or write another session (the report's probe: a
+// Telegram chat key). Any agent-scoped key it sends resolves to that agent's
+// main conversation, the one every surface shares.
+func TestForeignSessionKeyResolvesToMain(t *testing.T) {
+	_, q, inbound, wsURL := newQuerierServer(t)
 	em := newEmulator(t)
 	conn := mustOpen(t, em, wsURL, "")
 	const foreign = "agent:bob:telegram:direct:123456"
 
 	em.writeReq(t, conn, "h1", "chat.history", map[string]any{"sessionKey": foreign})
-	if r := readRes(t, conn, "h1"); r.OK || r.Error == nil || r.Error.Code != gatewayproto.CodeInvalidRequest {
-		t.Fatalf("chat.history for %s: ok=%v err=%+v, want a protocol error", foreign, r.OK, r.Error)
+	if r := readRes(t, conn, "h1"); !r.OK {
+		t.Fatalf("chat.history for %s refused: %+v", foreign, r.Error)
 	}
 	em.writeReq(t, conn, "s1", "chat.send", map[string]any{"sessionKey": foreign, "message": "hi", "idempotencyKey": "r1"})
-	if r := readRes(t, conn, "s1"); r.OK {
-		t.Fatal("chat.send into a foreign session was acknowledged")
+	if r := readRes(t, conn, "s1"); !r.OK {
+		t.Fatalf("chat.send for %s refused: %+v", foreign, r.Error)
 	}
-	if reads := q.reads(); len(reads) != 0 {
-		t.Fatalf("history read for a refused key: %v", reads)
+	if reads := q.reads(); len(reads) != 1 || reads[0] != "agent:bob:main" {
+		t.Fatalf("history reads = %v, want [agent:bob:main]", reads)
 	}
-
-	em.writeReq(t, conn, "h2", "chat.history", map[string]any{"sessionKey": "agent:bob:main"})
-	if r := readRes(t, conn, "h2"); !r.OK {
-		t.Fatalf("own session refused: %+v", r.Error)
+	deadline := time.Now().Add(2 * time.Second)
+	for inbound.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
-	want := "agent:bob:device:" + em.deviceID()
-	if reads := q.reads(); len(reads) != 1 || reads[0] != want {
-		t.Fatalf("history reads = %v, want [%s]", reads, want)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if n := inbound.Load(); n != 0 {
-		t.Fatalf("inbound called %d times for a refused key", n)
+	if n := inbound.Load(); n != 1 {
+		t.Fatalf("inbound called %d times, want 1", n)
 	}
 }
 
 // M1: chat.history for agents that do not exist is refused before any session
 // is read, so random ids cannot create session stores or hold descriptors.
 func TestUnknownAgentHistoryOpensNothing(t *testing.T) {
-	_, q, _, wsURL := newQuerierServer(t, "unified")
+	_, q, _, wsURL := newQuerierServer(t)
 	em := newEmulator(t)
 	conn := mustOpen(t, em, wsURL, "")
 

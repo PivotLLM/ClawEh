@@ -145,12 +145,6 @@ export function SystemPage() {
       {
         // base_dir may be blank — the backend then defaults to <data_dir>/agents.
         const baseDir = form.baseDir.trim()
-        const sessionMode = form.sessionMode.trim()
-
-        if (!sessionMode) {
-          throw new Error("Session mode is required.")
-        }
-
         const maxTokens = parseIntField(form.maxTokens, "Max tokens", {
           min: 1,
         })
@@ -358,9 +352,6 @@ export function SystemPage() {
           summarization: {
             models: summarizationModels,
             debug_capture: form.summarizationDebugCapture,
-          },
-          session: {
-            mode: sessionMode,
           },
           tools: {
             exec: {

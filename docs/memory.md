@@ -256,16 +256,14 @@ naming it; reduce it to your own instructions, or delete it.
 
 ## Memory and channels
 
-Memory belongs to the assistant, not to the channel you reach it through. In the
-default `unified` session mode there is one Amber: what she learns from your
+Memory belongs to the assistant, not to the channel you reach it through. There
+is one Alice: what she learns from your
 phone, from Slack, from a paired device like a Rabbit R1, or from an external
 integration driving her tools all goes into the same memory, and she can draw on
 any of it wherever you next speak to her.
 
 For an assistant with genuinely separate memory, create a separate agent — and
-set `cogmem: false` for one that should accumulate none. The isolating session
-modes (`per-user`, `per-platform`, `per-account`) divide memory by person or
-platform instead; see the session-scope section of the README.
+set `cogmem: false` for one that should accumulate none.
 
 ## Configuration
 

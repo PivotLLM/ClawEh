@@ -58,27 +58,6 @@ func (al *AgentLoop) runAgentLoop(
 	agent *AgentInstance,
 	opts processOptions,
 ) (string, error) {
-	// 0. Record last channel (skip internal channels and cli)
-	if opts.Channel != "" && opts.ChatID != "" {
-		if !constants.IsInternalChannel(opts.Channel) {
-			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
-			if err := al.RecordLastChannel(channelKey); err != nil {
-				logger.WarnCF(
-					"agent",
-					"Failed to record last channel",
-					map[string]any{"error": err.Error()},
-				)
-			}
-			// Also record in per-agent state so callback routing works for named agents.
-			if sm, ok := al.agentStates[agent.ID]; ok {
-				if err := sm.SetLastChannel(channelKey); err != nil {
-					logger.WarnCF("agent", "Failed to record last channel for agent",
-						map[string]any{"agent": agent.ID, "error": err.Error()})
-				}
-			}
-		}
-	}
-
 	// Attach the agent ID to the context so every downstream provider call —
 	// including compression-time invocations through PreDispatchCheck,
 	// CheckAndCompress, AddUserMessage's trigger check, and the compact_session
@@ -95,9 +74,8 @@ func (al *AgentLoop) runAgentLoop(
 	// Record the inbound source on the session token record so MCP-routed tool
 	// calls (which bypass the agent loop) can publish their ForUser payloads
 	// back to the originating user. Done after getContextManager so the token
-	// for this session is guaranteed to exist. Unified-mode sessions overwrite
-	// on each turn to follow the user across channels; non-unified sessions
-	// only ever see one channel so the field is stable. Internal channels
+	// for this session is guaranteed to exist. The source is overwritten on
+	// each turn to follow the user across channels. Internal channels
 	// (cli/subagent/recovery/system) have no real channel handler, so skip
 	// the record entirely — the MCP ForUser publish path drops on the empty
 	// channel/chatID guard rather than dispatching to a nonexistent handler.

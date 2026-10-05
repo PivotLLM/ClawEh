@@ -114,9 +114,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   `docs/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
-- Data dir layout (README "File layout"): `internal/` holds claw's own state (`state.json`,
-  token stores, `gateway.db`, fusion tokens, the ACP identity, `audit.db`, `claw.pid`,
-  `claw.lock`; `config.InternalPath()`,
+- Data dir layout (README "File layout"): `internal/` holds claw's own state
+  (token stores, `gateway.db`, fusion tokens, the ACP identity, `audit.db`,
+  `claw.pid`, `claw.lock`; `config.InternalPath()`,
   `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
   workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `common/` the
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
@@ -232,22 +232,22 @@ Hard-won learnings (don't relearn these):
   and closes its connections. Pending pairings: at most 20, each expires after 10 minutes.
 - **Agent selection / session scope:** the client encodes the selected agent as the session
   key's 2nd segment (`agent:<id>:<peer>:<profile>`); node clients send the `main` sentinel and
-  use their per-device assignment (else the default agent). Which *conversation* the turn joins
-  is decided by `session.session_scope`, not by the transport: under **`unified` (default) a
-  device joins the selected agent's main session** (`agent:<id>:main`) — one agent, one history,
-  one memory across the R1, the app, Slack, Telegram, and MCP service tokens. Isolating modes
-  give every device `agent:<id>:device:<deviceID>` and refuse any other agent-scoped key
-  except the `agent:<id>:main` selector; an unknown agent id is refused in every mode.
-  `chat.history` resolves through the same rule as `chat.send`. Single source of truth:
-  `routing.ResolveDeviceSessionKey` / `routing.ResolveServiceSessionKey`; mechanism:
-  `metadata["session_key"]` + `metadata["preresolved_agent_id"]`. `agents.list` falls back to
-  the id as the display name (clients hide name-less agents).
+  use their per-device assignment (else the default agent). Every device joins the selected
+  agent's main conversation (`agent:<id>:main`), whatever the rest of the key says — one
+  agent, one history, one memory across the R1, the app, Slack, Telegram, and MCP service
+  tokens. There are no session modes; an unknown agent id is refused. `chat.history` resolves
+  through the same rule as `chat.send` (`Server.sessionScopeKeyFor`). Every other inbound path
+  goes through `routing.ResolveAgentSessionKey`, which keeps only the agent's own sub-agent
+  key and collapses anything else to `agent:<id>:main`: cogmem's inbox is fed from exactly
+  one persistent session per agent. Mechanism: `metadata["session_key"]` +
+  `metadata["preresolved_agent_id"]`. `agents.list` falls back to the id as the display name
+  (clients hide name-less agents).
   **Isolation is a property of the agent** — a separate agent (optionally `cogmem: false`), not
   a separate channel.
 - **`/agent` command (node clients):** node clients (R1) switch assistants by typing `/agent`
   (list), `/agent <name-or-id>` (switch), or `/agent default` (reset). `handleChatSend`
   intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field
-  `sessionScopeKey` reads, so it survives restarts. Reply goes through the normal event path.
+  `sessionScopeKeyFor` reads, so it survives restarts. Reply goes through the normal event path.
 - No permessage-deflate (disabled end-to-end); the OpenClaw `agent` event schema is
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 

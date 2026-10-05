@@ -34,13 +34,11 @@ func newEraseCommand() *cobra.Command {
 		Use:   "erase",
 		Short: "Delete every session archive belonging to one sender on one channel",
 		Long: "Deletes, across all assistants, each session whose key belongs to the " +
-			"given channel and chat (or sender) id: direct sessions under the per-user, " +
-			"per-platform and per-account scopes, group and channel sessions with that " +
-			"peer id, and device sessions keyed by that device id. Under the unified " +
-			"scope a sender's messages live in the assistant's shared main session, " +
-			"which has no per-sender column; it is reported, and deleted only with " +
-			"--all. Cognitive memories are not touched: cogmem records no per-sender " +
-			"provenance.\n\n" +
+			"given channel and chat (or sender) id: the direct, group, channel and " +
+			"device sessions earlier releases kept per sender. A sender's messages " +
+			"now live in the assistant's shared main session, which has no per-sender " +
+			"column; it is reported, and deleted only with --all. Cognitive memories " +
+			"are not touched: cogmem records no per-sender provenance.\n\n" +
 			"Run with the service stopped; the command refuses to run while the " +
 			"service is up (use DELETE /api/sessions?channel=&chat_id= there).",
 		Args: cobra.NoArgs,
@@ -50,7 +48,7 @@ func newEraseCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&req.Channel, "channel", "", "Channel name as it appears in session keys (telegram, slack, webui, device, ...)")
 	cmd.Flags().StringVar(&req.ChatID, "chat", "", "Chat or sender id as the channel reports it (the peer id ending the session key)")
-	cmd.Flags().BoolVar(&req.All, "all", false, "Also delete the shared main session (unified scope): every sender's history in it")
+	cmd.Flags().BoolVar(&req.All, "all", false, "Also delete the shared main session: every sender's history in it")
 	// MarkFlagRequired only fails when the flag does not exist, which is a
 	// programming error in the lines above, so it is fatal at construction.
 	for _, name := range []string{"channel", "chat"} {

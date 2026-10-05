@@ -44,7 +44,6 @@ export interface CoreConfigForm {
   evictionEvictTurns: string
   evictionBudgetBytes: string
   logRetentionDays: string
-  sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
   backupEnabled: boolean
@@ -52,38 +51,6 @@ export interface CoreConfigForm {
   backupRetainDays: string
   backupDest: string
 }
-
-export const SESSION_MODE_OPTIONS = [
-  {
-    value: "unified",
-    labelKey: "pages.config.session_mode_unified",
-    labelDefault: "Unified",
-    descKey: "pages.config.session_mode_unified_desc",
-    descDefault:
-      "One shared memory for the entire agent, across all users and channels.",
-  },
-  {
-    value: "per-user",
-    labelKey: "pages.config.session_mode_per_user",
-    labelDefault: "Per User",
-    descKey: "pages.config.session_mode_per_user_desc",
-    descDefault: "Each person gets their own private memory.",
-  },
-  {
-    value: "per-platform",
-    labelKey: "pages.config.session_mode_per_platform",
-    labelDefault: "Per Platform",
-    descKey: "pages.config.session_mode_per_platform_desc",
-    descDefault: "Each person has a separate memory per platform.",
-  },
-  {
-    value: "per-account",
-    labelKey: "pages.config.session_mode_per_account",
-    labelDefault: "Per Account",
-    descKey: "pages.config.session_mode_per_account_desc",
-    descDefault: "Like per-platform, but also separates by bot account.",
-  },
-] as const
 
 export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
@@ -124,7 +91,6 @@ export const EMPTY_FORM: CoreConfigForm = {
   evictionEvictTurns: "10",
   evictionBudgetBytes: "0",
   logRetentionDays: "30",
-  sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
   backupEnabled: true,
@@ -175,7 +141,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const compressionTrigger = asRecord(compression.trigger)
   const compressionRetain = asRecord(compression.retain)
   const summarization = asRecord(root.summarization)
-  const session = asRecord(root.session)
   const devices = asRecord(root.devices)
   const logging = asRecord(root.logging)
   const tools = asRecord(root.tools)
@@ -300,7 +265,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       logging.retention_days,
       EMPTY_FORM.logRetentionDays,
     ),
-    sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:
       devices.enabled === undefined
         ? EMPTY_FORM.devicesEnabled

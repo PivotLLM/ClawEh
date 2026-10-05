@@ -170,7 +170,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `common/` | You and the agents | A shared folder agents with access can exchange files through (`agents.common_dir` moves it). |
 | `skills/` | You | Shared skills every agent can use. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
-| `internal/` | claw | claw's own state: `state.json`, service and message tokens, the device pairing database and Fusion's OAuth tokens. |
+| `internal/` | claw | claw's own state: service and message tokens, the device pairing database and Fusion's OAuth tokens. |
 | `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
 | `internal/claw.pid`, `internal/claw.lock` | claw | Mark the running instance, so a second one refuses to start. |
 | `fusion/` | You | Fusion's REST-API service definitions, its env file and `fusion.log`. |
@@ -439,59 +439,21 @@ ClawEh supports a wide range of LLM providers. It is your responsibility to ensu
 
 ## Assistant behaviour
 
-`session_scope` (in the `session` config block) controls how an agent's memory is divided across users and platforms.
+**One agent, one conversation — every channel, without exception**
 
-| Mode | Memory per | Description |
-|---|---|---|
-| `unified` | Agent | One shared session for the entire agent, across every user, channel, platform, device, and integration. |
-| `per-user` | Person | Each person gets their own private memory. Recognises the same person across platforms if `identity_links` are configured; otherwise each platform ID is a separate person |
-| `per-platform` | Person × platform | Each person has a separate memory per platform. Slack and Telegram are independent conversations even for the same person |
-| `per-account` | Person × platform × bot | Like `per-platform`, but also separates by bot account. Relevant only when multiple bots on the same platform are routed to the same agent |
+An agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device listener (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Alice from your R1 that dinner is at six, ask her from Slack, and she answers six.
 
-The default is `unified`.
-
-**`unified` means unified — every channel, without exception**
-
-In `unified` mode an agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device listener (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Amber from your R1 that dinner is at six, ask her from Slack, and she answers six.
-
-There is no per-channel or per-device carve-out, and no way to make one channel private by connecting through a different door. **If you want isolation, create a separate agent** and control what that agent can reach — its own workspace, its own tools, its own bindings. If an agent should not accumulate memory at all, disable cognitive memory for it (`cogmem: false`). Those are the supported ways to separate things; the transport you happen to speak through is not one.
-
-The isolating modes below divide an agent's sessions by person, platform, or account. They apply to chat channels; the device listener keeps a per-device conversation and a service token keeps its own headless session under those modes, so two devices never share a transcript.
-
-**Choosing a mode**
-
-*Personal assistant, or a purpose-built specialist* — use `unified`. This is the right choice in two situations. For a personal assistant: one continuous memory across all your channels, it knows your preferences, remembers your projects, and picks up where you left off regardless of where you reach it. For a purpose-built assistant — if you create an agent named Alice who specialises in security, there is one Alice. Anyone who contacts her, through any channel you have configured, is talking to the same Alice with the same accumulated knowledge and context. She does not have separate memories for different users; she is one coherent assistant.
-
-*Shared assistant for a team or family* — use `per-user`. Each person gets their own private relationship with the assistant — their own context, their own memory, no bleed between users. If the same person might contact the assistant from multiple platforms, configure `identity_links` to tell the system they are the same person (see below). However, before going this route, consider using `unified` mode and creating a separate agent for each user.
-
-*Keeping contexts separate by platform* — use `per-platform`. Each person gets a separate session per platform, so a user's Slack and Telegram conversations are fully independent even when handled by the same agent.
-
-*Multiple independent bots on the same platform* — use `per-account`. Each bot maintains its own memory per user even when multiple bots are handled by the same agent. Rarely needed — if you have multiple bots you most likely have multiple agents already.
-
-**Linking a person across platforms**
-
-In `per-user` mode, the same person on different platforms is only recognised as the same person if you configure `identity_links`:
-
-```json
-"session": {
-  "session_scope": "per-user",
-  "identity_links": {
-    "alice": ["telegram:123456789", "U0SLACKUSERID"]
-  }
-}
-```
-
-Without this, a person's Telegram ID and Slack ID are treated as two separate people even in `per-user` mode.
+There is no per-user, per-channel or per-device carve-out, and no way to make one channel private by connecting through a different door. **If you want a separate conversation, create a separate agent** and control what that agent can reach — its own workspace, its own tools, its own bindings. A team or family that wants private assistants gives each person their own agent. If an agent should not accumulate memory at all, disable cognitive memory for it (`cogmem: false`). Those are the supported ways to separate things; the transport you happen to speak through is not one.
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation. A sub-agent inherits the parent's full toolset and may itself spawn or orchestrate further sub-agents, bounded by `agents.defaults.max_subagent_depth` (default 3) so recursion cannot run away. See [docs/subagents.md](docs/subagents.md).
+Every conversation adds to the agent's shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation. A sub-agent inherits the parent's full toolset and may itself spawn or orchestrate further sub-agents, bounded by `agents.defaults.max_subagent_depth` (default 3) so recursion cannot run away. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 
 Every channel has an `allow_from` list. An empty list means **nobody** can connect. Set it to your user IDs to restrict access, or `["*"]` to allow all users.
 
-ClawEh is designed as a personal assistant framework. We strongly advise against allowing untrusted users to access your assistants. In `unified` mode in particular, every person who can reach the assistant is contributing to — and reading from — the same shared memory and context. An untrusted user can see the assistant's full history of what it knows and has been told. Only grant access to people you trust completely, and ensure you fully understand the security implications before opening any channel beyond your own use.
+ClawEh is designed as a personal assistant framework. We strongly advise against allowing untrusted users to access your assistants. Every person who can reach the assistant is contributing to — and reading from — the same shared memory and context. An untrusted user can see the assistant's full history of what it knows and has been told. Only grant access to people you trust completely, and ensure you fully understand the security implications before opening any channel beyond your own use.
 
 On platforms like Telegram where bots are publicly discoverable by username, this risk is especially acute. Always set `allow_from` explicitly.
 
@@ -725,7 +687,7 @@ claw token revoke <agent>   # remove it
 claw token list             # list agents that have one (tokens are not shown)
 ```
 
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running ClawEh picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. It drives the agent's **main** session like every other surface, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. If an integration must be walled off, give it its own agent. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running ClawEh picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 
@@ -766,9 +728,9 @@ Compaction itself is configured under a `compression` block, split by what each 
 | `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
 | `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
-| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only isolated sessions (per-user, per-platform, per-account, group, device) are affected; the agent's `main` conversation and its `service` session are never deleted (use `archive_days` to trim messages inside them). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
+| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only sessions other than the agent's `main` conversation are affected (sub-agent sessions, and per-sender sessions left by earlier releases); `main` is never deleted (use `archive_days` to trim messages inside it). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
 
-**Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every session Alice or Bob hold for that chat id on Telegram (direct, group, per-account and identity-linked per-user keys) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. Under the default `unified` scope the sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
+**Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every per-sender session Alice or Bob hold for that chat id on Telegram (direct and group sessions left by earlier releases) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. The sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
 | `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
 | `summary_retention_days` | `0` (unlimited) | Permanently delete context summaries older than *n* days. `0` = no age limit. |
 | `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -40,13 +39,12 @@ func TestSyncServiceTokens_HashedValuesResolveByPlaintext(t *testing.T) {
 	}
 }
 
-// TestRegisterService_UnifiedBindsMainSession verifies the default (unified)
-// contract: a service token drives the agent's MAIN session, so an external
-// integration reads and writes the same conversation, tools, and memory as every
-// other channel. One agent, one session — isolation is achieved with a separate
-// agent, not a separate door.
-func TestRegisterService_UnifiedBindsMainSession(t *testing.T) {
-	s := newSessionTokenStore() // zero mode == unified
+// TestRegisterService_BindsMainSession verifies that a service token drives the
+// agent's MAIN session, so an external integration reads and writes the same
+// conversation, tools, and memory as every other channel. One agent, one
+// session — isolation is achieved with a separate agent, not a separate door.
+func TestRegisterService_BindsMainSession(t *testing.T) {
+	s := newSessionTokenStore()
 
 	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
 
@@ -59,27 +57,6 @@ func TestRegisterService_UnifiedBindsMainSession(t *testing.T) {
 	}
 	if rec.sessionKey != "agent:alice:main" {
 		t.Errorf("sessionKey = %q, want agent:alice:main", rec.sessionKey)
-	}
-}
-
-// TestRegisterService_IsolatingModeKeepsHeadlessSession verifies that when
-// sessions are NOT unified, a service token keeps its dedicated headless session
-// and cannot reach the agent's conversation.
-func TestRegisterService_IsolatingModeKeepsHeadlessSession(t *testing.T) {
-	s := newSessionTokenStore()
-	s.setSessionMode(routing.SessionScopePerUser)
-
-	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
-
-	rec, ok := s.Resolve("SSTservice")
-	if !ok {
-		t.Fatal("service token did not resolve")
-	}
-	if rec.sessionKey != "agent:alice:service" {
-		t.Errorf("sessionKey = %q, want agent:alice:service", rec.sessionKey)
-	}
-	if rec.channel != "" || rec.chatID != "" {
-		t.Errorf("service session must be headless, got channel=%q chatID=%q", rec.channel, rec.chatID)
 	}
 }
 
@@ -107,7 +84,7 @@ func TestServiceAndConversationTokensCoexist(t *testing.T) {
 		t.Error("conversation token did not resolve")
 	}
 
-	// Both must land on the same session — that is the point of unified.
+	// Both must land on the same session: one agent, one conversation.
 	svc, _ := s.Resolve("SSTservice")
 	conv, _ := s.Resolve(convTok)
 	if svc.sessionKey != conv.sessionKey {

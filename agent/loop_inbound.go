@@ -142,7 +142,7 @@ func (al *AgentLoop) takeCancelResult(key string) (running bool, skipped int) {
 // takeBatch removes the next turn's messages from pending and returns them
 // merged: the oldest message plus every later message from the same
 // channel:chat, up to the next command in that chat. Messages from other chats
-// stay queued (a unified session may serve several chats, whose messages are
+// stay queued (an agent's session may serve several chats, whose messages are
 // never merged), and a command always runs as a turn of its own.
 func takeBatch(pending *[]bus.InboundMessage) (bus.InboundMessage, bool) {
 	queue := *pending
@@ -230,7 +230,7 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 
 	// Resolve the route before dispatch so that all channel:chatID pairs that
 	// share the same agent session use the same dispatch key. This prevents
-	// concurrent LLM history reads/writes across unified sessions.
+	// concurrent LLM history reads/writes on the agent's one session.
 	var dispatchKey string
 	route, _, routeErr := al.resolveMessageRoute(msg)
 	if routeErr != nil {
@@ -395,24 +395,6 @@ func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body st
 	pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer pubCancel()
 	return al.bus.PublishInbound(pubCtx, msg)
-}
-
-// RecordLastChannel records the last active channel for this workspace.
-// This uses the atomic state save mechanism to prevent data loss on crash.
-func (al *AgentLoop) RecordLastChannel(channel string) error {
-	if al.state == nil {
-		return nil
-	}
-	return al.state.SetLastChannel(channel)
-}
-
-// RecordLastChatID records the last active chat ID for this workspace.
-// This uses the atomic state save mechanism to prevent data loss on crash.
-func (al *AgentLoop) RecordLastChatID(chatID string) error {
-	if al.state == nil {
-		return nil
-	}
-	return al.state.SetLastChatID(chatID)
 }
 
 func (al *AgentLoop) ProcessDirect(
@@ -608,12 +590,11 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		normalized := routing.NormalizeAgentID(preresolved)
 		if agent, ok := registry.GetAgent(normalized); ok {
 			route := routing.ResolvedRoute{
-				AgentID:        normalized,
-				Channel:        msg.Channel,
-				AccountID:      routing.NormalizeAccountID(inboundMetadata(msg, metadataKeyAccountID)),
-				SessionKey:     routing.BuildAgentMainSessionKey(normalized),
-				MainSessionKey: routing.BuildAgentMainSessionKey(normalized),
-				MatchedBy:      "preresolved",
+				AgentID:    normalized,
+				Channel:    msg.Channel,
+				AccountID:  routing.NormalizeAccountID(inboundMetadata(msg, metadataKeyAccountID)),
+				SessionKey: routing.BuildAgentMainSessionKey(normalized),
+				MatchedBy:  "preresolved",
 			}
 			return route, agent, nil
 		}
@@ -642,13 +623,13 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	return route, agent, nil
 }
 
+// resolveScopeKey returns the session an inbound message runs in: the routed
+// agent's main conversation, or that agent's own sub-agent session when the
+// message names one. Any other explicit key collapses to the main session, so
+// no inbound path can open a second persistent session for an agent (its
+// cognitive memory is fed from exactly one).
 func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
-	if msgSessionKey != "" && strings.HasPrefix(msgSessionKey, sessionKeyAgentPrefix) {
-		if pk := routing.ParseAgentSessionKey(msgSessionKey); pk != nil && pk.AgentID == route.AgentID {
-			return msgSessionKey
-		}
-	}
-	return route.SessionKey
+	return routing.ResolveAgentSessionKey(route.AgentID, msgSessionKey)
 }
 
 // extractMention checks for and strips an agent mention trigger from msg.Content,
@@ -785,15 +766,9 @@ func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentI
 		return nil, ""
 	}
 
-	// Prefer the originator's session (so the completion lands in the conversation
-	// that spawned the work); otherwise the agent's main session.
-	sessionKey := strings.TrimSpace(msg.SessionKey)
-	if sessionKey == "" || !strings.HasPrefix(sessionKey, sessionKeyAgentPrefix) {
-		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
-	} else if pk := routing.ParseAgentSessionKey(sessionKey); pk == nil || pk.AgentID != agent.ID {
-		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
-	}
-	return agent, sessionKey
+	// A sub-agent session key is kept as given; any other key resolves to the
+	// agent's one conversation.
+	return agent, routing.ResolveAgentSessionKey(agent.ID, msg.SessionKey)
 }
 
 // extractPeer extracts the routing peer from the inbound message's structured Peer field.
@@ -836,8 +811,8 @@ func senderLabel(s bus.SenderInfo) string {
 }
 
 // prependSenderLabel attributes a message with its sender ("[From: <label>]").
-// Applied to every message, direct chats included: under the default unified
-// session scope, direct and group messages share one session, so a "private"
+// Applied to every message, direct chats included: direct and group messages
+// share the agent's one session, so a "private"
 // message is just one of several senders in the shared context — the label keeps
 // attribution unambiguous. Cheap, and the clarity is worth the few tokens. No-op
 // when the sender yields no label.

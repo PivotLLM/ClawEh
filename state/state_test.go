@@ -10,191 +10,102 @@ import (
 )
 
 func TestAtomicSave(t *testing.T) {
-	// Create temp workspace
 	tmpDir := t.TempDir()
-
 	sm := NewManager(tmpDir)
 
-	// Test SetLastChannel
-	err := sm.SetLastChannel("test-channel")
-	if err != nil {
-		t.Fatalf("SetLastChannel failed: %v", err)
+	want := PendingTurn{Channel: "telegram", ChatID: "123"}
+	if err := sm.SetPendingTurn("agent:alice:main", want); err != nil {
+		t.Fatalf("SetPendingTurn failed: %v", err)
 	}
-
-	// Verify the channel was saved
-	lastChannel := sm.GetLastChannel()
-	if lastChannel != "test-channel" {
-		t.Errorf("Expected channel 'test-channel', got '%s'", lastChannel)
+	if got, ok := sm.GetPendingTurn("agent:alice:main"); !ok || got != want {
+		t.Errorf("GetPendingTurn = %+v, %v; want %+v", got, ok, want)
 	}
-
-	// Verify timestamp was updated
 	if sm.GetTimestamp().IsZero() {
 		t.Error("Expected timestamp to be updated")
 	}
 
-	// Verify state file exists
 	stateFile := filepath.Join(tmpDir, "state", "state.json")
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		t.Error("Expected state file to exist")
 	}
 
-	// Create a new manager to verify persistence
-	sm2 := NewManager(tmpDir)
-	if sm2.GetLastChannel() != "test-channel" {
-		t.Errorf("Expected persistent channel 'test-channel', got '%s'", sm2.GetLastChannel())
-	}
-}
-
-func TestSetLastChatID(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	sm := NewManager(tmpDir)
-
-	// Test SetLastChatID
-	err := sm.SetLastChatID("test-chat-id")
-	if err != nil {
-		t.Fatalf("SetLastChatID failed: %v", err)
-	}
-
-	// Verify the chat ID was saved
-	lastChatID := sm.GetLastChatID()
-	if lastChatID != "test-chat-id" {
-		t.Errorf("Expected chat ID 'test-chat-id', got '%s'", lastChatID)
-	}
-
-	// Verify timestamp was updated
-	if sm.GetTimestamp().IsZero() {
-		t.Error("Expected timestamp to be updated")
-	}
-
-	// Create a new manager to verify persistence
-	sm2 := NewManager(tmpDir)
-	if sm2.GetLastChatID() != "test-chat-id" {
-		t.Errorf("Expected persistent chat ID 'test-chat-id', got '%s'", sm2.GetLastChatID())
+	// A new manager on the same workspace reads the saved state back.
+	if got, ok := NewManager(tmpDir).GetPendingTurn("agent:alice:main"); !ok || got != want {
+		t.Errorf("reloaded GetPendingTurn = %+v, %v; want %+v", got, ok, want)
 	}
 }
 
 func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 	tmpDir := t.TempDir()
-
 	sm := NewManager(tmpDir)
 
-	// Write initial state
-	err := sm.SetLastChannel("initial-channel")
-	if err != nil {
-		t.Fatalf("SetLastChannel failed: %v", err)
+	if err := sm.SetPendingTurn("k", PendingTurn{Channel: "initial"}); err != nil {
+		t.Fatalf("SetPendingTurn failed: %v", err)
 	}
 
 	// Simulate a crash scenario by manually creating a corrupted temp file
 	tempFile := filepath.Join(tmpDir, "state", "state.json.tmp")
-	err = os.WriteFile(tempFile, []byte("corrupted data"), 0o644)
-	if err != nil {
+	if err := os.WriteFile(tempFile, []byte("corrupted data"), 0o644); err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	// Verify that the original state is still intact
-	lastChannel := sm.GetLastChannel()
-	if lastChannel != "initial-channel" {
-		t.Errorf("Expected channel 'initial-channel' after corrupted temp file, got '%s'", lastChannel)
+	// The original state is still intact.
+	if got, _ := NewManager(tmpDir).GetPendingTurn("k"); got.Channel != "initial" {
+		t.Errorf("Expected channel 'initial' after corrupted temp file, got %q", got.Channel)
 	}
 
-	// Clean up the temp file manually
 	if rmErr := os.Remove(tempFile); rmErr != nil {
 		t.Fatalf("Failed to remove temp file: %v", rmErr)
 	}
 
-	// Now do a proper save
-	err = sm.SetLastChannel("new-channel")
-	if err != nil {
-		t.Fatalf("SetLastChannel failed: %v", err)
+	if err := sm.SetPendingTurn("k", PendingTurn{Channel: "new"}); err != nil {
+		t.Fatalf("SetPendingTurn failed: %v", err)
 	}
-
-	// Verify the new state was saved
-	if sm.GetLastChannel() != "new-channel" {
-		t.Errorf("Expected channel 'new-channel', got '%s'", sm.GetLastChannel())
+	if got, _ := sm.GetPendingTurn("k"); got.Channel != "new" {
+		t.Errorf("Expected channel 'new', got %q", got.Channel)
 	}
 }
 
 func TestConcurrentAccess(t *testing.T) {
 	tmpDir := t.TempDir()
-
 	sm := NewManager(tmpDir)
 
-	// Test concurrent writes
 	done := make(chan bool, 10)
 	for i := range 10 {
 		go func(idx int) {
-			channel := fmt.Sprintf("channel-%d", idx)
-			if setErr := sm.SetLastChannel(channel); setErr != nil {
-				t.Errorf("SetLastChannel(%s): %v", channel, setErr)
+			key := fmt.Sprintf("session-%d", idx)
+			if setErr := sm.SetPendingTurn(key, PendingTurn{Channel: "c"}); setErr != nil {
+				t.Errorf("SetPendingTurn(%s): %v", key, setErr)
 			}
 			done <- true
 		}(i)
 	}
-
-	// Wait for all goroutines to complete
 	for range 10 {
 		<-done
 	}
 
-	// Verify the final state is consistent
-	lastChannel := sm.GetLastChannel()
-	if lastChannel == "" {
-		t.Error("Expected non-empty channel after concurrent writes")
+	for i := range 10 {
+		if _, ok := sm.GetPendingTurn(fmt.Sprintf("session-%d", i)); !ok {
+			t.Errorf("session-%d missing after concurrent writes", i)
+		}
 	}
 
-	// Verify state file is valid JSON
-	stateFile := filepath.Join(tmpDir, "state", "state.json")
-	data, err := os.ReadFile(stateFile)
+	// The state file is valid JSON.
+	data, err := os.ReadFile(filepath.Join(tmpDir, "state", "state.json"))
 	if err != nil {
 		t.Fatalf("Failed to read state file: %v", err)
 	}
-
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Errorf("State file contains invalid JSON: %v", err)
 	}
 }
 
-func TestNewManager_ExistingState(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create initial state
-	sm1 := NewManager(tmpDir)
-	if err := sm1.SetLastChannel("existing-channel"); err != nil {
-		t.Fatalf("SetLastChannel failed: %v", err)
-	}
-	if err := sm1.SetLastChatID("existing-chat-id"); err != nil {
-		t.Fatalf("SetLastChatID failed: %v", err)
-	}
-
-	// Create new manager with same workspace
-	sm2 := NewManager(tmpDir)
-
-	// Verify state was loaded
-	if sm2.GetLastChannel() != "existing-channel" {
-		t.Errorf("Expected channel 'existing-channel', got '%s'", sm2.GetLastChannel())
-	}
-
-	if sm2.GetLastChatID() != "existing-chat-id" {
-		t.Errorf("Expected chat ID 'existing-chat-id', got '%s'", sm2.GetLastChatID())
-	}
-}
-
 func TestNewManager_EmptyWorkspace(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	sm := NewManager(tmpDir)
-
-	// Verify default state
-	if sm.GetLastChannel() != "" {
-		t.Errorf("Expected empty channel, got '%s'", sm.GetLastChannel())
+	sm := NewManager(t.TempDir())
+	if _, ok := sm.GetPendingTurn("agent:alice:main"); ok {
+		t.Error("Expected no pending turn in a new state")
 	}
-
-	if sm.GetLastChatID() != "" {
-		t.Errorf("Expected empty chat ID, got '%s'", sm.GetLastChatID())
-	}
-
 	if !sm.GetTimestamp().IsZero() {
 		t.Error("Expected zero timestamp for new state")
 	}
@@ -222,20 +133,5 @@ func TestNewManager_MkdirFailureDoesNotCrash(t *testing.T) {
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("NewManager should not crash when state dir creation fails, got: %v", err)
-	}
-}
-
-func TestNewManagerInDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "internal")
-
-	sm := NewManagerInDir(dir)
-	if err := sm.SetLastChannel("telegram"); err != nil {
-		t.Fatalf("SetLastChannel: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "state.json")); err != nil {
-		t.Fatalf("state.json not written in dir: %v", err)
-	}
-	if got := NewManagerInDir(dir).GetLastChannel(); got != "telegram" {
-		t.Errorf("reloaded LastChannel = %q, want telegram", got)
 	}
 }

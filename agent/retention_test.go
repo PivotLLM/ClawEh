@@ -61,8 +61,8 @@ func archiveExists(t *testing.T, dir, key string) bool {
 }
 
 // TestPruneSessions deletes only sessions that are old, closed and idle: a
-// recent session, a pending turn, an open (cached) session, the main and
-// service sessions and an unreadable file all stay.
+// recent session, a pending turn, an open (cached) session, the main session
+// and an unreadable file all stay.
 func TestPruneSessions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sessions")
 	now := time.Now()
@@ -75,7 +75,6 @@ func TestPruneSessions(t *testing.T) {
 		oldOpen    = "agent:alice:telegram:direct:333"
 		recent     = "agent:alice:telegram:direct:444"
 		mainKey    = "agent:alice:main"
-		serviceKey = "agent:alice:service"
 	)
 	seedRetentionArchive(t, dir, oldClosed, old, false)
 	seedRetentionArchive(t, dir, oldGroup, old, false)
@@ -83,7 +82,6 @@ func TestPruneSessions(t *testing.T) {
 	seedRetentionArchive(t, dir, oldOpen, old, false)
 	seedRetentionArchive(t, dir, recent, now.Add(-2*24*time.Hour), false)
 	seedRetentionArchive(t, dir, mainKey, old, false)
-	seedRetentionArchive(t, dir, serviceKey, old, false)
 	junk := filepath.Join(dir, "not-a-db.archive.db")
 	if err := os.WriteFile(junk, []byte("junk"), 0o600); err != nil {
 		t.Fatal(err)
@@ -107,7 +105,7 @@ func TestPruneSessions(t *testing.T) {
 			t.Errorf("%s still on disk", key)
 		}
 	}
-	for _, key := range []string{oldPending, oldOpen, recent, mainKey, serviceKey} {
+	for _, key := range []string{oldPending, oldOpen, recent, mainKey} {
 		if !archiveExists(t, dir, key) {
 			t.Errorf("%s was deleted", key)
 		}
@@ -155,7 +153,7 @@ func TestRetentionExempt(t *testing.T) {
 		want bool
 	}{
 		{"agent:alice:main", true},
-		{"agent:alice:service", true},
+		{"agent:alice:service", false},
 		{"agent:alice:telegram:direct:1", false},
 		{"agent:alice:device:dev-1", false},
 		{"agent:alice:subagent:abc", false},

@@ -39,18 +39,6 @@ func (q deviceAgentQuerier) DefaultAgentID() string {
 	return q.al.GetRegistry().GetDefaultAgentID()
 }
 
-// SessionMode returns the configured session mode, so the device gateway can
-// join the agent's main conversation when sessions are unified. An unreadable
-// config yields "", which IsUnified treats as unified — the safe default, since
-// unified is what every other surface falls back to.
-func (q deviceAgentQuerier) SessionMode() string {
-	cfg := q.al.GetConfig()
-	if cfg == nil {
-		return ""
-	}
-	return cfg.Session.Mode
-}
-
 // History returns the user/assistant text turns stored for a session key. A
 // key whose agent is not registered returns nothing: reading it would create a
 // session database in some other agent's store.

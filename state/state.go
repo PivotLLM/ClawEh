@@ -13,14 +13,7 @@ import (
 )
 
 // State represents the persistent state for a workspace.
-// It includes information about the last active channel/chat.
 type State struct {
-	// LastChannel is the last channel used for communication
-	LastChannel string `json:"last_channel,omitempty"`
-
-	// LastChatID is the last chat ID used for communication
-	LastChatID string `json:"last_chat_id,omitempty"`
-
 	// Timestamp is the last time this state was updated
 	Timestamp time.Time `json:"timestamp"`
 
@@ -87,76 +80,6 @@ func NewManager(workspace string) *Manager {
 	}
 
 	return sm
-}
-
-// NewManagerInDir creates a state manager whose file is <dir>/state.json,
-// creating dir if missing. claw's own state lives in <CLAW_HOME>/internal; an
-// agent's state uses NewManager with its workspace.
-func NewManagerInDir(dir string) *Manager {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		logger.WarnCF("state", "failed to create state directory",
-			map[string]any{"path": dir, "error": err.Error()})
-	}
-	sm := &Manager{
-		workspace: dir,
-		stateFile: filepath.Join(dir, "state.json"),
-		state:     &State{},
-	}
-	if err := sm.load(); err != nil {
-		logger.WarnCF("state", "failed to load state",
-			map[string]any{"error": err.Error()})
-	}
-	return sm
-}
-
-// SetLastChannel atomically updates the last channel and saves the state.
-// This method uses a temp file + rename pattern for atomic writes,
-// ensuring that the state file is never corrupted even if the process crashes.
-func (sm *Manager) SetLastChannel(channel string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Update state
-	sm.state.LastChannel = channel
-	sm.state.Timestamp = time.Now()
-
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
-	}
-
-	return nil
-}
-
-// SetLastChatID atomically updates the last chat ID and saves the state.
-func (sm *Manager) SetLastChatID(chatID string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Update state
-	sm.state.LastChatID = chatID
-	sm.state.Timestamp = time.Now()
-
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
-	}
-
-	return nil
-}
-
-// GetLastChannel returns the last channel from the state.
-func (sm *Manager) GetLastChannel() string {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.state.LastChannel
-}
-
-// GetLastChatID returns the last chat ID from the state.
-func (sm *Manager) GetLastChatID() string {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.state.LastChatID
 }
 
 // SetPendingTurn records the source of the turn in flight for sessionKey and

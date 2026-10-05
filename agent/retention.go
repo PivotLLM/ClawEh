@@ -133,16 +133,15 @@ func (al *AgentLoop) sessionOpen(agentID, sessionKey string) bool {
 }
 
 // retentionExempt reports whether retention must never delete key: the
-// agent's main session (the shared conversation under unified scope, and the
-// WebUI operator's conversation there) and its headless service session, both
-// of which exist for the life of the agent and are trimmed by archive_days
-// instead. Keys of an unrecognised shape are left alone too.
+// agent's main session, its one conversation, which exists for the life of the
+// agent and is trimmed by archive_days instead. Keys of an unrecognised shape
+// are left alone too.
 func retentionExempt(key string) bool {
 	parsed := routing.ParseAgentSessionKey(key)
 	if parsed == nil {
 		return true
 	}
-	return parsed.Rest == routing.DefaultMainKey || parsed.Rest == "service"
+	return parsed.Rest == routing.DefaultMainKey
 }
 
 // pruneSessions deletes every archive in dir (one agent's sessions

@@ -9,6 +9,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/state"
 )
 
@@ -57,6 +58,15 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 				map[string]any{"session": sessionKey, "error": err.Error()})
 		}
 		al.clearPendingTurnSource(agentID, sessionKey)
+	}
+
+	// A session no turn runs in any more (a per-sender key from an earlier
+	// release) is left on disk, but its interrupted turn is not replayed: the
+	// replay would land in the main session while this flag stayed set, and
+	// repeat on every restart.
+	if routing.ResolveAgentSessionKey(agentID, sessionKey) != sessionKey {
+		clearPending("Pending session is no longer used")
+		return
 	}
 
 	sm, ok := al.agentStates[agentID]

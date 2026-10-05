@@ -42,7 +42,6 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -87,7 +86,6 @@ type MCPServer struct {
 	internalPath string // session-token-parameter endpoint (/internal)
 
 	sessionTokens *SessionTokenStore   // SST-prefixed per-session tokens for session-scoped tools
-	sessionMode   routing.SessionScope // applied to sessionTokens in New, so option order does not matter
 	workspaces    map[string]string    // agentID → workspace (for boot/first-call logging)
 	policy        acl.Policy           // per-agent tools/call ACL; defaults to acl.Default
 	msgBus        *bus.MessageBus      // outbound publish target for tool ForUser payloads (optional)
@@ -234,14 +232,6 @@ func WithOnServeError(fn func(error)) Option {
 	return func(m *MCPServer) { m.onServeError = fn }
 }
 
-// WithSessionMode tells the server which session scope is configured. Under the
-// unified default a long-lived service token operates on the agent's MAIN
-// session — one agent, one conversation, one memory, whatever is driving it —
-// rather than on a headless session of its own. See docs/service-tokens.md.
-func WithSessionMode(mode string) Option {
-	return func(m *MCPServer) { m.sessionMode = routing.SessionScope(mode) }
-}
-
 // WithSessionTokenStore makes the server use s instead of a store of its own.
 // The store is process-lifetime: the server is rebuilt on every config reload,
 // but the tokens already rendered into running prompts (Maestro workers, turns
@@ -281,7 +271,6 @@ func New(opts ...Option) (*MCPServer, error) {
 	if m.policy == nil {
 		m.policy = acl.Default
 	}
-	m.sessionTokens.setSessionMode(m.sessionMode)
 
 	// Boot-log assertion: emit one line per registered agent so any
 	// mis-bindings are visible at startup.

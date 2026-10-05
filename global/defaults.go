@@ -10,7 +10,7 @@ package global
 const DefaultDataDir = ".claw"
 
 // InternalDir is the directory under the data directory that holds claw's own
-// state: state.json, token stores and the device database. Nobody edits it.
+// state: token stores and the device database. Nobody edits it.
 const InternalDir = "internal"
 
 // CLIDir is the directory under the data directory that CLI providers run in

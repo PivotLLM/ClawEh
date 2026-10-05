@@ -47,7 +47,6 @@ import (
 	"github.com/PivotLLM/ClawEh/mountwatch"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/servicetoken"
-	"github.com/PivotLLM/ClawEh/state"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
@@ -732,13 +731,13 @@ func setupAndStartServices(
 	endpoints["external_url"] = cfg.Gateway.EffectiveExternalURL()
 	logger.InfoF("Health endpoints available", endpoints)
 
-	// Setup state manager and device service
-	stateManager := state.NewManagerInDir(cfg.InternalPath())
+	// Setup the device service
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
+		Target:     defaultAgentTarget(agentLoop),
 		Alerter:    agentLoop.Alerter(),
-	}, stateManager)
+	})
 	services.DeviceService.SetBus(msgBus)
 	if err := services.DeviceService.Start(context.Background()); err != nil {
 		logger.ErrorCF("device", "Error starting device service", map[string]any{"error": err.Error()})
@@ -836,7 +835,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
 		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
-		mcpserver.WithSessionMode(cfg.Session.Mode),
 		mcpserver.WithAlerter(agentLoop.Alerter()),
 		mcpserver.WithOnServeError(services.fatal.handlerFor("mcpserver")),
 	)
@@ -1158,7 +1156,7 @@ func restartServices(
 
 	// Re-inject the device agent querier: the channel manager (and thus the device
 	// channel) is rebuilt on every reload, so without this the device channel loses
-	// its querier after the first config reload and sessionScopeKey falls back to a
+	// its querier after the first config reload and sessionScopeKeyFor falls back to a
 	// bogus "main" agent id — breaking device/ACP turn routing.
 	injectDeviceAgentQuerier(services.ChannelManager, al)
 	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
@@ -1223,12 +1221,12 @@ func restartServices(
 	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
 
 	// Re-create device service with new config
-	stateManager := state.NewManagerInDir(cfg.InternalPath())
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
+		Target:     defaultAgentTarget(al),
 		Alerter:    al.Alerter(),
-	}, stateManager)
+	})
 	services.DeviceService.SetBus(msgBus)
 	if err := services.DeviceService.Start(runCtx); err != nil {
 		logger.WarnCF("device", "Failed to restart device service", map[string]any{"error": err.Error()})

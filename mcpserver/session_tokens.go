@@ -56,15 +56,11 @@ type SessionTokenStore struct {
 	tokens map[string]sessionRecord // token → record
 	bySess map[string]string        // conversation sessionKey → token (rotation/revocation)
 	// bySvc indexes long-lived service tokens by agent id. They are tracked
-	// separately from bySess because under unified sessions a service token
-	// resolves to the agent's MAIN session, which already has a conversation
-	// token: several tokens may name one session, and rotating the conversation
-	// token must not disturb the service token (or vice versa).
+	// separately from bySess because a service token resolves to the agent's
+	// main session, which already has a conversation token: several tokens may
+	// name one session, and rotating the conversation token must not disturb
+	// the service token (or vice versa).
 	bySvc map[string]string // agentID → service token
-
-	// sessionMode is the configured session scope. Unified means one agent has
-	// one session, whatever is driving it — see routing.ResolveServiceSessionKey.
-	sessionMode routing.SessionScope
 }
 
 // NewSessionTokenStore returns an empty store. The gateway creates one for the
@@ -79,20 +75,6 @@ func newSessionTokenStore() *SessionTokenStore {
 		bySess: make(map[string]string),
 		bySvc:  make(map[string]string),
 	}
-}
-
-// setSessionMode records the configured session scope. Called from New with
-// the WithSessionMode value before the server serves traffic.
-func (s *SessionTokenStore) setSessionMode(mode routing.SessionScope) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessionMode = mode
-}
-
-// serviceSessionKey is the session a service token for agentID operates on.
-// Caller must hold at least a read lock.
-func (s *SessionTokenStore) serviceSessionKey(agentID string) string {
-	return routing.ResolveServiceSessionKey(s.sessionMode, agentID)
 }
 
 // Issue generates a new token for the given session and stores the mapping.
@@ -154,15 +136,16 @@ func (s *SessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 }
 
 // RegisterService registers a long-lived per-agent service token bound to the
-// agent's dedicated headless service session (agent:<id>:service). Like Register
-// it is pinned (never rotated by Issue); unlike a conversation token it is never
-// evicted, because no ContextManager ever uses the service session key. The
-// caller supplies the exact token (minted/persisted by the `claw token` CLI).
+// agent's main session (agent:<id>:main): an agent has one conversation,
+// whatever is driving it. Like Register it is pinned (never rotated by Issue)
+// and it is indexed apart from the conversation token, so neither disturbs the
+// other. The caller supplies the exact token (minted/persisted by the
+// `claw token` CLI).
 func (s *SessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	sessionKey := s.serviceSessionKey(agentID)
+	sessionKey := routing.BuildAgentMainSessionKey(agentID)
 	// Replace this agent's previous service token, and only that: the session's
 	// conversation token (bySess) is a separate credential and stays put, so
 	// registering a service token can never revoke the agent's own token.
@@ -193,8 +176,7 @@ func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 	defer s.mu.Unlock()
 
 	// Drop every existing service token. They are indexed by agent, so this never
-	// touches a conversation token — which matters under unified sessions, where
-	// a service token and the agent's own token name the same session.
+	// touches a conversation token, though both name the agent's main session.
 	for agentID, tok := range s.bySvc {
 		delete(s.tokens, tok)
 		delete(s.bySvc, agentID)
@@ -207,7 +189,7 @@ func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 		}
 		s.tokens[tok] = sessionRecord{
 			agentID:    agentID,
-			sessionKey: s.serviceSessionKey(agentID),
+			sessionKey: routing.BuildAgentMainSessionKey(agentID),
 			archiveDir: archiveDir,
 			pinned:     true,
 			hashed:     tokenhash.IsHashed(tok),

@@ -2,7 +2,6 @@ package devices
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -13,12 +12,11 @@ import (
 	"github.com/PivotLLM/ClawEh/devices/events"
 	"github.com/PivotLLM/ClawEh/devices/sources"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/state"
 )
 
 type Service struct {
 	bus     *bus.MessageBus
-	state   *state.Manager
+	target  TargetFunc
 	sources []events.EventSource
 	alerter alerter.Alerter
 	enabled bool
@@ -27,18 +25,25 @@ type Service struct {
 	mu      sync.RWMutex
 }
 
+// TargetFunc returns where device notifications are delivered: the default
+// agent's default channel and chat. ok is false when none is configured.
+type TargetFunc func() (channel, chatID string, ok bool)
+
 type Config struct {
 	Enabled    bool
 	MonitorUSB bool // When true, monitor USB hotplug (Linux only)
+	// Target resolves the delivery channel at notification time; nil means
+	// notifications are not delivered.
+	Target TargetFunc
 	// Alerter receives operator alerts for sources that fail to start; nil
 	// means none.
 	Alerter alerter.Alerter
 	// Future: MonitorBluetooth, MonitorPCI, etc.
 }
 
-func NewService(cfg Config, stateMgr *state.Manager) *Service {
+func NewService(cfg Config) *Service {
 	s := &Service{
-		state:   stateMgr,
+		target:  cfg.Target,
 		alerter: cfg.Alerter,
 		enabled: cfg.Enabled,
 		sources: make([]EventSource, 0),
@@ -133,16 +138,15 @@ func (s *Service) sendNotification(ctx context.Context, ev *events.DeviceEvent) 
 		return
 	}
 
-	lastChannel := s.state.GetLastChannel()
-	if lastChannel == "" {
-		logger.DebugCF("devices", "No last channel, skipping notification", map[string]any{
+	var platform, userID string
+	ok := false
+	if s.target != nil {
+		platform, userID, ok = s.target()
+	}
+	if !ok || platform == "" || userID == "" || constants.IsInternalChannel(platform) {
+		logger.DebugCF("devices", "No default channel for the default agent, skipping notification", map[string]any{
 			"event": ev.FormatMessage(),
 		})
-		return
-	}
-
-	platform, userID := parseLastChannel(lastChannel)
-	if platform == "" || userID == "" || constants.IsInternalChannel(platform) {
 		return
 	}
 
@@ -168,15 +172,4 @@ func (s *Service) sendNotification(ctx context.Context, ev *events.DeviceEvent) 
 		"action": ev.Action,
 		"to":     platform,
 	})
-}
-
-func parseLastChannel(lastChannel string) (platform, userID string) {
-	if lastChannel == "" {
-		return "", ""
-	}
-	parts := strings.SplitN(lastChannel, ":", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", ""
-	}
-	return parts[0], parts[1]
 }

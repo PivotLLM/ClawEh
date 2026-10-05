@@ -16,9 +16,6 @@ func testConfig(agents []config.AgentConfig, bindings []config.AgentBinding) *co
 			List: agents,
 		},
 		Bindings: bindings,
-		Session: config.SessionConfig{
-			Mode: "per-user",
-		},
 	}
 }
 

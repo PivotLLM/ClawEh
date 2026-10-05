@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // RouteInput contains the routing context from an inbound message.
@@ -20,12 +19,12 @@ type RouteInput struct {
 
 // ResolvedRoute is the result of agent routing.
 type ResolvedRoute struct {
-	AgentID        string
-	Channel        string
-	AccountID      string
-	SessionKey     string
-	MainSessionKey string
-	MatchedBy      string // "binding.peer", "binding.peer.parent", "binding.guild", "binding.team", "binding.account", "binding.channel", "default"
+	AgentID   string
+	Channel   string
+	AccountID string
+	// SessionKey is the agent's one conversation, agent:<id>:main.
+	SessionKey string
+	MatchedBy  string // "binding.peer", "binding.peer.parent", "binding.guild", "binding.team", "binding.account", "binding.channel", "default"
 }
 
 // RouteResolver determines which agent handles a message based on config bindings.
@@ -35,24 +34,11 @@ type RouteResolver struct {
 
 // NewRouteResolver creates a new route resolver.
 func NewRouteResolver(cfg *config.Config) *RouteResolver {
-	mode := cfg.Session.Mode
-	if mode == "" {
-		mode = string(SessionScopeUnified) + " (default)"
-	} else {
-		switch SessionScope(mode) {
-		case SessionScopeUnified, SessionScopePerUser, SessionScopePerPlatform, SessionScopePerAccount:
-			// valid
-		default:
-			logger.WarnCF("routing", "Unrecognized session mode — falling back to unified",
-				map[string]any{"mode": mode})
-			mode += " (unrecognized, using unified)"
-		}
-	}
-	logger.InfoCF("routing", "Session mode active", map[string]any{"mode": mode})
 	return &RouteResolver{cfg: cfg}
 }
 
-// ResolveRoute determines which agent handles the message and constructs session keys.
+// ResolveRoute determines which agent handles the message; the session is
+// always that agent's main conversation.
 // Implements the 7-level priority cascade:
 // peer > parent_peer > guild > team > account > channel_wildcard > default
 func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
@@ -60,32 +46,16 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	accountID := NormalizeAccountID(input.AccountID)
 	peer := input.Peer
 
-	sessionScope := SessionScope(r.cfg.Session.Mode)
-	if sessionScope == "" {
-		sessionScope = SessionScopeUnified
-	}
-	identityLinks := r.cfg.Session.IdentityLinks
-
 	bindings := r.filterBindings(channel, accountID)
 
 	choose := func(agentID string, matchedBy string) ResolvedRoute {
 		resolvedAgentID := r.pickAgentID(agentID)
-		sessionKey := strings.ToLower(BuildAgentPeerSessionKey(SessionKeyParams{
-			AgentID:       resolvedAgentID,
-			Channel:       channel,
-			AccountID:     accountID,
-			Peer:          peer,
-			SessionScope:  sessionScope,
-			IdentityLinks: identityLinks,
-		}))
-		mainSessionKey := strings.ToLower(BuildAgentMainSessionKey(resolvedAgentID))
 		return ResolvedRoute{
-			AgentID:        resolvedAgentID,
-			Channel:        channel,
-			AccountID:      accountID,
-			SessionKey:     sessionKey,
-			MainSessionKey: mainSessionKey,
-			MatchedBy:      matchedBy,
+			AgentID:    resolvedAgentID,
+			Channel:    channel,
+			AccountID:  accountID,
+			SessionKey: strings.ToLower(BuildAgentMainSessionKey(resolvedAgentID)),
+			MatchedBy:  matchedBy,
 		}
 	}
 

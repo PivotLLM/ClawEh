@@ -33,7 +33,6 @@ type AgentLoop struct {
 	bus             *bus.MessageBus
 	cfg             *config.Config
 	registry        *AgentRegistry
-	state           *state.Manager
 	running         atomic.Bool
 	contextManagers sync.Map
 	fallback        *providers.FallbackChain
@@ -166,7 +165,6 @@ type SessionTokenIssuer interface {
 
 const (
 	defaultResponse               = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
-	sessionKeyAgentPrefix         = "agent:"
 	metadataKeyAccountID          = "account_id"
 	metadataKeyGuildID            = "guild_id"
 	metadataKeyTeamID             = "team_id"
@@ -193,13 +191,6 @@ func NewAgentLoop(
 	// Set up shared fallback chain with the config-driven cooldown policy.
 	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
 	fallbackChain := providers.NewFallbackChain(cooldown)
-
-	// Create state manager using default agent's workspace for channel recording
-	defaultAgent := registry.GetDefaultAgent()
-	var stateManager *state.Manager
-	if defaultAgent != nil {
-		stateManager = state.NewManager(defaultAgent.Workspace)
-	}
 
 	// Build per-agent state managers and message-token managers.
 	agentStates := make(map[string]*state.Manager)
@@ -242,7 +233,6 @@ func NewAgentLoop(
 		bus:                   msgBus,
 		cfg:                   cfg,
 		registry:              registry,
-		state:                 stateManager,
 		fallback:              fallbackChain,
 		cooldown:              cooldown,
 		cmdRegistry:           commands.NewRegistry(commands.BuiltinDefinitions()),

@@ -1044,7 +1044,7 @@ func agentDisplayName(a DeviceAgentInfo) string {
 }
 
 // replyScopeKey is the session key a device-command reply is tagged with: the
-// connection's resolved session, or "" when its key is not allowed.
+// connection's resolved session, or "" when its key names an unknown agent.
 func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
@@ -1059,16 +1059,12 @@ func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 // errUnknownAgent refuses a session key naming an agent that does not exist.
 var errUnknownAgent = errors.New("unknown agent")
 
-// refuseSessionKey answers a request whose session key the device may not use.
+// refuseSessionKey answers a request whose session key names an unknown agent.
 func (s *Server) refuseSessionKey(lc *liveConn, reqID string, err error) {
 	logger.WarnCF("device", "request refused: session key not allowed", map[string]any{
 		"deviceId": lc.deviceID, "reason": err.Error(),
 	})
-	msg := "session key not allowed"
-	if errors.Is(err, errUnknownAgent) {
-		msg = "unknown agent"
-	}
-	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, msg, nil)))
+	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "unknown agent", nil)))
 }
 
 // agentExists reports whether id names a configured agent. Without a querier
@@ -1089,41 +1085,37 @@ func (s *Server) agentExists(id string) bool {
 
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
 // Both chat.send and chat.history go through it, so a device always reads the
-// transcript it writes, and neither can reach a session the device may not.
+// transcript it writes.
 //
-// Under UNIFIED sessions (the default) a device joins the selected agent's main
-// conversation: the R1, the phone app, Slack and Telegram are one assistant with
-// one history, one tool surface, and one memory. Tell her something on the R1 and
-// she knows it in Slack. Isolation is a property of the agent — to keep a device
-// separate, give it its own agent.
+// Every device joins the selected agent's main conversation: the R1, the phone
+// app, Slack and Telegram are one assistant with one history, one tool surface,
+// and one memory. Tell her something on the R1 and she knows it in Slack. To
+// keep a device separate, give it its own agent.
 //
-// Under an isolating mode every device gets its own per-device session for the
-// selected agent, and a key naming any other session is refused (see
-// routing.ResolveDeviceSessionKey).
-//
-// The agent itself is chosen the same way in both modes: an operator client picks
-// it via the key's 2nd segment, which must name a configured agent (an unknown id
-// is refused before anything touches a session store); a node client (e.g. the
-// R1) has no picker, so it falls back to its per-device assignment (WebUI Devices
-// page / "/agent") and then to the gateway default. The choice reaches the loop
-// as preresolved_agent_id.
+// An operator client picks the agent via the key's 2nd segment, which must name
+// a configured agent (an unknown id is refused before anything touches a
+// session store); a node client (e.g. the R1) has no picker, so it falls back
+// to its per-device assignment (WebUI Devices page / "/agent") and then to the
+// gateway default. The choice reaches the loop as preresolved_agent_id.
 func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) (string, error) {
-	if id := routing.AgentIDFromSessionKey(requested); id != "" && !s.agentExists(id) {
-		return "", errUnknownAgent
+	agentID := routing.AgentIDFromSessionKey(requested)
+	if agentID != "" {
+		if !s.agentExists(agentID) {
+			return "", errUnknownAgent
+		}
+		return routing.BuildAgentMainSessionKey(agentID), nil
 	}
-	fallback := "main"
-	mode := ""
+	agentID = "main"
 	if s.querier != nil {
 		if d := s.querier.DefaultAgentID(); d != "" {
-			fallback = d
+			agentID = d
 		}
-		mode = s.querier.SessionMode()
 	}
 	// Per-device assignment overrides the gateway default for node clients.
 	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		fallback = dev.AgentID
+		agentID = dev.AgentID
 	}
-	return routing.ResolveDeviceSessionKey(routing.SessionScope(mode), requested, fallback, lc.deviceID)
+	return routing.BuildAgentMainSessionKey(agentID), nil
 }
 
 // handleNodeEvent handles the node ingress envelope (chat.subscribe / chat.unsubscribe).
@@ -1205,8 +1197,8 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 		lc.mu.Unlock()
 	}
 	// Resolve through the same rule chat.send uses, so a client reads the
-	// transcript its turns are written to — under unified that is the agent's
-	// main conversation, not the key the client happens to have asked for.
+	// transcript its turns are written to — the agent's main conversation, not
+	// the key the client happens to have asked for.
 	sessionKey, err := s.sessionScopeKeyFor(ctx, lc, sessionKey)
 	if err != nil {
 		s.refuseSessionKey(lc, req.ID, err)

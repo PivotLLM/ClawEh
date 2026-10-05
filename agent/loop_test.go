@@ -96,56 +96,15 @@ func newTestAgentLoop(t *testing.T) *testLoop {
 	}
 }
 
-func TestRecordLastChannel(t *testing.T) {
-	tl := newTestAgentLoop(t)
-	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
-
-	testChannel := "test-channel"
-	if err := al.RecordLastChannel(testChannel); err != nil {
-		t.Fatalf("RecordLastChannel failed: %v", err)
-	}
-	if got := al.state.GetLastChannel(); got != testChannel {
-		t.Errorf("Expected channel '%s', got '%s'", testChannel, got)
-	}
-	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	if got := al2.state.GetLastChannel(); got != testChannel {
-		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, got)
-	}
-}
-
-func TestRecordLastChatID(t *testing.T) {
-	tl := newTestAgentLoop(t)
-	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
-
-	testChatID := "test-chat-id-123"
-	if err := al.RecordLastChatID(testChatID); err != nil {
-		t.Fatalf("RecordLastChatID failed: %v", err)
-	}
-	if got := al.state.GetLastChatID(); got != testChatID {
-		t.Errorf("Expected chat ID '%s', got '%s'", testChatID, got)
-	}
-	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	if got := al2.state.GetLastChatID(); got != testChatID {
-		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, got)
-	}
-}
-
 func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create temp workspace
 	cfg := newTestConfig(t)
 
 	// Create agent loop
-	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
-	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
+	mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Verify state manager is initialized
-	if al.state == nil {
-		t.Error("Expected state manager to be initialized")
-	}
-
-	// Verify state directory was created. The default agent resolves to
-	// <base_dir>/default, so its state lives under tmpDir/default/state.
+	// Verify the per-agent state directory was created. The default agent
+	// resolves to <base_dir>/default, so its state lives under tmpDir/default/state.
 	stateDir := filepath.Join(cfg.Agents.BaseDir, "default", "state")
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
 		t.Error("Expected state directory to exist")
@@ -425,9 +384,49 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 	}
 }
 
+// TestProcessMessage_OtherSessionKeyLandsInMain: an agent has one persistent
+// conversation. An inbound message carrying some other agent-scoped session key
+// (one an older release's session modes, a device or a service token would
+// have used) is answered in the agent's main session; no second session gets
+// any history.
+func TestProcessMessage_OtherSessionKeyLandsInMain(t *testing.T) {
+	cfg := newTestConfig(t)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &simpleMockProvider{response: "ok"}, nil)
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+	mainKey := routing.BuildAgentMainSessionKey(agent.ID)
+	others := []string{
+		"agent:" + agent.ID + ":telegram:direct:user1",
+		"agent:" + agent.ID + ":device:dev1",
+		"agent:" + agent.ID + ":service",
+	}
+
+	helper := testHelper{al: al}
+	for _, key := range others {
+		helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+			Channel:    "telegram",
+			SenderID:   "user1",
+			ChatID:     "chat1",
+			Content:    "hello",
+			SessionKey: key,
+			Peer:       bus.Peer{Kind: "direct", ID: "user1"},
+		})
+	}
+
+	if got := len(agent.Sessions.GetHistory(mainKey)); got != 2*len(others) {
+		t.Fatalf("main session history len = %d, want %d", got, 2*len(others))
+	}
+	for _, key := range others {
+		if got := len(agent.Sessions.GetHistory(key)); got != 0 {
+			t.Errorf("session %q has %d messages, want 0", key, got)
+		}
+	}
+}
+
 func TestProcessMessage_CommandOutcomes(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.Session.Mode = "per-platform"
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}

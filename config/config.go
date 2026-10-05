@@ -149,7 +149,7 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 	}
 
 	// Only include session if not empty
-	if c.Session.Mode != "" || len(c.Session.IdentityLinks) > 0 || c.Session.RetentionDays > 0 {
+	if c.Session.RetentionDays > 0 {
 		aux.Session = &c.Session
 	}
 
@@ -945,11 +945,9 @@ type AgentBinding struct {
 }
 
 type SessionConfig struct {
-	Mode          string              `json:"mode,omitempty"`
-	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
 	// RetentionDays deletes a session's archive database once its last
 	// activity is older than this many days (checked nightly). 0 keeps every
-	// session forever. An agent's main and service sessions are never deleted.
+	// session forever. An agent's main session is never deleted.
 	RetentionDays int `json:"retention_days,omitempty"`
 }
 
@@ -2903,8 +2901,7 @@ func (c *Config) ResolveCommonDir() string {
 }
 
 // InternalPath returns the directory for claw's own state that nobody edits
-// by hand (<data_dir>/internal): state.json, token stores, the device
-// database.
+// by hand (<data_dir>/internal): token stores, the device database.
 func (c *Config) InternalPath() string {
 	return filepath.Join(c.dataDir, global.InternalDir)
 }
