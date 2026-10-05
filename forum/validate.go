@@ -147,8 +147,8 @@ type PreflightEnv struct {
 	// Launcher is the launching agent's ID.
 	Launcher string
 	Agents   Agents
-	// Schemas may be nil; a configuration naming any schema then fails with
-	// ErrSchemasUnavailable.
+	// Schemas may be nil; a configuration naming any schema or having an
+	// enabled moderated layer then fails with ErrSchemasUnavailable.
 	Schemas SchemaValidator
 	// HostLimits are ceilings on Config.Limits; a zero field is no ceiling.
 	// A limit above its ceiling is reported as an issue naming the ceiling
@@ -193,8 +193,10 @@ type Resolved struct {
 //   - a fresh participant's model is in Agents.Models(launcher);
 //   - every named schema compiles (Schemas.Compile), and every enabled
 //     layer's effective moderator schema (EffectiveModeratorSchema)
-//     compiles too; a nil Schemas with any schema configured is
-//     ErrSchemasUnavailable (returned directly, not as an issue);
+//     compiles too; a nil Schemas with any named schema or any enabled
+//     moderated layer (whose decision schema the controller compiles at
+//     Open) is ErrSchemasUnavailable naming them (returned directly, not
+//     as an issue);
 //   - each file source resolves under ConfigDir to a path ReadAllowed
 //     accepts (both the named path and, through any symbolic link, its
 //     target) and that exists as a regular file; it is read once, here,
@@ -205,8 +207,10 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 	if env.Agents == nil || env.Launcher == "" {
 		return nil, errors.New("preflight: launcher and Agents are required")
 	}
-	if len(cfg.Schemas) > 0 && env.Schemas == nil {
-		return nil, fmt.Errorf("%w (the configuration names schemas: %s)", ErrSchemasUnavailable, strings.Join(sortedKeys(cfg.Schemas), ", "))
+	if env.Schemas == nil {
+		if err := schemasNeeded(cfg); err != nil {
+			return nil, err
+		}
 	}
 	p := &preflight{cfg: cfg, env: env, models: map[string][]ModelInfo{}, res: &Resolved{
 		Models:           map[string]string{},
@@ -226,6 +230,29 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 		return nil, &ValidationError{Issues: p.issues}
 	}
 	return p.res, nil
+}
+
+// schemasNeeded returns ErrSchemasUnavailable, naming what needs a JSON
+// Schema validator, when cfg names schemas or has an enabled layer with a
+// moderator (its decision schema is always validated); nil otherwise.
+func schemasNeeded(cfg *Config) error {
+	var needs []string
+	if len(cfg.Schemas) > 0 {
+		needs = append(needs, "the configuration names schemas: "+strings.Join(sortedKeys(cfg.Schemas), ", "))
+	}
+	var moderated []string
+	for _, l := range cfg.EnabledLayers() {
+		if l.Moderator != nil {
+			moderated = append(moderated, l.ID)
+		}
+	}
+	if len(moderated) > 0 {
+		needs = append(needs, "moderated layers: "+strings.Join(moderated, ", "))
+	}
+	if len(needs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w (%s)", ErrSchemasUnavailable, strings.Join(needs, "; "))
 }
 
 // staticValidator accumulates the issues of ValidateStatic.
