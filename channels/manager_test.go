@@ -68,7 +68,9 @@ func TestSendWithRetry_Success(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call, got %d", callCount)
@@ -95,7 +97,9 @@ func TestSendWithRetry_TemporaryThenSuccess(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 3 {
 		t.Fatalf("expected 3 Send calls (2 failures + 1 success), got %d", callCount)
@@ -119,7 +123,9 @@ func TestSendWithRetry_PermanentFailure(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call (no retry for permanent failure), got %d", callCount)
@@ -143,7 +149,9 @@ func TestSendWithRetry_NotRunning(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call (no retry for ErrNotRunning), got %d", callCount)
@@ -171,7 +179,9 @@ func TestSendWithRetry_RateLimitRetry(t *testing.T) {
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
 	start := time.Now()
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 	elapsed := time.Since(start)
 
 	if callCount != 2 {
@@ -200,7 +210,9 @@ func TestSendWithRetry_MaxRetriesExhausted(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	expected := maxRetries + 1 // initial attempt + maxRetries retries
 	if callCount != expected {
@@ -228,7 +240,9 @@ func TestSendWithRetry_UnknownError(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 2 {
 		t.Fatalf("expected 2 Send calls (unknown error treated as temporary), got %d", callCount)
@@ -259,7 +273,9 @@ func TestSendWithRetry_ContextCancelled(t *testing.T) {
 		return fmt.Errorf("timeout: %w", ErrTemporary)
 	}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	// Should have called Send once, then noticed ctx canceled during backoff
 	if callCount != 1 {
@@ -414,7 +430,9 @@ func TestSendWithRetry_ExponentialBackoff(t *testing.T) {
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
 	start := time.Now()
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 	totalElapsed := time.Since(start)
 
 	// With maxRetries=3: attempts at 0, ~500ms, ~1.5s, ~3.5s
@@ -725,7 +743,9 @@ func TestSendWithRetry_PreSendEditsPlaceholder(t *testing.T) {
 	}
 
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "123", Content: "hello"}
-	m.sendWithRetry(context.Background(), "test", w, msg)
+	if err := m.sendWithRetry(context.Background(), "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if sendCalled {
 		t.Fatal("expected Send to NOT be called when placeholder was edited")
@@ -993,7 +1013,9 @@ func TestManager_PlaceholderConsumedByResponse(t *testing.T) {
 		ChatID:  "chat-1",
 		Content: "Transcript: hello",
 	}
-	mgr.sendWithRetry(ctx, "mock", worker, msgTranscript)
+	if err := mgr.sendWithRetry(ctx, "mock", worker, msgTranscript); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if mockCh.editedMessages != 1 {
 		t.Errorf("expected 1 edited message (placeholder consumed by transcript), got %d", mockCh.editedMessages)
@@ -1013,7 +1035,9 @@ func TestManager_PlaceholderConsumedByResponse(t *testing.T) {
 		ChatID:  "chat-1",
 		Content: "Final Answer",
 	}
-	mgr.sendWithRetry(ctx, "mock", worker, msgFinal)
+	if err := mgr.sendWithRetry(ctx, "mock", worker, msgFinal); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if len(mockCh.sentMessages) != 1 {
 		t.Errorf("expected 1 normal message sent, got %d", len(mockCh.sentMessages))

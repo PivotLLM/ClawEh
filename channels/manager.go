@@ -901,23 +901,39 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 			if !ok {
 				return
 			}
-			maxLen := 0
-			if mlp, ok := w.ch.(MessageLengthProvider); ok {
-				maxLen = mlp.MaxMessageLength()
-			}
-			if maxLen > 0 && len([]rune(msg.Content)) > maxLen {
-				chunks := SplitMessage(msg.Content, maxLen)
-				for _, chunk := range chunks {
-					chunkMsg := msg
-					chunkMsg.Content = chunk
-					m.sendWithRetry(ctx, name, w, chunkMsg)
-				}
-			} else {
-				m.sendWithRetry(ctx, name, w, msg)
-			}
+			reportDelivery(msg, m.sendSplit(ctx, name, w, msg))
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// sendSplit sends msg through w, split into chunks when it exceeds the
+// channel's maximum message length, and returns the first chunk's error.
+func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
+	maxLen := 0
+	if mlp, ok := w.ch.(MessageLengthProvider); ok {
+		maxLen = mlp.MaxMessageLength()
+	}
+	if maxLen <= 0 || len([]rune(msg.Content)) <= maxLen {
+		return m.sendWithRetry(ctx, name, w, msg)
+	}
+	var first error
+	for _, chunk := range SplitMessage(msg.Content, maxLen) {
+		chunkMsg := msg
+		chunkMsg.Content = chunk
+		if err := m.sendWithRetry(ctx, name, w, chunkMsg); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// reportDelivery tells msg's sender, when it asked (OnDelivery), how the
+// delivery ended.
+func reportDelivery(msg bus.OutboundMessage, err error) {
+	if msg.OnDelivery != nil {
+		msg.OnDelivery(err)
 	}
 }
 
@@ -926,23 +942,23 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 //   - ErrNotRunning / ErrSendFailed: permanent, no retry
 //   - ErrRateLimit: fixed delay retry
 //   - ErrTemporary / unknown: exponential backoff retry
-func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) {
+func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
 		// ctx canceled, shutting down
-		return
+		return err
 	}
 
 	// Pre-send: stop typing and try to edit placeholder
 	if m.preSend(ctx, name, msg, w.ch) {
-		return // placeholder was edited successfully, skip Send
+		return nil // placeholder was edited successfully, skip Send
 	}
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		lastErr = w.ch.Send(ctx, msg)
 		if lastErr == nil {
-			return
+			return nil
 		}
 
 		// Permanent failures — don't retry
@@ -962,7 +978,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 			case <-time.After(rateLimitDelay):
 				continue
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
 		}
 
@@ -971,7 +987,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		select {
 		case <-time.After(jitter(backoff)):
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
 
@@ -983,7 +999,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 			"chat_id": msg.ChatID,
 			"detail":  lastErr.Error(),
 		})
-		return
+		return lastErr
 	}
 
 	// All retries exhausted or permanent failure
@@ -999,6 +1015,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		Details:     lastErr.Error(),
 		EventID:     name,
 	})
+	return lastErr
 }
 
 func dispatchLoop[M any](
@@ -1007,6 +1024,7 @@ func dispatchLoop[M any](
 	subscribe func(context.Context) (M, bool),
 	getChannel func(M) string,
 	enqueue func(context.Context, *channelWorker, M) bool,
+	drop func(M, error),
 	startMsg, stopMsg, unknownMsg, noWorkerMsg string,
 ) {
 	logger.InfoC("channels", startMsg)
@@ -1032,15 +1050,18 @@ func dispatchLoop[M any](
 
 		if !exists {
 			logger.WarnCF("channels", unknownMsg, map[string]any{"channel": channel})
+			drop(msg, fmt.Errorf("channel %s not found", channel))
 			continue
 		}
 
 		if wExists && w != nil {
 			if !enqueue(ctx, w, msg) {
+				drop(msg, ctx.Err())
 				return
 			}
 		} else if exists {
 			logger.WarnCF("channels", noWorkerMsg, map[string]any{"channel": channel})
+			drop(msg, fmt.Errorf("channel %s has no active worker", channel))
 		}
 	}
 }
@@ -1058,6 +1079,7 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 				return false
 			}
 		},
+		reportDelivery,
 		"Outbound dispatcher started",
 		"Outbound dispatcher stopped",
 		"Unknown channel for outbound message",
@@ -1078,6 +1100,7 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 				return false
 			}
 		},
+		func(bus.OutboundMediaMessage, error) {},
 		"Outbound media dispatcher started",
 		"Outbound media dispatcher stopped",
 		"Unknown channel for outbound media message",
@@ -1281,7 +1304,8 @@ func (m *Manager) UnregisterChannel(name string) {
 // SendMessage sends an outbound message synchronously through the channel
 // worker's rate limiter and retry logic. It blocks until the message is
 // delivered (or all retries are exhausted), which preserves ordering when
-// a subsequent operation depends on the message having been sent.
+// a subsequent operation depends on the message having been sent, and
+// returns the delivery error.
 func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) error {
 	m.mu.RLock()
 	_, exists := m.channels[msg.Channel]
@@ -1295,20 +1319,7 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 		return fmt.Errorf("channel %s has no active worker", msg.Channel)
 	}
 
-	maxLen := 0
-	if mlp, ok := w.ch.(MessageLengthProvider); ok {
-		maxLen = mlp.MaxMessageLength()
-	}
-	if maxLen > 0 && len([]rune(msg.Content)) > maxLen {
-		for _, chunk := range SplitMessage(msg.Content, maxLen) {
-			chunkMsg := msg
-			chunkMsg.Content = chunk
-			m.sendWithRetry(ctx, msg.Channel, w, chunkMsg)
-		}
-	} else {
-		m.sendWithRetry(ctx, msg.Channel, w, msg)
-	}
-	return nil
+	return m.sendSplit(ctx, msg.Channel, w, msg)
 }
 
 func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {

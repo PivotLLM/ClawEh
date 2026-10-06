@@ -346,7 +346,7 @@ type LayerResult struct {
 	Outputs   []OutputRecord `json:"outputs"`
 }
 
-// Result (result.json) is the manifest forum_results returns: the result
+// Result (result.json) is the manifest forum_results renders (ResultsView): the result
 // layers' outputs, completeness and omissions. For a running forum the
 // service builds a partial one from State with Complete false; the file is
 // written only at a terminal state, before the launching agent is notified

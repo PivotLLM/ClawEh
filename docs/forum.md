@@ -103,7 +103,8 @@ without creating anything.
 
 `forum_launch` answers "Forum <id> launched." at once; the forum runs in the
 background. `forum_status` shows its progress, `forum_pause` / `forum_resume`
-/ `forum_cancel` control it, and `forum_results` lists its result files. When
+/ `forum_cancel` control it, and `forum_results` returns its results (see
+[Results](#results)). When
 it ends (completed, incomplete, failed or cancelled) Alice gets
 `[System: forum] Forum design-review finished: completed (id <id>).` in her
 conversation. If she launched it from a chat, her answer goes to her default
@@ -115,6 +116,23 @@ A forum survives a restart: an interrupted forum resumes where it stopped, and
 a turn that was in progress is sent again (an existing agent may see that
 message twice). A forum that stops on an error raises the "Forum stopped"
 alert and continues with `forum_resume` or at the next start.
+
+## Results
+
+`forum_results` returns, for each output of the result layers, its author
+(the participant), layer, round, size in characters, the file holding it, and
+its text, plus the path of `transcript.md`. Paths are relative to Alice's
+workspace (`forums/<id>/...`), so her file tools can open them. A running or
+stopped forum returns the outputs published so far, the same way.
+
+### Large results
+
+Each output's text is returned in full up to 4,000 characters
+(`forum.MaxResultInlineChars`). A longer output is cut there and followed by
+`(truncated; full text in forums/<id>/...)`; the whole text stays in that
+file. For long work, such as a book chapter, end the forum with a short
+summary layer and make it the result layer: Alice then gets the summary
+inline and reads the full outputs from their files only when she needs them.
 
 ## Where files live
 
@@ -138,6 +156,10 @@ tail -f <workspace>/forums/<id>/transcript.md
 The transcript holds published outputs and the moderator's public decisions,
 never a participant's private instructions, rejected replies or private
 messages. Nothing is deleted until `forum_delete`.
+
+Alice's file tools can read her `forums/` folder, whatever
+`agents.defaults.workspace_read_subdirs` lists, but cannot write to it: only
+ClawEh writes a forum's files. Another agent's forums are not readable.
 
 ## Limits
 

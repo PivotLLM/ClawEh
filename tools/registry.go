@@ -589,7 +589,15 @@ func (r *ToolRegistry) executeWithContext(
 	duration := time.Since(start)
 
 	// Log based on result type
-	if result.IsError {
+	if result.IsError && IsRefusal(result.Err) {
+		// A configured permission or limit said no: expected, not a fault.
+		logger.WarnCF("tool", "Tool call refused",
+			map[string]any{
+				"tool":     name,
+				"duration": duration.Milliseconds(),
+				"error":    utils.Truncate(result.ForLLM, 500),
+			})
+	} else if result.IsError {
 		logger.ErrorCF("tool", "Tool execution failed",
 			map[string]any{
 				"tool":     name,

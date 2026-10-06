@@ -71,7 +71,7 @@ func TestBuiltin_BuiltOnEveryManager(t *testing.T) {
 		}
 		select {
 		case got := <-last.sent:
-			if got != want {
+			if got.Channel != want.Channel || got.ChatID != want.ChatID || got.Content != want.Content || got.Outcome != want.Outcome {
 				t.Fatalf("built-in got %+v, want %+v", got, want)
 			}
 		case <-time.After(5 * time.Second):

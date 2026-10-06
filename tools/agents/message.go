@@ -67,6 +67,12 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 	fail := func(format string, args ...any) *global.Result {
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf(format, args...)}
 	}
+	// refuse is fail for a configured permission or limit: logged as a
+	// warning, not an error.
+	refuse := func(format string, args ...any) *global.Result {
+		text := fmt.Sprintf(format, args...)
+		return &global.Result{IsError: true, ForLLM: text, Err: tools.Refusal(errors.New(text))}
+	}
 	if host.Cfg == nil || host.Agents == nil || host.Messenger == nil {
 		return fail("agent_message is not available")
 	}
@@ -79,7 +85,7 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 		return fail("message is required")
 	}
 	if tools.AgentMessageTooLong(message) {
-		return fail("%s", tools.AgentMessageLimitText())
+		return refuse("%s", tools.AgentMessageLimitText())
 	}
 	seconds, ok := numArg(call.Args, "wait_seconds")
 	if !ok || seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
@@ -92,7 +98,7 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 	}
 	name := target.DisplayName()
 	if !host.Agents.CanTarget(target.ID) {
-		return fail("You may not message %s: it is not in your subagents.allow_agents.", name)
+		return refuse("You may not message %s: it is not in your subagents.allow_agents.", name)
 	}
 	from := host.AgentID
 	if caller := host.Cfg.AgentByID(host.AgentID); caller != nil {

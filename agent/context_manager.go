@@ -526,6 +526,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 			})
 		}),
 	}, agent.CompressOpts...)
+	ensurePrivateArchive(agent.StateDir, sessionKey)
 	cm := ctxengine.New(sessionKey, agent.Sessions, opts...)
 
 	// Issue a session token so session-scoped MCP tools can identify this session.

@@ -573,22 +573,32 @@ func TestAsk_Refusals(t *testing.T) {
 
 // TestWhisper_DeliveredOnceAtStartOfNextMessage: a whisper starts no turn;
 // it opens the target's next message, from any source, exactly once. The
-// hint on answering is given only to an agent with agent_message.
+// hint on answering is given only to an agent that can answer: it has
+// agent_message and the sender is in its subagents.allow_agents.
 func TestWhisper_DeliveredOnceAtStartOfNextMessage(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
+	const (
+		noHint   = "[Private whisper from Alice — no reply expected.] psst\n\n"
+		withHint = "[Private whisper from Alice — no reply expected. To answer privately, use agent_message with wait_seconds 0.] psst\n\n"
+	)
 	for _, tc := range []struct {
 		name     string
 		denied   bool
+		allow    []string
 		wantHead string
 	}{
-		{"without the tool", true, "[Private whisper from Alice — no reply expected.] psst\n\n"},
-		{"with the tool", false, "[Private whisper from Alice — no reply expected. To answer privately, use agent_message with wait_seconds 0.] psst\n\n"},
+		{"without the tool", true, []string{"alice"}, noHint},
+		{"with the tool, sender not allowed", false, nil, noHint},
+		{"with the tool, sender allowed", false, []string{"alice"}, withHint},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := messagingConfig(t)
 			if tc.denied {
 				cfg.Agents.List[1].DenyTools = []string{"agent_message"}
+			}
+			if tc.allow != nil {
+				cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: tc.allow}
 			}
 			model := &recordingProvider{}
 			al, msgBus := messagingLoop(t, cfg, model)
@@ -660,6 +670,10 @@ func TestAgentMessageTool_AllowAgents(t *testing.T) {
 			res := callMessageTool(t, al, tc.caller, tc.target, tc.wait)
 			if res.IsError != tc.wantErr || !strings.Contains(res.ForLLM, tc.want) {
 				t.Fatalf("result = %+v, want error=%v containing %q", res, tc.wantErr, tc.want)
+			}
+			// A permission refusal is expected, logged as a warning.
+			if refusal := strings.HasPrefix(tc.want, "You may not message"); tools.IsRefusal(res.Err) != refusal {
+				t.Fatalf("IsRefusal = %v, want %v for %+v", !refusal, refusal, res)
 			}
 		})
 	}
@@ -875,7 +889,7 @@ func TestAgentMessageTool_SizeLimit(t *testing.T) {
 	over := tool.Execute(context.Background(), map[string]any{
 		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars+1), "wait_seconds": 0,
 	})
-	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." {
+	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." || !tools.IsRefusal(over.Err) {
 		t.Fatalf("over the limit: %+v, want the limit refusal", over)
 	}
 	at := tool.Execute(context.Background(), map[string]any{
@@ -883,5 +897,25 @@ func TestAgentMessageTool_SizeLimit(t *testing.T) {
 	})
 	if at.IsError || at.ForLLM != "Whispered to Bob." {
 		t.Fatalf("at the limit: %+v, want the whisper sent", at)
+	}
+}
+
+// TestCommandSender_Labels: a /ask or /whisper sender is named by its display
+// name; the WebUI user, which has none, is "the WebUI user", not its id.
+func TestCommandSender_Labels(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		msg  bus.InboundMessage
+		want string
+	}{
+		{"webui", bus.InboundMessage{Channel: "webui", SenderID: "webui:webui-user"}, "the WebUI user"},
+		{"telegram display name", bus.InboundMessage{Channel: "telegram", SenderID: "u1", Sender: bus.SenderInfo{DisplayName: "Alice"}}, "Alice"},
+		{"no name", bus.InboundMessage{Channel: "telegram", SenderID: "telegram:u1"}, "telegram:u1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commandSender(tc.msg); got != tc.want {
+				t.Fatalf("commandSender = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

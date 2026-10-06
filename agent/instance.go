@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -467,11 +468,34 @@ func initSessionStore(dir string) (session.SessionStore, error) {
 	if err := refuseUnmigratedSessions(dir); err != nil {
 		return nil, err
 	}
+	// Created here, private, before the engine would create it with 0755.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create session directory %s: %w", dir, err)
+	}
 	store, err := session.NewSQLiteStore(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
 	return store, nil
+}
+
+// ensurePrivateArchive creates the session's archive database as an empty
+// 0600 file before the engine opens it, so it and its -wal/-shm side files
+// are private from the first write (SQLite would create them 0644). Both the
+// session store and the engine's archive open this one file. Best-effort: a
+// failure is logged, and the engine still opens the database.
+func ensurePrivateArchive(stateDir, sessionKey string) {
+	if stateDir == "" || sessionKey == "" {
+		return
+	}
+	path := archiveDBPath(stateDir, sessionKey)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		logger.WarnCF("agent", "Failed to create the session directory", map[string]any{"path": filepath.Dir(path), "error": err.Error()})
+		return
+	}
+	if err := perms.EnsurePrivateFile(path); err != nil {
+		logger.WarnCF("agent", "Failed to create the session archive privately", map[string]any{"path": path, "error": err.Error()})
+	}
 }
 
 // refuseUnmigratedSessions fails when dir still holds a JSONL-layout session

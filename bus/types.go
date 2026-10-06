@@ -44,6 +44,12 @@ type OutboundMessage struct {
 	// implements channels.MessageLengthProvider has a long reply split by the
 	// manager, and then receives the Outcome on every chunk.
 	Outcome string `json:"outcome,omitempty"`
+	// OnDelivery, when set, is called once the channel manager has delivered
+	// the message (nil) or given up on it (the error: send failed, unknown
+	// channel, no worker, shutdown). A long message split into chunks reports
+	// once, with the first chunk's error. Messages to internal channels never
+	// reach the manager, so it is not called for them. It must not block.
+	OnDelivery func(error) `json:"-"`
 }
 
 // Outcomes of a turn, carried on its final reply (OutboundMessage.Outcome).

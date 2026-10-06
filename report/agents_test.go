@@ -39,6 +39,10 @@ func TestCollectAgents_FolderAccessResolved(t *testing.T) {
 	if tasks[1] != "[read]" || !strings.Contains(tasks[2], "does not exist") {
 		t.Errorf("tasks row = %v", tasks)
 	}
+	_, forums := findRow(t, fa, filepath.Join(link, "forums"))
+	if forums[1] != "[read]" || !strings.Contains(forums[2], "forums (always readable)") {
+		t.Errorf("forums row = %v", forums)
+	}
 	// Allow-list patterns are shown verbatim.
 	_, rp := findRow(t, fa, "^/srv/shared/")
 	if rp[1] != "[read]" || !strings.Contains(rp[2], "pattern") {

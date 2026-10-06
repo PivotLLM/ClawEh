@@ -90,6 +90,7 @@ func agentFolderAccess(cfg *config.Config, env Environment, a *config.AgentConfi
 			}
 			fa.add(filepath.Join(ws, "tasks"), true, false, "sub-agent results (always readable)")
 			fa.add(filepath.Join(ws, "tmp"), true, false, "inbound attachments (always readable)")
+			fa.add(filepath.Join(ws, "forums"), true, false, "the agent's forums (always readable)")
 		}
 		for _, p := range cfg.Tools.AllowReadPaths {
 			fa.add(p, true, false, "pattern (allow_read_paths)")
@@ -270,7 +271,7 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 	d := cfg.Agents.Defaults
 	readSubdirs := append([]string{}, d.WorkspaceReadSubdirs...)
 	if len(readSubdirs) > 0 {
-		readSubdirs = append(readSubdirs, "tasks", "tmp")
+		readSubdirs = append(readSubdirs, "tasks", "tmp", "forums")
 	}
 	defaults := pairs("Defaults (agents.defaults)",
 		row("restrict_to_workspace", onOff(d.RestrictToWorkspace)),

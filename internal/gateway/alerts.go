@@ -11,6 +11,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -32,6 +33,13 @@ func newAlerter(baseDir string) (alerter.Alerter, string) {
 	if path == "" {
 		path = filepath.Join(baseDir, "logs", alertsFileName)
 		opts = append(opts, alerter.WithLogFile(path))
+		// The alerter would create the log 0644; created first, it is 0600. A
+		// missing logs directory is left to alerter.New to report.
+		if _, err := os.Stat(filepath.Dir(path)); err == nil {
+			if err := perms.EnsurePrivateFile(path); err != nil {
+				logger.WarnCF("gateway", "Failed to create the alerts log privately", map[string]any{"path": path, "error": err.Error()})
+			}
+		}
 	}
 	a, err := alerter.New(opts...)
 	if err != nil {

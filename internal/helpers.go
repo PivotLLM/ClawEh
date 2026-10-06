@@ -76,15 +76,23 @@ func GetConfigPath() string {
 }
 
 func LoadConfig() (*config.Config, error) {
+	path := SeedConfig()
+	return config.LoadConfig(path)
+}
+
+// SeedConfig writes a default config.json when none exists yet and returns
+// its path. Best-effort: a failure is logged, and loading the path reports the
+// real problem.
+func SeedConfig() string {
 	path := GetConfigPath()
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr == nil {
 			defaultCfg := config.DefaultConfig()
-			// Best-effort; keeps default_config marker. LoadConfig below reports the real failure.
+			// Keeps the default_config marker.
 			if seedErr := config.SeedDefaultConfig(path, defaultCfg); seedErr != nil {
 				logger.WarnCF("config", "failed to seed default config", map[string]any{"path": path, "error": seedErr.Error()})
 			}
 		}
 	}
-	return config.LoadConfig(path)
+	return path
 }

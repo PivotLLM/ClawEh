@@ -323,7 +323,9 @@ observe does not need an entry.
   it waits and an asked turn needs none, so asks cannot deadlock on slots; an
   ask that would close a wait cycle is refused, and an ask nobody waits for
   any more is not answered. Background work an asked turn starts reports to
-  that agent's own main conversation and is not sent to any chat. Whispers not yet delivered are lost on restart. See
+  that agent's own main conversation and is not sent to any chat. Whispers not yet delivered are lost on restart. A
+  whisper tells the recipient how to answer privately only when it can: it
+  has `agent_message` and the sender is in its `subagents.allow_agents`. See
   `docs/agent-messaging.md`.
 - **`/ask` and `/whisper` commands.** From any chat, `/ask Bob <text>` asks
   Bob and posts his reply to the chat as "Bob: <reply>" (waiting up to his
@@ -334,7 +336,8 @@ observe does not need an entry.
   its `agent_mentions`. Otherwise the answer is "You don't have permission to
   /ask Bob"; an unknown name gets "There is no agent named Bob.". Bob is told
   the sender is a person and how they wrote ("Alice (a person, via /ask on
-  telegram)"), so a person cannot pass for an agent of the same name. Both
+  telegram)"; from the WebUI chat, "the WebUI user (a person, via /ask on
+  webui)"), so a person cannot pass for an agent of the same name. Both
   commands appear in Telegram's command menu.
 - **Forums: an agent can run a structured discussion among other agents.**
   A new per-agent switch, `forum` (WebUI Agents page: "Allow forum", off by
@@ -351,7 +354,11 @@ observe does not need an entry.
   kept under `<workspace>/forums/<id>/`, with a live `transcript.md`; temporary
   participants are deleted when the forum ends, and the launching agent is told
   "Forum <name> finished: <status>" (posted to its default chat if it launched
-  the forum from a chat). Each participant uses its own tools (a clone its
+  the forum from a chat). `forum_results` returns each final output's
+  author, layer, round, size and file, with its text inline up to 4,000
+  characters (longer text is cut and names the file holding all of it), and
+  the transcript's path. The agent's file tools can read its `forums/` folder
+  but not write to it. Each participant uses its own tools (a clone its
   source's). Forums survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A forum that stops on an error raises
@@ -373,7 +380,9 @@ observe does not need an entry.
   forum turn) is posted, with its sender header, to that chat, and the
   person's next text message there is the answer; after the model's
   `request_timeout`, or once the asker stops waiting if that is sooner, the
-  asker is told the person did not reply. A question whose asker gives up
+  asker is told the person did not reply. A question that cannot be posted
+  to the chat (the channel fails to deliver it) ends at once with "Couldn't
+  reach Bob's chat.". A question whose asker gives up
   early is withdrawn in the person's chat ("Alice no longer needs an answer
   to that request."), and an answer that comes too late is told so, so no
   answer is ever dropped without a word. If the person sends `/cancel`, the
@@ -646,6 +655,14 @@ observe does not need an entry.
   `last_error_at` in `GET /api/mcp/status`).
 
 ### Changed
+
+- **Expected refusals are logged as warnings, not errors.** A call refused by
+  configuration (an `agent_message` target outside `subagents.allow_agents`,
+  a message over the 8,000-character limit, a forum tool called inside a
+  forum turn or at the maximum sub-agent depth, a `/ask` or `/whisper` the
+  sender may not send) is logged at WARN as "Tool call refused" (or "Agent
+  message refused"). Genuine tool failures stay at ERROR, so `error.log`
+  holds only faults.
 
 - **A sub-agent (`agent_spawn`, Maestro dispatch) now runs as a temporary
   clone of its agent** instead of in a sub-agent session of the agent. What it
@@ -1038,6 +1055,16 @@ observe does not need an entry.
   conversation, so the flag no longer selected anything.
 
 ### Fixed
+
+- **Each config warning is logged once at startup.** The configuration was
+  read twice when the service started, so every "unknown config key" (and
+  other load-time) warning appeared twice in the log.
+- **New conversation archives and the alerts log are private from the
+  start.** An agent's new `sessions/*.archive.db` (with its `-wal` and `-shm`
+  files) and `logs/alerts.log` were created readable by other users (0644) and
+  tightened to 0600 only at the next start, so Check Up flagged them in
+  between. They are now created 0600, and a `sessions/` folder ClawEh creates
+  is 0700.
 
 - **Saving on the Agents page no longer erases agent settings it does not
   show.** Any change on that page (a tool, a model, a toggle, adding or

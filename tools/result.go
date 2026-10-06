@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -213,4 +214,24 @@ func (tr *ToolResult) MarshalJSON() ([]byte, error) {
 func (tr *ToolResult) WithError(err error) *ToolResult {
 	tr.Err = err
 	return tr
+}
+
+// refusalError marks a tool error as an expected refusal: a configured
+// permission or limit said no, nothing failed. The registry logs such a
+// result at WARN instead of ERROR.
+type refusalError struct{ err error }
+
+func (e refusalError) Error() string { return e.err.Error() }
+func (e refusalError) Unwrap() error { return e.err }
+func (refusalError) Refusal() bool   { return true }
+
+// Refusal marks err as an expected refusal (see IsRefusal).
+func Refusal(err error) error { return refusalError{err: err} }
+
+// IsRefusal reports whether err, or an error it wraps, is an expected
+// refusal: one created by Refusal, or any error with a Refusal() bool method
+// that returns true (so packages that do not import tools can mark theirs).
+func IsRefusal(err error) bool {
+	var r interface{ Refusal() bool }
+	return errors.As(err, &r) && r.Refusal()
 }

@@ -49,6 +49,18 @@ type humanNotAskedError struct{ label string }
 
 func (e humanNotAskedError) Error() string { return e.label + " only answers questions from agents." }
 
+// errChatUnreachable ends a request that could not be posted to the person's
+// chat (the channel gave up on it): the person never saw it, so the asker is
+// told at once rather than after the timeout.
+var errChatUnreachable = errors.New("the request could not be posted to the person's chat")
+
+// humanUnreachableError is a request that never reached the person's chat.
+// Its text is for the sender.
+type humanUnreachableError struct{ label string }
+
+func (e humanUnreachableError) Error() string { return "Couldn't reach " + e.label + "'s chat." }
+func (e humanUnreachableError) Unwrap() error { return errChatUnreachable }
+
 // humanCancelledError is a request the person cancelled. Its text is for the
 // sender.
 type humanCancelledError struct{ label string }
@@ -190,7 +202,8 @@ func sameChat(msg bus.InboundMessage, channel, chatID string) bool {
 //
 // It returns context.DeadlineExceeded when timeout passes, errAskerStopped
 // when the asker's deadline passes or it stops waiting, ctx's error when ctx
-// ends first, and errHumanCancelled on /cancel.
+// ends first, errHumanCancelled on /cancel, and errChatUnreachable as soon as
+// the channel reports that the request could not be posted.
 func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, request string, timeout time.Duration, ask *askWait) (string, error) {
 	if slot := turnSlotFrom(ctx); slot != nil {
 		slot.lend()
@@ -227,12 +240,24 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	// person has no tools, so no hint on answering.
 	if ws := al.whispers.take(agentID); len(ws) > 0 {
 		logger.InfoCF("agent", "Delivering whispers", map[string]any{"agent_id": agentID, "count": len(ws)})
-		request = whisperBlock(ws, false) + "\n\n" + request
+		request = whisperBlock(ws, nil) + "\n\n" + request
 	}
 	req := &humanRequest{channel: channel, chatID: chatID, answer: make(chan humanAnswer, 1)}
 	al.humans.set(agentID, req)
 
-	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: request}); err != nil {
+	// The channel reports whether the request reached the chat; a failure
+	// ends the wait at once.
+	undelivered := make(chan error, 1)
+	onDelivery := func(err error) {
+		if err == nil {
+			return
+		}
+		select {
+		case undelivered <- err:
+		default:
+		}
+	}
+	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: request, OnDelivery: onDelivery}); err != nil {
 		al.humans.clear(agentID, req)
 		return "", fmt.Errorf("post the request to %s:%s: %w", channel, chatID, err)
 	}
@@ -249,6 +274,16 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	select {
 	case a := <-req.answer:
 		return answerResult(a)
+	case err := <-undelivered:
+		al.humans.clear(agentID, req)
+		select {
+		case a := <-req.answer: // answered after all (the failure was partial)
+			return answerResult(a)
+		default:
+		}
+		logger.WarnCF("agent", "Request to a person could not be posted to their chat",
+			turnFields(ctx, map[string]any{"agent_id": agentID, "channel": channel, "chat_id": chatID, "error": err.Error()}))
+		return "", fmt.Errorf("%w: %s:%s: %w", errChatUnreachable, channel, chatID, err)
 	case <-waitCtx.Done():
 	case <-gone:
 		// An asker that stopped at its deadline is the request timing out,
@@ -372,6 +407,9 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 		[]providers.Message{{Role: "user", Content: opts.UserMessage}}, nil, agent.HumanModel, nil)
 	if errors.Is(err, errHumanCancelled) {
 		return "", humanCancelledError{label: agentLabelForUser(agent)}
+	}
+	if errors.Is(err, errChatUnreachable) {
+		return "", humanUnreachableError{label: agentLabelForUser(agent)}
 	}
 	if err != nil {
 		return "", err

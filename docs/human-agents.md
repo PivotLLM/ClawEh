@@ -48,6 +48,9 @@ and their next message there is the answer.
   the question is posted), or before the asker stops waiting if that is
   sooner, the asker is told "Bob did not reply within N seconds.". A late
   answer is told "That request has already timed out."
+- If the question cannot be posted to the chat (the channel fails to deliver
+  it), the asker is told at once "Couldn't reach Bob's chat." and the person
+  is not waited for.
 - If the asker gives up first (its turn is cancelled, or claw shuts down),
   the question is withdrawn with "Alice no longer needs an answer to that
   request.", and a later answer is told "That request was withdrawn." An

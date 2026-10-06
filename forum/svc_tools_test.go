@@ -322,15 +322,11 @@ func TestSvcToolLifecycle(t *testing.T) {
 	}
 	st.e.running(id)
 
-	var res struct {
-		Directory string `json:"directory"`
-		ForumID   string `json:"forum_id"`
-		Complete  bool   `json:"complete"`
-	}
+	var res ResultsView
 	if err := json.Unmarshal([]byte(st.ok("results", args)), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.Directory != filepath.Join(st.e.scope.BaseDirectory, id) || res.ForumID != id || res.Complete {
+	if res.Transcript != "forums/"+id+"/transcript.md" || res.ForumID != id || res.Complete {
 		t.Errorf("results = %+v", res)
 	}
 
@@ -457,8 +453,14 @@ func TestSvcToolsRefusedAtMaximumDepth(t *testing.T) {
 	host := &svcDepthHost{svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}}
 	for _, d := range Tools(e.svc, host) {
 		res, err := d.Handler(&toolspec.ToolCall{AgentID: "alice", Args: map[string]any{"id": uuid.NewString()}, Ctx: t.Context()})
-		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum tools are not available at the maximum sub-agent depth." || !errors.Is(res.Err, ErrForumDepth) {
+		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum tools are not available at the maximum sub-agent depth." || !errors.Is(res.Err, ErrForumDepth) || !isRefusal(res.Err) {
 			t.Errorf("%s at the maximum depth = %+v, %v", d.Name, res, err)
 		}
 	}
+}
+
+// isRefusal mirrors the host's tools.IsRefusal (forum does not import tools).
+func isRefusal(err error) bool {
+	var r interface{ Refusal() bool }
+	return errors.As(err, &r) && r.Refusal()
 }

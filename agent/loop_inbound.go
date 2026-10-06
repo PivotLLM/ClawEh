@@ -421,6 +421,9 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		return
 	case errors.Is(err, errHumanCancelled):
 		response, outcome = err.Error(), bus.OutcomeCancelled
+	case errors.As(err, new(humanUnreachableError)):
+		// The request never reached the person's chat (logged in askHuman).
+		response, outcome = err.Error(), bus.OutcomeError
 	case err != nil && errors.Is(context.Cause(turnCtx), errCancelledByUser):
 		response = "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed."
 		outcome = bus.OutcomeCancelled

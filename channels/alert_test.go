@@ -5,6 +5,7 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -42,7 +43,9 @@ func TestSendWithRetry_AlertsOnGiveUp(t *testing.T) {
 		ch:      &mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error { return nil }},
 		limiter: rate.NewLimiter(rate.Inf, 1),
 	}
-	m.sendWithRetry(context.Background(), "test", ok, msg)
+	if err := m.sendWithRetry(context.Background(), "test", ok, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 	if len(rec.alerts) != 0 {
 		t.Fatalf("delivered message must not alert, got %+v", rec.alerts)
 	}
@@ -53,7 +56,9 @@ func TestSendWithRetry_AlertsOnGiveUp(t *testing.T) {
 		}},
 		limiter: rate.NewLimiter(rate.Inf, 1),
 	}
-	m.sendWithRetry(context.Background(), "test", bad, msg)
+	if err := m.sendWithRetry(context.Background(), "test", bad, msg); !errors.Is(err, ErrSendFailed) {
+		t.Fatalf("sendWithRetry = %v, want ErrSendFailed", err)
+	}
 	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "test" ||
 		rec.alerts[0].Title != "Channel send failed" {
 		t.Fatalf("dropped message must alert low once for the channel, got %+v", rec.alerts)

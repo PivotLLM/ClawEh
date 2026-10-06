@@ -728,3 +728,49 @@ func TestHumanAgent_UnknownCommand(t *testing.T) {
 	}
 	al.activeRequests.Wait()
 }
+
+// A request the channel could not post to the person's chat ends the ask at
+// once with an error naming the agent, not after the timeout.
+func TestHumanAgent_UnreachableChatEndsAtOnce(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, msgBus, _ := newHumanLoop(t, 60)
+
+	start := time.Now()
+	replies := sendAsk(al, "r1", "Are you there?")
+	posted := expectPosted(t, msgBus)
+	if posted.OnDelivery == nil {
+		t.Fatal("the request must ask for its delivery to be reported")
+	}
+	posted.OnDelivery(errors.New("send failed"))
+
+	reply := expectAskReply(t, replies)
+	if reply.Text != "Couldn't reach Bob's chat." || reply.Outcome != bus.OutcomeError {
+		t.Fatalf("reply = %+v, want the unreachable error naming Bob", reply)
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Fatalf("the ask waited %s, want it to end at once", waited)
+	}
+	al.activeRequests.Wait()
+
+	// The person never saw the request, so a later message answers nothing.
+	deliver(al, fromBob("b1", "Hello?"))
+	expectInBobChat(t, msgBus, nothingWaitingReply)
+}
+
+// A successful delivery report changes nothing: the request keeps waiting
+// for the person's answer.
+func TestHumanAgent_DeliveredRequestKeepsWaiting(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, msgBus, _ := newHumanLoop(t, 60)
+
+	replies := sendAsk(al, "r1", "Are you there?")
+	posted := expectPosted(t, msgBus)
+	posted.OnDelivery(nil)
+	deliver(al, fromBob("b1", "Yes."))
+	if reply := expectAskReply(t, replies); reply.Text != "Yes." || reply.Outcome != bus.OutcomeOK {
+		t.Fatalf("reply = %+v, want Bob's answer", reply)
+	}
+	al.activeRequests.Wait()
+}

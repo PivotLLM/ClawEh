@@ -167,6 +167,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `agents/<id>/cogmem/` | claw | The agent's cognitive memory. |
 | `agents/<id>/state/` | claw | The agent's own state, such as interrupted turns and its message tokens. |
 | `agents/<id>/tmp/`, `tasks/` | claw | Scratch space and background task records for the agent. |
+| `agents/<id>/forums/` | claw | The agent's forums, which it can read but not change. |
 | `common/` | You and the agents | A shared folder agents with access can exchange files through (`agents.common_dir` moves it). |
 | `skills/` | You | Shared skills every agent can use. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |

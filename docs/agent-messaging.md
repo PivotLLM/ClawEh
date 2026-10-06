@@ -102,7 +102,9 @@ job, a sub-agent result), as:
 [Private whisper from Alice — no reply expected. To answer privately, use agent_message with wait_seconds 0.] <text>
 ```
 
-The last sentence is shown only when Bob has the `agent_message` tool. Each
+The last sentence is shown only when Bob can do it: he has the
+`agent_message` tool and Alice is in his `subagents.allow_agents`. A person's
+whisper never has it. Each
 whisper is delivered once. Whispers are kept in memory: any not yet delivered
 are lost when ClawEh restarts.
 
@@ -132,6 +134,7 @@ Bob sees the person marked as a person, with the command and the channel, so
 they cannot be taken for an agent of the same name:
 `[Message from Alice (a person, via /ask on telegram) — Alice is waiting for your reply]`
 and `[Private whisper from Alice (a person, via /whisper on telegram) — …]`.
+From the WebUI chat, which has no user name, the person is "the WebUI user".
 A `/ask` still waiting when ClawEh stops is abandoned without a reply.
 
 ## For code: the `Messenger` interface

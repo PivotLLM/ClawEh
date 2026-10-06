@@ -135,6 +135,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			if agent == nil || agent.Sessions == nil || opts == nil {
 				return 0, 0, 0
 			}
+			ensurePrivateArchive(agent.StateDir, opts.SessionKey)
 			history := agent.Sessions.GetHistory(opts.SessionKey)
 			summary := agent.Sessions.GetSummary(opts.SessionKey)
 			return len(history), al.estimateTokens(history), len(summary)
@@ -354,6 +355,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			if agent == nil || agent.Sessions == nil || opts == nil {
 				return errors.New("session not available")
 			}
+			ensurePrivateArchive(agent.StateDir, opts.SessionKey)
 			history := agent.Sessions.GetHistory(opts.SessionKey)
 			lastUserMsg := ""
 			for _, h := range slices.Backward(history) {

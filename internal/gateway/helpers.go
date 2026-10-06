@@ -89,6 +89,13 @@ func (p *phaseTimer) done(what string) {
 	p.start = time.Now()
 }
 
+// openConfigStore seeds a default config.json on first run and opens the
+// store on it. The file is read once, so each load-time warning (an unknown
+// key, a legacy setting) is logged once per start.
+func openConfigStore() (*config.Store, error) {
+	return config.NewStore(internal.SeedConfig())
+}
+
 // runtimeConfig returns the private copy of the store's configuration the
 // gateway runs on. References to models that do not exist are first removed
 // from config.json through the store (pruneStoredModelReferences); if that
@@ -245,13 +252,9 @@ func gatewayCmd(debug bool) error {
 	if permErr := enforceDataDirPerms(baseDir, configPath); permErr != nil {
 		return permErr
 	}
-	// internal.LoadConfig seeds a default config.json on first run; the store
-	// is the live configuration from here on, shared with the WebUI API so a
-	// save through it and the gateway's own reads never disagree.
-	if _, loadErr := internal.LoadConfig(); loadErr != nil {
-		return fmt.Errorf("error loading config: %w", loadErr)
-	}
-	store, err := config.NewStore(configPath)
+	// The store is the live configuration from here on, shared with the WebUI
+	// API so a save through it and the gateway's own reads never disagree.
+	store, err := openConfigStore()
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
 	}

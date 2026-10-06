@@ -277,12 +277,13 @@ func askHeader(from sender) string {
 }
 
 // whisperBlock renders held whispers for the start of the next message. The
-// hint on answering is given only to an agent that has the tool.
-func whisperBlock(ws []whisper, canAnswer bool) string {
+// hint on answering is given only for a whisper canAnswer (nil: none) says
+// the recipient can answer.
+func whisperBlock(ws []whisper, canAnswer func(w whisper) bool) string {
 	lines := make([]string, 0, len(ws))
 	for _, w := range ws {
 		head := "[Private whisper from " + sender{name: w.from, note: w.note}.label() + " — no reply expected."
-		if canAnswer {
+		if canAnswer != nil && canAnswer(w) {
 			head += " To answer privately, use " + agentMessageToolName + " with wait_seconds 0."
 		}
 		lines = append(lines, head+"] "+w.text)
@@ -297,10 +298,26 @@ func (al *AgentLoop) prependWhispers(agent *AgentInstance, message string) strin
 	if len(ws) == 0 {
 		return message
 	}
-	_, canAnswer := agent.Tools.Get(agentMessageToolName)
 	logger.InfoCF("agent", "Delivering whispers",
 		map[string]any{"agent_id": agent.ID, "count": len(ws)})
-	return whisperBlock(ws, canAnswer) + "\n\n" + message
+	return whisperBlock(ws, al.canAnswerWhisper(agent)) + "\n\n" + message
+}
+
+// canAnswerWhisper returns whether agent can answer a whisper privately: it
+// has agent_message and the whisper's sender is an agent in its
+// subagents.allow_agents. A person's whisper cannot be answered that way.
+func (al *AgentLoop) canAnswerWhisper(agent *AgentInstance) func(w whisper) bool {
+	if _, ok := agent.Tools.Get(agentMessageToolName); !ok {
+		return nil
+	}
+	cfg := al.GetConfig()
+	return func(w whisper) bool {
+		if w.note != "" || cfg == nil {
+			return false
+		}
+		from := cfg.FindAgent(w.from)
+		return from != nil && newAgentServices(al, agent.ID).CanTarget(from.ID)
+	}
 }
 
 // instanceName is the agent's name, or its id when it has none.
@@ -530,9 +547,19 @@ func (al *AgentLoop) whisper(_ context.Context, from sender, agentID, message st
 	return nil
 }
 
+// webUIChannel is the WebUI chat's channel name. Its sender has no name of
+// its own (only an internal id), so commandSender names it webUISender.
+const (
+	webUIChannel = "webui"
+	webUISender  = "the WebUI user"
+)
+
 // commandSender names the sender of a chat message for the agent it asks or
 // whispers to.
 func commandSender(msg bus.InboundMessage) string {
+	if msg.Channel == webUIChannel {
+		return webUISender
+	}
 	if label := senderLabel(msg.Sender); label != "" {
 		return label
 	}
@@ -578,7 +605,7 @@ func (al *AgentLoop) commandTarget(command string, msg bus.InboundMessage, ref s
 		return nil, fmt.Sprintf("There is no agent named %s.", ref)
 	}
 	if !al.senderMayReach(msg, target.ID) {
-		logger.InfoCF("agent", "Agent message refused: the sender may not talk to the agent",
+		logger.WarnCF("agent", "Agent message refused: the sender may not talk to the agent",
 			map[string]any{"command": command, "agent_id": target.ID, "channel": msg.Channel, "sender_id": msg.SenderID})
 		return nil, fmt.Sprintf("You don't have permission to /%s %s", command, instanceName(target))
 	}

@@ -70,9 +70,10 @@ type ToolHost interface {
 //	                                   reference the agent may read)
 //	status(id?)                     -> one Summary as JSON, or a JSON array of every forum's Summary
 //	pause(id), resume(id), cancel(id), delete(id) -> a one-line confirmation
-//	results(id)                     -> the Result manifest as JSON, with "directory",
-//	                                   the forum's absolute directory that its
-//	                                   file names are relative to
+//	results(id)                     -> a ResultsView as JSON: each result output's
+//	                                   author, layer, round, size and file, and its
+//	                                   text up to MaxResultInlineChars; paths are
+//	                                   relative to the agent's workspace
 func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 	t := &toolSuite{svc: svc, host: host}
 	id := toolspec.Parameter{Name: "id", Type: "string", Required: true, Description: "Forum ID (UUID) returned by launch"}
@@ -90,7 +91,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "pause", Description: "Stop new dispatch and pause the forum once active turns finish", Handler: t.pause, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "resume", Description: "Resume a paused forum", Handler: t.resume, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "cancel", Description: "Stop the forum, keep its partial work and finalize it as cancelled", Handler: t.cancel, Category: "forum", Parameters: []toolspec.Parameter{id}},
-		{Name: "results", Description: "Result files and completeness of a forum", Handler: t.results, Category: "forum", Parameters: []toolspec.Parameter{id}},
+		{Name: "results", Description: "Results of a forum: each final output's author, layer, round, size, file and text (long text is cut; the file has it all), and the transcript's path", Handler: t.results, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "delete", Description: "Delete a paused or finished forum's directory", Handler: t.delete, Category: "forum", Parameters: []toolspec.Parameter{id}},
 	}
 }
@@ -204,13 +205,6 @@ func (t *toolSuite) control(call *toolspec.ToolCall, tool string, op func(*Servi
 	return &toolspec.Result{ForLLM: fmt.Sprintf(done, id)}, nil
 }
 
-// resultsView is what the results tool returns: the manifest and the
-// directory its file names are relative to.
-type resultsView struct {
-	Directory string `json:"directory"`
-	*Result
-}
-
 func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	scope, err := t.host.Scope(call)
 	if err != nil {
@@ -224,7 +218,14 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if err != nil {
 		return t.fail(err, id, "results")
 	}
-	return jsonResult(resultsView{Directory: filepath.Join(scope.BaseDirectory, id), Result: res})
+	store, err := t.svc.open(scope, id)
+	if err != nil {
+		return t.fail(err, id, "results")
+	}
+	// Paths are relative to the agent's workspace, whose forums/ folder holds
+	// the base directory.
+	prefix := filepath.Join(filepath.Base(scope.BaseDirectory), id)
+	return jsonResult(newResultsView(res, prefix, store.ReadFile))
 }
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
@@ -352,13 +353,20 @@ func jsonResult(v any) (*toolspec.Result, error) {
 // is returned as the error, for the host to report.
 func scopeFailure(err error) (*toolspec.Result, error) {
 	if errors.Is(err, ErrForumTurn) {
-		return &toolspec.Result{ForLLM: "Forum tools are not available inside a forum turn.", IsError: true, Err: err}, nil
+		return &toolspec.Result{ForLLM: "Forum tools are not available inside a forum turn.", IsError: true, Err: refused{err}}, nil
 	}
 	if errors.Is(err, ErrForumDepth) {
-		return &toolspec.Result{ForLLM: "Forum tools are not available at the maximum sub-agent depth.", IsError: true, Err: err}, nil
+		return &toolspec.Result{ForLLM: "Forum tools are not available at the maximum sub-agent depth.", IsError: true, Err: refused{err}}, nil
 	}
 	return nil, err
 }
+
+// refused marks a scope refusal as expected (the host's tools.IsRefusal
+// recognises the Refusal method), so it is logged as a warning, not an error.
+type refused struct{ error }
+
+func (r refused) Unwrap() error { return r.error }
+func (refused) Refusal() bool   { return true }
 
 // toolVerbs is the past participle of each tool's operation, for the
 // internal-failure message.
