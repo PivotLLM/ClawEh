@@ -238,15 +238,16 @@ type Host struct {
 	Notifier  Notifier
 	Logger    Logger
 	Schemas   SchemaValidator
-	// OnStuck, when set, is called once per forum and process when a
-	// forum stops on an error it does not recover from by itself (a store
-	// write that fails during a run, a forum Recover cannot reopen): the
-	// forum keeps its status on disk with no live controller and continues
-	// only with forum_resume or at the next start. err is the cause, already
+	// OnStuck, when set, is called once per run and process when a
+	// forum's run stops on an error it does not recover from by itself (a
+	// store write that fails during a run, a forum Recover cannot reopen):
+	// the run keeps its status on disk with no live controller and continues
+	// only with forum_resume or at the next start. run is the run number (0
+	// when it could not be read). err is the cause, already
 	// logged at Error; origin is the launcher, so the host can tell it and
 	// raise an operator alert. A corrupt forum is not stuck: it ends failed
 	// (EndCorrupt) and the launcher gets the normal completion notice. It
 	// is called on the run's goroutine with no lock held and must not
 	// block.
-	OnStuck func(forumID string, origin Origin, err error)
+	OnStuck func(forumID string, run int, origin Origin, err error)
 }

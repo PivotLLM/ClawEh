@@ -342,7 +342,7 @@ observe does not need an entry.
 - **Forums: an agent can run a structured discussion among other agents.**
   A new per-agent switch, `forum` (WebUI Agents page: "Allow forum", off by
   default, so no existing agent gains anything), gives the agent fifteen
-  tools: `forum_readme`, `forum_models`, `forum_config_new`,
+  tools: `forum_readme`, `forum_models`, `forum_new`,
   `forum_config_template`, `forum_config_import`, `forum_config_update`,
   `forum_config_export`, `forum_validate`, `forum_launch`, `forum_status`,
   `forum_pause`, `forum_resume`, `forum_cancel`, `forum_results` and
@@ -350,14 +350,24 @@ observe does not need an entry.
   brief, sources, and participants that are existing agents, clones of agents,
   or fresh temporary agents on one of the launching agent's models, taking
   turns in ordered layers with optional moderation and JSON Schema checks.
-  The agent sets it up step by step as a draft: `forum_config_new` creates
-  one, `forum_config_template` or `forum_config_import` fills it,
-  `forum_config_update` changes it with a JSON merge patch (RFC 7386),
-  `forum_validate` checks it and `forum_launch` runs it under the same ID.
-  Drafts survive a restart, show as `draft` in `forum_status` and are removed
-  by `forum_delete`; only a draft can be changed. `forum_config_export`
-  returns any forum's configuration, so a finished forum (a book chapter, say)
-  is reused by importing it into a new draft and changing only what differs.
+  The agent sets it up step by step: `forum_new` creates a forum (status
+  `new`), `forum_config_template` or `forum_config_import` fills its
+  configuration, `forum_config_update` changes it with a JSON merge patch
+  (RFC 7386), `forum_validate` checks it and `forum_launch` starts a run of
+  it. The configuration can be changed whenever the forum is not running
+  ("Forum <id> is running; pause or cancel it first." otherwise), and every
+  launch starts a new run from the beginning, numbered 1, 2, 3, … in its own
+  folder; earlier runs are kept. `forum_status` and `forum_results` show the
+  latest run, or an earlier one with `run`; status also gives the number of
+  runs and whether the configuration changed since the latest. `forum_pause`,
+  `forum_resume` and `forum_cancel` act on the latest run; a paused run whose
+  configuration has changed is not resumed ("The config changed; launch to
+  start a new run."), and launching then cancels it without a notice.
+  `forum_delete` removes the forum with all its runs. A book is reviewed
+  chapter by chapter by changing the chapter source and launching again;
+  `forum_config_export` and `forum_config_import` copy a configuration to
+  another forum. The optional `name` labels the forum in status, results,
+  notices and the transcript heading; without it the ID is used.
   A source `file` is read exactly as the agent's file tools read that path
   (workspace, or a mount such as `maestro/`).
   `forum_readme` returns a one-page guide for the agent and the built-in
@@ -372,10 +382,11 @@ observe does not need an entry.
   participants are limited to the launcher's `subagents.allow_agents`. Each
   turn is an ask from the launching agent run at the maximum sub-agent depth,
   so a participant cannot spawn, ask further or use forum tools. Everything is
-  kept under `<workspace>/forums/<id>/`, with a live `transcript.md`; temporary
-  participants are deleted when the forum ends, and the launching agent is told
-  "Forum <name> finished: <status>" (posted to its default chat if it launched
-  the forum from a chat). `forum_results` returns each final output's
+  kept under `<workspace>/forums/<id>/` (`forum.json`, the configuration, and
+  `runs/<n>/` per run, with a live `transcript.md`); temporary participants
+  are deleted when the run ends, and the launching agent is told
+  "Forum <name> run <n> finished: <status>" (posted to its default chat if it
+  launched the forum from a chat). `forum_results` returns each final output's
   author, layer, round, size and file, with its text inline up to 4,000
   characters (`forum.MaxResultInlineChars`; longer text is cut and names the
   file holding all of it) and 16,000 characters for all outputs together
@@ -384,10 +395,10 @@ observe does not need an entry.
   agent's file tools can read its `forums/` folder but not write to it. A forum
   tool called with an argument it does not take is refused, naming it
   ("Unknown argument forum_id; use id."). Each participant uses its own tools (a clone its
-  source's). Forums survive a restart and resume where
+  source's). Runs survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
-  still run, resume and are cleaned up. A forum that stops on an error raises
-  the "Forum stopped" alert. Check Up shows a Forum row per agent and lists
+  still run, resume and are cleaned up. A run that stops on an error raises
+  the "Forum run stopped" alert. Check Up shows a Forum row per agent and lists
   `forum_launch` among its sensitive tools when the switch is on. See
   `docs/forum.md`.
 - **Messages to other agents are limited to 8,000 characters.** The

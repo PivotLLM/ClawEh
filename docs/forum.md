@@ -15,7 +15,7 @@ A forum is set up by an agent, never by a person directly. Allow it per agent:
 - **Config:** `"forum": true` on the agent in `agents.list`. Off by default.
 
 The agent then has fifteen tools: `forum_readme`, `forum_models`,
-`forum_config_new`, `forum_config_template`, `forum_config_import`,
+`forum_new`, `forum_config_template`, `forum_config_import`,
 `forum_config_update`, `forum_config_export`, `forum_validate`,
 `forum_launch`, `forum_status`, `forum_pause`, `forum_resume`,
 `forum_cancel`, `forum_results` and `forum_delete`. They come as a set, like
@@ -57,8 +57,8 @@ include it, wherever the forum was launched from.
 
 ## Configuration overview
 
-One JSON object, set up in a draft (see [Setting one up](#setting-one-up)).
-Unknown fields are refused.
+One JSON object, the forum's configuration (see
+[Setting one up](#setting-one-up)). Unknown fields are refused.
 
 ```json
 {
@@ -88,6 +88,9 @@ Unknown fields are refused.
 }
 ```
 
+- `name` is optional. When set it names the forum in `forum_status`,
+  `forum_results`, the completion notice and the transcript heading;
+  otherwise the forum's ID is used.
 - `brief` goes to every participant; `instructions` only to its participant.
 - `sources` are `inline` or a `file`. A `file` is read exactly as Alice's
   file tools would read that path: relative to her workspace, or in one of
@@ -117,41 +120,50 @@ Unknown fields are refused.
 
 ## Setting one up
 
-Alice sets a forum up as a draft, step by step, and launches it when it is
-ready:
+A forum has a configuration and zero or more runs. Alice sets the
+configuration up step by step and launches it when it is ready; each launch
+is a new run:
 
 | Tool | What it does |
 |---|---|
-| `forum_config_new` | Creates a draft with an empty configuration and answers "Forum <id> created as a draft.". |
-| `forum_config_template` | `id`, `name`: the draft's configuration becomes that built-in template. |
-| `forum_config_import` | `id`, `config`: the draft's configuration becomes `config`, a JSON object (usually one `forum_config_export` returned). |
+| `forum_new` | Creates a forum with an empty configuration and answers "Forum <id> created.". Its status is `new` until its first run. |
+| `forum_config_template` | `id`, `name`: the configuration becomes that built-in template. |
+| `forum_config_import` | `id`, `config`: the configuration becomes `config`, a JSON object (usually one `forum_config_export` returned). |
 | `forum_config_update` | `id`, `changes`: applies `changes` as a JSON merge patch (RFC 7386): objects merge, `null` deletes a key, arrays such as `layers` are replaced whole. |
-| `forum_config_export` | `id`: the configuration of any of Alice's forums, draft, running or finished. |
-| `forum_validate` | `id`: checks the draft, agents and models included, without creating anything. |
-| `forum_launch` | `id`: validates the draft and runs it under the same ID. |
+| `forum_config_export` | `id`: the forum's configuration, to import into another forum. |
+| `forum_validate` | `id`: checks the configuration, agents and models included, without creating anything. |
+| `forum_launch` | `id`: validates the configuration and starts a new run of it from the beginning ("Forum <id> launched (run 2)."). |
 
-A draft need not be valid while it is being edited; only `forum_validate`
-and `forum_launch` check it. An update keeps the order of the keys already
-in the configuration and adds new ones at the end of their object; the keys
-of an imported or patched object arrive in alphabetical order. Numbers in
-`config` and `changes` pass through a floating-point value, so an integer
-above 2^53 (a large `seed`) loses precision. Only a draft can be changed: a launched forum
-answers "Forum <id> has already been launched; export its config into a new
-forum.". A draft survives a restart, shows as `draft` in `forum_status`, and
-`forum_delete` removes it. A launch that fails leaves the draft as it was.
+The configuration need not be valid while it is being edited; only
+`forum_validate` and `forum_launch` check it. An update keeps the order of
+the keys already in the configuration and adds new ones at the end of their
+object; the keys of an imported or patched object arrive in alphabetical
+order. Numbers in `config` and `changes` pass through a floating-point value,
+so an integer above 2^53 (a large `seed`) loses precision.
 
-To reuse a forum, export its configuration, import it into a new draft and
-change only what differs. A book review set up for chapter 1 runs again for
-chapter 2 with one update:
-`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`.
+The configuration can be changed whenever the forum is not running: before
+its first run, while its latest run is paused, and after it has ended. While
+a run is running, `forum_config_template`, `forum_config_import`,
+`forum_config_update` and `forum_launch` answer "Forum <id> is running;
+pause or cancel it first." (`forum_config_export` and `forum_validate` still
+work). A change takes effect at
+the next launch, never in a run already started. A forum survives a restart,
+and a launch that fails leaves it as it was.
+
+To review a book chapter by chapter, run chapter 1, then change only the
+chapter source and launch again; run 2 reviews chapter 2 and run 1 keeps its
+own files and results:
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`. To start another
+forum from this one, export its configuration and import it into a forum made
+with `forum_new`.
 
 ## Guide and templates
 
 `forum_readme` without arguments returns a one-page guide for the agent (what
-a forum is, participants, layers, the steps from a new draft to results, the
+a forum is, participants, layers, the steps from a new forum to results, the
 limits, and when a single sub-agent or `agent_message` is enough), followed
 by the built-in templates. With `template` it returns that template's
-configuration; `forum_config_template` puts one in a draft. An unknown name
+configuration; `forum_config_template` puts one in a forum. An unknown name
 is refused with the valid ones.
 Every other forum tool's description tells the agent to call it first.
 
@@ -167,36 +179,44 @@ templates are embedded in the binary (`forum/readme/`).
 
 ## Running it
 
-`forum_launch` answers "Forum <id> launched." at once; the forum runs in the
-background. `forum_status` shows its progress, `forum_pause` / `forum_resume`
-/ `forum_cancel` control it, and `forum_results` returns its results (see
-[Results](#results)). A forum tool called with an argument it does not take
-is refused, naming it ("Unknown argument forum_id; use id."). When
-it ends (completed, incomplete, failed or cancelled) Alice gets
-`[System: forum] Forum design-review finished: completed (id <id>).` in her
-conversation. If she launched it from a chat, her answer goes to her default
-chat (her default binding), or nowhere when she has none; a forum launched
-locally is never posted.
-`forum_delete` removes a draft, or a paused or finished forum.
+`forum_launch` answers "Forum <id> launched (run <n>)." at once; the run goes
+on in the background. `forum_status` shows the progress of the latest run
+(or of `run`), how many runs the forum has and whether its configuration
+changed since the latest run (`config_changed`). `forum_pause`,
+`forum_resume` and `forum_cancel` control the latest run, and
+`forum_results` returns a run's results (see [Results](#results)). A paused
+run resumes only while the configuration is unchanged; after a change
+`forum_resume` answers "The config changed; launch to start a new run.", and
+launching cancels the paused run (without a notice) before the new one
+starts. A forum tool called with an argument it does not take is refused,
+naming it ("Unknown argument forum_id; use id."). When a run ends
+(completed, incomplete, failed or cancelled) Alice gets
+`[System: forum] Forum design-review run 1 finished: completed (id <id>).` in
+her conversation. If she launched it from a chat, her answer goes to her
+default chat (her default binding), or nowhere when she has none; a forum
+launched locally is never posted. `forum_delete` removes a forum and all its
+runs, unless a run is running.
 
-A forum survives a restart: an interrupted forum resumes where it stopped, and
-a turn that was in progress is sent again (an existing agent may see that
-message twice). A forum that stops on an error raises the "Forum stopped"
-alert and continues with `forum_resume` or at the next start.
+A run survives a restart: an interrupted run resumes where it stopped, and a
+turn that was in progress is sent again (an existing agent may see that
+message twice). A launch interrupted before its run started leaves the forum
+as it was. A run that stops on an error raises the "Forum run stopped" alert
+and continues with `forum_resume` or at the next start.
 
 ## Results
 
-`forum_results` returns, for each output of the result layers, its author
-(the participant), layer, round, size in characters, the file holding it, and
-its text, plus the path of `transcript.md`. Paths are relative to Alice's
-workspace (`forums/<id>/...`), so her file tools can open them. A running or
-stopped forum returns the outputs published so far, the same way.
+`forum_results` returns, for the latest run or the one `run` names, each
+output of the result layers: its author (the participant), layer, round, size
+in characters, the file holding it, and its text, plus the path of
+`transcript.md`. Paths are relative to Alice's workspace
+(`forums/<id>/runs/<n>/...`), so her file tools can open them. A running or
+stopped run returns the outputs published so far, the same way.
 
 ### Large results
 
 Each output's text is returned in full up to 4,000 characters
 (`forum.MaxResultInlineChars`). A longer output is cut there and followed by
-`(truncated; full text in forums/<id>/...)`; the whole text stays in that
+`(truncated; full text in forums/<id>/runs/<n>/...)`; the whole text stays in that
 file. All outputs together get at most 16,000 characters inline
 (`forum.MaxResultInlineTotalChars`), in order; the ones after that are listed
 with `"inline_omitted": true`, their size and file, but no text. An output
@@ -210,23 +230,25 @@ Everything is under the launching agent's workspace:
 
 ```
 <workspace>/forums/<id>/
-  draft.json          the configuration being set up (a draft only)
-  forum.json          the configuration as launched
-  transcript.md       the public transcript, written as turns are published
-  result.json         the result, once the forum has ended
-  layers/<layer>/...  every message sent, every reply, every output
-  commits/            the run's log (what a restart replays)
+  forum.json            the configuration, as it stands now
+  runs/<n>/             run n (1, 2, 3, ...), never changed by a later run
+    forum.json          the configuration this run used
+    transcript.md       the public transcript, written as turns are published
+    result.json         the result, once the run has ended
+    layers/<layer>/...  every message sent, every reply, every output
+    commits/            the run's log (what a restart replays)
 ```
 
 Follow a running forum with:
 
 ```
-tail -f <workspace>/forums/<id>/transcript.md
+tail -f <workspace>/forums/<id>/runs/<n>/transcript.md
 ```
 
 The transcript holds published outputs and the moderator's public decisions,
 never a participant's private instructions, rejected replies or private
-messages. Nothing is deleted until `forum_delete`.
+messages. Its heading names the forum and the run. Nothing is deleted until
+`forum_delete`.
 
 With the default workspace restrictions (`restrict_to_workspace` on and a
 `workspace_write_subdir` set), Alice's file tools can read her `forums/`
@@ -240,5 +262,6 @@ write to it, and cannot read another agent's forums.
   attempts per turn and parallel turns. A layer may set its own `max_calls`.
 - Each participant's own settings (its `request_timeout`, its tool limits)
   still apply to its turns.
-- Temporary participants are kept alive while the forum is paused and deleted
-  when it ends; the registry's 24-hour idle limit is only a backstop.
+- Temporary participants are created for each run, kept alive while it is
+  paused and deleted when it ends; the registry's 24-hour idle limit is only a
+  backstop.

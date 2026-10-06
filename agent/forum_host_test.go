@@ -27,7 +27,7 @@ import (
 
 // forumToolNames are the fifteen tools an agent with the `forum` switch gets.
 var forumToolNames = []string{
-	"forum_readme", "forum_models", "forum_config_new", "forum_config_template", "forum_config_import",
+	"forum_readme", "forum_models", "forum_new", "forum_config_template", "forum_config_import",
 	"forum_config_update", "forum_config_export", "forum_validate", "forum_launch", "forum_status",
 	"forum_pause", "forum_resume", "forum_cancel", "forum_results", "forum_delete",
 }
@@ -196,7 +196,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// launchForum sets up a draft as Alice with forumLaunchConfig, launches it
+// launchForum sets up a forum as Alice with forumLaunchConfig, launches it
 // from channel and returns the forum's id.
 func launchForum(t *testing.T, al *AgentLoop, channel string) string {
 	t.Helper()
@@ -219,9 +219,9 @@ func launchForumWith(t *testing.T, al *AgentLoop, channel, launchConfig string) 
 		}
 		return res.ForLLM
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(run("forum_config_new", map[string]any{}), "Forum "), " created as a draft.")
+	id := strings.TrimSuffix(strings.TrimPrefix(run("forum_new", map[string]any{}), "Forum "), " created.")
 	run("forum_config_import", map[string]any{"id": id, "config": cfgObj})
-	if out := run("forum_launch", map[string]any{"id": id}); out != "Forum "+id+" launched." {
+	if out := run("forum_launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
 		t.Fatalf("forum_launch = %q", out)
 	}
 	return id
@@ -243,7 +243,7 @@ func waitCompleted(t *testing.T, r *forumRig, id string) *forum.Result {
 	t.Helper()
 	var res *forum.Result
 	eventually(t, "the forum to complete", func() bool {
-		got, err := r.svc.Results(context.Background(), aliceScope(t, r.al), id)
+		got, err := r.svc.Results(context.Background(), aliceScope(t, r.al), id, 0)
 		if err == nil && got.Status.Terminal() {
 			res = got
 			return true
@@ -274,7 +274,7 @@ func TestForum_EndToEnd(t *testing.T) {
 	}
 
 	alice, _ := r.al.GetRegistry().Get("alice")
-	transcript, err := os.ReadFile(filepath.Join(alice.Workspace, "forums", id, "transcript.md"))
+	transcript, err := os.ReadFile(filepath.Join(alice.Workspace, "forums", id, "runs", "1", "transcript.md"))
 	if err != nil {
 		t.Fatalf("transcript: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestForum_EndToEnd(t *testing.T) {
 
 	eventually(t, "the temporary participant's deletion", func() bool { return len(r.al.GetRegistry().ListTemp()) == 0 })
 	eventually(t, "Alice's completion notice", func() bool {
-		return model.sawUser("[System: forum] Forum review finished: completed (id " + id + ").")
+		return model.sawUser("[System: forum] Forum review run 1 finished: completed (id " + id + ").")
 	})
 }
 
@@ -551,7 +551,7 @@ func TestForumHost_AskChecksTheLauncherNow(t *testing.T) {
 // launch from a chat has the answer posted to the launcher's default chat when
 // it has one, and nowhere otherwise; a local launch is never posted.
 func TestForumHost_NoticeRouting(t *testing.T) {
-	result := &forum.Result{ForumID: "f1", Name: "review", Status: forum.StatusCompleted}
+	result := &forum.Result{ForumID: "f1", Run: 1, Name: "review", Status: forum.StatusCompleted}
 	for _, tc := range []struct {
 		name     string
 		binding  bool
@@ -577,7 +577,7 @@ func TestForumHost_NoticeRouting(t *testing.T) {
 				t.Fatalf("ForumFinished: %v", err)
 			}
 			eventually(t, "the notice in Alice's conversation", func() bool {
-				return model.sawUser("[System: forum] Forum review finished: completed (id f1).")
+				return model.sawUser("[System: forum] Forum review run 1 finished: completed (id f1).")
 			})
 			if tc.wantChat == "" {
 				noOutbound(t, r.bus)

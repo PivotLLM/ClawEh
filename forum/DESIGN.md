@@ -35,7 +35,7 @@ validated) fails preflight with `ErrSchemasUnavailable` naming them.
 | (b) store and replay | `store.go`, `replay.go` | §8, rev 3 §8 |
 | (c) router | `router.go`, `jsonpointer.go` | rev 3 §4 |
 | (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go` | §5, §6, §2.3, §8 restart |
-| (e) service and tools | `service.go`, `draft.go`, `mergepatch.go`, `tools.go` | §9, §2.2 |
+| (e) service and tools | `service.go`, `forums.go`, `mergepatch.go`, `tools.go` | §9, §2.2 |
 
 - `records.go` is the wire format between seams (every on-disk type, plus
   `State`, `Result`, `Summary`): (b) writes it, (d) fills it and (e)
@@ -48,19 +48,21 @@ validated) fails preflight with `ErrSchemasUnavailable` naming them.
 ## 3. Data flow
 
 ```
-tool calls ─► (e) Service.NewDraft      CreateStore, WriteDraft       (b)
-               SetDraftConfig / UpdateDraft (merge patch): WriteDraft
+tool calls ─► (e) Service.NewForum       CreateStore, WriteForumConfig  (b)
+               SetConfig / UpdateConfig (merge patch): WriteForumConfig
+               (refused while the latest run is running)
 tool call ──► (e) Service.Launch(id)
-                 │  IsDraft → Lock; ReadDraft                    (b)
-                 │  Decode → ValidateStatic → Preflight          (a)
-                 │  WriteConfig, WriteSource…                    (b)
+                 │  Lock; undoUnstarted; latest run not running   (b)
+                 │  ReadForumConfig                               (b)
+                 │  Decode → ValidateStatic → Preflight           (a)
+                 │  CreateRun(n+1); WriteConfig, WriteSource…     (b)
                  │  Agents.CreateClone / CreateFresh             host
-                 │    (each ID added to .cleanup/<uuid>.agents.json)
-                 │  WriteParticipants, set .cleanup/<uuid>.notice,
+                 │    (each ID added to .cleanup/<uuid>.<n>.agents.json)
+                 │  WriteParticipants, set .cleanup/<uuid>.<n>.notice,
                  │  WriteSnapshot, AppendCommit(1, launched)
-                 │  Open (any failure: revertLaunch: delete
-                 │    agents, ResetToDraft)                      (d)
-                 │  ClearDraft once the run has started
+                 │  Open (any failure: revertRun: delete agents,
+                 │    RemoveRun)                                  (d)
+                 │  supersede a paused run n (cancel, no notice)
                  ▼
             (d) Open                      ← the SAME path a restart takes
                  │  Verify, ReplayState, ReadCommits, ListAttempts (b)
@@ -108,24 +110,30 @@ What crosses each boundary:
 
 ```
 <base>/                              <launching-agent-workspace>/forums
-  .locks/<uuid>.run                  flock held by the running controller
-  .cleanup/<uuid>.agents.json        temp agents still to delete (written at launch)
-  .cleanup/<uuid>.notice             completion notice not yet delivered (written at launch)
-  .cleanup/<uuid>/                   a root staged for removal (Remove)
+  .locks/<uuid>.run                  flock held by the running controller (the forum's)
+  .cleanup/<uuid>.<n>.agents.json    run n's temp agents still to delete (written at launch)
+  .cleanup/<uuid>.<n>.notice         run n's completion notice not yet delivered
+  .cleanup/<uuid>/                   a forum directory staged for removal (Remove)
   <uuid>/
-    draft.json                       Draft (owner, configuration) until launch
-    forum.json  snapshot.json  participants.json  state.json  result.json
-    transcript.md
-    sources/<id><ext>
-    layers/<layer>/inputs.json
-    layers/<layer>/calls/<turn>/<n>/request.json | reply.json
+    forum.json                       the current configuration (indented, no HTML escaping)
+    runs/<n>/                        run n = 1, 2, 3, …; never changed by a later run
+      forum.json  snapshot.json  participants.json  state.json  result.json
+      transcript.md
+      sources/<id><ext>
+      layers/<layer>/inputs.json
+      layers/<layer>/calls/<turn>/<n>/request.json | reply.json
                                      | output<ext> | published<ext>
-    commits/00000001.json …
+      commits/00000001.json …
 ```
 
-Locks and cleanup staging live beside the roots, not inside them, so
-removing a root never removes the lock protecting it, and a `Remove` is one
-atomic rename out of `ListForums` followed by a plain delete.
+Locks and cleanup staging live beside the forum directories, not inside
+them, so removing one never removes the lock protecting it, and a `Remove`
+is one atomic rename out of `ListForums` followed by a plain delete. A
+`Store` is either the forum's handle (run 0: the configuration, the runs,
+the lock, removal) or one run (`Run`, `CreateRun`, `OpenRun`); every handle
+derived from one opening shares the forum's lock. A run directory is removed
+(`RemoveRun`) by one rename to a temporary name and a delete, so a crash
+leaves only a temporary entry the next `Lock` sweeps.
 
 ## 5. Invariants
 
@@ -153,7 +161,7 @@ atomic rename out of `ListForums` followed by a plain delete.
    unchanged if it has no reply; followed by a repair if its reply was
    rejected. Restart resets no limit (§5).
 4. **The controller always starts from disk.** `Open` is the only
-   constructor; `Launch` writes everything, then opens. There is no
+   constructor; `Launch` writes the run's files, then opens. There is no
    in-memory-only state between dispatches.
 5. **Private material never reaches `transcript.md` or a published file:**
    participant `instructions`, directed messages, rejected attempts, the
@@ -169,10 +177,13 @@ atomic rename out of `ListForums` followed by a plain delete.
    resume; `Resolve` is never called for a layer that has the file.
 7. **Snapshot over configuration.** Seed, models, layer order, result
    layers, limits, deadline, source digests and effective moderator
-   schemas come from `snapshot.json`, never recomputed from `forum.json`.
-8. **One controller per forum.** `<base>/.locks/<uuid>.run` is held from
-   `Launch`/`Resume`/`Recover` until the run pauses or ends; a second
-   process gets `ErrLocked`. The exclusive-create writes in the store
+   schemas come from the run's `snapshot.json`, never recomputed from its
+   `forum.json`, and never from the forum's current `forum.json`, which may
+   have changed since the run was launched.
+8. **One controller per forum.** At most one run of a forum is live, and
+   only its latest. `<base>/.locks/<uuid>.run` is held from
+   `Launch`/`Resume`/`Recover` until the run pauses or ends, and by every
+   configuration change; a second process gets `ErrLocked`. The exclusive-create writes in the store
    (`request.json`, `commits/<seq>.json`, outputs) fail loudly if the lock
    is ever bypassed.
 9. **Limits are checked before every dispatch** (`checkLimits`: deadline,
@@ -187,13 +198,13 @@ atomic rename out of `ListForums` followed by a plain delete.
     the service if `end` did not get to it), then the service deletes
     temporary agents, then notifies (§9 Completion) on a goroutine of its
     own, holding no lock, so a blocking `Notifier` never holds the forum.
-    The `.cleanup/<uuid>.notice` marker, written at launch and cleared
+    The `.cleanup/<uuid>.<n>.notice` marker, written at launch and cleared
     after the notice attempt, lets a restart deliver a notice a crash or
     a shutdown interrupted; any other failed notice is logged, not
     retried.
-12. **Temporary agents are created at launch and deleted at a terminal
-    state or on delete.** Each created agent is added to the
-    `.cleanup/<uuid>.agents.json` marker as soon as it exists; the marker
+12. **Temporary agents are created per run at launch and deleted at the
+    run's terminal state or on delete.** Each created agent is added to the
+    run's `.cleanup/<uuid>.<n>.agents.json` marker as soon as it exists; the marker
     is the only record of what is still to delete. `deleteTempAgents(ctx,
     store)` deletes the agents it lists (`ErrNotFound` counts as done),
     keeps the failures in it and clears it when empty, so a restart
@@ -280,8 +291,8 @@ are logged, never shown to the agent.
 8. **Cancel** cancels the in-flight ask's context; pause lets it finish.
 9. **Fenced JSON** replies are unwrapped before validation.
 10. **`keepAliveInterval` = 1 h.**
-11. **Tools:** a forum is configured as a draft (§7.21); `validate` and
-    `launch` take only the draft's `id`; `launch` has no `options`.
+11. **Tools:** a forum is a configuration and runs (§7.21); `validate` and
+    `launch` take only the forum's `id`; `launch` has no `options`.
 12. **`model`** applies to fresh and clone participants only; it is
     rejected on an `agent` participant, which always runs on its own model.
 13. **No `Whisper`** in the forum's `Messenger`; directed messages are
@@ -292,55 +303,74 @@ are logged, never shown to the agent.
 16. **`inline` for `decode: json`** is any raw JSON value
     (`json.RawMessage`); for text/markdown it is a JSON string.
 17. **`instructions`** is optional.
-18. **Restart:** `Recover` automatically resumes queued (after appending
-    the missing `CommitLaunched`) and running forums, resumes
-    pausing/cancelling ones so the controller finishes the transition,
-    leaves paused forums paused (keep-alive only), finishes the terminal
-    work of terminal ones (result.json, agents, notice) and staged
-    removals, leaves drafts alone, undoes a launch that died before its
-    snapshot (`revertLaunch`: the draft is kept) and removes a `draft.json`
-    left beside a snapshot.
+18. **Restart:** `Recover` applies to each forum's latest run what it did
+    to a forum: it resumes a queued (after appending the missing
+    `CommitLaunched`) or running run, resumes a pausing/cancelling one so
+    the controller finishes the transition, leaves a paused run paused
+    (keep-alive only) and finishes the terminal work of a terminal one
+    (result.json, agents, notice). It finishes staged removals, undoes
+    every run whose launch died before its snapshot (`revertRun`: the
+    forum is as it was before that launch), deletes the agents such an
+    undone run left, finishes an earlier run's pending markers
+    (`finishEarlier`: terminal work, or the supersede a crash cut short),
+    leaves a forum with no run alone, and removes a forum directory of an
+    earlier development layout (`snapshot.json` or `commits/` beside `forum.json`)
+    or with no `forum.json`.
 19. **Launch is all or nothing** for its caller: any failure, including
     `Open` failing after `CommitLaunched` (nothing has been dispatched),
-    deletes the agents created so far and resets the directory to the
-    draft (`ResetToDraft`). The draft is locked before anything is written.
+    deletes the agents created so far and removes the new run
+    (`revertRun`). The forum is locked before anything is written.
 20. **Control operations** (service): repeating pause, resume or cancel
     is harmless; cancellation dominates (pause and resume of a cancelling
     forum are refused, and a pending cancel must win over a pending pause
     in the controller); resume clears a pending pause (`CommitResumed`
     from pausing or paused); pause, resume and cancel take over an
-    interrupted forum. `delete` works on paused or terminal forums (and a
-    corrupt one), deleting an absent ID succeeds, and a forum whose agents
-    cannot all be deleted is kept. Operations on one ID are serialised;
-    live lookups are restricted to the caller's base directory.
-21. **Drafts.** `forum_config_new` creates `<base>/<uuid>/draft.json`
-    (`Draft`: owner, times, the configuration as raw JSON, `{}` at first);
-    a draft need not be valid until validate or launch. A forum is a draft
-    while it has `draft.json` and no `snapshot.json`; only a draft can be
-    changed (template, import, merge patch), under the control lock and the
-    store lock. `forum_config_update` is RFC 7386 (`mergePatch`: the stored
+    interrupted forum. Pause, resume and cancel act on the latest run; a
+    forum with no run refuses them. `delete` works on a forum whose latest
+    run is not running (a new, paused or ended one, and a corrupt one),
+    removes every run, deleting an absent ID succeeds, and a forum whose
+    agents cannot all be deleted is kept. Operations on one ID are
+    serialised; live lookups are restricted to the caller's base directory.
+21. **Runs.** `forum_new` creates `<base>/<uuid>/forum.json` (`{}`) and
+    an empty `runs/`; the status is `new` until the first run. The
+    configuration need not be valid until validate or launch. It can be
+    changed (template, import, merge patch) whenever the latest run is not
+    running (`busy`: not paused and not terminal; a run interrupted by a
+    restart counts as running), under the control lock and the forum's
+    lock, and is always written formatted (`formatConfig`: indented, no
+    HTML escaping, formatting a formatted document changes nothing).
+    `forum_config_update` is RFC 7386 (`mergePatch`: the stored
     configuration's member order and untouched values are kept byte for
-    byte; members the patch adds are appended). The host hands `config` and
-    `changes` over decoded, so the agent's own key order is not kept (a
-    decoded object is encoded in alphabetical order) and numbers pass
+    byte; members the patch adds are appended). The host hands `config`
+    and `changes` over decoded, so the agent's own key order is not kept
+    (a decoded object is encoded in alphabetical order) and numbers pass
     through float64 (an integer above 2^53 loses precision); a host that
     passes raw JSON (`json.RawMessage`) keeps both. Source `file` paths are
     resolved by the host exactly as the agent's file tools read them
     (`ToolHost.ResolveFile`: workspace, folders, mounts such as `maestro/`).
-    `ResetToDraft` removes `snapshot.json`, then `forum.json`, then the
-    rest, emptying the required subdirectories, so a crash at any step
-    leaves a draft the next recovery or launch finishes resetting; a draft
-    missing a subdirectory has it recreated when opened. Recovery removes a
-    folder with `forum.json` and neither a snapshot nor a draft (`discard`)
-    and one with neither file (a `NewDraft` that died; it holds the lock
-    until `draft.json` is written). Launch keeps the ID: it
-    writes `forum.json` (the draft's configuration, indented) and the rest
-    into the same directory and removes `draft.json` once the run has
-    started. A `draft.json` naming another owner is `ErrCorrupt`, like a
-    snapshot naming another launcher. Status shows `draft`; pause, resume,
-    cancel and results refuse a draft; delete removes one; export works on
-    any forum. There is no template store: configurations move between
-    forums by export and import.
+    Every launch validates the current configuration and starts run n+1
+    in `runs/<n+1>/` from the beginning, with its own copy of the
+    configuration (`forum.json`, whose digest is the snapshot's
+    `ConfigDigest`), sources, participants and temporary agents; earlier
+    runs are never changed. A run whose directory has no `snapshot.json`
+    did not start and is undone at the next launch or recovery
+    (`undoUnstarted`). A launch is refused while the latest run is
+    running; a paused latest run is superseded once the new run is written
+    and open (`supersede`: cancelled through its controller, the notice
+    marker cleared after the cancel is committed so no notice is sent, its
+    agents deleted), and a latest run whose records are damaged only has
+    its agents deleted. `config_changed` (status) compares the digest of
+    the formatted current configuration with the latest run's
+    `ConfigDigest`; resuming a paused run is refused once they differ, so a
+    run always executes the configuration it was launched with. Status and
+    results take an optional run number (default the latest); pause,
+    resume and cancel act on the latest run; delete removes the forum and
+    every run. `name` is optional: `Snapshot.Label()` (the name, or the ID)
+    labels summaries, results, the notice and the transcript heading. A
+    forum whose latest run names another launcher is `ErrCorrupt` when
+    opened in a scope (`Service.open`); a forum with no run has no owner
+    record and nothing privileged to protect. There is no template store:
+    configurations move between forums by export and import.
 
 ## 8. Still inferred (rev 3 and rev 5 do not say)
 

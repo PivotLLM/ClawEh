@@ -691,7 +691,7 @@ PY
       "time_now",
       "forum_readme",
       "forum_models",
-      "forum_config_new",
+      "forum_new",
       "forum_config_template",
       "forum_config_import",
       "forum_config_update",

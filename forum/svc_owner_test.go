@@ -23,16 +23,16 @@ func TestSvcForumOfAnotherLauncherRefused(t *testing.T) {
 	}
 	e.restart()
 	other := Scope{AgentID: "bob", BaseDirectory: e.scope.BaseDirectory}
-	if _, err := e.svc.Status(t.Context(), other, id); !errors.Is(err, ErrCorrupt) {
+	if _, err := e.svc.Status(t.Context(), other, id, 0); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("Status in bob's scope = %v, want ErrCorrupt", err)
 	}
-	if _, err := e.svc.Results(t.Context(), other, id); !errors.Is(err, ErrCorrupt) {
+	if _, err := e.svc.Results(t.Context(), other, id, 0); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("Results in bob's scope = %v, want ErrCorrupt", err)
 	}
 	if err := e.svc.Recover(t.Context(), []Scope{other}); err == nil || !strings.Contains(err.Error(), "launcher") {
 		t.Errorf("Recover in bob's scope = %v, want a refusal naming the launcher", err)
 	}
-	if _, err := e.svc.Status(t.Context(), e.scope, id); err != nil {
+	if _, err := e.svc.Status(t.Context(), e.scope, id, 0); err != nil {
 		t.Errorf("Status in the launcher's scope: %v", err)
 	}
 }

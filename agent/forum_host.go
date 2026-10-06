@@ -361,7 +361,7 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 		Channel:    "system",
 		SenderID:   forumNoticeSender,
 		ChatID:     channel + ":" + chatID,
-		Content:    fmt.Sprintf("Forum %s finished: %s (id %s).", name, result.Status, result.ForumID),
+		Content:    fmt.Sprintf("Forum %s run %d finished: %s (id %s).", name, result.Run, result.Status, result.ForumID),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,
 	}); err != nil {
@@ -370,9 +370,9 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 	return nil
 }
 
-// OnStuck is forum.Host.OnStuck: an operator alert naming the forum and its
-// launching agent. Alerts are queued, so it does not block.
-func (h *ForumHost) OnStuck(forumID string, origin forum.Origin, err error) {
+// OnStuck is forum.Host.OnStuck: an operator alert naming the forum, its
+// run and its launching agent. Alerts are queued, so it does not block.
+func (h *ForumHost) OnStuck(forumID string, run int, origin forum.Origin, err error) {
 	al := h.loop.Load()
 	if al == nil {
 		return
@@ -386,11 +386,11 @@ func (h *ForumHost) OnStuck(forumID string, origin forum.Origin, err error) {
 		details = err.Error()
 	}
 	al.Alerter().Send(alerter.Alert{
-		Title:       fmt.Sprintf("Forum %s of %s stopped", forumID, who),
-		Description: "the forum stopped on an error; it continues with forum_resume or at the next start",
+		Title:       fmt.Sprintf("Forum %s run %d of %s stopped", forumID, run, who),
+		Description: "the forum's run stopped on an error; it continues with forum_resume or at the next start",
 		Details:     details,
-		EventID:     "forum:" + forumID,
+		EventID:     fmt.Sprintf("forum:%s:%d", forumID, run),
 	})
-	logger.WarnCF("forum", "Forum stopped on an error; operator alerted",
-		map[string]any{"forum_id": forumID, "agent_id": origin.AgentID})
+	logger.WarnCF("forum", "Forum run stopped on an error; operator alerted",
+		map[string]any{"forum_id": forumID, "run": run, "agent_id": origin.AgentID})
 }

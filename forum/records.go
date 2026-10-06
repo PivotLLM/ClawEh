@@ -19,10 +19,11 @@ import (
 // Status is a forum's lifecycle state (§9).
 type Status string
 
-// Forum states. The last four are terminal. A draft has not been launched:
-// it has no controller and no state, only a configuration being edited.
+// Run states. The last four are terminal. StatusNew is a forum's status
+// before its first run: it has a configuration and no run, controller or
+// state.
 const (
-	StatusDraft      Status = "draft"
+	StatusNew        Status = "new"
 	StatusQueued     Status = "queued"
 	StatusRunning    Status = "running"
 	StatusPausing    Status = "pausing"
@@ -39,7 +40,7 @@ func (s Status) Terminal() bool {
 	switch s {
 	case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		return true
-	case StatusDraft, StatusQueued, StatusRunning, StatusPausing, StatusPaused, StatusCancelling:
+	case StatusNew, StatusQueued, StatusRunning, StatusPausing, StatusPaused, StatusCancelling:
 		return false
 	}
 	return false
@@ -71,7 +72,9 @@ const (
 // effective limits, seed, original deadline, effective moderator schemas).
 // It is written before the first dispatch and never changed.
 type Snapshot struct {
-	ForumID       string    `json:"forum_id"`
+	ForumID string `json:"forum_id"`
+	// Run is the run number (1, 2, 3, ... per forum).
+	Run           int       `json:"run"`
 	Name          string    `json:"name,omitempty"`
 	LaunchedAt    time.Time `json:"launched_at"`
 	BaseDirectory string    `json:"base_directory"`
@@ -79,7 +82,9 @@ type Snapshot struct {
 	// bounded by it and restart does not extend it (§5).
 	Deadline time.Time `json:"deadline"`
 	Origin   Origin    `json:"origin"`
-	// ConfigDigest is the hex SHA-256 of forum.json; Verify checks it.
+	// ConfigDigest is the hex SHA-256 of the run's forum.json; Verify
+	// checks it, and the forum's current forum.json differs from the run's
+	// when its digest differs.
 	ConfigDigest string `json:"config_digest"`
 	Seed         int64  `json:"seed"`
 	// Limits are the configuration's limits as accepted (within host
@@ -98,10 +103,24 @@ type Snapshot struct {
 	Sources map[string]SourceRecord `json:"sources,omitempty"`
 }
 
+// Label is how the forum is named to people: its configured name, or its
+// ID when it has none.
+func (s *Snapshot) Label() string {
+	return forumLabel(s.Name, s.ForumID)
+}
+
+// forumLabel is name, or id when name is empty.
+func forumLabel(name, id string) string {
+	if name != "" {
+		return name
+	}
+	return id
+}
+
 // SourceRecord is one materialised source (sources/<id><ext>).
 type SourceRecord struct {
 	Decode Format `json:"decode"`
-	// File is the path relative to the forum root.
+	// File is the path relative to the run's directory.
 	File string `json:"file"`
 	// Digest is the hex SHA-256 of the file's content.
 	Digest string `json:"digest"`
@@ -359,8 +378,10 @@ type LayerResult struct {
 // written only at a terminal state, before the launching agent is notified
 // (§9).
 type Result struct {
-	ForumID    string    `json:"forum_id"`
-	Name       string    `json:"name,omitempty"`
+	ForumID string `json:"forum_id"`
+	Run     int    `json:"run"`
+	// Name labels the forum: its configured name, or its ID when it has none.
+	Name       string    `json:"name"`
 	Status     Status    `json:"status"`
 	Reason     EndReason `json:"reason,omitempty"`
 	LaunchedAt time.Time `json:"launched_at"`
@@ -372,7 +393,8 @@ type Result struct {
 	// Omissions names what the result lacks: result layers that did not
 	// end, turns without a committed output.
 	Omissions []string `json:"omissions,omitempty"`
-	// Transcript is the path of transcript.md relative to the forum root.
+	// Transcript is the path of transcript.md relative to the run's
+	// directory.
 	Transcript string `json:"transcript"`
 }
 
@@ -389,26 +411,23 @@ type LayerProgress struct {
 	Outputs   int       `json:"outputs"`
 }
 
-// Draft is draft.json: a forum's configuration while it is being set up,
-// kept as raw JSON (it need not be valid until validate or launch) with the
-// agent that created it.
-type Draft struct {
-	Owner     string          `json:"owner"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	Config    json.RawMessage `json:"config"`
-}
-
 // Summary is one forum's progress as forum_status reports it.
 type Summary struct {
-	ForumID    string          `json:"forum_id"`
-	Name       string          `json:"name,omitempty"`
-	Status     Status          `json:"status"`
-	Reason     EndReason       `json:"reason,omitempty"`
-	LaunchedAt time.Time       `json:"launched_at,omitzero"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-	Deadline   time.Time       `json:"deadline,omitzero"`
-	Calls      int             `json:"calls"`
-	MaxCalls   int             `json:"max_calls"`
-	Layers     []LayerProgress `json:"layers"`
+	ForumID string `json:"forum_id"`
+	// Name labels the forum: its configured name, or its ID when it has none.
+	Name string `json:"name"`
+	// Run is the run the summary describes (0 for a new forum), Runs how
+	// many the forum has, and ConfigChanged whether the forum's
+	// configuration differs from the one its latest run used.
+	Run           int             `json:"run,omitempty"`
+	Runs          int             `json:"runs"`
+	ConfigChanged bool            `json:"config_changed,omitempty"`
+	Status        Status          `json:"status"`
+	Reason        EndReason       `json:"reason,omitempty"`
+	LaunchedAt    time.Time       `json:"launched_at,omitzero"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	Deadline      time.Time       `json:"deadline,omitzero"`
+	Calls         int             `json:"calls"`
+	MaxCalls      int             `json:"max_calls"`
+	Layers        []LayerProgress `json:"layers"`
 }

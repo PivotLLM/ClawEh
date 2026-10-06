@@ -19,7 +19,7 @@ import (
 
 // Verify checks a forum directory before it is opened for execution:
 //
-//   - snapshot.json decodes and names this forum;
+//   - snapshot.json decodes and names this forum and run;
 //   - forum.json decodes (Decode) and its SHA-256 equals
 //     Snapshot.ConfigDigest;
 //   - participants.json exists and decodes;
@@ -55,6 +55,9 @@ func Verify(s *Store) (*Config, *Snapshot, error) {
 	}
 	if snap.ForumID != s.ID() {
 		return nil, nil, corrupt("%s names forum %q", fileSnapshot, snap.ForumID)
+	}
+	if snap.Run != s.run {
+		return nil, nil, corrupt("%s names run %d, not %d", fileSnapshot, snap.Run, s.run)
 	}
 	if ownerErr := checkOwner(s, snap); ownerErr != nil {
 		return nil, nil, ownerErr

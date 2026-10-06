@@ -852,10 +852,11 @@ else
     # are hermetic successes on an agent with no forums; validate and launch
     # refuse a call without an ID and an unknown forum; pause, resume, cancel
     # and results refuse an unknown forum; delete of an absent forum succeeds
-    # (deleting is idempotent). A draft is then set up hermetically: new,
+    # (deleting is idempotent). A forum is then set up hermetically: new,
     # template, update, export, validate (refused: the template's models are
     # placeholders and the test config has no models), import, export again,
-    # launch (refused: invalid), status (draft) and delete. No forum is started.
+    # launch (refused: invalid), status (new), results (refused: no run),
+    # status with a bad run number (refused) and delete. No run is started.
     #---------------------------------------------------------------------------
 
     if echo "$LIST_OUT" | grep -qw "forum_launch"; then
@@ -887,34 +888,38 @@ else
         run_test_err_msg_auth "4g.12 forum_readme refuses an unknown template" \
             "forum_readme" '{"template":"nosuch"}' "There is no template"
 
-        echo "  4g.13 forum_config_new creates a draft"
-        DRAFT_OUT=$(probe_call_auth "forum_config_new" '{}')
-        DRAFT_ID=$(echo "$DRAFT_OUT" | grep -oE 'Forum [0-9a-f-]{36} created as a draft' | head -1 | awk '{print $2}')
-        if [ -n "$DRAFT_ID" ]; then
-            echo "    ${GREEN}PASS${NC}: draft $DRAFT_ID"
+        echo "  4g.13 forum_new creates a forum"
+        NEW_FORUM_OUT=$(probe_call_auth "forum_new" '{}')
+        NEW_FORUM_ID=$(echo "$NEW_FORUM_OUT" | grep -oE 'Forum [0-9a-f-]{36} created' | head -1 | awk '{print $2}')
+        if [ -n "$NEW_FORUM_ID" ]; then
+            echo "    ${GREEN}PASS${NC}: forum $NEW_FORUM_ID"
             TIER2_PASS=$((TIER2_PASS + 1))
             PASS_COUNT=$((PASS_COUNT + 1))
             run_test_ok_auth "4g.14 forum_config_template sets the council template" \
-                "forum_config_template" "{\"id\":\"$DRAFT_ID\",\"name\":\"council\"}" "council template"
+                "forum_config_template" "{\"id\":\"$NEW_FORUM_ID\",\"name\":\"council\"}" "council template"
             run_test_ok_auth "4g.15 forum_config_update applies a merge patch" \
-                "forum_config_update" "{\"id\":\"$DRAFT_ID\",\"changes\":{\"name\":\"probe-council\",\"seed\":7}}" "is updated"
+                "forum_config_update" "{\"id\":\"$NEW_FORUM_ID\",\"changes\":{\"name\":\"probe-council\",\"seed\":7}}" "is updated"
             run_test_ok_auth "4g.16 forum_config_export returns the changed configuration" \
-                "forum_config_export" "{\"id\":\"$DRAFT_ID\"}" "probe-council"
+                "forum_config_export" "{\"id\":\"$NEW_FORUM_ID\"}" "probe-council"
             run_test_err_msg_auth "4g.17 forum_validate names the placeholder models" \
-                "forum_validate" "{\"id\":\"$DRAFT_ID\"}" "participants.member1.model"
+                "forum_validate" "{\"id\":\"$NEW_FORUM_ID\"}" "participants.member1.model"
             run_test_ok_auth "4g.18 forum_config_import replaces the configuration" \
-                "forum_config_import" "{\"id\":\"$DRAFT_ID\",\"config\":{\"version\":1,\"name\":\"probe-import\"}}" "imported configuration"
+                "forum_config_import" "{\"id\":\"$NEW_FORUM_ID\",\"config\":{\"version\":1,\"name\":\"probe-import\"}}" "imported configuration"
             run_test_ok_auth "4g.19 forum_config_export returns the imported configuration" \
-                "forum_config_export" "{\"id\":\"$DRAFT_ID\"}" "probe-import"
-            run_test_err_msg_auth "4g.20 forum_launch refuses an invalid draft" \
-                "forum_launch" "{\"id\":\"$DRAFT_ID\"}" "invalid configuration"
-            run_test_ok_auth "4g.21 forum_status shows the draft" \
-                "forum_status" "{\"id\":\"$DRAFT_ID\"}" "draft"
-            run_test_ok_auth "4g.22 forum_delete removes the draft" \
-                "forum_delete" "{\"id\":\"$DRAFT_ID\"}" "is deleted"
+                "forum_config_export" "{\"id\":\"$NEW_FORUM_ID\"}" "probe-import"
+            run_test_err_msg_auth "4g.20 forum_launch refuses an invalid configuration" \
+                "forum_launch" "{\"id\":\"$NEW_FORUM_ID\"}" "invalid configuration"
+            run_test_ok_auth "4g.21 forum_status shows the new forum" \
+                "forum_status" "{\"id\":\"$NEW_FORUM_ID\"}" "\"new\""
+            run_test_err_msg_auth "4g.22 forum_results refuses a forum with no run" \
+                "forum_results" "{\"id\":\"$NEW_FORUM_ID\"}" "has not been launched"
+            run_test_err_msg_auth "4g.23 forum_status refuses a bad run number" \
+                "forum_status" "{\"id\":\"$NEW_FORUM_ID\",\"run\":0}" "must be a run number"
+            run_test_ok_auth "4g.24 forum_delete removes the forum" \
+                "forum_delete" "{\"id\":\"$NEW_FORUM_ID\"}" "is deleted"
         else
-            echo "    ${RED}FAIL${NC}: no draft ID in the reply"
-            echo "    Output: $DRAFT_OUT"
+            echo "    ${RED}FAIL${NC}: no forum ID in the reply"
+            echo "    Output: $NEW_FORUM_OUT"
             TIER2_FAIL=$((TIER2_FAIL + 1))
             FAIL_COUNT=$((FAIL_COUNT + 1))
         fi

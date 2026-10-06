@@ -24,7 +24,8 @@ const MaxResultInlineTotalChars = 16000
 // agent's workspace.
 type ResultsView struct {
 	ForumID    string        `json:"forum_id"`
-	Name       string        `json:"name,omitempty"`
+	Run        int           `json:"run"`
+	Name       string        `json:"name"`
 	Status     Status        `json:"status"`
 	Reason     EndReason     `json:"reason,omitempty"`
 	LaunchedAt time.Time     `json:"launched_at"`
@@ -76,7 +77,7 @@ type prefixReader func(rel string, keep int) (string, int, error)
 // directory relative to the agent's workspace (forums/<id>).
 func newResultsView(res *Result, prefix string, read prefixReader) ResultsView {
 	view := ResultsView{
-		ForumID: res.ForumID, Name: res.Name, Status: res.Status, Reason: res.Reason,
+		ForumID: res.ForumID, Run: res.Run, Name: res.Name, Status: res.Status, Reason: res.Reason,
 		LaunchedAt: res.LaunchedAt, EndedAt: res.EndedAt, Complete: res.Complete, Calls: res.Calls,
 		Transcript: filepath.ToSlash(filepath.Join(prefix, res.Transcript)),
 		Layers:     make([]LayerOutput, 0, len(res.Layers)),

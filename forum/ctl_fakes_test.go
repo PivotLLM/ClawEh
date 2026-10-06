@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -18,8 +17,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // Test helpers of seam (d), prefixed ctl so they cannot collide with the
@@ -208,10 +205,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	if err = ValidateStatic(cfg); err != nil {
 		t.Fatalf("ValidateStatic: %v", err)
 	}
-	s, err := CreateStore(t.TempDir(), uuid.NewString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := stNewStore(t)
 	if err = s.Lock(); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +273,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	now := time.Now().UTC()
 	f := &ctlForum{t: t, s: s, cfg: cfg, agents: &ctlAgents{gone: map[string]bool{}}, log: &ctlLogger{}}
 	f.snap = &Snapshot{
-		ForumID: s.ID(), Name: cfg.Name, LaunchedAt: now, BaseDirectory: filepath.Dir(s.Root()),
+		ForumID: s.ID(), Run: s.RunNumber(), Name: cfg.Name, LaunchedAt: now, BaseDirectory: s.base,
 		Deadline: now.Add(time.Duration(cfg.Limits.MaxDurationSeconds) * time.Second), ConfigDigest: digest(raw),
 		Seed: seed, Limits: cfg.Limits, Layers: layers, ResultLayers: cfg.EffectiveResultLayers(),
 		Models: map[string]string{}, ModeratorSchemas: modSchemas, Sources: sources,

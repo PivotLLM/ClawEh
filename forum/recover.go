@@ -146,9 +146,9 @@ func checkCreated(ctx context.Context, agents Agents, parts *Participants) ([]st
 // differs. Only public material is rendered: published projections, and
 // the decision, reason and guidance of moderator decisions.
 
-// renderTranscript renders the transcript of every publication commit in
-// the in-memory log. It returns the text and the seq of the last
-// publication rendered.
+// renderTranscript renders the transcript: a heading naming the forum and
+// the run, then the entry of every publication commit in the in-memory
+// log. It returns the text and the seq of the last publication rendered.
 func (c *Controller) renderTranscript() (string, int, error) {
 	c.mu.Lock()
 	commits := slices.Clone(c.commits)
@@ -157,6 +157,7 @@ func (c *Controller) renderTranscript() (string, int, error) {
 		b    strings.Builder
 		last int
 	)
+	fmt.Fprintf(&b, "# %s · run %d\n\n", c.snap.Label(), c.snap.Run)
 	for i := range commits {
 		entry, err := c.transcriptEntry(&commits[i])
 		if err != nil {

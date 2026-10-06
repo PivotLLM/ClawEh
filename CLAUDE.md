@@ -215,12 +215,24 @@ production instance directly; test against a dev instance.
   case "forum", WebUI "Allow forum") gets the fifteen `forum_*` tools from
   `tools/forum` (suite provider; `SetService` installs the one `*forum.Service`,
   which the gateway builds in `internal/gateway/forum.go` BEFORE `NewAgentLoop`,
-  since the loop builds the tools). A forum is set up as a draft
-  (`forum/draft.go`: `forum_config_new`, then `_template`/`_import`, then
-  `_update` as an RFC 7386 merge patch, `forum/mergepatch.go`; `draft.json` in
-  the forum's own folder, survives restart) and `forum_launch {id}` runs it
-  under the same ID; only drafts change, `forum_config_export` returns any
-  forum's config for reuse (no template store). `forum_readme` serves the agent guide and
+  since the loop builds the tools): `forum_readme`, `forum_models`,
+  `forum_new`, `forum_config_template`, `forum_config_import`,
+  `forum_config_update`, `forum_config_export`, `forum_validate`,
+  `forum_launch`, `forum_status`, `forum_pause`, `forum_resume`,
+  `forum_cancel`, `forum_results`, `forum_delete`. A forum is a config and
+  zero or more runs (`forum/forums.go`): `forums/<id>/forum.json` (the current
+  config, edited by `_template`/`_import`/`_update`, the last an RFC 7386
+  merge patch, `forum/mergepatch.go`, whenever the latest run is not running)
+  and `forums/<id>/runs/<n>/` (everything a run produces; earlier runs are
+  never touched). Each `forum_launch {id}` validates the current config and
+  starts run n+1 from the beginning (a paused latest run is cancelled first,
+  without a notice); `forum_status`/`forum_results` take an optional `run`
+  (default the latest); pause/resume/cancel act on the latest run, and resume
+  is refused once the config changed. The store's lock and the per-run
+  cleanup markers (`.cleanup/<id>.<n>.<name>`) are the forum's; a `Store` is
+  the forum handle (run 0) or a run (`Store.Run`/`CreateRun`/`OpenRun`).
+  `forum_config_export` returns a forum's config to import elsewhere (no
+  template store). `forum_readme` serves the agent guide and
   the built-in templates (`writing`, `council`) embedded from `forum/readme/`
   (`forum/readme.go`; the template list there and the files are kept in step by
   a test); every other forum tool's description says to call it first. A layer
@@ -236,7 +248,7 @@ production instance directly; test against a dev instance.
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
   `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`);
   the completion notice as a `system` inbound to the launcher's main conversation;
-  `OnStuck` raises the `forum:<id>` alert. `ToolHost.Scope` refuses a call at
+  `OnStuck` raises the `forum:<id>:<run>` alert. `ToolHost.Scope` refuses a call at
   the maximum depth (`forum.ErrForumDepth`) or from a forum participant
   (`forum.ErrForumTurn`; participants get no forum tools anyway); file
   references go through `files.Reader.Resolve`/`Allowed`. Base directory:
@@ -253,6 +265,9 @@ production instance directly; test against a dev instance.
   `Recover` runs once the loop has `Started()`, over every config agent (the
   switch gates only the tools); `Close` runs first in `shutdownGateway`, before
   the loop stops. A reload rebuilds the tools; running forums continue.
+  Recovery resumes an interrupted latest run, undoes a launch that died before
+  its run's snapshot (the forum stays as it was), and removes a forum folder
+  of an earlier development layout.
 - **Agent message size**: `tools.MaxAgentMessageChars` (8,000) caps the
   `agent_message` tool, `/ask` and `/whisper` ("Messages to other agents are
   limited to 8,000 characters."); the core Ask/Whisper (and so the forum) are

@@ -3,8 +3,8 @@
 A forum is a structured discussion that you set up and ClawEh runs for you.
 You choose the participants, write a brief and the material they work from,
 and lay the discussion out in ordered layers. ClawEh sends every turn itself,
-keeps everything on disk under `forums/<id>/` in your workspace, and tells you
-when the forum has finished.
+keeps everything on disk under `forums/<id>/` in your workspace (each run in
+`forums/<id>/runs/<n>/`), and tells you when a run has finished.
 
 Use a forum when several independent views, a critique-and-revise cycle or a
 review panel improves the result. Do not use one when a single sub-agent or a
@@ -67,30 +67,38 @@ required and are hard limits.
 
 ## How to run one
 
-A forum is set up as a draft, step by step, then launched.
+A forum has a configuration and runs. You set the configuration up step by
+step, then launch it; every launch is a new run from the beginning.
 
-1. `forum_config_new` creates a draft and returns its ID.
-2. `forum_config_template` with `name` fills it from a template, or
-   `forum_config_import` with `config` from an exported configuration.
+1. `forum_new` creates a forum and returns its ID.
+2. `forum_config_template` with `name` fills its configuration from a
+   template, or `forum_config_import` with `config` from an exported one.
 3. `forum_config_update` with `changes` edits it: a JSON merge patch, where
    objects merge, `null` deletes a key and arrays such as `layers` are
    replaced whole. Fill every `<...>` placeholder and set the models from
    `forum_models`. `forum_config_export` shows the configuration so far.
 4. `forum_validate` with the ID. Fix every issue it lists.
-5. `forum_launch` with the ID. The forum runs in the background under the
-   same ID; it can no longer be changed.
-6. `forum_status` with the ID to follow it; `forum_pause`, `forum_resume` and
-   `forum_cancel` control it.
+5. `forum_launch` with the ID starts run 1 in the background.
+6. `forum_status` with the ID follows the latest run; `forum_pause`,
+   `forum_resume` and `forum_cancel` control it.
 7. When you are told it has finished, `forum_results` with the ID.
-8. `forum_delete` removes a draft, or a finished or paused forum's files.
+8. To run it again, change the configuration (only while it is not running)
+   and `forum_launch` again: run 2 starts from the beginning, and run 1 keeps
+   its files. `forum_status` and `forum_results` take `run` to look at an
+   earlier run. A paused run cannot be resumed once the configuration has
+   changed; launching then replaces it.
+9. `forum_delete` removes the forum and all its runs, unless it is running.
+
+`name` in the configuration is optional; it labels the forum in status,
+results and notices instead of its ID.
 
 A source `file` is read as your file tools read that path (your
 workspace, or a mount such as `maestro/`).
 
-To reuse a forum, `forum_config_export` it, `forum_config_import` the result
-into a new draft and change only what differs. For a book: run chapter 1,
-then for chapter 2 import its configuration and update only
-`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`.
+For a book, run the forum on chapter 1, then update only
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}` and launch again
+for chapter 2. To start another forum from this one, `forum_config_export` it
+and `forum_config_import` the result into a forum made with `forum_new`.
 
 ## Limits
 
@@ -107,5 +115,5 @@ then for chapter 2 import its configuration and update only
 ## Example
 
 The templates are complete examples: `forum_config_template` with one of the
-names below starts a draft from it, and `forum_readme` with `template` shows
-it.
+names below puts it in a forum's configuration, and `forum_readme` with
+`template` shows it.

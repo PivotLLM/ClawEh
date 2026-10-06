@@ -28,30 +28,37 @@ import (
 	"github.com/google/uuid"
 )
 
-// Seam (b): the on-disk store (spec §8, rev 3 §8). One Store is one forum
-// under a base directory:
+// Seam (b): the on-disk store (spec §8, rev 3 §8). A forum is a directory
+// under a base directory holding its current configuration and its runs;
+// one Store is either the forum directory (run 0: the configuration, the
+// lock, the list of runs, removal) or one run of it (everything below):
 //
 //	<base>/
-//	  .locks/<forum-uuid>.run        exclusive advisory lock of the running controller
-//	  .cleanup/<forum-uuid>.<name>   markers for work a restart must finish
-//	  .cleanup/<forum-uuid>/         a forum root staged for removal (Remove)
+//	  .locks/<forum-uuid>.run              exclusive advisory lock of the forum
+//	  .cleanup/<forum-uuid>.<run>.<name>   markers for work a restart must finish, per run
+//	  .cleanup/<forum-uuid>/               a forum directory staged for removal (Remove)
 //	  <forum-uuid>/
-//	    forum.json            the configuration as launched (the draft's, indented)
-//	    snapshot.json         Snapshot
-//	    participants.json     Participants
-//	    sources/<id><ext>     materialised sources
-//	    layers/<layer>/inputs.json                           LayerInputs
-//	    layers/<layer>/calls/<turn>/<attempt>/request.json   AttemptRequest
-//	    layers/<layer>/calls/<turn>/<attempt>/reply.json     AttemptReply
-//	    layers/<layer>/calls/<turn>/<attempt>/output<ext>    the accepted output (valid attempts only)
-//	    layers/<layer>/calls/<turn>/<attempt>/published<ext> its projection (JSON with share only)
-//	    commits/<seq>.json    Commit, seq zero-padded to commitSeqWidth digits
-//	    state.json            State (derived cache)
-//	    result.json           Result (terminal only)
-//	    transcript.md         public transcript, appended (rewritten in place only by Open's repair)
+//	    forum.json            the current configuration (indented), edited between runs
+//	    runs/<n>/             run n (1, 2, 3, ...), never changed by a later run:
+//	      forum.json            the configuration the run used
+//	      snapshot.json         Snapshot
+//	      participants.json     Participants
+//	      sources/<id><ext>     materialised sources
+//	      layers/<layer>/inputs.json                           LayerInputs
+//	      layers/<layer>/calls/<turn>/<attempt>/request.json   AttemptRequest
+//	      layers/<layer>/calls/<turn>/<attempt>/reply.json     AttemptReply
+//	      layers/<layer>/calls/<turn>/<attempt>/output<ext>    the accepted output (valid attempts only)
+//	      layers/<layer>/calls/<turn>/<attempt>/published<ext> its projection (JSON with share only)
+//	      commits/<seq>.json    Commit, seq zero-padded to commitSeqWidth digits
+//	      state.json            State (derived cache)
+//	      result.json           Result (terminal only)
+//	      transcript.md         public transcript, appended (rewritten in place only by Open's repair)
 //
-// Locks and cleanup staging sit beside the roots, not inside them (rev 3
-// §8), so removing a root never removes the lock protecting it. Every write
+// The lock is the forum's, shared by every Store handle derived from one
+// opening (Run, CreateRun, OpenRun), so a run holds the same lock as the
+// forum it belongs to. Locks and cleanup staging sit beside the forum
+// directories, not inside them (rev 3 §8), so removing one never removes
+// the lock protecting it. Every write
 // of a whole file is atomic and durable (writeFileAt): an exclusive write
 // links its temporary file to the target, so a racing second writer fails
 // with os.ErrExist instead of replacing the first. transcript.md is the
@@ -63,7 +70,7 @@ import (
 // outside it; IDs used in paths (layer, participant, turn) are checked
 // with ValidID, forum IDs must be canonical UUIDs.
 //
-// The store keeps an index of the commit log (last sequence number,
+// A run's store keeps an index of the commit log (last sequence number,
 // reserved attempts, turns with a committed output). It is what lets the
 // store tell a reserved attempt from an orphan request.json (a crash
 // between WriteAttemptRequest and AppendCommit), and refuse a second
@@ -72,7 +79,6 @@ import (
 // File and directory names.
 const (
 	fileConfig       = "forum.json"
-	fileDraft        = "draft.json"
 	fileSnapshot     = "snapshot.json"
 	fileParticipants = "participants.json"
 	fileState        = "state.json"
@@ -87,6 +93,7 @@ const (
 	dirLayers        = "layers"
 	dirCalls         = "calls"
 	dirCommits       = "commits"
+	dirRuns          = "runs"
 	dirLocks         = ".locks"
 	dirCleanup       = ".cleanup"
 	lockSuffix       = ".run"
@@ -152,26 +159,57 @@ func newCommitIndex() *commitIndex {
 	}
 }
 
-// Store is one forum directory. It is safe for concurrent use by the
-// goroutines of one controller; cross-process exclusion is Lock.
+// forumLock is a forum's cross-process lock (an flock on lockPath), shared
+// by every Store handle derived from one opening.
+type forumLock struct {
+	mu sync.Mutex
+	f  *os.File
+}
+
+// Store is one forum directory (run 0) or one run of it. It is safe for
+// concurrent use by the goroutines of one controller; cross-process
+// exclusion is Lock.
 type Store struct {
 	base string
 	id   string
+	// dir is <base>/<id>, the forum directory.
+	dir string
+	// run is the run number, 0 for the forum directory itself.
+	run int
+	// root is the run's directory (<dir>/runs/<run>); empty for run 0, so a
+	// run file is never read from or written to the forum directory.
 	root string
 	// owner is the agent whose scope the store was opened in (set by the
 	// service); when set, Verify refuses a snapshot naming another
 	// launcher, because the directory lives in that agent's workspace and
 	// is not trusted for whose forum it is.
 	owner string
+	lk    *forumLock
 
-	mu   sync.Mutex // guards lock, idx, cfg and snap, and serialises commits and transcript writes
-	lock *os.File
-	idx  commitIndex
+	mu  sync.Mutex // guards idx, cfg and snap, and serialises commits and transcript writes
+	idx commitIndex
 	// cfg and snap are forum.json and snapshot.json as AppendCommit reads
 	// them for checkCommit; both are immutable once written.
 	cfg  *Config
 	snap *Snapshot
 }
+
+// newForumHandle is the run-0 Store of <base>/<id>, with a lock of its own.
+func newForumHandle(base, id string) *Store {
+	return &Store{base: base, id: id, dir: filepath.Join(base, id), lk: &forumLock{}}
+}
+
+// Run returns the handle of run n of the forum, sharing this handle's lock
+// and owner. It does not touch the disk; see OpenRun and CreateRun.
+func (s *Store) Run(n int) *Store {
+	return &Store{
+		base: s.base, id: s.id, dir: s.dir, run: n, owner: s.owner, lk: s.lk,
+		root: filepath.Join(s.dir, dirRuns, strconv.Itoa(n)),
+	}
+}
+
+// RunNumber is the run the store is a handle of, 0 for the forum directory.
+func (s *Store) RunNumber() int { return s.run }
 
 // validForumID reports whether id is a canonical (lower-case, hyphenated)
 // UUID, the only form a forum root may have.
@@ -180,11 +218,11 @@ func validForumID(id string) bool {
 	return err == nil && u.String() == id
 }
 
-// CreateStore creates <base>/<forumID>/ with its subdirectories, and
-// <base>/.locks/ and <base>/.cleanup/ if missing, and returns the store.
-// It fails if the root already exists (a UUID collision is an error, never
-// a reuse), base is not an absolute path or forumID is not a canonical
-// UUID.
+// CreateStore creates <base>/<forumID>/ with its runs/ directory, and
+// <base>/.locks/ and <base>/.cleanup/ if missing, and returns the forum's
+// handle (run 0). It fails if the directory already exists (a UUID
+// collision is an error, never a reuse), base is not an absolute path or
+// forumID is not a canonical UUID.
 func CreateStore(base, forumID string) (*Store, error) {
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("create forum store: base directory %q is not absolute", base)
@@ -197,30 +235,28 @@ func CreateStore(base, forumID string) (*Store, error) {
 			return nil, fmt.Errorf("create forum store: %w", err)
 		}
 	}
-	root := filepath.Join(base, forumID)
-	if err := os.Mkdir(root, dirPerm); err != nil {
+	s := newForumHandle(base, forumID)
+	if err := os.Mkdir(s.dir, dirPerm); err != nil {
 		return nil, fmt.Errorf("create forum store: %w", err)
 	}
-	for _, d := range []string{dirSources, dirLayers, dirCommits} {
-		if err := os.Mkdir(filepath.Join(root, d), dirPerm); err != nil {
-			return nil, fmt.Errorf("create forum store: %w", err)
-		}
+	if err := os.Mkdir(filepath.Join(s.dir, dirRuns), dirPerm); err != nil {
+		return nil, fmt.Errorf("create forum store: %w", err)
 	}
-	if err := syncDir(root); err != nil {
+	if err := syncDir(s.dir); err != nil {
 		return nil, fmt.Errorf("create forum store: %w", err)
 	}
 	if err := syncDir(base); err != nil {
 		return nil, fmt.Errorf("create forum store: %w", err)
 	}
-	return &Store{base: base, id: forumID, root: root}, nil
+	return s, nil
 }
 
-// OpenStore opens an existing forum directory, a draft included. It fails
-// with ErrNotFound if forumID is not a forum ID or the root, or both its
-// forum.json and its draft.json, are missing, and
-// with ErrCorrupt wrapped around the detail if the layout is unusable (the
-// root, forum.json or a required subdirectory has the wrong type or a
-// subdirectory is missing). It does not verify contents; see Verify.
+// OpenStore opens an existing forum directory and returns its handle (run
+// 0). It fails with ErrNotFound if forumID is not a forum ID or the
+// directory or its forum.json is missing, and with ErrCorrupt wrapped
+// around the detail if the layout is unusable (the directory or forum.json
+// has the wrong type, or runs/ is missing or not a directory). It does not
+// verify contents; see Verify.
 func OpenStore(base, forumID string) (*Store, error) {
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("open forum store: base directory %q is not absolute", base)
@@ -228,54 +264,36 @@ func OpenStore(base, forumID string) (*Store, error) {
 	if !validForumID(forumID) {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, forumID)
 	}
-	root := filepath.Join(base, forumID)
-	fi, err := os.Lstat(root)
+	s := newForumHandle(base, forumID)
+	fi, err := os.Lstat(s.dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, forumID)
 	case err != nil:
 		return nil, fmt.Errorf("open forum store: %w", err)
 	case !fi.IsDir():
-		return nil, fmt.Errorf("%w: forum %s: root is not a directory", ErrCorrupt, forumID)
+		return nil, fmt.Errorf("%w: forum %s: its directory is not a directory", ErrCorrupt, forumID)
 	}
-	name := fileConfig
-	fi, err = os.Lstat(filepath.Join(root, name))
-	if errors.Is(err, fs.ErrNotExist) {
-		name = fileDraft
-		fi, err = os.Lstat(filepath.Join(root, name))
-	}
+	fi, err = os.Lstat(filepath.Join(s.dir, fileConfig))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, forumID)
 	case err != nil:
 		return nil, fmt.Errorf("open forum store: %w", err)
 	case !fi.Mode().IsRegular():
-		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, name)
+		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, fileConfig)
 	}
-	if name == fileDraft {
-		// A draft whose reset to draft was interrupted, or whose creation
-		// was, may lack a subdirectory; it is recreated rather than the
-		// draft reported damaged.
-		for _, d := range []string{dirSources, dirLayers, dirCommits} {
-			if err := os.Mkdir(filepath.Join(root, d), dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
-				return nil, fmt.Errorf("open forum store: %w", err)
-			}
-		}
+	if fi, err = os.Lstat(filepath.Join(s.dir, dirRuns)); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("%w: forum %s: %s/ is missing or not a directory", ErrCorrupt, forumID, dirRuns)
 	}
-	for _, d := range []string{dirSources, dirLayers, dirCommits} {
-		fi, err := os.Lstat(filepath.Join(root, d))
-		if err != nil || !fi.IsDir() {
-			return nil, fmt.Errorf("%w: forum %s: %s/ is missing or not a directory", ErrCorrupt, forumID, d)
-		}
-	}
-	return &Store{base: base, id: forumID, root: root}, nil
+	return s, nil
 }
 
 // ListForums returns the forum IDs under base: every directory whose name
-// is a UUID and that contains forum.json or draft.json, sorted, drafts
-// included. Dot-directories (.locks, .cleanup) are skipped. A missing base
-// is an empty list, not an error. A root with neither file (a draft that
-// died before writing it) is not a forum and is not listed.
+// is a UUID and that contains forum.json, sorted. Dot-directories (.locks,
+// .cleanup) are skipped. A missing base is an empty list, not an error. A
+// directory without forum.json (a forum whose creation died before writing
+// it) is not a forum and is not listed.
 func ListForums(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -286,10 +304,7 @@ func ListForums(base string) ([]string, error) {
 	}
 	ids := []string{}
 	for _, e := range entries {
-		if !e.IsDir() || !validForumID(e.Name()) {
-			continue
-		}
-		if regularFile(filepath.Join(base, e.Name(), fileConfig)) || regularFile(filepath.Join(base, e.Name(), fileDraft)) {
+		if e.IsDir() && validForumID(e.Name()) && regularFile(filepath.Join(base, e.Name(), fileConfig)) {
 			ids = append(ids, e.Name())
 		}
 	}
@@ -303,9 +318,9 @@ func regularFile(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// ListIncomplete returns the forum IDs under base whose roots hold neither
-// forum.json nor draft.json (a draft whose creation died before it wrote
-// draft.json), sorted. Recover removes them.
+// ListIncomplete returns the forum IDs under base whose directories hold no
+// forum.json (a forum whose creation died before it wrote the file),
+// sorted. Recover removes them.
 func ListIncomplete(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -316,12 +331,170 @@ func ListIncomplete(base string) ([]string, error) {
 	}
 	ids := []string{}
 	for _, e := range entries {
-		root := filepath.Join(base, e.Name())
-		if e.IsDir() && validForumID(e.Name()) && !regularFile(filepath.Join(root, fileConfig)) && !regularFile(filepath.Join(root, fileDraft)) {
+		if e.IsDir() && validForumID(e.Name()) && !regularFile(filepath.Join(base, e.Name(), fileConfig)) {
 			ids = append(ids, e.Name())
 		}
 	}
 	return ids, nil
+}
+
+// oldLayout reports whether a forum directory has the layout of an earlier
+// development version: the run's files (snapshot.json, commits/) beside
+// forum.json instead of under runs/. Recover removes such a directory.
+func oldLayout(base, forumID string) bool {
+	dir := filepath.Join(base, forumID)
+	if regularFile(filepath.Join(dir, fileSnapshot)) {
+		return true
+	}
+	fi, err := os.Lstat(filepath.Join(dir, dirCommits))
+	return err == nil && fi.IsDir()
+}
+
+// runDirPattern is the name of a run directory: a positive decimal number
+// without leading zeros.
+var runDirPattern = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
+
+// Runs returns the run numbers that have a directory under runs/, in
+// ascending order, whether or not their launch finished (see HasSnapshot).
+// Temporary entries and anything else that is not a run directory are
+// skipped.
+func (s *Store) Runs() ([]int, error) {
+	entries, err := os.ReadDir(filepath.Join(s.dir, dirRuns))
+	if err != nil {
+		return nil, fmt.Errorf("list runs of forum %s: %w", s.id, err)
+	}
+	var runs []int
+	for _, e := range entries {
+		if !e.IsDir() || !runDirPattern.MatchString(e.Name()) {
+			continue
+		}
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		runs = append(runs, n)
+	}
+	sort.Ints(runs)
+	return runs, nil
+}
+
+// HasSnapshot reports whether a run's launch got as far as its snapshot: a
+// run without one never started and is undone (RemoveRun).
+func (s *Store) HasSnapshot() bool {
+	return s.root != "" && s.has(fileSnapshot)
+}
+
+// CreateRun creates run n's directory (runs/<n>/ with its subdirectories)
+// and returns its handle, sharing this handle's lock. It fails if the
+// directory exists. The caller holds the lock.
+func (s *Store) CreateRun(n int) (*Store, error) {
+	if n < 1 {
+		return nil, fmt.Errorf("create run of forum %s: bad run number %d", s.id, n)
+	}
+	r := s.Run(n)
+	err := s.inDir(func(root *os.Root) error {
+		rel := path.Join(dirRuns, strconv.Itoa(n))
+		if err := mkdirAt(root, dirRuns); err != nil {
+			return err
+		}
+		if err := root.Mkdir(rel, dirPerm); err != nil {
+			return err
+		}
+		for _, d := range []string{dirSources, dirLayers, dirCommits} {
+			if err := root.Mkdir(path.Join(rel, d), dirPerm); err != nil {
+				return err
+			}
+		}
+		if err := syncDirAt(root, rel); err != nil {
+			return err
+		}
+		return syncDirAt(root, dirRuns)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create run %d of forum %s: %w", n, s.id, err)
+	}
+	return r, nil
+}
+
+// OpenRun returns the handle of an existing run, sharing this handle's
+// lock: ErrNotFound when runs/<n>/ is missing, ErrCorrupt when it or a
+// required subdirectory is not a directory.
+func (s *Store) OpenRun(n int) (*Store, error) {
+	if n < 1 {
+		return nil, fmt.Errorf("%w: forum %s has no run %d", ErrNotFound, s.id, n)
+	}
+	r := s.Run(n)
+	fi, err := os.Lstat(r.root)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("%w: forum %s has no run %d", ErrNotFound, s.id, n)
+	case err != nil:
+		return nil, fmt.Errorf("open run %d of forum %s: %w", n, s.id, err)
+	case !fi.IsDir():
+		return nil, fmt.Errorf("%w: forum %s: run %d is not a directory", ErrCorrupt, s.id, n)
+	}
+	for _, d := range []string{dirSources, dirLayers, dirCommits} {
+		fi, err := os.Lstat(filepath.Join(r.root, d))
+		if err != nil || !fi.IsDir() {
+			return nil, fmt.Errorf("%w: forum %s run %d: %s/ is missing or not a directory", ErrCorrupt, s.id, n, d)
+		}
+	}
+	return r, nil
+}
+
+// RemoveRun removes a run's directory: it is renamed to a temporary name
+// under runs/ (one atomic step that takes the run out of Runs) and then
+// deleted; a crash part-way leaves a temporary entry the next Lock sweeps.
+// Its markers are not touched. The caller holds the lock.
+func (s *Store) RemoveRun() error {
+	if s.run < 1 {
+		return fmt.Errorf("remove run of forum %s: not a run", s.id)
+	}
+	err := s.inDir(func(root *os.Root) error {
+		rel := path.Join(dirRuns, strconv.Itoa(s.run))
+		tmp := path.Join(dirRuns, tmpPrefix+"run-"+uuid.NewString())
+		switch err := root.Rename(rel, tmp); {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
+			return err
+		}
+		if err := syncDirAt(root, dirRuns); err != nil {
+			return err
+		}
+		return root.RemoveAll(tmp)
+	})
+	if err != nil {
+		return fmt.Errorf("remove run %d of forum %s: %w", s.run, s.id, err)
+	}
+	s.mu.Lock()
+	s.idx = commitIndex{}
+	s.cfg, s.snap = nil, nil
+	s.mu.Unlock()
+	return nil
+}
+
+// MarkedRuns returns the runs that have the cleanup marker name, in
+// ascending order, whether or not their directories still exist.
+func (s *Store) MarkedRuns(name string) ([]int, error) {
+	pattern := filepath.Join(s.base, dirCleanup, s.id+".*."+name)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("list cleanup markers of forum %s: %w", s.id, err)
+	}
+	var runs []int
+	for _, m := range matches {
+		mid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m), s.id+"."), "."+name)
+		if !runDirPattern.MatchString(mid) {
+			continue
+		}
+		n, err := strconv.Atoi(mid)
+		if err == nil {
+			runs = append(runs, n)
+		}
+	}
+	sort.Ints(runs)
+	return runs, nil
 }
 
 // ListStaged returns the forum IDs whose roots are staged for removal
@@ -354,7 +527,7 @@ func RemoveStaged(base, forumID string) error {
 	if !validForumID(forumID) {
 		return fmt.Errorf("remove staged forum: %q is not a forum ID", forumID)
 	}
-	s := &Store{base: base, id: forumID, root: filepath.Join(base, forumID)}
+	s := newForumHandle(base, forumID)
 	if err := s.Lock(); err != nil {
 		return fmt.Errorf("remove staged forum %s: %w", forumID, err)
 	}
@@ -384,8 +557,11 @@ func (s *Store) removeStagedAndMarkers() error {
 	return nil
 }
 
-// Root is the forum directory's absolute path.
+// Root is the run directory's absolute path (empty for the forum handle).
 func (s *Store) Root() string { return s.root }
+
+// Dir is the forum directory's absolute path.
+func (s *Store) Dir() string { return s.dir }
 
 // ID is the forum's UUID.
 func (s *Store) ID() string { return s.id }
@@ -409,13 +585,14 @@ func (s *Store) lockPath() string {
 	return filepath.Join(s.base, dirLocks, s.id+lockSuffix)
 }
 
-// cleanupPath is <base>/.cleanup/<id>.<name>, or "" for a name that is
-// empty or not a single path element.
+// cleanupPath is <base>/.cleanup/<id>.<run>.<name>, or "" for the forum
+// handle (markers are per run) or a name that is empty or not a single
+// path element.
 func (s *Store) cleanupPath(name string) string {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+	if s.run < 1 || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return ""
 	}
-	return filepath.Join(s.base, dirCleanup, s.id+"."+name)
+	return filepath.Join(s.base, dirCleanup, s.id+"."+strconv.Itoa(s.run)+"."+name)
 }
 
 // lockAttempts bounds how often Lock retries when the lock file is
@@ -437,12 +614,12 @@ const lockAttempts = 5
 // and starts again if not; without that check two holders could each
 // lock a different inode.
 func (s *Store) Lock() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.lock != nil {
+	s.lk.mu.Lock()
+	defer s.lk.mu.Unlock()
+	if s.lk.f != nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(s.base, dirLocks), dirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Join(s.base, dirLocks), dirPerm); err != nil { //nolint:gosec // the lock directory under the forum base
 		return fmt.Errorf("lock forum %s: %w", s.id, err)
 	}
 	p := s.lockPath()
@@ -459,7 +636,7 @@ func (s *Store) Lock() error {
 			return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, closeErr))
 		}
 		held, statErr := f.Stat()
-		current, pathErr := os.Stat(p)
+		current, pathErr := os.Stat(p) //nolint:gosec // lock file under the forum base
 		if statErr == nil && pathErr == nil && os.SameFile(held, current) {
 			if err := writePID(f); err != nil {
 				return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, releaseFile(f)))
@@ -467,7 +644,7 @@ func (s *Store) Lock() error {
 			if err := s.sweepTemp(); err != nil {
 				return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, releaseFile(f)))
 			}
-			s.lock = f
+			s.lk.f = f
 			return nil
 		}
 		// The holder we waited behind removed the file; ours is stale.
@@ -478,20 +655,21 @@ func (s *Store) Lock() error {
 	return fmt.Errorf("lock forum %s: the lock file kept changing", s.id)
 }
 
-// sweepTemp removes every entry under the root whose name starts with
-// tmpPrefix. A missing root (a forum staged for removal) has nothing to
-// sweep. Symbolic links are not followed.
+// sweepTemp removes every entry under the forum directory, its runs
+// included, whose name starts with tmpPrefix. A missing directory (a forum
+// staged for removal) has nothing to sweep. Symbolic links are not
+// followed.
 func (s *Store) sweepTemp() error {
 	var found []string
-	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == s.root && errors.Is(err, fs.ErrNotExist) {
+			if p == s.dir && errors.Is(err, fs.ErrNotExist) {
 				return filepath.SkipAll
 			}
 			return err
 		}
-		if p != s.root && strings.HasPrefix(d.Name(), tmpPrefix) {
-			rel, relErr := filepath.Rel(s.root, p)
+		if p != s.dir && strings.HasPrefix(d.Name(), tmpPrefix) {
+			rel, relErr := filepath.Rel(s.dir, p)
 			if relErr != nil {
 				return relErr
 			}
@@ -508,7 +686,7 @@ func (s *Store) sweepTemp() error {
 	if len(found) == 0 {
 		return nil
 	}
-	return s.inRoot(func(r *os.Root) error {
+	return s.inDir(func(r *os.Root) error {
 		for _, rel := range found {
 			if err := r.RemoveAll(rel); err != nil {
 				return fmt.Errorf("sweep temporary files: %w", err)
@@ -518,11 +696,12 @@ func (s *Store) sweepTemp() error {
 	})
 }
 
-// locked reports whether this Store holds the forum's lock.
+// locked reports whether this Store (or a handle sharing its lock) holds
+// the forum's lock.
 func (s *Store) locked() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lock != nil
+	s.lk.mu.Lock()
+	defer s.lk.mu.Unlock()
+	return s.lk.f != nil
 }
 
 // writePID replaces the lock file's content with this process's PID.
@@ -550,15 +729,15 @@ func (s *Store) Unlock() {
 // unlock is Unlock with its errors. The file is removed while the lock is
 // still held (see Lock).
 func (s *Store) unlock() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.lock == nil {
+	s.lk.mu.Lock()
+	defer s.lk.mu.Unlock()
+	if s.lk.f == nil {
 		return nil
 	}
-	f := s.lock
-	s.lock = nil
+	f := s.lk.f
+	s.lk.f = nil
 	var err error
-	if rmErr := os.Remove(f.Name()); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+	if rmErr := os.Remove(f.Name()); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) { //nolint:gosec // the lock file this store opened
 		err = rmErr
 	}
 	if relErr := releaseFile(f); relErr != nil {
@@ -570,14 +749,14 @@ func (s *Store) unlock() error {
 	return nil
 }
 
-// WriteConfig writes forum.json, the draft's configuration as Launch
-// accepted it (indented); it fails if the file already exists (the
-// configuration never changes after launch, §3.2).
+// WriteConfig writes the run's forum.json, the configuration the run
+// uses (the forum's forum.json as Launch accepted it); it fails if the file
+// already exists (a run's configuration never changes, §3.2).
 func (s *Store) WriteConfig(raw []byte) error {
 	return s.writeRel(fileConfig, raw, true)
 }
 
-// ReadConfig returns forum.json verbatim; ErrNotFound if absent.
+// ReadConfig returns the run's forum.json verbatim; ErrNotFound if absent.
 func (s *Store) ReadConfig() ([]byte, error) {
 	data, err := s.ReadFile(fileConfig)
 	if err != nil {
@@ -586,161 +765,45 @@ func (s *Store) ReadConfig() ([]byte, error) {
 	return data, nil
 }
 
-// WriteDraft writes draft.json, replacing it. Only a draft (a forum with no
-// snapshot.json) has one, until its launch has committed.
-func (s *Store) WriteDraft(d *Draft) error {
-	return s.writeJSON(fileDraft, d, false)
-}
-
-// ReadDraft reads draft.json; ErrNotFound if absent. A draft owned by
-// another agent than the one whose scope the store was opened in is
-// ErrCorrupt: like a snapshot, the directory is not trusted for whose it is.
-func (s *Store) ReadDraft() (*Draft, error) {
-	var d Draft
-	if err := s.readJSON(fileDraft, &d); err != nil {
-		return nil, err
-	}
-	if s.owner != "" && d.Owner != s.owner {
-		return nil, corrupt("%s names owner %q, not %q", fileDraft, d.Owner, s.owner)
-	}
-	return &d, nil
-}
-
-// IsDraft reports whether the forum is a draft: it has draft.json and no
-// snapshot.json (a launch writes the snapshot before it removes the draft).
-func (s *Store) IsDraft() bool {
-	return s.has(fileDraft) && !s.has(fileSnapshot)
-}
-
-// has reports whether the root-relative rel is a regular file.
-func (s *Store) has(rel string) bool {
-	return s.statRegular(rel) == nil
-}
-
-// ClearDraft removes draft.json once the forum has been launched; a missing
-// file is not an error.
-func (s *Store) ClearDraft() error {
-	err := s.inRoot(func(r *os.Root) error {
-		if err := r.Remove(fileDraft); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		return syncDirAt(r, ".")
-	})
+// WriteForumConfig replaces the forum's current configuration
+// (<dir>/forum.json) with raw, atomically.
+func (s *Store) WriteForumConfig(raw []byte) error {
+	err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileConfig, raw, false) })
 	if err != nil {
-		return fmt.Errorf("remove %s: %w", fileDraft, err)
+		return fmt.Errorf("write the configuration of forum %s: %w", s.id, err)
 	}
 	return nil
 }
 
-// resetHook, when set (tests only), runs after each removal ResetToDraft
-// makes, naming what was removed; an error stops the reset there, as a
-// crash would.
-var resetHook func(removed string) error
-
-// ResetToDraft undoes a launch that did not finish: it removes everything
-// under the root but draft.json and empties the required subdirectories,
-// so the forum is the draft it was. It is safe to interrupt at any step:
-// snapshot.json goes first, so the folder reads as a draft from then on,
-// then forum.json, so a recovery or a launch that finds it resets again;
-// the subdirectories are emptied, never removed. The caller holds the lock
-// and has deleted the temporary agents.
-func (s *Store) ResetToDraft() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	err := s.inRoot(func(r *os.Root) error {
-		removed := func(name string) error {
-			if err := syncDirAt(r, path.Dir(name)); err != nil {
-				return err
-			}
-			if resetHook != nil {
-				return resetHook(name)
-			}
-			return nil
+// ReadForumConfig returns the forum's current configuration
+// (<dir>/forum.json) and when it was last written; ErrNotFound if absent.
+// It is read without following a symbolic link.
+func (s *Store) ReadForumConfig() ([]byte, time.Time, error) {
+	var (
+		data []byte
+		mod  time.Time
+	)
+	err := s.inDir(func(r *os.Root) error {
+		if err := lstatRegular(r, fileConfig); err != nil {
+			return err
 		}
-		for _, name := range []string{fileSnapshot, fileConfig} {
-			switch err := r.Remove(name); {
-			case errors.Is(err, fs.ErrNotExist):
-			case err != nil:
-				return err
-			default:
-				if err := removed(name); err != nil {
-					return err
-				}
-			}
-		}
-		names, err := readDirNames(r, ".")
+		fi, err := r.Lstat(fileConfig)
 		if err != nil {
 			return err
 		}
-		for _, name := range names {
-			if name == fileDraft {
-				continue
-			}
-			if fi, err := r.Lstat(name); err == nil && fi.IsDir() && isRequiredDir(name) {
-				if err := emptyDirAt(r, name, removed); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := r.RemoveAll(name); err != nil {
-				return err
-			}
-			if err := removed(name); err != nil {
-				return err
-			}
-		}
-		for _, dir := range []string{dirSources, dirLayers, dirCommits} {
-			if err := mkdirAt(r, dir); err != nil {
-				return err
-			}
-		}
-		return nil
+		mod = fi.ModTime().UTC()
+		data, err = r.ReadFile(fileConfig)
+		return err
 	})
 	if err != nil {
-		return fmt.Errorf("reset forum %s to its draft: %w", s.id, err)
+		return nil, time.Time{}, fmt.Errorf("read the configuration of forum %s: %w", s.id, notFound(err))
 	}
-	s.idx = commitIndex{}
-	s.cfg, s.snap = nil, nil
-	return nil
+	return data, mod, nil
 }
 
-// isRequiredDir reports whether name is one of the subdirectories every
-// forum root has.
-func isRequiredDir(name string) bool {
-	return name == dirSources || name == dirLayers || name == dirCommits
-}
-
-// emptyDirAt removes every entry of the r-relative directory dir, calling
-// removed after each.
-func emptyDirAt(r *os.Root, dir string, removed func(string) error) error {
-	names, err := readDirNames(r, dir)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		rel := path.Join(dir, name)
-		if err := r.RemoveAll(rel); err != nil {
-			return err
-		}
-		if err := removed(rel); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// readDirNames lists the r-relative directory dir, sorted.
-func readDirNames(r *os.Root, dir string) ([]string, error) {
-	d, err := r.Open(dir)
-	if err != nil {
-		return nil, err
-	}
-	names, err := d.Readdirnames(-1)
-	if closeErr := d.Close(); err == nil {
-		err = closeErr
-	}
-	sort.Strings(names)
-	return names, err
+// has reports whether the run-relative rel is a regular file.
+func (s *Store) has(rel string) bool {
+	return s.statRegular(rel) == nil
 }
 
 // WriteSnapshot writes snapshot.json; it fails if the file already exists.
@@ -767,7 +830,7 @@ func (s *Store) WriteParticipants(p *Participants) error {
 		return err
 	}
 	if s.idx.last > 0 {
-		return fmt.Errorf("write %s: %w: the forum is already launched", fileParticipants, ErrInvalidState)
+		return fmt.Errorf("write %s: %w: the run is already launched", fileParticipants, ErrInvalidState)
 	}
 	return s.writeJSON(fileParticipants, p, false)
 }
@@ -1420,12 +1483,12 @@ func (s *Store) ClearCleanup(name string) error {
 	return syncDir(filepath.Dir(p))
 }
 
-// Remove deletes the forum: it takes the lock (keeping this store's own
-// lock if it holds it), failing with ErrLocked if another holder has it,
-// renames the root into <base>/.cleanup/<id>/ (one atomic step that takes
-// the forum out of ListForums), then removes the staged copy and the
-// forum's markers, and finally releases the lock and removes the lock
-// file. A crash after the rename leaves a staged root that Recover
+// Remove deletes the forum, every run included: it takes the lock
+// (keeping this store's own lock if it holds it), failing with ErrLocked
+// if another holder has it, renames the forum directory into
+// <base>/.cleanup/<id>/ (one atomic step that takes the forum out of
+// ListForums), then removes the staged copy and the markers of every run,
+// and finally releases the lock and removes the lock file. A crash after the rename leaves a staged root that Recover
 // removes with RemoveStaged.
 func (s *Store) Remove() error {
 	if err := s.Lock(); err != nil {
@@ -1447,7 +1510,7 @@ func (s *Store) stageAndRemove() error {
 	if err := os.RemoveAll(staged); err != nil {
 		return fmt.Errorf("remove forum %s: %w", s.id, err)
 	}
-	switch err := os.Rename(s.root, staged); {
+	switch err := os.Rename(s.dir, staged); {
 	case errors.Is(err, fs.ErrNotExist):
 		// Already staged and removed; finish the markers.
 	case err != nil:
@@ -1521,10 +1584,26 @@ func digest(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// inRoot runs fn with the forum root opened as an os.Root, so nothing fn
-// does can reach outside the root.
+// inRoot runs fn with the run's directory opened as an os.Root, so nothing
+// fn does can reach outside it. On the forum handle (no run) it fails.
 func (s *Store) inRoot(fn func(r *os.Root) error) error {
+	if s.root == "" {
+		return fmt.Errorf("forum %s: %w: not a run", s.id, ErrInvalidState)
+	}
 	r, err := os.OpenRoot(s.root)
+	if err != nil {
+		return err
+	}
+	err = fn(r)
+	if closeErr := r.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// inDir runs fn with the forum directory opened as an os.Root.
+func (s *Store) inDir(fn func(r *os.Root) error) error {
+	r, err := os.OpenRoot(s.dir)
 	if err != nil {
 		return err
 	}

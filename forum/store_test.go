@@ -63,14 +63,48 @@ func stConfig() *Config {
 	}
 }
 
-// stNewStore creates an empty forum store under a fresh base directory.
+// stNewStore creates a forum under a fresh base directory and returns the
+// store of its empty run 1.
 func stNewStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := CreateStore(t.TempDir(), uuid.NewString())
+	return stNewRun(t, t.TempDir())
+}
+
+// stNewRun creates a forum under base and returns the store of its empty
+// run 1.
+func stNewRun(t *testing.T, base string) *Store {
+	t.Helper()
+	f, err := CreateStore(base, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}
+	if err = f.WriteForumConfig([]byte("{}\n")); err != nil {
+		t.Fatalf("WriteForumConfig: %v", err)
+	}
+	s, err := f.CreateRun(1)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
 	return s
+}
+
+// stOpenRun opens s's run again through OpenStore and OpenRun.
+func stOpenRun(s *Store) (*Store, error) {
+	f, err := OpenStore(s.base, s.ID())
+	if err != nil {
+		return nil, err
+	}
+	return f.OpenRun(s.RunNumber())
+}
+
+// stReopen is another handle of s's forum and run with a lock of its own,
+// as another process would open it.
+func stReopen(s *Store) *Store {
+	h := newForumHandle(s.base, s.id)
+	if s.run == 0 {
+		return h
+	}
+	return h.Run(s.run)
 }
 
 // stLaunch writes everything Launch writes (forum.json, the source,
@@ -98,7 +132,7 @@ func stLaunch(t *testing.T, s *Store, cfg *Config) *Snapshot {
 	}
 	launched := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	snap := &Snapshot{
-		ForumID: s.ID(), Name: cfg.Name, LaunchedAt: launched, BaseDirectory: filepath.Dir(s.Root()),
+		ForumID: s.ID(), Run: s.RunNumber(), Name: cfg.Name, LaunchedAt: launched, BaseDirectory: s.base,
 		Deadline: launched.Add(10 * time.Minute), ConfigDigest: digest(raw), Seed: 7, Limits: cfg.Limits,
 		Layers: []string{"debate", "summary"}, ResultLayers: []string{"summary"},
 		Models:  map[string]string{"bob": "model-b"},
@@ -165,15 +199,72 @@ func stIsPerm(t *testing.T, path string, want os.FileMode) {
 
 func TestCreateStoreLayout(t *testing.T) {
 	s := stNewStore(t)
-	base := filepath.Dir(s.Root())
+	base := s.base
 	for _, d := range []string{
-		s.Root(), filepath.Join(base, dirLocks), filepath.Join(base, dirCleanup),
+		s.Dir(), filepath.Join(s.Dir(), dirRuns), s.Root(), filepath.Join(base, dirLocks), filepath.Join(base, dirCleanup),
 		s.Path(dirSources), s.Path(dirLayers), s.Path(dirCommits),
 	} {
 		stIsPerm(t, d, dirPerm)
 	}
-	if s.ID() != filepath.Base(s.Root()) {
-		t.Errorf("ID %q does not name the root %q", s.ID(), s.Root())
+	stIsPerm(t, filepath.Join(s.Dir(), fileConfig), filePerm)
+	if s.ID() != filepath.Base(s.Dir()) || s.Root() != filepath.Join(s.Dir(), dirRuns, "1") || s.RunNumber() != 1 {
+		t.Errorf("forum %s, run %d in %s", s.ID(), s.RunNumber(), s.Root())
+	}
+}
+
+// Runs are listed in order; a run directory without a snapshot did not
+// start, and RemoveRun takes a run out in one step, leaving the others.
+func TestStoreRuns(t *testing.T) {
+	first := stNewStore(t)
+	f, err := OpenStore(first.base, first.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer f.Unlock()
+	if !f.Run(1).locked() {
+		t.Error("a run's handle does not share the forum's lock")
+	}
+	for _, n := range []int{2, 10} {
+		if _, err := f.CreateRun(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.CreateRun(2); err == nil {
+		t.Error("CreateRun of an existing run succeeded")
+	}
+	if err := os.Mkdir(filepath.Join(f.Dir(), dirRuns, "notes"), dirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := f.Runs(); err != nil || !slices.Equal(runs, []int{1, 2, 10}) {
+		t.Errorf("Runs = %v, %v", runs, err)
+	}
+	stLaunch(t, f.Run(2), stConfig())
+	if started, err := startedRuns(f); err != nil || !slices.Equal(started, []int{2}) {
+		t.Errorf("startedRuns = %v, %v", started, err)
+	}
+	if err := f.Run(10).RemoveRun(); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := f.Runs(); err != nil || !slices.Equal(runs, []int{1, 2}) {
+		t.Errorf("Runs after RemoveRun = %v, %v", runs, err)
+	}
+	if _, err := f.OpenRun(10); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpenRun of a removed run = %v", err)
+	}
+	if err := f.Run(2).SetCleanup(CleanupAgents, []byte("[]")); err != nil {
+		t.Fatal(err)
+	}
+	if marked, err := f.MarkedRuns(CleanupAgents); err != nil || !slices.Equal(marked, []int{2}) {
+		t.Errorf("MarkedRuns = %v, %v", marked, err)
+	}
+	if err := f.SetCleanup(CleanupAgents, nil); err == nil {
+		t.Error("the forum handle wrote a run marker")
+	}
+	if _, err := f.ReadConfig(); err == nil {
+		t.Error("the forum handle read a run file")
 	}
 }
 
@@ -205,20 +296,17 @@ func TestCreateStoreRejects(t *testing.T) {
 
 func TestOpenStore(t *testing.T) {
 	s := stNewStore(t)
-	base := filepath.Dir(s.Root())
+	base := s.base
 
-	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrNotFound) {
-		t.Errorf("open without forum.json: %v, want ErrNotFound", err)
-	}
-	if err := s.WriteConfig([]byte(`{}`)); err != nil {
-		t.Fatal(err)
-	}
 	got, err := OpenStore(base, s.ID())
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	if got.Root() != s.Root() || got.ID() != s.ID() {
-		t.Errorf("opened %s/%s, want %s/%s", got.Root(), got.ID(), s.Root(), s.ID())
+	if got.Dir() != s.Dir() || got.ID() != s.ID() || got.RunNumber() != 0 {
+		t.Errorf("opened %s/%s run %d, want %s/%s run 0", got.Dir(), got.ID(), got.RunNumber(), s.Dir(), s.ID())
+	}
+	if run, err := got.OpenRun(1); err != nil || run.Root() != s.Root() {
+		t.Errorf("OpenRun(1) = %v, %v", run, err)
 	}
 
 	for _, id := range []string{uuid.NewString(), "../" + s.ID(), "x"} {
@@ -230,7 +318,8 @@ func TestOpenStore(t *testing.T) {
 		t.Error("OpenStore with a relative base succeeded")
 	}
 
-	// A root that is a file, and a root missing commits/, are corrupt.
+	// A root that is a file, a run missing commits/ and a forum missing
+	// runs/ are corrupt.
 	fileRoot := uuid.NewString()
 	if err := os.WriteFile(filepath.Join(base, fileRoot), nil, filePerm); err != nil {
 		t.Fatal(err)
@@ -241,8 +330,20 @@ func TestOpenStore(t *testing.T) {
 	if err := os.RemoveAll(s.Path(dirCommits)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrCorrupt) {
+	if _, err := got.OpenRun(1); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("missing commits/: %v, want ErrCorrupt", err)
+	}
+	if err := os.RemoveAll(filepath.Join(s.Dir(), dirRuns)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("missing runs/: %v, want ErrCorrupt", err)
+	}
+	if err := os.Remove(filepath.Join(s.Dir(), fileConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("open without forum.json: %v, want ErrNotFound", err)
 	}
 }
 
@@ -258,12 +359,12 @@ func TestListForums(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.WriteConfig([]byte(`{}`)); err != nil {
+		if err := s.WriteForumConfig([]byte(`{}`)); err != nil {
 			t.Fatal(err)
 		}
 		want = append(want, s.ID())
 	}
-	// Not listed: a root whose launch died before forum.json, a non-UUID
+	// Not listed: a root whose creation died before forum.json, a non-UUID
 	// directory, and a plain file named like a forum.
 	if _, err := CreateStore(base, uuid.NewString()); err != nil {
 		t.Fatal(err)
@@ -509,7 +610,7 @@ func TestStoreOrphanAttemptRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reopened, err := OpenStore(filepath.Dir(s.Root()), s.ID())
+	reopened, err := stOpenRun(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +752,7 @@ func TestStoreAppendCommit(t *testing.T) {
 
 	// A second store on the same directory (a bypassed lock) cannot
 	// overwrite a commit: its index is stale and the exclusive write fails.
-	stale := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+	stale := stReopen(s)
 	if err = stale.loadIndexLocked(); err != nil {
 		t.Fatal(err)
 	}
@@ -676,7 +777,7 @@ func TestStoreAppendCommit(t *testing.T) {
 
 	// A seq that does not follow the log is refused before anything is
 	// written, whether it is ahead of the log or behind it.
-	fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+	fresh := stReopen(s)
 	for _, seq := range []int{0, 4, 6, 9} {
 		c := &Commit{Kind: CommitResumed}
 		if err := fresh.AppendCommit(seq, c); !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "expected at seq") {
@@ -894,7 +995,7 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 				t.Errorf("ReadCommits: %v, want ErrCorrupt", err)
 			}
 			// The index is built from the same log, so writes fail too.
-			fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+			fresh := stReopen(s)
 			if err := fresh.AppendCommit(4, &Commit{Kind: CommitResumed}); !errors.Is(err, ErrCorrupt) {
 				t.Errorf("AppendCommit on a corrupt log: %v, want ErrCorrupt", err)
 			}
@@ -917,7 +1018,7 @@ func TestStoreCrashLeftovers(t *testing.T) {
 	if err != nil || len(commits) != 1 {
 		t.Fatalf("ReadCommits with leftovers = %d, %v", len(commits), err)
 	}
-	fresh := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+	fresh := stReopen(s)
 	if err := fresh.AppendCommit(2, &Commit{Kind: CommitPauseRequested}); err != nil {
 		t.Errorf("AppendCommit after a crash: %v", err)
 	}
@@ -925,7 +1026,7 @@ func TestStoreCrashLeftovers(t *testing.T) {
 
 func TestStoreLock(t *testing.T) {
 	s := stNewStore(t)
-	other := &Store{base: filepath.Dir(s.Root()), id: s.ID(), root: s.Root()}
+	other := stReopen(s)
 
 	if err := s.Lock(); err != nil {
 		t.Fatalf("Lock: %v", err)
@@ -960,7 +1061,7 @@ func TestStoreLock(t *testing.T) {
 func TestStoreLockAcrossProcesses(t *testing.T) {
 	s := stNewStore(t)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStoreLockHelperProcess$")
-	cmd.Env = append(os.Environ(), "FORUM_STORE_LOCK_BASE="+filepath.Dir(s.Root()), "FORUM_STORE_LOCK_ID="+s.ID())
+	cmd.Env = append(os.Environ(), "FORUM_STORE_LOCK_BASE="+s.base, "FORUM_STORE_LOCK_ID="+s.ID())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -1004,7 +1105,7 @@ func TestStoreLockHelperProcess(t *testing.T) {
 	if base == "" {
 		return
 	}
-	s := &Store{base: base, id: id, root: filepath.Join(base, id)}
+	s := newForumHandle(base, id)
 	if err := s.Lock(); err != nil {
 		fmt.Println("error:", err)
 		os.Exit(1)
@@ -1057,15 +1158,9 @@ func TestStoreCleanupMarkers(t *testing.T) {
 
 func TestStoreRemove(t *testing.T) {
 	s := stNewStore(t)
-	base := filepath.Dir(s.Root())
+	base := s.base
 	stLaunch(t, s, stConfig())
-	keep, err := CreateStore(base, uuid.NewString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := keep.WriteConfig([]byte(`{}`)); err != nil {
-		t.Fatal(err)
-	}
+	keep := stNewRun(t, base)
 	if err := keep.SetCleanup(CleanupAgents, []byte(`[]`)); err != nil {
 		t.Fatal(err)
 	}
@@ -1074,7 +1169,7 @@ func TestStoreRemove(t *testing.T) {
 	}
 
 	// Another holder blocks removal.
-	holder := &Store{base: base, id: s.ID(), root: s.Root()}
+	holder := stReopen(s)
 	if err := holder.Lock(); err != nil {
 		t.Fatal(err)
 	}
@@ -1090,7 +1185,7 @@ func TestStoreRemove(t *testing.T) {
 	if err := s.Remove(); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	for _, p := range []string{s.Root(), filepath.Join(base, dirCleanup, s.ID()), s.cleanupPath(CleanupAgents), s.lockPath()} {
+	for _, p := range []string{s.Dir(), filepath.Join(base, dirCleanup, s.ID()), s.cleanupPath(CleanupAgents), s.lockPath()} {
 		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s still exists after Remove (%v)", p, err)
 		}
@@ -1115,13 +1210,13 @@ func TestStoreStagedRemoval(t *testing.T) {
 		t.Fatalf("ListStaged(missing) = %v, %v", ids, err)
 	}
 	s := stNewStore(t)
-	base := filepath.Dir(s.Root())
+	base := s.base
 	stLaunch(t, s, stConfig())
 	if err := s.SetCleanup(CleanupAgents, []byte(`["x"]`)); err != nil {
 		t.Fatal(err)
 	}
 	staged := filepath.Join(base, dirCleanup, s.ID())
-	if err := os.Rename(s.Root(), staged); err != nil {
+	if err := os.Rename(s.Dir(), staged); err != nil {
 		t.Fatal(err)
 	}
 	if ids, err := ListForums(base); err != nil || len(ids) != 0 {
@@ -1132,7 +1227,7 @@ func TestStoreStagedRemoval(t *testing.T) {
 		t.Fatalf("ListStaged = %v, %v", ids, err)
 	}
 
-	holder := &Store{base: base, id: s.ID(), root: s.Root()}
+	holder := stReopen(s)
 	if err := holder.Lock(); err != nil {
 		t.Fatal(err)
 	}
@@ -1210,7 +1305,7 @@ func TestStorePermissions(t *testing.T) {
 	if err := s.SetCleanup(CleanupAgents, nil); err != nil {
 		t.Fatal(err)
 	}
-	base := filepath.Dir(s.Root())
+	base := s.base
 	files := 0
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

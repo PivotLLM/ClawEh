@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,10 +223,10 @@ func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, res *Res
 	defer n.mu.Unlock()
 	n.notices = append(n.notices, res)
 	n.origins = append(n.origins, origin)
-	if _, err := os.Stat(filepath.Join(n.base, res.ForumID, fileResult)); err != nil {
+	if _, err := os.Stat(filepath.Join(n.base, res.ForumID, dirRuns, strconv.Itoa(res.Run), fileResult)); err != nil {
 		n.violations = append(n.violations, "notice before result.json: "+err.Error())
 	}
-	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, res.ForumID+"."+CleanupAgents)); err == nil {
+	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, CleanupAgents))); err == nil {
 		n.violations = append(n.violations, "notice before the temporary agents were deleted")
 	}
 	return n.err
@@ -343,7 +344,7 @@ func (c *svcCtrl) run(ctx context.Context) (Status, error) {
 		return c.finishPause()
 	case StatusCancelling:
 		return StatusCancelled, c.end(StatusCancelled, EndCancelled)
-	case StatusDraft, StatusQueued, StatusRunning, StatusPaused:
+	case StatusNew, StatusQueued, StatusRunning, StatusPaused:
 	}
 	for {
 		select {
@@ -479,7 +480,11 @@ func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error)
 		wake: make(chan struct{}, 1), finish: make(chan Status, 1), fail: make(chan error, 1), started: make(chan struct{}),
 		noResult: r.noResult,
 	}
-	r.byID[s.ID()] = c
+	// The latest run's controller is the forum's; a superseded earlier run
+	// opened after it does not replace it.
+	if old, ok := r.byID[s.ID()]; !ok || old.store.RunNumber() <= s.RunNumber() {
+		r.byID[s.ID()] = c
+	}
 	return c, nil
 }
 
@@ -527,7 +532,7 @@ type svcStuck struct {
 	calls []string // "<forum id> <origin agent>: <error>"
 }
 
-func (s *svcStuck) record(id string, origin Origin, err error) {
+func (s *svcStuck) record(id string, _ int, origin Origin, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, id+" "+origin.AgentID+": "+err.Error())
@@ -630,7 +635,7 @@ func (e *svcEnv) launch(cfg string) (string, *svcCtrl) {
 
 func (e *svcEnv) status(id string) Status {
 	e.t.Helper()
-	sum, err := e.svc.Status(e.t.Context(), e.scope, id)
+	sum, err := e.svc.Status(e.t.Context(), e.scope, id, 0)
 	if err != nil {
 		e.t.Fatalf("status %s: %v", id, err)
 	}
@@ -666,14 +671,22 @@ func (e *svcEnv) keptAlive(id string) bool {
 	return ok
 }
 
-// store opens a forum's store directly.
+// store opens the store of a forum's latest run directly (the forum's
+// handle when it has no run).
 func (e *svcEnv) store(id string) *Store {
 	e.t.Helper()
 	s, err := OpenStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		e.t.Fatalf("open store %s: %v", id, err)
 	}
-	return s
+	n, err := latestRun(s)
+	if err != nil {
+		e.t.Fatalf("runs of %s: %v", id, err)
+	}
+	if n == 0 {
+		return s
+	}
+	return s.Run(n)
 }
 
 // appendCommits writes commits to a forum that has no live controller, as
@@ -692,11 +705,17 @@ func (e *svcEnv) appendCommits(id string, commits ...Commit) {
 	}
 }
 
-// marker reports whether a cleanup marker of a forum exists and its
-// content.
+// marker reports whether a cleanup marker of a forum's run 1 exists and
+// its content.
 func (e *svcEnv) marker(id, name string) (string, bool) {
 	e.t.Helper()
-	data, err := os.ReadFile(filepath.Join(e.scope.BaseDirectory, dirCleanup, id+"."+name))
+	return e.markerRun(id, 1, name)
+}
+
+// markerRun is marker for run n.
+func (e *svcEnv) markerRun(id string, n int, name string) (string, bool) {
+	e.t.Helper()
+	data, err := os.ReadFile(filepath.Join(e.scope.BaseDirectory, dirCleanup, fmt.Sprintf("%s.%d.%s", id, n, name)))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false
 	}
@@ -728,16 +747,17 @@ func svcEventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// svcLaunch creates a draft holding cfg in opts.Scope and launches it. It
-// returns the draft's ID whether or not the launch succeeded.
+// svcLaunch creates a forum holding cfg in opts.Scope and launches it. It
+// returns the forum's ID whether or not the launch succeeded.
 func svcLaunch(t *testing.T, svc *Service, cfg string, opts LaunchOptions) (string, error) {
 	t.Helper()
-	id, err := svc.NewDraft(t.Context(), opts.Scope)
+	id, err := svc.NewForum(t.Context(), opts.Scope)
 	if err != nil {
-		t.Fatalf("new draft: %v", err)
+		t.Fatalf("new forum: %v", err)
 	}
-	if err := svc.SetDraftConfig(t.Context(), opts.Scope, id, []byte(cfg)); err != nil {
-		t.Fatalf("set the draft's configuration: %v", err)
+	if err = svc.SetConfig(t.Context(), opts.Scope, id, []byte(cfg)); err != nil {
+		t.Fatalf("set the forum's configuration: %v", err)
 	}
-	return id, svc.Launch(t.Context(), id, opts)
+	_, err = svc.Launch(t.Context(), id, opts)
+	return id, err
 }

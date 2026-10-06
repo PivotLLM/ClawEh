@@ -486,7 +486,7 @@ func TestReplayStateIgnoresTheCache(t *testing.T) {
 		t.Errorf("state.json not rewritten: %v", err)
 	}
 
-	unlocked, err := OpenStore(filepath.Dir(r.s.Root()), r.s.ID())
+	unlocked, err := stOpenRun(r.s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s, err := OpenStore(filepath.Dir(r.s.Root()), r.s.ID())
+		s, err := stOpenRun(r.s)
 		if err != nil {
 			t.Fatalf("k=%d: OpenStore: %v", k, err)
 		}
@@ -678,7 +678,7 @@ func TestVerifyUndecodableConfig(t *testing.T) {
 	if err := s.WriteConfig(raw); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteSnapshot(&Snapshot{ForumID: s.ID(), ConfigDigest: digest(raw)}); err != nil {
+	if err := s.WriteSnapshot(&Snapshot{ForumID: s.ID(), Run: s.RunNumber(), ConfigDigest: digest(raw)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := Verify(s); !errors.Is(err, ErrCorrupt) {

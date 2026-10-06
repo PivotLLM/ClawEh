@@ -8,6 +8,7 @@ package forum
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	if p := e.notifier.problems(); len(p) != 0 {
 		t.Errorf("notice order: %v", p)
 	}
-	res, err := svc.Results(t.Context(), e.scope, id)
+	res, err := svc.Results(t.Context(), e.scope, id, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +50,10 @@ func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	}
 	if len(e.agents.deletedIDs()) != 1 {
 		t.Errorf("deleted %v, want the fresh participant", e.agents.deletedIDs())
+	}
+	transcript, err := e.store(id).ReadFile(fileTranscript)
+	if err != nil || !strings.HasPrefix(string(transcript), "# svc-simple · run 1\n\n### talk · round 1 ·") {
+		t.Errorf("transcript = %q (%v), want the forum's name and run as its heading", transcript, err)
 	}
 	messenger.mu.Lock()
 	defer messenger.mu.Unlock()
@@ -74,7 +79,7 @@ func TestSvcRealControllerPausesAndCancels(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 	svcEventually(t, "terminal", func() bool {
-		sum, err := svc.Status(t.Context(), e.scope, id)
+		sum, err := svc.Status(t.Context(), e.scope, id, 0)
 		return err == nil && sum.Status.Terminal()
 	})
 	svcEventually(t, "completion notice", func() bool { return e.notifier.count() == 1 })
