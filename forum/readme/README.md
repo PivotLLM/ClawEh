@@ -62,7 +62,8 @@ required and are hard limits.
 - A reader must not also read that layer by name, moderate it, or take part
   in it while it is `per_turn` or has more than one round, and must have
   someone else's output to read.
-- A clone of you cannot take part, since it can read the forum's files.
+- Neither you nor a clone of you can take part, since both can read the
+  forum's files.
 
 ## How to run one
 

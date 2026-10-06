@@ -366,5 +366,5 @@ the reader of the affected seam knows it is a choice, not a requirement.
     recipient reads the producer by name through another route, moderates
     it, or takes part in it while it is `per_turn` or multi-round; every
     recipient has another author (after `authors`); and Preflight refuses
-    a clone of the launcher in a forum with any anonymous input, since it
-    can read the forum directory. (a), (c), (d).
+    the launcher or a clone of it in a forum with any anonymous input,
+    since either can read the forum directory. (a), (c), (d).

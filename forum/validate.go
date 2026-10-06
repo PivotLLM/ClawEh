@@ -197,8 +197,8 @@ type Resolved struct {
 //     true and Agents.Exists(id) is true;
 //   - a clone's `model` override is in Agents.Models(source);
 //   - a fresh participant's model is in Agents.Models(launcher);
-//   - no clone of the launcher takes part in a forum with an anonymous
-//     input (it could read the forum's files and so the authors);
+//   - neither the launcher nor a clone of it takes part in a forum with an
+//     anonymous input (it could read the forum's files and so the authors);
 //   - every named schema compiles (Schemas.Compile), and every enabled
 //     layer's effective moderator schema (EffectiveModeratorSchema)
 //     compiles too; a nil Schemas with any named schema or any enabled
@@ -945,15 +945,18 @@ func (p *preflight) participants(ctx context.Context) error {
 	return nil
 }
 
-// launcherClones refuses a clone of the launching agent in a forum with an
-// anonymous input: the clone acts as the launcher, whose file tools can read
-// the forum's directory and so every author's name.
+// launcherClones refuses the launching agent, or a clone of it, in a forum
+// with an anonymous input: either acts as the launcher, whose file tools can
+// read the forum's directory and so every author's name.
 func (p *preflight) launcherClones() {
 	if !usesAnonymous(p.cfg) {
 		return
 	}
 	for _, id := range p.usedParticipants() {
-		if part := p.cfg.Participants[id]; part.Clone == p.env.Launcher {
+		switch part := p.cfg.Participants[id]; {
+		case part.Agent == p.env.Launcher:
+			p.addf("participants."+id+".agent", "%s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
+		case part.Clone == p.env.Launcher:
 			p.addf("participants."+id+".clone", "A clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
 		}
 	}

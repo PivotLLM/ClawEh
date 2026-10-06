@@ -440,25 +440,41 @@ func TestPreflightReadsSourcesOnce(t *testing.T) {
 	}
 }
 
-// A clone of the launching agent can read the forum's files, so it is
-// refused in a forum with an anonymous input, and accepted in one without.
-func TestPreflightLauncherCloneWithAnonymousInput(t *testing.T) {
-	for _, anonymous := range []bool{false, true} {
-		cfg := cfgtExample(t)
-		cfg.Participants["bob"] = Participant{Clone: "launcher"}
-		cfg.Layers[2].Inputs[1].Anonymous = anonymous
-		if err := ValidateStatic(cfg); err != nil {
-			t.Fatal(err)
+// The launching agent and a clone of it can read the forum's files, so each
+// is refused in a forum with an anonymous input, and accepted in one without.
+func TestPreflightLauncherWithAnonymousInput(t *testing.T) {
+	for _, tc := range []struct {
+		part Participant
+		path string
+		want string
+	}{
+		{Participant{Clone: "launcher"}, "participants.bob.clone", "A clone of launcher can read the forum's files, so it can't take part in an anonymous review"},
+		{Participant{Agent: "launcher"}, "participants.bob.agent", "launcher can read the forum's files, so it can't take part in an anonymous review"},
+	} {
+		for _, anonymous := range []bool{false, true} {
+			testPreflightLauncher(t, tc.part, anonymous, tc.path, tc.want)
 		}
-		agents := cfgtNewAgents()
-		agents.allowed["launcher"] = true
-		_, err := Preflight(context.Background(), cfg, cfgtEnv(agents))
-		if !anonymous {
-			if err != nil {
-				t.Fatalf("without an anonymous input: %v", err)
-			}
-			continue
-		}
-		cfgtWantIssue(t, err, "participants.bob.clone", "A clone of launcher can read the forum's files, so it can't take part in an anonymous review")
 	}
+}
+
+// testPreflightLauncher runs Preflight with part as participant bob and
+// report reading review anonymously or not; want is the expected issue.
+func testPreflightLauncher(t *testing.T, part Participant, anonymous bool, path, want string) {
+	t.Helper()
+	cfg := cfgtExample(t)
+	cfg.Participants["bob"] = part
+	cfg.Layers[2].Inputs[1].Anonymous = anonymous
+	if err := ValidateStatic(cfg); err != nil {
+		t.Fatal(err)
+	}
+	agents := cfgtNewAgents()
+	agents.allowed["launcher"] = true
+	_, err := Preflight(context.Background(), cfg, cfgtEnv(agents))
+	if !anonymous {
+		if err != nil {
+			t.Fatalf("%+v without an anonymous input: %v", part, err)
+		}
+		return
+	}
+	cfgtWantIssue(t, err, path, want)
 }

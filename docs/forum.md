@@ -110,9 +110,9 @@ refused.
     `distribute: same_participant`; a reading layer that is not `after_round`
     with one round and no moderator; a reader that also reads the layer by
     name, moderates it, or takes part in it while it is `per_turn` or has more
-    than one round; a reader with no other author to read; and a clone of the
-    launching agent anywhere in a forum with an anonymous input (it can read
-    the forum's files).
+    than one round; a reader with no other author to read; and the launching
+    agent or a clone of it anywhere in a forum with an anonymous input (either
+    can read the forum's files).
 
 Call `forum_validate` first: it checks everything, agents and models included,
 without creating anything.
