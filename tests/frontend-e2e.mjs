@@ -2563,10 +2563,15 @@ if (useGroup("S", "Keyboard")) {
     return `${ROUTES.length} pages`
   })
 
-  await check(5, "Space on a tool checkbox persists the change (on a throwaway agent)", async () => {
+  await check(5, "Space on a tool checkbox persists the change and keeps unshown agent fields", async () => {
     const ID = "e2e-kbd"
     const before = await config()
-    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [] }]
+    // subagents and archive_days are not on the Agents page; a save from it
+    // must write them back. PATCH replaces agents.list wholesale.
+    const list = [
+      ...(before.agents.list ?? []),
+      { id: ID, name: ID, tools: [], subagents: { allow_agents: [ID] }, archive_days: 30 },
+    ]
     const r = await api("/api/config", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -2587,6 +2592,20 @@ if (useGroup("S", "Keyboard")) {
       const c = await config()
       const a = (c.agents.list ?? []).find((x) => x.id === ID)
       assert(a && Array.isArray(a.tools) && a.tools.includes("time_now"), `tools = ${JSON.stringify(a?.tools)}; Space did not add time_now`)
+      assert(
+        JSON.stringify(a.subagents) === JSON.stringify({ allow_agents: [ID] }) && a.archive_days === 30,
+        `the save dropped fields the page does not show: subagents = ${JSON.stringify(a.subagents)}, archive_days = ${a.archive_days}`,
+      )
+      // Every other agent keeps its fields too: the save re-sends the whole list.
+      for (const old of before.agents.list ?? []) {
+        const now = (c.agents.list ?? []).find((x) => x.id === old.id)
+        for (const k of ["workspace", "subagents", "memory", "compression", "context_eviction"]) {
+          assert(
+            JSON.stringify(now?.[k]) === JSON.stringify(old[k]),
+            `${old.id}.${k} changed from ${JSON.stringify(old[k])} to ${JSON.stringify(now?.[k])}`,
+          )
+        }
+      }
     } finally {
       const c = await config()
       c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
