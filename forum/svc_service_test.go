@@ -512,6 +512,29 @@ func TestSvcEditAndLaunchWhilePausing(t *testing.T) {
 	e.settled(id, StatusCancelled)
 }
 
+// While a run is being cancelled, a configuration change, a launch and a
+// delete say so.
+func TestSvcEditLaunchDeleteWhileCancelling(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.restart() // running on disk, no live controller
+	e.appendCommits(id, Commit{Kind: CommitCancelRequested})
+	want := "forum svc-test (" + id + ") is being cancelled"
+	for name, op := range map[string]func() error{
+		"update": func() error { return e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"name": "x"}`)) },
+		"launch": func() error { _, err := e.svc.Launch(t.Context(), id, e.opts()); return err },
+		"delete": func() error { return e.svc.Delete(t.Context(), e.scope, id) },
+	} {
+		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != want {
+			t.Errorf("%s while cancelling = %v, want %q", name, err, want)
+		}
+	}
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+}
+
 func TestSvcControlOfInterruptedForums(t *testing.T) {
 	t.Run("pause an interrupted running forum", func(t *testing.T) {
 		e := svcSetup(t)

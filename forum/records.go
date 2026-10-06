@@ -8,7 +8,9 @@ package forum
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // Shared contract: the record types written to and read from a forum
@@ -109,10 +111,31 @@ func (s *Snapshot) Label() string {
 	return forumLabel(s.Name, s.ForumID)
 }
 
+// MaxNameChars is the longest forum `name` ValidateStatic accepts, in
+// characters; a name is also one line without control characters.
+const MaxNameChars = 100
+
+// validName reports whether name is one line of at most MaxNameChars
+// characters without control characters.
+func validName(name string) bool {
+	return len([]rune(name)) <= MaxNameChars && !strings.ContainsFunc(name, unicode.IsControl)
+}
+
 // Ref names a forum in a message to people or agents: "<name> (<id>)"
 // when it has a name, else its ID. A name equal to the ID (a Label of an
-// unnamed forum) counts as none.
+// unnamed forum) counts as none. forum.json lives in the launcher's
+// workspace and is not trusted, so control characters are dropped and the
+// name is cut to MaxNameChars whatever validation said.
 func Ref(name, id string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	if r := []rune(name); len(r) > MaxNameChars {
+		name = string(r[:MaxNameChars])
+	}
 	if name == "" || name == id {
 		return id
 	}

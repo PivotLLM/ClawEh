@@ -138,6 +138,9 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 		if err != nil || reason != "" || wait < 0 {
 			return attemptResult{reason: reason}, err
 		}
+		// A held turn never goes out without time to answer (the clock
+		// moved on between the hold and the reservation).
+		expired = expired || (!deadline.IsZero() && wait < minHeldWait)
 		var reply *AttemptReply
 		if expired {
 			reply, err = c.recordReply(req, Reply{Outcome: OutcomeTimeout}, w.validate)
@@ -161,13 +164,19 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 // looks again: the model may come back early, or the forum be paused.
 var cooldownPoll = time.Second
 
+// minHeldWait is the least time a turn held back by a cooldown must have
+// left of its call timeout to be sent; with less, the attempt ends as a
+// timeout instead of being sent with no time to answer.
+const minHeldWait = time.Second
+
 // awaitModel holds a turn back, before its attempt is reserved, while every
 // model its participant can run on is in cooldown (Host.Cooldown), so a
 // cooldown never uses up the turn's attempts. The hold and the reply
 // together stay within the call timeout (bounded by the run deadline,
 // c.wait), counted from the start of the hold: deadline is that time, zero
-// when there was no hold. expired reports that the cooldown outlasted it;
-// the attempt then ends as a timeout without being sent. A pause, cancel
+// when there was no hold. expired reports that the cooldown outlasted it,
+// or ended with less than minHeldWait left; the attempt then ends as a
+// timeout without being sent. A pause, cancel
 // or end of ctx ends the hold early; reserve then stops the turn.
 func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
 	if c.host.Cooldown == nil {
@@ -199,11 +208,18 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 		if c.interrupted() {
 			return deadline, false
 		}
-		if model, left = c.host.Cooldown(w.p.AgentID); left <= 0 {
+		next, nextLeft := c.host.Cooldown(w.p.AgentID)
+		if nextLeft <= 0 {
+			if time.Until(deadline) < minHeldWait {
+				c.host.Logger.Infof("forum %s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
+					ref, w.layer.ID, w.turn, model, w.p.ID)
+				return deadline, true
+			}
 			c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn",
 				ref, w.layer.ID, w.turn, w.p.ID)
 			return deadline, false
 		}
+		model, left = next, nextLeft
 	}
 }
 

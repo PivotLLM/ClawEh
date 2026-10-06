@@ -33,6 +33,8 @@ type fieldDoc struct {
 	enum []string
 	// min and max bound an integer field; 0 means no bound.
 	min, max int
+	// maxLength bounds a string field, in characters; 0 means no bound.
+	maxLength int
 }
 
 func enumOf[T ~string](values []T) []string {
@@ -48,7 +50,7 @@ var (
 
 	fieldDocs = map[string]fieldDoc{
 		"Config.version":       {desc: "Configuration format version; always 1", min: ConfigVersion, max: ConfigVersion},
-		"Config.name":          {desc: "Optional label for the forum in status, results and notices; its ID when omitted"},
+		"Config.name":          {desc: "Optional label for the forum in status, results and notices; one line of at most 100 characters; its ID when omitted", maxLength: MaxNameChars},
 		"Config.brief":         {desc: "Shared with every participant"},
 		"Config.sources":       {desc: "Material routed into layers, by source ID (letters, digits, _ and -, not starting with a digit)"},
 		"Config.participants":  {desc: "Participants by ID (letters, digits, _ and -, not starting with a digit); each entry is one of three forms: agent, clone or model"},
@@ -180,6 +182,9 @@ func structSchema(t reflect.Type, patch bool) map[string]any {
 		}
 		if doc.max != 0 {
 			s["maximum"] = doc.max
+		}
+		if doc.maxLength != 0 {
+			s["maxLength"] = doc.maxLength
 		}
 		if patch {
 			allowNull(s)

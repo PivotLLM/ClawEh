@@ -277,10 +277,12 @@ contract beyond the interface signatures:
   turn before reserving its attempt (`awaitModel`, logged at Info naming the
   forum, participant and model), polling every `cooldownPoll`, and sends it
   once a model is available, with the reply's wait cut to what is left of
-  the call timeout counted from the start of the hold. A cooldown that
-  outlasts the call timeout records the attempt as `timeout` without
-  sending it; pause, cancel and the run deadline end the hold as they end
-  any turn. A cooldown therefore never uses up an attempt by itself.
+  the call timeout counted from the start of the hold. A cooldown that ends
+  within the call timeout costs no attempt and no call. One that outlasts
+  it, or ends with less than `minHeldWait` (1 s) left, is recorded as a
+  `timeout` attempt without being sent: it uses an attempt and counts
+  toward `max_calls`, like any timeout. Pause, cancel and the run deadline
+  end the hold as they end any turn.
 - `Agents` over the registry, `Host.Schemas = forum.JSONSchemaValidator{}`.
 
 Tool failures are one sentence naming the forum; error chains and paths

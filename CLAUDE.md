@@ -252,7 +252,8 @@ production instance directly; test against a dev instance.
   the completion notice as a `system` inbound to the launcher's main conversation;
   `OnStuck` raises the `forum:<id>:<run>` alert; `Cooldown` reads the shared
   cooldown tracker, so a turn whose models are all in cooldown is held
-  (within its call timeout) instead of using up its attempts. `ToolHost.Scope` refuses a call at
+  within its call timeout (a cooldown that ends in time costs nothing; one
+  that outlasts it is a `timeout` attempt). `ToolHost.Scope` refuses a call at
   the maximum depth (`forum.ErrForumDepth`) or from a forum participant
   (`forum.ErrForumTurn`; participants get no forum tools anyway); file
   references go through `files.Reader.Resolve`/`Allowed`. Base directory:

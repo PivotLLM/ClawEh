@@ -88,7 +88,7 @@ One JSON object, the forum's configuration (see
 }
 ```
 
-- `name` is optional. When set it names the forum in `forum_status`,
+- `name` is optional, one line of at most 100 characters. When set it names the forum in `forum_status`,
   `forum_results` and the transcript heading, and the tools' replies,
   refusals and the completion notice call it "<name> (<id>)"
   ("design-review (<id>)"); otherwise the forum's ID is used.
@@ -150,7 +150,8 @@ a run is running, `forum_config_template`, `forum_config_import`,
 `forum_config_update`, `forum_launch` and `forum_delete` answer "Forum
 design-review (<id>) is running; pause or cancel it first.", and while it is
 pausing "Forum design-review (<id>) is still pausing; try again once it is
-paused." (`forum_config_export` and `forum_validate` still work). A change takes effect at
+paused.", and while it is being cancelled "Forum design-review (<id>) is
+being cancelled." (`forum_config_export` and `forum_validate` still work). A change takes effect at
 the next launch, never in a run already started. A forum survives a restart,
 and a launch that fails leaves it as it was.
 
@@ -283,11 +284,13 @@ write to it, and cannot read another agent's forums.
 - Each participant's own settings (its `request_timeout`, its tool limits)
   still apply to its turns.
 - A turn whose participant's models are all in cooldown is held until one is
-  available and then sent; the wait uses none of the turn's attempts but
-  counts against `call_timeout_seconds` (and the run's
-  `max_duration_seconds`). A cooldown that outlasts the call timeout ends the
-  attempt as a timeout. The wait is logged at INFO with the forum, the
-  participant and the model.
+  available and then sent; the wait counts against `call_timeout_seconds`
+  (and the run's `max_duration_seconds`). A cooldown that ends within the
+  call timeout costs nothing. One that outlasts it (or leaves less than a
+  second) is recorded as a timeout attempt without being sent, and that
+  attempt counts toward `max_attempts_per_turn` and `max_calls` like any
+  timeout. The wait is logged at INFO with the forum, the participant and
+  the model.
 - Temporary participants are created for each run, kept alive while it is
   paused and deleted when it ends; the registry's 24-hour idle limit is only a
   backstop.

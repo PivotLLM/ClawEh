@@ -329,6 +329,40 @@ func TestCtlCooldownLongerThanTheCallTimeout(t *testing.T) {
 	ctlWant(t, "outcome", att[0].Reply.Outcome, OutcomeTimeout)
 }
 
+// A cooldown that ends only in the poll the call timeout cuts short leaves
+// no time to answer: the attempt is a timeout, never an ask with no wait,
+// and the next attempt, with the model back, completes the run.
+func TestCtlCooldownEndingAtTheCallTimeout(t *testing.T) {
+	cfg := ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}})
+	cfg.Limits.CallTimeoutSeconds = 1
+	f := ctlLaunch(t, cfg)
+	poll := cooldownPoll
+	cooldownPoll = 5 * time.Second // the one poll is cut to the call timeout
+	t.Cleanup(func() { cooldownPoll = poll })
+	var mu sync.Mutex
+	checks := 0
+	f.host.Cooldown = func(agentID string) (string, time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		checks++
+		if agentID == "alice" && checks == 1 {
+			return "slow-model", time.Hour
+		}
+		return "", 0
+	}
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	calls := f.msg.all()
+	ctlWant(t, "calls", len(calls), 1)
+	if calls[0].Wait <= 0 {
+		t.Errorf("the ask was sent with wait %v", calls[0].Wait)
+	}
+	att := f.attempts("one")
+	ctlWant(t, "attempts", len(att), 2)
+	ctlWant(t, "first outcome", att[0].Reply.Outcome, OutcomeTimeout)
+	ctlWant(t, "second outcome", att[1].Reply.Outcome, OutcomeOK)
+}
+
 // Every limit: the forum budget (incomplete), the layer budget (the layer
 // ends call_limit and the next runs), the deadline (incomplete), the round
 // limit (round_limit).

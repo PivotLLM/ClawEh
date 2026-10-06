@@ -389,3 +389,19 @@ func TestConfigSchemaEnumsAreValidatorValues(t *testing.T) {
 		}
 	}
 }
+
+// The schema bounds the forum name as ValidateStatic does.
+func TestConfigSchemaBoundsTheName(t *testing.T) {
+	props, ok := ConfigSchema()["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("the schema has no properties")
+	}
+	name, ok := props["name"].(map[string]any)
+	if !ok || name["maxLength"] != MaxNameChars {
+		t.Errorf("name schema = %v, want maxLength %d", name, MaxNameChars)
+	}
+	long := `{"name": "` + strings.Repeat("a", MaxNameChars+1) + `"}`
+	if err := compileSchema(t, ConfigSchema()).Validate([]byte(long)); err == nil {
+		t.Error("the schema accepts a name over the limit")
+	}
+}

@@ -102,7 +102,8 @@ again. That is a new run; earlier runs stay readable with `run`.
    changed; launching then replaces it.
 9. `forum_delete` removes the forum and all its runs, unless it is running.
 
-`name` in the configuration is optional; status, results and notices then
+`name` in the configuration is optional (one line, at most 100
+characters); status, results and notices then
 name the forum "<name> (<id>)" instead of the ID alone.
 
 A source `file` is read as your file tools read that path (your

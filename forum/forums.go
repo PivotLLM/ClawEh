@@ -154,8 +154,12 @@ func (s *Service) ValidateConfig(ctx context.Context, id string, opts LaunchOpti
 // running; st is that run's status. ref names the forum (Ref), as in every
 // refusal below.
 func errBusy(ref string, st Status) error {
-	if st == StatusPausing {
+	switch st {
+	case StatusPausing:
 		return invalidState("forum %s is still pausing; try again once it is paused", ref)
+	case StatusCancelling:
+		return invalidState("forum %s is being cancelled", ref)
+	case StatusNew, StatusQueued, StatusRunning, StatusPaused, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 	}
 	return invalidState("forum %s is running; pause or cancel it first", ref)
 }

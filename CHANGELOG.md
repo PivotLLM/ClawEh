@@ -358,7 +358,8 @@ observe does not need an entry.
   `changes` publish the configuration's full JSON Schema, so the model sees
   every field. The configuration can be changed whenever the forum is not running
   ("Forum <name> (<id>) is running; pause or cancel it first." otherwise, and
-  "… is still pausing; try again once it is paused." while it pauses), and every
+  "… is still pausing; try again once it is paused." while it pauses, "… is
+  being cancelled." while it is cancelled), and every
   launch starts a new run from the beginning, numbered 1, 2, 3, … in its own
   folder; earlier runs are kept. `forum_status` and `forum_results` show the
   latest run, or an earlier one with `run`; status also gives the number of
@@ -371,7 +372,8 @@ observe does not need an entry.
   `forum_delete` removes the forum with all its runs. A book is reviewed
   chapter by chapter by changing the chapter source and launching again;
   `forum_config_export` and `forum_config_import` copy a configuration to
-  another forum. The optional `name` labels the forum in status, results
+  another forum. The optional `name` (one line of at most 100 characters)
+  labels the forum in status, results
   and the transcript heading, and replies, refusals and notices call the
   forum "<name> (<id>)"; without it the ID is used. `forum_launch` answers
   "Forum <name> (<id>) launched (run <n>). You will be notified when it
@@ -412,8 +414,9 @@ observe does not need an entry.
   tool called with an argument it does not take is refused, naming it
   ("Unknown argument forum_id; use id."). Each participant uses its own tools (a clone its
   source's). A turn whose participant's models are all in cooldown waits
-  for one to come back, within `call_timeout_seconds`, instead of using up
-  its attempts. Runs survive a restart and resume where
+  for one to come back within `call_timeout_seconds`: a cooldown that ends
+  in time costs nothing, and one that outlasts it is recorded as a timeout
+  attempt (counted toward `max_calls`). Runs survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A run that stops on an error raises
   the "Forum run stopped" alert. Check Up shows a Forum row per agent and lists

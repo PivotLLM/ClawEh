@@ -278,6 +278,9 @@ func (v *staticValidator) addf(path, format string, args ...any) {
 }
 
 func (v *staticValidator) run() {
+	if !validName(v.cfg.Name) {
+		v.addf("name", "must be one line of at most %d characters", MaxNameChars)
+	}
 	v.brief()
 	v.sources()
 	v.participants()
