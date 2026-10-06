@@ -228,6 +228,10 @@ agent no longer edits them, they're authoritative, and shape what it learns. A s
 optional **notify** toggle). A mount `notes` → `/home/ai/Documents/mynotes` is reachable
 as `notes/.... read **and** write, sandboxed so the agent can't climb above it (`..`
 is rejected). Unless write permissions are explicitly granted, the directory is read-only. With **notify** on, claw watches the tree and messages the agent on its default channel whenever a **new** file appears.
+A mount can't be named after a workspace folder (`files`, `skills`, `tasks`, `tmp`,
+`forums`, `maestro`, `sessions`, `cogmem`, `state`, `common`, in any case): such a name
+is refused on save, and one already in `config.json` is ignored, with a note on the
+Agents page and the Check Up page, until it is renamed.
 
 **File tools** address content explicitly by **lines** or **bytes**, so units never
 mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional

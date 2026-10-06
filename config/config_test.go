@@ -588,8 +588,12 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 }
 
 func TestValidateMountName(t *testing.T) {
-	ok := []string{"notes", "notes-eric", "a1", "X-9", "maestro"}
-	bad := []string{"notes eric", "notes/sub", "notes.md", "no_tes", "", "files", "skills", "tasks", "common", "Files"}
+	ok := []string{"notes", "notes-bob", "a1", "X-9", "filesx", "my-tasks"}
+	bad := make([]string, 0, 5+3*len(ReservedWorkspaceNames))
+	bad = append(bad, "notes bob", "notes/sub", "notes.md", "no_tes", "")
+	for _, r := range ReservedWorkspaceNames {
+		bad = append(bad, r, strings.ToUpper(r), strings.ToUpper(r[:1])+r[1:])
+	}
 	for _, n := range ok {
 		if err := ValidateMountName(n); err != nil {
 			t.Errorf("ValidateMountName(%q) unexpected error: %v", n, err)
@@ -623,12 +627,13 @@ func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 		t.Fatalf("maestro off: expected no mounts, mounts %+v", mounts)
 	}
 
-	// Explicit maestro mount wins (not duplicated, keeps operator Writable=false).
+	// A configured mount named "maestro" is reserved and ignored: the auto
+	// mount of the workspace folder is used.
 	a.Maestro = &MaestroConfig{Enabled: true}
-	a.Mounts = []MountConfig{{Name: "maestro", Path: "/tmp/custom", Writable: false}}
+	a.Mounts = []MountConfig{{Name: "Maestro", Path: "/tmp/custom", Writable: false}}
 	got = a.EffectiveMounts(ws)
-	if len(got) != 1 || got[0].Path != "/tmp/custom" || got[0].Writable {
-		t.Fatalf("explicit maestro mount should win, got %+v", got)
+	if len(got) != 1 || got[0].Path != wantPath || !got[0].Writable {
+		t.Fatalf("reserved maestro mount should be ignored, got %+v", got)
 	}
 
 	// Other mounts preserved alongside auto maestro.

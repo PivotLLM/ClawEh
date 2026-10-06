@@ -35,6 +35,29 @@ type agentToolCatalogResponse struct {
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/tools", h.handleListAgentTools)
 	mux.HandleFunc("GET /api/agents/human", h.handleHumanAgentProblems)
+	mux.HandleFunc("GET /api/agents/mounts/ignored", h.handleIgnoredMounts)
+}
+
+// ignoredMount is a mount of the saved configuration that is not used because
+// its name is reserved (config.IgnoredMounts); the Agents page marks it.
+type ignoredMount struct {
+	Agent string `json:"agent"`
+	Mount string `json:"mount"`
+}
+
+// handleIgnoredMounts lists the mounts set aside for a reserved name.
+func (h *Handler) handleIgnoredMounts(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := h.currentConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := []ignoredMount{}
+	for _, m := range cfg.IgnoredMounts() {
+		out = append(out, ignoredMount{Agent: m.Agent, Mount: m.Mount})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encodeJSON(w, map[string]any{"ignored": out})
 }
 
 // humanAgentProblem is one way the configuration breaks the human-agent

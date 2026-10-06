@@ -432,17 +432,13 @@ type MountConfig struct {
 
 var mountNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
-// reservedMountNames cannot be used as mount names — they would shadow the
-// built-in workspace roots.
-var reservedMountNames = map[string]bool{"files": true, "skills": true, "tasks": true, "common": true}
-
 // ValidateMountName checks a mount name: a single path component of letters,
-// digits, and hyphens, not colliding with a reserved root.
+// digits, and hyphens, not one of ReservedWorkspaceNames (in any case).
 func ValidateMountName(name string) error {
 	if !mountNameRe.MatchString(name) {
 		return fmt.Errorf("mount name %q: use only letters, digits, and '-' (a single directory name)", name)
 	}
-	if reservedMountNames[strings.ToLower(name)] {
+	if IsReservedWorkspaceName(name) {
 		return fmt.Errorf("mount name %q is reserved", name)
 	}
 	return nil
@@ -537,23 +533,24 @@ func warnShellOverride(cfg *Config) {
 	}
 }
 
-// EffectiveMounts returns the agent's configured mounts, plus an auto-injected
-// read/write mount of <workspace>/maestro when Maestro is enabled and the agent
-// has not already defined a mount named "maestro". The returned Path for the
-// auto mount is absolute when workspace is non-empty. Does not create the
-// directory — the files provider does that when installing mounts.
+// EffectiveMounts returns the agent's configured mounts, less any whose name
+// is reserved (IgnoredMounts: the workspace folder wins), plus an
+// auto-injected read/write mount of <workspace>/maestro when Maestro is
+// enabled. The returned Path for the auto mount is absolute when workspace is
+// non-empty. Does not create the directory — the files provider does that
+// when installing mounts.
 func (a *AgentConfig) EffectiveMounts(workspace string) []MountConfig {
 	if a == nil {
 		return nil
 	}
-	out := append([]MountConfig(nil), a.Mounts...)
+	var out []MountConfig
+	for _, m := range a.Mounts {
+		if !IsReservedWorkspaceName(m.Name) {
+			out = append(out, m)
+		}
+	}
 	if !a.MaestroEnabled() || strings.TrimSpace(workspace) == "" {
 		return out
-	}
-	for _, m := range out {
-		if strings.EqualFold(strings.TrimSpace(m.Name), MaestroMountName) {
-			return out
-		}
 	}
 	abs := MaestroDataDir(workspace)
 	if a, err := filepath.Abs(abs); err == nil {
@@ -2690,6 +2687,7 @@ func LoadConfig(path string) (*Config, error) {
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
 	warnShellOverride(cfg)
+	warnReservedMounts(cfg)
 
 	if err := env.Parse(cfg); err != nil {
 		return nil, err

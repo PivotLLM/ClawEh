@@ -9,6 +9,7 @@ import {
   getAgentTools,
   getAppConfig,
   getHumanAgents,
+  getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
 import { listCLIs } from "@/api/system"
@@ -103,8 +104,16 @@ export function AgentsPage() {
     queryKey: ["agents-human-problems"],
     queryFn: getHumanAgents,
   })
-  const refreshHumanProblems = () =>
-    queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
+  // Saved mounts set aside for a reserved name; each is marked in its row.
+  const { data: ignoredMounts } = useQuery({
+    queryKey: ["agents-ignored-mounts"],
+    queryFn: getIgnoredMounts,
+  })
+  const refreshAgentNotes = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] }),
+      queryClient.invalidateQueries({ queryKey: ["agents-ignored-mounts"] }),
+    ])
 
   const fetchError = loadError
     ? loadError instanceof Error
@@ -163,7 +172,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
       await patchAppConfig(agentsPayload(next))
-      void refreshHumanProblems()
+      void refreshAgentNotes()
       // In-place update: no reload, so no scroll jump. The hook suppresses its
       // reseed around this write, so the saved snapshot cannot overwrite a
       // field that is still being edited.
@@ -327,7 +336,7 @@ export function AgentsPage() {
     setSaving(`binding-${targetIndex}`)
     try {
       await patchAppConfig({ bindings: next })
-      void refreshHumanProblems()
+      void refreshAgentNotes()
       // Optimistic cache update rather than a refetch, matching what the old
       // setBindings(next) did: the patch already succeeded, so re-reading the
       // whole page would only cost a round trip.
@@ -554,6 +563,12 @@ export function AgentsPage() {
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
                       mounts={e.mounts}
+                      ignoredMounts={(ignoredMounts ?? [])
+                        .filter(
+                          (m) =>
+                            m.agent.toLowerCase() === agent.id.toLowerCase(),
+                        )
+                        .map((m) => m.mount)}
                       onMountsChange={(ms) => edit(i, { mounts: ms })}
                       mcpTools={e.mcpTools}
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}

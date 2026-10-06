@@ -244,6 +244,10 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		add(false, "Install-wide shell setting",
 			"tools.tool_overrides.shell_exec has no effect; shell commands are allowed per agent.")
 	}
+	// A mount named after a workspace folder is set aside at load.
+	for _, m := range cfg.IgnoredMounts() {
+		add(true, "Mount ("+m.Agent+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
+	}
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
 	// does not, so a confined agent with shell_exec is confined in name only.

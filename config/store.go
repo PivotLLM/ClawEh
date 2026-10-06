@@ -106,6 +106,10 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if errs := newHumanProblems(s.cur, next); len(errs) > 0 {
 		return &ValidationError{Err: errors.Join(errs...)}
 	}
+	// So is a mount named after a workspace folder (mount_names.go).
+	if errs := newReservedMounts(s.cur, next); len(errs) > 0 {
+		return &ValidationError{Err: errors.Join(errs...)}
+	}
 
 	resolved, err := resolveConfigSecrets(next)
 	if err != nil {

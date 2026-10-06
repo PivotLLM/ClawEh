@@ -7,6 +7,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -208,5 +210,73 @@ func TestResolveAgentMounts_AutoMaestro(t *testing.T) {
 	// Maestro off → no auto mount.
 	if got := resolveAgentMounts(&config.AgentConfig{ID: "bob"}, ws); len(got) != 0 {
 		t.Fatalf("maestro off: expected nil, got %+v", got)
+	}
+}
+
+// A configured mount named after a workspace folder is never installed: the
+// file tools resolve that folder in the workspace, never the mount. A normal
+// mount beside it still works, and Maestro's automatic mount is kept.
+func TestResolveAgentMounts_ReservedNameIgnored(t *testing.T) {
+	for _, reserved := range config.ReservedWorkspaceNames {
+		for _, name := range []string{reserved, strings.ToUpper(reserved)} {
+			t.Run(name, func(t *testing.T) {
+				ws := t.TempDir()
+				ext := t.TempDir()
+				if err := os.WriteFile(filepath.Join(ext, "x.md"), []byte("from mount"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(ws, reserved), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(ws, reserved, "x.md"), []byte("from workspace"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				agent := &config.AgentConfig{
+					ID:      "alice",
+					Maestro: &config.MaestroConfig{Enabled: true},
+					Mounts: []config.MountConfig{
+						{Name: name, Path: ext, Writable: true},
+						{Name: "notes", Path: ext},
+					},
+				}
+				specs := resolveAgentMounts(agent, ws)
+				var names []string
+				for _, s := range specs {
+					names = append(names, s.Name)
+					if s.Name == config.MaestroMountName && s.Path != filepath.Join(ws, "maestro") {
+						t.Errorf("maestro mount points at %q, not the workspace folder", s.Path)
+					}
+				}
+				if len(specs) != 2 || names[0] != "notes" || names[1] != config.MaestroMountName {
+					t.Fatalf("mounts = %v, want [notes maestro]", names)
+				}
+				SetMountsForWorkspace(ws, specs)
+				defer SetMountsForWorkspace(ws, nil)
+
+				read := NewReadFileTool(ws, true, MaxReadFileSize)
+				ctx := context.Background()
+				if reserved != config.MaestroMountName {
+					if res := read.Execute(ctx, map[string]any{"path": reserved + "/x.md"}); res.IsError || !contains(res.ForLLM, "from workspace") {
+						t.Errorf("read %s/x.md: %s", reserved, res.ForLLM)
+					}
+				}
+				if res := read.Execute(ctx, map[string]any{"path": name + "/x.md"}); contains(res.ForLLM, "from mount") {
+					t.Errorf("read %s/x.md reached the mount: %s", name, res.ForLLM)
+				}
+				if res := read.Execute(ctx, map[string]any{"path": "notes/x.md"}); res.IsError || !contains(res.ForLLM, "from mount") {
+					t.Errorf("read notes/x.md: %s", res.ForLLM)
+				}
+			})
+		}
+	}
+}
+
+// The workspace folders the file tools always let an agent read are reserved,
+// so no mount can shadow them.
+func TestAlwaysReadableSubdirsReserved(t *testing.T) {
+	for _, d := range slices.Concat(alwaysReadableSubdirs, config.DefaultConfig().Agents.Defaults.WorkspaceReadSubdirs, []string{config.DefaultConfig().Agents.Defaults.WorkspaceWriteSubdir}) {
+		if !config.IsReservedWorkspaceName(d) {
+			t.Errorf("%q is read by the file tools but not in config.ReservedWorkspaceNames", d)
+		}
 	}
 }

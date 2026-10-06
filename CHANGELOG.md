@@ -660,6 +660,19 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING: mounts can no longer be named after workspace folders.** The
+  names `files`, `skills`, `tasks`, `tmp`, `forums`, `maestro`, `sessions`,
+  `cogmem`, `state` and `common` (in any case) are reserved, so a mount can
+  never hide the folder of the same name from the agent's file tools. Saving
+  such a mount is refused ("Alice's mount "files" uses a reserved name;
+  choose another name."). A mount already in `config.json` with one of these
+  names is ignored until renamed: a warning names the agent and the mount at
+  load, the Agents page marks it "Ignored: "files" is a reserved name.", and
+  Check Up lists it. A mount named `maestro` no longer replaces the
+  automatic Maestro mount. Migration: rename the mount on the Agents page or
+  in `agents.list[].mounts[].name` in `config.json`, and update any path the
+  agent uses to reach it.
+
 - **Expected refusals are logged as warnings, not errors.** A call refused by
   configuration (an `agent_message` target outside `subagents.allow_agents`,
   a message over the 8,000-character limit, a forum tool called inside a

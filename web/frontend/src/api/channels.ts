@@ -110,6 +110,20 @@ export async function getHumanAgents(): Promise<HumanAgentsInfo> {
   return { problems: res.problems ?? [], human_agents: res.human_agents ?? [] }
 }
 
+// IgnoredMount is a saved mount that is not used because its name is
+// reserved for a workspace folder.
+export interface IgnoredMount {
+  agent: string
+  mount: string
+}
+
+export async function getIgnoredMounts(): Promise<IgnoredMount[]> {
+  const res = await request<{ ignored?: IgnoredMount[] }>(
+    "/api/agents/mounts/ignored",
+  )
+  return res.ignored ?? []
+}
+
 // SecMsgLinkStatus mirrors the backend pairing reply. status is
 // "pending" | "complete" | "error"; qr_png is a PNG data-URL for the pairing URI.
 export interface SecMsgLinkStatus {

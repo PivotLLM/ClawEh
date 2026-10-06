@@ -512,3 +512,21 @@ func TestAssessment_ShellOverrideHasNoEffect(t *testing.T) {
 		}
 	}
 }
+
+// TestAssessment_IgnoredMount: a mount named after a workspace folder gets an
+// action row naming the agent and the mount; a normal mount gets none.
+func TestAssessment_IgnoredMount(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Mounts = []config.MountConfig{{Name: "notes", Path: t.TempDir()}}
+	for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+		if strings.HasPrefix(row[1], "Mount (") {
+			t.Errorf("row present for a normal mount: %v", row)
+		}
+	}
+	cfg.Agents.List[0].Mounts = append(cfg.Agents.List[0].Mounts, config.MountConfig{Name: "Files", Path: t.TempDir()})
+	id := cfg.Agents.List[0].ID
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Mount ("+id+")")
+	if r[0] == "" || r[2] != `Ignored: "Files" is a reserved name.` {
+		t.Errorf("row = %v", r)
+	}
+}

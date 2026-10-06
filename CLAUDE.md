@@ -245,6 +245,13 @@ production instance directly; test against a dev instance.
   not capped.
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
+- **Mounts** (`agents.list[].mounts`, `tools/files/mounts.go`): an external folder reached
+  as `<name>/...` beside the workspace folders. The names ClawEh uses inside a workspace
+  are `config.ReservedWorkspaceNames` (one list; add a folder there when code starts
+  creating one): a mount with such a name (any case) is refused by `Store.Update` when a
+  save introduces it, and one already in the file is set aside by `EffectiveMounts`
+  (WARN at load, `GET /api/agents/mounts/ignored` marks it on the Agents page, a Check Up
+  row). The automatic `maestro` mount is the only mount with a reserved name.
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.
   Config agents are built from config and rebuilt on reload (`Reload` builds the
   whole new set, then swaps it in one step with `al.cfg`). **Temporary agents**

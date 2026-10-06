@@ -60,6 +60,8 @@ export interface AgentCardProps {
   cogmem?: boolean
   mounts?: MountEntry[]
   onMountsChange?: (mounts: MountEntry[]) => void
+  /** Saved mount names ignored because they are reserved (GET /api/agents/mounts/ignored). */
+  ignoredMounts?: string[]
   mcpTools?: string[]
   onMCPToolsChange?: (mcpTools: string[]) => void
   denyTools?: string[]
@@ -117,6 +119,7 @@ export function AgentCard({
   cogmem = true,
   mounts = [],
   onMountsChange = undefined,
+  ignoredMounts = [],
   mcpTools = [],
   onMCPToolsChange = undefined,
   denyTools = [],
@@ -380,45 +383,55 @@ export function AgentCard({
                   mounts.map((x, j) => (j === mi ? { ...x, ...patch } : x)),
                 )
               return (
-                <div key={mi} className="flex items-center gap-1.5">
-                  <Input
-                    value={m.name}
-                    onChange={(e) => set({ name: e.target.value })}
-                    placeholder="name (e.g. notes)"
-                    className="h-7 w-32 font-mono text-xs"
-                  />
-                  <Input
-                    value={m.path}
-                    onChange={(e) => set({ path: e.target.value })}
-                    placeholder="/absolute/path"
-                    className="h-7 flex-1 font-mono text-xs"
-                  />
-                  <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
-                    <Switch
-                      checked={m.writable === true}
-                      onCheckedChange={(c) => set({ writable: c })}
+                <div key={mi} className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={m.name}
+                      onChange={(e) => set({ name: e.target.value })}
+                      placeholder="name (e.g. notes)"
+                      className="h-7 w-32 font-mono text-xs"
                     />
-                    write
-                  </label>
-                  <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
-                    <Switch
-                      checked={m.notify === true}
-                      onCheckedChange={(c) => set({ notify: c })}
+                    <Input
+                      value={m.path}
+                      onChange={(e) => set({ path: e.target.value })}
+                      placeholder="/absolute/path"
+                      className="h-7 flex-1 font-mono text-xs"
                     />
-                    notify
-                  </label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-7 w-7"
-                    aria-label="remove mount"
-                    onClick={() =>
-                      onMountsChange(mounts.filter((_, j) => j !== mi))
-                    }
-                  >
-                    <IconTrash className="size-3.5" />
-                  </Button>
+                    <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
+                      <Switch
+                        checked={m.writable === true}
+                        onCheckedChange={(c) => set({ writable: c })}
+                      />
+                      write
+                    </label>
+                    <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
+                      <Switch
+                        checked={m.notify === true}
+                        onCheckedChange={(c) => set({ notify: c })}
+                      />
+                      notify
+                    </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label="remove mount"
+                      onClick={() =>
+                        onMountsChange(mounts.filter((_, j) => j !== mi))
+                      }
+                    >
+                      <IconTrash className="size-3.5" />
+                    </Button>
+                  </div>
+                  {ignoredMounts.includes(m.name) && (
+                    <p
+                      data-testid="ignored-mount"
+                      className="text-xs text-amber-600 dark:text-amber-400"
+                    >
+                      Ignored: &quot;{m.name}&quot; is a reserved name.
+                    </p>
+                  )}
                 </div>
               )
             })}
