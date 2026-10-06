@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -727,6 +729,40 @@ func TestHumanAgent_UnknownCommand(t *testing.T) {
 		t.Fatalf("reply = %+v", got)
 	}
 	al.activeRequests.Wait()
+}
+
+// A request the channel could not post to the person's chat ends the ask at
+// once with an error naming the agent and saying why, from the channel's
+// reason.
+func TestHumanAgent_UnreachableChatSaysWhy(t *testing.T) {
+	tests := []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{"unknown channel", fmt.Errorf("%w: telegram-x", channels.ErrUnknownChannel), "Bob's chat is not set up."},
+		{"channel not running", channels.ErrNotRunning, "Bob's chat is unavailable."},
+		{"recipient offline", fmt.Errorf("device:1: %w", channels.ErrRecipientOffline), "Bob's device is offline."},
+		{"recipient not found", fmt.Errorf("chat not found: %w", channels.ErrRecipientNotFound), "Bob's chat doesn't exist."},
+		{"failed after retries", fmt.Errorf("timeout: %w", channels.ErrTemporary), "Couldn't reach Bob's chat."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := logger.RedirectForTest(&safeBufLoop{})
+			defer restore()
+			al, msgBus, _ := newHumanLoop(t, 60)
+
+			replies := sendAsk(al, "r1", "Are you there?")
+			posted := expectPosted(t, msgBus)
+			posted.OnDelivery(tt.cause)
+
+			reply := expectAskReply(t, replies)
+			if reply.Text != tt.want || reply.Outcome != tools.OutcomePersonUnreachable {
+				t.Fatalf("reply = %+v, want %q", reply, tt.want)
+			}
+			al.activeRequests.Wait()
+		})
+	}
 }
 
 // A request the channel could not post to the person's chat ends the ask at

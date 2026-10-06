@@ -59,7 +59,8 @@ appear in the output.
   with *Allow shell commands*, plus a row when `tools.tool_overrides.shell_exec`
   is set, which has no effect), and for each
   confined agent that can run `shell_exec` a reminder that the shell is not
-  confined, CLI providers with *Allow CLI to bypass restrictions* on, channels
+  confined, CLI providers with *Allow CLI to bypass restrictions* on, a
+  human agent whose chat is on a channel that is not set up (marked), channels
   accepting any sender, message content in logs, the audit log
   (`<CLAW_HOME>/internal/audit.db`, 90-day retention), MCP servers running local
   programs, and sub-agent spawning. The first column holds `*` where action is

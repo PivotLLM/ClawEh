@@ -385,8 +385,9 @@ observe does not need an entry.
   person's next text message there is the answer; after the model's
   `request_timeout`, or once the asker stops waiting if that is sooner, the
   asker is told the person did not reply. A question that cannot be posted
-  to the chat (the channel fails to deliver it) ends at once with "Couldn't
-  reach Bob's chat.". A question whose asker gives up
+  to the chat ends at once with why: "Bob's chat is not set up.", "Bob's
+  chat is unavailable.", "Bob's device is offline.", "Bob's chat doesn't
+  exist." or "Couldn't reach Bob's chat.". A question whose asker gives up
   early is withdrawn in the person's chat ("Alice no longer needs an answer
   to that request."), and an answer that comes too late is told so, so no
   answer is ever dropped without a word. If the person sends `/cancel`, the
@@ -659,6 +660,20 @@ observe does not need an entry.
   `last_error_at` in `GET /api/mcp/status`).
 
 ### Changed
+
+- **A message dropped because its recipient is offline or doesn't exist no
+  longer raises the "Channel send failed" alert.** Every channel now says why
+  a send failed: the channel is not configured, not running, the recipient is
+  offline (a paired device that is not connected), the recipient doesn't
+  exist (an unknown or unpaired device; a Telegram chat that is not found,
+  blocked the bot or was deactivated; a Slack conversation that is not found,
+  archived or without the app; a Discord channel or user that is unknown or
+  refuses the bot's messages), or the send failed after its retries. The
+  alert is raised only when the channel is not running or the send failed
+  after its retries; an offline or missing recipient is logged as a warning
+  and not retried. A human agent's question that cannot be posted now tells
+  the asker why (see the human agents entry under Added), and Check Up marks
+  a human agent whose chat is on a channel that is not set up.
 
 - **BREAKING: mounts can no longer be named after workspace folders.** The
   names `files`, `skills`, `tasks`, `tmp`, `forums`, `maestro`, `sessions`,

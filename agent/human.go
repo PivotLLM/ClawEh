@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
@@ -55,10 +56,26 @@ func (e humanNotAskedError) Error() string { return e.label + " only answers que
 var errChatUnreachable = errors.New("the request could not be posted to the person's chat")
 
 // humanUnreachableError is a request that never reached the person's chat.
-// Its text is for the sender.
-type humanUnreachableError struct{ label string }
+// Its text is for the sender and says why, from the channel's reason in
+// cause.
+type humanUnreachableError struct {
+	label string
+	cause error
+}
 
-func (e humanUnreachableError) Error() string { return "Couldn't reach " + e.label + "'s chat." }
+func (e humanUnreachableError) Error() string {
+	switch {
+	case errors.Is(e.cause, channels.ErrUnknownChannel):
+		return e.label + "'s chat is not set up."
+	case errors.Is(e.cause, channels.ErrNotRunning):
+		return e.label + "'s chat is unavailable."
+	case errors.Is(e.cause, channels.ErrRecipientOffline):
+		return e.label + "'s device is offline."
+	case errors.Is(e.cause, channels.ErrRecipientNotFound):
+		return e.label + "'s chat doesn't exist."
+	}
+	return "Couldn't reach " + e.label + "'s chat."
+}
 func (e humanUnreachableError) Unwrap() error { return errChatUnreachable }
 
 // humanCancelledError is a request the person cancelled. Its text is for the
@@ -409,7 +426,7 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 		return "", humanCancelledError{label: agentLabelForUser(agent)}
 	}
 	if errors.Is(err, errChatUnreachable) {
-		return "", humanUnreachableError{label: agentLabelForUser(agent)}
+		return "", humanUnreachableError{label: agentLabelForUser(agent), cause: err}
 	}
 	if err != nil {
 		return "", err

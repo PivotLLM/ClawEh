@@ -408,14 +408,12 @@ func (c *DeviceChannel) StreamDelta(_ context.Context, chatID, delta string) err
 
 // Send implements channels.Channel — routes an agent reply to the device WS as a
 // terminal chat event, keyed by the inbound chatID ("device:<deviceID>").
-func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
+// It says why a reply was not delivered (see Server.DeliverReply).
+func (c *DeviceChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	if !c.IsRunning() {
 		return channels.ErrNotRunning
 	}
-	if c.server.DeliverReply(msg.ChatID, msg.Content) {
-		return nil
-	}
-	return channels.ErrSendFailed
+	return c.server.DeliverReply(ctx, msg.ChatID, msg.Content)
 }
 
 // trustedProxyHandler attributes a request from a trusted proxy to the client

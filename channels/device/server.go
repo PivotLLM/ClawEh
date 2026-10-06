@@ -1303,19 +1303,42 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 }
 
 // DeliverReply emits a terminal "chat" final event to the device for the given
-// chatID, carrying the in-flight runId. Returns false if no connection matches.
-func (s *Server) DeliverReply(chatID, content string) bool {
+// chatID ("device:<deviceID>"), carrying the in-flight runId. It says why a
+// reply was not delivered: channels.ErrRecipientNotFound when chatID names no
+// paired device, channels.ErrRecipientOffline when the device is paired but
+// not connected, and channels.ErrSendFailed when the write failed.
+func (s *Server) DeliverReply(ctx context.Context, chatID, content string) error {
 	v, _ := s.conns.Load(chatID)
 	lc, ok := v.(*liveConn)
 	if !ok {
-		return false
+		return s.undeliverable(ctx, chatID)
 	}
 	lc.mu.Lock()
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey
 	lc.currentRun = ""
 	lc.mu.Unlock()
-	return s.emitChatReply(lc, runID, sessionKey, content)
+	if !s.emitChatReply(lc, runID, sessionKey, content) {
+		return fmt.Errorf("%s: the connection closed during the write: %w", chatID, channels.ErrSendFailed)
+	}
+	return nil
+}
+
+// undeliverable says why chatID has no live connection: no paired device by
+// that id, or a paired device that is not connected.
+func (s *Server) undeliverable(ctx context.Context, chatID string) error {
+	deviceID, ok := strings.CutPrefix(chatID, "device:")
+	if !ok || deviceID == "" {
+		return fmt.Errorf("%s is not a device chat: %w", chatID, channels.ErrRecipientNotFound)
+	}
+	_, paired, err := s.store.GetPaired(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("%s: look up the paired device: %w: %w", chatID, channels.ErrSendFailed, err)
+	}
+	if !paired {
+		return fmt.Errorf("%s: no paired device: %w", chatID, channels.ErrRecipientNotFound)
+	}
+	return fmt.Errorf("%s: device not connected: %w", chatID, channels.ErrRecipientOffline)
 }
 
 // emitChatReply delivers a complete assistant reply to one connection. It emits

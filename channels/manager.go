@@ -951,7 +951,8 @@ func reportDelivery(msg bus.OutboundMessage, err error) {
 
 // sendWithRetry sends a message through the channel with rate limiting and
 // retry logic. It classifies errors to determine the retry strategy:
-//   - ErrNotRunning / ErrSendFailed: permanent, no retry
+//   - ErrNotRunning / ErrSendFailed / ErrReceiveOnly / ErrRecipientOffline /
+//     ErrRecipientNotFound / ErrUnknownChannel: permanent, no retry
 //   - ErrRateLimit: fixed delay retry
 //   - ErrTemporary / unknown: exponential backoff retry
 func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
@@ -974,8 +975,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
-			errors.Is(lastErr, ErrReceiveOnly) {
+		if permanentSendError(lastErr) {
 			break
 		}
 
@@ -1014,6 +1014,17 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		return lastErr
 	}
 
+	// A recipient that is offline or does not exist is an expected state,
+	// not an outage: logged at WARN, never alerted.
+	if recipientUnavailable(lastErr) {
+		logger.WarnCF("channels", "Send dropped: "+recipientReason(lastErr), map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"error":   lastErr.Error(),
+		})
+		return lastErr
+	}
+
 	// All retries exhausted or permanent failure
 	logger.ErrorCF("channels", "Send failed", map[string]any{
 		"channel": name,
@@ -1021,13 +1032,38 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
 	})
+	description := name + ": a message could not be delivered after " + strconv.Itoa(maxRetries) + " retries"
+	if errors.Is(lastErr, ErrNotRunning) {
+		description = name + ": a message could not be delivered because the channel is not running"
+	}
 	m.alert(alerter.Alert{
 		Title:       "Channel send failed",
-		Description: name + ": a message could not be delivered after " + strconv.Itoa(maxRetries) + " retries",
+		Description: description,
 		Details:     lastErr.Error(),
 		EventID:     name,
 	})
 	return lastErr
+}
+
+// permanentSendError reports whether err ends a send at once, without retry.
+func permanentSendError(err error) bool {
+	return errors.Is(err, ErrNotRunning) || errors.Is(err, ErrSendFailed) ||
+		errors.Is(err, ErrReceiveOnly) || errors.Is(err, ErrUnknownChannel) ||
+		recipientUnavailable(err)
+}
+
+// recipientUnavailable reports whether err says the recipient is offline or
+// does not exist: an expected state, logged at WARN and never alerted.
+func recipientUnavailable(err error) bool {
+	return errors.Is(err, ErrRecipientOffline) || errors.Is(err, ErrRecipientNotFound)
+}
+
+// recipientReason names the recipient state err reports, for a log message.
+func recipientReason(err error) string {
+	if errors.Is(err, ErrRecipientOffline) {
+		return "recipient offline"
+	}
+	return "recipient not found"
 }
 
 func dispatchLoop[M any](
@@ -1062,7 +1098,7 @@ func dispatchLoop[M any](
 
 		if !exists {
 			logger.WarnCF("channels", unknownMsg, map[string]any{"channel": channel})
-			drop(msg, fmt.Errorf("channel %s not found", channel))
+			drop(msg, fmt.Errorf("%w: %s", ErrUnknownChannel, channel))
 			continue
 		}
 
@@ -1073,7 +1109,7 @@ func dispatchLoop[M any](
 			}
 		} else if exists {
 			logger.WarnCF("channels", noWorkerMsg, map[string]any{"channel": channel})
-			drop(msg, fmt.Errorf("channel %s has no active worker", channel))
+			drop(msg, fmt.Errorf("%w: %s has no active worker", ErrNotRunning, channel))
 		}
 	}
 }
@@ -1160,8 +1196,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
-			errors.Is(lastErr, ErrReceiveOnly) {
+		if permanentSendError(lastErr) {
 			break
 		}
 
@@ -1196,6 +1231,15 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 			"channel": name,
 			"chat_id": msg.ChatID,
 			"detail":  lastErr.Error(),
+		})
+		return
+	}
+
+	if recipientUnavailable(lastErr) {
+		logger.WarnCF("channels", "SendMedia dropped: "+recipientReason(lastErr), map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"error":   lastErr.Error(),
 		})
 		return
 	}
@@ -1317,8 +1361,9 @@ func (m *Manager) UnregisterChannel(name string) {
 // worker's rate limiter and retry logic. It blocks until the message is
 // delivered (or all retries are exhausted), which preserves ordering when
 // a subsequent operation depends on the message having been sent. It
-// returns the delivery error (nil once delivered): an unknown channel, a
-// channel with no worker, or the send's own failure after its retries. The
+// returns the delivery error (nil once delivered): an unknown channel
+// (ErrUnknownChannel), a channel with no worker (ErrNotRunning), or the
+// send's own failure after its retries. The
 // same result goes to msg.OnDelivery.
 func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) error {
 	m.mu.RLock()
@@ -1329,9 +1374,9 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 	var err error
 	switch {
 	case !exists:
-		err = fmt.Errorf("channel %s not found", msg.Channel)
+		err = fmt.Errorf("%w: %s", ErrUnknownChannel, msg.Channel)
 	case !wExists || w == nil:
-		err = fmt.Errorf("channel %s has no active worker", msg.Channel)
+		err = fmt.Errorf("%w: %s has no active worker", ErrNotRunning, msg.Channel)
 	default:
 		err = m.sendSplit(ctx, msg.Channel, w, msg)
 	}
@@ -1346,7 +1391,7 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 	m.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("channel %s not found", channelName)
+		return fmt.Errorf("%w: %s", ErrUnknownChannel, channelName)
 	}
 
 	msg := bus.OutboundMessage{

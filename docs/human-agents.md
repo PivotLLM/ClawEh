@@ -48,9 +48,20 @@ and their next message there is the answer.
   the question is posted), or before the asker stops waiting if that is
   sooner, the asker is told "Bob did not reply within N seconds.". A late
   answer is told "That request has already timed out."
-- If the question cannot be posted to the chat (the channel fails to deliver
-  it), the asker is told at once "Couldn't reach Bob's chat." and the person
-  is not waited for.
+- If the question cannot be posted to the chat, the asker is told at once
+  why, and the person is not waited for:
+
+  | The channel reports | The asker is told |
+  |---|---|
+  | No channel of that name is configured | "Bob's chat is not set up." |
+  | The channel is not running | "Bob's chat is unavailable." |
+  | The recipient is offline (a paired device that is not connected) | "Bob's device is offline." |
+  | The recipient doesn't exist (an unknown chat, a user who blocked the bot, an unpaired device) | "Bob's chat doesn't exist." |
+  | The send failed after its retries, or anything else | "Couldn't reach Bob's chat." |
+
+  Of these, only a channel that is not running or a send that failed after
+  its retries raises the "Channel send failed" alert. Check Up marks a human
+  agent whose chat is on a channel that is not set up.
 - If the asker gives up first (its turn is cancelled, or claw shuts down),
   the question is withdrawn with "Alice no longer needs an answer to that
   request.", and a later answer is told "That request was withdrawn." An

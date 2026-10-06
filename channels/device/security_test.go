@@ -220,15 +220,19 @@ func TestSlowReaderDisconnectedWithoutBlocking(t *testing.T) {
 	start := time.Now()
 	for i := range 40 {
 		t0 := time.Now()
-		srv.DeliverReply("device:"+stuck.deviceID(), big)
+		// The stuck device is closed once its queue fills: later replies fail.
+		if err := srv.DeliverReply(context.Background(), "device:"+stuck.deviceID(), big); err != nil &&
+			!errors.Is(err, channels.ErrSendFailed) && !errors.Is(err, channels.ErrRecipientOffline) {
+			t.Fatalf("DeliverReply %d to a stuck device: %v", i, err)
+		}
 		if d := time.Since(t0); d > 500*time.Millisecond {
 			t.Fatalf("DeliverReply %d to a stuck device blocked for %s", i, d)
 		}
 	}
 
 	// The healthy device gets its reply promptly while the stuck one is wedged.
-	if !srv.DeliverReply("device:"+healthy.deviceID(), "hello") {
-		t.Fatal("DeliverReply to the healthy device failed")
+	if err := srv.DeliverReply(context.Background(), "device:"+healthy.deviceID(), "hello"); err != nil {
+		t.Fatalf("DeliverReply to the healthy device failed: %v", err)
 	}
 	if err := fine.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
@@ -253,8 +257,8 @@ func TestSlowReaderDisconnectedWithoutBlocking(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if srv.DeliverReply("device:"+stuck.deviceID(), "late") {
-		t.Fatal("DeliverReply to a closed connection reported success")
+	if err := srv.DeliverReply(context.Background(), "device:"+stuck.deviceID(), "late"); !errors.Is(err, channels.ErrRecipientOffline) {
+		t.Fatalf("DeliverReply to a closed connection = %v, want ErrRecipientOffline", err)
 	}
 }
 

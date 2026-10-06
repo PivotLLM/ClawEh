@@ -242,7 +242,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("discord send media: %w", channels.ErrTemporary)
+			return classifySendErr("discord send media", err)
 		}
 		return nil
 	case <-sendCtx.Done():
@@ -312,12 +312,27 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content, repl
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("discord send: %w", channels.ErrTemporary)
+			return classifySendErr("discord send", err)
 		}
 		return nil
 	case <-sendCtx.Done():
 		return sendCtx.Err()
 	}
+}
+
+// classifySendErr maps a failed Discord send to a channel sentinel: an
+// unknown channel or user, or a user who does not accept messages from the
+// bot, is ErrRecipientNotFound; anything else ErrTemporary (retried).
+func classifySendErr(op string, err error) error {
+	var restErr *discordgo.RESTError
+	if errors.As(err, &restErr) && restErr.Message != nil {
+		switch restErr.Message.Code {
+		case discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeUnknownUser,
+			discordgo.ErrCodeCannotSendMessagesToThisUser:
+			return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
+		}
+	}
+	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
 }
 
 // appendContent safely appends content to existing text

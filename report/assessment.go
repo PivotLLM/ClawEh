@@ -284,6 +284,19 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 
+	// A person's chat on a channel that is not set up: requests to them
+	// cannot be delivered. Only the configuration is checked here; whether
+	// the chat itself exists is known only when a request is sent.
+	for _, a := range enabledAgents(cfg) {
+		if !cfg.IsHumanAgent(a.ID) {
+			continue
+		}
+		if channel, _, _, ok := cfg.CronTarget(a.ID); ok && !channelSetUp(cfg, channel) {
+			add(true, "Person's chat ("+a.ID+")",
+				"Channel "+channel+" is not set up, so requests can't reach "+a.ID+".")
+		}
+	}
+
 	// The WebUI's one sender is the logged-in operator and every device is
 	// authenticated and paired, so allow_from says nothing about exposure
 	// there; only channels where anyone can message the bot count.
@@ -334,6 +347,27 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		Notes:  []string{"A " + actionMark + " in the first column means action is recommended. Details for every item are in the sections below."},
 		Tables: []Table{t},
 	}
+}
+
+// channelSetUp reports whether name is a channel the configuration starts.
+// A secmsg daemon with no accounts listed discovers them at start, so any
+// name under its prefix may be one of them.
+func channelSetUp(cfg *config.Config, name string) bool {
+	for _, c := range enabledChannels(cfg) {
+		if strings.EqualFold(c.Name, name) {
+			return true
+		}
+	}
+	for _, s := range cfg.Channels.SecMsg {
+		if !s.Enabled || len(s.Accounts) > 0 {
+			continue
+		}
+		base := orValue(s.Name, "secmsg")
+		if strings.EqualFold(name, base) || strings.HasPrefix(strings.ToLower(name), strings.ToLower(base)+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 // permsStatus describes what perms.Check found under CLAW_HOME. A truncated

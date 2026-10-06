@@ -508,16 +508,58 @@ func (c *TelegramChannel) sendHTMLChunk(
 	}
 
 	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
+		// A chat that does not exist fails the same way in plain text.
+		if recipientNotFound(err) {
+			return fmt.Errorf("telegram send: %w: %w", channels.ErrRecipientNotFound, redactErr(err))
+		}
 		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
 			"error": redactErr(err).Error(),
 		})
 		tgMsg.Text = mdFallback
 		tgMsg.ParseMode = ""
 		if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
-			return fmt.Errorf("telegram send: %w", channels.ErrTemporary)
+			return classifySendErr("telegram send", err)
 		}
 	}
 	return nil
+}
+
+// recipientNotFoundReasons are the Telegram API descriptions (lower case) of
+// a chat the bot cannot reach at all: it does not exist, the user blocked
+// the bot or was deactivated, or the bot is no longer in the group.
+var recipientNotFoundReasons = []string{
+	"chat not found",
+	"peer_id_invalid",
+	"bot was blocked by the user",
+	"user is deactivated",
+	"bot was kicked",
+	"bot is not a member",
+}
+
+// recipientNotFound reports whether err is a Telegram API error saying the
+// chat cannot be reached at all.
+func recipientNotFound(err error) bool {
+	var apiErr *ta.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	desc := strings.ToLower(apiErr.Description)
+	for _, r := range recipientNotFoundReasons {
+		if strings.Contains(desc, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// classifySendErr maps a failed Telegram send to a channel sentinel: a chat
+// that cannot be reached is ErrRecipientNotFound, anything else
+// ErrTemporary (retried). The redacted API error is kept for the log.
+func classifySendErr(op string, err error) error {
+	if recipientNotFound(err) {
+		return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, redactErr(err))
+	}
+	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
 }
 
 // StartTyping implements channels.TypingCapable.
@@ -699,7 +741,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				"type":  part.Type,
 				"error": redactErr(err).Error(),
 			})
-			return fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
+			return classifySendErr("telegram send media", err)
 		}
 	}
 

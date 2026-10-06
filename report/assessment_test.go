@@ -530,3 +530,45 @@ func TestAssessment_IgnoredMount(t *testing.T) {
 		t.Errorf("row = %v", r)
 	}
 }
+
+// TestAssessment_PersonChatNotSetUp: a human agent whose chat is on a channel
+// the configuration does not start is marked for action; a chat on a running
+// channel, or on a secmsg daemon that discovers its accounts, is not listed.
+func TestAssessment_PersonChatNotSetUp(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Providers = append(cfg.Providers, config.Provider{Name: "People", Protocol: config.HumanProtocol})
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Bob person", Model: "bob", Provider: "People", Enabled: true})
+	cfg.Agents.List[1].Models = []string{"Bob person"}
+	const item = "Person's chat (bob)"
+	hasRow := func() bool {
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasRow() {
+		t.Fatal("a chat on a running channel must not be listed")
+	}
+
+	cfg.Channels.Telegram[0].Enabled = false
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), item)
+	if r[0] == "" {
+		t.Error("expected an action mark")
+	}
+	contains(t, r[2], "Channel telegram-bob is not set up", "row status")
+
+	cfg.Channels.SecMsg = []config.SecMsgConfig{{Enabled: true, Address: "127.0.0.1:1"}}
+	cfg.Bindings[0].Match.Channel = "secmsg-bob"
+	if hasRow() {
+		t.Fatal("a chat on a secmsg daemon that discovers its accounts must not be listed")
+	}
+
+	cfg.Agents.List[1].Models = nil
+	cfg.Bindings[0].Match.Channel = "nowhere"
+	if hasRow() {
+		t.Fatal("an agent that is not a person must not be listed")
+	}
+}

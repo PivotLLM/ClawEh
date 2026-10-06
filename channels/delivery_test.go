@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -73,8 +74,8 @@ func TestDispatchOutbound_ReportsUnknownChannel(t *testing.T) {
 	if err := mb.PublishOutbound(t.Context(), bus.OutboundMessage{Channel: "nowhere", ChatID: "1", Content: "hi", OnDelivery: onDelivery}); err != nil {
 		t.Fatal(err)
 	}
-	if err := expectDelivery(t, reports); err == nil {
-		t.Fatal("an unknown channel must be reported as a failed delivery")
+	if err := expectDelivery(t, reports); !errors.Is(err, ErrUnknownChannel) {
+		t.Fatalf("delivery error = %v, want ErrUnknownChannel", err)
 	}
 }
 
@@ -118,5 +119,87 @@ func TestSendMessage_ReportsDelivery(t *testing.T) {
 	}
 	if got := expectDelivery(t, reports); got == nil || got.Error() != err.Error() {
 		t.Fatalf("OnDelivery got %v, want %v", got, err)
+	}
+}
+
+// Every failed send reaches OnDelivery with its reason, testable with
+// errors.Is, and only a channel that is not running or a send that failed
+// after its retries raises the "Channel send failed" alert. A recipient that
+// is offline or does not exist is not retried.
+func TestSendMessage_ReasonsAndAlerts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		channel   string // "" uses the registered channel
+		noWorker  bool
+		sendErr   error
+		want      error
+		wantAlert bool
+		wantCalls int
+	}{
+		{name: "unknown channel", channel: "nowhere", want: ErrUnknownChannel},
+		{name: "no worker", noWorker: true, want: ErrNotRunning},
+		{name: "channel not running", sendErr: ErrNotRunning, want: ErrNotRunning, wantAlert: true, wantCalls: 1},
+		{name: "recipient offline", sendErr: fmt.Errorf("device:1: %w", ErrRecipientOffline), want: ErrRecipientOffline, wantCalls: 1},
+		{name: "recipient not found", sendErr: fmt.Errorf("chat not found: %w", ErrRecipientNotFound), want: ErrRecipientNotFound, wantCalls: 1},
+		{name: "send failed", sendErr: fmt.Errorf("bad request: %w", ErrSendFailed), want: ErrSendFailed, wantAlert: true, wantCalls: 1},
+		{name: "failed after retries", sendErr: fmt.Errorf("timeout: %w", ErrTemporary), want: ErrTemporary, wantAlert: true, wantCalls: maxRetries + 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newTestManager()
+			rec := &alertRecorder{}
+			m.SetAlerter(rec)
+			calls := 0
+			ch := &mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error {
+				calls++
+				return tt.sendErr
+			}}
+			m.channels["test"] = ch
+			if !tt.noWorker {
+				m.workers["test"] = &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+			}
+			name := tt.channel
+			if name == "" {
+				name = "test"
+			}
+
+			reports, onDelivery := deliveryReport()
+			err := m.SendMessage(t.Context(), bus.OutboundMessage{Channel: name, ChatID: "1", Content: "hi", OnDelivery: onDelivery})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("SendMessage = %v, want %v", err, tt.want)
+			}
+			if got := expectDelivery(t, reports); !errors.Is(got, tt.want) {
+				t.Fatalf("OnDelivery got %v, want %v", got, tt.want)
+			}
+			if calls != tt.wantCalls {
+				t.Fatalf("Send called %d times, want %d", calls, tt.wantCalls)
+			}
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if alerted := len(rec.alerts) > 0; alerted != tt.wantAlert {
+				t.Fatalf("alerts = %+v, want alert %v", rec.alerts, tt.wantAlert)
+			}
+			if tt.wantAlert && (len(rec.alerts) != 1 || rec.alerts[0].Title != "Channel send failed") {
+				t.Fatalf("alerts = %+v, want one Channel send failed", rec.alerts)
+			}
+		})
+	}
+}
+
+// The dispatcher reports a message on a channel with no worker as not running.
+func TestDispatchOutbound_ReportsNoWorkerAsNotRunning(t *testing.T) {
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	m := &Manager{channels: map[string]Channel{"test": &mockChannel{}}, workers: make(map[string]*channelWorker), bus: mb}
+	go m.dispatchOutbound(t.Context())
+
+	reports, onDelivery := deliveryReport()
+	if err := mb.PublishOutbound(t.Context(), bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hi", OnDelivery: onDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expectDelivery(t, reports); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("delivery error = %v, want ErrNotRunning", err)
 	}
 }

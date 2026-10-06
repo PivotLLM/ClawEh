@@ -212,7 +212,7 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	_, _, err := c.api.PostMessageContext(ctx, channelID, opts...)
 	if err != nil {
-		return fmt.Errorf("slack send: %w", channels.ErrTemporary)
+		return classifySendErr("slack send", err)
 	}
 
 	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
@@ -311,11 +311,32 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return fmt.Errorf("slack send media: %w", channels.ErrTemporary)
+			return classifySendErr("slack send media", uploadErr)
 		}
 	}
 
 	return nil
+}
+
+// recipientNotFoundErrors are the Slack API error codes of a conversation the
+// app cannot post to at all: it does not exist, the app is not in it, or it
+// is archived.
+var recipientNotFoundErrors = map[string]bool{
+	"channel_not_found": true,
+	"not_in_channel":    true,
+	"is_archived":       true,
+	"user_not_found":    true,
+}
+
+// classifySendErr maps a failed Slack send to a channel sentinel: a
+// conversation the app cannot post to is ErrRecipientNotFound, anything else
+// ErrTemporary (retried).
+func classifySendErr(op string, err error) error {
+	var apiErr slack.SlackErrorResponse
+	if errors.As(err, &apiErr) && recipientNotFoundErrors[apiErr.Err] {
+		return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
+	}
+	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
 }
 
 // ReactToMessage implements channels.ReactionCapable.
