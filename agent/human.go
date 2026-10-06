@@ -263,13 +263,12 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	al.humans.set(agentID, req)
 
 	// The channel reports whether the request reached the chat; a failure
-	// ends the wait at once. The wait is logged only once the request is in
-	// the person's chat.
-	postedFields := turnFields(ctx, map[string]any{"agent_id": agentID, "channel": channel, "chat_id": chatID, "timeout": timeout.String()})
+	// ends the wait at once, a success is logged.
+	fields := turnFields(ctx, map[string]any{"agent_id": agentID, "channel": channel, "chat_id": chatID, "timeout": timeout.String()})
 	undelivered := make(chan error, 1)
 	onDelivery := func(err error) {
 		if err == nil {
-			logger.InfoCF("agent", "Request posted to a person; waiting for the answer", postedFields)
+			logger.InfoCF("agent", "Request delivered to a person; waiting for the answer", fields)
 			return
 		}
 		select {
@@ -277,6 +276,7 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 		default:
 		}
 	}
+	logger.InfoCF("agent", "Posting request to a person", fields)
 	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: request, OnDelivery: onDelivery}); err != nil {
 		al.humans.clear(agentID, req)
 		return "", fmt.Errorf("post the request to %s:%s: %w", channel, chatID, err)

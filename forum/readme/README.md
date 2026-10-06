@@ -40,17 +40,29 @@ an agent (as itself or as a clone) only if it is in your allowed agents.
 - `inputs`: what the layer receives, each `{"from": "source:<id>"}` or
   `{"from": "layer:<id>"}` (an earlier layer only). Options include
   `select`, `authors`, `to`, `distribute` and `optional`.
-- `"anonymous": true` on a layer input shows that layer's outputs as
-  "Response A", "Response B", ... without their authors, and leaves out the
-  reader's own. The letter follows the author's position in that layer's
-  `participants`. Anyone reading the same layer without the option sees
-  "Bob (Response A)", so a chair can match reviews to authors. The
-  transcript keeps the real names.
+- `"anonymous": true` on a layer input hides who wrote what; see below.
 
 `result_layers` names the layers whose outputs are the result; the default is
 the last layer. `limits` (`max_calls`, `max_duration_seconds`,
 `call_timeout_seconds`, `max_attempts_per_turn`, `max_parallel_calls`) are
 required and are hard limits.
+
+## Anonymous review
+
+`{"from": "layer:answer", "anonymous": true}` shows that layer's outputs as
+"Response A", "Response B", ... without their authors.
+
+- Letters are assigned per producing layer, by the author's position in its
+  `participants`.
+- Each reader's own outputs are left out; with `distribute: random` it is
+  never dealt its own.
+- Anyone reading the same layer by name sees "Bob (Response A)", so a chair
+  can match reviews to authors. The transcript keeps the real names.
+- The reading layer must be `after_round` with one round and no moderator.
+- A reader must not also read that layer by name, moderate it, or take part
+  in it while it is `per_turn` or has more than one round, and must have
+  someone else's output to read.
+- A clone of you cannot take part, since it can read the forum's files.
 
 ## How to run one
 

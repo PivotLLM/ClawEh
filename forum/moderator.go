@@ -129,7 +129,9 @@ func (c *Controller) composeModeratorMessage(layer Layer, round int, m Participa
 		if err != nil {
 			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, ModeratorTurnID(round), err)
 		}
-		c.writeInputs(&b, inputs.Moderator)
+		// No anonymous route reaches a moderator: a layer that reads
+		// anonymously has none (ValidateStatic).
+		c.writeInputs(&b, inputs.Moderator, nil, "")
 	}
 	after := through
 	if single {

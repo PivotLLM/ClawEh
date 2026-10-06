@@ -107,6 +107,11 @@ func (e *ValidationError) Error() string {
 //     on a source route (a source contributes one record, authorless);
 //   - anonymous is rejected with same_participant (it leaves out the
 //     recipient's own outputs, the only ones same_participant gives);
+//   - an anonymous read of layer P by layer L: L is after_round with one
+//     round and no moderator; no recipient reads P by name through another
+//     route, moderates P, or takes part in P while P is per_turn or has
+//     more than one round; and every recipient has another author in P
+//     (narrowed by authors);
 //   - view full requires a nonempty to on a layer input; a moderator input
 //     may use view full without to, since the moderator is its one
 //     explicit recipient (the router applies the same rule);
@@ -192,6 +197,8 @@ type Resolved struct {
 //     true and Agents.Exists(id) is true;
 //   - a clone's `model` override is in Agents.Models(source);
 //   - a fresh participant's model is in Agents.Models(launcher);
+//   - no clone of the launcher takes part in a forum with an anonymous
+//     input (it could read the forum's files and so the authors);
 //   - every named schema compiles (Schemas.Compile), and every enabled
 //     layer's effective moderator schema (EffectiveModeratorSchema)
 //     compiles too; a nil Schemas with any named schema or any enabled
@@ -222,6 +229,7 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 	if err := p.participants(ctx); err != nil {
 		return nil, err
 	}
+	p.launcherClones()
 	p.schemas()
 	if err := p.sources(); err != nil {
 		return nil, err
@@ -515,6 +523,73 @@ func (v *staticValidator) layer(i int, l Layer) {
 	}
 }
 
+// anonymous checks an anonymous read of producer by layer l (the
+// recipients are the route's): l must be after_round with one round and no
+// moderator, so its readers never see one another by name; no recipient
+// may see producer by name elsewhere (another route from it, its moderator,
+// or taking part in it while it is per_turn or runs more than one round);
+// and every recipient must have someone else's output to read.
+func (v *staticValidator) anonymous(path string, l Layer, r Route, recipients []string, producer Layer) {
+	if l.Delivery != DeliveryAfterRound || l.MaxRounds != 1 || l.Moderator != nil {
+		v.addf(path, "Layer %s reads %s anonymously, so it must be after_round with one round and no moderator", l.ID, producer.ID)
+	}
+	authors := producer.Participants
+	if len(r.Authors) > 0 {
+		authors = slices.DeleteFunc(slices.Clone(authors), func(a string) bool { return !slices.Contains(r.Authors, a) })
+	}
+	for _, pid := range recipients {
+		who := v.participantName(pid)
+		if !slices.ContainsFunc(authors, func(a string) bool { return a != pid }) {
+			v.addf(path, "%s reads layer %s anonymously in layer %s but would only see its own responses", who, producer.ID, l.ID)
+		}
+		if slices.Contains(producer.Participants, pid) && (producer.Delivery == DeliveryPerTurn || producer.MaxRounds > 1) {
+			v.addf(path, "%s takes part in layer %s, which is per_turn or has more than one round, so it can't read that layer anonymously in layer %s", who, producer.ID, l.ID)
+		}
+		if producer.Moderator != nil && producer.Moderator.Participant == pid {
+			v.addf(path, "%s moderates layer %s, so it can't read that layer anonymously in layer %s", who, producer.ID, l.ID)
+		}
+		if named, ok := v.readsByName(producer.ID, pid); ok {
+			v.addf(path, "%s reads layer %s anonymously in layer %s and by name in layer %s", who, producer.ID, l.ID, named)
+		}
+	}
+}
+
+// readsByName returns a layer in which participant pid receives producer's
+// outputs through a route that is not anonymous, and whether there is one.
+func (v *staticValidator) readsByName(producer, pid string) (string, bool) {
+	reads := func(r Route, recipients []string) bool {
+		kind, id, err := r.Producer()
+		return err == nil && kind == RouteFromLayer && id == producer && !r.Anonymous && slices.Contains(recipients, pid)
+	}
+	for _, l := range v.cfg.Layers {
+		for _, r := range l.Inputs {
+			recipients := r.To
+			if len(recipients) == 0 {
+				recipients = l.Participants
+			}
+			if reads(r, recipients) {
+				return l.ID, true
+			}
+		}
+		if l.Moderator != nil {
+			for _, r := range l.Moderator.Inputs {
+				if reads(r, []string{l.Moderator.Participant}) {
+					return l.ID, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// participantName is a participant's configured name, else its ID.
+func (v *staticValidator) participantName(id string) string {
+	if p, ok := v.cfg.Participants[id]; ok && p.Name != "" {
+		return p.Name
+	}
+	return id
+}
+
 // participantRefs checks a list of participant IDs: each configured, none
 // repeated.
 func (v *staticValidator) participantRefs(path string, ids []string, owner string) {
@@ -640,6 +715,9 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 		v.authorRefs(path+".authors", r.Authors, producer)
 		if r.Anonymous && r.Distribute == DistributeSameParticipant {
 			v.addf(path+".anonymous", "anonymous leaves out each recipient's own outputs, so same_participant would give it nothing")
+		}
+		if r.Anonymous {
+			v.anonymous(path+".anonymous", l, r, recipients, producer)
 		}
 		if r.Distribute == DistributeSameParticipant {
 			for _, to := range recipients {
@@ -865,6 +943,40 @@ func (p *preflight) participants(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// launcherClones refuses a clone of the launching agent in a forum with an
+// anonymous input: the clone acts as the launcher, whose file tools can read
+// the forum's directory and so every author's name.
+func (p *preflight) launcherClones() {
+	if !usesAnonymous(p.cfg) {
+		return
+	}
+	for _, id := range p.usedParticipants() {
+		if part := p.cfg.Participants[id]; part.Clone == p.env.Launcher {
+			p.addf("participants."+id+".clone", "A clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
+		}
+	}
+}
+
+// usesAnonymous reports whether any input of an enabled layer, or of its
+// moderator, is anonymous.
+func usesAnonymous(cfg *Config) bool {
+	for _, l := range cfg.EnabledLayers() {
+		for _, r := range l.Inputs {
+			if r.Anonymous {
+				return true
+			}
+		}
+		if l.Moderator != nil {
+			for _, r := range l.Moderator.Inputs {
+				if r.Anonymous {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // target checks that the launcher may name agentID and that it exists.

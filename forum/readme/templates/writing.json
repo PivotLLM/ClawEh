@@ -2,16 +2,16 @@
   "version": 1,
   "name": "writing",
   "brief": {
-    "purpose": "Produce a clear, well-argued text on the topic in the brief source.",
+    "purpose": "Produce a clear, well-argued text on the topic in the topic source.",
     "task": "Draft the text, critique it, revise it and edit it into its final form.",
     "success_criteria": [
-      "The text meets every requirement in the brief source.",
+      "The text meets every requirement in the topic source.",
       "Its argument is sound and its structure easy to follow.",
       "It reads clearly and suits its audience."
     ]
   },
   "sources": {
-    "brief": {
+    "topic": {
       "decode": "markdown",
       "inline": "<the topic, audience, length and any other requirements for the text>"
     }
@@ -45,8 +45,8 @@
     {
       "id": "draft",
       "participants": ["writer"],
-      "instructions": "Write a complete first draft of the text described in the brief source. Reply with the draft only.",
-      "inputs": [{"from": "source:brief"}],
+      "instructions": "Write a complete first draft of the text described in the topic source. Reply with the draft only.",
+      "inputs": [{"from": "source:topic"}],
       "delivery": "after_round",
       "max_rounds": 1,
       "output": {"format": "markdown"}
@@ -55,7 +55,7 @@
       "id": "critique",
       "participants": ["structure_critic", "style_critic"],
       "instructions": "Critique the draft from your angle only. List concrete problems, each with where it occurs and how to fix it, most important first. Do not rewrite the text.",
-      "inputs": [{"from": "source:brief"}, {"from": "layer:draft"}],
+      "inputs": [{"from": "source:topic"}, {"from": "layer:draft"}],
       "delivery": "after_round",
       "max_rounds": 1,
       "output": {"format": "markdown"}
@@ -72,8 +72,8 @@
     {
       "id": "final",
       "participants": ["editor"],
-      "instructions": "Edit the revised text into its final form, checking it against the brief source. Reply with the final text, then a heading 'What changed' and a short list of what changed from the first draft and why.",
-      "inputs": [{"from": "source:brief"}, {"from": "layer:draft"}, {"from": "layer:revise"}],
+      "instructions": "Edit the revised text into its final form, checking it against the topic source. Reply with the final text only, then end with a short section headed '## Notes' listing what changed from the first draft and why.",
+      "inputs": [{"from": "source:topic"}, {"from": "layer:draft"}, {"from": "layer:revise"}],
       "delivery": "after_round",
       "max_rounds": 1,
       "output": {"format": "markdown"}

@@ -53,7 +53,7 @@
     {
       "id": "verdict",
       "participants": ["chair"],
-      "instructions": "Write the council's final answer to the question, drawing on the best of the responses and the reviews. Then state where the members agree and disagree, and give the aggregate ranking of the responses from the reviews' FINAL RANKING lines.",
+      "instructions": "Write the council's final answer to the question, drawing on the best of the responses and the reviews. Then state where the members agree and disagree, and give the aggregate ranking of the responses from the reviews' FINAL RANKING lines. Each member ranks only the other members' responses, never its own.",
       "inputs": [{"from": "source:question"}, {"from": "layer:answer"}, {"from": "layer:review"}],
       "delivery": "after_round",
       "max_rounds": 1,

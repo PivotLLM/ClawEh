@@ -347,3 +347,24 @@ the reader of the affected seam knows it is a choice, not a requirement.
     `running`) keeps its on-disk status; "interrupted" is a condition
     (`running` with no live controller) rather than a status, and
     `Recover`/`Resume` detect it. (e).
+11. **Anonymous inputs** (`Route.Anonymous`, layer routes only). The
+    router labels each output of a layer that some route reads
+    anonymously "Response <letter>" by its author's position in the
+    producing layer's `participants` (`responseLabel`), so the letter is
+    per producing layer and the same for every reader; an anonymous
+    route's records are shown by label only, a named reader's as
+    "<name> (Response A)". Each recipient's own records are left out
+    (`withoutOwn`), and `random` deals a record to the next recipient in
+    turn that did not write it. `InputItem.Label` and
+    `InputItem.Anonymous` are persisted in `inputs.json`, so a resume
+    shows the same labels. An optional anonymous route that gives a
+    recipient nothing is written as "No other responses are available."
+    (`writeInputs`). The transcript and results keep real names.
+    Validation (no reader may learn the authors another way): not on a
+    source or with `same_participant`; the reading layer is `after_round`,
+    one round, no moderator (so no moderator input is ever anonymous); no
+    recipient reads the producer by name through another route, moderates
+    it, or takes part in it while it is `per_turn` or multi-round; every
+    recipient has another author (after `authors`); and Preflight refuses
+    a clone of the launcher in a forum with any anonymous input, since it
+    can read the forum directory. (a), (c), (d).

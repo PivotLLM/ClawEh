@@ -891,3 +891,24 @@ func TestResponseLabel(t *testing.T) {
 		}
 	}
 }
+
+// A random anonymous route never deals a record to its author, whatever the
+// seed, and still deals every record once.
+func TestRouterAnonymousRandomSkipsAuthor(t *testing.T) {
+	for seed := range int64(50) {
+		f := routerNewFixture(t)
+		f.snap.Seed = seed
+		f.routerAddOutput("notes", 1, "alice")
+		f.routerAddOutput("notes", 1, "bob")
+		layer := f.routerConsumer("dealt", []string{"alice", "bob"}, Route{From: "layer:notes", Anonymous: true, Distribute: DistributeRandom})
+		got, err := f.routerResolve(layer)
+		if err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
+		}
+		for pid, items := range got.Participants {
+			if len(items) != 1 || items[0].Author == pid {
+				t.Fatalf("seed %d: %s got %v, want the other author's record", seed, pid, routerIDs(items))
+			}
+		}
+	}
+}

@@ -794,10 +794,11 @@ func TestHumanAgent_UnreachableChatEndsAtOnce(t *testing.T) {
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 }
 
-// The wait is logged as posted only once the channel reports the request in
-// the person's chat, never for a request that could not be posted.
+// Posting is logged before the request is sent; delivery only once the
+// channel reports the request in the person's chat, never for a request
+// that could not be posted.
 func TestHumanAgent_PostedLoggedAfterDelivery(t *testing.T) {
-	const posted = "Request posted to a person; waiting for the answer"
+	const posting, posted = "Posting request to a person", "Request delivered to a person; waiting for the answer"
 	for _, tt := range []struct {
 		name  string
 		cause error
@@ -814,8 +815,11 @@ func TestHumanAgent_PostedLoggedAfterDelivery(t *testing.T) {
 
 			replies := sendAsk(al, "r1", "Are you there?")
 			req := expectPosted(t, msgBus)
+			if !strings.Contains(logs.String(), posting) {
+				t.Fatal("posting the request was not logged")
+			}
 			if strings.Contains(logs.String(), posted) {
-				t.Fatal("logged as posted before the channel reported delivery")
+				t.Fatal("logged as delivered before the channel reported delivery")
 			}
 			req.OnDelivery(tt.cause)
 			if tt.cause == nil {

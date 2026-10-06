@@ -222,7 +222,9 @@ production instance directly; test against a dev instance.
   input with `"anonymous": true` labels the producing layer's outputs
   "Response A", … by author position, leaves out the reader's own, and gives
   every named reader of that layer "Bob (Response A)" (`router.go`
-  `responseLabel`/`withoutOwn`, persisted in `inputs.json`). The host side is `agent.ForumHost`
+  `responseLabel`/`withoutOwn`, persisted in `inputs.json`); validation refuses
+  any setup where a reader could learn the authors another way (rules in
+  `forum/DESIGN.md` §8.11). The host side is `agent.ForumHost`
   (`agent/forum_host.go`): Messenger over the core Ask at depth
   `max_subagent_depth`-1 (the turn runs at the maximum) with the launcher as
   sender (`forum.AskInfoFromContext`), shutdown mapped to `forum.ErrShuttingDown`;

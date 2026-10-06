@@ -827,3 +827,26 @@ func TestCtlAnonymousInputsSurviveRestart(t *testing.T) {
 	ctlContains(t, "bob review", sent[1], `### Response A, layer "answer", round 1`)
 	ctlLacks(t, "bob review", sent[1], "### Alice")
 }
+
+// An optional anonymous input with no other author's output for a reader
+// (here its producer is disabled) tells it so instead of saying nothing;
+// a named optional input that gives nothing still says nothing.
+func TestCtlAnonymousNoOtherResponses(t *testing.T) {
+	off := false
+	answer := ctlLayer("answer", DeliveryAfterRound, 1, FormatText)
+	answer.Enabled = &off
+	review := ctlLayer("review", DeliveryAfterRound, 1, FormatText)
+	review.Inputs = []Route{{From: "layer:answer", Anonymous: true, Optional: true}}
+	named := ctlLayer("named", DeliveryAfterRound, 1, FormatText)
+	named.Participants = []string{"chair"}
+	named.Inputs = []Route{{From: "layer:answer", Optional: true}}
+	f := ctlLaunch(t, ctlConfig(answer, review, named))
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+
+	for _, pid := range []string{"alice", "bob"} {
+		msg := f.ctlOne(pid, "review", 1, false).Message
+		ctlContains(t, pid+" review", msg, headingInputs, "### Responses from layer \"answer\"\n"+noOtherResponses)
+	}
+	ctlLacks(t, "chair", f.ctlOne("chair", "named", 1, false).Message, noOtherResponses, headingInputs)
+}

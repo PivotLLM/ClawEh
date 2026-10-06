@@ -386,7 +386,7 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 		if err != nil {
 			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, TurnID(round, p.ID), err)
 		}
-		c.writeInputs(&b, inputs.Participants[p.ID])
+		c.writeInputs(&b, inputs.Participants[p.ID], layer.Inputs, p.ID)
 	}
 	after := through
 	if single {
@@ -469,9 +469,21 @@ func (c *Controller) writeIntro(b *strings.Builder, layer Layer, p ParticipantRe
 	fmt.Fprintf(b, "%s\n", layer.Instructions)
 }
 
-// writeInputs writes routed inputs as attributed, quoted data.
-func (c *Controller) writeInputs(b *strings.Builder, items []InputItem) {
-	if len(items) == 0 {
+// writeInputs writes routed inputs as attributed, quoted data. routes are
+// the inputs the items came from and pid their recipient: an anonymous
+// route addressed to pid that gave it nothing (optional, with no other
+// author's output) is written as a line saying so.
+func (c *Controller) writeInputs(b *strings.Builder, items []InputItem, routes []Route, pid string) {
+	var empty []string // producing layers of anonymous routes that gave nothing
+	for i, r := range routes {
+		if !r.Anonymous || (len(r.To) > 0 && !slices.Contains(r.To, pid)) {
+			continue
+		}
+		if !slices.ContainsFunc(items, func(it InputItem) bool { return it.Route == i }) {
+			empty = append(empty, strings.TrimPrefix(r.From, string(RouteFromLayer)+":"))
+		}
+	}
+	if len(items) == 0 && len(empty) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "\n%s\n%s\n", headingInputs, dataNote)
@@ -494,7 +506,13 @@ func (c *Controller) writeInputs(b *strings.Builder, items []InputItem) {
 		}
 		fmt.Fprintf(b, "%s\n", fence(fenceInfo(it.Format), it.Content))
 	}
+	for _, id := range empty {
+		fmt.Fprintf(b, "\n### Responses from layer %q\n%s\n", id, noOtherResponses)
+	}
 }
+
+// noOtherResponses stands in for an anonymous input with nothing to show.
+const noOtherResponses = "No other responses are available."
 
 // writeEvents writes layer events under heading; self names the reader so
 // its own outputs (single_shot only) are marked as such.

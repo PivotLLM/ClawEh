@@ -354,7 +354,9 @@ observe does not need an entry.
   models answer, review each other anonymously and rank, a chair decides). A
   layer input with `"anonymous": true` shows that layer's outputs as
   "Response A", "Response B", … without authors and without the reader's own;
-  other readers of the layer see "Bob (Response A)". Existing and clone
+  other readers of the layer see "Bob (Response A)". `forum_validate` refuses
+  a setup where a reader could still learn the authors (the rules are in
+  `docs/forum.md`). Existing and clone
   participants are limited to the launcher's `subagents.allow_agents`. Each
   turn is an ask from the launching agent run at the maximum sub-agent depth,
   so a participant cannot spawn, ask further or use forum tools. Everything is

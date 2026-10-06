@@ -135,6 +135,49 @@ func TestValidateStaticRejects(t *testing.T) {
 			c.Layers[1].Inputs[1].Anonymous = true
 			c.Layers[1].Inputs[1].Distribute = DistributeSameParticipant
 		}, "layers[1].inputs[1].anonymous", []string{"own outputs", "same_participant"}},
+		// routes: anonymous reads (layers[2] is report, reading review in
+		// inputs[1] and debate in inputs[2])
+		{"anonymous in a per_turn layer", func(c *Config) {
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Delivery = DeliveryPerTurn
+		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously", "after_round with one round and no moderator"}},
+		{"anonymous in a multi-round layer", func(c *Config) {
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].MaxRounds = 2
+		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously"}},
+		{"anonymous in a moderated layer", func(c *Config) {
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}
+		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously"}},
+		{"anonymous and by name", func(c *Config) {
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Inputs = append(c.Layers[2].Inputs, Route{From: "layer:review", Optional: true})
+		}, "layers[2].inputs[1].anonymous", []string{"editor reads layer review anonymously in layer report and by name in layer report"}},
+		{"anonymous read of a per_turn layer one takes part in", func(c *Config) {
+			c.Layers[2].Participants = []string{"alice"}
+			c.Layers[2].Inputs[2].Anonymous = true
+		}, "layers[2].inputs[2].anonymous", []string{"alice takes part in layer debate", "per_turn or has more than one round"}},
+		{"anonymous read of a multi-round layer one takes part in", func(c *Config) {
+			c.Layers[1].Delivery = DeliveryAfterRound
+			c.Layers[2].Participants = []string{"alice"}
+			c.Layers[2].Inputs[2].Anonymous = true
+		}, "layers[2].inputs[2].anonymous", []string{"alice takes part in layer debate"}},
+		{"anonymous read of a layer one moderates", func(c *Config) {
+			c.Layers[2].Participants = []string{"chair"}
+			c.Layers[2].Inputs[2].Anonymous = true
+		}, "layers[2].inputs[2].anonymous", []string{"chair moderates layer debate"}},
+		{"anonymous read of only one's own outputs", func(c *Config) {
+			c.Layers[2].Participants = []string{"alice"}
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Inputs[1].Authors = []string{"alice"}
+		}, "layers[2].inputs[1].anonymous", []string{"alice reads layer review anonymously in layer report but would only see its own responses"}},
+		{"anonymous random with only one's own outputs", func(c *Config) {
+			c.Layers[2].Participants = []string{"alice", "editor"}
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Inputs[1].Authors = []string{"alice"}
+			c.Layers[2].Inputs[1].Distribute = DistributeRandom
+			c.Layers[2].Inputs[1].Optional = true
+		}, "layers[2].inputs[1].anonymous", []string{"alice", "only see its own responses"}},
 		{"random source to two recipients", func(c *Config) { c.Layers[0].Inputs[0].Distribute = DistributeRandom }, "layers[0].inputs[0].distribute", []string{`"report"`, "2 recipients", "optional"}},
 
 		// routes: recipients and authors
@@ -211,7 +254,12 @@ func TestValidateStaticAccepts(t *testing.T) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large", Name: "Bob (clone)"}
 		}},
 		{"no instructions", func(c *Config) { c.Participants["alice"] = Participant{Agent: "alice"} }},
-		{"anonymous layer input", func(c *Config) { c.Layers[1].Inputs[1].Anonymous = true }},
+		{"anonymous layer input", func(c *Config) { c.Layers[2].Inputs[1].Anonymous = true }},
+		{"anonymous random", func(c *Config) {
+			c.Layers[2].Participants = []string{"editor", "chair"}
+			c.Layers[2].Inputs[1].Anonymous = true
+			c.Layers[2].Inputs[1].Distribute = DistributeRandom
+		}},
 		{"two clones of one agent", func(c *Config) {
 			c.Participants["chair"] = Participant{Clone: "alice"}
 			c.Participants["editor"] = Participant{Clone: "alice", Name: "Alice (editor)"}

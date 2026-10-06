@@ -54,7 +54,8 @@ func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error
 //     bundle; same_participant gives each recipient the records it
 //     authored; random shuffles the records with layerRand and assigns
 //     each once, round-robin, across the recipients in configured order
-//     (counts differ by at most one; some recipients may get nothing);
+//     (counts differ by at most one; some recipients may get nothing),
+//     skipping, on an anonymous route, the record's author;
 //   - an anonymous route then leaves out each recipient's own outputs
 //     (withoutOwn), and labels the records it delivers "Response A", ...
 //     by their author's position in the producing layer (responseLabel);
@@ -421,9 +422,19 @@ func distribute(route Route, items []InputItem, recipients []string, rng *rand.R
 	case DistributeRandom:
 		shuffled := slices.Clone(items)
 		rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-		for i, it := range shuffled {
-			pid := recipients[i%len(recipients)]
-			dealt[pid] = append(dealt[pid], it)
+		next := 0 // the recipient whose turn it is
+		for _, it := range shuffled {
+			// An anonymous route never deals a record to its author: the
+			// record goes to the next recipient in turn that did not write it.
+			for k := range recipients {
+				pid := recipients[(next+k)%len(recipients)]
+				if route.Anonymous && it.Author == pid {
+					continue
+				}
+				dealt[pid] = append(dealt[pid], it)
+				next = (next + k + 1) % len(recipients)
+				break
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unknown distribute %q", route.Distribute)

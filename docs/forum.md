@@ -97,13 +97,22 @@ refused.
   checked against a schema in `schemas`.
 - `"anonymous": true` on a layer input (`{"from": "layer:answer",
   "anonymous": true}`) shows that layer's outputs as "Response A",
-  "Response B", … without their authors, and leaves out the reader's own. The
-  letter is the author's position in the producing layer's `participants`, so
-  it is the same for every reader and after a restart. Once any input reads a
-  layer anonymously, every other reader of that layer sees the author with the
-  letter ("Bob (Response A)"), so a chair can match reviews to authors. It is
-  refused on a source input and together with `distribute: same_participant`.
-  The transcript and the results keep the real names.
+  "Response B", … without their authors. The rules:
+  - Letters are assigned per producing layer, by the author's position in its
+    `participants`, so they are the same for every reader and after a restart.
+  - Each reader's own outputs are left out; `distribute: random` never deals a
+    reader its own. A reader left with nothing on an optional input is told
+    "No other responses are available."
+  - Once any input reads a layer anonymously, every other reader of that layer
+    sees the author with the letter ("Bob (Response A)"), so a chair can match
+    reviews to authors. The transcript and the results keep the real names.
+  - Validation refuses: `anonymous` on a source input or with
+    `distribute: same_participant`; a reading layer that is not `after_round`
+    with one round and no moderator; a reader that also reads the layer by
+    name, moderates it, or takes part in it while it is `per_turn` or has more
+    than one round; a reader with no other author to read; and a clone of the
+    launching agent anywhere in a forum with an anonymous input (it can read
+    the forum's files).
 
 Call `forum_validate` first: it checks everything, agents and models included,
 without creating anything.
@@ -119,11 +128,11 @@ Every other forum tool's description tells the agent to call it first.
 
 | Template | What it does |
 |---|---|
-| `writing` | A writer drafts from a brief, two critics comment separately (structure and argument; style and clarity), the writer revises, and an editor produces the final text with a short note of what changed. |
-| `council` | Three members on different models answer a question independently, review each other's answers anonymously ending with a `FINAL RANKING:`, and a chair writes the final answer with the consensus, the disagreements and the aggregate ranking. |
+| `writing` | A writer drafts on a topic, two critics comment separately (structure and argument; style and clarity), the writer revises, and an editor produces the final text, ending with a short "Notes" section on what changed. |
+| `council` | Three members on different models answer a question independently, review the others' answers anonymously ending with a `FINAL RANKING:`, and a chair writes the final answer with the consensus, the disagreements and the aggregate ranking. |
 
 A template's models are placeholders such as `"<a model from forum_models>"`
-and its brief or question is a `<...>` placeholder in a source; validation
+and its topic or question is a `<...>` placeholder in a source; validation
 names every participant whose model is still a placeholder. The guide and
 templates are embedded in the binary (`forum/readme/`).
 
