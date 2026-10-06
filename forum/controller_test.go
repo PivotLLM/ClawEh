@@ -758,3 +758,72 @@ func TestCtlAskCarriesForum(t *testing.T) {
 		t.Error("AskInfoFromContext reports a forum on a plain context")
 	}
 }
+
+// ctlCouncil is answer (Alice, Bob) -> review (Alice, Bob, reading answer
+// anonymously) -> verdict (the chair, reading answer by name).
+func ctlCouncil() *Config {
+	answer := ctlLayer("answer", DeliveryAfterRound, 1, FormatText)
+	review := ctlLayer("review", DeliveryAfterRound, 1, FormatText)
+	review.Inputs = []Route{{From: "layer:answer", Anonymous: true}}
+	verdict := ctlLayer("verdict", DeliveryAfterRound, 1, FormatText)
+	verdict.Participants = []string{"chair"}
+	verdict.Inputs = []Route{{From: "layer:answer"}, {From: "layer:review"}}
+	cfg := ctlConfig(answer, review, verdict)
+	cfg.Limits.MaxParallelCalls = 1
+	return cfg
+}
+
+// An anonymous reader sees the others' outputs as "Response <letter>" with
+// no author and never its own; a named reader of the same layer sees the
+// author with the letter; the transcript keeps the real names.
+func TestCtlAnonymousInputs(t *testing.T) {
+	f := ctlLaunch(t, ctlCouncil())
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+
+	alice := f.ctlOne("alice", "review", 1, false).Message
+	ctlContains(t, "alice review", alice, `### Response B, layer "answer", round 1`, ctlMark("bob", "answer", 1))
+	ctlLacks(t, "alice review", alice, "### Bob", ctlMark("alice", "answer", 1), "Response A")
+	bob := f.ctlOne("bob", "review", 1, false).Message
+	ctlContains(t, "bob review", bob, `### Response A, layer "answer", round 1`, ctlMark("alice", "answer", 1))
+	ctlLacks(t, "bob review", bob, "### Alice", ctlMark("bob", "answer", 1), "Response B")
+
+	chair := f.ctlOne("chair", "verdict", 1, false).Message
+	ctlContains(t, "chair verdict", chair,
+		`### Alice (Response A), layer "answer", round 1`, `### Bob (Response B), layer "answer", round 1`,
+		`### Alice, layer "review", round 1`, `### Bob, layer "review", round 1`)
+
+	ctlLacks(t, "transcript", f.transcript(), "Response A", "Response B")
+}
+
+// The labels come from inputs.json: a forum interrupted inside the
+// anonymous layer resends the same message after a restart.
+func TestCtlAnonymousInputsSurviveRestart(t *testing.T) {
+	f := ctlLaunch(t, ctlCouncil())
+	ctx, cancel := context.WithCancel(context.Background())
+	f.msg.hook = func(ctx context.Context, cl ctlCall) error {
+		if cl.Participant == "bob" && cl.Layer == "review" {
+			cancel()
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	if _, err := f.open().Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run after shutdown: %v", err)
+	}
+	f.msg.hook = nil
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+
+	var sent []string
+	for _, cl := range f.msg.all() {
+		if cl.Participant == "bob" && cl.Layer == "review" {
+			sent = append(sent, cl.Message)
+		}
+	}
+	ctlWant(t, "bob review messages", len(sent), 2)
+	ctlWant(t, "resent message", sent[1], sent[0])
+	ctlContains(t, "bob review", sent[1], `### Response A, layer "answer", round 1`)
+	ctlLacks(t, "bob review", sent[1], "### Alice")
+}

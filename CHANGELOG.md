@@ -341,13 +341,20 @@ observe does not need an entry.
   commands appear in Telegram's command menu.
 - **Forums: an agent can run a structured discussion among other agents.**
   A new per-agent switch, `forum` (WebUI Agents page: "Allow forum", off by
-  default, so no existing agent gains anything), gives the agent nine tools:
-  `forum_models`, `forum_validate`, `forum_launch`, `forum_status`,
-  `forum_pause`, `forum_resume`, `forum_cancel`, `forum_results` and
-  `forum_delete`. A forum is one JSON configuration: a brief, sources, and
-  participants that are existing agents, clones of agents, or fresh temporary
-  agents on one of the launching agent's models, taking turns in ordered
-  layers with optional moderation and JSON Schema checks. Existing and clone
+  default, so no existing agent gains anything), gives the agent ten tools:
+  `forum_readme`, `forum_models`, `forum_validate`, `forum_launch`,
+  `forum_status`, `forum_pause`, `forum_resume`, `forum_cancel`,
+  `forum_results` and `forum_delete`. A forum is one JSON configuration: a
+  brief, sources, and participants that are existing agents, clones of agents,
+  or fresh temporary agents on one of the launching agent's models, taking
+  turns in ordered layers with optional moderation and JSON Schema checks.
+  `forum_readme` returns a one-page guide for the agent and the built-in
+  templates; with `template` it returns that template's configuration to edit:
+  `writing` (draft, two critiques, revision, final edit) and `council` (three
+  models answer, review each other anonymously and rank, a chair decides). A
+  layer input with `"anonymous": true` shows that layer's outputs as
+  "Response A", "Response B", … without authors and without the reader's own;
+  other readers of the layer see "Bob (Response A)". Existing and clone
   participants are limited to the launcher's `subagents.allow_agents`. Each
   turn is an ask from the launching agent run at the maximum sub-agent depth,
   so a participant cannot spawn, ask further or use forum tools. Everything is

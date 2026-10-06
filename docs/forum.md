@@ -14,9 +14,9 @@ A forum is set up by an agent, never by a person directly. Allow it per agent:
 - **WebUI:** Agents page, the agent's card, **Allow forum**.
 - **Config:** `"forum": true` on the agent in `agents.list`. Off by default.
 
-The agent then has nine tools: `forum_models`, `forum_validate`,
-`forum_launch`, `forum_status`, `forum_pause`, `forum_resume`,
-`forum_cancel`, `forum_results` and `forum_delete`. They come as a set, like
+The agent then has ten tools: `forum_readme`, `forum_models`,
+`forum_validate`, `forum_launch`, `forum_status`, `forum_pause`,
+`forum_resume`, `forum_cancel`, `forum_results` and `forum_delete`. They come as a set, like
 Maestro and Fusion: the agent's `tools` list does not select them, its
 `deny_tools` can still remove one. The Check Up report shows a Forum row for
 every agent and lists `forum_launch` among the sensitive tools of an agent
@@ -95,9 +95,37 @@ refused.
   see each other) or `per_turn` (each turn sees the earlier ones). A layer may
   have a `moderator` that continues, guides or stops it, and JSON output may be
   checked against a schema in `schemas`.
+- `"anonymous": true` on a layer input (`{"from": "layer:answer",
+  "anonymous": true}`) shows that layer's outputs as "Response A",
+  "Response B", … without their authors, and leaves out the reader's own. The
+  letter is the author's position in the producing layer's `participants`, so
+  it is the same for every reader and after a restart. Once any input reads a
+  layer anonymously, every other reader of that layer sees the author with the
+  letter ("Bob (Response A)"), so a chair can match reviews to authors. It is
+  refused on a source input and together with `distribute: same_participant`.
+  The transcript and the results keep the real names.
 
 Call `forum_validate` first: it checks everything, agents and models included,
 without creating anything.
+
+## Guide and templates
+
+`forum_readme` without arguments returns a one-page guide for the agent (what
+a forum is, participants, layers, the steps from validate to results, the
+limits, and when a single sub-agent or `agent_message` is enough), followed
+by the built-in templates. With `template` it returns that template's
+configuration, ready to edit; an unknown name is refused with the valid ones.
+Every other forum tool's description tells the agent to call it first.
+
+| Template | What it does |
+|---|---|
+| `writing` | A writer drafts from a brief, two critics comment separately (structure and argument; style and clarity), the writer revises, and an editor produces the final text with a short note of what changed. |
+| `council` | Three members on different models answer a question independently, review each other's answers anonymously ending with a `FINAL RANKING:`, and a chair writes the final answer with the consensus, the disagreements and the aggregate ranking. |
+
+A template's models are placeholders such as `"<a model from forum_models>"`
+and its brief or question is a `<...>` placeholder in a source; validation
+names every participant whose model is still a placeholder. The guide and
+templates are embedded in the binary (`forum/readme/`).
 
 ## Running it
 

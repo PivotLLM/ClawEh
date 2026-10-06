@@ -689,6 +689,7 @@ PY
       "common_put",
       "common_delete",
       "time_now",
+      "forum_readme",
       "forum_models",
       "forum_validate",
       "forum_launch",

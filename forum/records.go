@@ -153,8 +153,13 @@ type InputItem struct {
 	Round      int    `json:"round,omitempty"`
 	Author     string `json:"author,omitempty"`
 	AuthorName string `json:"author_name,omitempty"`
-	Format     Format `json:"format"`
-	Content    string `json:"content"`
+	// Label is the output's anonymous label ("Response A"), set for every
+	// output of a layer that some route reads anonymously; Anonymous marks
+	// an item delivered by such a route, shown by its label alone.
+	Label     string `json:"label,omitempty"`
+	Anonymous bool   `json:"anonymous,omitempty"`
+	Format    Format `json:"format"`
+	Content   string `json:"content"`
 }
 
 // LayerInputs (layers/<id>/inputs.json) is a layer's resolved routing:

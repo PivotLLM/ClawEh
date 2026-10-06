@@ -804,3 +804,90 @@ func TestRouterDedupe(t *testing.T) {
 		}
 	}
 }
+
+// An anonymous route labels each output by its author's position in the
+// producing layer and leaves out the reader's own; a named reader of the
+// same layer sees the author with the label; a layer nobody reads
+// anonymously carries no labels.
+func TestRouterAnonymous(t *testing.T) {
+	f := routerNewFixture(t)
+	f.routerStandardOutputs()
+	peers := f.routerConsumer("peers", []string{"alice", "bob", "chair"}, Route{From: "layer:review", Anonymous: true})
+	named := f.routerConsumer("named", []string{"chair"}, Route{From: "layer:review"}, Route{From: "layer:notes"})
+
+	got, err := f.routerResolve(peers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type labelled struct{ id, label string }
+	view := func(items []InputItem) []labelled {
+		out := make([]labelled, 0, len(items))
+		for _, it := range items {
+			if !it.Anonymous {
+				t.Errorf("item %s of an anonymous route is not marked anonymous", it.OutputID)
+			}
+			out = append(out, labelled{it.OutputID, it.Label})
+		}
+		return out
+	}
+	// review participants: alice (A), bob (B), editor (C), whatever order
+	// the turns were committed in and whoever reads them.
+	wantAlice := []labelled{{"review-r001-bob", "Response B"}, {"review-r001-editor", "Response C"}, {"review-r002-bob", "Response B"}}
+	if v := view(got.Participants["alice"]); !reflect.DeepEqual(v, wantAlice) {
+		t.Errorf("alice sees %v, want %v (own outputs left out)", v, wantAlice)
+	}
+	wantBob := []labelled{{"review-r001-alice", "Response A"}, {"review-r001-editor", "Response C"}, {"review-r002-alice", "Response A"}}
+	if v := view(got.Participants["bob"]); !reflect.DeepEqual(v, wantBob) {
+		t.Errorf("bob sees %v, want %v", v, wantBob)
+	}
+	if n := len(got.Participants["chair"]); n != 5 {
+		t.Errorf("chair (no outputs of its own) gets %d items, want 5", n)
+	}
+
+	byName, err := f.routerResolve(named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range byName.Participants["chair"] {
+		switch {
+		case it.Anonymous:
+			t.Errorf("named reader got anonymous item %s", it.OutputID)
+		case it.LayerID == "review" && it.Label != responseLabel(slices.Index([]string{"alice", "bob", "editor"}, it.Author)):
+			t.Errorf("chair: %s label %q, want the author's letter", it.OutputID, it.Label)
+		case it.LayerID == "notes" && it.Label != "":
+			t.Errorf("chair: %s of a layer nobody reads anonymously has label %q", it.OutputID, it.Label)
+		}
+	}
+
+	again, err := f.routerResolve(peers)
+	if err != nil || !reflect.DeepEqual(again, got) {
+		t.Errorf("second Resolve differs: %v", err)
+	}
+}
+
+// A recipient left with nothing but its own outputs fails a required
+// anonymous route and gets nothing from an optional one.
+func TestRouterAnonymousOnlyOwn(t *testing.T) {
+	f := routerNewFixture(t)
+	f.routerAddOutput("notes", 1, "alice")
+	required := f.routerConsumer("solo", []string{"alice"}, Route{From: "layer:notes", Anonymous: true})
+	if _, err := f.routerResolve(required); err == nil || !strings.Contains(err.Error(), "its own outputs") {
+		t.Fatalf("Resolve err = %v, want the own-outputs failure", err)
+	}
+	optional := f.routerConsumer("solo2", []string{"alice"}, Route{From: "layer:notes", Anonymous: true, Optional: true})
+	got, err := f.routerResolve(optional)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(got.Participants["alice"]); n != 0 {
+		t.Errorf("alice gets %d items, want none", n)
+	}
+}
+
+func TestResponseLabel(t *testing.T) {
+	for pos, want := range map[int]string{0: "Response A", 1: "Response B", 25: "Response Z", 26: "Response AA", 27: "Response AB", 51: "Response AZ", 52: "Response BA"} {
+		if got := responseLabel(pos); got != want {
+			t.Errorf("responseLabel(%d) = %q, want %q", pos, got, want)
+		}
+	}
+}

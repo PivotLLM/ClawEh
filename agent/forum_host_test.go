@@ -25,9 +25,9 @@ import (
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
 )
 
-// forumToolNames are the nine tools an agent with the `forum` switch gets.
+// forumToolNames are the ten tools an agent with the `forum` switch gets.
 var forumToolNames = []string{
-	"forum_models", "forum_validate", "forum_launch", "forum_status", "forum_pause",
+	"forum_readme", "forum_models", "forum_validate", "forum_launch", "forum_status", "forum_pause",
 	"forum_resume", "forum_cancel", "forum_results", "forum_delete",
 }
 
@@ -291,7 +291,7 @@ func TestForum_EndToEnd(t *testing.T) {
 	})
 }
 
-// TestForum_ToolsFollowTheSwitch: an agent gets the nine forum tools only
+// TestForum_ToolsFollowTheSwitch: an agent gets the ten forum tools only
 // with its `forum` switch on.
 func TestForum_ToolsFollowTheSwitch(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))

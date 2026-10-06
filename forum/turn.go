@@ -484,6 +484,12 @@ func (c *Controller) writeInputs(b *strings.Builder, items []InputItem) {
 			if name == "" {
 				name = it.Author
 			}
+			switch {
+			case it.Anonymous:
+				name = it.Label
+			case it.Label != "":
+				name += " (" + it.Label + ")"
+			}
 			fmt.Fprintf(b, "\n### %s, layer %q, round %d\n", name, it.LayerID, it.Round)
 		}
 		fmt.Fprintf(b, "%s\n", fence(fenceInfo(it.Format), it.Content))

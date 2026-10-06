@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -155,9 +156,14 @@ func TestSvcToolDefinitions(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"cancel", "delete", "launch", "models", "pause", "results", "resume", "status", "validate"}
+	want := []string{"cancel", "delete", "launch", "models", "pause", "readme", "results", "resume", "status", "validate"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v, want %v", names, want)
+	}
+	for name, d := range st.defs {
+		if refers := strings.HasSuffix(d.Description, ". "+readFirst); refers == (name == "readme") {
+			t.Errorf("%s description = %q; every tool but readme ends with %q", name, d.Description, readFirst)
+		}
 	}
 	for _, name := range []string{"pause", "resume", "cancel", "results", "delete"} {
 		ps := st.defs[name].Parameters
@@ -426,7 +432,7 @@ func TestSvcToolsRefusedInsideAForumTurn(t *testing.T) {
 	host := &svcTurnHost{svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}}
 	args := map[string]any{"id": uuid.NewString(), "config": map[string]any{"version": 1}}
 	defs := Tools(e.svc, host)
-	if len(defs) != 9 {
+	if len(defs) != 10 {
 		t.Fatalf("%d tools", len(defs))
 	}
 	for _, d := range defs {
@@ -477,6 +483,7 @@ func TestSvcToolsRefuseUnknownArguments(t *testing.T) {
 		{"status", map[string]any{"forum_id": "x"}, "Unknown argument forum_id; use id."},
 		{"results", map[string]any{"forum_id": "x"}, "Unknown argument forum_id; use id."},
 		{"models", map[string]any{"verbose": true}, "Unknown argument verbose; this tool takes no arguments."},
+		{"readme", map[string]any{"name": "council"}, "Unknown argument name; use template."},
 		{"validate", map[string]any{"cfg": "x", "file": "y"}, "Unknown arguments cfg, file; use config or config_file."},
 	} {
 		res, err := st.call(tc.tool, tc.args)
@@ -487,5 +494,89 @@ func TestSvcToolsRefuseUnknownArguments(t *testing.T) {
 	// Declared arguments still work.
 	if out := st.ok("status", map[string]any{}); !strings.HasPrefix(out, "[") {
 		t.Errorf("status without arguments = %q, want the forum list", out)
+	}
+}
+
+// Without arguments readme returns the guide and the template list; with a
+// template its configuration verbatim; an unknown template is one sentence
+// naming it and the valid names.
+func TestSvcToolReadme(t *testing.T) {
+	st := svcToolSetup(t)
+	out := st.ok("readme", nil)
+	if !strings.HasPrefix(out, "# Forums\n") || !strings.Contains(out, "\n## Templates\n") {
+		t.Errorf("guide = %q", out)
+	}
+	for _, tpl := range templates {
+		if !strings.Contains(out, "- `"+tpl.name+"`: "+tpl.description+"\n") {
+			t.Errorf("guide does not list template %s", tpl.name)
+		}
+		want, err := readmeFS.ReadFile("readme/templates/" + tpl.name + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := st.ok("readme", map[string]any{"template": tpl.name}); got != string(want) {
+			t.Errorf("template %s = %q, want the file verbatim", tpl.name, got)
+		}
+	}
+	st.refused("readme", map[string]any{"template": "debate"}, `There is no template "debate"; use writing or council.`)
+	st.refused("readme", map[string]any{"template": 3}, "The template argument must be a string.")
+}
+
+// Every template file is listed, and every listed template has a file.
+func TestReadmeTemplatesInStep(t *testing.T) {
+	entries, err := readmeFS.ReadDir("readme/templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]string, 0, len(entries))
+	listed := make([]string, 0, len(templates))
+	for _, e := range entries {
+		files = append(files, strings.TrimSuffix(e.Name(), ".json"))
+	}
+	for _, tpl := range templates {
+		listed = append(listed, tpl.name)
+	}
+	slices.Sort(files)
+	slices.Sort(listed)
+	if !slices.Equal(files, listed) {
+		t.Errorf("template files %v, listed %v", files, listed)
+	}
+}
+
+// templateModelPlaceholder matches the model placeholders of the templates.
+var templateModelPlaceholder = regexp.MustCompile(`"<(?:a model|model \d) from forum_models>"`)
+
+// A template passes forum_validate once its model placeholders are filled;
+// unfilled, validation names every participant whose model is a
+// placeholder.
+func TestReadmeTemplatesValidate(t *testing.T) {
+	st := svcToolSetup(t)
+	for _, tpl := range templates {
+		t.Run(tpl.name, func(t *testing.T) {
+			raw, _ := templateConfig(tpl.name)
+			cfg, err := Decode([]byte(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			placeholders := map[string]bool{}
+			for id, p := range cfg.Participants {
+				if templateModelPlaceholder.MatchString(`"` + p.Model + `"`) {
+					placeholders[id] = true
+				}
+			}
+			if len(placeholders) == 0 {
+				t.Fatal("the template has no model placeholders")
+			}
+			msg := st.refused("validate", map[string]any{"config": svcConfigMap(t, raw)}, "participants.")
+			for id := range placeholders {
+				if !strings.Contains(msg, "participants."+id+".model") {
+					t.Errorf("validation does not name participant %s:\n%s", id, msg)
+				}
+			}
+			filled := templateModelPlaceholder.ReplaceAllString(raw, `"default"`)
+			if out := st.ok("validate", map[string]any{"config": svcConfigMap(t, filled)}); out != "The configuration is valid." {
+				t.Errorf("filled template: %s", out)
+			}
+		})
 	}
 }

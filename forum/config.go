@@ -219,6 +219,13 @@ type Route struct {
 	// Optional allows an empty selection or a disabled producer; it never
 	// excuses malformed data or a projection error.
 	Optional bool `json:"optional,omitempty"`
+	// Anonymous shows the producing layer's outputs to the recipients as
+	// "Response A", "Response B", ... without their authors, and leaves out
+	// each recipient's own outputs. Layer routes only. The letter is the
+	// author's position in the producing layer's participants, so it is
+	// the same for every reader; every other reader of that layer sees the
+	// author with the letter ("Bob (Response A)").
+	Anonymous bool `json:"anonymous,omitempty"`
 }
 
 // RouteKind is the kind of a route's producer.

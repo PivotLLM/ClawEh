@@ -103,8 +103,10 @@ func (e *ValidationError) Error() string {
 //   - a non-optional route from a disabled layer is an error when the
 //     consuming layer is enabled;
 //   - select, view and distribute are known values or empty;
-//   - select, authors, view and same_participant are rejected on a source
-//     route (a source contributes one record, authorless);
+//   - select, authors, view, same_participant and anonymous are rejected
+//     on a source route (a source contributes one record, authorless);
+//   - anonymous is rejected with same_participant (it leaves out the
+//     recipient's own outputs, the only ones same_participant gives);
 //   - view full requires a nonempty to on a layer input; a moderator input
 //     may use view full without to, since the moderator is its one
 //     explicit recipient (the router applies the same rule);
@@ -614,6 +616,9 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 		if r.Distribute == DistributeRandom && len(recipients) > 1 && !r.Optional {
 			v.addf(path+".distribute", "random deals source %q (one record) to %d recipients, so some get nothing; mark the input optional", id, len(recipients))
 		}
+		if r.Anonymous {
+			v.addf(path+".anonymous", "anonymous applies only to layer inputs (a source has no author)")
+		}
 	case RouteFromLayer:
 		pi, ok := v.layerIndex[id]
 		if !ok {
@@ -633,6 +638,9 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 			v.addf(path+".from", "layer %q is disabled; enable it or mark the input optional", id)
 		}
 		v.authorRefs(path+".authors", r.Authors, producer)
+		if r.Anonymous && r.Distribute == DistributeSameParticipant {
+			v.addf(path+".anonymous", "anonymous leaves out each recipient's own outputs, so same_participant would give it nothing")
+		}
 		if r.Distribute == DistributeSameParticipant {
 			for _, to := range recipients {
 				if !slices.Contains(producer.Participants, to) {

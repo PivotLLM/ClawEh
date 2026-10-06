@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "name": "council",
+  "brief": {
+    "purpose": "Answer the question in the question source as well as possible by combining several models.",
+    "task": "Answer independently, review the answers anonymously and rank them, then write one final answer.",
+    "success_criteria": [
+      "The final answer is correct, complete and directly answers the question.",
+      "Points of consensus and disagreement are stated."
+    ]
+  },
+  "sources": {
+    "question": {
+      "decode": "markdown",
+      "inline": "<the question for the council>"
+    }
+  },
+  "participants": {
+    "member1": {"model": "<model 1 from forum_models>"},
+    "member2": {"model": "<model 2 from forum_models>"},
+    "member3": {"model": "<model 3 from forum_models>"},
+    "chair": {
+      "model": "<a model from forum_models>",
+      "instructions": "You chair the council and write its final answer."
+    }
+  },
+  "limits": {
+    "max_calls": 16,
+    "max_duration_seconds": 1800,
+    "call_timeout_seconds": 600,
+    "max_attempts_per_turn": 2,
+    "max_parallel_calls": 3
+  },
+  "layers": [
+    {
+      "id": "answer",
+      "participants": ["member1", "member2", "member3"],
+      "instructions": "Answer the question in the question source as well as you can.",
+      "inputs": [{"from": "source:question"}],
+      "delivery": "after_round",
+      "max_rounds": 1,
+      "output": {"format": "markdown"}
+    },
+    {
+      "id": "review",
+      "participants": ["member1", "member2", "member3"],
+      "instructions": "Review each of the other responses to the question. For each response give its strengths, its weaknesses, and what you agree and disagree with. End with a line 'FINAL RANKING:' followed by one line per response, best first, in the form '1. Response X'.",
+      "inputs": [{"from": "source:question"}, {"from": "layer:answer", "anonymous": true}],
+      "delivery": "after_round",
+      "max_rounds": 1,
+      "output": {"format": "markdown"}
+    },
+    {
+      "id": "verdict",
+      "participants": ["chair"],
+      "instructions": "Write the council's final answer to the question, drawing on the best of the responses and the reviews. Then state where the members agree and disagree, and give the aggregate ranking of the responses from the reviews' FINAL RANKING lines.",
+      "inputs": [{"from": "source:question"}, {"from": "layer:answer"}, {"from": "layer:review"}],
+      "delivery": "after_round",
+      "max_rounds": 1,
+      "output": {"format": "markdown"}
+    }
+  ],
+  "result_layers": ["verdict"]
+}

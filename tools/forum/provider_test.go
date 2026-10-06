@@ -71,8 +71,8 @@ func TestProviderGating(t *testing.T) {
 		SetService(nil)
 	})
 	SetService(svc)
-	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 9 {
-		t.Fatalf("alice (forum on) got %d tools, want 9", len(defs))
+	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 10 {
+		t.Fatalf("alice (forum on) got %d tools, want 10", len(defs))
 	}
 	if defs := GlobalProvider.RegisterTools(deps("bob")); len(defs) != 0 {
 		t.Fatalf("bob (forum off) got %d tools", len(defs))

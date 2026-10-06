@@ -52,7 +52,7 @@ type ToolHost interface {
 	Workspace(agentID string) (string, error)
 }
 
-// Tools returns the nine forum tools over svc. Every handler resolves the
+// Tools returns the ten forum tools over svc. Every handler resolves the
 // caller's Scope first: ErrForumTurn and ErrForumDepth are tool errors, any other Scope
 // failure is returned as the error. Every failure of the operation itself
 // is a Result with IsError and one plain sentence naming the forum (when
@@ -64,6 +64,8 @@ type ToolHost interface {
 //
 // Parameters and results:
 //
+//	readme(template?)               -> the guide and the template list, or one
+//	                                   template's configuration verbatim
 //	models()                        -> JSON array of ModelInfo
 //	validate(config | config_file)  -> "The configuration is valid." or the issues, one per line
 //	launch(config | config_file)    -> "Forum <id> launched." Exactly one of config
@@ -84,6 +86,9 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "config_file", Type: "string", Description: "Path of a forum configuration file the agent may read (use this or config)"},
 	}
 	defs := []toolspec.ToolDefinition{
+		{Name: "readme", Description: "How forums work, with built-in configuration templates; give template to get one", Handler: t.readme, Category: "forum", Parameters: []toolspec.Parameter{
+			{Name: "template", Type: "string", Description: "Name of a built-in template; omit for the guide and the list of templates"},
+		}},
 		{Name: "models", Description: "List the models the calling agent may give to fresh forum participants", Handler: t.models, Category: "forum"},
 		{Name: "validate", Description: "Validate a forum configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: configParams},
 		{Name: "launch", Description: "Validate and launch a forum; returns its ID and runs it in the background", Handler: t.launch, Category: "forum", Parameters: configParams},
@@ -98,9 +103,15 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 	}
 	for i := range defs {
 		defs[i].Handler = t.refuseUnknownArgs(defs[i].Parameters, defs[i].Handler)
+		if defs[i].Name != "readme" {
+			defs[i].Description += ". " + readFirst
+		}
 	}
 	return defs
 }
+
+// readFirst ends every forum tool's description but the readme's own.
+const readFirst = "Call forum_readme first if you have not."
 
 // refuseUnknownArgs wraps a handler so a call with an argument the tool does
 // not declare is refused in one sentence naming it, rather than the argument
@@ -144,6 +155,24 @@ func (t *toolSuite) refuseUnknownArgs(params []toolspec.Parameter, next toolspec
 type toolSuite struct {
 	svc  *Service
 	host ToolHost
+}
+
+func (t *toolSuite) readme(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	if _, err := t.host.Scope(call); err != nil {
+		return scopeFailure(err)
+	}
+	name, present, err := stringArg(call, "template")
+	if err != nil {
+		return t.fail(err, "", "readme")
+	}
+	if !present {
+		return &toolspec.Result{ForLLM: guide()}, nil
+	}
+	config, ok := templateConfig(name)
+	if !ok {
+		return &toolspec.Result{ForLLM: fmt.Sprintf("There is no template %q; use %s.", name, templateNames()), IsError: true}, nil
+	}
+	return &toolspec.Result{ForLLM: config}, nil
 }
 
 func (t *toolSuite) models(call *toolspec.ToolCall) (*toolspec.Result, error) {

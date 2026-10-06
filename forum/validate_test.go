@@ -130,6 +130,11 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"authors on source", func(c *Config) { c.Layers[0].Inputs[0].Authors = []string{"alice"} }, "layers[0].inputs[0].authors", []string{"no author"}},
 		{"view on source", func(c *Config) { c.Layers[0].Inputs[0].View = ViewFull; c.Layers[0].Inputs[0].To = []string{"alice"} }, "layers[0].inputs[0].view", []string{"layer inputs"}},
 		{"same_participant on source", func(c *Config) { c.Layers[0].Inputs[0].Distribute = DistributeSameParticipant }, "layers[0].inputs[0].distribute", []string{"same_participant", "no author"}},
+		{"anonymous on source", func(c *Config) { c.Layers[0].Inputs[0].Anonymous = true }, "layers[0].inputs[0].anonymous", []string{"layer inputs", "no author"}},
+		{"anonymous with same_participant", func(c *Config) {
+			c.Layers[1].Inputs[1].Anonymous = true
+			c.Layers[1].Inputs[1].Distribute = DistributeSameParticipant
+		}, "layers[1].inputs[1].anonymous", []string{"own outputs", "same_participant"}},
 		{"random source to two recipients", func(c *Config) { c.Layers[0].Inputs[0].Distribute = DistributeRandom }, "layers[0].inputs[0].distribute", []string{`"report"`, "2 recipients", "optional"}},
 
 		// routes: recipients and authors
@@ -206,6 +211,7 @@ func TestValidateStaticAccepts(t *testing.T) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large", Name: "Bob (clone)"}
 		}},
 		{"no instructions", func(c *Config) { c.Participants["alice"] = Participant{Agent: "alice"} }},
+		{"anonymous layer input", func(c *Config) { c.Layers[1].Inputs[1].Anonymous = true }},
 		{"two clones of one agent", func(c *Config) {
 			c.Participants["chair"] = Participant{Clone: "alice"}
 			c.Participants["editor"] = Participant{Clone: "alice", Name: "Alice (editor)"}

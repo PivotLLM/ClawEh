@@ -55,6 +55,11 @@ func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error
 //     authored; random shuffles the records with layerRand and assigns
 //     each once, round-robin, across the recipients in configured order
 //     (counts differ by at most one; some recipients may get nothing);
+//   - an anonymous route then leaves out each recipient's own outputs
+//     (withoutOwn), and labels the records it delivers "Response A", ...
+//     by their author's position in the producing layer (responseLabel);
+//     every output of a layer some route reads anonymously carries its
+//     label, so a named reader can match the letters to the authors;
 //   - a recipient whose bundle is empty fails the route unless it is
 //     optional (so a random route with fewer records than recipients must
 //     be optional); an optional route that selects nothing at all (an
@@ -88,6 +93,9 @@ func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*Laye
 			continue
 		}
 		dealt, err := distribute(route, items, recipients, rng)
+		if err == nil {
+			err = withoutOwn(route, dealt, recipients)
+		}
 		if err != nil {
 			return nil, routeError(layer.ID, "input", i, route, err)
 		}
@@ -115,6 +123,9 @@ func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*Laye
 				continue
 			}
 			dealt, err := distribute(route, items, recipients, rng)
+			if err == nil {
+				err = withoutOwn(route, dealt, recipients)
+			}
 			if err != nil {
 				return nil, routeError(layer.ID, "moderator input", i, route, err)
 			}
@@ -254,6 +265,7 @@ func (r *Router) outputItems(route Route, index int, producer Layer, outs []Outp
 			return !slices.Contains(route.Authors, o.ParticipantID)
 		})
 	}
+	labelled := route.Anonymous || r.readAnonymously(producer.ID)
 	items := make([]InputItem, 0, len(outs))
 	for _, o := range outs {
 		var file string
@@ -273,7 +285,7 @@ func (r *Router) outputItems(route Route, index int, producer Layer, outs []Outp
 		if err != nil {
 			return nil, fmt.Errorf("output %s of layer %s: %w", o.OutputID, producer.ID, err)
 		}
-		items = append(items, InputItem{
+		item := InputItem{
 			Route:      index,
 			Kind:       InputOutput,
 			OutputID:   o.OutputID,
@@ -281,11 +293,60 @@ func (r *Router) outputItems(route Route, index int, producer Layer, outs []Outp
 			Round:      o.Round,
 			Author:     o.ParticipantID,
 			AuthorName: r.participantName(o.ParticipantID),
+			Anonymous:  route.Anonymous,
 			Format:     o.Format,
 			Content:    string(content),
-		})
+		}
+		if labelled {
+			item.Label = responseLabel(slices.Index(producer.Participants, o.ParticipantID))
+		}
+		items = append(items, item)
 	}
 	return items, nil
+}
+
+// readAnonymously reports whether any route of the configuration, a layer
+// input or a moderator input, reads layerID anonymously.
+func (r *Router) readAnonymously(layerID string) bool {
+	reads := func(routes []Route) bool {
+		return slices.ContainsFunc(routes, func(rt Route) bool {
+			kind, id, err := rt.Producer()
+			return err == nil && rt.Anonymous && kind == RouteFromLayer && id == layerID
+		})
+	}
+	for _, l := range r.cfg.Layers {
+		if reads(l.Inputs) || (l.Moderator != nil && reads(l.Moderator.Inputs)) {
+			return true
+		}
+	}
+	return false
+}
+
+// responseLabel is the anonymous label of the author at position pos in the
+// producing layer's participants: "Response A" for the first, then B, ...,
+// Z, AA, AB, ...
+func responseLabel(pos int) string {
+	var letters []byte
+	for n := pos + 1; n > 0; n = (n - 1) / 26 {
+		letters = append([]byte{byte('A' + (n-1)%26)}, letters...)
+	}
+	return "Response " + string(letters)
+}
+
+// withoutOwn applies an anonymous route's rule to the dealt bundles: each
+// recipient's own outputs are left out. A recipient left with nothing fails
+// the route unless it is optional. Other routes are unchanged.
+func withoutOwn(route Route, dealt map[string][]InputItem, recipients []string) error {
+	if !route.Anonymous {
+		return nil
+	}
+	for _, pid := range recipients {
+		dealt[pid] = slices.DeleteFunc(dealt[pid], func(it InputItem) bool { return it.Author == pid })
+		if len(dealt[pid]) == 0 && !route.Optional {
+			return fmt.Errorf("recipient %q receives nothing but its own outputs and the anonymous route is not optional", pid)
+		}
+	}
+	return nil
 }
 
 // participantName is the participant's transcript name: its configured

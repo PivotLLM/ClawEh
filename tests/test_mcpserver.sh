@@ -847,7 +847,8 @@ else
 
     #---------------------------------------------------------------------------
     # Section 4g: Forum tools (forum_*). The test config switches `forum` on for
-    # main, the session token's agent. Every tool is probed: models and status
+    # main, the session token's agent. Every tool is probed: readme returns the
+    # guide, a template, and refuses an unknown template; models and status
     # are hermetic successes on an agent with no forums; validate and launch
     # refuse a call without a configuration and an invalid configuration;
     # pause, resume, cancel and results refuse an unknown forum; delete of an
@@ -876,6 +877,12 @@ else
             "forum_results" "{\"id\":\"$FORUM_ID\"}" "was not found"
         run_test_ok_auth "4g.9 forum_delete of an absent forum succeeds" \
             "forum_delete" "{\"id\":\"$FORUM_ID\"}" "is deleted"
+        run_test_ok_auth "4g.10 forum_readme returns the guide and the templates" \
+            "forum_readme" '{}' "## Templates"
+        run_test_ok_auth "4g.11 forum_readme returns a template" \
+            "forum_readme" '{"template":"council"}' "result_layers"
+        run_test_err_msg_auth "4g.12 forum_readme refuses an unknown template" \
+            "forum_readme" '{"template":"nosuch"}' "There is no template"
     else
         # The test config switches forum on for main: missing tools are a
         # regression, not an optional host feature.

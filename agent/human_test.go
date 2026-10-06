@@ -794,6 +794,42 @@ func TestHumanAgent_UnreachableChatEndsAtOnce(t *testing.T) {
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 }
 
+// The wait is logged as posted only once the channel reports the request in
+// the person's chat, never for a request that could not be posted.
+func TestHumanAgent_PostedLoggedAfterDelivery(t *testing.T) {
+	const posted = "Request posted to a person; waiting for the answer"
+	for _, tt := range []struct {
+		name  string
+		cause error
+		want  bool
+	}{
+		{"delivered", nil, true},
+		{"not delivered", errors.New("send failed"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := &safeBufLoop{}
+			restore := logger.RedirectForTest(logs)
+			defer restore()
+			al, msgBus, _ := newHumanLoop(t, 60)
+
+			replies := sendAsk(al, "r1", "Are you there?")
+			req := expectPosted(t, msgBus)
+			if strings.Contains(logs.String(), posted) {
+				t.Fatal("logged as posted before the channel reported delivery")
+			}
+			req.OnDelivery(tt.cause)
+			if tt.cause == nil {
+				deliver(al, fromBob("b1", "Yes."))
+			}
+			expectAskReply(t, replies)
+			al.activeRequests.Wait()
+			if got := strings.Contains(logs.String(), posted); got != tt.want {
+				t.Fatalf("posted logged = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // A successful delivery report changes nothing: the request keeps waiting
 // for the person's answer.
 func TestHumanAgent_DeliveredRequestKeepsWaiting(t *testing.T) {
