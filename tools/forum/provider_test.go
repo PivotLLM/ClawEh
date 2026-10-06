@@ -75,6 +75,22 @@ func TestProviderGating(t *testing.T) {
 	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 15 {
 		t.Fatalf("alice (forum on) got %d tools, want 15", len(defs))
 	}
+	// The free-form objects reach the model declared open (see
+	// tools.OpenObjectProperties): config_import's config and
+	// config_update's changes.
+	for _, d := range GlobalProvider.RegisterTools(deps("alice")) {
+		param := map[string]string{"config_import": "config", "config_update": "changes"}[d.Name]
+		if param == "" {
+			continue
+		}
+		props, ok := tools.OpenObjectProperties(d.Schema())["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s has no properties", d.Name)
+		}
+		if p, ok := props[param].(map[string]any); !ok || p["type"] != "object" || p["additionalProperties"] != true {
+			t.Errorf("%s.%s schema = %v, want an open object", d.Name, param, p)
+		}
+	}
 	if defs := GlobalProvider.RegisterTools(deps("bob")); len(defs) != 0 {
 		t.Fatalf("bob (forum off) got %d tools", len(defs))
 	}

@@ -109,7 +109,9 @@ One JSON object, the forum's configuration (see
     "No other responses are available."
   - Once any input reads a layer anonymously, every other reader of that layer
     sees the author with the letter ("Bob (Response A)"), so a chair can match
-    reviews to authors. The transcript and the results keep the real names.
+    reviews to authors. The transcript and the results keep the real names;
+    the transcript shows the letter next to each author ("Bob (Response A)"),
+    so the reviews' letters can be matched there.
   - Validation refuses: `anonymous` on a source input or with
     `distribute: same_participant`; a reading layer that is not `after_round`
     with one round and no moderator; a reader that also reads the layer by
@@ -153,7 +155,11 @@ and a launch that fails leaves it as it was.
 To review a book chapter by chapter, run chapter 1, then change only the
 chapter source and launch again; run 2 reviews chapter 2 and run 1 keeps its
 own files and results:
-`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`. To start another
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`. A source holds
+either `inline` or `file`, so turning an inline source (such as the
+`writing` template's `topic`) into a file removes `inline` in the same
+patch: `{"sources": {"topic": {"inline": null, "file": "files/chapter1.md"}}}`.
+To start another
 forum from this one, export its configuration and import it into a forum made
 with `forum_new`.
 
@@ -186,7 +192,9 @@ changed since the latest run (`config_changed`). `forum_pause`,
 `forum_resume` and `forum_cancel` control the latest run, and
 `forum_results` returns a run's results (see [Results](#results)). A paused
 run resumes only while the configuration is unchanged; after a change
-`forum_resume` answers "The config changed; launch to start a new run.", and
+`forum_resume` answers "Forum design-review: the config changed; launch to
+start a new run." (formatting, key order and number spelling are not
+changes), and
 launching cancels the paused run (without a notice) before the new one
 starts. A forum tool called with an argument it does not take is refused,
 naming it ("Unknown argument forum_id; use id."). When a run ends
@@ -208,9 +216,11 @@ and continues with `forum_resume` or at the next start.
 `forum_results` returns, for the latest run or the one `run` names, each
 output of the result layers: its author (the participant), layer, round, size
 in characters, the file holding it, and its text, plus the path of
-`transcript.md`. Paths are relative to Alice's workspace
+`transcript.md` once it exists. Paths are relative to Alice's workspace
 (`forums/<id>/runs/<n>/...`), so her file tools can open them. A running or
-stopped run returns the outputs published so far, the same way.
+stopped run returns the outputs published so far, the same way. When the
+result layers have no output (a run that failed early), the other layers'
+outputs are listed under `other_layers` instead, within the same limits.
 
 ### Large results
 
@@ -246,7 +256,9 @@ Follow a running forum with:
 tail -f <workspace>/forums/<id>/runs/<n>/transcript.md
 ```
 
-The transcript holds published outputs and the moderator's public decisions,
+Each output in the transcript is quoted in a code block, so its own headings
+do not mix with the transcript's. The transcript holds published outputs and
+the moderator's public decisions,
 never a participant's private instructions, rejected replies or private
 messages. Its heading names the forum and the run. Nothing is deleted until
 `forum_delete`.

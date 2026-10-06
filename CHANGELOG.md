@@ -361,13 +361,20 @@ observe does not need an entry.
   latest run, or an earlier one with `run`; status also gives the number of
   runs and whether the configuration changed since the latest. `forum_pause`,
   `forum_resume` and `forum_cancel` act on the latest run; a paused run whose
-  configuration has changed is not resumed ("The config changed; launch to
-  start a new run."), and launching then cancels it without a notice.
+  configuration has changed is not resumed ("Forum <name>: the config
+  changed; launch to start a new run."), and launching then cancels it
+  without a notice. Formatting, member order and number spelling are not
+  changes.
   `forum_delete` removes the forum with all its runs. A book is reviewed
   chapter by chapter by changing the chapter source and launching again;
   `forum_config_export` and `forum_config_import` copy a configuration to
   another forum. The optional `name` labels the forum in status, results,
   notices and the transcript heading; without it the ID is used.
+  `forum_validate` reports every problem at once. The transcript quotes each
+  output in a code block and, for a layer read anonymously, shows the letter
+  next to the author ("Bob (Response A)"). `forum_results` names the
+  transcript only once it exists, and lists the other layers' outputs when
+  the result layers have none. Refused forum calls are logged as warnings.
   A source `file` is read exactly as the agent's file tools read that path
   (workspace, or a mount such as `maestro/`).
   `forum_readme` returns a one-page guide for the agent and the built-in
@@ -1128,6 +1135,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Tool arguments that take any JSON object are declared as such.** A tool
+  parameter that is an object with no listed members (such as
+  `forum_config_update`'s `changes`, `forum_config_import`'s `config` and
+  `cron_schedule`'s `watch_args`) is now published to models and MCP clients
+  with `"additionalProperties": true`. Some model providers filled such a
+  parameter with a blank string instead of an object.
 - **Each config warning is logged once at startup.** The configuration was
   read twice when the service started, so every "unknown config key" (and
   other load-time) warning appeared twice in the log.

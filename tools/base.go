@@ -175,7 +175,7 @@ func ToolToSchema(tool Tool) map[string]any {
 		"function": map[string]any{
 			"name":        tool.Name(),
 			"description": tool.Description(),
-			"parameters":  tool.Parameters(),
+			"parameters":  OpenObjectProperties(tool.Parameters()),
 		},
 	}
 }

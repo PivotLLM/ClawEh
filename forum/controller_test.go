@@ -793,7 +793,9 @@ func TestCtlAnonymousInputs(t *testing.T) {
 		`### Alice (Response A), layer "answer", round 1`, `### Bob (Response B), layer "answer", round 1`,
 		`### Alice, layer "review", round 1`, `### Bob, layer "review", round 1`)
 
-	ctlLacks(t, "transcript", f.transcript(), "Response A", "Response B")
+	// The transcript keeps the real names and maps the letters the reviews
+	// use.
+	ctlContains(t, "transcript", f.transcript(), "· Alice (Response A)", "· Bob (Response B)")
 }
 
 // The labels come from inputs.json: a forum interrupted inside the

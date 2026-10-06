@@ -1526,13 +1526,23 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(turnDir, tmpPrefix+"attempt-x", fileRequest), []byte("{}"), filePerm); err != nil {
 		t.Fatal(err)
 	}
+	other, err := newForumHandle(s.base, s.id).CreateRun(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	untouched := filepath.Join(other.Path(dirCommits), tmpPrefix+"other-run")
+	if err := os.WriteFile(untouched, []byte("partial"), filePerm); err != nil {
+		t.Fatal(err)
+	}
 	leftovers := [...]string{
 		filepath.Join(s.Root(), tmpPrefix+"1"),
 		filepath.Join(s.Path(dirCommits), tmpPrefix+"2"),
 		filepath.Join(s.Path(dirSources), tmpPrefix+"3"),
+		filepath.Join(s.Dir(), tmpPrefix+"config"),
+		filepath.Join(s.Dir(), dirRuns, tmpPrefix+"run-x"),
 		filepath.Join(turnDir, tmpPrefix+"attempt-x"), // a directory, created above
 	}
-	for _, p := range leftovers[:3] {
+	for _, p := range leftovers[:5] {
 		if err := os.WriteFile(p, []byte("partial"), filePerm); err != nil {
 			t.Fatal(err)
 		}
@@ -1564,6 +1574,16 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 	}
 	if _, err := os.Lstat(turnDir); err != nil {
 		t.Errorf("turn directory removed by the sweep: %v", err)
+	}
+	// Another run is not walked when this one is locked; opening it does.
+	if _, err := os.Lstat(untouched); err != nil {
+		t.Errorf("another run was swept: %v", err)
+	}
+	if err := other.SweepRun(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(untouched); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("SweepRun left %s: %v", untouched, err)
 	}
 }
 

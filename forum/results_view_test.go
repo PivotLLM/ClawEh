@@ -38,7 +38,7 @@ func resultWith(status Status, outs ...OutputRecord) *Result {
 func TestResultsView_InlineTextAndCap(t *testing.T) {
 	long := strings.Repeat("é", MaxResultInlineChars+10)
 	res := resultWith(StatusCompleted, outputAt("alice", "layers/report/a.txt", 1), outputAt("bob", "layers/report/b.txt", 2))
-	view := newResultsView(res, "forums/f1", fakePrefix(map[string]string{
+	view := newResultsView(res, "forums/f1", true, fakePrefix(map[string]string{
 		"layers/report/a.txt": "Short answer.",
 		"layers/report/b.txt": long,
 	}))
@@ -66,7 +66,7 @@ func TestResultsView_InlineTextAndCap(t *testing.T) {
 // Exactly MaxResultInlineChars characters is not cut.
 func TestResultsView_AtTheCap(t *testing.T) {
 	text := strings.Repeat("x", MaxResultInlineChars)
-	view := newResultsView(resultWith(StatusCompleted, outputAt("alice", "a.txt", 1)), "forums/f1", fakePrefix(map[string]string{"a.txt": text}))
+	view := newResultsView(resultWith(StatusCompleted, outputAt("alice", "a.txt", 1)), "forums/f1", true, fakePrefix(map[string]string{"a.txt": text}))
 	if ov := view.Layers[0].Outputs[0]; ov.Truncated || ov.Text != text {
 		t.Fatalf("text at the cap was cut: truncated=%v", ov.Truncated)
 	}
@@ -83,7 +83,7 @@ func TestResultsView_TotalBudget(t *testing.T) {
 		files[name] = strings.Repeat("y", MaxResultInlineChars)
 		outs = append(outs, outputAt("alice", name, i+1))
 	}
-	view := newResultsView(resultWith(StatusCompleted, outs...), "forums/f1", fakePrefix(files))
+	view := newResultsView(resultWith(StatusCompleted, outs...), "forums/f1", true, fakePrefix(files))
 	total := 0
 	for i, ov := range view.Layers[0].Outputs {
 		total += utf8.RuneCountInString(ov.Text)
@@ -106,7 +106,7 @@ func TestResultsView_TotalBudget(t *testing.T) {
 func TestResultsView_PartialAndUnreadable(t *testing.T) {
 	res := resultWith(StatusRunning,
 		outputAt("alice", "a.txt", 1), outputAt("bob", "missing.txt", 1), outputAt("bob", "../../../etc/passwd", 2))
-	view := newResultsView(res, "forums/f1", fakePrefix(map[string]string{"a.txt": "So far."}))
+	view := newResultsView(res, "forums/f1", true, fakePrefix(map[string]string{"a.txt": "So far."}))
 	if view.Complete || view.Status != StatusRunning || view.Layers[0].Ended {
 		t.Errorf("partial view = %+v", view)
 	}
@@ -143,5 +143,27 @@ func TestStoreReadPrefix(t *testing.T) {
 	}
 	if _, _, err := store.ReadPrefix("../escape.txt", 3); err == nil {
 		t.Fatal("a path outside the forum must be refused")
+	}
+}
+
+// Without a transcript the view names none, and other layers' outputs are
+// rendered within the same inline limits.
+func TestResultsView_NoTranscriptAndOtherLayers(t *testing.T) {
+	res := resultWith(StatusFailed)
+	res.OtherLayers = []LayerResult{{LayerID: "answer", Outputs: []OutputRecord{
+		{LayerID: "answer", Round: 1, ParticipantID: "alice", Format: FormatText, ContentFile: "a.txt"},
+		{LayerID: "answer", Round: 1, ParticipantID: "bob", Format: FormatText, ContentFile: "b.txt"},
+	}}}
+	files := map[string]string{"a.txt": strings.Repeat("x", MaxResultInlineTotalChars), "b.txt": "Bob's answer."}
+	view := newResultsView(res, "forums/f1/runs/1", false, fakePrefix(files))
+	if view.Transcript != "" {
+		t.Errorf("transcript = %q, want none", view.Transcript)
+	}
+	if len(view.OtherLayers) != 1 || len(view.OtherLayers[0].Outputs) != 2 {
+		t.Fatalf("other layers = %+v", view.OtherLayers)
+	}
+	a, b := view.OtherLayers[0].Outputs[0], view.OtherLayers[0].Outputs[1]
+	if !a.Truncated || a.File != "forums/f1/runs/1/a.txt" || b.Text != "Bob's answer." {
+		t.Errorf("outputs: a truncated %v in %s, b %q", a.Truncated, a.File, b.Text)
 	}
 }

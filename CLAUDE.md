@@ -268,8 +268,12 @@ production instance directly; test against a dev instance.
   switch gates only the tools); `Close` runs first in `shutdownGateway`, before
   the loop stops. A reload rebuilds the tools; running forums continue.
   Recovery resumes an interrupted latest run, undoes a launch that died before
-  its run's snapshot (the forum stays as it was), and removes a forum folder
-  of an earlier development layout.
+  its run's snapshot (the forum stays as it was), and removes a folder
+  missing `forum-meta.json` or `forum.json` (`ListIncomplete`; this includes
+  every folder of the earlier development layout).
+- **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
+  object parameter that lists no members with `"additionalProperties": true`
+  (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.
 - **Agent message size**: `tools.MaxAgentMessageChars` (8,000) caps the
   `agent_message` tool, `/ask` and `/whisper` ("Messages to other agents are
   limited to 8,000 characters."); the core Ask/Whisper (and so the forum) are

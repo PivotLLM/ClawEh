@@ -248,11 +248,22 @@ func (s *Service) Validate(ctx context.Context, raw []byte, opts LaunchOptions) 
 // ValidateStatic, Preflight with the service's host limits.
 func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*Config, *Resolved, error) {
 	cfg, err := Decode(raw)
-	if err != nil {
+	if cfg == nil {
 		return nil, nil, err
 	}
-	if err = ValidateStatic(cfg); err != nil {
-		return nil, nil, err
+	// Every problem is reported at once: Decode's and ValidateStatic's.
+	decodeErr, _ := errors.AsType[*ValidationError](err)
+	if staticErr := ValidateStatic(cfg); staticErr != nil || decodeErr != nil {
+		var issues []Issue
+		if decodeErr != nil {
+			issues = append(issues, decodeErr.Issues...)
+		}
+		if ve, ok := errors.AsType[*ValidationError](staticErr); ok {
+			issues = append(issues, ve.Issues...)
+		} else if staticErr != nil {
+			return nil, nil, staticErr
+		}
+		return nil, nil, &ValidationError{Issues: issues}
 	}
 	resolved, err := Preflight(ctx, cfg, PreflightEnv{
 		Launcher:    opts.Scope.AgentID,
@@ -361,9 +372,9 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 	if opts.Origin.AgentID == "" {
 		opts.Origin.AgentID = opts.Scope.AgentID
 	}
-	n := 1
-	if prev != nil {
-		n = prev.RunNumber() + 1
+	n, err := nextRun(store, started)
+	if err != nil {
+		return 0, err
 	}
 	run, err := store.CreateRun(n)
 	if err != nil {
@@ -377,6 +388,11 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 		return 0, errors.Join(fmt.Errorf("forum %s run %d could not start: %w", store.ID(), n, err), s.revertRun(ctx, run))
 	}
 	if prevPaused || prevDamaged {
+		// A closing service could not start the new run; the paused one must
+		// then stay as it is.
+		if s.isClosed() {
+			return 0, errors.Join(errClosed, s.revertRun(ctx, run))
+		}
 		if err = s.supersede(ctx, prev, prevDamaged); err != nil {
 			return 0, errors.Join(err, s.revertRun(ctx, run))
 		}
@@ -588,11 +604,9 @@ func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*S
 		sum = summaryOf(cfg, snap, st)
 	}
 	sum.Runs = len(runs)
-	latestSnap, err := store.Run(latest).ReadSnapshot()
-	if err != nil {
-		return nil, corrupt("run %d %s: %v", latest, fileSnapshot, err)
+	if sum.ConfigChanged, err = configChanged(store.Run(latest), raw); err != nil {
+		return nil, err
 	}
-	sum.ConfigChanged = configDigest(raw) != latestSnap.ConfigDigest
 	return sum, nil
 }
 
@@ -716,14 +730,14 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 		return err
 	}
 	if st.Status == StatusPaused {
-		changed, err := configChanged(store, snap)
-		if err != nil {
+		changed, changeErr := configChanged(store, nil)
+		if changeErr != nil {
 			store.Unlock()
-			return err
+			return changeErr
 		}
 		if changed {
 			store.Unlock()
-			return invalidState("the config changed; launch to start a new run")
+			return invalidState("forum %s: the config changed; launch to start a new run", snap.Label())
 		}
 	}
 	return s.resume(ctx, store, st)
@@ -837,8 +851,23 @@ func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*
 		return nil, errNoRun(id, run)
 	}
 	rs := store.Run(run)
+	// The run's own records are checked like the latest run's (open):
+	// its snapshot must name this run and the scope's agent.
+	snap, err := rs.ReadSnapshot()
+	if err != nil {
+		return nil, corrupt("run %d %s: %v", run, fileSnapshot, err)
+	}
+	if err = checkOwner(rs, snap); err != nil {
+		return nil, err
+	}
+	if snap.ForumID != id || snap.Run != run {
+		return nil, corrupt("run %d %s names forum %s run %d", run, fileSnapshot, snap.ForumID, snap.Run)
+	}
 	res, err := rs.ReadResult()
 	if err == nil {
+		if res.ForumID != id || res.Run != run {
+			return nil, corrupt("run %d %s names forum %s run %d", run, fileResult, res.ForumID, res.Run)
+		}
 		return res, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -983,8 +1012,6 @@ func (s *Service) removeIncomplete(scope Scope) {
 
 // recoverOne applies Recover's rules to one forum (DESIGN.md §7.18):
 //
-//   - a directory with the layout of an earlier development version is
-//     removed;
 //   - every run whose launch did not get as far as its snapshot is undone
 //     (revertRun), so the forum is as it was before that launch, and the
 //     temporary agents such undone runs left are deleted;
@@ -998,13 +1025,6 @@ func (s *Service) removeIncomplete(scope Scope) {
 //     cancel.
 func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error {
 	if _, ok := s.running(scope, id); ok {
-		return nil
-	}
-	if oldLayout(scope.BaseDirectory, id) {
-		if err := newForumHandle(scope.BaseDirectory, id).Remove(); err != nil {
-			return err
-		}
-		s.host.Logger.Infof("forum %s: removed a forum folder of an earlier version", id)
 		return nil
 	}
 	store, err := s.open(scope, id)
@@ -1074,9 +1094,9 @@ func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []
 }
 
 // finishEarlier finishes the pending work of a run that is not the
-// forum's latest, which only its markers record: a terminal run gets its
-// terminal work done (completeTerminal); a run a crash left unfinished
-// while a later run was being launched is superseded (cancelled without a
+// forum's latest: a terminal run with markers gets its terminal work done
+// (completeTerminal); a run a crash left unfinished while a later run was
+// being launched, markers or not, is superseded (cancelled without a
 // notice), as that launch would have done. Failures are logged. The caller
 // holds the lock.
 func (s *Service) finishEarlier(ctx context.Context, run *Store) {
@@ -1087,7 +1107,13 @@ func (s *Service) finishEarlier(ctx context.Context, run *Store) {
 		return
 	}
 	if !agents && !notice {
-		return
+		// Nothing pending is recorded, but a supersede cut short after the
+		// cancel cleared the notice leaves the run cancelling: the state
+		// cache (loadView) says so without verifying every file.
+		_, _, st, err := loadView(run)
+		if err != nil || st.Status.Terminal() {
+			return
+		}
 	}
 	cfg, snap, st, err := load(run)
 	switch {

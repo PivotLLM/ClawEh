@@ -798,6 +798,28 @@ func buildResult(cfg *Config, snap *Snapshot, st *State) *Result {
 		})
 		res.Omissions = append(res.Omissions, layerOmissions(layer, ls)...)
 	}
+	for _, l := range res.Layers {
+		if len(l.Outputs) > 0 {
+			return res
+		}
+	}
+	for _, id := range snap.Layers {
+		if slices.Contains(snap.ResultLayers, id) {
+			continue
+		}
+		layer, _ := cfg.Layer(id)
+		ls := st.Layers[id]
+		if ls == nil {
+			continue
+		}
+		outs := publishedOutputs(layer, ls)
+		if st.Status.Terminal() {
+			outs = orderOutputs(layer, slices.Clone(ls.Outputs))
+		}
+		if len(outs) > 0 {
+			res.OtherLayers = append(res.OtherLayers, LayerResult{LayerID: id, Ended: ls.Ended, EndReason: ls.EndReason, Outputs: outs})
+		}
+	}
 	return res
 }
 

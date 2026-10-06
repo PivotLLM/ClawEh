@@ -352,18 +352,6 @@ func ListIncomplete(base string) ([]string, error) {
 	return ids, nil
 }
 
-// oldLayout reports whether a forum directory has the layout of an earlier
-// development version: the run's files (snapshot.json, commits/) beside
-// forum.json instead of under runs/. Recover removes such a directory.
-func oldLayout(base, forumID string) bool {
-	dir := filepath.Join(base, forumID)
-	if regularFile(filepath.Join(dir, fileSnapshot)) {
-		return true
-	}
-	fi, err := os.Lstat(filepath.Join(dir, dirCommits))
-	return err == nil && fi.IsDir()
-}
-
 // runDirPattern is the name of a run directory: a positive decimal number
 // without leading zeros.
 var runDirPattern = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
@@ -669,21 +657,54 @@ func (s *Store) Lock() error {
 	return fmt.Errorf("lock forum %s: the lock file kept changing", s.id)
 }
 
-// sweepTemp removes every entry under the forum directory, its runs
-// included, whose name starts with tmpPrefix. A missing directory (a forum
-// staged for removal) has nothing to sweep. Symbolic links are not
-// followed.
+// sweepTemp removes the temporary entries (tmpPrefix) a crashed writer
+// left directly in the forum directory and in runs/ (a configuration
+// write, a run being removed), and anywhere in this store's run when it is
+// one (SweepRun). Earlier runs are not walked: nothing writes to them. A
+// missing directory (a forum staged for removal) has nothing to sweep.
 func (s *Store) sweepTemp() error {
+	err := s.inDir(func(r *os.Root) error {
+		for _, dir := range []string{".", dirRuns} {
+			names, err := readDirNames(r, dir)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			for _, name := range names {
+				if strings.HasPrefix(name, tmpPrefix) {
+					if err := r.RemoveAll(path.Join(dir, name)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("sweep temporary files: %w", err)
+	}
+	if s.run > 0 {
+		return s.SweepRun()
+	}
+	return nil
+}
+
+// SweepRun removes every entry under the run's directory whose name starts
+// with tmpPrefix (what a crash during a write left). Symbolic links are not
+// followed. The caller holds the lock; Open calls it before reading the run.
+func (s *Store) SweepRun() error {
 	var found []string
-	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == s.dir && errors.Is(err, fs.ErrNotExist) {
+			if p == s.root && errors.Is(err, fs.ErrNotExist) {
 				return filepath.SkipAll
 			}
 			return err
 		}
-		if p != s.dir && strings.HasPrefix(d.Name(), tmpPrefix) {
-			rel, relErr := filepath.Rel(s.dir, p)
+		if p != s.root && strings.HasPrefix(d.Name(), tmpPrefix) {
+			rel, relErr := filepath.Rel(s.root, p)
 			if relErr != nil {
 				return relErr
 			}
@@ -700,7 +721,7 @@ func (s *Store) sweepTemp() error {
 	if len(found) == 0 {
 		return nil
 	}
-	return s.inDir(func(r *os.Root) error {
+	return s.inRoot(func(r *os.Root) error {
 		for _, rel := range found {
 			if err := r.RemoveAll(rel); err != nil {
 				return fmt.Errorf("sweep temporary files: %w", err)
@@ -708,6 +729,20 @@ func (s *Store) sweepTemp() error {
 		}
 		return nil
 	})
+}
+
+// readDirNames lists the r-relative directory dir, sorted.
+func readDirNames(r *os.Root, dir string) ([]string, error) {
+	d, err := r.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	names, err := d.Readdirnames(-1)
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	sort.Strings(names)
+	return names, err
 }
 
 // locked reports whether this Store (or a handle sharing its lock) holds
@@ -732,6 +767,17 @@ func releaseFile(f *os.File) error {
 	return errors.Join(unlockFile(f), f.Close())
 }
 
+// removeLockFile removes <base>/.locks/<id>.run through an os.Root of the
+// lock directory.
+func removeLockFile(base, id string) error {
+	r, err := os.OpenRoot(filepath.Join(base, dirLocks))
+	if err != nil {
+		return err
+	}
+	err = r.Remove(id + lockSuffix)
+	return errors.Join(err, r.Close())
+}
+
 // Unlock releases the lock and removes the file. Unlocking an unlocked
 // store is a no-op. Errors are not reported: the lock is released when
 // the file is closed whatever else fails, and a leftover lock file is
@@ -751,7 +797,7 @@ func (s *Store) unlock() error {
 	f := s.lk.f
 	s.lk.f = nil
 	var err error
-	if rmErr := os.Remove(f.Name()); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+	if rmErr := removeLockFile(s.base, s.id); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 		err = rmErr
 	}
 	if relErr := releaseFile(f); relErr != nil {

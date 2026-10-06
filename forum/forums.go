@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -218,24 +220,69 @@ func refuseBusy(store *Store) error {
 	return nil
 }
 
-// configChanged reports whether the forum's current configuration differs
-// from the one the run with snapshot snap used.
-func configChanged(store *Store, snap *Snapshot) (bool, error) {
-	raw, _, err := store.ReadForumConfig()
-	if err != nil {
-		return false, err
+// configChanged reports whether the forum's current configuration (current,
+// or forum.json read now when nil) differs from the one run used. The two
+// are compared in canonical form (canonicalConfig), so formatting, member
+// order and number spelling are not changes; the run's ConfigDigest stays
+// the integrity check of its own copy.
+func configChanged(run *Store, current []byte) (bool, error) {
+	if current == nil {
+		var err error
+		if current, _, err = run.ReadForumConfig(); err != nil {
+			return false, err
+		}
 	}
-	return configDigest(raw) != snap.ConfigDigest, nil
+	used, err := run.ReadConfig()
+	if err != nil {
+		return false, corrupt("run %d %s: %v", run.RunNumber(), fileConfig, err)
+	}
+	// A document that does not decode is compared as different.
+	a, errA := canonicalConfig(current)
+	b, errB := canonicalConfig(used)
+	same := errA == nil && errB == nil && bytes.Equal(a, b)
+	return !same, nil
 }
 
-// configDigest is the digest a run records for raw (the digest of
-// formatConfig(raw)), or "" when raw is not JSON.
-func configDigest(raw []byte) string {
-	formatted, err := formatConfig(raw)
-	if err != nil {
-		return ""
+// canonicalConfig is a configuration in canonical form: decoded with
+// numbers kept as written, each number normalised (an integer as an
+// integer, any other as the shortest float form), and encoded again with
+// object members in sorted order and no HTML escaping.
+func canonicalConfig(raw []byte) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
 	}
-	return digest(formatted)
+	if dec.More() {
+		return nil, errors.New("trailing data after the configuration")
+	}
+	return marshalCompact(canonicalNumbers(v))
+}
+
+// canonicalNumbers replaces every json.Number in v with its normal form.
+func canonicalNumbers(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			x[k] = canonicalNumbers(e)
+		}
+	case []any:
+		for i, e := range x {
+			x[i] = canonicalNumbers(e)
+		}
+	case json.Number:
+		if n, err := strconv.ParseInt(x.String(), 10, 64); err == nil {
+			return json.Number(strconv.FormatInt(n, 10))
+		}
+		if f, err := strconv.ParseFloat(x.String(), 64); err == nil {
+			if f == math.Trunc(f) && math.Abs(f) < 1<<53 {
+				return json.Number(strconv.FormatInt(int64(f), 10))
+			}
+			return json.Number(strconv.FormatFloat(f, 'g', -1, 64))
+		}
+	}
+	return v
 }
 
 // configName is the `name` of a configuration that may not be valid yet,
@@ -250,16 +297,38 @@ func configName(raw []byte) string {
 	return named.Name
 }
 
+// nextRun is the number of a forum's next run: one more than the highest
+// of its started runs and of the runs its cleanup markers still name (an
+// undone launch whose agents are still to delete), so a new run never
+// shares a marker with an earlier one.
+func nextRun(store *Store, started []int) (int, error) {
+	last := 0
+	if len(started) > 0 {
+		last = started[len(started)-1]
+	}
+	for _, name := range []string{CleanupAgents, cleanupNotice} {
+		marked, err := store.MarkedRuns(name)
+		if err != nil {
+			return 0, err
+		}
+		if len(marked) > 0 {
+			last = max(last, marked[len(marked)-1])
+		}
+	}
+	return last + 1, nil
+}
+
 // revertRun undoes a run whose launch did not finish: the temporary agents
 // created so far are deleted (those that could not be stay in the run's
-// agents marker, which the next launch of that number extends or recovery
-// retries, and a failure is logged), the notice marker cleared and the
+// agents marker, which the keep-alive loop and recovery retry; no later
+// run takes that number, see nextRun), the notice marker cleared and the
 // run's directory removed, so the forum is as it was before the launch.
 // The caller holds the lock. It runs even if the launching call was
 // cancelled.
 func (s *Service) revertRun(ctx context.Context, store *Store) error {
 	if err := s.deleteTempAgents(context.WithoutCancel(ctx), store); err != nil {
-		s.host.Logger.Warnf("forum %s: undoing run %d: %v (the registry's idle TTL removes them)", store.ID(), store.RunNumber(), err)
+		s.host.Logger.Warnf("forum %s: undoing run %d: %v (retried every %s)", store.ID(), store.RunNumber(), err, s.keepAliveEvery)
+		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 	}
 	if err := store.ClearCleanup(cleanupNotice); err != nil {
 		return err
@@ -290,7 +359,8 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 	return started, nil
 }
 
-// supersede ends a run that a later launch replaces: a paused run (or one
+// supersede ends a run that a later launch replaces (the caller has checked
+// that the service is not closing): a paused run (or one
 // left unfinished by a crash during such a launch) is cancelled and its
 // terminal work done without a completion notice, since the launcher
 // started the new run itself; a run whose records are damaged only has its
@@ -298,8 +368,8 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 // the lock.
 func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) error {
 	id, n := store.ID(), store.RunNumber()
-	s.forgetPaused(id)
 	if damaged {
+		s.forgetPaused(id)
 		if err := s.deleteTempAgents(ctx, store); err != nil {
 			s.host.Logger.Warnf("forum %s: run %d: %v (retried every %s)", id, n, err, s.keepAliveEvery)
 			s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
@@ -311,10 +381,13 @@ func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) err
 		return err
 	}
 	if err = ctrl.RequestCancel(); err != nil {
+		// Still paused: it stays registered for keep-alive.
 		return err
 	}
 	// The cancel is committed; a crash from here leaves a cancelling run
-	// that recovery finishes, still without a notice.
+	// that recovery finishes, still without a notice. Only now does the run
+	// stop being a paused one to keep alive.
+	s.forgetPaused(id)
 	if err = store.ClearCleanup(cleanupNotice); err != nil {
 		return err
 	}

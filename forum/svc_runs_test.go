@@ -212,11 +212,52 @@ func TestSvcResumeAfterAConfigChange(t *testing.T) {
 	if sum, err := e.svc.Status(t.Context(), e.scope, id, 0); err != nil || sum.ConfigChanged {
 		t.Errorf("an empty patch counts as a change: %+v (%v)", sum, err)
 	}
-	if err := e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"brief": {"task": "Answer at length."}}`)); err != nil {
+	unchanged := func(what string) {
+		t.Helper()
+		if sum, err := e.svc.Status(t.Context(), e.scope, id, 0); err != nil || sum.ConfigChanged {
+			t.Errorf("%s counts as a change: %+v (%v)", what, sum, err)
+		}
+	}
+	// Importing the exported configuration as a decoded object (members in
+	// alphabetical order, numbers through float64) is no change.
+	exported, err := e.svc.ExportConfig(t.Context(), e.scope, id)
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := e.svc.Resume(t.Context(), e.scope, id)
-	if !errors.Is(err, ErrInvalidState) || err.Error() != "the config changed; launch to start a new run" {
+	var decoded map[string]any
+	if err = json.Unmarshal(exported, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	reencoded, err := marshalCompact(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.svc.SetConfig(t.Context(), e.scope, id, reencoded); err != nil {
+		t.Fatal(err)
+	}
+	unchanged("export then import")
+	// A patch and the patch reverting it are no change either.
+	if err = e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"seed": 5, "brief": {"task": "Something else."}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if sum, sumErr := e.svc.Status(t.Context(), e.scope, id, 0); sumErr != nil || !sum.ConfigChanged {
+		t.Errorf("a real patch is not a change: %+v (%v)", sum, sumErr)
+	}
+	if err = e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"seed": null, "brief": {"task": "Answer briefly."}}`)); err != nil {
+		t.Fatal(err)
+	}
+	unchanged("a patch and its revert")
+	if err = e.svc.Resume(t.Context(), e.scope, id); err != nil {
+		t.Fatalf("resume after a reverted change: %v", err)
+	}
+	e.running(id)
+	pause()
+
+	if err = e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"brief": {"task": "Answer at length."}}`)); err != nil {
+		t.Fatal(err)
+	}
+	err = e.svc.Resume(t.Context(), e.scope, id)
+	if !errors.Is(err, ErrInvalidState) || err.Error() != "forum svc-test: the config changed; launch to start a new run" {
 		t.Fatalf("resume after a change = %v", err)
 	}
 	if e.status(id) != StatusPaused {
@@ -258,6 +299,105 @@ func TestSvcResumeAfterAConfigChange(t *testing.T) {
 	svcEventually(t, "run 2's notice", func() bool { return e.notifier.count() == 1 })
 	if res, _ := e.notifier.last(); res.Run != 2 {
 		t.Errorf("notice for run %d, want 2", res.Run)
+	}
+}
+
+// A launch that fails while replacing a paused run leaves that run paused
+// and still kept alive, and no new run.
+func TestSvcFailedSupersedeKeepsThePausedRun(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.running(id)
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	if !e.keptAlive(id) {
+		t.Fatal("the paused run is not kept alive")
+	}
+	e.ctrls.mu.Lock()
+	e.ctrls.openErrRun = map[int]error{1: errSvcHost}
+	e.ctrls.mu.Unlock()
+	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, errSvcHost) {
+		t.Fatalf("launch = %v, want the failure opening run 1", err)
+	}
+	if !e.keptAlive(id) {
+		t.Error("the paused run was dropped from keep-alive")
+	}
+	if sum, err := e.svc.Status(t.Context(), e.scope, id, 0); err != nil || sum.Run != 1 || sum.Runs != 1 || sum.Status != StatusPaused {
+		t.Errorf("status = %+v (%v), want run 1 of 1, paused", sum, err)
+	}
+	e.ctrls.mu.Lock()
+	e.ctrls.openErrRun = nil
+	e.ctrls.mu.Unlock()
+	if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
+		t.Errorf("resume the kept run: %v", err)
+	}
+}
+
+// The results of an earlier run are refused as damaged when its snapshot
+// names another launcher or another run, though the latest run is fine.
+func TestSvcResultsOfAnEarlierRunAreChecked(t *testing.T) {
+	for name, damage := range map[string]func(*Snapshot){
+		"another launcher": func(s *Snapshot) { s.Origin.AgentID = "bob" },
+		"another run":      func(s *Snapshot) { s.Run = 2 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := svcSetup(t)
+			id, _ := e.launch(svcSimpleJSON)
+			svcFinish(t, e, id, 1)
+			svcRelaunch(t, e, id)
+			run1 := e.store(id).Run(1)
+			snap, err := run1.ReadSnapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			damage(snap)
+			data, err := marshalRecord(snap)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(run1.Path(fileSnapshot), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = e.svc.Results(t.Context(), e.scope, id, 1); !errors.Is(err, ErrCorrupt) {
+				t.Errorf("results of run 1 = %v, want ErrCorrupt", err)
+			}
+			if _, err = e.svc.Results(t.Context(), e.scope, id, 2); err != nil {
+				t.Errorf("results of run 2 = %v", err)
+			}
+		})
+	}
+}
+
+// An undone launch whose agents could not all be deleted leaves its
+// marker; the next launch takes the following number, so the marker is
+// never shared with a new run.
+func TestSvcNextRunSkipsALeftMarker(t *testing.T) {
+	e := svcSetup(t)
+	id, err := e.svc.NewForum(t.Context(), e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.svc.SetConfig(t.Context(), e.scope, id, []byte(svcSimpleJSON)); err != nil {
+		t.Fatal(err)
+	}
+	f, err := OpenStore(e.scope.BaseDirectory, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = setAgentsMarker(f.Run(1), []string{"left-by-run-1"}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := e.svc.Launch(t.Context(), id, e.opts())
+	if err != nil || n != 2 {
+		t.Fatalf("launch = run %d, %v; want run 2", n, err)
+	}
+	if marker, ok := e.markerRun(id, 1, CleanupAgents); !ok || !strings.Contains(marker, "left-by-run-1") {
+		t.Errorf("run 1's marker = %q, %v; want it left as it was", marker, ok)
+	}
+	if marker, ok := e.markerRun(id, 2, CleanupAgents); !ok || strings.Contains(marker, "left-by-run-1") {
+		t.Errorf("run 2's marker = %q, %v; want only run 2's agents", marker, ok)
 	}
 }
 
@@ -365,7 +505,58 @@ func TestSvcRecoverASupersedeCutShort(t *testing.T) {
 	}
 	e.settled(id, StatusPaused)
 	e.restart()
-	// What launchLocked writes before it supersedes run 1.
+	svcAllocateRun2(t, e, id)
+
+	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+		t.Fatal(err)
+	}
+	e.running(id)
+	if sum, err := e.svc.Status(t.Context(), e.scope, id, 1); err != nil || sum.Status != StatusCancelled {
+		t.Errorf("run 1 = %+v (%v), want cancelled", sum, err)
+	}
+	if e.notifier.count() != 0 {
+		t.Errorf("%d notices, want none", e.notifier.count())
+	}
+	if e.keptAlive(id) {
+		t.Error("the superseded run is kept alive")
+	}
+}
+
+// A supersede cut short after the cancel was committed and the notice
+// marker cleared leaves an earlier run cancelling with no marker at all;
+// recovery still ends it.
+func TestSvcRecoverACancellingEarlierRunWithoutMarkers(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch(svcSimpleJSON)
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	e.restart()
+	e.appendCommits(id, Commit{Kind: CommitCancelRequested})
+	run1 := e.store(id)
+	for _, marker := range []string{CleanupAgents, cleanupNotice} {
+		if err := run1.ClearCleanup(marker); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svcAllocateRun2(t, e, id)
+	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+		t.Fatal(err)
+	}
+	e.running(id)
+	if sum, err := e.svc.Status(t.Context(), e.scope, id, 1); err != nil || sum.Status != StatusCancelled {
+		t.Errorf("run 1 = %+v (%v), want cancelled", sum, err)
+	}
+	if e.notifier.count() != 0 {
+		t.Errorf("%d notices, want none", e.notifier.count())
+	}
+}
+
+// svcAllocateRun2 writes run 2 of a forum as launchLocked does before it
+// supersedes run 1, as a launch that then crashed would leave it.
+func svcAllocateRun2(t *testing.T, e *svcEnv, id string) {
+	t.Helper()
 	f, err := OpenStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		t.Fatal(err)
@@ -391,20 +582,6 @@ func TestSvcRecoverASupersedeCutShort(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Unlock()
-
-	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
-		t.Fatal(err)
-	}
-	e.running(id)
-	if sum, err := e.svc.Status(t.Context(), e.scope, id, 1); err != nil || sum.Status != StatusCancelled {
-		t.Errorf("run 1 = %+v (%v), want cancelled", sum, err)
-	}
-	if e.notifier.count() != 0 {
-		t.Errorf("%d notices, want none", e.notifier.count())
-	}
-	if e.keptAlive(id) {
-		t.Error("the superseded run is kept alive")
-	}
 }
 
 // The book: chapter 1 runs, the same forum's source is pointed at chapter
@@ -457,6 +634,9 @@ func TestSvcToolRunArgument(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(st.ok("status", map[string]any{"id": id})), &sum); err != nil || sum.Run != 2 || sum.Status != StatusRunning {
 		t.Errorf("status of the latest run = %+v (%v)", sum, err)
+	}
+	if err := st.e.store(id).Run(1).AppendTranscript("# svc-test · run 1\n\n"); err != nil {
+		t.Fatal(err)
 	}
 	var res ResultsView
 	if err := json.Unmarshal([]byte(st.ok("results", map[string]any{"id": id, "run": 1.0})), &res); err != nil ||

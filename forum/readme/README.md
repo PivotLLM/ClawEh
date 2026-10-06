@@ -4,7 +4,7 @@ A forum is a structured discussion that you set up and ClawEh runs for you.
 You choose the participants, write a brief and the material they work from,
 and lay the discussion out in ordered layers. ClawEh sends every turn itself,
 keeps everything on disk under `forums/<id>/` in your workspace (each run in
-`forums/<id>/runs/<n>/`), and tells you when a run has finished.
+`forums/<id>/runs/<n>/`), and tells you when a run ends.
 
 Use a forum when several independent views, a critique-and-revise cycle or a
 review panel improves the result. Do not use one when a single sub-agent or a
@@ -77,11 +77,15 @@ step, then launch it; every launch is a new run from the beginning.
    objects merge, `null` deletes a key and arrays such as `layers` are
    replaced whole. Fill every `<...>` placeholder and set the models from
    `forum_models`. `forum_config_export` shows the configuration so far.
+   For example, `forum_config_update` with
+   `{"id": "<id>", "changes": {"sources": {"question": {"inline": "Should we use Go or Python?"}}, "participants": {"chair": {"model": "<a name from forum_models>"}}}}`
+   sets the question and the chair's model and leaves everything else as
+   it is. `changes` is a JSON object, never a string.
 4. `forum_validate` with the ID. Fix every issue it lists.
 5. `forum_launch` with the ID starts run 1 in the background.
 6. `forum_status` with the ID follows the latest run; `forum_pause`,
    `forum_resume` and `forum_cancel` control it.
-7. When you are told it has finished, `forum_results` with the ID.
+7. When you are told the run has ended, `forum_results` with the ID.
 8. To run it again, change the configuration (only while it is not running)
    and `forum_launch` again: run 2 starts from the beginning, and run 1 keeps
    its files. `forum_status` and `forum_results` take `run` to look at an
@@ -97,7 +101,9 @@ workspace, or a mount such as `maestro/`).
 
 For a book, run the forum on chapter 1, then update only
 `{"sources": {"chapter": {"file": "files/chapter2.md"}}}` and launch again
-for chapter 2. To start another forum from this one, `forum_config_export` it
+for chapter 2. A source has either `inline` or `file`: to turn an inline
+source into a file, remove `inline` in the same patch, as in
+`{"sources": {"topic": {"inline": null, "file": "files/chapter1.md"}}}`. To start another forum from this one, `forum_config_export` it
 and `forum_config_import` the result into a forum made with `forum_new`.
 
 ## Limits

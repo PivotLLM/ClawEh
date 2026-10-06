@@ -23,18 +23,22 @@ const MaxResultInlineTotalChars = 16000
 // MaxResultInlineTotalChars) and every path relative to the launching
 // agent's workspace.
 type ResultsView struct {
-	ForumID    string        `json:"forum_id"`
-	Run        int           `json:"run"`
-	Name       string        `json:"name"`
-	Status     Status        `json:"status"`
-	Reason     EndReason     `json:"reason,omitempty"`
-	LaunchedAt time.Time     `json:"launched_at"`
-	EndedAt    time.Time     `json:"ended_at,omitzero"`
-	Complete   bool          `json:"complete"`
-	Calls      int           `json:"calls"`
-	Transcript string        `json:"transcript"`
+	ForumID    string    `json:"forum_id"`
+	Run        int       `json:"run"`
+	Name       string    `json:"name"`
+	Status     Status    `json:"status"`
+	Reason     EndReason `json:"reason,omitempty"`
+	LaunchedAt time.Time `json:"launched_at"`
+	EndedAt    time.Time `json:"ended_at,omitzero"`
+	Complete   bool      `json:"complete"`
+	Calls      int       `json:"calls"`
+	// Transcript is empty when the run has no transcript.md yet.
+	Transcript string        `json:"transcript,omitempty"`
 	Layers     []LayerOutput `json:"layers"`
 	Omissions  []string      `json:"omissions,omitempty"`
+	// OtherLayers lists the other layers' outputs when the result layers
+	// have none (Result.OtherLayers), within the same inline limits.
+	OtherLayers []LayerOutput `json:"other_layers,omitempty"`
 }
 
 // LayerOutput is one result layer in a ResultsView.
@@ -73,18 +77,31 @@ func truncatedNote(path string) string {
 // file and its length in characters (Store.ReadPrefix).
 type prefixReader func(rel string, keep int) (string, int, error)
 
-// newResultsView renders res for forum_results. prefix is the forum
-// directory relative to the agent's workspace (forums/<id>).
-func newResultsView(res *Result, prefix string, read prefixReader) ResultsView {
+// newResultsView renders res for forum_results. prefix is the run's
+// directory relative to the agent's workspace (forums/<id>/runs/<n>); the
+// transcript is named only when hasTranscript.
+func newResultsView(res *Result, prefix string, hasTranscript bool, read prefixReader) ResultsView {
 	view := ResultsView{
 		ForumID: res.ForumID, Run: res.Run, Name: res.Name, Status: res.Status, Reason: res.Reason,
 		LaunchedAt: res.LaunchedAt, EndedAt: res.EndedAt, Complete: res.Complete, Calls: res.Calls,
-		Transcript: filepath.ToSlash(filepath.Join(prefix, res.Transcript)),
-		Layers:     make([]LayerOutput, 0, len(res.Layers)),
-		Omissions:  res.Omissions,
+		Omissions: res.Omissions,
+	}
+	if hasTranscript {
+		view.Transcript = filepath.ToSlash(filepath.Join(prefix, res.Transcript))
 	}
 	budget := MaxResultInlineTotalChars
-	for _, l := range res.Layers {
+	view.Layers = renderLayers(res.Layers, prefix, read, &budget)
+	if len(res.OtherLayers) > 0 {
+		view.OtherLayers = renderLayers(res.OtherLayers, prefix, read, &budget)
+	}
+	return view
+}
+
+// renderLayers renders layers' outputs, spending budget (characters of
+// inline text left) in order.
+func renderLayers(layers []LayerResult, prefix string, read prefixReader, budget *int) []LayerOutput {
+	out := make([]LayerOutput, 0, len(layers))
+	for _, l := range layers {
 		lo := LayerOutput{LayerID: l.LayerID, Ended: l.Ended, EndReason: l.EndReason, Outputs: make([]OutputView, 0, len(l.Outputs))}
 		for _, o := range l.Outputs {
 			ov := OutputView{Author: o.ParticipantID, Layer: o.LayerID, Round: o.Round, Format: o.Format}
@@ -95,7 +112,7 @@ func newResultsView(res *Result, prefix string, read prefixReader) ResultsView {
 				continue
 			}
 			ov.File = filepath.ToSlash(filepath.Join(prefix, clean))
-			limit := min(MaxResultInlineChars, budget)
+			limit := min(MaxResultInlineChars, *budget)
 			// One character more than the limit tells a cut text apart.
 			text, chars, err := read(clean, limit+1)
 			if err != nil {
@@ -110,14 +127,14 @@ func newResultsView(res *Result, prefix string, read prefixReader) ResultsView {
 			case chars > limit:
 				ov.Text = string([]rune(text)[:limit]) + "\n" + truncatedNote(ov.File)
 				ov.Truncated = true
-				budget -= limit
+				*budget -= limit
 			default:
 				ov.Text = text
-				budget -= chars
+				*budget -= chars
 			}
 			lo.Outputs = append(lo.Outputs, ov)
 		}
-		view.Layers = append(view.Layers, lo)
+		out = append(out, lo)
 	}
-	return view
+	return out
 }

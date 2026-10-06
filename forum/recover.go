@@ -23,6 +23,8 @@ import (
 // at the first unfinished action. The store must be locked by the caller.
 // Steps:
 //
+//  0. Remove the temporary entries a crashed writer left in the run
+//     (SweepRun).
 //  1. Verify the directory (Verify), rebuild State from the commit log
 //     (ReplayState, never the state.json cache), read the log and every layer's attempts (Store.ListAttempts).
 //  2. Compile the configured schemas (compileSchemas); a configuration
@@ -41,6 +43,9 @@ import (
 // A terminal forum opens too (Run returns its status at once); the service
 // uses that to finish cleanup after a restart.
 func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
+	if err := s.SweepRun(); err != nil {
+		return nil, fmt.Errorf("open forum: %w", err)
+	}
 	cfg, snap, err := Verify(s)
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
@@ -261,18 +266,21 @@ func (c *Controller) transcriptEntry(commit *Commit) (string, error) {
 }
 
 // outputEntry renders one published output: a heading with the layer,
-// round and author's name, then the published projection (a JSON output
-// in a json code fence).
+// round and author's name (with the author's "Response X" label when some
+// route reads the layer anonymously, so the transcript maps the letters
+// the reviews use), then the published projection in a code fence of its
+// format, so its own headings never mix with the transcript's.
 func (c *Controller) outputEntry(layer Layer, out *OutputRecord) (string, error) {
 	data, err := c.store.ReadFile(out.PublishedFile)
 	if err != nil {
 		return "", fmt.Errorf("transcript: read output %s: %w", out.OutputID, err)
 	}
-	body := strings.TrimRight(string(data), "\n")
-	if out.Format == FormatJSON {
-		body = fence("json", body)
+	author := c.participantName(out.ParticipantID)
+	if c.router.readAnonymously(layer.ID) {
+		author += " (" + responseLabel(slices.Index(layer.Participants, out.ParticipantID)) + ")"
 	}
-	return fmt.Sprintf("### %s · round %d · %s\n\n%s\n\n", layer.ID, out.Round, c.participantName(out.ParticipantID), body), nil
+	body := fence(fenceInfo(out.Format), strings.TrimRight(string(data), "\n"))
+	return fmt.Sprintf("### %s · round %d · %s\n\n%s\n\n", layer.ID, out.Round, author, body), nil
 }
 
 // decisionEntry renders the public part of a decision: the decision, the

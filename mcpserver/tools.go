@@ -240,7 +240,7 @@ func (ep *endpointCatalogue) refresh(agentRegistries map[string]*tools.ToolRegis
 		// is never applied here. An external client (a CLI provider) receives every
 		// authorized tool in tools/list and runs its own tool-handling loop; claw's
 		// discovery is an in-loop-only optimization.
-		params := tool.Parameters()
+		params := tools.OpenObjectProperties(tool.Parameters())
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}

@@ -453,11 +453,13 @@ func (c *svcCtrl) Participants() *Participants { return c.parts }
 
 // svcCtrls opens fake controllers and keeps the latest one per forum.
 type svcCtrls struct {
-	mu       sync.Mutex
-	byID     map[string]*svcCtrl
-	opens    int
-	openErr  error
-	noResult bool
+	mu      sync.Mutex
+	byID    map[string]*svcCtrl
+	opens   int
+	openErr error
+	// openErrRun fails opening the controller of one run number.
+	openErrRun map[int]error
+	noResult   bool
 }
 
 func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error) {
@@ -466,6 +468,9 @@ func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error)
 	r.opens++
 	if r.openErr != nil {
 		return nil, r.openErr
+	}
+	if err := r.openErrRun[s.RunNumber()]; err != nil {
+		return nil, err
 	}
 	cfg, snap, st, err := load(s)
 	if err != nil {

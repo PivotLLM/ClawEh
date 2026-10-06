@@ -417,7 +417,8 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	// Paths are relative to the agent's workspace, whose forums/ folder holds
 	// the base directory.
 	prefix := filepath.Join(filepath.Base(scope.BaseDirectory), id, dirRuns, strconv.Itoa(res.Run))
-	return jsonResult(newResultsView(res, prefix, store.Run(res.Run).ReadPrefix))
+	rs := store.Run(res.Run)
+	return jsonResult(newResultsView(res, prefix, rs.has(res.Transcript), rs.ReadPrefix))
 }
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
@@ -456,11 +457,21 @@ func objectArg(call *toolspec.ToolCall, name string) ([]byte, error) {
 			return c, nil
 		}
 	case string:
+		if strings.TrimSpace(c) == "" {
+			return nil, argIssue(name + " is empty; pass the " + name + " as a JSON object, e.g. " + objectExamples[name])
+		}
 		return nil, argIssue("the " + name + " argument must be a JSON object, not a string; pass the object itself")
 	case nil:
 		return nil, argIssue("the " + name + " argument is required: a JSON object")
 	}
 	return nil, argIssue("the " + name + " argument must be a JSON object")
+}
+
+// objectExamples is a literal example of each JSON-object argument, for
+// the refusal of an empty one.
+var objectExamples = map[string]string{
+	"changes": `{"sources":{"topic":{"inline":"..."}}}`,
+	"config":  `{"version":1,"name":"...","brief":{"purpose":"...","task":"..."}}`,
 }
 
 // argIssue is a *ValidationError about the tool's arguments: one issue
@@ -568,7 +579,32 @@ var toolVerbs = map[string]string{
 // failure are logged at Error with the detail and reported in a fixed
 // sentence.
 func (t *toolSuite) fail(err error, id, tool string) (*toolspec.Result, error) {
-	return &toolspec.Result{ForLLM: t.message(err, id, tool), IsError: true, Err: err}, nil
+	msg := t.message(err, id, tool)
+	if expectedFailure(err) {
+		// A refusal the agent can act on: logged by the host as a warning,
+		// not as an error (refused).
+		err = refused{err}
+	}
+	return &toolspec.Result{ForLLM: msg, IsError: true, Err: err}, nil
+}
+
+// expectedFailure reports whether a failed operation is a refusal of the
+// call (bad arguments, an invalid configuration, a state that does not
+// allow it, an unknown forum, one in use elsewhere, a shutdown) rather
+// than a damaged forum or an internal failure.
+func expectedFailure(err error) bool {
+	if errors.Is(err, ErrCorrupt) {
+		return false
+	}
+	var (
+		ve *ValidationError
+		se *stateError
+	)
+	if errors.As(err, &ve) || errors.As(err, &se) {
+		return true
+	}
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrLocked) || errors.Is(err, ErrInvalidState) ||
+		errors.Is(err, ErrSchemasUnavailable) || errors.Is(err, errClosed)
 }
 
 // message is fail's sentence.

@@ -281,9 +281,13 @@ func TestCtlPauseCancelRaces(t *testing.T) {
 			layer.Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}
 			f := ctlLaunch(t, ctlConfig(layer))
 			rng := rand.New(rand.NewPCG(uint64(i), 1))
+			var rngMu sync.Mutex // parallel turns share the generator
 			f.msg.hook = func(ctx context.Context, _ ctlCall) error {
+				rngMu.Lock()
+				wait := time.Duration(rng.IntN(3)) * time.Millisecond
+				rngMu.Unlock()
 				select {
-				case <-time.After(time.Duration(rng.IntN(3)) * time.Millisecond):
+				case <-time.After(wait):
 				case <-ctx.Done():
 					return ctx.Err()
 				}

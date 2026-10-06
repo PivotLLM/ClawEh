@@ -1482,3 +1482,56 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 	close(release)
 	svcEventually(t, "completion notice", func() bool { return e.notifier.count() == 1 })
 }
+
+// A run whose result layers have no output lists the other layers'
+// outputs, so the work done is reachable: once it has ended every
+// committed output, while it runs only published ones.
+func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
+	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"layers": [`, `"layers": [
+    {"id": "answer", "participants": ["alice", "bob"], "instructions": "Answer.",
+     "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}},`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := &Snapshot{ForumID: "f", Layers: []string{"answer", "talk"}, ResultLayers: []string{"talk"}}
+	answer := OutputRecord{OutputID: "a1", LayerID: "answer", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")}
+	st := &State{
+		Status: StatusFailed, Reason: EndAttemptsExhausted,
+		Layers: map[string]*LayerState{"answer": {Started: true, Round: 1, Outputs: []OutputRecord{answer}}},
+	}
+	res := buildResult(cfg, snap, st)
+	if len(res.OtherLayers) != 1 || res.OtherLayers[0].LayerID != "answer" || len(res.OtherLayers[0].Outputs) != 1 {
+		t.Errorf("other layers of a failed run = %+v", res.OtherLayers)
+	}
+	st.Status, st.Reason = StatusRunning, ""
+	if res = buildResult(cfg, snap, st); len(res.OtherLayers) != 0 {
+		t.Errorf("a running run lists an unpublished round: %+v", res.OtherLayers)
+	}
+	st.Status = StatusCompleted
+	st.Layers["talk"] = &LayerState{Started: true, Ended: true, RoundsPublished: 1, Outputs: []OutputRecord{
+		{OutputID: "t1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")},
+	}}
+	if res = buildResult(cfg, snap, st); len(res.OtherLayers) != 0 {
+		t.Errorf("a result with outputs lists other layers: %+v", res.OtherLayers)
+	}
+}
+
+// Validation reports every problem at once: an empty configuration names
+// the version and each missing part, not only the first.
+func TestSvcValidateReportsEveryProblem(t *testing.T) {
+	e := svcSetup(t)
+	err := e.svc.Validate(t.Context(), []byte(`{}`), e.opts())
+	ve, ok := errors.AsType[*ValidationError](err)
+	if !ok {
+		t.Fatalf("Validate({}) = %v", err)
+	}
+	paths := map[string]bool{}
+	for _, is := range ve.Issues {
+		paths[strings.SplitN(is.Path, ".", 2)[0]] = true
+	}
+	for _, want := range []string{"version", "brief", "participants", "layers", "limits"} {
+		if !paths[want] {
+			t.Errorf("no issue about %s in %v", want, ve.Issues)
+		}
+	}
+}

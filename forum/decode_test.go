@@ -44,6 +44,8 @@ func TestDecodeRejects(t *testing.T) {
 	minimal := func(extra string) string {
 		return `{"version":1` + extra + `}`
 	}
+	// The last four decode as documents: the configuration comes back with
+	// the issues, so ValidateStatic's findings can be reported too.
 	tests := []struct {
 		name string
 		in   string
@@ -83,8 +85,9 @@ func TestDecodeRejects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := Decode([]byte(tt.in))
-			if cfg != nil {
-				t.Fatalf("Decode returned a configuration for invalid input")
+			decodes := tt.path == "version" || strings.Contains(tt.name, "explicit")
+			if (cfg != nil) != decodes {
+				t.Fatalf("Decode returned configuration %v for invalid input, want one: %v", cfg != nil, decodes)
 			}
 			cfgtWantIssue(t, err, tt.path, tt.want...)
 		})

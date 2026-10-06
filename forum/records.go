@@ -393,6 +393,11 @@ type Result struct {
 	// Omissions names what the result lacks: result layers that did not
 	// end, turns without a committed output.
 	Omissions []string `json:"omissions,omitempty"`
+	// OtherLayers is set only when the result layers have no output: the
+	// outputs of the other enabled layers, so a run that failed early
+	// still shows its work (committed outputs once the run has ended,
+	// published ones while it runs).
+	OtherLayers []LayerResult `json:"other_layers,omitempty"`
 	// Transcript is the path of transcript.md relative to the run's
 	// directory.
 	Transcript string `json:"transcript"`

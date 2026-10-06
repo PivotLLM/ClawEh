@@ -41,6 +41,8 @@ import (
 //   - Version must equal ConfigVersion.
 //
 // Decode does not validate references or limits; call ValidateStatic next.
+// When the document decodes but breaks one of the rules above, Decode
+// returns the configuration together with the *ValidationError.
 func Decode(data []byte) (*Config, error) {
 	w := &jsonWalker{dec: newTokenDecoder(data), data: data}
 	if err := w.document(reflect.TypeFor[Config]()); err != nil {
@@ -62,7 +64,9 @@ func Decode(data []byte) (*Config, error) {
 	issues = append(issues, explicitZeroLayerBudgets(data)...)
 	issues = append(issues, explicitNullShares(data)...)
 	if len(issues) > 0 {
-		return nil, &ValidationError{Issues: issues}
+		// The document decoded: the configuration is returned with the
+		// issues, so a caller can report ValidateStatic's findings too.
+		return &cfg, &ValidationError{Issues: issues}
 	}
 	return &cfg, nil
 }

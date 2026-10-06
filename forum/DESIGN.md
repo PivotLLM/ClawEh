@@ -132,7 +132,10 @@ them, so removing one never removes the lock protecting it, and a `Remove`
 is one atomic rename out of `ListForums` followed by a plain delete. A
 `Store` is either the forum's handle (run 0: the configuration, the runs,
 the lock, removal) or one run (`Run`, `CreateRun`, `OpenRun`); every handle
-derived from one opening shares the forum's lock. A run directory is removed
+derived from one opening shares the forum's lock. `Lock` sweeps the
+temporary entries directly in the forum directory and in `runs/` (and the
+whole run when the handle is one); `Open` sweeps the run it opens
+(`SweepRun`); earlier runs are never walked. A run directory is removed
 (`RemoveRun`) by one rename to a temporary name and a delete, so a crash
 leaves only a temporary entry the next `Lock` sweeps.
 
@@ -171,8 +174,16 @@ leaves only a temporary entry the next `Lock` sweeps.
    (decision, reason, guidance), in publication order. It is derived:
    `Open` regenerates it from the log when it differs, rewriting the same
    file in place (`Store.ReplaceTranscript`) so `tail -f` keeps working; a
-   torn rewrite is repaired at the next `Open`. A result or partial
-   manifest never shows an `after_round` round that was not published.
+   torn rewrite is repaired at the next `Open`. The transcript starts with
+   a heading naming the forum and the run; each output is fenced in its
+   format, and its author carries the "Response X" label when a route
+   reads its layer anonymously. A result or partial manifest never shows
+   an `after_round` round that was not published in its result layers;
+   only when those have no output at all does it list the other layers'
+   outputs (`Result.OtherLayers`: every committed one once the run has
+   ended, the published ones while it runs), so the launcher can reach
+   the work of a run that failed early. `forum_results` names
+   `transcript.md` only once it exists.
 6. **Inputs are resolved once.** `inputs.json` (random assignments
    included) is written before a layer's first dispatch and read back on
    resume; `Resolve` is never called for a layer that has the file.
@@ -314,9 +325,9 @@ are logged, never shown to the agent.
     forum is as it was before that launch), deletes the agents such an
     undone run left, finishes an earlier run's pending markers
     (`finishEarlier`: terminal work, or the supersede a crash cut short),
-    leaves a forum with no run alone, and removes a forum directory of an
-    earlier development layout (`snapshot.json` or `commits/` beside `forum.json`)
-    or with no `forum.json`.
+    leaves a forum with no run alone, and removes a directory missing
+    `forum-meta.json` or `forum.json` (`ListIncomplete`), which includes
+    every directory of the earlier development layout.
 19. **Launch is all or nothing** for its caller: any failure, including
     `Open` failing after `CommitLaunched` (nothing has been dispatched),
     deletes the agents created so far and removes the new run
@@ -362,8 +373,21 @@ are logged, never shown to the agent.
     agents deleted), and a latest run whose records are damaged only has
     its agents deleted. `config_changed` (status) compares the digest of
     the formatted current configuration with the latest run's
-    `ConfigDigest`; resuming a paused run is refused once they differ, so a
-    run always executes the configuration it was launched with. Status and
+    `ConfigDigest` for integrity only: whether the configuration changed is
+    decided by comparing the current `forum.json` with the run's copy in
+    canonical form (`canonicalConfig`: decoded with `UseNumber`, numbers
+    normalised, re-encoded with sorted members), so an export imported
+    back or a patch and its revert is no change. Resuming a paused run is
+    refused once they differ ("Forum <name>: the config changed; launch to
+    start a new run."), so a run always executes the configuration it was
+    launched with. The next run number is one more than the highest started
+    run or run named by a cleanup marker (`nextRun`), so no new run shares
+    an earlier run's marker. A launch checks that the service is not
+    closing before it supersedes a paused run, and the paused run leaves
+    the keep-alive set only once its cancel is committed. An earlier run
+    left non-terminal without markers (a supersede cut short) is
+    superseded at recovery too. Results of any run check that run's
+    snapshot names the scope's agent and the run. Status and
     results take an optional run number (default the latest); pause,
     resume and cancel act on the latest run; delete removes the forum and
     every run. `name` is optional: `Snapshot.Label()` (the name, or the ID)
@@ -429,7 +453,9 @@ the reader of the affected seam knows it is a choice, not a requirement.
     `InputItem.Anonymous` are persisted in `inputs.json`, so a resume
     shows the same labels. An optional anonymous route that gives a
     recipient nothing is written as "No other responses are available."
-    (`writeInputs`). The transcript and results keep real names.
+    (`writeInputs`). The transcript and results keep real names; the
+    transcript adds the label to the author ("Alice (Response A)") so the
+    letters the reviews use can be read back.
     Validation (no reader may learn the authors another way): not on a
     source or with `same_participant`; the reading layer is `after_round`,
     one round, no moderator (so no moderator input is ever anonymous); no

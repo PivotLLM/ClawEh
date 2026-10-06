@@ -385,6 +385,7 @@ func TestSvcToolConfigImport(t *testing.T) {
 		want string
 	}{
 		{"a string", map[string]any{"id": id, "config": svcSimpleJSON}, "The config argument must be a JSON object, not a string; pass the object itself."},
+		{"an empty string", map[string]any{"id": id, "config": ""}, `Config is empty; pass the config as a JSON object, e.g. {"version":1,"name":"...","brief":{"purpose":"...","task":"..."}}.`},
 		{"a number", map[string]any{"id": id, "config": 3.0}, "The config argument must be a JSON object."},
 		{"raw non-object JSON", map[string]any{"id": id, "config": json.RawMessage(`[1]`)}, "The config argument must be a JSON object."},
 		{"missing", map[string]any{"id": id}, "The config argument is required: a JSON object."},
@@ -435,6 +436,11 @@ func TestSvcToolConfigUpdate(t *testing.T) {
 		t.Errorf("member order changed:\n%s", exported)
 	}
 	st.refused("config_update", map[string]any{"id": id, "changes": "x"}, "The changes argument must be a JSON object, not a string")
+	for _, blank := range []string{"", "    "} {
+		if msg := st.refused("config_update", map[string]any{"id": id, "changes": blank}, "empty"); msg != `Changes is empty; pass the changes as a JSON object, e.g. {"sources":{"topic":{"inline":"..."}}}.` {
+			t.Errorf("blank changes = %q", msg)
+		}
+	}
 	st.refused("config_update", map[string]any{"id": id}, "The changes argument is required")
 	launched := st.launch()
 	st.refused("config_update", map[string]any{"id": launched, "changes": map[string]any{"name": "x"}},
@@ -605,12 +611,22 @@ func TestSvcToolLifecycle(t *testing.T) {
 	}
 	st.e.running(id)
 
+	// The fake controller writes no transcript: none is named.
 	var res ResultsView
 	if err := json.Unmarshal([]byte(st.ok("results", args)), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.Transcript != "forums/"+id+"/runs/1/transcript.md" || res.ForumID != id || res.Run != 1 || res.Complete {
-		t.Errorf("results = %+v", res)
+	if res.Transcript != "" || res.ForumID != id || res.Run != 1 || res.Complete {
+		t.Errorf("results without a transcript = %+v", res)
+	}
+	if err := st.e.store(id).AppendTranscript("# svc-test · run 1\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(st.ok("results", args)), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Transcript != "forums/"+id+"/runs/1/transcript.md" {
+		t.Errorf("results with a transcript = %+v", res)
 	}
 
 	if out := st.ok("cancel", args); out != fmt.Sprintf("Forum %s is being cancelled; its partial work is kept.", id) {
@@ -873,5 +889,27 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 				t.Errorf("filled template: %s", out)
 			}
 		})
+	}
+}
+
+// A refusal the agent can act on is marked as one (the host logs it as a
+// warning); a damaged forum and an internal failure are not.
+func TestSvcToolRefusalsAreMarked(t *testing.T) {
+	st := svcToolSetup(t)
+	missing := uuid.NewString()
+	for name, args := range map[string]map[string]any{
+		"status":        {"id": missing},
+		"validate":      {"id": st.newForum("")},
+		"config_update": {"id": missing, "changes": ""},
+	} {
+		res, err := st.call(name, args)
+		if err != nil || res == nil || !res.IsError || !isRefusal(res.Err) {
+			t.Errorf("%s = %+v, %v; want a refusal", name, res, err)
+		}
+	}
+	for _, err := range []error{ErrCorrupt, errSvcHost} {
+		if expectedFailure(err) {
+			t.Errorf("%v counts as a refusal", err)
+		}
 	}
 }
