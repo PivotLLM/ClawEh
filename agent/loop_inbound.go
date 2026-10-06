@@ -446,8 +446,11 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	// An ask's reply goes back to the asker, never to a channel.
 	if msg.Channel == constants.AgentMessageChannel {
 		askOutcome := outcome
-		if errors.Is(err, errHumanCancelled) {
+		switch {
+		case errors.Is(err, errHumanCancelled):
 			askOutcome = tools.OutcomePersonCancelled
+		case errors.As(err, new(humanUnreachableError)):
+			askOutcome = tools.OutcomePersonUnreachable
 		}
 		if !al.deliverAskReply(msg, response, askOutcome) && err == nil && outcome == bus.OutcomeOK {
 			// A person's answer that arrived as the asker stopped waiting:

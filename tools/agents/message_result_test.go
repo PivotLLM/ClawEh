@@ -20,6 +20,7 @@ func TestAskResult_Outcomes(t *testing.T) {
 		{"ok", tools.AgentReply{Outcome: bus.OutcomeOK, Text: "pong"}, "pong", false},
 		{"timeout", tools.AgentReply{Outcome: tools.OutcomeTimeout, Text: "Bob did not reply within 5 seconds."}, "Bob did not reply within 5 seconds.", false},
 		{"person cancelled", tools.AgentReply{Outcome: tools.OutcomePersonCancelled, Text: "Bob cancelled the request."}, "Bob cancelled the request.", false},
+		{"chat unreachable", tools.AgentReply{Outcome: tools.OutcomePersonUnreachable, Text: "Couldn't reach Bob's chat."}, "Couldn't reach Bob's chat.", true},
 		{"turn cancelled", tools.AgentReply{Outcome: bus.OutcomeCancelled, Text: "Cancelled by /cancel before it started."}, "Bob's turn was cancelled before it replied.", false},
 		{"error", tools.AgentReply{Outcome: bus.OutcomeError, Text: "boom"}, "Bob's turn failed: boom", true},
 		{"empty", tools.AgentReply{Outcome: bus.OutcomeEmpty}, "Bob gave no reply.", false},

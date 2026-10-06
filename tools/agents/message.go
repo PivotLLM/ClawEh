@@ -130,6 +130,8 @@ func askResult(name string, reply tools.AgentReply) *global.Result {
 	switch reply.Outcome {
 	case tools.OutcomeTimeout, tools.OutcomePersonCancelled:
 		return &global.Result{ForLLM: reply.Text}
+	case tools.OutcomePersonUnreachable:
+		return &global.Result{IsError: true, ForLLM: reply.Text}
 	case bus.OutcomeError:
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf("%s's turn failed: %s", name, reply.Text)}
 	case bus.OutcomeCancelled:

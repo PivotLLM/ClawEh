@@ -50,6 +50,11 @@ const OutcomeTimeout = "timeout"
 // naming the agent.
 const OutcomePersonCancelled = "person_cancelled"
 
+// OutcomePersonUnreachable is the AgentReply outcome of an ask to a human
+// agent whose request could not be posted to the person's chat. Text says so,
+// naming the agent ("Couldn't reach Bob's chat."), and is shown as is.
+const OutcomePersonUnreachable = "person_unreachable"
+
 // Errors returned by Messenger.
 var (
 	// ErrNoSuchAgent: the addressed agent does not exist.

@@ -691,7 +691,8 @@ func commandAskReply(name string, reply tools.AgentReply, err error) string {
 		return err.Error()
 	case err != nil:
 		return fmt.Sprintf("Could not ask %s: %v", name, err)
-	case reply.Outcome == tools.OutcomeTimeout || reply.Outcome == tools.OutcomePersonCancelled:
+	case reply.Outcome == tools.OutcomeTimeout || reply.Outcome == tools.OutcomePersonCancelled ||
+		reply.Outcome == tools.OutcomePersonUnreachable:
 		return reply.Text
 	case strings.TrimSpace(reply.Text) == "":
 		return name + " gave no reply."

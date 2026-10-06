@@ -745,7 +745,7 @@ func TestHumanAgent_UnreachableChatEndsAtOnce(t *testing.T) {
 	posted.OnDelivery(errors.New("send failed"))
 
 	reply := expectAskReply(t, replies)
-	if reply.Text != "Couldn't reach Bob's chat." || reply.Outcome != bus.OutcomeError {
+	if reply.Text != "Couldn't reach Bob's chat." || reply.Outcome != tools.OutcomePersonUnreachable {
 		t.Fatalf("reply = %+v, want the unreachable error naming Bob", reply)
 	}
 	if waited := time.Since(start); waited > 5*time.Second {
