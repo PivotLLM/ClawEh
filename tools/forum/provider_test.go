@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -75,20 +76,24 @@ func TestProviderGating(t *testing.T) {
 	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 15 {
 		t.Fatalf("alice (forum on) got %d tools, want 15", len(defs))
 	}
-	// The free-form objects reach the model declared open (see
-	// tools.OpenObjectProperties): config_import's config and
-	// config_update's changes.
+	// config_import's config and config_update's changes reach the model
+	// with the configuration's full schema (tools.ParameterSchemaKey).
+	if forumpkg.ParameterSchemaKey != tools.ParameterSchemaKey {
+		t.Fatalf("forum.ParameterSchemaKey %q != tools.ParameterSchemaKey %q", forumpkg.ParameterSchemaKey, tools.ParameterSchemaKey)
+	}
+	want := map[string]map[string]any{"config_import": forumpkg.ConfigSchema(), "config_update": forumpkg.PatchSchema()}
 	for _, d := range GlobalProvider.RegisterTools(deps("alice")) {
 		param := map[string]string{"config_import": "config", "config_update": "changes"}[d.Name]
 		if param == "" {
 			continue
 		}
-		props, ok := tools.OpenObjectProperties(d.Schema())["properties"].(map[string]any)
+		props, ok := tools.DefinitionSchema(d)["properties"].(map[string]any)
 		if !ok {
 			t.Fatalf("%s has no properties", d.Name)
 		}
-		if p, ok := props[param].(map[string]any); !ok || p["type"] != "object" || p["additionalProperties"] != true {
-			t.Errorf("%s.%s schema = %v, want an open object", d.Name, param, p)
+		p, ok := props[param].(map[string]any)
+		if !ok || p["type"] != "object" || p["description"] == "" || !reflect.DeepEqual(p["properties"], want[d.Name]["properties"]) {
+			t.Errorf("%s.%s schema = %v, want the configuration schema", d.Name, param, p)
 		}
 	}
 	if defs := GlobalProvider.RegisterTools(deps("bob")); len(defs) != 0 {

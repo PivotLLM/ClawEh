@@ -101,11 +101,11 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		}},
 		{Name: "config_import", Description: "Replace a forum's configuration with one exported by forum_config_export (not while it is running)", Handler: t.configImport, Category: "forum", Parameters: []toolspec.Parameter{
 			id,
-			{Name: "config", Type: "object", Required: true, Description: "The forum configuration as a JSON object"},
+			{Name: "config", Type: "object", Required: true, Description: "The forum configuration as a JSON object", Metadata: map[string]any{ParameterSchemaKey: ConfigSchema()}},
 		}},
 		{Name: "config_update", Description: "Change a forum's configuration with a JSON merge patch (not while it is running); launch again to run the change", Handler: t.configUpdate, Category: "forum", Parameters: []toolspec.Parameter{
 			id,
-			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as layers are replaced whole"},
+			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as layers are replaced whole", Metadata: map[string]any{ParameterSchemaKey: PatchSchema()}},
 		}},
 		{Name: "config_export", Description: "Return a forum's configuration, to import into another forum", Handler: t.configExport, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "validate", Description: "Validate a forum's configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: []toolspec.Parameter{id}},

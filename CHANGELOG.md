@@ -354,7 +354,9 @@ observe does not need an entry.
   `new`), `forum_config_template` or `forum_config_import` fills its
   configuration, `forum_config_update` changes it with a JSON merge patch
   (RFC 7386), `forum_validate` checks it and `forum_launch` starts a run of
-  it. The configuration can be changed whenever the forum is not running
+  it. `forum_config_import`'s `config` and `forum_config_update`'s
+  `changes` publish the configuration's full JSON Schema, so the model sees
+  every field. The configuration can be changed whenever the forum is not running
   ("Forum <id> is running; pause or cancel it first." otherwise), and every
   launch starts a new run from the beginning, numbered 1, 2, 3, … in its own
   folder; earlier runs are kept. `forum_status` and `forum_results` show the
