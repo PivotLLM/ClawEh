@@ -6,6 +6,7 @@ package device
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -22,8 +23,8 @@ func (listenerlessDevice) Start(context.Context) error { return nil }
 func (listenerlessDevice) Stop(context.Context) error  { return nil }
 
 // A reply the device channel cannot deliver reaches the sender's OnDelivery,
-// through the manager, with why: no such device, a paired device that is not
-// connected, or a failed write.
+// through the manager, with why: no such device, or a paired device that is
+// not connected or whose connection is closing.
 func TestDeliverReply_ReasonsThroughManager(t *testing.T) {
 	srv, store, _ := newTestServer(t, ServerOptions{ServerVersion: "test-1"})
 	ctx := context.Background()
@@ -36,7 +37,7 @@ func TestDeliverReply_ReasonsThroughManager(t *testing.T) {
 	if _, _, err = store.Approve(ctx, reqID, []string{"operator"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// A connection whose writer has already closed.
+	// A connection that is closing: its writer has already closed.
 	cw := &connWriter{queue: make(chan any, 1), done: make(chan struct{})}
 	close(cw.done)
 	srv.conns.Store("device:broken", &liveConn{cw: cw, deviceID: "broken", chatID: "device:broken"})
@@ -67,7 +68,7 @@ func TestDeliverReply_ReasonsThroughManager(t *testing.T) {
 		{"unknown device", "device:nosuch", channels.ErrRecipientNotFound},
 		{"not a device chat", "telegram:1", channels.ErrRecipientNotFound},
 		{"not connected", "device:paired-1", channels.ErrRecipientOffline},
-		{"write error", "device:broken", channels.ErrSendFailed},
+		{"connection closing", "device:broken", channels.ErrRecipientOffline},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,5 +89,34 @@ func TestDeliverReply_ReasonsThroughManager(t *testing.T) {
 				t.Fatal("OnDelivery was not called")
 			}
 		})
+	}
+}
+
+// A fault of the server itself (the pairing store fails) is ErrSendFailed.
+func TestDeliverReply_StoreFaultIsSendFailed(t *testing.T) {
+	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(store, ServerOptions{ServerVersion: "test-1"})
+	if err := srv.DeliverReply(context.Background(), "device:paired-1", "hello"); !errors.Is(err, channels.ErrSendFailed) {
+		t.Fatalf("DeliverReply = %v, want ErrSendFailed", err)
+	}
+}
+
+// A send cut short by shutdown returns the context's error, never a
+// delivery reason the manager would alert on.
+func TestDeviceSend_ShutdownReturnsContextError(t *testing.T) {
+	srv, store, _ := newTestServer(t, ServerOptions{ServerVersion: "test-1"})
+	dc := &DeviceChannel{BaseChannel: channels.NewBaseChannel("device", nil, nil, nil), server: srv, store: store}
+	dc.SetRunning(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := dc.Send(ctx, bus.OutboundMessage{Channel: "device", ChatID: "device:nosuch", Content: "hello"})
+	if !errors.Is(err, context.Canceled) || errors.Is(err, channels.ErrSendFailed) {
+		t.Fatalf("Send = %v, want context.Canceled", err)
 	}
 }

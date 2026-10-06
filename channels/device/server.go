@@ -431,11 +431,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	defer cw.close()
 	go cw.run()
 	s.conns.Store(lc.chatID, lc)
-	defer func() {
-		if cur, ok := s.conns.Load(lc.chatID); ok && cur == lc {
-			s.conns.Delete(lc.chatID)
-		}
-	}()
+	defer s.conns.CompareAndDelete(lc.chatID, lc)
 
 	setReadDeadline(conn, time.Time{})
 	s.serveLoop(r.Context(), lc)
@@ -1306,7 +1302,9 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 // chatID ("device:<deviceID>"), carrying the in-flight runId. It says why a
 // reply was not delivered: channels.ErrRecipientNotFound when chatID names no
 // paired device, channels.ErrRecipientOffline when the device is paired but
-// not connected, and channels.ErrSendFailed when the write failed.
+// not connected or its connection is closing (closed, or closed because it
+// stopped reading), and channels.ErrSendFailed for a fault of the server
+// itself (the pairing store failed).
 func (s *Server) DeliverReply(ctx context.Context, chatID, content string) error {
 	v, _ := s.conns.Load(chatID)
 	lc, ok := v.(*liveConn)
@@ -1319,7 +1317,7 @@ func (s *Server) DeliverReply(ctx context.Context, chatID, content string) error
 	lc.currentRun = ""
 	lc.mu.Unlock()
 	if !s.emitChatReply(lc, runID, sessionKey, content) {
-		return fmt.Errorf("%s: the connection closed during the write: %w", chatID, channels.ErrSendFailed)
+		return fmt.Errorf("%s: the connection is closing: %w", chatID, channels.ErrRecipientOffline)
 	}
 	return nil
 }

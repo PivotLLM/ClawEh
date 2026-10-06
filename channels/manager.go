@@ -921,7 +921,8 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 
 // sendSplit sends msg through w, split into chunks when it exceeds the
 // channel's maximum message length, and returns the first non-nil error
-// among the chunks (every chunk is attempted).
+// among the chunks. Every chunk is attempted unless the recipient is offline
+// or can't be reached.
 func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
 	maxLen := 0
 	if mlp, ok := w.ch.(MessageLengthProvider); ok {
@@ -934,8 +935,14 @@ func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, 
 	for _, chunk := range SplitMessage(msg.Content, maxLen) {
 		chunkMsg := msg
 		chunkMsg.Content = chunk
-		if err := m.sendWithRetry(ctx, name, w, chunkMsg); err != nil && first == nil {
+		err := m.sendWithRetry(ctx, name, w, chunkMsg)
+		if err != nil && first == nil {
 			first = err
+		}
+		// A recipient that is offline or can't be reached takes none of the
+		// remaining chunks either.
+		if recipientUnavailable(err) {
+			break
 		}
 	}
 	return first
@@ -968,7 +975,9 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 	}
 
 	var lastErr error
+	retries := 0
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		retries = attempt
 		lastErr = w.ch.Send(ctx, msg)
 		if lastErr == nil {
 			return nil
@@ -1030,11 +1039,14 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		"channel": name,
 		"chat_id": msg.ChatID,
 		"error":   lastErr.Error(),
-		"retries": maxRetries,
+		"retries": retries,
 	})
-	description := name + ": a message could not be delivered after " + strconv.Itoa(maxRetries) + " retries"
-	if errors.Is(lastErr, ErrNotRunning) {
-		description = name + ": a message could not be delivered because the channel is not running"
+	description := name + ": a message could not be delivered"
+	switch {
+	case retries > 0:
+		description += " after " + strconv.Itoa(retries) + " retries"
+	case errors.Is(lastErr, ErrNotRunning):
+		description += " because the channel is not running"
 	}
 	m.alert(alerter.Alert{
 		Title:       "Channel send failed",

@@ -743,7 +743,7 @@ func TestHumanAgent_UnreachableChatSaysWhy(t *testing.T) {
 		{"unknown channel", fmt.Errorf("%w: telegram-x", channels.ErrUnknownChannel), "Bob's chat is not set up."},
 		{"channel not running", channels.ErrNotRunning, "Bob's chat is unavailable."},
 		{"recipient offline", fmt.Errorf("device:1: %w", channels.ErrRecipientOffline), "Bob's device is offline."},
-		{"recipient not found", fmt.Errorf("chat not found: %w", channels.ErrRecipientNotFound), "Bob's chat doesn't exist."},
+		{"recipient not found", fmt.Errorf("chat not found: %w", channels.ErrRecipientNotFound), "Bob's chat can't be reached."},
 		{"failed after retries", fmt.Errorf("timeout: %w", channels.ErrTemporary), "Couldn't reach Bob's chat."},
 	}
 	for _, tt := range tests {

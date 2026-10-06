@@ -413,7 +413,12 @@ func (c *DeviceChannel) Send(ctx context.Context, msg bus.OutboundMessage) error
 	if !c.IsRunning() {
 		return channels.ErrNotRunning
 	}
-	return c.server.DeliverReply(ctx, msg.ChatID, msg.Content)
+	err := c.server.DeliverReply(ctx, msg.ChatID, msg.Content)
+	if err != nil && ctx.Err() != nil {
+		// Shutting down: not a delivery fault, and never an alert.
+		return ctx.Err()
+	}
+	return err
 }
 
 // trustedProxyHandler attributes a request from a trusted proxy to the client

@@ -350,11 +350,12 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 }
 
 // channelSetUp reports whether name is a channel the configuration starts.
-// A secmsg daemon with no accounts listed discovers them at start, so any
+// Names are compared exactly, as the channel manager looks them up. A secmsg
+// daemon with no accounts listed discovers them at start, so any
 // name under its prefix may be one of them.
 func channelSetUp(cfg *config.Config, name string) bool {
 	for _, c := range enabledChannels(cfg) {
-		if strings.EqualFold(c.Name, name) {
+		if c.Name == name {
 			return true
 		}
 	}
@@ -363,7 +364,7 @@ func channelSetUp(cfg *config.Config, name string) bool {
 			continue
 		}
 		base := orValue(s.Name, "secmsg")
-		if strings.EqualFold(name, base) || strings.HasPrefix(strings.ToLower(name), strings.ToLower(base)+"-") {
+		if name == base || strings.HasPrefix(name, base+"-") {
 			return true
 		}
 	}

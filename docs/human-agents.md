@@ -56,11 +56,13 @@ and their next message there is the answer.
   | No channel of that name is configured | "Bob's chat is not set up." |
   | The channel is not running | "Bob's chat is unavailable." |
   | The recipient is offline (a paired device that is not connected) | "Bob's device is offline." |
-  | The recipient doesn't exist (an unknown chat, a user who blocked the bot, an unpaired device) | "Bob's chat doesn't exist." |
+  | The recipient can't be reached (an unknown chat, a user who blocked the bot, an archived conversation, an unpaired device) | "Bob's chat can't be reached." |
   | The send failed after its retries, or anything else | "Couldn't reach Bob's chat." |
 
-  Of these, only a channel that is not running or a send that failed after
-  its retries raises the "Channel send failed" alert. Check Up marks a human
+  A device whose connection has died without closing counts as connected
+  until the connection times out, so the question is posted and waits.
+  Of these, only a channel that reports itself not running or a send that
+  failed after its retries raises the "Channel send failed" alert. Check Up marks a human
   agent whose chat is on a channel that is not set up.
 - If the asker gives up first (its turn is cancelled, or claw shuts down),
   the question is withdrawn with "Alice no longer needs an answer to that

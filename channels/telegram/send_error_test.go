@@ -30,6 +30,9 @@ func TestSend_ClassifiesAPIErrors(t *testing.T) {
 		{"blocked by the user", `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`, channels.ErrRecipientNotFound, 1},
 		{"user deactivated", `{"ok":false,"error_code":403,"description":"Forbidden: user is deactivated"}`, channels.ErrRecipientNotFound, 1},
 		{"kicked from the group", `{"ok":false,"error_code":403,"description":"Forbidden: bot was kicked from the group chat"}`, channels.ErrRecipientNotFound, 1},
+		{"never started a conversation", `{"ok":false,"error_code":403,"description":"Forbidden: bot can't initiate conversation with a user"}`, channels.ErrRecipientNotFound, 1},
+		{"another bot", `{"ok":false,"error_code":403,"description":"Forbidden: bot can't send messages to bots"}`, channels.ErrRecipientNotFound, 1},
+		{"upgraded to a supergroup", `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":-1001234}}`, channels.ErrRecipientNotFound, 1},
 		{"server error", `{"ok":false,"error_code":500,"description":"Internal Server Error"}`, channels.ErrTemporary, 2},
 	}
 	for _, tt := range tests {

@@ -526,7 +526,10 @@ func (c *TelegramChannel) sendHTMLChunk(
 
 // recipientNotFoundReasons are the Telegram API descriptions (lower case) of
 // a chat the bot cannot reach at all: it does not exist, the user blocked
-// the bot or was deactivated, or the bot is no longer in the group.
+// the bot, was deactivated or never started a conversation with it, it is
+// another bot, the bot is no longer in the group, or the group was upgraded
+// to a supergroup (a new chat id; the binding must be changed, it is not
+// migrated automatically).
 var recipientNotFoundReasons = []string{
 	"chat not found",
 	"peer_id_invalid",
@@ -534,6 +537,9 @@ var recipientNotFoundReasons = []string{
 	"user is deactivated",
 	"bot was kicked",
 	"bot is not a member",
+	"bot can't initiate conversation with a user",
+	"bot can't send messages to bots",
+	"group chat was upgraded to a supergroup",
 }
 
 // recipientNotFound reports whether err is a Telegram API error saying the

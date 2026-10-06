@@ -1,12 +1,20 @@
 package discord
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/media"
 )
 
 // A Discord API error naming an unknown channel or user, or a user who does
@@ -34,5 +42,46 @@ func TestClassifySendErr(t *testing.T) {
 				t.Fatalf("classifySendErr = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// SendMedia says why Discord refused an attachment: an unknown channel is
+// ErrRecipientNotFound.
+func TestSendMedia_UnknownChannelIsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		if _, err := io.WriteString(w, `{"code":10003,"message":"Unknown Channel"}`); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	orig := discordgo.EndpointChannels
+	discordgo.EndpointChannels = srv.URL + "/channels/"
+	t.Cleanup(func() { discordgo.EndpointChannels = orig })
+
+	session, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := media.NewFileMediaStore()
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err = os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Store(path, media.MediaMeta{Filename: "a.txt", ContentType: "text/plain"}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &DiscordChannel{BaseChannel: channels.NewBaseChannel("discord", nil, nil, nil), session: session}
+	c.SetMediaStore(store)
+	c.SetRunning(true)
+
+	err = c.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		Channel: "discord", ChatID: "123",
+		Parts: []bus.MediaPart{{Type: "file", Ref: ref, Filename: "a.txt", ContentType: "text/plain"}},
+	})
+	if !errors.Is(err, channels.ErrRecipientNotFound) {
+		t.Fatalf("SendMedia = %v, want ErrRecipientNotFound", err)
 	}
 }

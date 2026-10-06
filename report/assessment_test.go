@@ -553,8 +553,15 @@ func TestAssessment_PersonChatNotSetUp(t *testing.T) {
 		t.Fatal("a chat on a running channel must not be listed")
 	}
 
-	cfg.Channels.Telegram[0].Enabled = false
+	// The manager looks channels up by exact name: a binding that differs
+	// only in case names no channel.
+	cfg.Bindings[0].Match.Channel = "Telegram-Bob"
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), item)
+	contains(t, r[2], "Channel Telegram-Bob is not set up", "row status")
+	cfg.Bindings[0].Match.Channel = "telegram-bob"
+
+	cfg.Channels.Telegram[0].Enabled = false
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), item)
 	if r[0] == "" {
 		t.Error("expected an action mark")
 	}
@@ -564,6 +571,10 @@ func TestAssessment_PersonChatNotSetUp(t *testing.T) {
 	cfg.Bindings[0].Match.Channel = "secmsg-bob"
 	if hasRow() {
 		t.Fatal("a chat on a secmsg daemon that discovers its accounts must not be listed")
+	}
+	cfg.Bindings[0].Match.Channel = "SecMsg-bob"
+	if !hasRow() {
+		t.Fatal("a secmsg name that differs in case names no channel")
 	}
 
 	cfg.Agents.List[1].Models = nil

@@ -203,3 +203,107 @@ func TestDispatchOutbound_ReportsNoWorkerAsNotRunning(t *testing.T) {
 		t.Fatalf("delivery error = %v, want ErrNotRunning", err)
 	}
 }
+
+// mediaMock is a channel that can send media.
+type mediaMock struct {
+	mockChannel
+	calls int
+	err   error
+}
+
+func (m *mediaMock) SendMedia(context.Context, bus.OutboundMediaMessage) error {
+	m.calls++
+	return m.err
+}
+
+// A media send to a recipient that can't be reached is not retried and
+// raises no alert.
+func TestSendMediaWithRetry_RecipientNotFound(t *testing.T) {
+	m := newTestManager()
+	rec := &alertRecorder{}
+	m.SetAlerter(rec)
+	ch := &mediaMock{err: fmt.Errorf("chat not found: %w", ErrRecipientNotFound)}
+	w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+	m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+	if ch.calls != 1 {
+		t.Fatalf("SendMedia called %d times, want 1", ch.calls)
+	}
+	if len(rec.alerts) != 0 {
+		t.Fatalf("alerts = %+v, want none", rec.alerts)
+	}
+}
+
+// A split message reports the recipient's reason through errors.Is and
+// stops at the first chunk the recipient can't take; a send failure leaves
+// the remaining chunks to be tried.
+func TestSendSplit_RecipientUnavailableStops(t *testing.T) {
+	const content, maxLen = "aaaaaaaa bbbbbbbb cccccccc", 10
+	chunks := len(SplitMessage(content, maxLen))
+	if chunks < 2 {
+		t.Fatalf("the message must split, got %d chunks", chunks)
+	}
+	tests := []struct {
+		name      string
+		err       error
+		wantCalls int
+	}{
+		{"recipient offline", fmt.Errorf("device: %w", ErrRecipientOffline), 1},
+		{"recipient not found", fmt.Errorf("chat: %w", ErrRecipientNotFound), 1},
+		{"send failed", fmt.Errorf("bad request: %w", ErrSendFailed), chunks},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestManager()
+			calls := 0
+			ch := &mockChannelWithLength{
+				sendFn: func(context.Context, bus.OutboundMessage) error {
+					calls++
+					return tt.err
+				},
+				maxLen: maxLen,
+			}
+			w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+			err := m.sendSplit(t.Context(), "test", w, bus.OutboundMessage{Channel: "test", ChatID: "1", Content: content})
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("sendSplit = %v, want %v", err, tt.err)
+			}
+			if calls != tt.wantCalls {
+				t.Fatalf("Send called %d times, want %d", calls, tt.wantCalls)
+			}
+		})
+	}
+}
+
+// The alert says "after N retries" only when the send was retried.
+func TestSendWithRetry_AlertDescription(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"not running", ErrNotRunning, "test: a message could not be delivered because the channel is not running"},
+		{"permanent failure", ErrSendFailed, "test: a message could not be delivered"},
+		{"after retries", ErrTemporary, "test: a message could not be delivered after 3 retries"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newTestManager()
+			rec := &alertRecorder{}
+			m.SetAlerter(rec)
+			w := &channelWorker{
+				ch:      &mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error { return tt.err }},
+				limiter: rate.NewLimiter(rate.Inf, 1),
+			}
+			if err := m.sendWithRetry(t.Context(), "test", w, bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hi"}); !errors.Is(err, tt.err) {
+				t.Fatalf("sendWithRetry = %v, want %v", err, tt.err)
+			}
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if len(rec.alerts) != 1 || rec.alerts[0].Description != tt.want {
+				t.Fatalf("alerts = %+v, want description %q", rec.alerts, tt.want)
+			}
+		})
+	}
+}

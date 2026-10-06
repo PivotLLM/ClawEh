@@ -72,7 +72,7 @@ func (e humanUnreachableError) Error() string {
 	case errors.Is(e.cause, channels.ErrRecipientOffline):
 		return e.label + "'s device is offline."
 	case errors.Is(e.cause, channels.ErrRecipientNotFound):
-		return e.label + "'s chat doesn't exist."
+		return e.label + "'s chat can't be reached."
 	}
 	return "Couldn't reach " + e.label + "'s chat."
 }

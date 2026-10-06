@@ -283,13 +283,14 @@ func (c *WebUIChannel) broadcastToSession(chatID string, msg WebUIMessage) error
 	sessionID := strings.TrimPrefix(chatID, "webui:")
 	msg.SessionID = sessionID
 
-	var sent bool
+	var sent, matched bool
 	c.connections.Range(func(key, value any) bool {
 		pc, ok := value.(*webuiConn)
 		if !ok {
 			return true
 		}
 		if pc.sessionID == sessionID {
+			matched = true
 			if err := pc.writeJSON(msg); err != nil {
 				logger.DebugCF("webui", "Write to connection failed", map[string]any{
 					"conn_id": pc.id,
@@ -302,8 +303,12 @@ func (c *WebUIChannel) broadcastToSession(chatID string, msg WebUIMessage) error
 		return true
 	})
 
+	if !matched {
+		// No browser has this session open: the recipient is offline.
+		return fmt.Errorf("no open browser session %s: %w", sessionID, channels.ErrRecipientOffline)
+	}
 	if !sent {
-		return fmt.Errorf("no active connections for session %s: %w", sessionID, channels.ErrSendFailed)
+		return fmt.Errorf("no write to session %s succeeded: %w", sessionID, channels.ErrSendFailed)
 	}
 	return nil
 }

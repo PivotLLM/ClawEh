@@ -222,7 +222,7 @@ func TestSlowReaderDisconnectedWithoutBlocking(t *testing.T) {
 		t0 := time.Now()
 		// The stuck device is closed once its queue fills: later replies fail.
 		if err := srv.DeliverReply(context.Background(), "device:"+stuck.deviceID(), big); err != nil &&
-			!errors.Is(err, channels.ErrSendFailed) && !errors.Is(err, channels.ErrRecipientOffline) {
+			!errors.Is(err, channels.ErrRecipientOffline) {
 			t.Fatalf("DeliverReply %d to a stuck device: %v", i, err)
 		}
 		if d := time.Since(t0); d > 500*time.Millisecond {
