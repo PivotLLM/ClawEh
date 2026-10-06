@@ -18,7 +18,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // Seam (a): validation. ValidateStatic needs nothing but the configuration;
@@ -983,7 +982,7 @@ func (p *preflight) readSource(abs string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // the path passed ReadAllowed for the launching agent
+	f, err := openNoFollow(target) // the path passed ReadAllowed for the launching agent
 	if err != nil {
 		return nil, fmt.Errorf("cannot be read: %w", err)
 	}

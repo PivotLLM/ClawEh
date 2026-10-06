@@ -201,15 +201,17 @@ func (g *waitGraph) reachesLocked(from, to string, seen map[string]bool) bool {
 
 // whisper is one held message.
 type whisper struct {
-	from string
-	note string // how a person sent it, e.g. "a person, via /whisper on telegram"; empty for an agent
-	text string
+	fromID string // the sending agent's id; empty for a person
+	from   string
+	note   string // how a person sent it, e.g. "a person, via /whisper on telegram"; empty for an agent
+	text   string
 }
 
 // sender is who an ask or whisper is from: an agent's or a person's name,
 // and for a person how they sent it, so the recipient cannot take them for
 // an agent of the same name.
 type sender struct {
+	id   string // the agent's id; empty for a person
 	name string
 	note string
 }
@@ -310,13 +312,8 @@ func (al *AgentLoop) canAnswerWhisper(agent *AgentInstance) func(w whisper) bool
 	if _, ok := agent.Tools.Get(agentMessageToolName); !ok {
 		return nil
 	}
-	cfg := al.GetConfig()
 	return func(w whisper) bool {
-		if w.note != "" || cfg == nil {
-			return false
-		}
-		from := cfg.FindAgent(w.from)
-		return from != nil && newAgentServices(al, agent.ID).CanTarget(from.ID)
+		return w.fromID != "" && newAgentServices(al, agent.ID).CanTarget(w.fromID)
 	}
 }
 
@@ -525,8 +522,8 @@ func (al *AgentLoop) deliverAskReply(msg bus.InboundMessage, text, outcome strin
 // Whisper implements tools.Messenger: message is held for agentID and added,
 // marked private, to the start of the next message it receives, whatever its
 // source. It never starts a turn.
-func (al *AgentLoop) Whisper(ctx context.Context, from, agentID, message string) error {
-	return al.whisper(ctx, sender{name: strings.TrimSpace(from)}, agentID, message)
+func (al *AgentLoop) Whisper(ctx context.Context, fromID, from, agentID, message string) error {
+	return al.whisper(ctx, sender{id: strings.TrimSpace(fromID), name: strings.TrimSpace(from)}, agentID, message)
 }
 
 // whisper is Whisper from from.
@@ -541,7 +538,7 @@ func (al *AgentLoop) whisper(_ context.Context, from sender, agentID, message st
 	if !ok || target == nil {
 		return fmt.Errorf("%w: %s", tools.ErrNoSuchAgent, agentID)
 	}
-	al.whispers.add(target.ID, whisper{from: from.name, note: from.note, text: message})
+	al.whispers.add(target.ID, whisper{fromID: from.id, from: from.name, note: from.note, text: message})
 	logger.InfoCF("agent", "Whisper held for the agent's next message",
 		map[string]any{"agent_id": target.ID, "from": from.label()})
 	return nil

@@ -292,6 +292,39 @@ func TestEnsurePrivateFile(t *testing.T) {
 	}
 }
 
+// A symbolic link is refused: its target is neither created nor tightened.
+func TestEnsurePrivateFile_RefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere.db")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateFile(link); err == nil {
+		t.Fatal("a symbolic link must be refused")
+	}
+	if got := mode(t, target); got != 0o644 {
+		t.Errorf("the link's target was changed to %04o", got)
+	}
+
+	dangling := filepath.Join(dir, "dangling.db")
+	if err := os.Symlink(filepath.Join(dir, "missing.db"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateFile(dangling); err == nil {
+		t.Fatal("a dangling symbolic link must be refused")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "missing.db")); !os.IsNotExist(err) {
+		t.Error("a file was created through a dangling link")
+	}
+}
+
 func TestIsSensitive(t *testing.T) {
 	cases := map[string]bool{
 		"internal/gateway.db":          true,

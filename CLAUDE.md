@@ -228,7 +228,8 @@ production instance directly; test against a dev instance.
   references go through `files.Reader.Resolve`/`Allowed`. Base directory:
   `<workspace>/forums` (its file tools may read it, never write it:
   `alwaysReadableSubdirs` in `tools/files`; `forum_results` inlines each
-  output up to `forum.MaxResultInlineChars`), which the agent can still reach
+  output up to `forum.MaxResultInlineChars`, all together up to
+  `forum.MaxResultInlineTotalChars`), which the agent can still reach
   by other means, so the host trusts nothing in it: every ask is re-checked against the launcher's current
   `allow_agents` (or must reach a forum participant it owns), `Delete`/`Touch`
   name the launcher and act only on its participants, a store opened in a

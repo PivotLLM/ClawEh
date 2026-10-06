@@ -130,7 +130,10 @@ stopped forum returns the outputs published so far, the same way.
 Each output's text is returned in full up to 4,000 characters
 (`forum.MaxResultInlineChars`). A longer output is cut there and followed by
 `(truncated; full text in forums/<id>/...)`; the whole text stays in that
-file. For long work, such as a book chapter, end the forum with a short
+file. All outputs together get at most 16,000 characters inline
+(`forum.MaxResultInlineTotalChars`), in order; the ones after that are listed
+with `"inline_omitted": true`, their size and file, but no text. An output
+whose file cannot be read is marked `"unreadable": true`. For long work, such as a book chapter, end the forum with a short
 summary layer and make it the result layer: Alice then gets the summary
 inline and reads the full outputs from their files only when she needs them.
 
@@ -157,9 +160,10 @@ The transcript holds published outputs and the moderator's public decisions,
 never a participant's private instructions, rejected replies or private
 messages. Nothing is deleted until `forum_delete`.
 
-Alice's file tools can read her `forums/` folder, whatever
-`agents.defaults.workspace_read_subdirs` lists, but cannot write to it: only
-ClawEh writes a forum's files. Another agent's forums are not readable.
+With the default workspace restrictions (`restrict_to_workspace` on and a
+`workspace_write_subdir` set), Alice's file tools can read her `forums/`
+folder, whatever `agents.defaults.workspace_read_subdirs` lists, but cannot
+write to it, and cannot read another agent's forums.
 
 ## Limits
 

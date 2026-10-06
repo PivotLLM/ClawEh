@@ -356,9 +356,11 @@ observe does not need an entry.
   "Forum <name> finished: <status>" (posted to its default chat if it launched
   the forum from a chat). `forum_results` returns each final output's
   author, layer, round, size and file, with its text inline up to 4,000
-  characters (longer text is cut and names the file holding all of it), and
-  the transcript's path. The agent's file tools can read its `forums/` folder
-  but not write to it. Each participant uses its own tools (a clone its
+  characters (`forum.MaxResultInlineChars`; longer text is cut and names the
+  file holding all of it) and 16,000 characters for all outputs together
+  (`forum.MaxResultInlineTotalChars`; later outputs are listed without text),
+  and the transcript's path. With the default workspace restrictions the
+  agent's file tools can read its `forums/` folder but not write to it. Each participant uses its own tools (a clone its
   source's). Forums survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A forum that stops on an error raises

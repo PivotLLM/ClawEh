@@ -130,22 +130,37 @@ func EnsurePrivateFile(path string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600) //nolint:gosec // the store path the caller is about to open
+	// A symbolic link is refused, never followed: tightening or creating
+	// through it would act on a file somewhere else.
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("perms: %s is a symbolic link", path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY|oNoFollow, 0o600) //nolint:gosec // the store path the caller is about to open
 	if err != nil {
 		return fmt.Errorf("perms: create %s: %w", path, err)
 	}
-	if closeErr := f.Close(); closeErr != nil {
-		return fmt.Errorf("perms: close %s: %w", path, closeErr)
+	err = tightenOpen(f)
+	if closeErr := f.Close(); err == nil && closeErr != nil {
+		err = closeErr
 	}
-	fnd, ok, err := loose(path)
 	if err != nil {
-		return fmt.Errorf("perms: stat %s: %w", path, err)
+		return fmt.Errorf("perms: %s: %w", path, err)
 	}
-	if !ok {
-		return nil
+	return nil
+}
+
+// tightenOpen clears group/other bits on the open regular file f, acting on
+// the descriptor so no path is resolved again.
+func tightenOpen(f *os.File) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
 	}
-	if chmodErr := os.Chmod(path, fnd.Want); chmodErr != nil {
-		return fmt.Errorf("perms: tighten %s: %w", path, chmodErr)
+	if !fi.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	if mode := fi.Mode().Perm(); mode&groupOther != 0 {
+		return f.Chmod(mode &^ groupOther)
 	}
 	return nil
 }

@@ -903,13 +903,25 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 			}
 			reportDelivery(msg, m.sendSplit(ctx, name, w, msg))
 		case <-ctx.Done():
-			return
+			// Messages still queued are not sent: tell their senders.
+			for {
+				select {
+				case msg, ok := <-w.queue:
+					if !ok {
+						return
+					}
+					reportDelivery(msg, ctx.Err())
+				default:
+					return
+				}
+			}
 		}
 	}
 }
 
 // sendSplit sends msg through w, split into chunks when it exceeds the
-// channel's maximum message length, and returns the first chunk's error.
+// channel's maximum message length, and returns the first non-nil error
+// among the chunks (every chunk is attempted).
 func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
 	maxLen := 0
 	if mlp, ok := w.ch.(MessageLengthProvider); ok {
@@ -1304,22 +1316,27 @@ func (m *Manager) UnregisterChannel(name string) {
 // SendMessage sends an outbound message synchronously through the channel
 // worker's rate limiter and retry logic. It blocks until the message is
 // delivered (or all retries are exhausted), which preserves ordering when
-// a subsequent operation depends on the message having been sent, and
-// returns the delivery error.
+// a subsequent operation depends on the message having been sent. It
+// returns the delivery error (nil once delivered): an unknown channel, a
+// channel with no worker, or the send's own failure after its retries. The
+// same result goes to msg.OnDelivery.
 func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) error {
 	m.mu.RLock()
 	_, exists := m.channels[msg.Channel]
 	w, wExists := m.workers[msg.Channel]
 	m.mu.RUnlock()
 
-	if !exists {
-		return fmt.Errorf("channel %s not found", msg.Channel)
+	var err error
+	switch {
+	case !exists:
+		err = fmt.Errorf("channel %s not found", msg.Channel)
+	case !wExists || w == nil:
+		err = fmt.Errorf("channel %s has no active worker", msg.Channel)
+	default:
+		err = m.sendSplit(ctx, msg.Channel, w, msg)
 	}
-	if !wExists || w == nil {
-		return fmt.Errorf("channel %s has no active worker", msg.Channel)
-	}
-
-	return m.sendSplit(ctx, msg.Channel, w, msg)
+	reportDelivery(msg, err)
+	return err
 }
 
 func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {

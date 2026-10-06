@@ -81,5 +81,7 @@ type Messenger interface {
 	Ask(ctx context.Context, from, agentID, message string, wait time.Duration) (AgentReply, error)
 	// Whisper holds message for agentID and adds it, marked private, to the
 	// start of the next message the agent receives. It never starts a turn.
-	Whisper(ctx context.Context, from, agentID, message string) error
+	// fromID is the sending agent's id ("" when the sender is not an
+	// agent); from is the name the recipient sees.
+	Whisper(ctx context.Context, fromID, from, agentID, message string) error
 }

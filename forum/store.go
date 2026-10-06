@@ -6,11 +6,13 @@
 package forum
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -20,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -357,6 +358,9 @@ func (s *Store) Path(rel string) string {
 	return filepath.Join(s.root, clean)
 }
 
+// errWouldBlock is tryLockFile's answer when another holder has the lock.
+var errWouldBlock = errors.New("lock held by another holder")
+
 // lockPath is <base>/.locks/<id>.run.
 func (s *Store) lockPath() string {
 	return filepath.Join(s.base, dirLocks, s.id+lockSuffix)
@@ -404,9 +408,9 @@ func (s *Store) Lock() error {
 		if err != nil {
 			return fmt.Errorf("lock forum %s: %w", s.id, err)
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err := tryLockFile(f); err != nil {
 			closeErr := f.Close()
-			if errors.Is(err, syscall.EWOULDBLOCK) {
+			if errors.Is(err, errWouldBlock) {
 				return fmt.Errorf("%w: forum %s", ErrLocked, s.id)
 			}
 			return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, closeErr))
@@ -487,9 +491,9 @@ func writePID(f *os.File) error {
 	return err
 }
 
-// releaseFile drops the flock on f and closes it.
+// releaseFile drops the lock on f and closes it.
 func releaseFile(f *os.File) error {
-	return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
+	return errors.Join(unlockFile(f), f.Close())
 }
 
 // Unlock releases the lock and removes the file. Unlocking an unlocked
@@ -824,6 +828,49 @@ func (s *Store) ReadFile(rel string) ([]byte, error) {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
 	return data, nil
+}
+
+// ReadPrefix reads the regular file at the root-relative rel under the
+// same rules as ReadFile, but holds at most keep characters of it in
+// memory: it returns those first keep characters and the file's total
+// length in characters (Unicode code points; invalid bytes count one each).
+func (s *Store) ReadPrefix(rel string, keep int) (string, int, error) {
+	var (
+		prefix strings.Builder
+		chars  int
+	)
+	err := s.inRoot(func(r *os.Root) error {
+		clean, err := rootRel(rel)
+		if err != nil {
+			return err
+		}
+		if err = lstatRegular(r, clean); err != nil {
+			return err
+		}
+		f, err := r.Open(clean)
+		if err != nil {
+			return err
+		}
+		br := bufio.NewReader(f)
+		for {
+			ch, _, rerr := br.ReadRune()
+			if rerr != nil {
+				closeErr := f.Close()
+				if errors.Is(rerr, io.EOF) {
+					return closeErr
+				}
+				return errors.Join(rerr, closeErr)
+			}
+			if chars < keep {
+				prefix.WriteRune(ch)
+			}
+			chars++
+		}
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("read %s: %w", rel, err)
+	}
+	return prefix.String(), chars, nil
 }
 
 // statRegular checks that the root-relative rel is a regular file reached

@@ -46,9 +46,12 @@ type OutboundMessage struct {
 	Outcome string `json:"outcome,omitempty"`
 	// OnDelivery, when set, is called once the channel manager has delivered
 	// the message (nil) or given up on it (the error: send failed, unknown
-	// channel, no worker, shutdown). A long message split into chunks reports
-	// once, with the first chunk's error. Messages to internal channels never
-	// reach the manager, so it is not called for them. It must not block.
+	// channel, no worker, or shutdown while it was queued for its channel). A
+	// long message split into chunks reports once, with the first non-nil
+	// error among them. It is not called for messages to internal channels,
+	// which never reach the manager, nor for one still in the bus's buffer
+	// when the service stops (its sender's context ends then too). It must
+	// not block.
 	OnDelivery func(error) `json:"-"`
 }
 

@@ -44,7 +44,7 @@ func TestOpenConfigStore_WarnsUnknownKeyOnce(t *testing.T) {
 	restore := logger.RedirectForTest(buf)
 	defer restore()
 
-	store, err := openConfigStore()
+	store, err := openConfigStore(filepath.Join(home, "config.json"))
 	if err != nil {
 		t.Fatalf("openConfigStore: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestOpenConfigStore_SeedsFirstRun(t *testing.T) {
 	home := filepath.Join(dir, ".claw")
 	t.Setenv("CLAW_HOME", home)
 
-	store, err := openConfigStore()
+	store, err := openConfigStore(filepath.Join(home, "config.json"))
 	if err != nil {
 		t.Fatalf("openConfigStore: %v", err)
 	}

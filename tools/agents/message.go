@@ -106,7 +106,7 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 	}
 
 	if seconds == 0 {
-		if err := host.Messenger.Whisper(call.Ctx, from, target.ID, message); err != nil {
+		if err := host.Messenger.Whisper(call.Ctx, host.AgentID, from, target.ID, message); err != nil {
 			return fail("Could not whisper to %s: %v", name, err)
 		}
 		return &global.Result{ForLLM: "Whispered to " + name + "."}

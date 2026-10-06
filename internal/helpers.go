@@ -76,15 +76,15 @@ func GetConfigPath() string {
 }
 
 func LoadConfig() (*config.Config, error) {
-	path := SeedConfig()
+	path := GetConfigPath()
+	SeedConfig(path)
 	return config.LoadConfig(path)
 }
 
-// SeedConfig writes a default config.json when none exists yet and returns
-// its path. Best-effort: a failure is logged, and loading the path reports the
-// real problem.
-func SeedConfig() string {
-	path := GetConfigPath()
+// SeedConfig writes a default config to path when no file exists there yet.
+// Best-effort: a failure is logged, and loading the path reports the real
+// problem.
+func SeedConfig(path string) {
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr == nil {
 			defaultCfg := config.DefaultConfig()
@@ -94,5 +94,4 @@ func SeedConfig() string {
 			}
 		}
 	}
-	return path
 }

@@ -603,7 +603,7 @@ func TestWhisper_DeliveredOnceAtStartOfNextMessage(t *testing.T) {
 			model := &recordingProvider{}
 			al, msgBus := messagingLoop(t, cfg, model)
 
-			if err := al.Whisper(context.Background(), "Alice", "bob", "psst"); err != nil {
+			if err := al.Whisper(context.Background(), "alice", "Alice", "bob", "psst"); err != nil {
 				t.Fatalf("Whisper: %v", err)
 			}
 			noOutbound(t, msgBus)
@@ -715,7 +715,7 @@ func TestWhispers_KeptAcrossRebuildDroppedOnRemoval(t *testing.T) {
 		t.Fatalf("clone alice: %v", err)
 	}
 	for _, id := range []string{cloneID, "helper"} {
-		if err := al.Whisper(context.Background(), "Alice", id, "psst"); err != nil {
+		if err := al.Whisper(context.Background(), "alice", "Alice", id, "psst"); err != nil {
 			t.Fatalf("Whisper %s: %v", id, err)
 		}
 	}
@@ -737,7 +737,7 @@ func TestWhispers_KeptAcrossRebuildDroppedOnRemoval(t *testing.T) {
 		t.Fatalf("the rebuilt clone's whispers = %+v, want one", ws)
 	}
 
-	if err := al.Whisper(context.Background(), "Alice", cloneID, "again"); err != nil {
+	if err := al.Whisper(context.Background(), "alice", "Alice", cloneID, "again"); err != nil {
 		t.Fatalf("Whisper: %v", err)
 	}
 	if err := reg.Delete(cloneID); err != nil {

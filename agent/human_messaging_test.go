@@ -167,7 +167,7 @@ func TestHumanAgent_WhisperDeliveredWithNextAsk(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 60), &countingProvider{})
 
-	if err := al.Whisper(context.Background(), "Alice", "bob", "The deadline moved to Friday."); err != nil {
+	if err := al.Whisper(context.Background(), "alice", "Alice", "bob", "The deadline moved to Friday."); err != nil {
 		t.Fatalf("Whisper: %v", err)
 	}
 	noOutbound(t, msgBus)

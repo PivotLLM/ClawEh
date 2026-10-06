@@ -72,7 +72,8 @@ type ToolHost interface {
 //	pause(id), resume(id), cancel(id), delete(id) -> a one-line confirmation
 //	results(id)                     -> a ResultsView as JSON: each result output's
 //	                                   author, layer, round, size and file, and its
-//	                                   text up to MaxResultInlineChars; paths are
+//	                                   text within MaxResultInlineChars and
+//	                                   MaxResultInlineTotalChars; paths are
 //	                                   relative to the agent's workspace
 func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 	t := &toolSuite{svc: svc, host: host}
@@ -225,7 +226,7 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	// Paths are relative to the agent's workspace, whose forums/ folder holds
 	// the base directory.
 	prefix := filepath.Join(filepath.Base(scope.BaseDirectory), id)
-	return jsonResult(newResultsView(res, prefix, store.ReadFile))
+	return jsonResult(newResultsView(res, prefix, store.ReadPrefix))
 }
 
 // launchOptions builds LaunchOptions for validate and launch from the call:

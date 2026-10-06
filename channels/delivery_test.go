@@ -77,3 +77,46 @@ func TestDispatchOutbound_ReportsUnknownChannel(t *testing.T) {
 		t.Fatal("an unknown channel must be reported as a failed delivery")
 	}
 }
+
+// Messages still queued for their channel when the service stops are
+// reported as not delivered, each exactly once.
+func TestRunWorker_ReportsQueuedAtShutdown(t *testing.T) {
+	m := newTestManager()
+	ch := &mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error { return nil }}
+	const queued = 3
+	w := &channelWorker{
+		ch: ch, queue: make(chan bus.OutboundMessage, queued), done: make(chan struct{}),
+		limiter: rate.NewLimiter(1, 1),
+	}
+	reports := make(chan error, queued+1)
+	for range queued {
+		w.queue <- bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hi", OnDelivery: func(err error) { reports <- err }}
+	}
+	// Spend the limiter's token so a send attempted after the stop waits on
+	// the cancelled context instead of going through.
+	w.limiter.Allow()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	m.runWorker(ctx, "test", w)
+	if len(reports) != queued {
+		t.Fatalf("%d reports for %d queued messages", len(reports), queued)
+	}
+	for range queued {
+		if err := <-reports; err == nil {
+			t.Fatal("a message queued at shutdown was reported delivered")
+		}
+	}
+}
+
+// SendMessage reports its result to OnDelivery as well as returning it.
+func TestSendMessage_ReportsDelivery(t *testing.T) {
+	m := newTestManager()
+	reports, onDelivery := deliveryReport()
+	err := m.SendMessage(t.Context(), bus.OutboundMessage{Channel: "nowhere", ChatID: "1", Content: "hi", OnDelivery: onDelivery})
+	if err == nil {
+		t.Fatal("an unknown channel must fail")
+	}
+	if got := expectDelivery(t, reports); got == nil || got.Error() != err.Error() {
+		t.Fatalf("OnDelivery got %v, want %v", got, err)
+	}
+}

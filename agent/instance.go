@@ -8,6 +8,7 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/memory"
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/agentreg"
@@ -476,21 +477,34 @@ func initSessionStore(dir string) (session.SessionStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
-	return store, nil
+	return &privateSessionStore{SQLiteStore: store, dir: dir}, nil
 }
 
-// ensurePrivateArchive creates the session's archive database as an empty
-// 0600 file before the engine opens it, so it and its -wal/-shm side files
-// are private from the first write (SQLite would create them 0644). Both the
-// session store and the engine's archive open this one file. Best-effort: a
-// failure is logged, and the engine still opens the database.
+// ensurePrivateArchive is ensureArchiveIn for the sessions directory of the
+// state directory stateDir. The engine's own archive handle opens the same
+// file, outside the session store, so the context manager calls it too.
 func ensurePrivateArchive(stateDir, sessionKey string) {
-	if stateDir == "" || sessionKey == "" {
+	if stateDir == "" {
 		return
 	}
-	path := archiveDBPath(stateDir, sessionKey)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		logger.WarnCF("agent", "Failed to create the session directory", map[string]any{"path": filepath.Dir(path), "error": err.Error()})
+	ensureArchiveIn(filepath.Join(stateDir, "sessions"), sessionKey)
+}
+
+// ensureArchiveIn creates the session's archive database in dir as an empty
+// 0600 file when it does not exist yet, so it and its -wal/-shm side files
+// are private from the first write (SQLite would create them 0644). An
+// existing file is left alone (startup tightens loose modes). Best-effort: a
+// failure is logged, and the engine still opens the database.
+func ensureArchiveIn(dir, sessionKey string) {
+	if dir == "" || sessionKey == "" {
+		return
+	}
+	path := memory.ArchivePath(dir, sessionKey)
+	if _, err := os.Lstat(path); err == nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		logger.WarnCF("agent", "Failed to create the session directory", map[string]any{"path": dir, "error": err.Error()})
 		return
 	}
 	if err := perms.EnsurePrivateFile(path); err != nil {
