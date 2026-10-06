@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -42,64 +41,76 @@ type ToolHost interface {
 	// launch, control or read forums, whatever its participants' tools
 	// allow. The tool returns that refusal to the agent as a tool error.
 	Scope(call *toolspec.ToolCall) (Scope, error)
-	// ResolveFile resolves a configuration file reference for the agent to
-	// an absolute path it may read, or fails with a message for the agent.
-	ResolveFile(agentID, ref string) (absPath string, err error)
 	// ReadAllowed reports whether the agent may read an absolute path.
 	ReadAllowed(agentID, absPath string) error
-	// Workspace is the agent's workspace, the ConfigDir of an inline
-	// configuration.
+	// Workspace is the agent's workspace, which relative source paths
+	// resolve against (LaunchOptions.ConfigDir).
 	Workspace(agentID string) (string, error)
 }
 
-// Tools returns the ten forum tools over svc. Every handler resolves the
-// caller's Scope first: ErrForumTurn and ErrForumDepth are tool errors, any other Scope
-// failure is returned as the error. Every failure of the operation itself
-// is a Result with IsError and one plain sentence naming the forum (when
-// there is one): an unknown forum, a refused state, a forum locked by
-// another process, an invalid configuration, unavailable schemas, a
-// damaged forum, temporary agents that could not be deleted, or an
-// internal failure. Error chains and paths never reach the agent; they
-// are logged.
+// Tools returns the fifteen forum tools over svc. Every handler resolves
+// the caller's Scope first: ErrForumTurn and ErrForumDepth are tool errors,
+// any other Scope failure is returned as the error. Every failure of the
+// operation itself is a Result with IsError and one plain sentence naming
+// the forum (when there is one): an unknown forum, a refused state (a
+// draft that is not launched, a launched forum that is no longer a draft),
+// a forum locked by another process, an invalid configuration,
+// unavailable schemas, a damaged forum, temporary agents that could not be
+// deleted, or an internal failure. Error chains and paths never reach the
+// agent; they are logged.
 //
-// Parameters and results:
+// A forum is set up as a draft, then launched:
 //
-//	readme(template?)               -> the guide and the template list, or one
-//	                                   template's configuration verbatim
-//	models()                        -> JSON array of ModelInfo
-//	validate(config | config_file)  -> "The configuration is valid." or the issues, one per line
-//	launch(config | config_file)    -> "Forum <id> launched." Exactly one of config
-//	                                   (a JSON object) and config_file (a file
-//	                                   reference the agent may read)
-//	status(id?)                     -> one Summary as JSON, or a JSON array of every forum's Summary
+//	readme(template?)              -> the guide and the template list, or one
+//	                                  template's configuration verbatim
+//	models()                       -> JSON array of ModelInfo
+//	config_new()                   -> "Forum <id> created as a draft."
+//	config_template(id, name)      -> the draft's configuration becomes a built-in template
+//	config_import(id, config)      -> the draft's configuration becomes config (a JSON object)
+//	config_update(id, changes)     -> changes (a JSON object) is applied as an RFC 7386
+//	                                  merge patch to the draft's configuration
+//	config_export(id)              -> the configuration of any forum, as JSON
+//	validate(id)                   -> "The configuration is valid." or the issues, one per line
+//	launch(id)                     -> "Forum <id> launched."
+//	status(id?)                    -> one Summary as JSON, or a JSON array of every forum's Summary
 //	pause(id), resume(id), cancel(id), delete(id) -> a one-line confirmation
-//	results(id)                     -> a ResultsView as JSON: each result output's
-//	                                   author, layer, round, size and file, and its
-//	                                   text within MaxResultInlineChars and
-//	                                   MaxResultInlineTotalChars; paths are
-//	                                   relative to the agent's workspace
+//	results(id)                    -> a ResultsView as JSON: each result output's
+//	                                  author, layer, round, size and file, and its
+//	                                  text within MaxResultInlineChars and
+//	                                  MaxResultInlineTotalChars; paths are
+//	                                  relative to the agent's workspace
 func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 	t := &toolSuite{svc: svc, host: host}
-	id := toolspec.Parameter{Name: "id", Type: "string", Required: true, Description: "Forum ID (UUID) returned by launch"}
-	configParams := []toolspec.Parameter{
-		{Name: "config", Type: "object", Description: "The forum configuration as a JSON object (use this or config_file)"},
-		{Name: "config_file", Type: "string", Description: "Path of a forum configuration file the agent may read (use this or config)"},
-	}
+	id := toolspec.Parameter{Name: "id", Type: "string", Required: true, Description: "Forum ID (UUID) returned by forum_config_new"}
 	defs := []toolspec.ToolDefinition{
 		{Name: "readme", Description: "How forums work, with built-in configuration templates; give template to get one", Handler: t.readme, Category: "forum", Parameters: []toolspec.Parameter{
 			{Name: "template", Type: "string", Description: "Name of a built-in template; omit for the guide and the list of templates"},
 		}},
 		{Name: "models", Description: "List the models the calling agent may give to fresh forum participants", Handler: t.models, Category: "forum"},
-		{Name: "validate", Description: "Validate a forum configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: configParams},
-		{Name: "launch", Description: "Validate and launch a forum; returns its ID and runs it in the background", Handler: t.launch, Category: "forum", Parameters: configParams},
-		{Name: "status", Description: "Progress of one forum, or summaries of all the agent's forums", Handler: t.status, Category: "forum", Parameters: []toolspec.Parameter{
+		{Name: "config_new", Description: "Create a draft forum with an empty configuration; returns its ID", Handler: t.configNew, Category: "forum"},
+		{Name: "config_template", Description: "Replace a draft forum's configuration with a built-in template", Handler: t.configTemplate, Category: "forum", Parameters: []toolspec.Parameter{
+			id,
+			{Name: "name", Type: "string", Required: true, Description: "Name of a built-in template (forum_readme lists them)"},
+		}},
+		{Name: "config_import", Description: "Replace a draft forum's configuration with a configuration exported by forum_config_export", Handler: t.configImport, Category: "forum", Parameters: []toolspec.Parameter{
+			id,
+			{Name: "config", Type: "object", Required: true, Description: "The forum configuration as a JSON object"},
+		}},
+		{Name: "config_update", Description: "Change a draft forum's configuration with a JSON merge patch", Handler: t.configUpdate, Category: "forum", Parameters: []toolspec.Parameter{
+			id,
+			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as layers are replaced whole"},
+		}},
+		{Name: "config_export", Description: "Return the configuration of a forum, draft or launched, to import into a new forum", Handler: t.configExport, Category: "forum", Parameters: []toolspec.Parameter{id}},
+		{Name: "validate", Description: "Validate a draft forum's configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: []toolspec.Parameter{id}},
+		{Name: "launch", Description: "Validate and launch a draft forum; it runs in the background", Handler: t.launch, Category: "forum", Parameters: []toolspec.Parameter{id}},
+		{Name: "status", Description: "Progress of one forum, or summaries of all the agent's forums and drafts", Handler: t.status, Category: "forum", Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Forum ID; omit for all forums"},
 		}},
 		{Name: "pause", Description: "Stop new dispatch and pause the forum once active turns finish", Handler: t.pause, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "resume", Description: "Resume a paused forum", Handler: t.resume, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "cancel", Description: "Stop the forum, keep its partial work and finalize it as cancelled", Handler: t.cancel, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "results", Description: "Results of a forum: each final output's author, layer, round, size, file and text (long text is cut; the file has it all), and the transcript's path", Handler: t.results, Category: "forum", Parameters: []toolspec.Parameter{id}},
-		{Name: "delete", Description: "Delete a paused or finished forum's directory", Handler: t.delete, Category: "forum", Parameters: []toolspec.Parameter{id}},
+		{Name: "delete", Description: "Delete a draft, or a paused or finished forum's directory", Handler: t.delete, Category: "forum", Parameters: []toolspec.Parameter{id}},
 	}
 	for i := range defs {
 		defs[i].Handler = t.refuseUnknownArgs(defs[i].Parameters, defs[i].Handler)
@@ -191,17 +202,110 @@ func (t *toolSuite) models(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	return jsonResult(list)
 }
 
+func (t *toolSuite) configNew(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	scope, err := t.host.Scope(call)
+	if err != nil {
+		return scopeFailure(err)
+	}
+	id, err := t.svc.NewDraft(call.Ctx, scope)
+	if err != nil {
+		return t.fail(err, "", "config_new")
+	}
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s created as a draft.", id)}, nil
+}
+
+func (t *toolSuite) configTemplate(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	scope, err := t.host.Scope(call)
+	if err != nil {
+		return scopeFailure(err)
+	}
+	id, err := requiredID(call)
+	if err != nil {
+		return t.fail(err, "", "config_template")
+	}
+	name, _, err := stringArg(call, "name")
+	if err != nil {
+		return t.fail(err, id, "config_template")
+	}
+	config, ok := templateConfig(name)
+	if !ok {
+		return &toolspec.Result{ForLLM: fmt.Sprintf("There is no template %q; use %s.", name, templateNames()), IsError: true}, nil
+	}
+	if err := t.svc.SetDraftConfig(call.Ctx, scope, id, []byte(config)); err != nil {
+		return t.fail(err, id, "config_template")
+	}
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", id, name)}, nil
+}
+
+func (t *toolSuite) configImport(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	scope, err := t.host.Scope(call)
+	if err != nil {
+		return scopeFailure(err)
+	}
+	id, err := requiredID(call)
+	if err != nil {
+		return t.fail(err, "", "config_import")
+	}
+	raw, err := objectArg(call, "config")
+	if err == nil {
+		err = t.svc.SetDraftConfig(call.Ctx, scope, id, raw)
+	}
+	if err != nil {
+		return t.fail(err, id, "config_import")
+	}
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", id)}, nil
+}
+
+func (t *toolSuite) configUpdate(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	scope, err := t.host.Scope(call)
+	if err != nil {
+		return scopeFailure(err)
+	}
+	id, err := requiredID(call)
+	if err != nil {
+		return t.fail(err, "", "config_update")
+	}
+	patch, err := objectArg(call, "changes")
+	if err == nil {
+		err = t.svc.UpdateDraft(call.Ctx, scope, id, patch)
+	}
+	if err != nil {
+		return t.fail(err, id, "config_update")
+	}
+	return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", id)}, nil
+}
+
+func (t *toolSuite) configExport(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	scope, err := t.host.Scope(call)
+	if err != nil {
+		return scopeFailure(err)
+	}
+	id, err := requiredID(call)
+	if err != nil {
+		return t.fail(err, "", "config_export")
+	}
+	config, err := t.svc.ExportConfig(call.Ctx, scope, id)
+	if err != nil {
+		return t.fail(err, id, "config_export")
+	}
+	return &toolspec.Result{ForLLM: string(config)}, nil
+}
+
 func (t *toolSuite) validate(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	scope, err := t.host.Scope(call)
 	if err != nil {
 		return scopeFailure(err)
 	}
-	opts, raw, err := t.launchOptions(call, scope)
-	if err == nil {
-		err = t.svc.Validate(call.Ctx, raw, opts)
-	}
+	id, err := requiredID(call)
 	if err != nil {
 		return t.fail(err, "", "validate")
+	}
+	opts, err := t.launchOptions(call, scope)
+	if err == nil {
+		err = t.svc.ValidateDraft(call.Ctx, id, opts)
+	}
+	if err != nil {
+		return t.fail(err, id, "validate")
 	}
 	return &toolspec.Result{ForLLM: "The configuration is valid."}, nil
 }
@@ -211,13 +315,16 @@ func (t *toolSuite) launch(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if err != nil {
 		return scopeFailure(err)
 	}
-	opts, raw, err := t.launchOptions(call, scope)
+	id, err := requiredID(call)
 	if err != nil {
 		return t.fail(err, "", "launch")
 	}
-	id, err := t.svc.Launch(call.Ctx, raw, opts)
+	opts, err := t.launchOptions(call, scope)
+	if err == nil {
+		err = t.svc.Launch(call.Ctx, id, opts)
+	}
 	if err != nil {
-		return t.fail(err, "", "launch")
+		return t.fail(err, id, "launch")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched.", id)}, nil
 }
@@ -303,17 +410,9 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
 // Scope from the host, Origin from the call's agent, channel, chat and
-// session, ReadAllowed bound to the agent, and the configuration bytes and
-// ConfigDir from exactly one of the arguments: `config` (a JSON object,
-// re-encoded, ConfigDir = the agent's workspace) or `config_file`
-// (resolved with ToolHost.ResolveFile and read; ConfigDir = its directory).
-// Argument mistakes are a *ValidationError; host failures are returned
-// as they are.
-//
-// A `config` object arrives decoded by the host, so its JSON numbers have
-// passed through float64: an integer above 2^53 (a large seed) loses
-// precision. config_file keeps the bytes exactly.
-func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchOptions, []byte, error) {
+// session, ReadAllowed bound to the agent, and ConfigDir the agent's
+// workspace, which relative source paths resolve against.
+func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchOptions, error) {
 	opts := LaunchOptions{
 		Scope: scope,
 		Origin: Origin{
@@ -323,51 +422,24 @@ func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchO
 			return t.host.ReadAllowed(scope.AgentID, abs)
 		},
 	}
-	inline, hasInline := call.Args["config"]
-	hasInline = hasInline && inline != nil
-	ref, hasFile, err := stringArg(call, "config_file")
+	ws, err := t.host.Workspace(scope.AgentID)
 	if err != nil {
-		return opts, nil, err
+		return opts, fmt.Errorf("workspace of agent %s: %w", scope.AgentID, err)
 	}
-	switch {
-	case hasInline && hasFile:
-		return opts, nil, argIssue("give either config or config_file, not both")
-	case hasFile:
-		if ref == "" {
-			return opts, nil, argIssue("the config_file argument is empty")
-		}
-		abs, err := t.host.ResolveFile(scope.AgentID, ref)
-		if err != nil {
-			return opts, nil, argIssue(fmt.Sprintf("the configuration file %q cannot be used: %v", ref, err))
-		}
-		raw, err := os.ReadFile(abs) //nolint:gosec // resolved by the host as readable by the calling agent
-		if err != nil {
-			t.svc.host.Logger.Warnf("forum tools: agent %s: reading configuration file %q: %v", scope.AgentID, ref, err)
-			return opts, nil, argIssue(fmt.Sprintf("the configuration file %q cannot be read", ref))
-		}
-		opts.ConfigDir = filepath.Dir(abs)
-		return opts, raw, nil
-	case hasInline:
-		raw, err := inlineConfig(inline)
-		if err != nil {
-			return opts, nil, err
-		}
-		if opts.ConfigDir, err = t.host.Workspace(scope.AgentID); err != nil {
-			return opts, nil, fmt.Errorf("workspace of agent %s: %w", scope.AgentID, err)
-		}
-		return opts, raw, nil
-	}
-	return opts, nil, argIssue("give the configuration as config (a JSON object) or config_file (a file path)")
+	opts.ConfigDir = ws
+	return opts, nil
 }
 
-// inlineConfig encodes the `config` argument: a JSON object as the host
-// decoded it, or raw JSON bytes holding an object.
-func inlineConfig(v any) ([]byte, error) {
-	switch c := v.(type) {
+// objectArg encodes a JSON-object argument (config, changes) as the host
+// decoded it, or as raw JSON bytes holding an object. Its JSON numbers have
+// passed through float64: an integer above 2^53 (a large seed) loses
+// precision.
+func objectArg(call *toolspec.ToolCall, name string) ([]byte, error) {
+	switch c := call.Args[name].(type) {
 	case map[string]any:
 		raw, err := json.Marshal(c)
 		if err != nil {
-			return nil, argIssue("the config argument cannot be encoded as JSON")
+			return nil, argIssue("the " + name + " argument cannot be encoded as JSON")
 		}
 		return raw, nil
 	case json.RawMessage:
@@ -375,9 +447,11 @@ func inlineConfig(v any) ([]byte, error) {
 			return c, nil
 		}
 	case string:
-		return nil, argIssue("the config argument must be a JSON object, not a string; pass the object itself or use config_file")
+		return nil, argIssue("the " + name + " argument must be a JSON object, not a string; pass the object itself")
+	case nil:
+		return nil, argIssue("the " + name + " argument is required: a JSON object")
 	}
-	return nil, argIssue("the config argument must be a JSON object")
+	return nil, argIssue("the " + name + " argument must be a JSON object")
 }
 
 // argIssue is a *ValidationError about the tool's arguments: one issue
@@ -407,7 +481,7 @@ func requiredID(call *toolspec.ToolCall) (string, error) {
 		return "", err
 	}
 	if !ok || strings.TrimSpace(id) == "" {
-		return "", argIssue("the id argument is required: the forum ID returned by launch")
+		return "", argIssue("the id argument is required: the forum ID returned by forum_config_new")
 	}
 	return strings.TrimSpace(id), nil
 }
@@ -444,6 +518,8 @@ func (refused) Refusal() bool   { return true }
 // toolVerbs is the past participle of each tool's operation, for the
 // internal-failure message.
 var toolVerbs = map[string]string{
+	"config_new": "created", "config_template": "changed", "config_import": "changed",
+	"config_update": "changed", "config_export": "exported",
 	"validate": "validated", "launch": "launched", "status": "read", "results": "read",
 	"pause": "paused", "resume": "resumed", "cancel": "cancelled", "delete": "deleted",
 }

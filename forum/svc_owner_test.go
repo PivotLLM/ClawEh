@@ -17,7 +17,7 @@ import (
 // does not resume it.
 func TestSvcForumOfAnotherLauncherRefused(t *testing.T) {
 	e := svcSetup(t)
-	id, err := e.svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts())
+	id, err := svcLaunch(t, e.svc, svcSimpleJSON, e.opts())
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestSvcDeleteNamesTheLauncher(t *testing.T) {
 	messenger := &svcReplier{asks: map[string]int{}}
 	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
 	t.Cleanup(func() { svcClose(t, svc) })
-	if _, err := svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
+	if _, err := svcLaunch(t, svc, svcSimpleJSON, e.opts()); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 	svcEventually(t, "the temporary agent's deletion", func() bool { return len(e.agents.deletedIDs()) == 1 })

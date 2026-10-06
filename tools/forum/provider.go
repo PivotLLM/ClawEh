@@ -5,7 +5,7 @@
 // (forum_models, forum_launch, ...), gated by the agent's `forum` switch, and
 // supplies the per-agent forum.ToolHost: the caller's scope
 // (<workspace>/forums), the refusal inside a forum turn, and the agent's own
-// file-read permissions for configuration and source files.
+// file-read permissions for source files.
 package forum
 
 import (
@@ -124,18 +124,6 @@ func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 		return forumpkg.Scope{}, fmt.Errorf("forum directory of agent %s: %w", h.agentID, err)
 	}
 	return forumpkg.Scope{AgentID: h.agentID, BaseDirectory: base}, nil
-}
-
-// ResolveFile resolves ref the way the agent's file tools would read it.
-func (h *toolHost) ResolveFile(agentID, ref string) (string, error) {
-	if err := h.same(agentID); err != nil {
-		return "", err
-	}
-	abs, err := files.NewReader(h.cfg, h.workspace).Resolve(ref)
-	if err != nil {
-		return "", errors.New("the agent may not read it or it does not exist")
-	}
-	return abs, nil
 }
 
 // ReadAllowed reports whether the agent's file tools may read absPath.

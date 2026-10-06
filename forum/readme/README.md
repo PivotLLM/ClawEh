@@ -67,17 +67,29 @@ required and are hard limits.
 
 ## How to run one
 
-1. `forum_readme` with `template` to get a starting configuration.
-2. Edit it: fill every `<...>` placeholder, set the models from
-   `forum_models`.
-3. `forum_validate` with `config` (or `config_file`). Fix every issue it
-   lists.
-4. `forum_launch`. It returns the forum ID at once; the forum runs in the
-   background.
-5. `forum_status` with the ID to follow it; `forum_pause`, `forum_resume` and
+A forum is set up as a draft, step by step, then launched.
+
+1. `forum_config_new` creates a draft and returns its ID.
+2. `forum_config_template` with `name` fills it from a template, or
+   `forum_config_import` with `config` from an exported configuration.
+3. `forum_config_update` with `changes` edits it: a JSON merge patch, where
+   objects merge, `null` deletes a key and arrays such as `layers` are
+   replaced whole. Fill every `<...>` placeholder and set the models from
+   `forum_models`. `forum_config_export` shows the configuration so far.
+4. `forum_validate` with the ID. Fix every issue it lists.
+5. `forum_launch` with the ID. The forum runs in the background under the
+   same ID; it can no longer be changed.
+6. `forum_status` with the ID to follow it; `forum_pause`, `forum_resume` and
    `forum_cancel` control it.
-6. When you are told it has finished, `forum_results` with the ID.
-7. `forum_delete` removes a finished or paused forum's files.
+7. When you are told it has finished, `forum_results` with the ID.
+8. `forum_delete` removes a draft, or a finished or paused forum's files.
+
+Relative source `file` paths are read from your workspace.
+
+To reuse a forum, `forum_config_export` it, `forum_config_import` the result
+into a new draft and change only what differs. For a book: run chapter 1,
+then for chapter 2 import its configuration and update only
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`.
 
 ## Limits
 
@@ -93,5 +105,6 @@ required and are hard limits.
 
 ## Example
 
-The templates are complete examples: call `forum_readme` with `template` set
-to one of the names below.
+The templates are complete examples: `forum_config_template` with one of the
+names below starts a draft from it, and `forum_readme` with `template` shows
+it.

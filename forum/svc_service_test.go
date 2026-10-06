@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -104,7 +105,7 @@ func TestSvcLaunchWritesTheForum(t *testing.T) {
 	if snap.Seed < 0 {
 		t.Errorf("seed %d is negative", snap.Seed)
 	}
-	for srcID, want := range map[string]string{"note": "A short note.", "data": `{"k": 1}`, "doc": "# Doc\n\nBody.\n"} {
+	for srcID, want := range map[string]string{"note": "A short note.", "data": "{\n  \"k\": 1\n}", "doc": "# Doc\n\nBody.\n"} {
 		rec, ok := snap.Sources[srcID]
 		if !ok {
 			t.Errorf("source %s not materialised", srcID)
@@ -119,8 +120,12 @@ func TestSvcLaunchWritesTheForum(t *testing.T) {
 		}
 	}
 	raw, err := s.ReadConfig()
-	if err != nil || string(raw) != svcConfigJSON {
-		t.Errorf("forum.json is not the configuration verbatim (%v)", err)
+	wantRaw, fmtErr := formatConfig([]byte(svcConfigJSON))
+	if err != nil || fmtErr != nil || string(raw) != string(wantRaw) {
+		t.Errorf("forum.json is not the draft's configuration (%v, %v)", err, fmtErr)
+	}
+	if s.has(fileDraft) {
+		t.Error("draft.json is left beside the launched forum")
 	}
 	commits, err := s.ReadCommits()
 	if err != nil || len(commits) != 1 || commits[0].Kind != CommitLaunched {
@@ -141,7 +146,9 @@ func TestSvcLaunchUsesTheConfiguredSeed(t *testing.T) {
 	}
 }
 
-func TestSvcLaunchFailuresLeaveNothing(t *testing.T) {
+// A launch that fails leaves the draft as it was: no forum files, no
+// markers, every temporary agent deleted; it can then be launched again.
+func TestSvcLaunchFailuresLeaveTheDraft(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     string
@@ -190,12 +197,25 @@ func TestSvcLaunchFailuresLeaveNothing(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(e)
 			}
-			id, err := e.svc.Launch(t.Context(), []byte(tt.cfg), e.opts())
-			if err == nil || id != "" || !tt.wantErr(err) {
-				t.Fatalf("Launch = %q, %v", id, err)
+			id, err := svcLaunch(t, e.svc, tt.cfg, e.opts())
+			if err == nil || !tt.wantErr(err) {
+				t.Fatalf("Launch = %v", err)
 			}
-			if ids := e.forumIDs(); len(ids) != 0 {
-				t.Errorf("forums left behind: %v", ids)
+			if ids := e.forumIDs(); !slices.Equal(ids, []string{id}) {
+				t.Errorf("forums = %v, want only the draft %s", ids, id)
+			}
+			if !e.store(id).IsDraft() {
+				t.Error("the forum is no longer a draft")
+			}
+			var left []string
+			err = filepath.WalkDir(filepath.Join(e.scope.BaseDirectory, id), func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					left = append(left, d.Name())
+				}
+				return err
+			})
+			if err != nil || !slices.Equal(left, []string{fileDraft}) {
+				t.Errorf("files left in the draft = %v (%v), want only %s", left, err, fileDraft)
 			}
 			created, deleted := e.agents.createdIDs(), e.agents.deletedIDs()
 			slices.Sort(created)
@@ -209,6 +229,18 @@ func TestSvcLaunchFailuresLeaveNothing(t *testing.T) {
 			}
 			if len(entries) != 0 {
 				t.Errorf("cleanup entries left behind: %v", entries)
+			}
+			if tt.setup == nil {
+				return
+			}
+			clear(e.agents.createErr)
+			e.ctrls.openErr = nil
+			if err := e.svc.Launch(t.Context(), id, e.opts()); err != nil {
+				t.Fatalf("launch once the failure is gone: %v", err)
+			}
+			e.ctrls.get(t, id)
+			if e.store(id).IsDraft() {
+				t.Error("still a draft after its launch")
 			}
 		})
 	}
@@ -253,8 +285,8 @@ func TestSvcHostLimits(t *testing.T) {
 	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "limits.max_calls: 10 is above the host ceiling of 5") {
 		t.Errorf("Validate above the ceiling = %v", err)
 	}
-	if id, err := capped.Launch(t.Context(), []byte(svcSimpleJSON), e.opts()); err == nil || id != "" {
-		t.Errorf("Launch above the ceiling = %q, %v", id, err)
+	if id, err := svcLaunch(t, capped, svcSimpleJSON, e.opts()); err == nil || !e.store(id).IsDraft() {
+		t.Errorf("Launch above the ceiling = %v", err)
 	}
 }
 
@@ -915,15 +947,24 @@ func TestSvcRecover(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(base, dirCleanup, staged, "layers"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		abandoned := uuid.NewString()
-		s, err := CreateStore(base, abandoned)
+		abandoned, err := e.svc.NewDraft(t.Context(), e.scope)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := e.svc.SetDraftConfig(t.Context(), e.scope, abandoned, []byte(svcSimpleJSON)); err != nil {
+			t.Fatal(err)
+		}
+		s := e.store(abandoned)
 		if err := s.WriteConfig([]byte(svcSimpleJSON)); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := s.WriteSource("note", FormatText, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
 		if err := setAgentsMarker(s, []string{"leftover"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetCleanup(cleanupNotice, []byte("pending\n")); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
@@ -932,11 +973,39 @@ func TestSvcRecover(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(base, dirCleanup, staged)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("staged root still there: %v", err)
 		}
-		if len(e.forumIDs()) != 0 {
-			t.Errorf("abandoned launch still listed: %v", e.forumIDs())
+		if ids := e.forumIDs(); !slices.Equal(ids, []string{abandoned}) || !s.IsDraft() || s.has(fileConfig) {
+			t.Errorf("the abandoned launch is not its draft again: forums %v", ids)
+		}
+		if _, err := os.Stat(s.Path(path.Join(dirSources, "note.txt"))); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the abandoned launch's source is still there: %v", err)
 		}
 		if !slices.Equal(e.agents.deletedIDs(), []string{"leftover"}) {
 			t.Errorf("deleted %v, want the abandoned launch's agent", e.agents.deletedIDs())
+		}
+		if _, ok := e.marker(abandoned, cleanupNotice); ok {
+			t.Error("the abandoned launch's notice marker is still there")
+		}
+		if err := e.svc.Launch(t.Context(), abandoned, e.opts()); err != nil {
+			t.Errorf("launching the draft again: %v", err)
+		}
+	})
+	t.Run("a draft left beside a launched forum is removed", func(t *testing.T) {
+		e := svcSetup(t)
+		id, _ := e.launch("")
+		e.restart()
+		s := e.store(id)
+		if err := s.WriteDraft(&Draft{Owner: e.scope.AgentID, Config: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if s.IsDraft() {
+			t.Fatal("a launched forum with a leftover draft.json counts as a draft")
+		}
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		e.running(id)
+		if s.has(fileDraft) {
+			t.Error("the leftover draft.json was not removed")
 		}
 	})
 	t.Run("errors are reported and do not stop the scan", func(t *testing.T) {
@@ -1020,7 +1089,7 @@ func TestSvcCloseLeavesStateAndRefusesWork(t *testing.T) {
 	if e.status(id) != StatusRunning {
 		t.Errorf("status after close = %s, want running", e.status(id))
 	}
-	if _, err := e.svc.Launch(t.Context(), []byte(svcConfigJSON), e.opts()); !errors.Is(err, errClosed) {
+	if _, err := svcLaunch(t, e.svc, svcConfigJSON, e.opts()); !errors.Is(err, errClosed) {
 		t.Errorf("launch after close: %v", err)
 	}
 	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, errClosed) {
@@ -1155,7 +1224,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		return svc
 	}
 	svc := newSvc()
-	id, err := svc.Launch(t.Context(), []byte(svcSimpleJSON), e.opts())
+	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1337,7 +1406,7 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
 	t.Cleanup(func() { svcClose(t, svc) })
 	cfg := strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)
-	id, err := svc.Launch(t.Context(), []byte(cfg), e.opts())
+	id, err := svcLaunch(t, svc, cfg, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -343,7 +343,7 @@ func (c *svcCtrl) run(ctx context.Context) (Status, error) {
 		return c.finishPause()
 	case StatusCancelling:
 		return StatusCancelled, c.end(StatusCancelled, EndCancelled)
-	case StatusQueued, StatusRunning, StatusPaused:
+	case StatusDraft, StatusQueued, StatusRunning, StatusPaused:
 	}
 	for {
 		select {
@@ -616,7 +616,7 @@ func (e *svcEnv) launch(cfg string) (string, *svcCtrl) {
 	if cfg == "" {
 		cfg = svcConfigJSON
 	}
-	id, err := e.svc.Launch(e.t.Context(), []byte(cfg), e.opts())
+	id, err := svcLaunch(e.t, e.svc, cfg, e.opts())
 	if err != nil {
 		e.t.Fatalf("launch: %v", err)
 	}
@@ -721,4 +721,18 @@ func svcEventually(t *testing.T, what string, cond func() bool) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// svcLaunch creates a draft holding cfg in opts.Scope and launches it. It
+// returns the draft's ID whether or not the launch succeeded.
+func svcLaunch(t *testing.T, svc *Service, cfg string, opts LaunchOptions) (string, error) {
+	t.Helper()
+	id, err := svc.NewDraft(t.Context(), opts.Scope)
+	if err != nil {
+		t.Fatalf("new draft: %v", err)
+	}
+	if err := svc.SetDraftConfig(t.Context(), opts.Scope, id, []byte(cfg)); err != nil {
+		t.Fatalf("set the draft's configuration: %v", err)
+	}
+	return id, svc.Launch(t.Context(), id, opts)
 }

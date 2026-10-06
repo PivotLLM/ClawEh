@@ -14,9 +14,11 @@ A forum is set up by an agent, never by a person directly. Allow it per agent:
 - **WebUI:** Agents page, the agent's card, **Allow forum**.
 - **Config:** `"forum": true` on the agent in `agents.list`. Off by default.
 
-The agent then has ten tools: `forum_readme`, `forum_models`,
-`forum_validate`, `forum_launch`, `forum_status`, `forum_pause`,
-`forum_resume`, `forum_cancel`, `forum_results` and `forum_delete`. They come as a set, like
+The agent then has fifteen tools: `forum_readme`, `forum_models`,
+`forum_config_new`, `forum_config_template`, `forum_config_import`,
+`forum_config_update`, `forum_config_export`, `forum_validate`,
+`forum_launch`, `forum_status`, `forum_pause`, `forum_resume`,
+`forum_cancel`, `forum_results` and `forum_delete`. They come as a set, like
 Maestro and Fusion: the agent's `tools` list does not select them, its
 `deny_tools` can still remove one. The Check Up report shows a Forum row for
 every agent and lists `forum_launch` among the sensitive tools of an agent
@@ -55,9 +57,8 @@ include it, wherever the forum was launched from.
 
 ## Configuration overview
 
-One JSON object, passed to `forum_validate` / `forum_launch` as `config`, or
-as `config_file`, a path Alice's file tools may read. Unknown fields are
-refused.
+One JSON object, set up in a draft (see [Setting one up](#setting-one-up)).
+Unknown fields are refused.
 
 ```json
 {
@@ -89,8 +90,7 @@ refused.
 
 - `brief` goes to every participant; `instructions` only to its participant.
 - `sources` are `inline` or a `file`. A relative path resolves against Alice's
-  workspace (inline configuration) or the configuration file's directory, and
-  must be readable by Alice's file tools.
+  workspace, and the file must be readable by Alice's file tools.
 - `layers` run in order. `delivery` is `after_round` (turns in a round do not
   see each other) or `per_turn` (each turn sees the earlier ones). A layer may
   have a `moderator` that continues, guides or stops it, and JSON output may be
@@ -114,16 +114,40 @@ refused.
     agent or a clone of it anywhere in a forum with an anonymous input (either
     can read the forum's files).
 
-Call `forum_validate` first: it checks everything, agents and models included,
-without creating anything.
+## Setting one up
+
+Alice sets a forum up as a draft, step by step, and launches it when it is
+ready:
+
+| Tool | What it does |
+|---|---|
+| `forum_config_new` | Creates a draft with an empty configuration and answers "Forum <id> created as a draft.". |
+| `forum_config_template` | `id`, `name`: the draft's configuration becomes that built-in template. |
+| `forum_config_import` | `id`, `config`: the draft's configuration becomes `config`, a JSON object (usually one `forum_config_export` returned). |
+| `forum_config_update` | `id`, `changes`: applies `changes` as a JSON merge patch (RFC 7386): objects merge, `null` deletes a key, arrays such as `layers` are replaced whole. |
+| `forum_config_export` | `id`: the configuration of any of Alice's forums, draft, running or finished. |
+| `forum_validate` | `id`: checks the draft, agents and models included, without creating anything. |
+| `forum_launch` | `id`: validates the draft and runs it under the same ID. |
+
+A draft need not be valid while it is being edited; only `forum_validate`
+and `forum_launch` check it. Only a draft can be changed: a launched forum
+answers "Forum <id> has already been launched; export its config into a new
+forum.". A draft survives a restart, shows as `draft` in `forum_status`, and
+`forum_delete` removes it. A launch that fails leaves the draft as it was.
+
+To reuse a forum, export its configuration, import it into a new draft and
+change only what differs. A book review set up for chapter 1 runs again for
+chapter 2 with one update:
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`.
 
 ## Guide and templates
 
 `forum_readme` without arguments returns a one-page guide for the agent (what
-a forum is, participants, layers, the steps from validate to results, the
+a forum is, participants, layers, the steps from a new draft to results, the
 limits, and when a single sub-agent or `agent_message` is enough), followed
 by the built-in templates. With `template` it returns that template's
-configuration, ready to edit; an unknown name is refused with the valid ones.
+configuration; `forum_config_template` puts one in a draft. An unknown name
+is refused with the valid ones.
 Every other forum tool's description tells the agent to call it first.
 
 | Template | What it does |
@@ -148,7 +172,7 @@ it ends (completed, incomplete, failed or cancelled) Alice gets
 conversation. If she launched it from a chat, her answer goes to her default
 chat (her default binding), or nowhere when she has none; a forum launched
 locally is never posted.
-`forum_delete` removes a paused or finished forum.
+`forum_delete` removes a draft, or a paused or finished forum.
 
 A forum survives a restart: an interrupted forum resumes where it stopped, and
 a turn that was in progress is sent again (an existing agent may see that
@@ -181,6 +205,7 @@ Everything is under the launching agent's workspace:
 
 ```
 <workspace>/forums/<id>/
+  draft.json          the configuration being set up (a draft only)
   forum.json          the configuration as launched
   transcript.md       the public transcript, written as turns are published
   result.json         the result, once the forum has ended

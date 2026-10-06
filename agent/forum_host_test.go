@@ -25,10 +25,11 @@ import (
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
 )
 
-// forumToolNames are the ten tools an agent with the `forum` switch gets.
+// forumToolNames are the fifteen tools an agent with the `forum` switch gets.
 var forumToolNames = []string{
-	"forum_readme", "forum_models", "forum_validate", "forum_launch", "forum_status", "forum_pause",
-	"forum_resume", "forum_cancel", "forum_results", "forum_delete",
+	"forum_readme", "forum_models", "forum_config_new", "forum_config_template", "forum_config_import",
+	"forum_config_update", "forum_config_export", "forum_validate", "forum_launch", "forum_status",
+	"forum_pause", "forum_resume", "forum_cancel", "forum_results", "forum_delete",
 }
 
 // freshPrompt is the fresh participant's system prompt in forumLaunchConfig,
@@ -195,8 +196,8 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// launchForum runs forum_launch as Alice from channel with
-// forumLaunchConfig and returns the new forum's id.
+// launchForum sets up a draft as Alice with forumLaunchConfig, launches it
+// from channel and returns the forum's id.
 func launchForum(t *testing.T, al *AgentLoop, channel string) string {
 	t.Helper()
 	return launchForumWith(t, al, channel, forumLaunchConfig)
@@ -210,11 +211,20 @@ func launchForumWith(t *testing.T, al *AgentLoop, channel, launchConfig string) 
 	if err := json.Unmarshal([]byte(launchConfig), &cfgObj); err != nil {
 		t.Fatal(err)
 	}
-	res := alice.Tools.ExecuteWithContext(context.Background(), "forum_launch", map[string]any{"config": cfgObj}, channel, "chat-1", nil)
-	if res.IsError || !strings.HasPrefix(res.ForLLM, "Forum ") || !strings.HasSuffix(res.ForLLM, " launched.") {
-		t.Fatalf("forum_launch = %+v", res)
+	run := func(tool string, args map[string]any) string {
+		t.Helper()
+		res := alice.Tools.ExecuteWithContext(context.Background(), tool, args, channel, "chat-1", nil)
+		if res.IsError {
+			t.Fatalf("%s = %+v", tool, res)
+		}
+		return res.ForLLM
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(res.ForLLM, "Forum "), " launched.")
+	id := strings.TrimSuffix(strings.TrimPrefix(run("forum_config_new", map[string]any{}), "Forum "), " created as a draft.")
+	run("forum_config_import", map[string]any{"id": id, "config": cfgObj})
+	if out := run("forum_launch", map[string]any{"id": id}); out != "Forum "+id+" launched." {
+		t.Fatalf("forum_launch = %q", out)
+	}
+	return id
 }
 
 // aliceScope is Alice's forum scope.
@@ -291,7 +301,7 @@ func TestForum_EndToEnd(t *testing.T) {
 	})
 }
 
-// TestForum_ToolsFollowTheSwitch: an agent gets the ten forum tools only
+// TestForum_ToolsFollowTheSwitch: an agent gets the fifteen forum tools only
 // with its `forum` switch on.
 func TestForum_ToolsFollowTheSwitch(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))

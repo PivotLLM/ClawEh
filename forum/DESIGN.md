@@ -35,7 +35,7 @@ validated) fails preflight with `ErrSchemasUnavailable` naming them.
 | (b) store and replay | `store.go`, `replay.go` | §8, rev 3 §8 |
 | (c) router | `router.go`, `jsonpointer.go` | rev 3 §4 |
 | (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go` | §5, §6, §2.3, §8 restart |
-| (e) service and tools | `service.go`, `tools.go` | §9, §2.2 |
+| (e) service and tools | `service.go`, `draft.go`, `mergepatch.go`, `tools.go` | §9, §2.2 |
 
 - `records.go` is the wire format between seams (every on-disk type, plus
   `State`, `Result`, `Summary`): (b) writes it, (d) fills it and (e)
@@ -48,14 +48,19 @@ validated) fails preflight with `ErrSchemasUnavailable` naming them.
 ## 3. Data flow
 
 ```
-tool call ──► (e) Service.Launch
+tool calls ─► (e) Service.NewDraft      CreateStore, WriteDraft       (b)
+               SetDraftConfig / UpdateDraft (merge patch): WriteDraft
+tool call ──► (e) Service.Launch(id)
+                 │  IsDraft → Lock; ReadDraft                    (b)
                  │  Decode → ValidateStatic → Preflight          (a)
-                 │  CreateStore → Lock, WriteConfig, WriteSource… (b)
+                 │  WriteConfig, WriteSource…                    (b)
                  │  Agents.CreateClone / CreateFresh             host
                  │    (each ID added to .cleanup/<uuid>.agents.json)
                  │  WriteParticipants, set .cleanup/<uuid>.notice,
                  │  WriteSnapshot, AppendCommit(1, launched)
-                 │  Open (any failure: delete agents, Remove)    (d)
+                 │  Open (any failure: revertLaunch: delete
+                 │    agents, ResetToDraft)                      (d)
+                 │  ClearDraft once the run has started
                  ▼
             (d) Open                      ← the SAME path a restart takes
                  │  Verify, ReplayState, ReadCommits, ListAttempts (b)
@@ -108,6 +113,7 @@ What crosses each boundary:
   .cleanup/<uuid>.notice             completion notice not yet delivered (written at launch)
   .cleanup/<uuid>/                   a root staged for removal (Remove)
   <uuid>/
+    draft.json                       Draft (owner, configuration) until launch
     forum.json  snapshot.json  participants.json  state.json  result.json
     transcript.md
     sources/<id><ext>
@@ -274,16 +280,15 @@ are logged, never shown to the agent.
 8. **Cancel** cancels the in-flight ask's context; pause lets it finish.
 9. **Fenced JSON** replies are unwrapped before validation.
 10. **`keepAliveInterval` = 1 h.**
-11. **Tools:** `validate` and `launch` take exactly one of `config`
-    (object) and `config_file` (string); `launch` has no `options`.
+11. **Tools:** a forum is configured as a draft (§7.21); `validate` and
+    `launch` take only the draft's `id`; `launch` has no `options`.
 12. **`model`** applies to fresh and clone participants only; it is
     rejected on an `agent` participant, which always runs on its own model.
 13. **No `Whisper`** in the forum's `Messenger`; directed messages are
     forum-scoped and travel inside the next forum turn.
 14. **No chat-id field** in attempt records (rev 5 has no channel).
-15. **Source paths:** an inline configuration's relative `file` paths
-    resolve against the launching agent's workspace; a `config_file`'s
-    against that file's directory; both must be readable by the agent.
+15. **Source paths:** relative `file` paths resolve against the launching
+    agent's workspace and must be readable by the agent.
 16. **`inline` for `decode: json`** is any raw JSON value
     (`json.RawMessage`); for text/markdown it is a JSON string.
 17. **`instructions`** is optional.
@@ -292,11 +297,13 @@ are logged, never shown to the agent.
     pausing/cancelling ones so the controller finishes the transition,
     leaves paused forums paused (keep-alive only), finishes the terminal
     work of terminal ones (result.json, agents, notice) and staged
-    removals, and discards a launch that died before its snapshot.
+    removals, leaves drafts alone, undoes a launch that died before its
+    snapshot (`revertLaunch`: the draft is kept) and removes a `draft.json`
+    left beside a snapshot.
 19. **Launch is all or nothing** for its caller: any failure, including
     `Open` failing after `CommitLaunched` (nothing has been dispatched),
-    deletes the agents created so far and removes the directory. The
-    store is locked right after `CreateStore`.
+    deletes the agents created so far and resets the directory to the
+    draft (`ResetToDraft`). The draft is locked before anything is written.
 20. **Control operations** (service): repeating pause, resume or cancel
     is harmless; cancellation dominates (pause and resume of a cancelling
     forum are refused, and a pending cancel must win over a pending pause
@@ -306,6 +313,20 @@ are logged, never shown to the agent.
     corrupt one), deleting an absent ID succeeds, and a forum whose agents
     cannot all be deleted is kept. Operations on one ID are serialised;
     live lookups are restricted to the caller's base directory.
+21. **Drafts.** `forum_config_new` creates `<base>/<uuid>/draft.json`
+    (`Draft`: owner, times, the configuration as raw JSON, `{}` at first);
+    a draft need not be valid until validate or launch. A forum is a draft
+    while it has `draft.json` and no `snapshot.json`; only a draft can be
+    changed (template, import, merge patch), under the control lock and the
+    store lock. `forum_config_update` is RFC 7386 (`mergePatch`: member
+    order kept, untouched values byte for byte). Launch keeps the ID: it
+    writes `forum.json` (the draft's configuration, indented) and the rest
+    into the same directory and removes `draft.json` once the run has
+    started. A `draft.json` naming another owner is `ErrCorrupt`, like a
+    snapshot naming another launcher. Status shows `draft`; pause, resume,
+    cancel and results refuse a draft; delete removes one; export works on
+    any forum. There is no template store: configurations move between
+    forums by export and import.
 
 ## 8. Still inferred (rev 3 and rev 5 do not say)
 

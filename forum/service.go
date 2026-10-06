@@ -6,6 +6,7 @@
 package forum
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -18,8 +19,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // Seam (e): the lifecycle service (spec §9). One Service per process owns
@@ -74,8 +73,7 @@ type LaunchOptions struct {
 	// filled with Scope.AgentID.
 	Origin Origin
 	// ConfigDir is the directory relative source paths resolve against:
-	// the configuration file's directory for a file reference, the
-	// launching agent's workspace for an inline configuration.
+	// the launching agent's workspace.
 	ConfigDir string
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path (source files). nil allows nothing.
@@ -259,72 +257,93 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 	return cfg, resolved, nil
 }
 
-// Launch validates raw, allocates the forum and starts it (§9
-// forum_launch). Steps, in order:
+// Launch validates a draft, allocates the forum in the draft's directory,
+// under the same ID, and starts it (§9 forum_launch). Steps, in order:
 //
-//  1. check (Decode, ValidateStatic, Preflight).
-//  2. New UUID; CreateStore(opts.Scope.BaseDirectory, id) and Lock it at
-//     once, so a concurrent Recover never mistakes the half-written root
-//     for an abandoned launch; WriteConfig(raw).
-//  3. Materialise every source (WriteSource): file sources from
+//  1. Serialise with the forum's other control operations, check that it
+//     is a draft and Lock it (ErrLocked when another process has it).
+//  2. check (Decode, ValidateStatic, Preflight) the draft's configuration.
+//     A launch of this draft that died part-way is undone first
+//     (revertLaunch).
+//  3. WriteConfig (the configuration, indented).
+//  4. Materialise every source (WriteSource): file sources from
 //     Resolved.SourceContents, inline ones from the configuration.
-//  4. Create the temporary participants used by enabled layers
+//  5. Create the temporary participants used by enabled layers
 //     (createParticipants), recording each in the CleanupAgents marker as
 //     it is created.
-//  5. WriteParticipants; set the notice marker; WriteSnapshot;
-//     AppendCommit(CommitLaunched). The forum is now durably accepted.
-//  6. Open and start the run goroutine; return id.
+//  6. WriteParticipants; set the notice marker; WriteSnapshot;
+//     AppendCommit(CommitLaunched). The forum is now durably accepted and
+//     no longer a draft.
+//  7. Open and start the run goroutine; remove draft.json.
 //
 // Launch is all or nothing for its caller: any failure, including Open
-// failing after step 5 (nothing has been dispatched yet), deletes the
-// agents created so far and removes the directory, and the error is
-// returned.
-func (s *Service) Launch(ctx context.Context, raw []byte, opts LaunchOptions) (string, error) {
+// failing after step 6 (nothing has been dispatched yet), deletes the
+// agents created so far and leaves the forum the draft it was
+// (revertLaunch), and the error is returned.
+func (s *Service) Launch(ctx context.Context, id string, opts LaunchOptions) error {
 	if s.isClosed() {
-		return "", errClosed
+		return errClosed
 	}
-	cfg, resolved, err := s.check(ctx, raw, opts)
+	defer s.control(id)()
+	store, err := s.openDraft(opts.Scope, id, launchedOnce)
 	if err != nil {
-		return "", err
+		return err
+	}
+	if err = store.Lock(); err != nil {
+		return err
+	}
+	if err = s.launchLocked(ctx, store, opts); err != nil {
+		store.Unlock()
+		return err
+	}
+	if err := store.ClearDraft(); err != nil {
+		// The forum runs; Recover removes the leftover draft.json.
+		s.host.Logger.Warnf("forum %s: %v", id, err)
+	}
+	s.host.Logger.Infof("forum %s: launched by agent %s", id, opts.Scope.AgentID)
+	return nil
+}
+
+// launchLocked is Launch once the draft is locked. On success the started
+// run holds the lock; on failure the caller releases it.
+func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOptions) error {
+	if !store.IsDraft() {
+		return invalidState("forum %s "+launchedOnce, store.ID())
+	}
+	d, err := store.ReadDraft()
+	if err != nil {
+		return err
+	}
+	cfg, resolved, err := s.check(ctx, d.Config, opts)
+	if err != nil {
+		return err
+	}
+	raw, err := formatConfig(d.Config)
+	if err != nil {
+		return err
 	}
 	if opts.Origin.AgentID == "" {
 		opts.Origin.AgentID = opts.Scope.AgentID
 	}
-	store, err := CreateStore(opts.Scope.BaseDirectory, uuid.NewString())
-	if err != nil {
-		return "", err
-	}
-	store.owner = opts.Scope.AgentID
-	if err = store.Lock(); err != nil {
-		return "", errors.Join(err, store.Remove())
+	if store.has(fileConfig) {
+		if err = s.revertLaunch(ctx, store); err != nil {
+			return err
+		}
 	}
 	if err = s.allocate(ctx, store, raw, cfg, resolved, opts); err != nil {
-		return "", errors.Join(err, s.discard(ctx, store))
+		return errors.Join(err, s.revertLaunch(ctx, store))
 	}
 	ctrl, err := s.openCtrl(ctx, store, s.host)
 	if err != nil {
-		return "", errors.Join(fmt.Errorf("forum %s could not start: %w", store.ID(), err), s.discard(ctx, store))
+		return errors.Join(fmt.Errorf("forum %s could not start: %w", store.ID(), err), s.revertLaunch(ctx, store))
 	}
 	if err = s.start(store, ctrl); err != nil { //nolint:contextcheck // the run outlives the launching call; its context is the service's
-		return "", errors.Join(err, s.discard(ctx, store))
+		return errors.Join(err, s.revertLaunch(ctx, store))
 	}
-	s.host.Logger.Infof("forum %s: launched by agent %s", store.ID(), opts.Scope.AgentID)
-	return store.ID(), nil
+	return nil
 }
 
-// discard undoes a launch that did not start: it deletes the temporary
-// agents created so far and removes the directory (which also releases
-// the lock). It runs even if the launching call was cancelled.
-func (s *Service) discard(ctx context.Context, store *Store) error {
-	ctx = context.WithoutCancel(ctx)
-	agentsErr := s.deleteTempAgents(ctx, store)
-	if agentsErr != nil {
-		s.host.Logger.Warnf("forum %s: discarding a failed launch: %v (the registry's idle TTL removes them)", store.ID(), agentsErr)
-	}
-	return store.Remove()
-}
-
-// allocate performs Launch steps 2 (after the lock) to 5.
+// allocate performs Launch steps 3 to 6.
 func (s *Service) allocate(ctx context.Context, store *Store, raw []byte, cfg *Config, resolved *Resolved, opts LaunchOptions) error {
 	if err := store.WriteConfig(raw); err != nil {
 		return err
@@ -376,8 +395,8 @@ func (s *Service) allocate(ctx context.Context, store *Store, raw []byte, cfg *C
 
 // materialiseSources copies every source into sources/: a file source
 // from the bytes Preflight read (the file is never reopened), an inline one from the configuration
-// (a JSON string's text for text and markdown, the raw JSON value for
-// json).
+// (a JSON string's text for text and markdown, the JSON value indented on
+// its own for json).
 func materialiseSources(store *Store, cfg *Config, resolved *Resolved) (map[string]SourceRecord, error) {
 	out := make(map[string]SourceRecord, len(cfg.Sources))
 	for _, id := range sortedKeys(cfg.Sources) {
@@ -391,7 +410,11 @@ func materialiseSources(store *Store, cfg *Config, resolved *Resolved) (map[stri
 			}
 			content = data
 		case src.Decode == FormatJSON:
-			content = []byte(src.Inline)
+			var b bytes.Buffer
+			if err := json.Indent(&b, src.Inline, "", "  "); err != nil {
+				return nil, fmt.Errorf("source %q: inline content: %w", id, err)
+			}
+			content = b.Bytes()
 		default:
 			var text string
 			if err := json.Unmarshal(src.Inline, &text); err != nil {
@@ -483,6 +506,9 @@ func (s *Service) Status(_ context.Context, scope Scope, id string) (*Summary, e
 	if err != nil {
 		return nil, err
 	}
+	if store.IsDraft() {
+		return draftSummary(store)
+	}
 	cfg, snap, st, err := loadView(store)
 	if err != nil {
 		return nil, err
@@ -490,8 +516,9 @@ func (s *Service) Status(_ context.Context, scope Scope, id string) (*Summary, e
 	return summaryOf(cfg, snap, st), nil
 }
 
-// List returns a summary of every forum in the scope, newest first. A
-// forum that cannot be read is logged and left out.
+// List returns a summary of every forum in the scope, newest first (a
+// draft by when it was last changed). A forum that cannot be read is
+// logged and left out.
 func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
 	ids, err := ListForums(scope.BaseDirectory)
 	if err != nil {
@@ -506,8 +533,16 @@ func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
 		}
 		out = append(out, *sum)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].LaunchedAt.After(out[j].LaunchedAt) })
+	sort.SliceStable(out, func(i, j int) bool { return sortTime(&out[i]).After(sortTime(&out[j])) })
 	return out, nil
+}
+
+// sortTime is when a forum was launched, or a draft last changed.
+func sortTime(sum *Summary) time.Time {
+	if sum.Status == StatusDraft {
+		return sum.UpdatedAt
+	}
+	return sum.LaunchedAt
 }
 
 // Pause asks a forum to pause and returns at once; the status becomes
@@ -536,7 +571,7 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 			}
 		case StatusPausing, StatusPaused:
 			return nil
-		case StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+		case StatusDraft, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 			return refusePause(id, st)
 		}
 	}
@@ -556,7 +591,7 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 			return err
 		}
 		return s.openAndStart(ctx, store, controller.RequestPause)
-	case StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+	case StatusDraft, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 	}
 	store.Unlock()
 	return refusePause(id, st.Status)
@@ -589,7 +624,7 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 			return nil
 		case StatusPausing:
 			return invalidState("forum %s is still pausing; resume it once it is paused", id)
-		case StatusPaused, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+		case StatusDraft, StatusPaused, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 			return refuseResume(id, st)
 		}
 	}
@@ -617,7 +652,7 @@ func (s *Service) resume(ctx context.Context, store *Store, st *State) error {
 	case StatusQueued:
 		commit = CommitLaunched
 	case StatusRunning:
-	case StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+	case StatusDraft, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		store.Unlock()
 		return refuseResume(store.ID(), st.Status)
 	}
@@ -649,7 +684,7 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 		switch st := r.ctrl.State().Status; st {
 		case StatusCancelling, StatusCancelled:
 			return nil
-		case StatusCompleted, StatusIncomplete, StatusFailed:
+		case StatusDraft, StatusCompleted, StatusIncomplete, StatusFailed:
 			return invalidState("forum %s is already %s", id, st)
 		case StatusQueued, StatusRunning, StatusPausing, StatusPaused:
 			reqErr := r.ctrl.RequestCancel()
@@ -669,7 +704,7 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 	case StatusCancelled:
 		store.Unlock()
 		return nil
-	case StatusCompleted, StatusIncomplete, StatusFailed:
+	case StatusDraft, StatusCompleted, StatusIncomplete, StatusFailed:
 		store.Unlock()
 		return invalidState("forum %s is already %s", id, st.Status)
 	case StatusCancelling:
@@ -694,6 +729,9 @@ func (s *Service) Results(_ context.Context, scope Scope, id string) (*Result, e
 	if err != nil {
 		return nil, err
 	}
+	if err = refuseDraft(store); err != nil {
+		return nil, err
+	}
 	res, err := store.ReadResult()
 	if err == nil {
 		return res, nil
@@ -708,7 +746,7 @@ func (s *Service) Results(_ context.Context, scope Scope, id string) (*Result, e
 	return buildResult(cfg, snap, st), nil
 }
 
-// Delete removes a paused or terminal forum: it takes the forum's lock
+// Delete removes a draft, or a paused or terminal forum: it takes the forum's lock
 // without waiting (ErrLocked when another holder has it), rechecks the
 // status, deletes the temporary agents (deleteTempAgents) and then the
 // directory (Store.Remove). A forum whose directory is corrupt can be
@@ -735,14 +773,18 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	if err = store.Lock(); err != nil {
 		return err
 	}
-	if _, _, st, err := load(store); err == nil {
-		if st.Status != StatusPaused && !st.Status.Terminal() {
+	// A draft runs nothing; the agents of a launch of it that died part-way
+	// are in the marker and deleted below.
+	if !store.IsDraft() {
+		if _, _, st, err := load(store); err == nil {
+			if st.Status != StatusPaused && !st.Status.Terminal() {
+				store.Unlock()
+				return invalidState("forum %s is %s; pause or cancel it before deleting it", id, st.Status)
+			}
+		} else if !errors.Is(err, ErrCorrupt) {
 			store.Unlock()
-			return invalidState("forum %s is %s; pause or cancel it before deleting it", id, st.Status)
+			return err
 		}
-	} else if !errors.Is(err, ErrCorrupt) {
-		store.Unlock()
-		return err
 	}
 	if err := s.deleteTempAgents(ctx, store); err != nil {
 		store.Unlock()
@@ -805,8 +847,8 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 
 // recoverOne applies Recover's rules to one forum (DESIGN.md §7.18):
 //
-//   - a launch that died before its snapshot was written is discarded
-//     (its created agents deleted, its directory removed);
+//   - a draft is left as it is; a launch that died before its snapshot was
+//     written is undone, leaving the draft (revertLaunch);
 //   - a terminal forum gets its unfinished terminal work done
 //     (completeTerminal: result.json, agent deletion, notice);
 //   - a paused forum stays paused, its agents are touched once and it is
@@ -826,8 +868,21 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 		return err
 	}
 	if _, err = store.ReadSnapshot(); errors.Is(err, ErrNotFound) {
-		s.host.Logger.Warnf("forum %s: the launch did not finish; removing it", id)
-		return s.discard(ctx, store)
+		defer store.Unlock()
+		if !store.has(fileDraft) {
+			return corrupt("forum %s has neither %s nor %s", id, fileSnapshot, fileDraft)
+		}
+		if !store.has(fileConfig) {
+			return nil // a draft
+		}
+		s.host.Logger.Warnf("forum %s: the launch did not finish; it is a draft again", id)
+		return s.revertLaunch(ctx, store)
+	}
+	if store.has(fileDraft) {
+		// The launch committed but did not get to remove the draft.
+		if clearErr := store.ClearDraft(); clearErr != nil {
+			s.host.Logger.Warnf("forum %s: %v", id, clearErr)
+		}
 	}
 	cfg, snap, st, err := load(store)
 	if err != nil {
@@ -849,7 +904,7 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 			store.Unlock()
 			return err
 		}
-	case StatusRunning, StatusPausing, StatusCancelling:
+	case StatusDraft, StatusRunning, StatusPausing, StatusCancelling:
 	}
 	s.host.Logger.Infof("forum %s: resuming after restart (%s)", id, st.Status)
 	return s.openAndStart(ctx, store, nil)
@@ -895,11 +950,14 @@ func (s *Service) open(scope Scope, id string) (*Store, error) {
 }
 
 // takeOver opens a forum that has no live controller in this process,
-// takes its lock without waiting and loads its state. The caller owns the
+// refuses a draft, takes its lock without waiting and loads its state. The caller owns the
 // lock on success.
 func (s *Service) takeOver(scope Scope, id string) (*Store, *State, error) {
 	store, err := s.open(scope, id)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err = refuseDraft(store); err != nil {
 		return nil, nil, err
 	}
 	if err = store.Lock(); err != nil {

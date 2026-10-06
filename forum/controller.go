@@ -167,7 +167,7 @@ func (c *Controller) run(ctx context.Context) (Status, error) {
 		}
 	case StatusPaused:
 		return StatusPaused, fmt.Errorf("run forum %s: %w: it is paused; commit %s before running it", c.snap.ForumID, ErrInvalidState, CommitResumed)
-	case StatusRunning:
+	case StatusDraft, StatusRunning: // a draft never gets a controller
 	}
 	if c.interrupted() {
 		return c.settle()
@@ -222,7 +222,7 @@ func (c *Controller) RequestPause() error {
 			return errSkip
 		case StatusCancelling:
 			return invalidState("forum %s is being cancelled and cannot be paused", id)
-		case StatusQueued, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
+		case StatusDraft, StatusQueued, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		}
 		return invalidState("forum %s is %s and cannot be paused", id, st.Status)
 	}, &Commit{Kind: CommitPauseRequested}, func() { c.pause.Store(true) })
@@ -318,7 +318,7 @@ func (c *Controller) settle() (Status, error) {
 			return StatusPaused, nil
 		case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled, StatusPaused:
 			return st, nil
-		case StatusQueued, StatusRunning:
+		case StatusDraft, StatusQueued, StatusRunning:
 			// A flag without its commit cannot happen (both are set under
 			// the commit lock); treat it as a pause request that lost its
 			// record and stop without changing the status.

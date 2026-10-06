@@ -160,9 +160,8 @@ type PreflightEnv struct {
 	// A limit above its ceiling is reported as an issue naming the ceiling
 	// (it is never capped silently).
 	HostLimits Limits
-	// ConfigDir is the directory source `file` paths resolve against: the
-	// configuration file's directory, or the launching agent's workspace
-	// for an inline configuration.
+	// ConfigDir is the directory relative source `file` paths resolve
+	// against: the launching agent's workspace.
 	ConfigDir string
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path; a nil func allows nothing (every file source fails).

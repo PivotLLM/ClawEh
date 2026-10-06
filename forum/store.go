@@ -71,6 +71,7 @@ import (
 // File and directory names.
 const (
 	fileConfig       = "forum.json"
+	fileDraft        = "draft.json"
 	fileSnapshot     = "snapshot.json"
 	fileParticipants = "participants.json"
 	fileState        = "state.json"
@@ -213,8 +214,9 @@ func CreateStore(base, forumID string) (*Store, error) {
 	return &Store{base: base, id: forumID, root: root}, nil
 }
 
-// OpenStore opens an existing forum directory. It fails with ErrNotFound if
-// forumID is not a forum ID or the root or its forum.json is missing, and
+// OpenStore opens an existing forum directory, a draft included. It fails
+// with ErrNotFound if forumID is not a forum ID or the root, or both its
+// forum.json and its draft.json, are missing, and
 // with ErrCorrupt wrapped around the detail if the layout is unusable (the
 // root, forum.json or a required subdirectory has the wrong type or a
 // subdirectory is missing). It does not verify contents; see Verify.
@@ -235,14 +237,19 @@ func OpenStore(base, forumID string) (*Store, error) {
 	case !fi.IsDir():
 		return nil, fmt.Errorf("%w: forum %s: root is not a directory", ErrCorrupt, forumID)
 	}
-	fi, err = os.Lstat(filepath.Join(root, fileConfig))
+	name := fileConfig
+	fi, err = os.Lstat(filepath.Join(root, name))
+	if errors.Is(err, fs.ErrNotExist) {
+		name = fileDraft
+		fi, err = os.Lstat(filepath.Join(root, name))
+	}
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, forumID)
 	case err != nil:
 		return nil, fmt.Errorf("open forum store: %w", err)
 	case !fi.Mode().IsRegular():
-		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, fileConfig)
+		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, name)
 	}
 	for _, d := range []string{dirSources, dirLayers, dirCommits} {
 		fi, err := os.Lstat(filepath.Join(root, d))
@@ -254,10 +261,10 @@ func OpenStore(base, forumID string) (*Store, error) {
 }
 
 // ListForums returns the forum IDs under base: every directory whose name
-// is a UUID and that contains forum.json, sorted. Dot-directories
-// (.locks, .cleanup) are skipped. A missing base is an empty list, not an
-// error. A root without forum.json (a launch that died before writing it)
-// is not a forum and is not listed.
+// is a UUID and that contains forum.json or draft.json, sorted, drafts
+// included. Dot-directories (.locks, .cleanup) are skipped. A missing base
+// is an empty list, not an error. A root with neither file (a draft that
+// died before writing it) is not a forum and is not listed.
 func ListForums(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -271,14 +278,18 @@ func ListForums(base string) ([]string, error) {
 		if !e.IsDir() || !validForumID(e.Name()) {
 			continue
 		}
-		fi, err := os.Lstat(filepath.Join(base, e.Name(), fileConfig))
-		if err != nil || !fi.Mode().IsRegular() {
-			continue
+		if regularFile(filepath.Join(base, e.Name(), fileConfig)) || regularFile(filepath.Join(base, e.Name(), fileDraft)) {
+			ids = append(ids, e.Name())
 		}
-		ids = append(ids, e.Name())
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// regularFile reports whether p is a regular file (not followed if a link).
+func regularFile(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // ListStaged returns the forum IDs whose roots are staged for removal
@@ -541,6 +552,93 @@ func (s *Store) ReadConfig() ([]byte, error) {
 		return nil, notFound(err)
 	}
 	return data, nil
+}
+
+// WriteDraft writes draft.json, replacing it. Only a draft (a forum with no
+// snapshot.json) has one, until its launch has committed.
+func (s *Store) WriteDraft(d *Draft) error {
+	return s.writeJSON(fileDraft, d, false)
+}
+
+// ReadDraft reads draft.json; ErrNotFound if absent. A draft owned by
+// another agent than the one whose scope the store was opened in is
+// ErrCorrupt: like a snapshot, the directory is not trusted for whose it is.
+func (s *Store) ReadDraft() (*Draft, error) {
+	var d Draft
+	if err := s.readJSON(fileDraft, &d); err != nil {
+		return nil, err
+	}
+	if s.owner != "" && d.Owner != s.owner {
+		return nil, corrupt("%s names owner %q, not %q", fileDraft, d.Owner, s.owner)
+	}
+	return &d, nil
+}
+
+// IsDraft reports whether the forum is a draft: it has draft.json and no
+// snapshot.json (a launch writes the snapshot before it removes the draft).
+func (s *Store) IsDraft() bool {
+	return s.has(fileDraft) && !s.has(fileSnapshot)
+}
+
+// has reports whether the root-relative rel is a regular file.
+func (s *Store) has(rel string) bool {
+	return s.statRegular(rel) == nil
+}
+
+// ClearDraft removes draft.json once the forum has been launched; a missing
+// file is not an error.
+func (s *Store) ClearDraft() error {
+	err := s.inRoot(func(r *os.Root) error {
+		if err := r.Remove(fileDraft); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return syncDirAt(r, ".")
+	})
+	if err != nil {
+		return fmt.Errorf("remove %s: %w", fileDraft, err)
+	}
+	return nil
+}
+
+// ResetToDraft undoes a launch that did not finish: it removes everything
+// under the root but draft.json and recreates the empty subdirectories, so
+// the forum is the draft it was. The caller holds the lock and has deleted
+// the temporary agents.
+func (s *Store) ResetToDraft() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.inRoot(func(r *os.Root) error {
+		d, err := r.Open(".")
+		if err != nil {
+			return err
+		}
+		entries, err := d.ReadDir(-1)
+		if closeErr := d.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.Name() != fileDraft {
+				if err := r.RemoveAll(e.Name()); err != nil {
+					return err
+				}
+			}
+		}
+		for _, dir := range []string{dirSources, dirLayers, dirCommits} {
+			if err := r.Mkdir(dir, dirPerm); err != nil {
+				return err
+			}
+		}
+		return syncDirAt(r, ".")
+	})
+	if err != nil {
+		return fmt.Errorf("reset forum %s to its draft: %w", s.id, err)
+	}
+	s.idx = commitIndex{}
+	s.cfg, s.snap = nil, nil
+	return nil
 }
 
 // WriteSnapshot writes snapshot.json; it fails if the file already exists.

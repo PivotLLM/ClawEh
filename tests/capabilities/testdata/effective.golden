@@ -10,7 +10,7 @@ agent bob
   suites: cogmem=on maestro=off fusion=on forum=on
   native tools: agent_list, agent_message, agent_spawn, agent_status, common_delete, common_get, common_list, common_put, cron_schedule, file_append, file_copy, file_count, file_delete, file_delete_bytes, file_delete_lines, file_edit, file_edit_bytes, file_edit_lines, file_insert_bytes, file_insert_lines, file_list, file_move, file_read_bytes, file_read_lines, file_search_bytes, file_search_lines, file_view_image, file_write, msg_send, msg_send_file, session_clear, session_compact, session_info, session_messages, session_search, session_summary_get, session_summary_list, skill_find, skill_install, time_now, web_fetch, web_search
   fusion tools: (none)
-  forum tools: forum_cancel, forum_delete, forum_launch, forum_models, forum_pause, forum_readme, forum_results, forum_resume, forum_status, forum_validate
+  forum tools: forum_cancel, forum_config_export, forum_config_import, forum_config_new, forum_config_template, forum_config_update, forum_delete, forum_launch, forum_models, forum_pause, forum_readme, forum_results, forum_resume, forum_status, forum_validate
   mcp servers: github=no, simpledoc=yes, wxca=no
   mcp_tools: simpledoc
   deny_tools: (none)

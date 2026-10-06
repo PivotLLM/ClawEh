@@ -19,8 +19,10 @@ import (
 // Status is a forum's lifecycle state (§9).
 type Status string
 
-// Forum states. The last four are terminal.
+// Forum states. The last four are terminal. A draft has not been launched:
+// it has no controller and no state, only a configuration being edited.
 const (
+	StatusDraft      Status = "draft"
 	StatusQueued     Status = "queued"
 	StatusRunning    Status = "running"
 	StatusPausing    Status = "pausing"
@@ -37,7 +39,7 @@ func (s Status) Terminal() bool {
 	switch s {
 	case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		return true
-	case StatusQueued, StatusRunning, StatusPausing, StatusPaused, StatusCancelling:
+	case StatusDraft, StatusQueued, StatusRunning, StatusPausing, StatusPaused, StatusCancelling:
 		return false
 	}
 	return false
@@ -387,15 +389,25 @@ type LayerProgress struct {
 	Outputs   int       `json:"outputs"`
 }
 
+// Draft is draft.json: a forum's configuration while it is being set up,
+// kept as raw JSON (it need not be valid until validate or launch) with the
+// agent that created it.
+type Draft struct {
+	Owner     string          `json:"owner"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	Config    json.RawMessage `json:"config"`
+}
+
 // Summary is one forum's progress as forum_status reports it.
 type Summary struct {
 	ForumID    string          `json:"forum_id"`
 	Name       string          `json:"name,omitempty"`
 	Status     Status          `json:"status"`
 	Reason     EndReason       `json:"reason,omitempty"`
-	LaunchedAt time.Time       `json:"launched_at"`
+	LaunchedAt time.Time       `json:"launched_at,omitzero"`
 	UpdatedAt  time.Time       `json:"updated_at"`
-	Deadline   time.Time       `json:"deadline"`
+	Deadline   time.Time       `json:"deadline,omitzero"`
 	Calls      int             `json:"calls"`
 	MaxCalls   int             `json:"max_calls"`
 	Layers     []LayerProgress `json:"layers"`

@@ -71,8 +71,8 @@ func TestProviderGating(t *testing.T) {
 		SetService(nil)
 	})
 	SetService(svc)
-	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 10 {
-		t.Fatalf("alice (forum on) got %d tools, want 10", len(defs))
+	if defs := GlobalProvider.RegisterTools(deps("alice")); len(defs) != 15 {
+		t.Fatalf("alice (forum on) got %d tools, want 15", len(defs))
 	}
 	if defs := GlobalProvider.RegisterTools(deps("bob")); len(defs) != 0 {
 		t.Fatalf("bob (forum off) got %d tools", len(defs))
@@ -86,8 +86,8 @@ func TestProviderGating(t *testing.T) {
 	}
 }
 
-// ResolveFile and ReadAllowed follow the agent's file permissions and
-// answer only for the agent the host was built for.
+// ReadAllowed follows the agent's file permissions, and the host answers
+// only for the agent it was built for.
 func TestToolHostFiles(t *testing.T) {
 	ws := t.TempDir()
 	cfg := scopeConfig()
@@ -104,12 +104,6 @@ func TestToolHostFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &toolHost{cfg: cfg, agentID: "alice", workspace: ws}
-	if got, err := h.ResolveFile("alice", "files/forum.json"); err != nil || got != inside {
-		t.Errorf("ResolveFile = %q, %v; want %q", got, err, inside)
-	}
-	if _, err := h.ResolveFile("alice", outside); err == nil {
-		t.Error("ResolveFile accepted a file outside the workspace")
-	}
 	if err := h.ReadAllowed("alice", inside); err != nil {
 		t.Errorf("ReadAllowed(inside) = %v", err)
 	}

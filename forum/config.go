@@ -78,9 +78,8 @@ type Source struct {
 	// string; for decode json any JSON value, kept verbatim. nil means
 	// absent.
 	Inline json.RawMessage `json:"inline,omitempty"`
-	// File is a relative path, resolved against the configuration file's
-	// directory, or against the launching agent's workspace for an inline
-	// configuration, and must be readable by the launching agent. It is
+	// File is a path, resolved against the launching agent's workspace when
+	// relative, and must be readable by the launching agent. It is
 	// read once at launch and copied into sources/ (§8), so later edits do
 	// not affect a running forum.
 	File string `json:"file,omitempty"`

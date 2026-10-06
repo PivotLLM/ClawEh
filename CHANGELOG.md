@@ -341,15 +341,26 @@ observe does not need an entry.
   commands appear in Telegram's command menu.
 - **Forums: an agent can run a structured discussion among other agents.**
   A new per-agent switch, `forum` (WebUI Agents page: "Allow forum", off by
-  default, so no existing agent gains anything), gives the agent ten tools:
-  `forum_readme`, `forum_models`, `forum_validate`, `forum_launch`,
-  `forum_status`, `forum_pause`, `forum_resume`, `forum_cancel`,
-  `forum_results` and `forum_delete`. A forum is one JSON configuration: a
+  default, so no existing agent gains anything), gives the agent fifteen
+  tools: `forum_readme`, `forum_models`, `forum_config_new`,
+  `forum_config_template`, `forum_config_import`, `forum_config_update`,
+  `forum_config_export`, `forum_validate`, `forum_launch`, `forum_status`,
+  `forum_pause`, `forum_resume`, `forum_cancel`, `forum_results` and
+  `forum_delete`. A forum is one JSON configuration: a
   brief, sources, and participants that are existing agents, clones of agents,
   or fresh temporary agents on one of the launching agent's models, taking
   turns in ordered layers with optional moderation and JSON Schema checks.
+  The agent sets it up step by step as a draft: `forum_config_new` creates
+  one, `forum_config_template` or `forum_config_import` fills it,
+  `forum_config_update` changes it with a JSON merge patch (RFC 7386),
+  `forum_validate` checks it and `forum_launch` runs it under the same ID.
+  Drafts survive a restart, show as `draft` in `forum_status` and are removed
+  by `forum_delete`; only a draft can be changed. `forum_config_export`
+  returns any forum's configuration, so a finished forum (a book chapter, say)
+  is reused by importing it into a new draft and changing only what differs.
+  Relative source `file` paths resolve against the agent's workspace.
   `forum_readme` returns a one-page guide for the agent and the built-in
-  templates; with `template` it returns that template's configuration to edit:
+  templates; with `template` it returns that template's configuration:
   `writing` (draft, two critiques, revision, final edit) and `council` (three
   models answer, review each other anonymously and rank, a chair decides). A
   layer input with `"anonymous": true` shows that layer's outputs as
