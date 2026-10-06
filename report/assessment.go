@@ -234,7 +234,9 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 		shellText += "; deny patterns " + onOff(ex.EnableDenyPatterns) + "."
 	}
-	shellText += " CLI models with Allow CLI to bypass restrictions have their own shell."
+	if anyCLIBypass(cfg) {
+		shellText += " CLI models with Allow CLI to bypass restrictions have their own shell."
+	}
 	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText)
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
@@ -373,6 +375,17 @@ func certificateExpiryRow(cfg *config.Config, now time.Time) (action bool, item,
 		return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expired on %s (%d days ago).", date, -daysLeft)
 	}
 	return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expires on %s (%d days).", date, daysLeft)
+}
+
+// anyCLIBypass reports whether a CLI provider has Allow CLI to bypass
+// restrictions on, the condition under which a CLI model has its own shell.
+func anyCLIBypass(cfg *config.Config) bool {
+	for i := range cfg.Providers {
+		if p := &cfg.Providers[i]; config.IsCLIProtocol(p.Protocol) && p.BypassRestrictions {
+			return true
+		}
+	}
+	return false
 }
 
 // shellDelegators are the enabled agents without shell_exec whose

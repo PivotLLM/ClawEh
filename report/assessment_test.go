@@ -421,7 +421,8 @@ func TestAssessment_AuditLog(t *testing.T) {
 
 // TestAssessment_ShellDelegation: the Shell access row names the agents whose
 // subagents.allow_agents reaches an agent with shell_exec, and points to the
-// CLI bypass setting, which gives a CLI model its own shell.
+// CLI bypass setting, which gives a CLI model its own shell, only when a CLI
+// provider has it on.
 func TestAssessment_ShellDelegation(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.List[0].Tools = []string{"file_read"} // Alice has no shell_exec
@@ -430,7 +431,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 		t.Errorf("no delegation: shell row = %v", r)
 	}
 	if !strings.Contains(r[2], "Allow CLI to bypass restrictions") {
-		t.Errorf("shell row does not name the CLI bypass setting: %v", r)
+		t.Errorf("bypass on: shell row does not name the CLI bypass setting: %v", r)
 	}
 
 	for _, allow := range [][]string{{"bob"}, {"*"}} {
@@ -439,5 +440,13 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 		if !strings.Contains(r[2], "also via allow_agents: alice;") {
 			t.Errorf("allow_agents %v: shell row = %v", allow, r)
 		}
+	}
+
+	for i := range cfg.Providers {
+		cfg.Providers[i].BypassRestrictions = false
+	}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if strings.Contains(r[2], "bypass") {
+		t.Errorf("bypass off: shell row mentions the CLI bypass setting: %v", r)
 	}
 }
