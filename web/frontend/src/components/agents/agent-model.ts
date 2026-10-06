@@ -36,6 +36,10 @@ export interface AgentEntry {
   mcp_tools?: string[]
   /** Tools the agent may never call, even when tools / mcp_tools admit them. */
   deny_tools?: string[]
+  /** The agent exactly as loaded. A save starts from it, so every key this
+   *  page does not edit (workspace, subagents, memory, compression, …) is
+   *  written back unchanged. Absent for an agent added on this page. */
+  raw?: Record<string, unknown>
 }
 
 export interface MountEntry {
@@ -228,6 +232,7 @@ export function parseAgent(value: unknown): AgentEntry {
   const cbRaw = asRecord(r.message)
   const cbMins = asNumber(cbRaw.window_minutes)
   return {
+    raw: r,
     id: asString(r.id),
     name: asString(r.name) || undefined,
     enabled: enabledRaw === false ? false : true,
@@ -266,6 +271,7 @@ export function parseAgent(value: unknown): AgentEntry {
     global_cron: r.global_cron === true,
     maestro: maestroFromRaw(r.maestro),
     fusion: r.fusion === true,
+    forum: r.forum === true,
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
       const mr = asRecord(m)
@@ -441,4 +447,121 @@ export function applyMaestroEdits(
     rate_limit_period: e.rateLimitPeriod,
     allow_parallel: e.allowParallel ? undefined : false,
   }
+}
+
+// AGENT_PAGE_KEYS are the agents.list keys agentPayload writes from the page's
+// own state. Every other key of the loaded agent passes through untouched, so
+// a key the page does not know about, including one added to AgentConfig
+// later, survives a save. PATCH /api/config replaces agents.list wholesale
+// (arrays are not merged), so anything left out here would be deleted.
+const AGENT_PAGE_KEYS = [
+  "id",
+  "enabled",
+  "name",
+  "default",
+  "models",
+  "skills",
+  "tools",
+  "message",
+  "temperature",
+  "event_retention_days",
+  "retired_retention_days",
+  "summarization_models",
+  "share_common",
+  "global_cron",
+  "maestro",
+  "fusion",
+  "forum",
+  "cogmem",
+  "mcp_tools",
+  "deny_tools",
+  "mounts",
+]
+
+// MAESTRO_PAGE_KEYS are the keys of the maestro block maestroPayload writes;
+// the rest of a loaded block passes through the same way.
+const MAESTRO_PAGE_KEYS = [
+  "enabled",
+  "max_concurrent",
+  "rate_limit_requests",
+  "rate_limit_period",
+  "allow_parallel",
+]
+
+function withoutKeys(
+  r: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> {
+  const out = { ...r }
+  for (const k of keys) delete out[k]
+  return out
+}
+
+/** agentPayload is one agents.list entry as saved: the loaded agent with the
+ *  fields this page edits replaced by their current values. */
+export function agentPayload(a: AgentEntry): Record<string, unknown> {
+  const raw = a.raw ?? {}
+  return {
+    ...withoutKeys(raw, AGENT_PAGE_KEYS),
+    id: a.id,
+    ...(a.enabled === false ? { enabled: false } : {}),
+    ...(a.name ? { name: a.name } : {}),
+    ...(a.default ? { default: true } : {}),
+    ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
+    ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
+    tools: a.tools ?? [],
+    message:
+      a.message && a.message.window_minutes > 0
+        ? {
+            window_minutes: a.message.window_minutes,
+            window_count: a.message.window_count,
+          }
+        : null,
+    ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
+    ...(a.event_retention_days !== undefined
+      ? { event_retention_days: a.event_retention_days }
+      : {}),
+    ...(a.retired_retention_days !== undefined
+      ? { retired_retention_days: a.retired_retention_days }
+      : {}),
+    ...(a.summarization_models && a.summarization_models.length > 0
+      ? { summarization_models: a.summarization_models }
+      : {}),
+    ...(a.share_common === false ? { share_common: false } : {}),
+    ...(a.global_cron ? { global_cron: true } : {}),
+    ...(a.maestro
+      ? {
+          maestro: {
+            ...withoutKeys(asRecord(raw.maestro), MAESTRO_PAGE_KEYS),
+            ...maestroPayload(a.maestro),
+          },
+        }
+      : {}),
+    ...(a.fusion ? { fusion: true } : {}),
+    ...(a.forum ? { forum: true } : {}),
+    ...(a.cogmem === false ? { cogmem: false } : {}),
+    // Always sent (like tools/mounts) so clearing the box persists; the
+    // backend drops an empty slice on save (omitempty).
+    mcp_tools: a.mcp_tools ?? [],
+    // Always sent so clearing the list persists; blank rows (an entry being
+    // typed) are dropped. The backend drops an empty slice on save.
+    deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
+    // Always sent (like tools) so removing all mounts persists; the backend
+    // drops an empty slice on save (omitempty).
+    mounts: (a.mounts ?? [])
+      .filter((m) => m.name.trim() !== "" && m.path.trim() !== "")
+      .map((m) => ({
+        name: m.name.trim(),
+        path: m.path.trim(),
+        ...(m.notify ? { notify: true } : {}),
+        ...(m.writable ? { writable: true } : {}),
+      })),
+  }
+}
+
+/** agentsPayload is the PATCH /api/config body for the agent list. It
+ *  intentionally omits agents.defaults (edited on the Config page): the patch
+ *  is a deep merge, so leaving it out keeps what that page last saved. */
+export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
+  return { agents: { list: (cfg.list ?? []).map(agentPayload) } }
 }

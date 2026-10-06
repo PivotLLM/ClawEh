@@ -17,11 +17,11 @@ import { AgentCard } from "@/components/agents/agent-card"
 import {
   type AgentsConfig,
   type SkillInfo,
+  agentsPayload,
   applyMaestroEdits,
   asString,
   bindingViewsForAgent,
   fetchSkills,
-  maestroPayload,
   parseAgentBindings,
   parseAgentsConfig,
   sortAgentList,
@@ -133,63 +133,6 @@ export function AgentsPage() {
     setAgentsCfg(loaded.agentsCfg)
   }
 
-  // Note: agents.defaults (default model/temperature) and the default-agent
-  // selector live on the Config page now, so this payload intentionally omits
-  // `defaults`. The backend patch is a deep merge, so leaving it out preserves
-  // whatever the Config page last saved.
-  const buildPayload = (cfg: AgentsConfig) => ({
-    agents: {
-      list: (cfg.list ?? []).map((a) => ({
-        id: a.id,
-        ...(a.enabled === false ? { enabled: false } : {}),
-        ...(a.name ? { name: a.name } : {}),
-        ...(a.default ? { default: true } : {}),
-        ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
-        ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
-        tools: a.tools ?? [],
-        message:
-          a.message && a.message.window_minutes > 0
-            ? {
-                window_minutes: a.message.window_minutes,
-                window_count: a.message.window_count,
-              }
-            : null,
-        ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
-        ...(a.event_retention_days !== undefined
-          ? { event_retention_days: a.event_retention_days }
-          : {}),
-        ...(a.retired_retention_days !== undefined
-          ? { retired_retention_days: a.retired_retention_days }
-          : {}),
-        ...(a.summarization_models && a.summarization_models.length > 0
-          ? { summarization_models: a.summarization_models }
-          : {}),
-        ...(a.share_common === false ? { share_common: false } : {}),
-        ...(a.global_cron ? { global_cron: true } : {}),
-        ...(a.maestro ? { maestro: maestroPayload(a.maestro) } : {}),
-        ...(a.fusion ? { fusion: true } : {}),
-        ...(a.forum ? { forum: true } : {}),
-        ...(a.cogmem === false ? { cogmem: false } : {}),
-        // Always sent (like tools/mounts) so clearing the box persists; the
-        // backend drops an empty slice on save (omitempty).
-        mcp_tools: a.mcp_tools ?? [],
-        // Always sent so clearing the list persists; blank rows (an entry
-        // being typed) are dropped. The backend drops an empty slice on save.
-        deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
-        // Always sent (like tools) so removing all mounts persists; the backend
-        // drops an empty slice on save (omitempty).
-        mounts: (a.mounts ?? [])
-          .filter((m) => m.name.trim() !== "" && m.path.trim() !== "")
-          .map((m) => ({
-            name: m.name.trim(),
-            path: m.path.trim(),
-            ...(m.notify ? { notify: true } : {}),
-            ...(m.writable ? { writable: true } : {}),
-          })),
-      })),
-    },
-  })
-
   const handleSaveAgent = async (index: number, edits: AgentEdits) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
@@ -219,7 +162,7 @@ export function AgentsPage() {
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       void refreshHumanProblems()
       // In-place update: no reload, so no scroll jump. The hook suppresses its
       // reseed around this write, so the saved snapshot cannot overwrite a
@@ -243,7 +186,7 @@ export function AgentsPage() {
     const list = (agentsCfg.list ?? []).filter((_, i) => i !== index)
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       toast.success("Deleted")
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
@@ -267,7 +210,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`toggle-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
       setAgentsCfg(next)
@@ -285,7 +228,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`globalcron-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
@@ -307,7 +250,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`maestro-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
@@ -323,7 +266,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`fusion-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
@@ -339,7 +282,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`forum-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
@@ -355,7 +298,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`cogmem-${index}`)
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
@@ -419,7 +362,7 @@ export function AgentsPage() {
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving("add")
     try {
-      await patchAppConfig(buildPayload(next))
+      await patchAppConfig(agentsPayload(next))
       toast.success("Agent added")
       setAddingId("")
       setAddingName("")

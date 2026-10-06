@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  agentsPayload,
   applyMaestroEdits,
   maestroEditsFromAgent,
   maestroFromRaw,
@@ -9,6 +10,7 @@ import {
   fusionAccessView,
   mcpAccessEntries,
   mcpAccessView,
+  parseAgentsConfig,
   toggleAccessEntry,
 } from "./agent-model"
 
@@ -206,5 +208,185 @@ describe("cli bypass warnings", () => {
   it("is quiet for unknown models, HTTP providers and missing data", () => {
     expect(cliBypassWarnings(["Nope"], [], models, providers, clis)).toEqual([])
     expect(cliBypassWarnings(["Claude CLI Opus"], [], undefined, undefined, [])).toEqual([])
+  })
+})
+
+describe("agentsPayload", () => {
+  // Keys the Agents page has no control for. PATCH /api/config replaces
+  // agents.list wholesale, so each of them must come back in the payload.
+  const unedited = (id: string) => ({
+    workspace: `/srv/${id}`,
+    subagents: { allow_agents: ["alice", "bob"], models: ["fast"] },
+    memory: { enabled: true, prompt_budget_tokens: 900 },
+    compression: { min_percent: 40 },
+    context_eviction: { keep_turns: 3 },
+    archive_message_count: 500,
+    archive_days: 30,
+    summary_max_count: 7,
+    summary_retention_days: 90,
+    archive_content_max_bytes: 4096,
+    a_key_added_later: { nested: [1, 2] },
+  })
+  const loaded = {
+    agents: {
+      defaults: { models: ["fast"] },
+      list: [
+        {
+          id: "alice",
+          name: "Alice",
+          models: ["fast", "slow"],
+          tools: ["file_read"],
+          maestro: { enabled: true, max_concurrent: 2, a_runner_key: 9 },
+          ...unedited("alice"),
+        },
+        { id: "bob", name: "Bob", tools: ["*"], ...unedited("bob") },
+      ],
+    },
+  }
+
+  it("keeps every field the page does not edit, for every agent", () => {
+    const cfg = parseAgentsConfig(loaded)
+    // An edit to Alice, as handleSaveAgent applies it: the entry is spread
+    // and only the edited fields are replaced.
+    const list = (cfg.list ?? []).map((a) =>
+      a.id === "alice"
+        ? {
+            ...a,
+            models: undefined,
+            tools: ["file_read", "file_write"],
+            maestro: { ...a.maestro!, max_concurrent: 4 },
+          }
+        : a,
+    )
+    const out = agentsPayload({ ...cfg, list }) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    const byId = Object.fromEntries(out.agents.list.map((a) => [a.id, a]))
+
+    for (const id of ["alice", "bob"]) {
+      expect(byId[id]).toMatchObject(unedited(id))
+    }
+    expect(byId.alice.subagents).toEqual({
+      allow_agents: ["alice", "bob"],
+      models: ["fast"],
+    })
+    expect(byId.bob.workspace).toBe("/srv/bob")
+
+    // The edits themselves land, and a cleared field is removed rather than
+    // resurrected from the loaded copy.
+    expect(byId.alice.tools).toEqual(["file_read", "file_write"])
+    expect(byId.alice).not.toHaveProperty("models")
+    expect(byId.alice.maestro).toEqual({
+      enabled: true,
+      max_concurrent: 4,
+      a_runner_key: 9,
+    })
+    expect(byId.bob.tools).toEqual(["*"])
+    expect(byId.bob).not.toHaveProperty("maestro")
+  })
+
+  it("toggling Allow forum on Alice writes forum and keeps everything else", () => {
+    const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+      // As handleToggleForum applies it: only Alice's forum flag flips.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, forum: !a.forum } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const on = Object.fromEntries(
+      toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
+    )
+    expect(on.alice.forum).toBe(true)
+    expect(on.bob).not.toHaveProperty("forum")
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+      expect(on[id].subagents).toEqual({
+        allow_agents: ["alice", "bob"],
+        models: ["fast"],
+      })
+      expect(on[id].workspace).toBe(`/srv/${id}`)
+    }
+    expect(on.alice.models).toEqual(["fast", "slow"])
+    expect(on.alice.maestro).toEqual({
+      enabled: true,
+      max_concurrent: 2,
+      a_runner_key: 9,
+    })
+
+    // Loaded with forum on, the switch reads it and turning it off removes it.
+    const withForum = structuredClone(loaded)
+    Object.assign(withForum.agents.list[0], { forum: true })
+    const cfgOn = parseAgentsConfig(withForum)
+    expect(cfgOn.list?.[0].forum).toBe(true)
+    const off = Object.fromEntries(toggle(cfgOn).map((a) => [a.id, a]))
+    expect(off.alice).not.toHaveProperty("forum")
+    expect(off.alice).toMatchObject(unedited("alice"))
+    expect(off.bob).toMatchObject(unedited("bob"))
+
+    // A save that does not touch forum keeps it on.
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].forum).toBe(true)
+  })
+
+  it("keeps a human agent's hidden settings on save", () => {
+    // The card hides skills, tools, summarization and cogmem for a human
+    // agent; a save of what it does show must not lose them.
+    const hidden = {
+      skills: ["triage"],
+      tools: ["file_read"],
+      mcp_tools: ["simpledoc"],
+      deny_tools: ["shell_exec"],
+      summarization_models: ["fast"],
+      cogmem: false,
+    }
+    const cfg = parseAgentsConfig({
+      agents: {
+        list: [
+          {
+            id: "bob",
+            name: "Bob",
+            models: ["human"],
+            ...hidden,
+            ...unedited("bob"),
+          },
+        ],
+      },
+    })
+    const list = (cfg.list ?? []).map((a) => ({
+      ...a,
+      message: { window_minutes: 5, window_count: 3 },
+    }))
+    const out = agentsPayload({ ...cfg, list }) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(out.agents.list[0]).toMatchObject({
+      ...hidden,
+      ...unedited("bob"),
+      models: ["human"],
+      message: { window_minutes: 5, window_count: 3 },
+    })
+  })
+
+  it("writes an agent added on the page from its edited fields only", () => {
+    const out = agentsPayload({
+      defaults: {},
+      list: [{ id: "bob", name: "Bob", tools: [] }],
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(out.agents.list).toEqual([
+      {
+        id: "bob",
+        name: "Bob",
+        tools: [],
+        message: null,
+        mcp_tools: [],
+        deny_tools: [],
+        mounts: [],
+      },
+    ])
+    expect(out).not.toHaveProperty("agents.defaults")
   })
 })
