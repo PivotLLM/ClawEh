@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -329,9 +330,16 @@ func snapshotMemory(src, dst Spec) {
 			map[string]any{"agent": dst.Label(), "error": err.Error()})
 		return
 	}
-	if err := cogmemstore.Snapshot(context.Background(), from, cogmemstore.DBPath(dir)); err != nil {
+	to := cogmemstore.DBPath(dir)
+	if err := cogmemstore.Snapshot(context.Background(), from, to); err != nil {
 		logger.WarnCF("agent", "clone memory snapshot failed",
 			map[string]any{"agent": dst.Label(), "error": err.Error()})
+		return
+	}
+	// VACUUM INTO writes the copy with the umask default.
+	if err := perms.EnsurePrivateFile(to); err != nil {
+		logger.WarnCF("agent", "clone memory snapshot could not be made private",
+			map[string]any{"agent": dst.Label(), "path": to, "error": err.Error()})
 	}
 }
 

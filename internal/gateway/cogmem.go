@@ -33,6 +33,9 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 		if !ok || inst == nil || inst.Config == nil || !inst.Config.CognitiveMemoryEnabled() {
 			return nil, fmt.Errorf("cogmem: agent %q not cognitive", j.ID)
 		}
+		if err := cogmemhost.EnsurePrivate(j.Dir); err != nil {
+			return nil, fmt.Errorf("cogmem: prepare store: %w", err)
+		}
 		st, err := store.Open(store.DBPath(j.Dir))
 		if err != nil {
 			return nil, fmt.Errorf("cogmem: open store: %w", err)

@@ -68,6 +68,24 @@ var sensitiveFiles = []string{
 	"agents/bob/API_TOKEN",
 }
 
+// walkedDirs are the fixture's directories the walk tightens: every one it
+// creates except the skipped media/ and logs/ trees.
+var walkedDirs = []string{
+	"internal",
+	"internal/nested",
+	"tokens",
+	"tokens/nested",
+	"tls",
+	"agents",
+	"agents/alice",
+	"agents/alice/sessions",
+	"agents/alice/workspace",
+	"agents/bob",
+}
+
+// skippedDirs are the fixture's directories inside skipped trees, left alone.
+var skippedDirs = []string{"media", "logs", "agents/alice/logs", "agents/alice/workspace/media"}
+
 var harmlessFiles = []string{
 	"media/attachment.db",    // media tree is skipped
 	"logs/token.log",         // logs tree is skipped
@@ -121,12 +139,22 @@ func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
 			t.Errorf("%s mode = %04o, want untouched 0644", rel, got)
 		}
 	}
+	for _, rel := range walkedDirs {
+		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o700 {
+			t.Errorf("dir %s mode = %04o, want 0700", rel, got)
+		}
+	}
+	for _, rel := range skippedDirs {
+		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o755 {
+			t.Errorf("skipped dir %s mode = %04o, want untouched 0755", rel, got)
+		}
+	}
 	// The symlink's target is harmless and must not have been chmod'ed via the link.
 	if got := mode(t, filepath.Join(dir, "agents/alice/notes.md")); got != 0o644 {
 		t.Errorf("symlink target mode = %04o, want 0644: the walk followed link.db", got)
 	}
 
-	wantLogged := len(sensitiveFiles) + 1 // files plus the directory
+	wantLogged := len(sensitiveFiles) + len(walkedDirs) + 1 // files, subdirectories and the data directory
 	if len(rec.msgs) != wantLogged {
 		t.Errorf("logged %d changes, want %d:\n%s", len(rec.msgs), wantLogged, strings.Join(rec.msgs, "\n"))
 	}
@@ -193,9 +221,9 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 		got[f.Path] = f
 	}
 
-	want := make([]string, 0, 2+len(sensitiveFiles))
+	want := make([]string, 0, 2+len(sensitiveFiles)+len(walkedDirs))
 	want = append(want, dir, config)
-	for _, rel := range sensitiveFiles {
+	for _, rel := range append(append([]string{}, sensitiveFiles...), walkedDirs...) {
 		want = append(want, filepath.Join(dir, filepath.FromSlash(rel)))
 	}
 	for _, p := range want {
@@ -219,6 +247,51 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 	}
 	if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
 		t.Errorf("Check changed gateway.db to %04o", got)
+	}
+	if got := mode(t, filepath.Join(dir, "agents")); got != 0o755 {
+		t.Errorf("Check changed agents/ to %04o", got)
+	}
+}
+
+func TestEnsurePrivateDir(t *testing.T) {
+	root := t.TempDir()
+
+	fresh := filepath.Join(root, "a", "cogmem")
+	if err := EnsurePrivateDir(fresh); err != nil {
+		t.Fatalf("EnsurePrivateDir(new): %v", err)
+	}
+	if got := mode(t, fresh); got != 0o700 {
+		t.Errorf("new dir mode = %04o, want 0700", got)
+	}
+
+	loose := filepath.Join(root, "loose")
+	if err := os.Mkdir(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateDir(loose); err != nil {
+		t.Fatalf("EnsurePrivateDir(loose): %v", err)
+	}
+	if got := mode(t, loose); got != 0o700 {
+		t.Errorf("loose dir mode = %04o, want 0700", got)
+	}
+
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(loose, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateDir(link); err == nil {
+		t.Error("EnsurePrivateDir accepted a symbolic link")
+	}
+
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateDir(file); err == nil {
+		t.Error("EnsurePrivateDir accepted a regular file")
 	}
 }
 

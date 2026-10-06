@@ -51,7 +51,7 @@ var skipDirs = map[string]bool{"media": true, "logs": true}
 // missing and tightens it to 0700 if it is looser; refuses (returns an error
 // the caller should treat as fatal) when configPath grants any group or other
 // access, naming the chmod that fixes it; and clears group/other bits on every
-// secret-bearing file under dataDir (see isSensitive). Symlinks are never
+// directory and every secret-bearing file under dataDir (see isSensitive). Symlinks are never
 // followed or changed, and the media/ and logs/ trees are not entered. Every
 // change and every failure to change is reported through log, which may be
 // nil. On Windows it does nothing.
@@ -149,6 +149,35 @@ func EnsurePrivateFile(path string) error {
 	return nil
 }
 
+// EnsurePrivateDir creates path (and any missing parents) 0700 when it does
+// not exist and clears group/other bits on it when it does, so a store opened
+// inside it next is private from the start. A symbolic link is refused. On
+// Windows it does nothing.
+func EnsurePrivateDir(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("perms: create %s: %w", path, err)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("perms: %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("perms: %s is a symbolic link", path)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("perms: %s is not a directory", path)
+	}
+	if mode := fi.Mode().Perm(); mode&groupOther != 0 {
+		if err := os.Chmod(path, mode&^groupOther); err != nil {
+			return fmt.Errorf("perms: %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // tightenOpen clears group/other bits on the open regular file f, acting on
 // the descriptor so no path is resolved again.
 func tightenOpen(f *os.File) error {
@@ -229,8 +258,9 @@ func loose(path string) (Finding, bool, error) {
 	return Finding{Path: path, Mode: mode, Want: mode &^ groupOther}, true, nil
 }
 
-// walk visits every regular file under dataDir, calling found for each
-// sensitive one whose mode grants group/other access. It reports whether it
+// walk visits every directory and regular file under dataDir, calling found
+// for each directory, and each sensitive file, whose mode grants group/other
+// access. It reports whether it
 // stopped at walkLimit. Unreadable subtrees are skipped, not fatal.
 func walk(dataDir string, found func(Finding)) (bool, error) {
 	dataDir = filepath.Clean(dataDir)
@@ -262,6 +292,14 @@ func walk(dataDir string, found func(Finding)) (bool, error) {
 		if d.IsDir() {
 			if skipDirs[d.Name()] {
 				return fs.SkipDir
+			}
+			// Every directory ClawEh creates under the data directory is
+			// owner-only, so a looser one (made before that rule, or by a
+			// library with its own default) is tightened like a secret file.
+			if info, infoErr := d.Info(); infoErr == nil {
+				if mode := info.Mode().Perm(); mode&groupOther != 0 {
+					found(Finding{Path: path, Mode: mode, Want: mode &^ groupOther})
+				}
 			}
 			return nil
 		}

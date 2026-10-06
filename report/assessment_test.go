@@ -5,6 +5,7 @@ package report
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,8 +220,14 @@ func TestAssessment_Marks(t *testing.T) {
 // first offender with its mode.
 func TestAssessment_DataDirPermissions(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	// t.TempDir follows the umask; the gateway would have made it 0700.
-	if err := os.Chmod(env.DataDir, 0o700); err != nil {
+	// t.TempDir and the fixture's folders follow the umask; the gateway would
+	// have made every directory under CLAW_HOME, and CLAW_HOME itself, 0700.
+	if err := filepath.WalkDir(env.DataDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		return os.Chmod(p, 0o700)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	s := collectAssessment(t.Context(), cfg, env)

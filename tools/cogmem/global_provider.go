@@ -22,6 +22,7 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -89,5 +90,25 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}
 		}
 	}
-	return cogmemtools.Definitions(host)
+	defs := cogmemtools.Definitions(host)
+	if host.Dir == "" {
+		return defs
+	}
+	// The module's handlers create the store with the umask default; make the
+	// directory and database owner-only before each one runs.
+	for i := range defs {
+		inner := defs[i].Handler
+		if inner == nil {
+			continue
+		}
+		dir := host.Dir
+		defs[i].Handler = func(call *global.ToolCall) (*global.Result, error) {
+			if err := cogmemhost.EnsurePrivate(dir); err != nil {
+				logger.WarnCF("cogmem", "Failed to create the memory store privately",
+					map[string]any{"path": dir, "error": err.Error()})
+			}
+			return inner(call)
+		}
+	}
+	return defs
 }

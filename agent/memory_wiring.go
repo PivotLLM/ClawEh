@@ -34,11 +34,18 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 
 	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
 	perMessageChars := mem.Consolidation.PerMessageChars
+	dir := cogmemhost.Dir(agent.StateDir)
+	// Private before the module opens it, which would create both 0755/0644.
+	// Best-effort: the store still opens, and startup tightens it later.
+	if err := cogmemhost.EnsurePrivate(dir); err != nil {
+		logger.WarnCF("cogmem", "Failed to create the memory store privately",
+			map[string]any{"agent": agent.Label(), "path": dir, "error": err.Error()})
+	}
 	// One memory per agent, in its state directory. A sub-agent clone's is a
 	// snapshot of its source's, ephemeral: recalled from, never observed into.
 	return cogmem.NewSession(cogmem.SessionOptions{
 		ID:        agent.ID,
-		Dir:       cogmemhost.Dir(agent.StateDir),
+		Dir:       dir,
 		Workspace: agent.Workspace,
 		Ephemeral: agent.Spec.Ephemeral,
 		Settings:  cogmemhost.Settings(mem),

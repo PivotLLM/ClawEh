@@ -1061,12 +1061,15 @@ observe does not need an entry.
 - **Each config warning is logged once at startup.** The configuration was
   read twice when the service started, so every "unknown config key" (and
   other load-time) warning appeared twice in the log.
-- **New conversation archives and the alerts log are private from the
-  start.** An agent's new `sessions/*.archive.db` (with its `-wal` and `-shm`
-  files) and `logs/alerts.log` were created readable by other users (0644) and
-  tightened to 0600 only at the next start, so Check Up flagged them in
-  between. They are now created 0600, and a `sessions/` folder ClawEh creates
-  is 0700.
+- **New conversation archives, cognitive memory and the alerts log are
+  private from the start.** An agent's new `sessions/*.archive.db` and
+  `cogmem/cogmem.db` (each with its `-wal` and `-shm` files) and
+  `logs/alerts.log` were created readable by other users (0644) and tightened
+  to 0600 only at the next start, so Check Up flagged them in between. They
+  are now created 0600, and the `sessions/` and `cogmem/` folders ClawEh
+  creates are 0700. Startup now also tightens every folder under `CLAW_HOME`
+  (such as `agents/`, an agent's folder, `sessions/` and `cogmem/`) to 0700;
+  before, it tightened only files, and Check Up now lists a loose folder too.
 
 - **Saving on the Agents page no longer erases agent settings it does not
   show.** Any change on that page (a tool, a model, a toggle, adding or
