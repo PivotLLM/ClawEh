@@ -531,6 +531,22 @@ type svcEnv struct {
 	stuck     *svcStuck
 }
 
+// ref is how messages name forum id: Ref with the name in its current
+// configuration, or the ID once the forum is gone.
+func (e *svcEnv) ref(id string) string {
+	e.t.Helper()
+	raw, err := e.svc.ExportConfig(e.t.Context(), e.scope, id)
+	if err != nil {
+		return id
+	}
+	return Ref(configName(raw), id)
+}
+
+// svcLaunched is forum_launch's reply for run n of the forum named ref.
+func svcLaunched(ref string, n int) string {
+	return fmt.Sprintf("Forum %s launched (run %d). You will be notified when it finishes; end your turn instead of checking status.", ref, n)
+}
+
 // svcStuck records Host.OnStuck calls.
 type svcStuck struct {
 	mu    sync.Mutex

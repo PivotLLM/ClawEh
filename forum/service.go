@@ -285,7 +285,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 //
 //  1. Serialise with the forum's other control operations and Lock the
 //     forum (ErrLocked when another process has it). A running forum is
-//     refused (errRunning). Runs whose launch did not finish are undone
+//     refused (errBusy). Runs whose launch did not finish are undone
 //     first (undoUnstarted).
 //  2. check (Decode, ValidateStatic, Preflight) the configuration.
 //  3. CreateRun; write the run's forum.json (the configuration, indented).
@@ -313,7 +313,7 @@ func (s *Service) Launch(ctx context.Context, id string, opts LaunchOptions) (in
 		return 0, err
 	}
 	if r != nil {
-		return 0, errRunning(id)
+		return 0, errBusy(s.ref(opts.Scope, id), r.ctrl.State().Status)
 	}
 	store, err := s.open(opts.Scope, id)
 	if err != nil {
@@ -352,7 +352,7 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 		case loadErr != nil:
 			return 0, loadErr
 		case busy(st.Status):
-			return 0, errRunning(store.ID())
+			return 0, errBusy(storeRef(store), st.Status)
 		default:
 			prevPaused = st.Status == StatusPaused
 		}
@@ -590,7 +590,7 @@ func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*S
 		return &Summary{ForumID: id, Name: forumLabel(configName(raw), id), Status: StatusNew, UpdatedAt: mod, Layers: []LayerProgress{}}, nil
 	}
 	if !slices.Contains(runs, run) {
-		return nil, errNoRun(id, run)
+		return nil, errNoRun(Ref(configName(raw), id), run)
 	}
 	var sum *Summary
 	if r, ok := s.running(scope, id); ok && r.store.RunNumber() == run {
@@ -667,7 +667,7 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 		case StatusPausing, StatusPaused:
 			return nil
 		case StatusNew, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
-			return refusePause(id, st)
+			return refusePause(s.ref(scope, id), st)
 		}
 	}
 	store, _, st, err := s.takeOver(scope, id)
@@ -689,14 +689,14 @@ func (s *Service) Pause(ctx context.Context, scope Scope, id string) error {
 	case StatusNew, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 	}
 	store.Unlock()
-	return refusePause(id, st.Status)
+	return refusePause(storeRef(store), st.Status)
 }
 
-func refusePause(id string, st Status) error {
+func refusePause(ref string, st Status) error {
 	if st == StatusCancelling {
-		return invalidState("forum %s is being cancelled and cannot be paused", id)
+		return invalidState("forum %s is being cancelled and cannot be paused", ref)
 	}
-	return invalidState("forum %s is %s and cannot be paused", id, st)
+	return invalidState("forum %s is %s and cannot be paused", ref, st)
 }
 
 // Resume restarts a forum's paused latest run, or a queued, running or
@@ -720,12 +720,12 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 		case StatusRunning, StatusQueued:
 			return nil
 		case StatusPausing:
-			return invalidState("forum %s is still pausing; resume it once it is paused", id)
+			return invalidState("forum %s is still pausing; resume it once it is paused", s.ref(scope, id))
 		case StatusNew, StatusPaused, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
-			return refuseResume(id, st)
+			return refuseResume(s.ref(scope, id), st)
 		}
 	}
-	store, snap, st, err := s.takeOver(scope, id)
+	store, _, st, err := s.takeOver(scope, id)
 	if err != nil {
 		return err
 	}
@@ -737,17 +737,17 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 		}
 		if changed {
 			store.Unlock()
-			return invalidState("forum %s: the config changed; launch to start a new run", snap.Label())
+			return invalidState("forum %s: the config changed; launch to start a new run", storeRef(store))
 		}
 	}
 	return s.resume(ctx, store, st)
 }
 
-func refuseResume(id string, st Status) error {
+func refuseResume(ref string, st Status) error {
 	if st == StatusCancelling {
-		return invalidState("forum %s is being cancelled and cannot be resumed", id)
+		return invalidState("forum %s is being cancelled and cannot be resumed", ref)
 	}
-	return invalidState("forum %s is %s and cannot be resumed", id, st)
+	return invalidState("forum %s is %s and cannot be resumed", ref, st)
 }
 
 // resume is Resume after the store is locked and its state loaded. It
@@ -762,7 +762,7 @@ func (s *Service) resume(ctx context.Context, store *Store, st *State) error {
 	case StatusRunning:
 	case StatusNew, StatusCancelling, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		store.Unlock()
-		return refuseResume(store.ID(), st.Status)
+		return refuseResume(storeRef(store), st.Status)
 	}
 	if commit != "" {
 		if err := store.AppendCommit(st.Seq+1, &Commit{Kind: commit}); err != nil {
@@ -793,7 +793,7 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 		case StatusCancelling, StatusCancelled:
 			return nil
 		case StatusNew, StatusCompleted, StatusIncomplete, StatusFailed:
-			return invalidState("forum %s is already %s", id, st)
+			return invalidState("forum %s is already %s", s.ref(scope, id), st)
 		case StatusQueued, StatusRunning, StatusPausing, StatusPaused:
 			reqErr := r.ctrl.RequestCancel()
 			if !errors.Is(reqErr, errRunEnded) {
@@ -814,7 +814,7 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 		return nil
 	case StatusNew, StatusCompleted, StatusIncomplete, StatusFailed:
 		store.Unlock()
-		return invalidState("forum %s is already %s", id, st.Status)
+		return invalidState("forum %s is already %s", storeRef(store), st.Status)
 	case StatusCancelling:
 		return s.openAndStart(ctx, store, nil) // the controller completes the cancel
 	case StatusQueued, StatusRunning, StatusPausing, StatusPaused:
@@ -844,11 +844,11 @@ func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*
 	}
 	switch {
 	case len(runs) == 0:
-		return nil, errNotLaunched(id)
+		return nil, errNotLaunched(storeRef(store))
 	case run == 0:
 		run = runs[len(runs)-1]
 	case !slices.Contains(runs, run):
-		return nil, errNoRun(id, run)
+		return nil, errNoRun(storeRef(store), run)
 	}
 	rs := store.Run(run)
 	// The run's own records are checked like the latest run's (open):
@@ -885,7 +885,7 @@ func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*
 // another holder has it), rechecks the latest run's status, deletes the
 // temporary agents of every run (deleteTempAgents) and then the directory
 // (Store.Remove). A forum whose records are damaged can be deleted too.
-// A running forum is refused (errRunning); a forum whose agents could not
+// A running forum is refused (errBusy); a forum whose agents could not
 // all be deleted is kept and the error returned, so a retry finishes the
 // job. Deleting a forum ID that no longer exists succeeds.
 func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
@@ -895,7 +895,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 		return err
 	}
 	if r != nil {
-		return errRunning(id)
+		return errBusy(s.ref(scope, id), r.ctrl.State().Status)
 	}
 	store, err := s.open(scope, id)
 	switch {
@@ -1196,7 +1196,7 @@ func (s *Service) takeOver(scope Scope, id string) (*Store, *Snapshot, *State, e
 	}
 	n, err := latestRun(store)
 	if err == nil && n == 0 {
-		err = errNotLaunched(id)
+		err = errNotLaunched(storeRef(store))
 	}
 	if err != nil {
 		store.Unlock()
@@ -1362,7 +1362,7 @@ func (s *Service) start(store *Store, ctrl controller) error {
 	}
 	if _, ok := s.runs[id]; ok {
 		s.mu.Unlock()
-		return invalidState("forum %s is already running", id)
+		return invalidState("forum %s is already running", storeRef(store))
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	r := &run{store: store, ctrl: ctrl, cancel: cancel, done: make(chan struct{})}
@@ -1571,6 +1571,7 @@ func setAgentsMarker(store *Store, ids []string) error {
 // attempt).
 type agentsLeftError struct {
 	forumID string
+	ref     string // the forum as messages name it (Ref)
 	agents  []string
 	err     error
 }
@@ -1608,7 +1609,7 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 		return errors.Join(failures, err)
 	}
 	if failures != nil {
-		return &agentsLeftError{forumID: store.ID(), agents: remaining, err: failures}
+		return &agentsLeftError{forumID: store.ID(), ref: storeRef(store), agents: remaining, err: failures}
 	}
 	s.host.Logger.Debugf("forum %s run %d: deleted temporary agents %v", store.ID(), store.RunNumber(), ids)
 	return nil

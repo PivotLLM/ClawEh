@@ -76,7 +76,9 @@ type ToolHost interface {
 //	                                  merge patch to the configuration
 //	config_export(id)              -> the configuration, as JSON
 //	validate(id)                   -> "The configuration is valid." or the issues, one per line
-//	launch(id)                     -> "Forum <id> launched (run <n>)."
+//	launch(id)                     -> "Forum <ref> launched (run <n>). You will be notified
+//	                                  when it finishes; ..." (<ref> is Ref: "<name> (<id>)",
+//	                                  or the ID when the forum has no name)
 //	status(id?, run?)              -> one Summary as JSON (the latest run unless run
 //	                                  is given), or a JSON array of every forum's Summary
 //	pause(id), resume(id), cancel(id) -> a one-line confirmation, for the latest run
@@ -269,7 +271,7 @@ func (t *toolSuite) configTemplate(call *toolspec.ToolCall) (*toolspec.Result, e
 	if err := t.svc.SetConfig(call.Ctx, scope, id, []byte(config)); err != nil {
 		return t.fail(err, id, "config_template")
 	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", id, name)}, nil
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", t.svc.ref(scope, id), name)}, nil
 }
 
 func (t *toolSuite) configImport(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -288,7 +290,7 @@ func (t *toolSuite) configImport(call *toolspec.ToolCall) (*toolspec.Result, err
 	if err != nil {
 		return t.fail(err, id, "config_import")
 	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", id)}, nil
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", t.svc.ref(scope, id))}, nil
 }
 
 func (t *toolSuite) configUpdate(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -307,7 +309,7 @@ func (t *toolSuite) configUpdate(call *toolspec.ToolCall) (*toolspec.Result, err
 	if err != nil {
 		return t.fail(err, id, "config_update")
 	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", id)}, nil
+	return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", t.svc.ref(scope, id))}, nil
 }
 
 func (t *toolSuite) configExport(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -354,7 +356,7 @@ func (t *toolSuite) launch(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if err != nil {
 		return t.fail(err, id, "launch")
 	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched (run %d).", id, run)}, nil
+	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched (run %d). You will be notified when it finishes; end your turn instead of checking status.", t.svc.ref(scope, id), run)}, nil
 }
 
 func (t *toolSuite) status(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -404,7 +406,8 @@ func (t *toolSuite) delete(call *toolspec.ToolCall) (*toolspec.Result, error) {
 }
 
 // control runs one of the ID-only lifecycle operations (named by tool)
-// and confirms it with done (a format taking the ID).
+// and confirms it with done (a format taking the forum's Ref, read before
+// the operation, which may delete it).
 func (t *toolSuite) control(call *toolspec.ToolCall, tool string, op func(*Service, context.Context, Scope, string) error, done string) (*toolspec.Result, error) {
 	scope, err := t.host.Scope(call)
 	if err != nil {
@@ -414,10 +417,11 @@ func (t *toolSuite) control(call *toolspec.ToolCall, tool string, op func(*Servi
 	if err != nil {
 		return t.fail(err, "", tool)
 	}
+	ref := t.svc.ref(scope, id)
 	if err := op(t.svc, call.Ctx, scope, id); err != nil {
 		return t.fail(err, id, tool)
 	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf(done, id)}, nil
+	return &toolspec.Result{ForLLM: fmt.Sprintf(done, ref)}, nil
 }
 
 func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -654,7 +658,7 @@ func (t *toolSuite) message(err error, id, tool string) string {
 			noun = "agents " + strings.Join(left.agents, ", ")
 		}
 		t.svc.host.Logger.Warnf("forum tool %s: %v", tool, err)
-		return fmt.Sprintf("Forum %s was not deleted because its temporary %s could not be deleted; try again later.", left.forumID, noun)
+		return fmt.Sprintf("Forum %s was not deleted because its temporary %s could not be deleted; try again later.", left.ref, noun)
 	case isState:
 		return sentence(state.msg)
 	case errors.Is(err, ErrNotFound):

@@ -87,7 +87,7 @@ func newForumRig(t *testing.T, cfg *config.Config, model providers.LLMProvider) 
 	host := NewForumHost()
 	svc := forum.New(forum.Host{
 		Messenger: host, Agents: host, Notifier: host, Logger: logger.NewLogger("forum"),
-		Schemas: forum.JSONSchemaValidator{}, OnStuck: host.OnStuck,
+		Schemas: forum.JSONSchemaValidator{}, OnStuck: host.OnStuck, Cooldown: host.Cooldown,
 	})
 	toolsforum.SetService(svc)
 	msgBus := bus.NewMessageBus()
@@ -221,7 +221,12 @@ func launchForumWith(t *testing.T, al *AgentLoop, channel, launchConfig string) 
 	}
 	id := strings.TrimSuffix(strings.TrimPrefix(run("forum_new", map[string]any{}), "Forum "), " created.")
 	run("forum_config_import", map[string]any{"id": id, "config": cfgObj})
-	if out := run("forum_launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
+	var name string
+	if n, ok := cfgObj["name"].(string); ok {
+		name = n
+	}
+	want := "Forum " + forum.Ref(name, id) + " launched (run 1). You will be notified when it finishes; end your turn instead of checking status."
+	if out := run("forum_launch", map[string]any{"id": id}); out != want {
 		t.Fatalf("forum_launch = %q", out)
 	}
 	return id
@@ -297,7 +302,7 @@ func TestForum_EndToEnd(t *testing.T) {
 
 	eventually(t, "the temporary participant's deletion", func() bool { return len(r.al.GetRegistry().ListTemp()) == 0 })
 	eventually(t, "Alice's completion notice", func() bool {
-		return model.sawUser("[System: forum] Forum review run 1 finished: completed (id " + id + ").")
+		return model.sawUser("[System: forum] Forum review (" + id + ") run 1 finished: completed.")
 	})
 }
 
@@ -431,6 +436,36 @@ func TestForumHost_Agents(t *testing.T) {
 	}
 	if _, err := h.CreateClone(ctx, forum.CloneSpec{Source: "alice", Owner: "bob"}); err == nil {
 		t.Error("bob cloned alice without allow_agents")
+	}
+}
+
+// TestForumHost_Cooldown: an agent whose every model is in cooldown is
+// reported with the model and the time left; nothing once the model is
+// available again, and nothing for an unknown agent.
+func TestForumHost_Cooldown(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	r := newForumRig(t, forumConfig(t, true, false), &forumModel{})
+	h := r.host
+	if model, left := h.Cooldown("bob"); model != "" || left != 0 {
+		t.Errorf("Cooldown(bob) = %q, %v before any failure; want none", model, left)
+	}
+	bob, ok := r.al.GetRegistry().Get("bob")
+	if !ok || len(bob.Candidates) != 1 {
+		t.Fatalf("bob's candidates: %+v", bob)
+	}
+	c := bob.Candidates[0]
+	tracker := r.al.cooldownTracker()
+	tracker.MarkFailure(c.Provider, c.Model, providers.FailoverRateLimit, 429, 30*time.Second)
+	t.Cleanup(tracker.ClearAll)
+	if model, left := h.Cooldown("bob"); model != "alpha" || left <= 0 || left > 30*time.Second {
+		t.Errorf("Cooldown(bob) = %q, %v in cooldown; want alpha and up to 30s", model, left)
+	}
+	if model, left := h.Cooldown("nobody"); model != "" || left != 0 {
+		t.Errorf("Cooldown(nobody) = %q, %v; want none", model, left)
+	}
+	tracker.Clear(c.Provider, c.Model)
+	if model, left := h.Cooldown("bob"); model != "" || left != 0 {
+		t.Errorf("Cooldown(bob) = %q, %v after the cooldown was cleared; want none", model, left)
 	}
 }
 
@@ -577,7 +612,7 @@ func TestForumHost_NoticeRouting(t *testing.T) {
 				t.Fatalf("ForumFinished: %v", err)
 			}
 			eventually(t, "the notice in Alice's conversation", func() bool {
-				return model.sawUser("[System: forum] Forum review run 1 finished: completed (id f1).")
+				return model.sawUser("[System: forum] Forum review (f1) run 1 finished: completed.")
 			})
 			if tc.wantChat == "" {
 				noOutbound(t, r.bus)

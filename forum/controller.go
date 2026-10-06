@@ -221,10 +221,10 @@ func (c *Controller) RequestPause() error {
 		case StatusPausing, StatusPaused:
 			return errSkip
 		case StatusCancelling:
-			return invalidState("forum %s is being cancelled and cannot be paused", id)
+			return invalidState("forum %s is being cancelled and cannot be paused", Ref(c.snap.Name, id))
 		case StatusNew, StatusQueued, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		}
-		return invalidState("forum %s is %s and cannot be paused", id, st.Status)
+		return invalidState("forum %s is %s and cannot be paused", Ref(c.snap.Name, id), st.Status)
 	}, &Commit{Kind: CommitPauseRequested}, func() { c.pause.Store(true) })
 	if errors.Is(err, errSkip) {
 		return nil
@@ -244,7 +244,7 @@ func (c *Controller) RequestCancel() error {
 		case c.exited:
 			return runEnded(id, "cancelled")
 		case st.Status.Terminal():
-			return invalidState("forum %s is already %s", id, st.Status)
+			return invalidState("forum %s is already %s", Ref(c.snap.Name, id), st.Status)
 		case st.Status == StatusCancelling:
 			return errSkip
 		}

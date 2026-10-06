@@ -265,7 +265,7 @@ func TestCtlRequestRefusalsNameTheForum(t *testing.T) {
 	for name, req := range map[string]func() error{"cancel": c.RequestCancel, "pause": c.RequestPause} {
 		err := req()
 		if !errors.Is(err, ErrInvalidState) || errors.Is(err, errRunEnded) ||
-			!strings.Contains(err.Error(), "forum "+f.s.ID()+" is") || !strings.Contains(err.Error(), "completed") {
+			!strings.Contains(err.Error(), "forum ctl test ("+f.s.ID()+") is") || !strings.Contains(err.Error(), "completed") {
 			t.Errorf("%s of a completed forum: %v", name, err)
 		}
 	}

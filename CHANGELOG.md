@@ -357,21 +357,27 @@ observe does not need an entry.
   it. `forum_config_import`'s `config` and `forum_config_update`'s
   `changes` publish the configuration's full JSON Schema, so the model sees
   every field. The configuration can be changed whenever the forum is not running
-  ("Forum <id> is running; pause or cancel it first." otherwise), and every
+  ("Forum <name> (<id>) is running; pause or cancel it first." otherwise, and
+  "… is still pausing; try again once it is paused." while it pauses), and every
   launch starts a new run from the beginning, numbered 1, 2, 3, … in its own
   folder; earlier runs are kept. `forum_status` and `forum_results` show the
   latest run, or an earlier one with `run`; status also gives the number of
   runs and whether the configuration changed since the latest. `forum_pause`,
   `forum_resume` and `forum_cancel` act on the latest run; a paused run whose
-  configuration has changed is not resumed ("Forum <name>: the config
+  configuration has changed is not resumed ("Forum <name> (<id>): the config
   changed; launch to start a new run."), and launching then cancels it
   without a notice. Formatting, member order and number spelling are not
   changes.
   `forum_delete` removes the forum with all its runs. A book is reviewed
   chapter by chapter by changing the chapter source and launching again;
   `forum_config_export` and `forum_config_import` copy a configuration to
-  another forum. The optional `name` labels the forum in status, results,
-  notices and the transcript heading; without it the ID is used.
+  another forum. The optional `name` labels the forum in status, results
+  and the transcript heading, and replies, refusals and notices call the
+  forum "<name> (<id>)"; without it the ID is used. `forum_launch` answers
+  "Forum <name> (<id>) launched (run <n>). You will be notified when it
+  finishes; end your turn instead of checking status.", and the guide tells
+  the agent to wait for the notice rather than poll, and to run the same
+  forum on new material by changing only its source and launching again.
   `forum_validate` reports every problem at once. The transcript quotes each
   output in a code block and, for a layer read anonymously, shows the letter
   next to the author ("Bob (Response A)"). `forum_results` names the
@@ -381,7 +387,8 @@ observe does not need an entry.
   (workspace, or a mount such as `maestro/`).
   `forum_readme` returns a one-page guide for the agent and the built-in
   templates; with `template` it returns that template's configuration:
-  `writing` (draft, two critiques, revision, final edit) and `council` (three
+  `writing` (draft, two critiques, revision, final edit; the topic is read
+  from a file, so the next topic is one path change) and `council` (three
   models answer, review each other anonymously and rank, a chair decides). A
   layer input with `"anonymous": true` shows that layer's outputs as
   "Response A", "Response B", … without authors and without the reader's own;
@@ -394,7 +401,7 @@ observe does not need an entry.
   kept under `<workspace>/forums/<id>/` (`forum.json`, the configuration, and
   `runs/<n>/` per run, with a live `transcript.md`); temporary participants
   are deleted when the run ends, and the launching agent is told
-  "Forum <name> run <n> finished: <status>" (posted to its default chat if it
+  "Forum <name> (<id>) run <n> finished: <status>." (posted to its default chat if it
   launched the forum from a chat). `forum_results` returns each final output's
   author, layer, round, size and file, with its text inline up to 4,000
   characters (`forum.MaxResultInlineChars`; longer text is cut and names the
@@ -404,7 +411,9 @@ observe does not need an entry.
   agent's file tools can read its `forums/` folder but not write to it. A forum
   tool called with an argument it does not take is refused, naming it
   ("Unknown argument forum_id; use id."). Each participant uses its own tools (a clone its
-  source's). Runs survive a restart and resume where
+  source's). A turn whose participant's models are all in cooldown waits
+  for one to come back, within `call_timeout_seconds`, instead of using up
+  its attempts. Runs survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A run that stops on an error raises
   the "Forum run stopped" alert. Check Up shows a Forum row per agent and lists

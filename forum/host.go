@@ -250,4 +250,11 @@ type Host struct {
 	// is called on the run's goroutine with no lock held and must not
 	// block.
 	OnStuck func(forumID string, run int, origin Origin, err error)
+	// Cooldown, when set, reports whether every model agentID can run on
+	// is in cooldown: the model that is available first and how long until
+	// it is (0 when one can be used now). A turn is held back while it is
+	// positive rather than sent to fail, so a cooldown does not use up the
+	// turn's attempts; the hold counts against the call timeout. It must
+	// not block.
+	Cooldown func(agentID string) (model string, remaining time.Duration)
 }

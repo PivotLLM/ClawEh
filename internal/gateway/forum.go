@@ -29,6 +29,7 @@ func newForumService(host *agent.ForumHost) *forum.Service {
 		Logger:    logger.NewLogger("forum"),
 		Schemas:   forum.JSONSchemaValidator{},
 		OnStuck:   host.OnStuck,
+		Cooldown:  host.Cooldown,
 	})
 	toolsforum.SetService(svc)
 	return svc

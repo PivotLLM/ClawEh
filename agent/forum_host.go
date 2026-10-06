@@ -224,6 +224,33 @@ func (h *ForumHost) Models(_ context.Context, agentID string) ([]forum.ModelInfo
 	return out, nil
 }
 
+// Cooldown is forum.Host.Cooldown: when every model the agent can run on
+// is in cooldown, the one available first and how long until it is; ""
+// and 0 when one can be used now (or the agent is unknown, so the ask
+// reports that itself).
+func (h *ForumHost) Cooldown(agentID string) (string, time.Duration) {
+	al, err := h.bound()
+	if err != nil {
+		return "", 0
+	}
+	tracker := al.cooldownTracker()
+	a, ok := al.GetRegistry().Get(agentID)
+	if !ok || a == nil || tracker == nil || len(a.Candidates) == 0 {
+		return "", 0
+	}
+	model, soonest := "", time.Duration(0)
+	for _, c := range a.Candidates {
+		left := tracker.CooldownRemaining(c.Provider, c.Model)
+		if left <= 0 {
+			return "", 0
+		}
+		if model == "" || left < soonest {
+			model, soonest = candidateName(c), left
+		}
+	}
+	return model, soonest
+}
+
 // modelInfo describes the model name from its configuration.
 func modelInfo(cfg *config.Config, name string) forum.ModelInfo {
 	info := forum.ModelInfo{Name: name}
@@ -342,10 +369,6 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 	if result == nil {
 		return errors.New("no result")
 	}
-	name := result.Name
-	if name == "" {
-		name = result.ForumID
-	}
 	// processSystemMessage keeps a result of the ask channel in the agent's
 	// main conversation and sends it to no chat.
 	channel, chatID := constants.AgentMessageChannel, ""
@@ -361,7 +384,7 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 		Channel:    "system",
 		SenderID:   forumNoticeSender,
 		ChatID:     channel + ":" + chatID,
-		Content:    fmt.Sprintf("Forum %s run %d finished: %s (id %s).", name, result.Run, result.Status, result.ForumID),
+		Content:    fmt.Sprintf("Forum %s run %d finished: %s.", forum.Ref(result.Name, result.ForumID), result.Run, result.Status),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,
 	}); err != nil {

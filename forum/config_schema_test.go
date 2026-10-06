@@ -240,8 +240,8 @@ func TestPatchSchemaAcceptsGuideExamples(t *testing.T) {
 	guideText := guide()
 	for _, example := range []string{
 		`{"sources": {"question": {"inline": "Should we use Go or Python?"}}, "participants": {"chair": {"model": "<a name from forum_models>"}}}`,
-		`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`,
-		`{"sources": {"topic": {"inline": null, "file": "files/chapter1.md"}}}`,
+		`{"sources": {"topic": {"file": "files/topic2.md"}}}`,
+		`{"sources": {"question": {"inline": null, "file": "files/question.md"}}}`,
 	} {
 		if !strings.Contains(guideText, example) {
 			t.Errorf("the guide no longer shows %s", example)

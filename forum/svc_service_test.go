@@ -487,6 +487,31 @@ func TestSvcLiveCancelWinsOverPendingPause(t *testing.T) {
 	e.settled(id, StatusCancelled)
 }
 
+// While a run is pausing, a configuration change and a launch are refused
+// as such, not as "running": the forum is about to be paused.
+func TestSvcEditAndLaunchWhilePausing(t *testing.T) {
+	e := svcSetup(t)
+	id, c := e.launch("")
+	e.running(id)
+	if err := c.commit(&Commit{Kind: CommitPauseRequested}); err != nil {
+		t.Fatal(err)
+	}
+	c.pause.Store(true)
+	want := "forum svc-test (" + id + ") is still pausing; try again once it is paused"
+	for name, op := range map[string]func() error{
+		"update": func() error { return e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"name": "x"}`)) },
+		"launch": func() error { _, err := e.svc.Launch(t.Context(), id, e.opts()); return err },
+	} {
+		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != want {
+			t.Errorf("%s while pausing = %v, want %q", name, err, want)
+		}
+	}
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+}
+
 func TestSvcControlOfInterruptedForums(t *testing.T) {
 	t.Run("pause an interrupted running forum", func(t *testing.T) {
 		e := svcSetup(t)

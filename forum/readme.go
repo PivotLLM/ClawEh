@@ -24,7 +24,7 @@ type template struct {
 // templates lists the built-in templates in the order the guide shows them.
 // Each has a file under readme/templates; a test keeps the two in step.
 var templates = []template{
-	{"writing", "A writer drafts, two critics review structure and style, the writer revises, an editor finalises."},
+	{"writing", "A writer drafts on a topic read from a file, two critics review structure and style, the writer revises, an editor finalises."},
 	{"council", "Three models answer independently, review each other's answers anonymously and rank them; a chair writes the final answer."},
 }
 

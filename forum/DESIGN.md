@@ -70,6 +70,7 @@ tool call ──► (e) Service.Launch(id)
             (e) start → drive → Controller.Run
                  │  per layer: Router.Resolve → WriteLayerInputs (c)(b)
                  │  per turn : composeTurnMessage → perform:
+                 │               awaitModel: hold while Host.Cooldown > 0
                  │               reserve: WriteAttemptRequest → Commit(attempt)
                  │               dispatch: Messenger.Ask → WriteAttemptReply
                  │             storeOutput: validateOutput → WriteOutput → Commit(turn)
@@ -270,10 +271,22 @@ contract beyond the interface signatures:
   on its own goroutine, and `Close` waits for it until its context ends.
 - `Host.OnStuck` (optional) tells the launcher and may raise an operator
   alert; it must not block.
+- `Host.Cooldown` (optional, `ForumHost.Cooldown` over the shared cooldown
+  tracker) reports when every model of a participant is in cooldown, with
+  the model available first and the time left. `perform` then holds the
+  turn before reserving its attempt (`awaitModel`, logged at Info naming the
+  forum, participant and model), polling every `cooldownPoll`, and sends it
+  once a model is available, with the reply's wait cut to what is left of
+  the call timeout counted from the start of the hold. A cooldown that
+  outlasts the call timeout records the attempt as `timeout` without
+  sending it; pause, cancel and the run deadline end the hold as they end
+  any turn. A cooldown therefore never uses up an attempt by itself.
 - `Agents` over the registry, `Host.Schemas = forum.JSONSchemaValidator{}`.
 
 Tool failures are one sentence naming the forum; error chains and paths
-are logged, never shown to the agent.
+are logged, never shown to the agent. Replies, refusals and the notice name
+a forum by `Ref`: "<name> (<id>)", or the ID when it has no name (refusals
+read the name from the current `forum.json`, `storeRef`).
 
 ## 7. Decisions (agreed with the maintainer)
 
@@ -391,7 +404,8 @@ are logged, never shown to the agent.
     results take an optional run number (default the latest); pause,
     resume and cancel act on the latest run; delete removes the forum and
     every run. `name` is optional: `Snapshot.Label()` (the name, or the ID)
-    labels summaries, results, the notice and the transcript heading. A
+    labels summaries, results and the transcript heading; messages use
+    `Ref` ("<name> (<id>)"). A
     forum whose latest run names another launcher is `ErrCorrupt` when
     opened in a scope (`Service.open`), and so is one whose
     `forum-meta.json` (`ForumMeta`: the owner, written once by `forum_new`

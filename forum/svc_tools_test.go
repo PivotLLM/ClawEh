@@ -143,7 +143,7 @@ func (st *svcTools) newForum(cfg string) string {
 func (st *svcTools) launch() string {
 	st.t.Helper()
 	id := st.newForum(svcConfigJSON)
-	if out := st.ok("launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
+	if out := st.ok("launch", map[string]any{"id": id}); out != svcLaunched(st.e.ref(id), 1) {
 		st.t.Fatalf("launch said %q", out)
 	}
 	st.e.ctrls.get(st.t, id)
@@ -300,7 +300,7 @@ func TestSvcToolLaunch(t *testing.T) {
 	if snap.Origin != (Origin{AgentID: "launcher", Channel: "test", ChatID: "chat-1"}) {
 		t.Errorf("origin = %+v", snap.Origin)
 	}
-	if msg := st.refused("launch", map[string]any{"id": id}, "running"); msg != "Forum "+id+" is running; pause or cancel it first." {
+	if msg := st.refused("launch", map[string]any{"id": id}, "running"); msg != "Forum "+st.e.ref(id)+" is running; pause or cancel it first." {
 		t.Errorf("launch a running forum = %q", msg)
 	}
 
@@ -349,7 +349,7 @@ func TestSvcToolConfigTemplate(t *testing.T) {
 	st := svcToolSetup(t)
 	id := st.newForum(svcSimpleJSON)
 	for _, tpl := range templates {
-		if out := st.ok("config_template", map[string]any{"id": id, "name": tpl.name}); out != "Forum "+id+" now has the "+tpl.name+" template's configuration." {
+		if out := st.ok("config_template", map[string]any{"id": id, "name": tpl.name}); out != "Forum "+tpl.name+" ("+id+") now has the "+tpl.name+" template's configuration." {
 			t.Errorf("config_template %s = %q", tpl.name, out)
 		}
 		raw, _ := templateConfig(tpl.name)
@@ -361,7 +361,7 @@ func TestSvcToolConfigTemplate(t *testing.T) {
 	st.refused("config_template", map[string]any{"id": id, "name": 3.0}, "The name argument must be a string.")
 	launched := st.launch()
 	st.refused("config_template", map[string]any{"id": launched, "name": "council"},
-		"Forum "+launched+" is running; pause or cancel it first.")
+		"Forum "+st.e.ref(launched)+" is running; pause or cancel it first.")
 	st.stopped(launched)
 	st.ok("config_template", map[string]any{"id": launched, "name": "council"})
 }
@@ -369,7 +369,7 @@ func TestSvcToolConfigTemplate(t *testing.T) {
 func TestSvcToolConfigImport(t *testing.T) {
 	st := svcToolSetup(t)
 	id := st.newForum("")
-	if out := st.ok("config_import", map[string]any{"id": id, "config": svcConfigMap(t, svcSimpleJSON)}); out != "Forum "+id+" now has the imported configuration." {
+	if out := st.ok("config_import", map[string]any{"id": id, "config": svcConfigMap(t, svcSimpleJSON)}); out != "Forum svc-simple ("+id+") now has the imported configuration." {
 		t.Errorf("config_import = %q", out)
 	}
 	if got := st.export(id); !reflect.DeepEqual(got, svcConfigMap(t, svcSimpleJSON)) {
@@ -397,7 +397,7 @@ func TestSvcToolConfigImport(t *testing.T) {
 	}
 	launched := st.launch()
 	st.refused("config_import", map[string]any{"id": launched, "config": map[string]any{}},
-		"Forum "+launched+" is running; pause or cancel it first.")
+		"Forum "+st.e.ref(launched)+" is running; pause or cancel it first.")
 	st.stopped(launched)
 	st.ok("config_import", map[string]any{"id": launched, "config": map[string]any{}})
 }
@@ -416,7 +416,7 @@ func TestSvcToolConfigUpdate(t *testing.T) {
 			"critic": map[string]any{"model": "large", "name": nil},
 		},
 	}
-	if out := st.ok("config_update", map[string]any{"id": id, "changes": changes}); out != "The configuration of forum "+id+" is updated." {
+	if out := st.ok("config_update", map[string]any{"id": id, "changes": changes}); out != "The configuration of forum "+st.e.ref(id)+" is updated." {
 		t.Errorf("config_update = %q", out)
 	}
 	got := st.export(id)
@@ -444,7 +444,7 @@ func TestSvcToolConfigUpdate(t *testing.T) {
 	st.refused("config_update", map[string]any{"id": id}, "The changes argument is required")
 	launched := st.launch()
 	st.refused("config_update", map[string]any{"id": launched, "changes": map[string]any{"name": "x"}},
-		"Forum "+launched+" is running; pause or cancel it first.")
+		"Forum "+st.e.ref(launched)+" is running; pause or cancel it first.")
 	st.ok("pause", map[string]any{"id": launched})
 	st.e.settled(launched, StatusPaused)
 	st.ok("config_update", map[string]any{"id": launched, "changes": map[string]any{"name": "x"}})
@@ -484,7 +484,7 @@ func TestSvcToolExportImportRoundTrip(t *testing.T) {
 		"sources": map[string]any{"doc": map[string]any{"file": "chapter2.md"}},
 	}})
 	st.ok("validate", map[string]any{"id": second})
-	if out := st.ok("launch", map[string]any{"id": second}); out != "Forum "+second+" launched (run 1)." {
+	if out := st.ok("launch", map[string]any{"id": second}); out != svcLaunched(st.e.ref(second), 1) {
 		t.Fatalf("launch = %q", out)
 	}
 	st.e.ctrls.get(t, second)
@@ -516,7 +516,7 @@ func TestSvcToolOwnership(t *testing.T) {
 			st := svcToolSetup(t)
 			id := st.newForum(svcSimpleJSON)
 			if launched {
-				if out := st.ok("launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
+				if out := st.ok("launch", map[string]any{"id": id}); out != svcLaunched(st.e.ref(id), 1) {
 					t.Fatalf("launch = %q", out)
 				}
 				st.e.ctrls.get(t, id)
@@ -597,16 +597,17 @@ func TestSvcToolLifecycle(t *testing.T) {
 	st := svcToolSetup(t)
 	id := st.launch()
 	args := map[string]any{"id": id}
+	ref := "svc-test (" + id + ")"
 	st.e.running(id)
 
-	if msg := st.refused("delete", args, "pause or cancel it first"); msg != fmt.Sprintf("Forum %s is running; pause or cancel it first.", id) {
+	if msg := st.refused("delete", args, "pause or cancel it first"); msg != fmt.Sprintf("Forum %s is running; pause or cancel it first.", ref) {
 		t.Errorf("delete running = %q", msg)
 	}
-	if out := st.ok("pause", args); out != fmt.Sprintf("Forum %s is pausing; it pauses once its active turns finish.", id) {
+	if out := st.ok("pause", args); out != fmt.Sprintf("Forum %s is pausing; it pauses once its active turns finish.", ref) {
 		t.Errorf("pause = %q", out)
 	}
 	st.e.settled(id, StatusPaused)
-	if out := st.ok("resume", args); out != fmt.Sprintf("Forum %s is running.", id) {
+	if out := st.ok("resume", args); out != fmt.Sprintf("Forum %s is running.", ref) {
 		t.Errorf("resume = %q", out)
 	}
 	st.e.running(id)
@@ -629,15 +630,15 @@ func TestSvcToolLifecycle(t *testing.T) {
 		t.Errorf("results with a transcript = %+v", res)
 	}
 
-	if out := st.ok("cancel", args); out != fmt.Sprintf("Forum %s is being cancelled; its partial work is kept.", id) {
+	if out := st.ok("cancel", args); out != fmt.Sprintf("Forum %s is being cancelled; its partial work is kept.", ref) {
 		t.Errorf("cancel = %q", out)
 	}
 	st.e.settled(id, StatusCancelled)
-	if msg := st.refused("pause", args, "cannot be paused"); msg != fmt.Sprintf("Forum %s is cancelled and cannot be paused.", id) {
+	if msg := st.refused("pause", args, "cannot be paused"); msg != fmt.Sprintf("Forum %s is cancelled and cannot be paused.", ref) {
 		t.Errorf("pause cancelled = %q", msg)
 	}
 	st.refused("resume", args, "cannot be resumed")
-	if out := st.ok("delete", args); out != fmt.Sprintf("Forum %s is deleted.", id) {
+	if out := st.ok("delete", args); out != fmt.Sprintf("Forum %s is deleted.", ref) {
 		t.Errorf("delete = %q", out)
 	}
 	if msg := st.refused("results", args, "was not found"); msg != fmt.Sprintf("Forum %s was not found.", id) {
@@ -651,11 +652,11 @@ func TestSvcToolLifecycle(t *testing.T) {
 
 	fresh := st.newForum(svcSimpleJSON)
 	for _, name := range []string{"pause", "resume", "cancel", "results"} {
-		if msg := st.refused(name, map[string]any{"id": fresh}, "launched"); msg != "Forum "+fresh+" has not been launched." {
+		if msg := st.refused(name, map[string]any{"id": fresh}, "launched"); msg != "Forum svc-simple ("+fresh+") has not been launched." {
 			t.Errorf("%s of a new forum = %q", name, msg)
 		}
 	}
-	if out := st.ok("delete", map[string]any{"id": fresh}); out != "Forum "+fresh+" is deleted." {
+	if out := st.ok("delete", map[string]any{"id": fresh}); out != "Forum svc-simple ("+fresh+") is deleted." {
 		t.Errorf("delete a new forum = %q", out)
 	}
 	if len(st.e.forumIDs()) != 0 {
@@ -701,7 +702,7 @@ func TestSvcToolError(t *testing.T) {
 		{"run ended", runEnded(id, "paused"), id, "pause", "Forum " + id + " has stopped running and cannot be paused by this run.", ""},
 		{"bare state", fmt.Errorf("append commit: %w: resumed expected at seq 3", ErrInvalidState), id, "resume", "Forum " + id + " cannot be resumed in its current state.", "expected at seq 3"},
 		{
-			"agents left", fmt.Errorf("wrapped: %w", &agentsLeftError{forumID: id, agents: []string{agent}, err: errSvcHost}), id, "delete",
+			"agents left", fmt.Errorf("wrapped: %w", &agentsLeftError{forumID: id, ref: id, agents: []string{agent}, err: errSvcHost}), id, "delete",
 			"Forum " + id + " was not deleted because its temporary agent " + agent + " could not be deleted; try again later.", errSvcHost.Error(),
 		},
 		{"closed", errClosed, id, "resume", "Forums cannot be started or changed while the service is shutting down.", ""},
@@ -853,9 +854,9 @@ func TestReadmeTemplatesInStep(t *testing.T) {
 // templateModelPlaceholder matches the model placeholders of the templates.
 var templateModelPlaceholder = regexp.MustCompile(`"<(?:a model|model \d) from forum_models>"`)
 
-// A template passes forum_validate once its model placeholders are filled;
-// unfilled, validation names every participant whose model is a
-// placeholder.
+// A template passes forum_validate once its model and file placeholders
+// are filled; unfilled, validation names every participant whose model is
+// a placeholder and every source whose file is one.
 func TestReadmeTemplatesValidate(t *testing.T) {
 	st := svcToolSetup(t)
 	for _, tpl := range templates {
@@ -884,7 +885,21 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 				}
 				fill[pid] = map[string]any{"model": "default"}
 			}
-			st.ok("config_update", map[string]any{"id": id, "changes": map[string]any{"participants": fill}})
+			sources := map[string]any{}
+			for sid, src := range cfg.Sources {
+				if !strings.HasPrefix(src.File, "<") {
+					continue
+				}
+				if !strings.Contains(msg, "sources."+sid) {
+					t.Errorf("validation does not name source %s:\n%s", sid, msg)
+				}
+				file := sid + ".md"
+				if err := os.WriteFile(filepath.Join(st.e.workspace, file), []byte("Alice and Bob.\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				sources[sid] = map[string]any{"file": file}
+			}
+			st.ok("config_update", map[string]any{"id": id, "changes": map[string]any{"participants": fill, "sources": sources}})
 			if out := st.ok("validate", map[string]any{"id": id}); out != "The configuration is valid." {
 				t.Errorf("filled template: %s", out)
 			}

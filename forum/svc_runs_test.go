@@ -69,7 +69,7 @@ func TestSvcConfigEditOnlyWhenNotRunning(t *testing.T) {
 		"set":    func() error { return e.svc.SetConfig(t.Context(), e.scope, id, []byte(`{}`)) },
 		"update": edit,
 	} {
-		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+id+" is running; pause or cancel it first" {
+		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+e.ref(id)+" is running; pause or cancel it first" {
 			t.Errorf("%s while running = %v", name, err)
 		}
 	}
@@ -147,7 +147,7 @@ func TestSvcTwoRunsKeepSeparateFoldersAndResults(t *testing.T) {
 	if latest, latestErr := e.svc.Results(t.Context(), e.scope, id, 0); latestErr != nil || latest.Run != 2 {
 		t.Errorf("latest results = %+v (%v)", latest, latestErr)
 	}
-	if _, err = e.svc.Results(t.Context(), e.scope, id, 3); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+id+" has no run 3" {
+	if _, err = e.svc.Results(t.Context(), e.scope, id, 3); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+e.ref(id)+" has no run 3" {
 		t.Errorf("results of run 3 = %v", err)
 	}
 	if _, err = e.svc.Status(t.Context(), e.scope, id, 3); !errors.Is(err, ErrInvalidState) {
@@ -257,7 +257,7 @@ func TestSvcResumeAfterAConfigChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = e.svc.Resume(t.Context(), e.scope, id)
-	if !errors.Is(err, ErrInvalidState) || err.Error() != "forum svc-test: the config changed; launch to start a new run" {
+	if !errors.Is(err, ErrInvalidState) || err.Error() != "forum svc-test ("+id+"): the config changed; launch to start a new run" {
 		t.Fatalf("resume after a change = %v", err)
 	}
 	if e.status(id) != StatusPaused {
@@ -406,7 +406,7 @@ func TestSvcLaunchRefusedWhileRunning(t *testing.T) {
 	e := svcSetup(t)
 	id, _ := e.launch(svcSimpleJSON)
 	e.running(id)
-	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+id+" is running; pause or cancel it first" {
+	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+e.ref(id)+" is running; pause or cancel it first" {
 		t.Errorf("launch while running = %v", err)
 	}
 	e.restart()
@@ -622,7 +622,7 @@ func TestSvcToolRunArgument(t *testing.T) {
 	st := svcToolSetup(t)
 	id := st.launch()
 	st.stopped(id)
-	if out := st.ok("launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 2)." {
+	if out := st.ok("launch", map[string]any{"id": id}); out != svcLaunched(st.e.ref(id), 2) {
 		t.Fatalf("second launch = %q", out)
 	}
 	st.e.running(id)
@@ -643,7 +643,7 @@ func TestSvcToolRunArgument(t *testing.T) {
 		res.Run != 1 || res.Transcript != "forums/"+id+"/runs/1/transcript.md" {
 		t.Errorf("results of run 1 = %+v (%v)", res, err)
 	}
-	if msg := st.refused("results", map[string]any{"id": id, "run": 3.0}, "no run"); msg != "Forum "+id+" has no run 3." {
+	if msg := st.refused("results", map[string]any{"id": id, "run": 3.0}, "no run"); msg != "Forum svc-test ("+id+") has no run 3." {
 		t.Errorf("results of run 3 = %q", msg)
 	}
 	for _, bad := range []any{0.0, -1.0, 1.5, "1", true} {

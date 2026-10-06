@@ -250,7 +250,9 @@ production instance directly; test against a dev instance.
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
   `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`);
   the completion notice as a `system` inbound to the launcher's main conversation;
-  `OnStuck` raises the `forum:<id>:<run>` alert. `ToolHost.Scope` refuses a call at
+  `OnStuck` raises the `forum:<id>:<run>` alert; `Cooldown` reads the shared
+  cooldown tracker, so a turn whose models are all in cooldown is held
+  (within its call timeout) instead of using up its attempts. `ToolHost.Scope` refuses a call at
   the maximum depth (`forum.ErrForumDepth`) or from a forum participant
   (`forum.ErrForumTurn`; participants get no forum tools anyway); file
   references go through `files.Reader.Resolve`/`Allowed`. Base directory:

@@ -86,7 +86,7 @@ func (s *Service) UpdateConfig(ctx context.Context, scope Scope, id string, patc
 // formatted (formatConfig). It is serialised with the forum's other control
 // operations and holds the forum's lock while it writes (ErrLocked when
 // another process has it). A forum whose latest run is running is refused
-// (errRunning); a new, paused or ended one can be changed.
+// (errBusy); a new, paused or ended one can be changed.
 func (s *Service) editConfig(ctx context.Context, scope Scope, id string, edit func([]byte) ([]byte, error)) error {
 	defer s.control(id)()
 	r, err := s.live(ctx, scope, id)
@@ -94,7 +94,7 @@ func (s *Service) editConfig(ctx context.Context, scope Scope, id string, edit f
 		return err
 	}
 	if r != nil {
-		return errRunning(id)
+		return errBusy(s.ref(scope, id), r.ctrl.State().Status)
 	}
 	store, err := s.open(scope, id)
 	if err != nil {
@@ -150,21 +150,44 @@ func (s *Service) ValidateConfig(ctx context.Context, id string, opts LaunchOpti
 	return s.Validate(ctx, raw, opts)
 }
 
-// errRunning refuses an operation that needs a forum whose latest run is
-// not running.
-func errRunning(id string) error {
-	return invalidState("forum %s is running; pause or cancel it first", id)
+// errBusy refuses an operation that needs a forum whose latest run is not
+// running; st is that run's status. ref names the forum (Ref), as in every
+// refusal below.
+func errBusy(ref string, st Status) error {
+	if st == StatusPausing {
+		return invalidState("forum %s is still pausing; try again once it is paused", ref)
+	}
+	return invalidState("forum %s is running; pause or cancel it first", ref)
 }
 
 // errNotLaunched refuses an operation that needs a run of a forum that has
 // none.
-func errNotLaunched(id string) error {
-	return invalidState("forum %s has not been launched", id)
+func errNotLaunched(ref string) error {
+	return invalidState("forum %s has not been launched", ref)
 }
 
 // errNoRun refuses a run number the forum does not have.
-func errNoRun(id string, run int) error {
-	return invalidState("forum %s has no run %d", id, run)
+func errNoRun(ref string, run int) error {
+	return invalidState("forum %s has no run %d", ref, run)
+}
+
+// ref names forum id of scope in a refusal (Ref), with the name in its
+// current configuration; the ID alone when that cannot be read.
+func (s *Service) ref(scope Scope, id string) string {
+	store, err := s.open(scope, id)
+	if err != nil {
+		return id
+	}
+	return storeRef(store)
+}
+
+// storeRef is ref for an open store (the forum's or one of its runs').
+func storeRef(store *Store) string {
+	raw, _, err := store.ReadForumConfig()
+	if err != nil {
+		return store.ID()
+	}
+	return Ref(configName(raw), store.ID())
 }
 
 // busy reports whether a run in status st is running: not paused and not
@@ -200,7 +223,7 @@ func latestRun(store *Store) (int, error) {
 	return runs[len(runs)-1], nil
 }
 
-// refuseBusy refuses (errRunning) when the forum's latest run is busy. A
+// refuseBusy refuses (errBusy) when the forum's latest run is busy. A
 // latest run whose records are damaged never runs again and does not
 // refuse.
 func refuseBusy(store *Store) error {
@@ -215,7 +238,7 @@ func refuseBusy(store *Store) error {
 	case err != nil:
 		return err
 	case busy(st.Status):
-		return errRunning(store.ID())
+		return errBusy(storeRef(store), st.Status)
 	}
 	return nil
 }

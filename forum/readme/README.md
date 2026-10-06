@@ -70,6 +70,12 @@ required and are hard limits.
 A forum has a configuration and runs. You set the configuration up step by
 step, then launch it; every launch is a new run from the beginning.
 
+To run the same forum on new material (the next topic, chapter or question),
+do not build a new forum: change only the source with one
+`forum_config_update`, such as
+`{"sources": {"topic": {"file": "files/topic2.md"}}}`, and `forum_launch`
+again. That is a new run; earlier runs stay readable with `run`.
+
 1. `forum_new` creates a forum and returns its ID.
 2. `forum_config_template` with `name` fills its configuration from a
    template, or `forum_config_import` with `config` from an exported one.
@@ -82,10 +88,13 @@ step, then launch it; every launch is a new run from the beginning.
    sets the question and the chair's model and leaves everything else as
    it is. `changes` is a JSON object, never a string.
 4. `forum_validate` with the ID. Fix every issue it lists.
-5. `forum_launch` with the ID starts run 1 in the background.
-6. `forum_status` with the ID follows the latest run; `forum_pause`,
+5. `forum_launch` with the ID starts run 1 in the background. You will be
+   notified when it finishes: end your turn then, and do not poll
+   `forum_status` or the forum's files while it runs.
+6. `forum_status` with the ID shows the latest run; `forum_pause`,
    `forum_resume` and `forum_cancel` control it.
-7. When you are told the run has ended, `forum_results` with the ID.
+7. When you are notified that the run has ended, `forum_results` with the
+   ID.
 8. To run it again, change the configuration (only while it is not running)
    and `forum_launch` again: run 2 starts from the beginning, and run 1 keeps
    its files. `forum_status` and `forum_results` take `run` to look at an
@@ -93,18 +102,17 @@ step, then launch it; every launch is a new run from the beginning.
    changed; launching then replaces it.
 9. `forum_delete` removes the forum and all its runs, unless it is running.
 
-`name` in the configuration is optional; it labels the forum in status,
-results and notices instead of its ID.
+`name` in the configuration is optional; status, results and notices then
+name the forum "<name> (<id>)" instead of the ID alone.
 
 A source `file` is read as your file tools read that path (your
 workspace, or a mount such as `maestro/`).
 
-For a book, run the forum on chapter 1, then update only
-`{"sources": {"chapter": {"file": "files/chapter2.md"}}}` and launch again
-for chapter 2. A source has either `inline` or `file`: to turn an inline
-source into a file, remove `inline` in the same patch, as in
-`{"sources": {"topic": {"inline": null, "file": "files/chapter1.md"}}}`. To start another forum from this one, `forum_config_export` it
-and `forum_config_import` the result into a forum made with `forum_new`.
+A source has either `inline` or `file`: to turn an inline source into a
+file, remove `inline` in the same patch, as in
+`{"sources": {"question": {"inline": null, "file": "files/question.md"}}}`.
+To start another forum from this one, `forum_config_export` it and
+`forum_config_import` the result into a forum made with `forum_new`.
 
 ## Limits
 

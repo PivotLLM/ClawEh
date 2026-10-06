@@ -109,6 +109,16 @@ func (s *Snapshot) Label() string {
 	return forumLabel(s.Name, s.ForumID)
 }
 
+// Ref names a forum in a message to people or agents: "<name> (<id>)"
+// when it has a name, else its ID. A name equal to the ID (a Label of an
+// unnamed forum) counts as none.
+func Ref(name, id string) string {
+	if name == "" || name == id {
+		return id
+	}
+	return name + " (" + id + ")"
+}
+
 // forumLabel is name, or id when name is empty.
 func forumLabel(name, id string) string {
 	if name != "" {

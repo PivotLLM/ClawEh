@@ -13,7 +13,7 @@
   "sources": {
     "topic": {
       "decode": "markdown",
-      "inline": "<the topic, audience, length and any other requirements for the text>"
+      "file": "<path of a file with the topic, audience, length and any other requirements for the text>"
     }
   },
   "participants": {

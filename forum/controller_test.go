@@ -261,6 +261,74 @@ func TestCtlUnsuccessfulOutcomeResends(t *testing.T) {
 	}
 }
 
+// ctlCooldown makes alice's models in cooldown until until (forever when
+// until is zero) and shortens the hold's polling for the test.
+func ctlCooldown(t *testing.T, f *ctlForum, until time.Time) {
+	t.Helper()
+	poll := cooldownPoll
+	cooldownPoll = 10 * time.Millisecond
+	t.Cleanup(func() { cooldownPoll = poll })
+	f.host.Cooldown = func(agentID string) (string, time.Duration) {
+		if agentID != "alice" {
+			return "", 0
+		}
+		if until.IsZero() {
+			return "slow-model", time.Hour
+		}
+		return "slow-model", time.Until(until)
+	}
+}
+
+// A turn whose model is in cooldown waits for it and is then sent once:
+// the cooldown uses up no attempt, the wait is logged at INFO naming the
+// forum, the participant and the model, and the reply's wait is what is
+// left of the call timeout.
+func TestCtlCooldownHoldsTheTurn(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}}))
+	until := time.Now().Add(150 * time.Millisecond)
+	ctlCooldown(t, f, until)
+	var sentAt time.Time
+	f.msg.respond = func(cl ctlCall) (Reply, error) {
+		sentAt = time.Now()
+		return f.reply(cl), nil
+	}
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	calls := f.msg.all()
+	ctlWant(t, "calls", len(calls), 1)
+	if sentAt.Before(until) {
+		t.Errorf("the turn was sent %v before the cooldown ended", until.Sub(sentAt))
+	}
+	if limit := 60 * time.Second; calls[0].Wait >= limit || calls[0].Wait < limit-10*time.Second {
+		t.Errorf("wait = %v, want what is left of the 60s call timeout", calls[0].Wait)
+	}
+	ctlWant(t, "attempts", len(f.attempts("one")), 1)
+	f.log.mu.Lock()
+	logged := strings.Join(f.log.lines, "\n")
+	f.log.mu.Unlock()
+	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+"): one/"+TurnID(1, "alice")+": participant alice waits for model slow-model")
+}
+
+// A cooldown that outlasts the call timeout ends the attempt as a timeout,
+// exactly as a turn that timed out: without the message being sent.
+func TestCtlCooldownLongerThanTheCallTimeout(t *testing.T) {
+	cfg := ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}})
+	cfg.Limits.CallTimeoutSeconds, cfg.Limits.MaxAttemptsPerTurn = 1, 1
+	f := ctlLaunch(t, cfg)
+	ctlCooldown(t, f, time.Time{})
+	start := time.Now()
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusFailed)
+	ctlWant(t, "reason", f.result().Reason, EndAttemptsExhausted)
+	ctlWant(t, "calls", len(f.msg.all()), 0)
+	if took := time.Since(start); took < time.Second {
+		t.Errorf("the run ended after %v, before the 1s call timeout", took)
+	}
+	att := f.attempts("one")
+	ctlWant(t, "attempts", len(att), 1)
+	ctlWant(t, "outcome", att[0].Reply.Outcome, OutcomeTimeout)
+}
+
 // Every limit: the forum budget (incomplete), the layer budget (the layer
 // ends call_limit and the next runs), the deadline (incomplete), the round
 // limit (round_limit).

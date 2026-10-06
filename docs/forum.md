@@ -89,8 +89,9 @@ One JSON object, the forum's configuration (see
 ```
 
 - `name` is optional. When set it names the forum in `forum_status`,
-  `forum_results`, the completion notice and the transcript heading;
-  otherwise the forum's ID is used.
+  `forum_results` and the transcript heading, and the tools' replies,
+  refusals and the completion notice call it "<name> (<id>)"
+  ("design-review (<id>)"); otherwise the forum's ID is used.
 - `brief` goes to every participant; `instructions` only to its participant.
 - `sources` are `inline` or a `file`. A `file` is read exactly as Alice's
   file tools would read that path: relative to her workspace, or in one of
@@ -134,7 +135,7 @@ is a new run:
 | `forum_config_update` | `id`, `changes`: applies `changes` as a JSON merge patch (RFC 7386): objects merge, `null` deletes a key, arrays such as `layers` are replaced whole. |
 | `forum_config_export` | `id`: the forum's configuration, to import into another forum. |
 | `forum_validate` | `id`: checks the configuration, agents and models included, without creating anything. |
-| `forum_launch` | `id`: validates the configuration and starts a new run of it from the beginning ("Forum <id> launched (run 2)."). |
+| `forum_launch` | `id`: validates the configuration and starts a new run of it from the beginning ("Forum design-review (<id>) launched (run 2). You will be notified when it finishes; end your turn instead of checking status."). |
 
 The configuration need not be valid while it is being edited; only
 `forum_validate` and `forum_launch` check it. An update keeps the order of
@@ -146,19 +147,21 @@ so an integer above 2^53 (a large `seed`) loses precision.
 The configuration can be changed whenever the forum is not running: before
 its first run, while its latest run is paused, and after it has ended. While
 a run is running, `forum_config_template`, `forum_config_import`,
-`forum_config_update` and `forum_launch` answer "Forum <id> is running;
-pause or cancel it first." (`forum_config_export` and `forum_validate` still
-work). A change takes effect at
+`forum_config_update`, `forum_launch` and `forum_delete` answer "Forum
+design-review (<id>) is running; pause or cancel it first.", and while it is
+pausing "Forum design-review (<id>) is still pausing; try again once it is
+paused." (`forum_config_export` and `forum_validate` still work). A change takes effect at
 the next launch, never in a run already started. A forum survives a restart,
 and a launch that fails leaves it as it was.
 
-To review a book chapter by chapter, run chapter 1, then change only the
-chapter source and launch again; run 2 reviews chapter 2 and run 1 keeps its
-own files and results:
-`{"sources": {"chapter": {"file": "files/chapter2.md"}}}`. A source holds
-either `inline` or `file`, so turning an inline source (such as the
-`writing` template's `topic`) into a file removes `inline` in the same
-patch: `{"sources": {"topic": {"inline": null, "file": "files/chapter1.md"}}}`.
+To run the same forum on new material, change only its source and launch
+again: to review a book chapter by chapter, run chapter 1, then
+`{"sources": {"chapter": {"file": "files/chapter2.md"}}}` and launch; run 2
+reviews chapter 2 and run 1 keeps its own files and results. The guide tells
+the agent to do this rather than build a new forum. A source holds either
+`inline` or `file`, so turning an inline source into a file removes `inline`
+in the same patch:
+`{"sources": {"question": {"inline": null, "file": "files/question.md"}}}`.
 To start another
 forum from this one, export its configuration and import it into a forum made
 with `forum_new`.
@@ -175,31 +178,35 @@ Every other forum tool's description tells the agent to call it first.
 
 | Template | What it does |
 |---|---|
-| `writing` | A writer drafts on a topic, two critics comment separately (structure and argument; style and clarity), the writer revises, and an editor produces the final text, ending with a short "Notes" section on what changed. |
+| `writing` | A writer drafts on a topic read from a file, two critics comment separately (structure and argument; style and clarity), the writer revises, and an editor produces the final text, ending with a short "Notes" section on what changed. |
 | `council` | Three members on different models answer a question independently, review the others' answers anonymously ending with a `FINAL RANKING:`, and a chair writes the final answer with the consensus, the disagreements and the aggregate ranking. |
 
-A template's models are placeholders such as `"<a model from forum_models>"`
-and its topic or question is a `<...>` placeholder in a source; validation
-names every participant whose model is still a placeholder. The guide and
+A template's models are placeholders such as `"<a model from forum_models>"`;
+the `writing` template's topic is a source `file` whose path is a `<...>`
+placeholder (so the next topic is one `forum_config_update` of that path),
+and the `council` template's question is an inline `<...>` placeholder.
+Validation names every participant whose model is still a placeholder and a
+topic file that cannot be read. The guide and
 templates are embedded in the binary (`forum/readme/`).
 
 ## Running it
 
-`forum_launch` answers "Forum <id> launched (run <n>)." at once; the run goes
-on in the background. `forum_status` shows the progress of the latest run
+`forum_launch` answers at once, "Forum design-review (<id>) launched (run
+<n>). You will be notified when it finishes; end your turn instead of
+checking status.", and the run goes on in the background. `forum_status` shows the progress of the latest run
 (or of `run`), how many runs the forum has and whether its configuration
 changed since the latest run (`config_changed`). `forum_pause`,
 `forum_resume` and `forum_cancel` control the latest run, and
 `forum_results` returns a run's results (see [Results](#results)). A paused
 run resumes only while the configuration is unchanged; after a change
-`forum_resume` answers "Forum design-review: the config changed; launch to
-start a new run." (formatting, key order and number spelling are not
+`forum_resume` answers "Forum design-review (<id>): the config changed;
+launch to start a new run." (formatting, key order and number spelling are not
 changes), and
 launching cancels the paused run (without a notice) before the new one
 starts. A forum tool called with an argument it does not take is refused,
 naming it ("Unknown argument forum_id; use id."). When a run ends
 (completed, incomplete, failed or cancelled) Alice gets
-`[System: forum] Forum design-review run 1 finished: completed (id <id>).` in
+`[System: forum] Forum design-review (<id>) run 1 finished: completed.` in
 her conversation. If she launched it from a chat, her answer goes to her
 default chat (her default binding), or nowhere when she has none; a forum
 launched locally is never posted. `forum_delete` removes a forum and all its
@@ -275,6 +282,12 @@ write to it, and cannot read another agent's forums.
   attempts per turn and parallel turns. A layer may set its own `max_calls`.
 - Each participant's own settings (its `request_timeout`, its tool limits)
   still apply to its turns.
+- A turn whose participant's models are all in cooldown is held until one is
+  available and then sent; the wait uses none of the turn's attempts but
+  counts against `call_timeout_seconds` (and the run's
+  `max_duration_seconds`). A cooldown that outlasts the call timeout ends the
+  attempt as a timeout. The wait is logged at INFO with the forum, the
+  participant and the model.
 - Temporary participants are created for each run, kept alive while it is
   paused and deleted when it ends; the registry's 24-hour idle limit is only a
   backstop.

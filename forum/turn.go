@@ -133,11 +133,17 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 		default:
 			req.Message, req.ThroughSeq, req.Repair = c.repairFor(w, prior), last.Request.ThroughSeq, true
 		}
-		wait, reason, err := c.reserve(ctx, w.layer, req)
+		deadline, expired := c.awaitModel(ctx, w)
+		wait, reason, err := c.reserve(ctx, w.layer, req, deadline)
 		if err != nil || reason != "" || wait < 0 {
 			return attemptResult{reason: reason}, err
 		}
-		reply, reason, err := c.dispatch(ctx, w.p, req, wait, w.validate)
+		var reply *AttemptReply
+		if expired {
+			reply, err = c.recordReply(req, Reply{Outcome: OutcomeTimeout}, w.validate)
+		} else {
+			reply, reason, err = c.dispatch(ctx, w.p, req, wait, w.validate)
+		}
 		if err != nil || reason != "" || reply == nil {
 			return attemptResult{reason: reason}, err
 		}
@@ -151,11 +157,62 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 	return attemptResult{reason: w.exhausted}, nil
 }
 
+// cooldownPoll is how often a turn held back by a cooldown (awaitModel)
+// looks again: the model may come back early, or the forum be paused.
+var cooldownPoll = time.Second
+
+// awaitModel holds a turn back, before its attempt is reserved, while every
+// model its participant can run on is in cooldown (Host.Cooldown), so a
+// cooldown never uses up the turn's attempts. The hold and the reply
+// together stay within the call timeout (bounded by the run deadline,
+// c.wait), counted from the start of the hold: deadline is that time, zero
+// when there was no hold. expired reports that the cooldown outlasted it;
+// the attempt then ends as a timeout without being sent. A pause, cancel
+// or end of ctx ends the hold early; reserve then stops the turn.
+func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
+	if c.host.Cooldown == nil {
+		return time.Time{}, false
+	}
+	model, left := c.host.Cooldown(w.p.AgentID)
+	if left <= 0 {
+		return time.Time{}, false
+	}
+	start := time.Now()
+	deadline = start.Add(c.wait(start))
+	ref := Ref(c.snap.Name, c.snap.ForumID)
+	c.host.Logger.Infof("forum %s: %s/%s: participant %s waits for model %s, in cooldown for %s",
+		ref, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
+	for {
+		now := time.Now()
+		if !now.Before(deadline) {
+			c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
+				ref, w.layer.ID, w.turn, model, w.p.ID)
+			return deadline, true
+		}
+		pause := time.NewTimer(min(left, deadline.Sub(now), cooldownPoll))
+		select {
+		case <-ctx.Done():
+			pause.Stop()
+			return deadline, false
+		case <-pause.C:
+		}
+		if c.interrupted() {
+			return deadline, false
+		}
+		if model, left = c.host.Cooldown(w.p.AgentID); left <= 0 {
+			c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn",
+				ref, w.layer.ID, w.turn, w.p.ID)
+			return deadline, false
+		}
+	}
+}
+
 // reserve is the reservation step of one attempt: under dispatchMu it
 // refuses when a pause or cancel was requested (wait -1), stops at a limit
 // (checkLimits), writes request.json and commits CommitAttempt, which only
-// lands while the forum is running. It returns the Ask wait.
-func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest) (time.Duration, EndReason, error) {
+// lands while the forum is running. It returns the Ask wait, which ends by
+// deadline when that is set (a turn held back by awaitModel).
+func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (time.Duration, EndReason, error) {
 	c.dispatchMu.Lock()
 	defer c.dispatchMu.Unlock()
 	if c.interrupted() {
@@ -170,6 +227,9 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 		return -1, reason, nil
 	}
 	wait := c.wait(now)
+	if !deadline.IsZero() {
+		wait = max(min(wait, deadline.Sub(now)), 0)
+	}
 	req.SentAt = now.UTC()
 	req.WaitSeconds = int(wait / time.Second)
 	if err := c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
@@ -219,6 +279,14 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 		c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
 		return nil, "", ctx.Err()
 	}
+	rec, err := c.recordReply(req, reply, validate)
+	return rec, "", err
+}
+
+// recordReply records the reply of a reserved attempt: reply.json with
+// Issues from validate when the outcome is OutcomeOK, the outcome
+// otherwise, and the attempts cache.
+func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func(string) []string) (*AttemptReply, error) {
 	rec := &AttemptReply{ReceivedAt: time.Now().UTC(), Outcome: reply.Outcome, Text: reply.Text}
 	if reply.Outcome.Successful() {
 		rec.Issues = validate(reply.Text)
@@ -228,7 +296,7 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 	if err := c.durable("reply", func() error {
 		return c.store.WriteAttemptReply(req.Layer, req.Turn, req.Attempt, rec)
 	}); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	c.mu.Lock()
 	list := c.attempts[req.Layer]
@@ -238,7 +306,7 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 		}
 	}
 	c.mu.Unlock()
-	return rec, "", nil
+	return rec, nil
 }
 
 // hostFailure maps a Messenger error to the run's end reason:
