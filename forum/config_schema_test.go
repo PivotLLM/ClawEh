@@ -259,9 +259,9 @@ func TestConfigSchemaRefuses(t *testing.T) {
 		schema    CompiledSchema
 	}{
 		{"unknown field", `{"version":1,"bogus":1,"brief":{"purpose":"p","task":"t"},"participants":{},"layers":[],"limits":{"max_calls":1,"max_duration_seconds":1,"call_timeout_seconds":1,"max_attempts_per_turn":1,"max_parallel_calls":1}}`, config},
-		{"missing limits", `{"version":1,"brief":{"purpose":"p","task":"t"},"participants":{},"layers":[]}`, config},
+		{"limit below the minimum", `{"limits":{"max_calls":0}}`, config},
+		{"unknown output format", `{"layers":[{"id":"a","output":{"format":"html"}}]}`, config},
 		{"unknown delivery", `{"layers":[{"id":"a","participants":["x"],"instructions":"i","delivery":"sometimes","max_rounds":1,"output":{"format":"text"}}]}`, patch},
-		{"incomplete layer in a patch", `{"layers":[{"id":"a"}]}`, patch},
 		{"unknown participant field in a patch", `{"participants":{"bob":{"agnet":"bob"}}}`, patch},
 		{"null config", `null`, patch},
 	} {
@@ -273,9 +273,119 @@ func TestConfigSchemaRefuses(t *testing.T) {
 		`{"participants":{"bob":null},"seed":null,"layers":null}`,
 		`{"layers":[{"id":"a","participants":["x"],"instructions":"i","delivery":"per_turn","max_rounds":2,"output":{"format":"json","share":[]}}]}`,
 		`{"participants":{"bob":{"mode":null,"model":"m"}}}`,
+		`{"layers":[{"id":"a"}]}`,
 	} {
 		if err := patch.Validate([]byte(ok)); err != nil {
 			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+}
+
+// A configuration being built step by step (what forum_config_export returns
+// before it is complete) matches the import schema: nothing is required
+// there, and ValidateStatic is what reports the missing fields.
+func TestConfigSchemaAcceptsHalfBuiltConfig(t *testing.T) {
+	config := compileSchema(t, ConfigSchema())
+	for _, doc := range []string{
+		`{}`,
+		`{"version":1,"brief":{"purpose":"Review the proposal."},"participants":{"bob":{"agent":"bob"}}}`,
+		`{"version":1,"layers":[{"id":"review","participants":["bob"],"inputs":[{"from":"source:proposal"}]}],"limits":{"max_calls":10}}`,
+	} {
+		if err := config.Validate([]byte(doc)); err != nil {
+			t.Errorf("%s refused: %v", doc, err)
+		}
+		cfg, err := Decode([]byte(doc))
+		if err == nil {
+			err = ValidateStatic(cfg)
+		}
+		if err == nil {
+			t.Errorf("%s: ValidateStatic accepted an incomplete configuration", doc)
+		}
+	}
+}
+
+// With null kept out of types, the patch member is left as in the import
+// form (the switch for providers that refuse type arrays).
+func TestAllowNull(t *testing.T) {
+	on := map[string]any{"type": "string", "enum": []any{"a"}}
+	allowNullIn(on, true)
+	if !reflect.DeepEqual(on, map[string]any{"type": []string{"string", "null"}, "enum": []any{"a", nil}}) {
+		t.Errorf("with null in types: %v", on)
+	}
+	off := map[string]any{"type": "string", "enum": []any{"a"}}
+	allowNullIn(off, false)
+	if !reflect.DeepEqual(off, map[string]any{"type": "string", "enum": []any{"a"}}) {
+		t.Errorf("without null in types: %v", off)
+	}
+}
+
+// Every enum the schema publishes is the list ValidateStatic accepts, and
+// every minimum is minPositive.
+func TestConfigSchemaEnumsAreValidatorValues(t *testing.T) {
+	props := func(s map[string]any, path ...string) map[string]any {
+		for _, p := range path {
+			members, ok := s["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("no properties at %v", path)
+			}
+			next, ok := members[p].(map[string]any)
+			if !ok {
+				t.Fatalf("no %v", path)
+			}
+			s = next
+			if items, ok := s["items"].(map[string]any); ok {
+				s = items
+			} else if value, ok := s["additionalProperties"].(map[string]any); ok {
+				s = value
+			}
+		}
+		return s
+	}
+	root := ConfigSchema()
+	for _, tc := range []struct {
+		path []string
+		want []string
+	}{
+		{[]string{"sources", "decode"}, enumOf(formatValues)},
+		{[]string{"participants", "mode"}, enumOf(freshModeValues)},
+		{[]string{"layers", "delivery"}, enumOf(deliveryValues)},
+		{[]string{"layers", "output", "format"}, enumOf(formatValues)},
+		{[]string{"layers", "inputs", "select"}, enumOf(selectValues)},
+		{[]string{"layers", "inputs", "view"}, enumOf(viewValues)},
+		{[]string{"layers", "inputs", "distribute"}, enumOf(distributeValues)},
+		{[]string{"layers", "moderator", "conversation_view"}, enumOf(conversationViewValues)},
+		{[]string{"layers", "moderator", "inputs", "distribute"}, enumOf(distributeValues)},
+	} {
+		got := []string{}
+		enum, ok := props(root, tc.path...)["enum"].([]any)
+		if !ok {
+			t.Errorf("%v: no enum", tc.path)
+			continue
+		}
+		for _, v := range enum {
+			s, ok := v.(string)
+			if !ok {
+				t.Errorf("%v: non-string enum value %v", tc.path, v)
+			}
+			got = append(got, s)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%v: enum %v, want %v", tc.path, got, tc.want)
+		}
+	}
+	for _, path := range [][]string{
+		{"limits", "max_calls"},
+		{"limits", "max_duration_seconds"},
+		{"limits", "call_timeout_seconds"},
+		{"limits", "max_attempts_per_turn"},
+		{"limits", "max_parallel_calls"},
+		{"layers", "max_rounds"},
+		{"layers", "max_calls"},
+		{"layers", "moderator", "after_round"},
+		{"layers", "moderator", "every_rounds"},
+	} {
+		if got := props(root, path...)["minimum"]; got != minPositive {
+			t.Errorf("%v: minimum %v, want %d", path, got, minPositive)
 		}
 	}
 }

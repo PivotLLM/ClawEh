@@ -108,7 +108,7 @@ func (t nsBase) Name() string {
 }
 func (t nsBase) Description() string { return t.def.Description }
 func (t nsBase) Parameters() map[string]any {
-	return DefinitionSchema(t.def)
+	return t.def.Schema()
 }
 
 func (t nsBase) Execute(ctx context.Context, args map[string]any) *ToolResult {

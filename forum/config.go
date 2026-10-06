@@ -325,6 +325,33 @@ type DirectedMessage struct {
 	Text string `json:"text"`
 }
 
+// The accepted values of each enumerated field, in one place: ValidateStatic
+// checks against them and the published JSON Schema lists them. An empty
+// select, view, distribute, mode or conversation_view means its default.
+var (
+	formatValues           = []Format{FormatText, FormatMarkdown, FormatJSON}
+	deliveryValues         = []Delivery{DeliveryAfterRound, DeliveryPerTurn}
+	freshModeValues        = []FreshMode{FreshModeMemory, FreshModeContext, FreshModeSingleShot}
+	selectValues           = []Select{SelectAll, SelectLastPerParticipant}
+	viewValues             = []View{ViewPublished, ViewFull}
+	distributeValues       = []Distribute{DistributeAll, DistributeSameParticipant, DistributeRandom}
+	conversationViewValues = []ConversationView{ConversationViewPublished, ConversationViewFull}
+)
+
+// minPositive is the smallest value of every limit, of a layer's max_rounds
+// and of a moderator's after_round and every_rounds (ValidateStatic and the
+// published schema).
+const minPositive = 1
+
+// valueList renders accepted values for a message: "a, b, c".
+func valueList[T ~string](values []T) string {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		parts[i] = string(v)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // configIDPattern is the configuration ID syntax (§3): letters, digits,
 // underscore and hyphen, not starting with a digit.
 var configIDPattern = regexp.MustCompile(`^[A-Za-z_-][A-Za-z0-9_-]*$`)

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"path/filepath"
 	"slices"
@@ -101,11 +102,11 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		}},
 		{Name: "config_import", Description: "Replace a forum's configuration with one exported by forum_config_export (not while it is running)", Handler: t.configImport, Category: "forum", Parameters: []toolspec.Parameter{
 			id,
-			{Name: "config", Type: "object", Required: true, Description: "The forum configuration as a JSON object", Metadata: map[string]any{ParameterSchemaKey: ConfigSchema()}},
+			{Name: "config", Type: "object", Required: true, Description: "The forum configuration as a JSON object"},
 		}},
 		{Name: "config_update", Description: "Change a forum's configuration with a JSON merge patch (not while it is running); launch again to run the change", Handler: t.configUpdate, Category: "forum", Parameters: []toolspec.Parameter{
 			id,
-			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as layers are replaced whole", Metadata: map[string]any{ParameterSchemaKey: PatchSchema()}},
+			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as layers are replaced whole"},
 		}},
 		{Name: "config_export", Description: "Return a forum's configuration, to import into another forum", Handler: t.configExport, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "validate", Description: "Validate a forum's configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: []toolspec.Parameter{id}},
@@ -121,12 +122,38 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "delete", Description: "Delete a forum and all its runs, unless it is running", Handler: t.delete, Category: "forum", Parameters: []toolspec.Parameter{id}},
 	}
 	for i := range defs {
+		switch defs[i].Name {
+		case "config_import":
+			defs[i].RawSchema = withArgSchema(defs[i].Parameters, "config", ConfigSchema())
+		case "config_update":
+			defs[i].RawSchema = withArgSchema(defs[i].Parameters, "changes", PatchSchema())
+		}
 		defs[i].Handler = t.refuseUnknownArgs(defs[i].Parameters, defs[i].Handler)
 		if defs[i].Name != "readme" {
 			defs[i].Description += ". " + readFirst
 		}
 	}
 	return defs
+}
+
+// withArgSchema is the tool schema of params with the argument name
+// described by schema (the configuration's JSON Schema, which a flat
+// toolspec.Parameter cannot express), keeping that parameter's description.
+// Parameters still lists every argument, for refuseUnknownArgs.
+func withArgSchema(params []toolspec.Parameter, name string, schema map[string]any) map[string]any {
+	out := toolspec.ParametersToSchema(params)
+	props, ok := out["properties"].(map[string]any)
+	if !ok {
+		panic("forum: tool schema without properties")
+	}
+	arg := maps.Clone(schema)
+	for _, p := range params {
+		if p.Name == name {
+			arg["description"] = p.Description
+		}
+	}
+	props[name] = arg
+	return out
 }
 
 // readFirst ends every forum tool's description but the readme's own.

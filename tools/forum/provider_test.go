@@ -77,24 +77,38 @@ func TestProviderGating(t *testing.T) {
 		t.Fatalf("alice (forum on) got %d tools, want 15", len(defs))
 	}
 	// config_import's config and config_update's changes reach the model
-	// with the configuration's full schema (tools.ParameterSchemaKey).
-	if forumpkg.ParameterSchemaKey != tools.ParameterSchemaKey {
-		t.Fatalf("forum.ParameterSchemaKey %q != tools.ParameterSchemaKey %q", forumpkg.ParameterSchemaKey, tools.ParameterSchemaKey)
-	}
-	want := map[string]map[string]any{"config_import": forumpkg.ConfigSchema(), "config_update": forumpkg.PatchSchema()}
-	for _, d := range GlobalProvider.RegisterTools(deps("alice")) {
-		param := map[string]string{"config_import": "config", "config_update": "changes"}[d.Name]
-		if param == "" {
+	// with the configuration's full schema (the tool's RawSchema).
+	built := tools.NamespacedProvider(Suite, GlobalProvider).Build(tools.ToolDeps{Cfg: cfg, AgentID: "alice", Workspace: t.TempDir()})
+	want := map[string]map[string]any{"forum_config_import": forumpkg.ConfigSchema(), "forum_config_update": forumpkg.PatchSchema()}
+	arg := map[string]string{"forum_config_import": "config", "forum_config_update": "changes"}
+	found := 0
+	for _, tool := range built {
+		if want[tool.Name()] == nil {
 			continue
 		}
-		props, ok := tools.DefinitionSchema(d)["properties"].(map[string]any)
+		found++
+		fn, ok := tools.ToolToSchema(tool)["function"].(map[string]any)
 		if !ok {
-			t.Fatalf("%s has no properties", d.Name)
+			t.Fatalf("%s: no function", tool.Name())
 		}
-		p, ok := props[param].(map[string]any)
-		if !ok || p["type"] != "object" || p["description"] == "" || !reflect.DeepEqual(p["properties"], want[d.Name]["properties"]) {
-			t.Errorf("%s.%s schema = %v, want the configuration schema", d.Name, param, p)
+		params, ok := fn["parameters"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no parameters", tool.Name())
 		}
+		props, ok := params["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s has no properties", tool.Name())
+		}
+		p, ok := props[arg[tool.Name()]].(map[string]any)
+		if !ok || p["type"] != "object" || p["description"] == "" || !reflect.DeepEqual(p["properties"], want[tool.Name()]["properties"]) {
+			t.Errorf("%s schema = %v, want the configuration schema", tool.Name(), p)
+		}
+		if _, ok := props["id"]; !ok {
+			t.Errorf("%s lost its id parameter", tool.Name())
+		}
+	}
+	if found != 2 {
+		t.Errorf("found %d of the two config tools", found)
 	}
 	if defs := GlobalProvider.RegisterTools(deps("bob")); len(defs) != 0 {
 		t.Fatalf("bob (forum off) got %d tools", len(defs))

@@ -305,7 +305,7 @@ func (v *staticValidator) sources() {
 			v.addf(path, "source ID %q: %s", id, idRule)
 		}
 		if !validFormat(src.Decode) {
-			v.addf(path+".decode", "%q is not one of text, markdown, json", src.Decode)
+			v.addf(path+".decode", "%q is not one of %s", src.Decode, valueList(formatValues))
 		}
 		hasInline, hasFile := src.Inline != nil, src.File != ""
 		switch {
@@ -373,7 +373,7 @@ func (v *staticValidator) participants() {
 				v.addf(path+".mode", "participant %q: mode applies only to a fresh participant (model)", id)
 			}
 		} else if p.Mode != "" && !validMode(p.Mode) {
-			v.addf(path+".mode", "participant %q: %q is not one of memory, context, single_shot", id, p.Mode)
+			v.addf(path+".mode", "participant %q: %q is not one of %s", id, p.Mode, valueList(freshModeValues))
 		}
 	}
 }
@@ -455,7 +455,7 @@ func (v *staticValidator) limits() {
 		{"max_attempts_per_turn", l.MaxAttemptsPerTurn},
 		{"max_parallel_calls", l.MaxParallelCalls},
 	} {
-		if f.value <= 0 {
+		if f.value < minPositive {
 			v.addf("limits."+f.name, "must be a positive integer, got %d", f.value)
 		}
 	}
@@ -503,10 +503,10 @@ func (v *staticValidator) layer(i int, l Layer) {
 	if strings.TrimSpace(l.Instructions) == "" {
 		v.addf(path+".instructions", "layer %q: instructions are required", l.ID)
 	}
-	if l.Delivery != DeliveryAfterRound && l.Delivery != DeliveryPerTurn {
-		v.addf(path+".delivery", "layer %q: %q is not one of after_round, per_turn", l.ID, l.Delivery)
+	if !slices.Contains(deliveryValues, l.Delivery) {
+		v.addf(path+".delivery", "layer %q: %q is not one of %s", l.ID, l.Delivery, valueList(deliveryValues))
 	}
-	if l.MaxRounds <= 0 {
+	if l.MaxRounds < minPositive {
 		v.addf(path+".max_rounds", "layer %q: must be a positive integer, got %d", l.ID, l.MaxRounds)
 	}
 	switch {
@@ -609,7 +609,7 @@ func (v *staticValidator) participantRefs(path string, ids []string, owner strin
 func (v *staticValidator) output(path string, l Layer) {
 	o := l.Output
 	if !validFormat(o.Format) {
-		v.addf(path+".format", "layer %q: %q is not one of text, markdown, json", l.ID, o.Format)
+		v.addf(path+".format", "layer %q: %q is not one of %s", l.ID, o.Format, valueList(formatValues))
 	}
 	if o.Format != FormatJSON {
 		if o.Schema != "" {
@@ -640,14 +640,14 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 		v.addf(path+".from", "%v", err)
 		return
 	}
-	if r.Select != "" && r.Select != SelectAll && r.Select != SelectLastPerParticipant {
-		v.addf(path+".select", "%q is not one of all, last_per_participant", r.Select)
+	if r.Select != "" && !slices.Contains(selectValues, r.Select) {
+		v.addf(path+".select", "%q is not one of %s", r.Select, valueList(selectValues))
 	}
-	if r.View != "" && r.View != ViewPublished && r.View != ViewFull {
-		v.addf(path+".view", "%q is not one of published, full", r.View)
+	if r.View != "" && !slices.Contains(viewValues, r.View) {
+		v.addf(path+".view", "%q is not one of %s", r.View, valueList(viewValues))
 	}
-	if r.Distribute != "" && r.Distribute != DistributeAll && r.Distribute != DistributeSameParticipant && r.Distribute != DistributeRandom {
-		v.addf(path+".distribute", "%q is not one of all, same_participant, random", r.Distribute)
+	if r.Distribute != "" && !slices.Contains(distributeValues, r.Distribute) {
+		v.addf(path+".distribute", "%q is not one of %s", r.Distribute, valueList(distributeValues))
 	}
 
 	// Recipients: the moderator alone, or `to`, or the layer's participants.
@@ -806,16 +806,16 @@ func (v *staticValidator) moderator(path string, li int, l Layer) {
 	case slices.Contains(l.Participants, m.Participant):
 		v.addf(path+".participant", "layer %q: %q is a participant of the layer and cannot also moderate it", l.ID, m.Participant)
 	}
-	if m.AfterRound <= 0 {
+	if m.AfterRound < minPositive {
 		v.addf(path+".after_round", "layer %q: must be a positive integer, got %d", l.ID, m.AfterRound)
 	} else if l.MaxRounds > 0 && m.AfterRound >= l.MaxRounds {
 		v.addf(path+".after_round", "layer %q: %d must be below max_rounds (%d); the moderator is consulted only between rounds", l.ID, m.AfterRound, l.MaxRounds)
 	}
-	if m.EveryRounds <= 0 {
+	if m.EveryRounds < minPositive {
 		v.addf(path+".every_rounds", "layer %q: must be a positive integer, got %d", l.ID, m.EveryRounds)
 	}
-	if m.ConversationView != "" && m.ConversationView != ConversationViewPublished && m.ConversationView != ConversationViewFull {
-		v.addf(path+".conversation_view", "layer %q: %q is not one of published, full", l.ID, m.ConversationView)
+	if m.ConversationView != "" && !slices.Contains(conversationViewValues, m.ConversationView) {
+		v.addf(path+".conversation_view", "layer %q: %q is not one of %s", l.ID, m.ConversationView, valueList(conversationViewValues))
 	}
 	if m.Schema != "" && !hasKey(v.cfg.Schemas, m.Schema) {
 		v.addf(path+".schema", "layer %q: schema %q is not configured", l.ID, m.Schema)
@@ -851,13 +851,9 @@ const idRule = "use letters, digits, underscore and hyphen, not starting with a 
 
 func layerPath(i int) string { return fmt.Sprintf("layers[%d]", i) }
 
-func validFormat(f Format) bool {
-	return f == FormatText || f == FormatMarkdown || f == FormatJSON
-}
+func validFormat(f Format) bool { return slices.Contains(formatValues, f) }
 
-func validMode(m FreshMode) bool {
-	return m == FreshModeMemory || m == FreshModeContext || m == FreshModeSingleShot
-}
+func validMode(m FreshMode) bool { return slices.Contains(freshModeValues, m) }
 
 func isJSONObject(raw json.RawMessage) bool {
 	var obj map[string]json.RawMessage

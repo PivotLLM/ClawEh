@@ -274,14 +274,16 @@ production instance directly; test against a dev instance.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.
-  A toolspec parameter whose `Metadata[tools.ParameterSchemaKey]` (`"json_schema"`)
-  holds a JSON Schema object is published with that schema instead of its flat
-  type (`tools.DefinitionSchema`, used by the `toolspec` → `tools.Tool` bridge, so
-  models and the MCP host both get it); toolspec itself cannot express nested
-  schemas. The forum uses it for `forum_config_import.config` and
-  `forum_config_update.changes`: `forum.ConfigSchema`/`forum.PatchSchema` are
-  generated from the config types plus `fieldDocs` (`forum/config_schema.go`;
-  a test fails when a field lacks a description). Keep such schemas to the
+  A tool that needs a nested argument schema sets `toolspec.ToolDefinition.RawSchema`
+  (the whole tool schema, published verbatim by both; keep `Parameters` too when
+  the handler checks argument names). The forum does this for
+  `forum_config_import.config` and `forum_config_update.changes`
+  (`withArgSchema` in `forum/tools.go`): `forum.ConfigSchema` (nothing required,
+  objects closed) and `forum.PatchSchema` (the same, every member also null,
+  switched by `patchNullInTypes`) are generated from the config types plus
+  `fieldDocs` in `forum/config_schema.go`, with enums and minimums taken from
+  the values `ValidateStatic` checks (`formatValues`, ..., `minPositive`); a test
+  fails when a field lacks a description. Keep such schemas to the
   provider-common subset: no `$ref`/`$defs`, `oneOf`/`anyOf`, `pattern` or
   `format`, enums on strings only.
 - **Agent message size**: `tools.MaxAgentMessageChars` (8,000) caps the
