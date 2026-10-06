@@ -1,4 +1,9 @@
 import type { AgentToolCatalogResponse } from "@/api/channels"
+import {
+  SHELL_TOOL,
+  shellAllowed,
+  withShellAllowed,
+} from "@/components/agents/agent-model"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 
@@ -12,7 +17,13 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   // Only per-tool (native) tools are listed here — these are the tools always in
   // the agent's context. Suites (cogmem, maestro, fusion) are all-or-nothing and
   // controlled by their own toggles below, so they are intentionally not shown.
-  const perToolTools = catalog.tools.filter((t) => !t.suite)
+  // shell_exec has its own "Allow shell commands" box and is granted only by
+  // name, so it is not listed here, and every change below keeps its entry.
+  const perToolTools = catalog.tools.filter(
+    (t) => !t.suite && t.name !== SHELL_TOOL,
+  )
+  const shell = shellAllowed(selected)
+  const emit = (next: string[]) => onChange(withShellAllowed(next, shell))
 
   // MCP-client tools are no longer part of this per-tool allowlist; they have
   // their own per-tool mcp_tools field (see the MCP access box).
@@ -30,14 +41,14 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   const handleToggle = (name: string) => {
     const current = effectiveSelected()
     if (current.includes(name)) {
-      onChange(current.filter((s) => s !== name))
+      emit(current.filter((s) => s !== name))
     } else {
-      onChange([...current, name])
+      emit([...current, name])
     }
   }
 
-  const handleDefault = () => onChange([...catalog.default_tools])
-  const handleClear = () => onChange([])
+  const handleDefault = () => emit([...catalog.default_tools])
+  const handleClear = () => emit([])
 
   const noneSelected = selected.length === 0
 

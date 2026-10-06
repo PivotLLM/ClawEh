@@ -16,11 +16,18 @@ observe does not need an entry.
 
 - **BREAKING: `tools.exec.allow_remote` is removed; `shell_exec` is only the
   agent's own permission.** Whether an agent may run shell commands is now
-  decided by that agent's tool permission for `shell_exec` alone (its `tools`
-  and `deny_tools`, with `tools.tool_overrides.shell_exec` for the install), off by
-  default. It applies on every channel and to everything acting as the agent:
-  sub-agents, Maestro workers, asks, forum turns and calls with its MCP
-  session or service tokens. Agents that have `shell_exec` turned on can now
+  one per-agent switch, off by default: *Allow shell commands* on the Agents
+  page, which is `shell_exec` named in the agent's own `tools` list (and not
+  in its `deny_tools`). A `"*"` or prefix entry in `tools` does **not**
+  include it, and there is no install-wide switch any more:
+  `tools.tool_overrides.shell_exec` has no effect (a warning names it at
+  load, Check Up shows it, and the Tools page no longer lists `shell_exec`).
+  Migration: add `shell_exec` to the `tools` of each agent that should keep
+  running shell commands, or tick *Allow shell commands* on its card. Clones
+  inherit the setting; fresh temporary and human agents never have it. It
+  applies on every channel and to everything acting as the agent: sub-agents,
+  Maestro workers, asks, forum turns and calls with its MCP session or
+  service tokens. Agents that have `shell_exec` turned on can now
   run it when messaged from a chat such as Telegram or the WebUI chat, which
   `allow_remote: false` used to block. To keep an agent from running shell
   commands, turn `shell_exec` off for it (remove it from its `tools`, or add
@@ -29,7 +36,7 @@ observe does not need an entry.
   from any channel; narrowing its `allow_agents` removes that. An `allow_remote` left in `config.json` is ignored
   and logged as an unknown key, `CLAW_TOOLS_EXEC_ALLOW_REMOTE` is no longer
   read, and the WebUI setting is gone. Check Up's Shell access row lists the
-  agents that have `shell_exec` and those that reach one through
+  agents allowed shell commands and those that reach one through
   `allow_agents`. A refused call now reads "Alice is not allowed to run shell
   commands.", naming the agent; over MCP it adds that this is a configured
   restriction not to be retried.

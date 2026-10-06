@@ -222,6 +222,36 @@ export function toggleAccessEntry(entries: string[], name: string): string[] {
   return present ? entries.filter((e) => norm(e) !== norm(name)) : [...entries, name]
 }
 
+// SHELL_TOOL is the one tool granted only by name: an agent runs shell
+// commands only when its tools list names shell_exec ("Allow shell commands");
+// a "*" or prefix entry never includes it.
+export const SHELL_TOOL = "shell_exec"
+
+const isShellEntry = (e: string) => norm(e) === SHELL_TOOL
+
+// shellAllowed reports whether the tools list names shell_exec explicitly.
+export function shellAllowed(tools: string[]): boolean {
+  return tools.some(isShellEntry)
+}
+
+// shellDenied reports whether deny_tools blocks shell_exec, under the backend's
+// rule: an exact entry (case-insensitive) or a prefix entry ending in "*".
+export function shellDenied(denyTools: string[]): boolean {
+  return denyTools.some((raw) => {
+    const d = norm(raw)
+    return d.endsWith("*")
+      ? SHELL_TOOL.startsWith(d.slice(0, -1))
+      : d === SHELL_TOOL
+  })
+}
+
+// withShellAllowed adds or removes the explicit shell_exec entry and leaves
+// every other entry (including "*") as it is.
+export function withShellAllowed(tools: string[], allowed: boolean): string[] {
+  const rest = tools.filter((e) => !isShellEntry(e))
+  return allowed ? [...rest, SHELL_TOOL] : rest
+}
+
 // settingsCardClass groups a set of agent settings into one bordered card.
 export const settingsCardClass =
   "border-border/60 bg-card rounded-xl border p-4 space-y-5"

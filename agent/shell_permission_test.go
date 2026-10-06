@@ -64,15 +64,15 @@ func (m *shellModel) take() []string {
 	return out
 }
 
-// shellConfig is messagingConfig with shell_exec switched on for the
-// install, allowed for Alice and left out of Bob's tools. Helper may target
-// everyone and has agent_message.
+// shellConfig is messagingConfig with shell_exec named in Alice's tools
+// ("Allow shell commands") and Bob on "*" alone, which does not include it.
+// No install-wide setting is involved. Helper may target everyone and has
+// agent_message.
 func shellConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := messagingConfig(t)
-	cfg.Tools.Overrides["shell_exec"] = true
-	cfg.Agents.List[0].Tools = []string{"*"}
-	cfg.Agents.List[1].Tools = []string{"file_*"}
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
+	cfg.Agents.List[1].Tools = []string{"*"}
 	return cfg
 }
 
@@ -264,8 +264,7 @@ func TestShell_FreshAgentNever(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 			cfg := forumConfig(t, true, false)
-			cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
-			cfg.Agents.List[0].Tools = []string{"*"}
+			cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 			model := &shellModel{}
 			r := newForumRig(t, cfg, model)
 			id, err := newAgentServices(r.al, "alice").CreateFresh("alpha", tc.opts...)
@@ -310,9 +309,8 @@ func TestShell_UnnamedCloneUsesSourceName(t *testing.T) {
 func TestShell_HumanAgentNever(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	cfg := humanMessagingConfig(t, 60)
-	cfg.Tools.Overrides["shell_exec"] = true
 	for i := range cfg.Agents.List {
-		cfg.Agents.List[i].Tools = []string{"*"}
+		cfg.Agents.List[i].Tools = []string{"*", "shell_exec"}
 	}
 	al, _ := humanMessagingLoop(t, cfg, &countingProvider{})
 	bob, _ := al.GetRegistry().Get("bob")
@@ -335,20 +333,34 @@ func TestShell_HumanAgentNever(t *testing.T) {
 	}
 }
 
-// TestShell_ConfigSwitches: tools, deny_tools and tool_overrides decide it
-// as before.
+// TestShell_ConfigSwitches: only shell_exec named in the agent's own tools
+// grants it ("*" and prefixes do not), deny_tools wins, and
+// tools.tool_overrides.shell_exec, whatever its value, changes nothing.
 func TestShell_ConfigSwitches(t *testing.T) {
+	alice := func(tools ...string) func(*config.Config) {
+		return func(c *config.Config) { c.Agents.List[0].Tools = tools }
+	}
+	override := func(v bool, tools ...string) func(*config.Config) {
+		return func(c *config.Config) {
+			c.Tools.Overrides["shell_exec"] = v
+			c.Agents.List[0].Tools = tools
+		}
+	}
 	for _, tc := range []struct {
 		name    string
 		edit    func(cfg *config.Config)
 		allowed bool
 	}{
-		{"tools *", func(*config.Config) {}, true},
-		{"tools lists shell_exec", func(c *config.Config) { c.Agents.List[0].Tools = []string{"shell_exec"} }, true},
-		{"tools leave it out", func(c *config.Config) { c.Agents.List[0].Tools = []string{"file_*"} }, false},
+		{"tools * and shell_exec", func(*config.Config) {}, true},
+		{"tools lists only shell_exec", alice("shell_exec"), true},
+		{"tools *", alice("*"), false},
+		{"tools shell_*", alice("shell_*"), false},
+		{"tools leave it out", alice("file_*"), false},
 		{"deny_tools", func(c *config.Config) { c.Agents.List[0].DenyTools = []string{"shell_exec"} }, false},
-		{"tool_overrides off", func(c *config.Config) { c.Tools.Overrides["shell_exec"] = false }, false},
-		{"tool_overrides unset", func(c *config.Config) { delete(c.Tools.Overrides, "shell_exec") }, false},
+		{"tool_overrides true, tools *", override(true, "*"), false},
+		{"tool_overrides true, named", override(true, "*", "shell_exec"), true},
+		{"tool_overrides false, named", override(false, "*", "shell_exec"), true},
+		{"tool_overrides false, tools *", override(false, "*"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
@@ -357,10 +369,15 @@ func TestShell_ConfigSwitches(t *testing.T) {
 			model := &shellModel{}
 			al, msgBus := messagingLoop(t, cfg, model)
 
-			alice, _ := al.GetRegistry().Get("alice")
-			if _, has := alice.Tools.Get("shell_exec"); has != tc.allowed {
+			inst, _ := al.GetRegistry().Get("alice")
+			if _, has := inst.Tools.Get("shell_exec"); has != tc.allowed {
 				t.Errorf("Alice has shell_exec = %v, want %v", has, tc.allowed)
 			}
+			// The MCP host path (session and service tokens) runs the same
+			// registry.
+			res := inst.Tools.ExecuteForHost(context.Background(), "shell_exec",
+				map[string]any{"command": "echo shell-ok"}, "telegram", "chat-1", nil)
+			checkShell(t, "Alice through the host", res.ForLLM, "Alice", tc.allowed)
 			msg := inbound("chat-1", "m1", "run it")
 			msg.Channel = "telegram"
 			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "alice"}
@@ -396,7 +413,7 @@ func TestShell_ReloadTurnsItOff(t *testing.T) {
 
 	next := shellConfig(t)
 	next.Agents.BaseDir = cfg.Agents.BaseDir
-	next.Agents.List[0].Tools = []string{"file_*"}
+	next.Agents.List[0].Tools = []string{"*"}
 	before, _ := al.GetRegistry().Get(cloneID)
 	if err := al.ReloadProviderAndConfig(ctx, model, next); err != nil {
 		t.Fatalf("reload: %v", err)
@@ -428,7 +445,7 @@ func TestShell_DelegationThroughAllowAgents(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 			cfg := shellConfig(t)
 			cfg.Tools.Overrides["agent_spawn"] = true
-			cfg.Agents.List[1].Tools = []string{"file_*", "agent_spawn"}
+			cfg.Agents.List[1].Tools = []string{"*"}
 			cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: tc.allow}
 			model := &shellModel{}
 			al, _ := messagingLoop(t, cfg, model)

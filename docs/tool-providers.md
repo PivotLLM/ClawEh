@@ -136,7 +136,9 @@ hand-written schema.
 `DefaultAllow` defaults to **deny**. A tool is exposed to clients only if it sets
 `DefaultAllow: global.Allow(true)`, or an operator explicitly enables it via
 config (`tools.tool_overrides["<ns>_<name>"] = true`). So new tools are off by
-default until you opt in or the operator turns them on.
+default until you opt in or the operator turns them on. `shell_exec` is the
+exception: it has no install-wide switch and is granted only to an agent whose
+`tools` list names it.
 
 ### Sub-agents and the full toolset
 

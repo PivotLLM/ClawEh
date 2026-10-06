@@ -1,6 +1,14 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/PivotLLM/ClawEh/logger"
+)
 
 // deny_tools is evaluated after the generic Tools allow list, under
 // MatchToolPattern's rule, and deny wins.
@@ -34,8 +42,8 @@ func TestAgentConfig_IsToolAllowed_DenyTools(t *testing.T) {
 		{"unrelated deny leaves allow intact", []string{"file_read_lines"}, []string{"shell_exec"}, "file_read_lines", true},
 
 		// nil / empty deny ⇒ unchanged behaviour.
-		{"nil deny, wildcard allow", []string{"*"}, nil, "shell_exec", true},
-		{"empty deny, wildcard allow", []string{"*"}, []string{}, "shell_exec", true},
+		{"nil deny, wildcard allow", []string{"*"}, nil, "file_read_lines", true},
+		{"empty deny, wildcard allow", []string{"*"}, []string{}, "file_read_lines", true},
 		{"nil deny, empty allow", []string{}, nil, "shell_exec", false},
 
 		// nil Tools falls back to the install defaults, still subject to deny.
@@ -192,5 +200,123 @@ func TestDenyTools_RegistrationAndExecutionGatesAgree(t *testing.T) {
 	}
 	if !a.IsToolAllowed("file_read_lines") {
 		t.Error("file_read_lines should stay allowed")
+	}
+}
+
+// shell_exec is granted only by naming it in the agent's own tools list: no
+// wildcard or prefix entry includes it, deny_tools still wins, and no
+// install-wide setting plays a part.
+func TestAgentConfig_IsToolAllowed_ShellExplicitOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		tools     []string
+		deny      []string
+		toolName  string
+		wantAllow bool
+	}{
+		{"named", []string{"shell_exec"}, nil, "shell_exec", true},
+		{"named among others", []string{"file_read_lines", "shell_exec"}, nil, "shell_exec", true},
+		{"named beside a wildcard", []string{"*", "shell_exec"}, nil, "shell_exec", true},
+		{"named, different case", []string{"Shell_Exec"}, nil, "shell_exec", true},
+		{"named, tool name different case", []string{"shell_exec"}, nil, "SHELL_EXEC", true},
+		{"named with spaces", []string{" shell_exec "}, nil, "shell_exec", true},
+		{"wildcard only", []string{"*"}, nil, "shell_exec", false},
+		{"prefix shell_*", []string{"shell_*"}, nil, "shell_exec", false},
+		{"prefix s*", []string{"s*"}, nil, "shell_exec", false},
+		{"other tools only", []string{"file_*"}, nil, "shell_exec", false},
+		{"empty tools", []string{}, nil, "shell_exec", false},
+		{"named but denied", []string{"shell_exec"}, []string{"shell_exec"}, "shell_exec", false},
+		{"named but denied by prefix", []string{"shell_exec"}, []string{"shell_*"}, "shell_exec", false},
+		{"named but denied by star", []string{"shell_exec"}, []string{"*"}, "shell_exec", false},
+		{"wildcard does not affect other tools", []string{"*"}, nil, "file_write", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &AgentConfig{Tools: tc.tools, DenyTools: tc.deny}
+			if got := a.IsToolAllowed(tc.toolName); got != tc.wantAllow {
+				t.Errorf("IsToolAllowed(%q) with tools=%v deny=%v = %v, want %v",
+					tc.toolName, tc.tools, tc.deny, got, tc.wantAllow)
+			}
+		})
+	}
+}
+
+// With no tools key the install defaults apply; a "*" default does not
+// include shell_exec, and a default list naming it does.
+func TestAgentConfig_IsToolAllowed_ShellDefaults(t *testing.T) {
+	saved := DefaultAgentTools
+	t.Cleanup(func() { DefaultAgentTools = saved })
+	a := &AgentConfig{}
+
+	DefaultAgentTools = []string{"*"}
+	if a.IsToolAllowed("shell_exec") {
+		t.Error(`default tools ["*"] granted shell_exec`)
+	}
+	DefaultAgentTools = []string{"file_read_lines", "shell_exec"}
+	if !a.IsToolAllowed("shell_exec") {
+		t.Error("default tools naming shell_exec did not grant it")
+	}
+}
+
+// tools.tool_overrides.shell_exec is not a switch: true, false or absent, the
+// install-wide gate always admits shell_exec, and other overrides still work.
+func TestToolsConfig_ShellOverrideIgnored(t *testing.T) {
+	for _, overrides := range []map[string]bool{
+		nil,
+		{"shell_exec": true},
+		{"shell_exec": false},
+	} {
+		tc := &ToolsConfig{Overrides: overrides}
+		if !tc.ToolEnabled("shell_exec", false) {
+			t.Errorf("ToolEnabled(shell_exec) with overrides %v = false, want true", overrides)
+		}
+		if !tc.IsToolEnabled("shell_exec") {
+			t.Errorf("IsToolEnabled(shell_exec) with overrides %v = false, want true", overrides)
+		}
+	}
+	tc := &ToolsConfig{Overrides: map[string]bool{"file_write": false, "shell_exec": false}}
+	if tc.ToolEnabled("file_write", true) {
+		t.Error("an override for another tool no longer applies")
+	}
+}
+
+// A config that still sets tools.tool_overrides.shell_exec loads, and a
+// warning names the key; without it there is no warning. Either way an
+// agent's shell access follows its own tools list only.
+func TestLoadConfig_ShellOverrideWarns(t *testing.T) {
+	for _, tc := range []struct {
+		name, overrides string
+		warn            bool
+	}{
+		{"set true", `"tool_overrides":{"shell_exec":true},`, true},
+		{"set false", `"tool_overrides":{"shell_exec":false},`, true},
+		{"absent", `"tool_overrides":{"file_write":true},`, false},
+		{"no overrides", ``, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			restore := logger.RedirectForTest(&buf)
+			defer restore()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			doc := `{"tools":{` + tc.overrides + `"exec":{}},"agents":{"list":[` +
+				`{"id":"alice","tools":["*","shell_exec"]},{"id":"bob","tools":["*"]}]}}`
+			if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if got := strings.Contains(buf.String(), "tools.tool_overrides.shell_exec has no effect"); got != tc.warn {
+				t.Errorf("warning logged = %v, want %v:\n%s", got, tc.warn, buf.String())
+			}
+			if !cfg.AgentByID("alice").IsToolAllowed("shell_exec") {
+				t.Error("alice names shell_exec but is not allowed it")
+			}
+			if cfg.AgentByID("bob").IsToolAllowed("shell_exec") {
+				t.Error(`bob has only "*" but is allowed shell_exec`)
+			}
+		})
 	}
 }

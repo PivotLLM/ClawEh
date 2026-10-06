@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -76,6 +77,11 @@ func buildToolSupport(cfg *config.Config) []toolSupportItem {
 			if d.Suite != "" {
 				continue
 			}
+			// shell_exec has no install-wide switch: it is allowed per agent
+			// ("Allow shell commands" on the Agents page).
+			if d.Name == config.ShellExecTool {
+				continue
+			}
 			items = append(items, toolSupportItem{
 				Name:        d.Name,
 				Description: d.Description,
@@ -125,6 +131,9 @@ func resolveStaticToolStatus(_ *config.Config, _ tools.ToolDescriptor) (string, 
 }
 
 func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
+	if toolName == config.ShellExecTool {
+		return errors.New("shell commands are allowed per agent on the Agents page")
+	}
 	// Look up ConfigKey from registered providers.
 	for _, p := range tools.GetProviders() {
 		for _, d := range p.Describe() {

@@ -11,7 +11,10 @@ import {
   mcpAccessEntries,
   mcpAccessView,
   parseAgentsConfig,
+  shellAllowed,
+  shellDenied,
   toggleAccessEntry,
+  withShellAllowed,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -369,6 +372,89 @@ describe("agentsPayload", () => {
       models: ["human"],
       message: { window_minutes: 5, window_count: 3 },
     })
+  })
+
+  it("Allow shell commands adds and removes only the explicit shell_exec entry", () => {
+    // As the card applies it: the tools list goes through withShellAllowed
+    // and the rest of the agent is the loaded entry.
+    const save = (
+      cfg: ReturnType<typeof parseAgentsConfig>,
+      id: string,
+      allowed: boolean,
+    ) =>
+      Object.fromEntries(
+        (
+          agentsPayload({
+            ...cfg,
+            list: (cfg.list ?? []).map((a) =>
+              a.id === id
+                ? { ...a, tools: withShellAllowed(a.tools ?? [], allowed) }
+                : a,
+            ),
+          }) as { agents: { list: Record<string, unknown>[] } }
+        ).agents.list.map((a) => [a.id, a]),
+      )
+
+    const cfg = parseAgentsConfig(loaded)
+    // "*" alone does not include shell_exec.
+    expect(
+      shellAllowed(cfg.list?.find((a) => a.id === "bob")?.tools ?? []),
+    ).toBe(false)
+
+    // On for Bob, whose tools are "*": the explicit entry is added beside it.
+    const on = save(cfg, "bob", true)
+    expect(on.bob.tools).toEqual(["*", "shell_exec"])
+    expect(on.alice.tools).toEqual(["file_read"])
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+    }
+    expect(on.bob.name).toBe("Bob")
+    expect(on.alice.maestro).toEqual({
+      enabled: true,
+      max_concurrent: 2,
+      a_runner_key: 9,
+    })
+
+    // Reloaded, the box reads it; turning it off removes only that entry.
+    const reloaded = parseAgentsConfig({
+      agents: { list: Object.values(on) },
+    })
+    const bob = reloaded.list?.find((a) => a.id === "bob")
+    expect(shellAllowed(bob?.tools ?? [])).toBe(true)
+    const off = save(reloaded, "bob", false)
+    expect(off.bob.tools).toEqual(["*"])
+    expect(off.bob).toMatchObject(unedited("bob"))
+
+    // On for Alice, with an explicit list.
+    const aliceOn = save(cfg, "alice", true)
+    expect(aliceOn.alice.tools).toEqual(["file_read", "shell_exec"])
+    expect(aliceOn.alice).toMatchObject(unedited("alice"))
+  })
+
+  it("shellAllowed and withShellAllowed match the entry case-insensitively", () => {
+    expect(shellAllowed(["Shell_Exec"])).toBe(true)
+    expect(shellAllowed([" shell_exec "])).toBe(true)
+    expect(shellAllowed(["*"])).toBe(false)
+    expect(shellAllowed(["shell_*"])).toBe(false)
+    expect(shellAllowed([])).toBe(false)
+    expect(withShellAllowed(["*", "SHELL_EXEC"], false)).toEqual(["*"])
+    // Turning it on twice keeps one entry.
+    expect(withShellAllowed(["*", "shell_exec"], true)).toEqual([
+      "*",
+      "shell_exec",
+    ])
+    expect(withShellAllowed([], true)).toEqual(["shell_exec"])
+    expect(withShellAllowed(["shell_*"], false)).toEqual(["shell_*"])
+  })
+
+  it("shellDenied follows the deny_tools matching rule", () => {
+    expect(shellDenied(["shell_exec"])).toBe(true)
+    expect(shellDenied(["SHELL_EXEC"])).toBe(true)
+    expect(shellDenied(["shell_*"])).toBe(true)
+    expect(shellDenied(["*"])).toBe(true)
+    expect(shellDenied(["shell"])).toBe(false)
+    expect(shellDenied(["file_*"])).toBe(false)
+    expect(shellDenied([])).toBe(false)
   })
 
   it("writes an agent added on the page from its edited fields only", () => {

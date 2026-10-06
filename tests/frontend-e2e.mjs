@@ -717,7 +717,34 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
   })
 
-  await check(6, "returning to the Agents page through the sidebar shows the agents", async () => {
+  await check(6, "Allow shell commands adds and removes the explicit shell_exec entry", async () => {
+    if (!created) return "skipped, never created"
+    const before = (await config()).agents.list.find((x) => x.id === PROBE)
+    const others = (before?.tools ?? []).filter((t) => t !== "shell_exec")
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
+    const box = page.getByLabel("Allow shell commands", { exact: true }).first()
+    assert((await box.count()) > 0, 'no "Allow shell commands" checkbox on the card')
+    assert(!(await box.isChecked()), '"Allow shell commands" already ticked on a new agent')
+    await box.click()
+    await page.waitForTimeout(2000)
+    let a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert((a?.tools ?? []).includes("shell_exec"), `tools = ${JSON.stringify(a?.tools)}; expected shell_exec`)
+    assert(
+      JSON.stringify(a.tools.filter((t) => t !== "shell_exec")) === JSON.stringify(others),
+      `tools = ${JSON.stringify(a.tools)}; the other entries changed (were ${JSON.stringify(others)})`,
+    )
+    await box.click()
+    await page.waitForTimeout(2000)
+    await close()
+    a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert(!(a?.tools ?? []).includes("shell_exec"), `tools = ${JSON.stringify(a?.tools)}; shell_exec should be gone`)
+    assert(JSON.stringify(a?.tools ?? []) === JSON.stringify(others), `tools = ${JSON.stringify(a?.tools)}; expected ${JSON.stringify(others)}`)
+    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the shell toggle")
+  })
+
+  await check(7, "returning to the Agents page through the sidebar shows the agents", async () => {
     // A return visit mounts the page with its query already cached. It used to
     // seed the editable list only when a new fetch landed, so the cached list
     // never showed and the page said "No agents yet" until a browser reload.
@@ -741,7 +768,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(shown > 0, `the rail does not list "${rail[0]}" on a return visit`)
   })
 
-  await check(7, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
+  await check(8, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
     if (!created) return "skipped, never created"
     const clis = (await api("/api/system/clis")).json ?? []
     const c = await config()
@@ -766,7 +793,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(link > 0, 'the warning has no "Allow it" link to the Providers page')
   })
 
-  await check(8, "a long dropdown keeps its size and scroll position while scrolling", async () => {
+  await check(9, "a long dropdown keeps its size and scroll position while scrolling", async () => {
     // Radix Select's item-aligned mode grows the popup and rewrites the scroll
     // position on every scroll event; on a phone the list flickers and snaps
     // back to the top on release. The wheel goes through the same code, so this
@@ -814,7 +841,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(9, "delete the agent and confirm it is gone", async () => {
+  await check(10, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()

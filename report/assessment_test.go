@@ -302,6 +302,7 @@ func TestAssessment_DeviceAutoApprove(t *testing.T) {
 // restrict_to_workspace is off (the File confinement row covers that).
 func TestAssessment_FileConfinementVsShell(t *testing.T) {
 	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 	s := collectAssessment(t.Context(), cfg, env)
 	for _, id := range []string{"alice", "bob"} {
 		r := assessmentRow(t, s, "File confinement vs shell ("+id+")")
@@ -427,7 +428,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.List[0].Tools = []string{"file_read"} // Alice has no shell_exec
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "shell_exec: bob;") || strings.Contains(r[2], "allow_agents") {
+	if !strings.Contains(r[2], "Allow shell commands: bob;") || strings.Contains(r[2], "allow_agents") {
 		t.Errorf("no delegation: shell row = %v", r)
 	}
 	if !strings.Contains(r[2], "Allow CLI to bypass restrictions") {
@@ -448,5 +449,59 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
 	if strings.Contains(r[2], "bypass") {
 		t.Errorf("bypass off: shell row mentions the CLI bypass setting: %v", r)
+	}
+}
+
+// TestAssessment_ShellExplicitOnly: the Shell access row lists only the agents
+// whose tools name shell_exec ("Allow shell commands"); a "*" list does not
+// count, and deny_tools removes an agent.
+func TestAssessment_ShellExplicitOnly(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	// alice has no tools key (the "*" default), bob names shell_exec.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: bob;") {
+		t.Errorf("default: shell row = %v", r)
+	}
+
+	cfg.Agents.List[0].Tools = []string{"*"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: bob;") {
+		t.Errorf(`alice with "*": shell row = %v`, r)
+	}
+
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: alice, bob;") {
+		t.Errorf("alice names shell_exec: shell row = %v", r)
+	}
+
+	cfg.Agents.List[0].DenyTools = []string{"shell_exec"}
+	cfg.Agents.List[1].DenyTools = []string{"shell_exec"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.HasPrefix(r[2], "No enabled agent is allowed shell commands.") {
+		t.Errorf("both denied: shell row = %v", r)
+	}
+}
+
+// TestAssessment_ShellOverrideHasNoEffect: a tools.tool_overrides.shell_exec
+// entry, whatever its value, is shown as having no effect; without one there
+// is no such row.
+func TestAssessment_ShellOverrideHasNoEffect(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+		if row[1] == "Install-wide shell setting" {
+			t.Errorf("row present without the override: %v", row)
+		}
+	}
+	for _, v := range []bool{true, false} {
+		cfg.Tools.Overrides = map[string]bool{"shell_exec": v}
+		r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Install-wide shell setting")
+		if r[0] != "" || r[2] != "tools.tool_overrides.shell_exec has no effect; shell commands are allowed per agent." {
+			t.Errorf("override %v: row = %v", v, r)
+		}
+		// The override changes nobody's access.
+		if s := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access"); !strings.Contains(s[2], "Allow shell commands: bob;") {
+			t.Errorf("override %v: shell row = %v", v, s)
+		}
 	}
 }

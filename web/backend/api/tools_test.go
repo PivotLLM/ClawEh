@@ -149,3 +149,45 @@ func TestHandleUpdateToolState(t *testing.T) {
 		t.Fatalf("cron_schedule override should be true: %#v", updated.Tools.Overrides)
 	}
 }
+
+// TestShellExecHasNoInstallWideSwitch: the Tools page neither lists shell_exec
+// nor accepts a state change for it (it is allowed per agent), and a refused
+// change leaves the config untouched.
+func TestShellExecHasNoInstallWideSwitch(t *testing.T) {
+	configPath := setupTestEnv(t)
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tools", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp toolSupportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range resp.Tools {
+		if tool.Name == "shell_exec" {
+			t.Fatalf("shell_exec listed on the Tools page: %+v", tool)
+		}
+	}
+
+	for _, body := range []string{`{"enabled":true}`, `{"enabled":false}`} {
+		rec = httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/tools/shell_exec/state", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("PUT shell_exec %s: status = %d, want 400, body=%s", body, rec.Code, rec.Body.String())
+		}
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Tools.Overrides["shell_exec"]; ok {
+		t.Errorf("a refused change wrote tool_overrides.shell_exec: %v", cfg.Tools.Overrides)
+	}
+}

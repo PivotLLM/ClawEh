@@ -52,8 +52,9 @@ func (globalShellProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			Description: meta.Description(),
 			RawSchema:   meta.Parameters(),
 			Category:    "automation",
-			// shell_exec is DefaultEnabled:false → denied by default, so leave
-			// DefaultAllow unset.
+			// Not in the default agent tool list. There is no install-wide
+			// switch (config.ToolsConfig.ToolEnabled always admits it): an
+			// agent gets shell_exec only when its tools list names it.
 			DefaultAllow: nil,
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return tools.ResultToGlobal(execTool.Execute(call.Ctx, call.Args)), nil

@@ -15,6 +15,9 @@ import {
   type SkillInfo,
   settingsCardClass,
   type CLIBypassWarning,
+  shellAllowed,
+  shellDenied,
+  withShellAllowed,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
@@ -27,6 +30,7 @@ import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { noteKey, uniqueNotes } from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 
@@ -141,6 +145,8 @@ export function AgentCard({
   status,
 }: AgentCardProps) {
   const { t } = useTranslation()
+  // The shell entry has its own box; the count is of the other tools.
+  const internalTools = withShellAllowed(tools, false)
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
@@ -299,12 +305,12 @@ export function AgentCard({
           {availableTools.tools.length > 0 && (
             <div className="space-y-1.5">
               <p
-                className={`text-xs font-semibold ${tools.length === 0 ? "text-amber-400" : "text-foreground"}`}
+                className={`text-xs font-semibold ${internalTools.length === 0 ? "text-amber-400" : "text-foreground"}`}
               >
                 Internal tools (
-                {tools.length === 0
+                {internalTools.length === 0
                   ? "none — no tool access"
-                  : `${tools.includes("*") ? "all" : tools.length} granted`}
+                  : `${internalTools.includes("*") ? "all" : internalTools.length} granted`}
                 )
               </p>
               <p className="text-muted-foreground text-xs">
@@ -319,6 +325,29 @@ export function AgentCard({
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <label className="flex cursor-pointer items-center gap-2 select-none">
+              <Checkbox
+                checked={shellAllowed(tools)}
+                onCheckedChange={(v) =>
+                  onToolsChange(withShellAllowed(tools, v === true))
+                }
+                aria-label={t("agents.allowShell")}
+              />
+              <span className="text-foreground text-xs font-semibold">
+                {t("agents.allowShell")}
+              </span>
+            </label>
+            <p className="text-muted-foreground text-xs">
+              {t("agents.allowShellHint")}
+            </p>
+            {shellAllowed(tools) && shellDenied(denyTools) && (
+              <p className="text-xs font-medium text-amber-400">
+                {t("agents.allowShellDenied")}
+              </p>
+            )}
+          </div>
 
           {onDenyToolsChange !== undefined && (
             <div className="space-y-1.5">

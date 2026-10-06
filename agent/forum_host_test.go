@@ -439,16 +439,15 @@ func TestForum_ShellFollowsTheParticipant(t *testing.T) {
 		bobTools []string
 		want     string
 	}{
-		{"existing, allowed", forumLaunchConfig, []string{"*"}, "forum-shell-ok"},
-		{"existing, not allowed", forumLaunchConfig, []string{"file_*"}, "Bob is not allowed to run shell commands."},
-		{"clone, allowed", cloneConfig, []string{"*"}, "forum-shell-ok"},
-		{"clone, not allowed", cloneConfig, []string{"file_*"}, "Bob is not allowed to run shell commands."},
+		{"existing, allowed", forumLaunchConfig, []string{"*", "shell_exec"}, "forum-shell-ok"},
+		{"existing, not allowed", forumLaunchConfig, []string{"*"}, "Bob is not allowed to run shell commands."},
+		{"clone, allowed", cloneConfig, []string{"*", "shell_exec"}, "forum-shell-ok"},
+		{"clone, not allowed", cloneConfig, []string{"*"}, "Bob is not allowed to run shell commands."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 			model := &forumModel{bobTool: "shell_exec", bobArgs: `{"command":"echo forum-shell-ok"}`}
 			cfg := forumConfig(t, true, false)
-			cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
 			cfg.Agents.List[1].Tools = tc.bobTools
 			r := newForumRig(t, cfg, model)
 
@@ -469,8 +468,7 @@ func TestForum_ShellFollowsTheParticipant(t *testing.T) {
 func TestForum_FreshParticipantHasNoShell(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	cfg := forumConfig(t, true, false)
-	cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
-	cfg.Agents.List[0].Tools = []string{"*"}
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 	r := newForumRig(t, cfg, &forumModel{})
 	id, err := r.host.CreateFresh(context.Background(), forum.FreshSpec{Model: "alpha", Owner: "alice"})
 	if err != nil {

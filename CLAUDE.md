@@ -198,9 +198,13 @@ production instance directly; test against a dev instance.
   agent's next message.
 - **Turn scope** (`tools/origin.go`): the ask chain rides the context and the MCP
   session token (`SetTurnScope`) like the sub-agent depth.
-- **Shell permission**: whether an agent may run `shell_exec` is only its own tool
-  permission (`tools`/`deny_tools`, with the install-wide `tool_overrides.shell_exec`;
-  off by default). There is no channel rule: it applies on every channel and to
+- **Shell permission**: whether an agent may run `shell_exec` is one per-agent
+  switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
+  shell commands") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,
+  `config.ShellExecTool`). A `"*"` or prefix entry never includes it, and there is no
+  install-wide switch: `ToolsConfig.ToolEnabled` always admits it, a
+  `tool_overrides.shell_exec` is ignored with a load WARN and a Check Up row, and the
+  Tools page neither lists nor toggles it. Clones inherit it. There is no channel rule: it applies on every channel and to
   everything acting as the agent (clones, asks, forum turns, MCP session and service
   tokens). Fresh temporary and human agents have no tools. A refused call gets
   `tools.ShellNotAllowedMessage` ("Alice is not allowed to run shell commands."),
@@ -434,7 +438,7 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 145 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 146 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

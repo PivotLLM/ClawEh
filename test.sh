@@ -548,7 +548,7 @@ PY
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*", "cogmem_*"],
+        "tools": ["*", "cogmem_*", "shell_exec"],
         "fusion": true,
         "forum": true,
         "mcp_tools": ["wxca"]
@@ -595,7 +595,6 @@ PY
     "subagent": { "enabled": true },
     "cron": { "enabled": true },
     "tool_overrides": {
-      "shell_exec": true,
       "file_read_bytes": true,
       "file_count": true,
       "file_edit_bytes": true,

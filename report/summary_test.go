@@ -21,7 +21,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 		t.Errorf("Files = %q\nwant %q", files[1], want)
 	}
 	_, shell := findRow(t, tb, "Shell")
-	if shell[1] != "shell_exec allowed for alice, bob; deny patterns on." {
+	if shell[1] != "shell_exec allowed for bob; deny patterns on." {
 		t.Errorf("Shell = %q", shell[1])
 	}
 	_, out := findRow(t, tb, "Outbound network")

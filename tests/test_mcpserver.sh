@@ -48,7 +48,7 @@ PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 FUSION_SERVICE="${FUSION_SERVICE:-}"   # optional: a Fusion service the token's agent lists in mcp_tools
-UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of an agent with Fusion on and nothing listed
+UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of alice: Fusion on and nothing listed; tools "*" without shell_exec
 NOSHELL_SERVICE_TOKEN="${NOSHELL_SERVICE_TOKEN:-}"   # required by 4b.1b: service token of the agent Bob, whose tools leave out shell_exec
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
@@ -649,6 +649,21 @@ else
     else
         echo "    ${RED}FAIL${NC}: NOSHELL_SERVICE_TOKEN is not set (the service token of Bob, whose tools leave out shell_exec)"
         FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    # "*" does not include shell_exec: alice's tools are "*" without naming it.
+    if [ -n "$UNGRANTED_SERVICE_TOKEN" ]; then
+        echo "  4b.1c shell_exec refused for an agent whose tools are \"*\" only (service token)"
+        ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+            -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$UNGRANTED_SERVICE_TOKEN")" 2>&1)
+        if echo "$ns" | grep -qF "alice is not allowed to run shell commands. This is a configured access restriction" && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, naming alice"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: alice's service token was not refused by name"
+            echo "$ns" | head -5 | sed 's/^/      /'
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
     fi
 
     run_test_not_auth_err "4b.2 web_search — token accepted" \

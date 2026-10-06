@@ -3,6 +3,8 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // ToolResult represents the structured return value from tool execution.
@@ -115,7 +117,7 @@ func ErrorResult(message string) *ToolResult {
 }
 
 // ShellToolName is the published name of the shell tool.
-const ShellToolName = "shell_exec"
+const ShellToolName = config.ShellExecTool
 
 // ShellNotAllowedMessage is the refusal of a shell_exec call by an agent
 // whose tool permissions do not include it, on any channel and over MCP.

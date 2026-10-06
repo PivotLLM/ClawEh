@@ -335,11 +335,17 @@ agent's list controls which of them that agent may use.
 
 | Value | Meaning |
 |-------|---------|
-| `["*"]` | Allow all tools that are globally enabled |
+| `["*"]` | Allow all tools that are globally enabled, except `shell_exec` |
 | `["read_file", "exec"]` | Allow only the listed tools |
 | `["read_*"]` | Allow all tools whose names start with `read_` (case-insensitive prefix match) |
 | `[]` (present but empty) | Deny all tools |
 | _(absent)_ | Use the install defaults |
+
+`shell_exec` is granted only by naming it: an agent runs shell commands only
+when its `tools` list contains `shell_exec` itself (*Allow shell commands* on
+the Agents page). No `"*"` or prefix entry includes it, and there is no
+install-wide switch (`tools.tool_overrides.shell_exec` has no effect).
+`deny_tools` still wins.
 
 ### Configuration example
 

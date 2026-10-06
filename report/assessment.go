@@ -226,9 +226,9 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 	ex := cfg.Tools.Exec
-	shellText := "No enabled agent has shell_exec."
+	shellText := "No enabled agent is allowed shell commands."
 	if len(shell) > 0 {
-		shellText = "shell_exec: " + strings.Join(shell, ", ")
+		shellText = "Allow shell commands: " + strings.Join(shell, ", ")
 		if via := shellDelegators(agents, shell); len(via) > 0 {
 			shellText += "; also via allow_agents: " + strings.Join(via, ", ")
 		}
@@ -238,6 +238,12 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		shellText += " CLI models with Allow CLI to bypass restrictions have their own shell."
 	}
 	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText)
+	// An ignored value is shown where the operator looks: there is no
+	// install-wide shell switch any more.
+	if _, ok := cfg.Tools.Overrides[config.ShellExecTool]; ok {
+		add(false, "Install-wide shell setting",
+			"tools.tool_overrides.shell_exec has no effect; shell commands are allowed per agent.")
+	}
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
 	// does not, so a confined agent with shell_exec is confined in name only.

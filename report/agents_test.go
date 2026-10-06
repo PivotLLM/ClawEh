@@ -108,13 +108,17 @@ func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 	s := collectAgents(t.Context(), cfg, env)
 
 	// alice has no tools key: the install defaults ("*") apply, and every
-	// sensitive tool is admitted by the pattern.
+	// sensitive tool but shell_exec is admitted by the pattern (shell_exec is
+	// granted only by name).
 	alice := toolMarkers(findTable(t, agentSub(t, s, "alice"), "Internal tools"))
 	if alice["*"] != "no" {
 		t.Errorf("* marker = %q", alice["*"])
 	}
-	if alice["shell_exec"] != "yes (by pattern)" {
-		t.Errorf("shell_exec marker = %q", alice["shell_exec"])
+	if alice["file_write"] != "yes (by pattern)" {
+		t.Errorf("file_write marker = %q", alice["file_write"])
+	}
+	if m, ok := alice["shell_exec"]; ok {
+		t.Errorf(`shell_exec listed for "*" (marker %q): "*" does not include it`, m)
 	}
 
 	// bob lists two tools explicitly: one row holding both pairs.

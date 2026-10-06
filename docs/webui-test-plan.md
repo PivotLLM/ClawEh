@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-145 checks in all; the runner prints the same tally at the end.
+146 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -121,10 +121,11 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F3 | Under **Internal tools**, toggle the `time_now` checkbox, wait ~2s | `tools` persisted with `time_now` added (or removed, if it was on) **and** `temperature` is still `0.77`. The second save must not clobber the first |
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | Under **Fusion services** on the `e2e-probe` card, tick the first listed service, wait ~2s; tick it again, wait ~2s | `mcp_tools` gains the service name on the first tick and loses it on the second; the earlier edits are untouched. Skipped when the instance defines no Fusion service (`GET /api/agents/tools` has no `fusion_services`) |
-| F6 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
-| F7 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** one line per CLI reads "`<CLI>` is not allowed to bypass its restrictions." followed by an **Allow it** link to the Providers page |
-| F8 | Through the API add twenty temporary enabled models; select an agent, open **Add model…**, scroll the list with the wheel twice; remove the models again | The list shows a scrollbar (Radix hides it by default, which made a long list look cut off), scrolls, does not jump back, and the popup keeps its height throughout. In Radix Select's item-aligned mode the popup grows and the scroll position is rewritten on every scroll event, which on a phone flickers and snaps back to the top on release; every select uses popper mode |
-| F9 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
+| F6 | With `e2e-probe` selected, tick **Allow shell commands** under Tools, wait ~2s; untick it, wait ~2s | `tools` gains `shell_exec` on the tick and loses it on the untick; every other `tools` entry and the earlier edits are unchanged. It is the only way to grant `shell_exec`: `"*"` does not include it |
+| F7 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
+| F8 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** one line per CLI reads "`<CLI>` is not allowed to bypass its restrictions." followed by an **Allow it** link to the Providers page |
+| F9 | Through the API add twenty temporary enabled models; select an agent, open **Add model…**, scroll the list with the wheel twice; remove the models again | The list shows a scrollbar (Radix hides it by default, which made a long list look cut off), scrolls, does not jump back, and the popup keeps its height throughout. In Radix Select's item-aligned mode the popup grows and the scroll position is rewritten on every scroll event, which on a phone flickers and snaps back to the top on release; every select uses popper mode |
+| F10 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
 ## G. System page
 

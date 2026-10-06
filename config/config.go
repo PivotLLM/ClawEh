@@ -527,6 +527,16 @@ func warnLegacyMaestroBool(cfg *Config) {
 	}
 }
 
+// warnShellOverride logs a warning when tools.tool_overrides still sets
+// shell_exec. There is no install-wide shell switch: an agent runs shell
+// commands only when its own tools list names shell_exec.
+func warnShellOverride(cfg *Config) {
+	if _, ok := cfg.Tools.Overrides[ShellExecTool]; ok {
+		logger.WarnCF("config", "tools.tool_overrides.shell_exec has no effect; allow shell commands per agent by adding shell_exec to its tools",
+			map[string]any{"key": "tools.tool_overrides." + ShellExecTool})
+	}
+}
+
 // EffectiveMounts returns the agent's configured mounts, plus an auto-injected
 // read/write mount of <workspace>/maestro when Maestro is enabled and the agent
 // has not already defined a mount named "maestro". The returned Path for the
@@ -787,8 +797,29 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if allow == nil {
 		allow = DefaultAgentTools
 	}
+	// shell_exec is granted only by naming it: no wildcard or prefix entry
+	// includes it, and no install-wide setting turns it on or off.
+	if strings.EqualFold(name, ShellExecTool) {
+		return namesTool(allow, name) && !a.IsToolDenied(name)
+	}
 	// DenyTools is checked after the allow list, under the same rule; deny wins.
 	return MatchToolPattern(allow, name) && !a.IsToolDenied(name)
+}
+
+// ShellExecTool is the published name of the shell tool. An agent runs shell
+// commands only when its own tools list names it exactly ("Allow shell
+// commands" in the WebUI); a "*" or prefix entry never includes it.
+const ShellExecTool = "shell_exec"
+
+// namesTool reports whether patterns names the tool exactly
+// (case-insensitive), ignoring wildcard and prefix entries.
+func namesTool(patterns []string, name string) bool {
+	for _, entry := range patterns {
+		if strings.EqualFold(strings.TrimSpace(entry), name) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsToolDenied reports whether deny_tools names the tool, independent of any
@@ -2658,6 +2689,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
+	warnShellOverride(cfg)
 
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
@@ -3360,6 +3392,10 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 }
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
+	// shell_exec has no install-wide switch: the agent's tools list decides.
+	if name == ShellExecTool {
+		return true
+	}
 	// Generic overrides win — this is the dynamic gating path for global-layer
 	// tools that have no dedicated typed field.
 	if v, ok := t.Overrides[name]; ok {
@@ -3381,7 +3417,14 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 // ToolEnabled resolves a per-tool enabled state: an explicit Overrides entry wins,
 // otherwise the tool's own default-allow (from its descriptor) applies. This is the
 // gating path for global-layer tools, which have no dedicated typed config field.
+//
+// shell_exec is the exception: it has no install-wide switch, so it is always
+// enabled here and any tool_overrides entry for it is ignored; whether an agent
+// gets it is decided by AgentConfig.IsToolAllowed alone.
 func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
+	if name == ShellExecTool {
+		return true
+	}
 	if v, ok := t.Overrides[name]; ok {
 		return v
 	}
