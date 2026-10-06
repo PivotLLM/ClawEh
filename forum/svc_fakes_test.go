@@ -597,9 +597,14 @@ func svcClose(t *testing.T, svc *Service) {
 
 func (e *svcEnv) opts() LaunchOptions {
 	return LaunchOptions{
-		Scope:     e.scope,
-		Origin:    Origin{Channel: "test", ChatID: "chat-1"},
-		ConfigDir: e.workspace,
+		Scope:  e.scope,
+		Origin: Origin{Channel: "test", ChatID: "chat-1"},
+		ResolveFile: func(ref string) (string, error) {
+			if filepath.IsAbs(ref) {
+				return ref, nil
+			}
+			return filepath.Join(e.workspace, ref), nil
+		},
 		ReadAllowed: func(abs string) error {
 			if !strings.HasPrefix(abs, e.workspace+string(filepath.Separator)) {
 				return errors.New("outside the workspace")

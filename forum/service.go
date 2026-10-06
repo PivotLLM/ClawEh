@@ -72,9 +72,9 @@ type LaunchOptions struct {
 	// Origin is where the completion notice goes. An empty AgentID is
 	// filled with Scope.AgentID.
 	Origin Origin
-	// ConfigDir is the directory relative source paths resolve against:
-	// the launching agent's workspace.
-	ConfigDir string
+	// ResolveFile maps a source `file` reference to the absolute path the
+	// launching agent's file tools would read (PreflightEnv.ResolveFile).
+	ResolveFile func(ref string) (absPath string, err error)
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path (source files). nil allows nothing.
 	ReadAllowed func(absPath string) error
@@ -248,7 +248,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 		Agents:      s.host.Agents,
 		Schemas:     s.host.Schemas,
 		HostLimits:  s.hostLimits,
-		ConfigDir:   opts.ConfigDir,
+		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,
 	})
 	if err != nil {
@@ -263,7 +263,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 //  1. Serialise with the forum's other control operations, check that it
 //     is a draft and Lock it (ErrLocked when another process has it).
 //  2. check (Decode, ValidateStatic, Preflight) the draft's configuration.
-//     A launch of this draft that died part-way is undone first
+//     Whatever an earlier launch of this draft left is undone first
 //     (revertLaunch).
 //  3. WriteConfig (the configuration, indented).
 //  4. Materialise every source (WriteSource): file sources from
@@ -325,10 +325,10 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 	if opts.Origin.AgentID == "" {
 		opts.Origin.AgentID = opts.Scope.AgentID
 	}
-	if store.has(fileConfig) {
-		if err = s.revertLaunch(ctx, store); err != nil {
-			return err
-		}
+	// Undo whatever an earlier launch of this draft left (a crash, or a
+	// reset that was interrupted), so allocation starts from draft.json.
+	if err = s.revertLaunch(ctx, store); err != nil {
+		return err
 	}
 	if err = s.allocate(ctx, store, raw, cfg, resolved, opts); err != nil {
 		return errors.Join(err, s.revertLaunch(ctx, store))
@@ -453,7 +453,11 @@ func launchSeed(cfg *Config) (int64, error) {
 func (s *Service) createParticipants(ctx context.Context, store *Store, cfg *Config, resolved *Resolved, launcher string) (*Participants, error) {
 	used := (&preflight{cfg: cfg}).usedParticipants()
 	out := &Participants{Participants: make(map[string]ParticipantRecord, len(used))}
-	var created []string
+	// Agents an earlier launch of this draft could not delete stay listed.
+	created, err := agentsMarker(store)
+	if err != nil {
+		return nil, err
+	}
 	for _, id := range used {
 		part := cfg.Participants[id]
 		rec := ParticipantRecord{ID: id, Form: part.Form(), Name: part.Name}
@@ -535,6 +539,16 @@ func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return sortTime(&out[i]).After(sortTime(&out[j])) })
 	return out, nil
+}
+
+// discard removes a forum whose launch died with no draft to return to: it
+// deletes the temporary agents in its marker and removes the directory
+// (which also releases the lock). It runs even if ctx was cancelled.
+func (s *Service) discard(ctx context.Context, store *Store) error {
+	if err := s.deleteTempAgents(context.WithoutCancel(ctx), store); err != nil {
+		s.host.Logger.Warnf("forum %s: discarding a failed launch: %v (the registry's idle TTL removes them)", store.ID(), err)
+	}
+	return store.Remove()
 }
 
 // sortTime is when a forum was launched, or a draft last changed.
@@ -826,6 +840,7 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 				note(fmt.Errorf("forum %s: %w", id, rmErr))
 			}
 		}
+		s.removeIncomplete(scope)
 		ids, err := ListForums(scope.BaseDirectory)
 		if err != nil {
 			s.host.Logger.Errorf("forum recovery in %s: %v", scope.BaseDirectory, err)
@@ -845,10 +860,32 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 	return first
 }
 
+// removeIncomplete removes the folders of drafts whose creation died
+// before draft.json was written (ListIncomplete). One locked by a draft
+// being created right now is left alone.
+func (s *Service) removeIncomplete(scope Scope) {
+	ids, err := ListIncomplete(scope.BaseDirectory)
+	if err != nil {
+		s.host.Logger.Warnf("forum recovery in %s: %v", scope.BaseDirectory, err)
+		return
+	}
+	for _, id := range ids {
+		store := &Store{base: scope.BaseDirectory, id: id, root: filepath.Join(scope.BaseDirectory, id)}
+		switch err := store.Remove(); {
+		case errors.Is(err, ErrLocked):
+		case err != nil:
+			s.host.Logger.Warnf("forum %s: removing an incomplete draft: %v", id, err)
+		default:
+			s.host.Logger.Infof("forum %s: removed a draft whose creation did not finish", id)
+		}
+	}
+}
+
 // recoverOne applies Recover's rules to one forum (DESIGN.md §7.18):
 //
-//   - a draft is left as it is; a launch that died before its snapshot was
-//     written is undone, leaving the draft (revertLaunch);
+//   - a draft is kept; whatever a launch of it that died before its
+//     snapshot was written left is undone (revertLaunch); a folder with
+//     forum.json but neither a snapshot nor a draft is removed (discard);
 //   - a terminal forum gets its unfinished terminal work done
 //     (completeTerminal: result.json, agent deletion, notice);
 //   - a paused forum stays paused, its agents are touched once and it is
@@ -868,14 +905,15 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 		return err
 	}
 	if _, err = store.ReadSnapshot(); errors.Is(err, ErrNotFound) {
-		defer store.Unlock()
 		if !store.has(fileDraft) {
-			return corrupt("forum %s has neither %s nor %s", id, fileSnapshot, fileDraft)
+			s.host.Logger.Warnf("forum %s: the launch did not finish; removing it", id)
+			return s.discard(ctx, store)
 		}
-		if !store.has(fileConfig) {
-			return nil // a draft
+		defer store.Unlock()
+		if store.has(fileConfig) {
+			s.host.Logger.Warnf("forum %s: the launch did not finish; it is a draft again", id)
 		}
-		s.host.Logger.Warnf("forum %s: the launch did not finish; it is a draft again", id)
+		// A draft; anything an interrupted launch or reset left is undone.
 		return s.revertLaunch(ctx, store)
 	}
 	if store.has(fileDraft) {

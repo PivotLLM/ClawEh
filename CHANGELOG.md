@@ -358,7 +358,8 @@ observe does not need an entry.
   by `forum_delete`; only a draft can be changed. `forum_config_export`
   returns any forum's configuration, so a finished forum (a book chapter, say)
   is reused by importing it into a new draft and changing only what differs.
-  Relative source `file` paths resolve against the agent's workspace.
+  A source `file` is read exactly as the agent's file tools read that path
+  (workspace, or a mount such as `maestro/`).
   `forum_readme` returns a one-page guide for the agent and the built-in
   templates; with `template` it returns that template's configuration:
   `writing` (draft, two critiques, revision, final edit) and `council` (three

@@ -334,7 +334,7 @@ func cfgtFileEnv(t *testing.T) (PreflightEnv, string, string) {
 		t.Fatal(err)
 	}
 	env := cfgtEnv(cfgtNewAgents())
-	env.ConfigDir = ws
+	env.ResolveFile = func(ref string) (string, error) { return filepath.Join(ws, filepath.FromSlash(ref)), nil }
 	env.ReadAllowed = func(p string) error {
 		if p == ws || strings.HasPrefix(p, ws+string(filepath.Separator)) {
 			return nil
@@ -407,19 +407,28 @@ func TestPreflightReadAllowedSeesTheLexicalPath(t *testing.T) {
 	}
 }
 
-func TestPreflightConfigDirMustBeAbsolute(t *testing.T) {
-	env := cfgtEnv(cfgtNewAgents())
-	env.ConfigDir = "relative/dir"
-	env.ReadAllowed = func(string) error { return nil }
+// A missing resolver, or one returning a relative path, is a host wiring
+// error; a resolver refusing the reference is an issue naming the source.
+func TestPreflightResolveFile(t *testing.T) {
 	cfg := cfgtExample(t)
 	cfg.Sources["report"] = Source{Decode: FormatText, File: "r.txt"}
+	for name, resolve := range map[string]func(string) (string, error){
+		"no resolver":       nil,
+		"a relative result": func(ref string) (string, error) { return "relative/" + ref, nil },
+	} {
+		env := cfgtEnv(cfgtNewAgents())
+		env.ResolveFile = resolve
+		env.ReadAllowed = func(string) error { return nil }
+		_, err := Preflight(context.Background(), cfg, env)
+		if err == nil || errors.As(err, new(*ValidationError)) {
+			t.Errorf("%s: want a wiring error, got %v", name, err)
+		}
+	}
+	env := cfgtEnv(cfgtNewAgents())
+	env.ResolveFile = func(string) (string, error) { return "", errors.New("the agent may not read it") }
+	env.ReadAllowed = func(string) error { return nil }
 	_, err := Preflight(context.Background(), cfg, env)
-	if err == nil || !strings.Contains(err.Error(), "not absolute") {
-		t.Fatalf("want a wiring error for a relative ConfigDir, got %v", err)
-	}
-	if isIssues := errors.As(err, new(*ValidationError)); isIssues {
-		t.Error("a relative ConfigDir is a host wiring error, not a configuration issue")
-	}
+	cfgtWantIssue(t, err, "sources.report.file", `"r.txt" cannot be used: the agent may not read it`)
 }
 
 // A file source is read once, at Preflight: the content handed over is

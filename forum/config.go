@@ -75,13 +75,14 @@ func (f Format) Extension() string {
 type Source struct {
 	Decode Format `json:"decode"`
 	// Inline is the source content: for decode text or markdown a JSON
-	// string; for decode json any JSON value, kept verbatim. nil means
-	// absent.
+	// string; for decode json any JSON value, materialised indented on its
+	// own. nil means absent.
 	Inline json.RawMessage `json:"inline,omitempty"`
-	// File is a path, resolved against the launching agent's workspace when
-	// relative, and must be readable by the launching agent. It is
-	// read once at launch and copied into sources/ (§8), so later edits do
-	// not affect a running forum.
+	// File is a path the launching agent's file tools would read: relative
+	// to its workspace, or under one of its mounts (maestro/..., a
+	// configured mount); the host resolves it (PreflightEnv.ResolveFile).
+	// It is read once at launch and copied into sources/ (§8), so later
+	// edits do not affect a running forum.
 	File string `json:"file,omitempty"`
 }
 

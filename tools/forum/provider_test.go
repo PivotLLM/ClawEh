@@ -16,6 +16,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
+	"github.com/PivotLLM/ClawEh/tools/files"
 )
 
 func scopeConfig() *config.Config {
@@ -113,7 +114,7 @@ func TestToolHostFiles(t *testing.T) {
 	if err := h.ReadAllowed("alice", outside); err == nil {
 		t.Error("ReadAllowed accepted a file outside the workspace")
 	}
-	if _, err := h.Workspace("bob"); err == nil {
+	if _, err := h.ResolveFile("bob", "files/forum.json"); err == nil {
 		t.Error("the host answered for another agent")
 	}
 }
@@ -144,3 +145,82 @@ func (nopHost) Debugf(string, ...any) {}
 func (nopHost) Infof(string, ...any)  {}
 func (nopHost) Warnf(string, ...any)  {}
 func (nopHost) Errorf(string, ...any) {}
+
+// modelsHost is nopHost whose agents all have the model "m".
+type modelsHost struct{ nopHost }
+
+func (modelsHost) Models(context.Context, string) ([]forumpkg.ModelInfo, error) {
+	return []forumpkg.ModelInfo{{Name: "m"}}, nil
+}
+
+// A source file resolves exactly as the agent's file tools read it: from
+// the workspace, a configured mount and the maestro mount, and a mount wins
+// over a workspace folder of the same name just as it does for the tools.
+func TestSourcesResolveLikeTheFileTools(t *testing.T) {
+	ws, docsMount, maestroMount := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(p, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(ws, "files", "brief.md"), "workspace brief")
+	write(filepath.Join(ws, "docs", "chapter.md"), "workspace folder")
+	write(filepath.Join(docsMount, "chapter.md"), "mounted chapter")
+	write(filepath.Join(maestroMount, "notes.md"), "maestro notes")
+	files.SetMountsForWorkspace(ws, []files.MountSpec{
+		{Name: "docs", Path: docsMount},
+		{Name: config.MaestroMountName, Path: maestroMount},
+	})
+	t.Cleanup(func() { files.SetMountsForWorkspace(ws, nil) })
+	cfg := scopeConfig()
+	cfg.Agents.Defaults.RestrictToWorkspace = true
+	h := &toolHost{cfg: cfg, agentID: "alice", workspace: ws}
+
+	refs := map[string]string{"brief": "files/brief.md", "chapter": "docs/chapter.md", "notes": "maestro/notes.md"}
+	raw := `{"version": 1, "name": "mounts",
+	  "brief": {"purpose": "p", "task": "t"},
+	  "sources": {
+	    "brief":   {"decode": "markdown", "file": "files/brief.md"},
+	    "chapter": {"decode": "markdown", "file": "docs/chapter.md"},
+	    "notes":   {"decode": "markdown", "file": "maestro/notes.md"}},
+	  "participants": {"reader": {"model": "m"}},
+	  "limits": {"max_calls": 2, "max_duration_seconds": 60, "call_timeout_seconds": 30,
+	    "max_attempts_per_turn": 1, "max_parallel_calls": 1},
+	  "layers": [{"id": "read", "participants": ["reader"], "instructions": "Read.",
+	    "inputs": [{"from": "source:brief"}, {"from": "source:chapter"}, {"from": "source:notes"}],
+	    "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}}]}`
+	fc, err := forumpkg.Decode([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = forumpkg.ValidateStatic(fc); err != nil {
+		t.Fatal(err)
+	}
+	res, err := forumpkg.Preflight(context.Background(), fc, forumpkg.PreflightEnv{
+		Launcher:    "alice",
+		Agents:      modelsHost{},
+		Schemas:     forumpkg.JSONSchemaValidator{},
+		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
+		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
+	})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	reader := files.NewReader(cfg, ws)
+	for id, ref := range refs {
+		want, err := reader.ReadFile(ref)
+		if err != nil {
+			t.Fatalf("file tools reading %s: %v", ref, err)
+		}
+		if got := res.SourceContents[id]; string(got) != string(want) {
+			t.Errorf("source %s (%s) = %q, the file tools read %q", id, ref, got, want)
+		}
+	}
+	if got := string(res.SourceContents["chapter"]); got != "mounted chapter" {
+		t.Errorf("docs/chapter.md = %q, want the mount's file", got)
+	}
+}

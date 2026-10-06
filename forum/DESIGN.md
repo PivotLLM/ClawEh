@@ -318,8 +318,22 @@ are logged, never shown to the agent.
     a draft need not be valid until validate or launch. A forum is a draft
     while it has `draft.json` and no `snapshot.json`; only a draft can be
     changed (template, import, merge patch), under the control lock and the
-    store lock. `forum_config_update` is RFC 7386 (`mergePatch`: member
-    order kept, untouched values byte for byte). Launch keeps the ID: it
+    store lock. `forum_config_update` is RFC 7386 (`mergePatch`: the stored
+    configuration's member order and untouched values are kept byte for
+    byte; members the patch adds are appended). The host hands `config` and
+    `changes` over decoded, so the agent's own key order is not kept (a
+    decoded object is encoded in alphabetical order) and numbers pass
+    through float64 (an integer above 2^53 loses precision); a host that
+    passes raw JSON (`json.RawMessage`) keeps both. Source `file` paths are
+    resolved by the host exactly as the agent's file tools read them
+    (`ToolHost.ResolveFile`: workspace, folders, mounts such as `maestro/`).
+    `ResetToDraft` removes `snapshot.json`, then `forum.json`, then the
+    rest, emptying the required subdirectories, so a crash at any step
+    leaves a draft the next recovery or launch finishes resetting; a draft
+    missing a subdirectory has it recreated when opened. Recovery removes a
+    folder with `forum.json` and neither a snapshot nor a draft (`discard`)
+    and one with neither file (a `NewDraft` that died; it holds the lock
+    until `draft.json` is written). Launch keeps the ID: it
     writes `forum.json` (the draft's configuration, indented) and the rest
     into the same directory and removes `draft.json` once the run has
     started. A `draft.json` naming another owner is `ErrCorrupt`, like a

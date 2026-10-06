@@ -126,6 +126,19 @@ func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 	return forumpkg.Scope{AgentID: h.agentID, BaseDirectory: base}, nil
 }
 
+// ResolveFile resolves ref the way the agent's file tools would read it:
+// relative to the workspace, or under one of its mounts (maestro/...).
+func (h *toolHost) ResolveFile(agentID, ref string) (string, error) {
+	if err := h.same(agentID); err != nil {
+		return "", err
+	}
+	abs, err := files.NewReader(h.cfg, h.workspace).Resolve(ref)
+	if err != nil {
+		return "", errors.New("the agent may not read it or it does not exist")
+	}
+	return abs, nil
+}
+
 // ReadAllowed reports whether the agent's file tools may read absPath.
 func (h *toolHost) ReadAllowed(agentID, absPath string) error {
 	if err := h.same(agentID); err != nil {
@@ -139,14 +152,6 @@ func (h *toolHost) ReadAllowed(agentID, absPath string) error {
 	default:
 		return errors.New("its file permissions do not allow it")
 	}
-}
-
-// Workspace is the agent's workspace.
-func (h *toolHost) Workspace(agentID string) (string, error) {
-	if err := h.same(agentID); err != nil {
-		return "", err
-	}
-	return h.workspace, nil
 }
 
 // same refuses a question about any agent but the one the host is for.

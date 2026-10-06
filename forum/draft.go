@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,14 +32,27 @@ const (
 
 // NewDraft creates an empty draft (configuration {}) owned by
 // scope.AgentID and returns its ID.
+//
+// The forum's lock is held from before its directory exists until
+// draft.json is written, so Recover never removes the half-created
+// directory (ListIncomplete) from under it.
 func (s *Service) NewDraft(_ context.Context, scope Scope) (string, error) {
-	store, err := CreateStore(scope.BaseDirectory, uuid.NewString())
+	if !filepath.IsAbs(scope.BaseDirectory) {
+		return "", fmt.Errorf("new draft: base directory %q is not absolute", scope.BaseDirectory)
+	}
+	id := uuid.NewString()
+	guard := &Store{base: scope.BaseDirectory, id: id, root: filepath.Join(scope.BaseDirectory, id)}
+	if err := guard.Lock(); err != nil {
+		return "", err
+	}
+	defer guard.Unlock()
+	store, err := CreateStore(scope.BaseDirectory, id)
 	if err != nil {
 		return "", err
 	}
 	now := time.Now().UTC()
 	if err := store.WriteDraft(&Draft{Owner: scope.AgentID, CreatedAt: now, UpdatedAt: now, Config: json.RawMessage(`{}`)}); err != nil {
-		return "", errors.Join(err, store.Remove())
+		return "", errors.Join(err, guard.Remove())
 	}
 	s.host.Logger.Infof("forum %s: draft created by agent %s", store.ID(), scope.AgentID)
 	return store.ID(), nil
@@ -174,10 +188,11 @@ func draftSummary(store *Store) (*Summary, error) {
 }
 
 // revertLaunch makes a draft whose launch did not finish a draft again:
-// the temporary agents created so far are deleted (a failure is logged;
-// the registry's idle TTL removes them), the notice marker cleared and the
-// directory reset to draft.json. The caller holds the lock. It runs even
-// if the launching call was cancelled.
+// the temporary agents created so far are deleted (those that could not be
+// stay in the agents marker, which the next launch extends, and a failure
+// is logged), the notice marker cleared and the directory reset to
+// draft.json. On a draft with nothing to undo it changes nothing. The
+// caller holds the lock. It runs even if the launching call was cancelled.
 func (s *Service) revertLaunch(ctx context.Context, store *Store) error {
 	if err := s.deleteTempAgents(context.WithoutCancel(ctx), store); err != nil {
 		s.host.Logger.Warnf("forum %s: undoing a failed launch: %v (the registry's idle TTL removes them)", store.ID(), err)

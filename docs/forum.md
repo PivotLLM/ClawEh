@@ -89,8 +89,9 @@ Unknown fields are refused.
 ```
 
 - `brief` goes to every participant; `instructions` only to its participant.
-- `sources` are `inline` or a `file`. A relative path resolves against Alice's
-  workspace, and the file must be readable by Alice's file tools.
+- `sources` are `inline` or a `file`. A `file` is read exactly as Alice's
+  file tools would read that path: relative to her workspace, or in one of
+  her mounts such as `maestro/`.
 - `layers` run in order. `delivery` is `after_round` (turns in a round do not
   see each other) or `per_turn` (each turn sees the earlier ones). A layer may
   have a `moderator` that continues, guides or stops it, and JSON output may be
@@ -130,7 +131,11 @@ ready:
 | `forum_launch` | `id`: validates the draft and runs it under the same ID. |
 
 A draft need not be valid while it is being edited; only `forum_validate`
-and `forum_launch` check it. Only a draft can be changed: a launched forum
+and `forum_launch` check it. An update keeps the order of the keys already
+in the configuration and adds new ones at the end of their object; the keys
+of an imported or patched object arrive in alphabetical order. Numbers in
+`config` and `changes` pass through a floating-point value, so an integer
+above 2^53 (a large `seed`) loses precision. Only a draft can be changed: a launched forum
 answers "Forum <id> has already been launched; export its config into a new
 forum.". A draft survives a restart, shows as `draft` in `forum_status`, and
 `forum_delete` removes it. A launch that fails leaves the draft as it was.

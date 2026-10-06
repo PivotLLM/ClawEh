@@ -41,11 +41,12 @@ type ToolHost interface {
 	// launch, control or read forums, whatever its participants' tools
 	// allow. The tool returns that refusal to the agent as a tool error.
 	Scope(call *toolspec.ToolCall) (Scope, error)
+	// ResolveFile resolves a source file reference to the absolute path the
+	// agent's file tools would read for it (workspace and mounts), or fails
+	// with a message for the agent.
+	ResolveFile(agentID, ref string) (absPath string, err error)
 	// ReadAllowed reports whether the agent may read an absolute path.
 	ReadAllowed(agentID, absPath string) error
-	// Workspace is the agent's workspace, which relative source paths
-	// resolve against (LaunchOptions.ConfigDir).
-	Workspace(agentID string) (string, error)
 }
 
 // Tools returns the fifteen forum tools over svc. Every handler resolves
@@ -300,11 +301,7 @@ func (t *toolSuite) validate(call *toolspec.ToolCall) (*toolspec.Result, error) 
 	if err != nil {
 		return t.fail(err, "", "validate")
 	}
-	opts, err := t.launchOptions(call, scope)
-	if err == nil {
-		err = t.svc.ValidateDraft(call.Ctx, id, opts)
-	}
-	if err != nil {
+	if err := t.svc.ValidateDraft(call.Ctx, id, t.launchOptions(call, scope)); err != nil {
 		return t.fail(err, id, "validate")
 	}
 	return &toolspec.Result{ForLLM: "The configuration is valid."}, nil
@@ -319,11 +316,7 @@ func (t *toolSuite) launch(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if err != nil {
 		return t.fail(err, "", "launch")
 	}
-	opts, err := t.launchOptions(call, scope)
-	if err == nil {
-		err = t.svc.Launch(call.Ctx, id, opts)
-	}
-	if err != nil {
+	if err := t.svc.Launch(call.Ctx, id, t.launchOptions(call, scope)); err != nil {
 		return t.fail(err, id, "launch")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched.", id)}, nil
@@ -410,34 +403,31 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
 // Scope from the host, Origin from the call's agent, channel, chat and
-// session, ReadAllowed bound to the agent, and ConfigDir the agent's
-// workspace, which relative source paths resolve against.
-func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchOptions, error) {
-	opts := LaunchOptions{
+// session, and ResolveFile and ReadAllowed bound to the agent.
+func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) LaunchOptions {
+	return LaunchOptions{
 		Scope: scope,
 		Origin: Origin{
 			AgentID: scope.AgentID, Channel: call.Channel, ChatID: call.ChatID, Session: call.Session,
+		},
+		ResolveFile: func(ref string) (string, error) {
+			return t.host.ResolveFile(scope.AgentID, ref)
 		},
 		ReadAllowed: func(abs string) error {
 			return t.host.ReadAllowed(scope.AgentID, abs)
 		},
 	}
-	ws, err := t.host.Workspace(scope.AgentID)
-	if err != nil {
-		return opts, fmt.Errorf("workspace of agent %s: %w", scope.AgentID, err)
-	}
-	opts.ConfigDir = ws
-	return opts, nil
 }
 
 // objectArg encodes a JSON-object argument (config, changes) as the host
-// decoded it, or as raw JSON bytes holding an object. Its JSON numbers have
-// passed through float64: an integer above 2^53 (a large seed) loses
-// precision.
+// decoded it, or as raw JSON bytes holding an object. A decoded object has
+// lost the agent's key order (it is encoded in alphabetical order) and its
+// numbers have passed through float64: an integer above 2^53 (a large seed)
+// loses precision. Raw JSON keeps both.
 func objectArg(call *toolspec.ToolCall, name string) ([]byte, error) {
 	switch c := call.Args[name].(type) {
 	case map[string]any:
-		raw, err := json.Marshal(c)
+		raw, err := marshalCompact(c)
 		if err != nil {
 			return nil, argIssue("the " + name + " argument cannot be encoded as JSON")
 		}

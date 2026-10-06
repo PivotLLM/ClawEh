@@ -108,7 +108,7 @@ func encodeMembers(members []member) (json.RawMessage, error) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		key, err := json.Marshal(m.key)
+		key, err := marshalCompact(m.key)
 		if err != nil {
 			return nil, fmt.Errorf("merge patch: %w", err)
 		}

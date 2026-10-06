@@ -84,7 +84,8 @@ A forum is set up as a draft, step by step, then launched.
 7. When you are told it has finished, `forum_results` with the ID.
 8. `forum_delete` removes a draft, or a finished or paused forum's files.
 
-Relative source `file` paths are read from your workspace.
+A source `file` is read as your file tools read that path (your
+workspace, or a mount such as `maestro/`).
 
 To reuse a forum, `forum_config_export` it, `forum_config_import` the result
 into a new draft and change only what differs. For a book: run chapter 1,

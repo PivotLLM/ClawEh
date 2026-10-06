@@ -7,6 +7,7 @@ package forum
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -35,7 +36,7 @@ import (
 //	  .cleanup/<forum-uuid>.<name>   markers for work a restart must finish
 //	  .cleanup/<forum-uuid>/         a forum root staged for removal (Remove)
 //	  <forum-uuid>/
-//	    forum.json            the configuration exactly as accepted (bytes verbatim)
+//	    forum.json            the configuration as launched (the draft's, indented)
 //	    snapshot.json         Snapshot
 //	    participants.json     Participants
 //	    sources/<id><ext>     materialised sources
@@ -251,6 +252,16 @@ func OpenStore(base, forumID string) (*Store, error) {
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, name)
 	}
+	if name == fileDraft {
+		// A draft whose reset to draft was interrupted, or whose creation
+		// was, may lack a subdirectory; it is recreated rather than the
+		// draft reported damaged.
+		for _, d := range []string{dirSources, dirLayers, dirCommits} {
+			if err := os.Mkdir(filepath.Join(root, d), dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
+				return nil, fmt.Errorf("open forum store: %w", err)
+			}
+		}
+	}
 	for _, d := range []string{dirSources, dirLayers, dirCommits} {
 		fi, err := os.Lstat(filepath.Join(root, d))
 		if err != nil || !fi.IsDir() {
@@ -290,6 +301,27 @@ func ListForums(base string) ([]string, error) {
 func regularFile(p string) bool {
 	fi, err := os.Lstat(p)
 	return err == nil && fi.Mode().IsRegular()
+}
+
+// ListIncomplete returns the forum IDs under base whose roots hold neither
+// forum.json nor draft.json (a draft whose creation died before it wrote
+// draft.json), sorted. Recover removes them.
+func ListIncomplete(base string) ([]string, error) {
+	entries, err := os.ReadDir(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list forums: %w", err)
+	}
+	ids := []string{}
+	for _, e := range entries {
+		root := filepath.Join(base, e.Name())
+		if e.IsDir() && validForumID(e.Name()) && !regularFile(filepath.Join(root, fileConfig)) && !regularFile(filepath.Join(root, fileDraft)) {
+			ids = append(ids, e.Name())
+		}
+	}
+	return ids, nil
 }
 
 // ListStaged returns the forum IDs whose roots are staged for removal
@@ -538,9 +570,9 @@ func (s *Store) unlock() error {
 	return nil
 }
 
-// WriteConfig writes forum.json with the bytes exactly as accepted; it
-// fails if the file already exists (the configuration never changes after
-// launch, §3.2).
+// WriteConfig writes forum.json, the draft's configuration as Launch
+// accepted it (indented); it fails if the file already exists (the
+// configuration never changes after launch, §3.2).
 func (s *Store) WriteConfig(raw []byte) error {
 	return s.writeRel(fileConfig, raw, true)
 }
@@ -600,38 +632,69 @@ func (s *Store) ClearDraft() error {
 	return nil
 }
 
+// resetHook, when set (tests only), runs after each removal ResetToDraft
+// makes, naming what was removed; an error stops the reset there, as a
+// crash would.
+var resetHook func(removed string) error
+
 // ResetToDraft undoes a launch that did not finish: it removes everything
-// under the root but draft.json and recreates the empty subdirectories, so
-// the forum is the draft it was. The caller holds the lock and has deleted
-// the temporary agents.
+// under the root but draft.json and empties the required subdirectories,
+// so the forum is the draft it was. It is safe to interrupt at any step:
+// snapshot.json goes first, so the folder reads as a draft from then on,
+// then forum.json, so a recovery or a launch that finds it resets again;
+// the subdirectories are emptied, never removed. The caller holds the lock
+// and has deleted the temporary agents.
 func (s *Store) ResetToDraft() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err := s.inRoot(func(r *os.Root) error {
-		d, err := r.Open(".")
-		if err != nil {
-			return err
+		removed := func(name string) error {
+			if err := syncDirAt(r, path.Dir(name)); err != nil {
+				return err
+			}
+			if resetHook != nil {
+				return resetHook(name)
+			}
+			return nil
 		}
-		entries, err := d.ReadDir(-1)
-		if closeErr := d.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			if e.Name() != fileDraft {
-				if err := r.RemoveAll(e.Name()); err != nil {
+		for _, name := range []string{fileSnapshot, fileConfig} {
+			switch err := r.Remove(name); {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				return err
+			default:
+				if err := removed(name); err != nil {
 					return err
 				}
 			}
 		}
-		for _, dir := range []string{dirSources, dirLayers, dirCommits} {
-			if err := r.Mkdir(dir, dirPerm); err != nil {
+		names, err := readDirNames(r, ".")
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if name == fileDraft {
+				continue
+			}
+			if fi, err := r.Lstat(name); err == nil && fi.IsDir() && isRequiredDir(name) {
+				if err := emptyDirAt(r, name, removed); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := r.RemoveAll(name); err != nil {
+				return err
+			}
+			if err := removed(name); err != nil {
 				return err
 			}
 		}
-		return syncDirAt(r, ".")
+		for _, dir := range []string{dirSources, dirLayers, dirCommits} {
+			if err := mkdirAt(r, dir); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("reset forum %s to its draft: %w", s.id, err)
@@ -639,6 +702,45 @@ func (s *Store) ResetToDraft() error {
 	s.idx = commitIndex{}
 	s.cfg, s.snap = nil, nil
 	return nil
+}
+
+// isRequiredDir reports whether name is one of the subdirectories every
+// forum root has.
+func isRequiredDir(name string) bool {
+	return name == dirSources || name == dirLayers || name == dirCommits
+}
+
+// emptyDirAt removes every entry of the r-relative directory dir, calling
+// removed after each.
+func emptyDirAt(r *os.Root, dir string, removed func(string) error) error {
+	names, err := readDirNames(r, dir)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		rel := path.Join(dir, name)
+		if err := r.RemoveAll(rel); err != nil {
+			return err
+		}
+		if err := removed(rel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readDirNames lists the r-relative directory dir, sorted.
+func readDirNames(r *os.Root, dir string) ([]string, error) {
+	d, err := r.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	names, err := d.Readdirnames(-1)
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	sort.Strings(names)
+	return names, err
 }
 
 // WriteSnapshot writes snapshot.json; it fails if the file already exists.
@@ -1389,13 +1491,28 @@ func notFound(err error) error {
 }
 
 // marshalRecord is the JSON form every record is written in: indented,
-// newline-terminated, so the files read well by hand.
+// newline-terminated and without HTML escaping (a "<" stays "<"), so the
+// files read well by hand.
 func marshalRecord(v any) ([]byte, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	return append(data, '\n'), nil
+	return b.Bytes(), nil
+}
+
+// marshalCompact is json.Marshal without HTML escaping.
+func marshalCompact(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // digest is the hex SHA-256 of data.

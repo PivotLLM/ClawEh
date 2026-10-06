@@ -160,9 +160,11 @@ type PreflightEnv struct {
 	// A limit above its ceiling is reported as an issue naming the ceiling
 	// (it is never capped silently).
 	HostLimits Limits
-	// ConfigDir is the directory relative source `file` paths resolve
-	// against: the launching agent's workspace.
-	ConfigDir string
+	// ResolveFile maps a source `file` reference to the absolute host path
+	// the launching agent's file tools would read for it (workspace,
+	// workspace folders and mounts), or fails with a message for the
+	// agent. nil is a host wiring error once a file source is present.
+	ResolveFile func(ref string) (absPath string, err error)
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path; a nil func allows nothing (every file source fails).
 	ReadAllowed func(absPath string) error
@@ -204,7 +206,7 @@ type Resolved struct {
 //     moderated layer (whose decision schema the controller compiles at
 //     Open) is ErrSchemasUnavailable naming them (returned directly, not
 //     as an issue);
-//   - each file source resolves under ConfigDir to a path ReadAllowed
+//   - each file source resolves (ResolveFile) to a path ReadAllowed
 //     accepts (both the named path and, through any symbolic link, its
 //     target) and that exists as a regular file; it is read once, here,
 //     into Resolved.SourceContents; a json file source's content parses
@@ -1073,11 +1075,18 @@ func (p *preflight) sources() error {
 		if src.File == "" {
 			continue
 		}
-		if !filepath.IsAbs(p.env.ConfigDir) {
-			return fmt.Errorf("preflight: source %q: the configuration directory %q is not absolute", id, p.env.ConfigDir)
+		if p.env.ResolveFile == nil {
+			return fmt.Errorf("preflight: source %q: no file resolver", id)
 		}
 		path := "sources." + id + ".file"
-		abs := filepath.Join(p.env.ConfigDir, filepath.FromSlash(src.File))
+		abs, err := p.env.ResolveFile(src.File)
+		if err != nil {
+			p.addf(path, "source %q: %q cannot be used: %v", id, src.File, err)
+			continue
+		}
+		if !filepath.IsAbs(abs) {
+			return fmt.Errorf("preflight: source %q: the resolver returned %q, which is not absolute", id, abs)
+		}
 		data, err := p.readSource(abs)
 		if err != nil {
 			p.addf(path, "source %q: %q %v", id, src.File, err)

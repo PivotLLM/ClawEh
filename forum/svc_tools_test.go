@@ -25,7 +25,6 @@ import (
 // permission; only paths inside the workspace are readable.
 type svcToolHost struct {
 	base, workspace string
-	wsErr           error
 }
 
 func (h *svcToolHost) Scope(call *toolspec.ToolCall) (Scope, error) {
@@ -42,7 +41,17 @@ func (h *svcToolHost) ReadAllowed(_, abs string) error {
 	return nil
 }
 
-func (h *svcToolHost) Workspace(string) (string, error) { return h.workspace, h.wsErr }
+// ResolveFile resolves a reference against the workspace; "denied/..." is
+// refused as the file tools would refuse it.
+func (h *svcToolHost) ResolveFile(_, ref string) (string, error) {
+	if strings.HasPrefix(ref, "denied/") {
+		return "", errors.New("the agent may not read it or it does not exist")
+	}
+	if filepath.IsAbs(ref) {
+		return ref, nil
+	}
+	return filepath.Join(h.workspace, ref), nil
+}
 
 // svcTools is the tool suite over an svcEnv's service.
 type svcTools struct {
@@ -241,6 +250,7 @@ func TestSvcToolValidate(t *testing.T) {
 	}
 	bad := strings.Replace(svcConfigJSON, `"model": "large"`, `"model": "huge"`, 1)
 	outside := strings.Replace(svcConfigJSON, `"file": "doc.md"`, `"file": "/etc/passwd"`, 1)
+	refused := strings.Replace(svcConfigJSON, `"file": "doc.md"`, `"file": "denied/doc.md"`, 1)
 	missing := uuid.NewString()
 	tests := []struct {
 		name string
@@ -250,6 +260,7 @@ func TestSvcToolValidate(t *testing.T) {
 		{"an empty draft", map[string]any{"id": st.draft("")}, "invalid configuration"},
 		{"an invalid draft", map[string]any{"id": st.draft(bad)}, "participants.bob.model"},
 		{"a source the agent may not read", map[string]any{"id": st.draft(outside)}, "sources.doc.file"},
+		{"a source the file tools refuse", map[string]any{"id": st.draft(refused)}, `"denied/doc.md" cannot be used: the agent may not read it or it does not exist`},
 		{"no id", map[string]any{}, "The id argument is required: the forum ID returned by forum_config_new."},
 		{"an unknown forum", map[string]any{"id": missing}, "Forum " + missing + " was not found."},
 	}
@@ -270,9 +281,6 @@ func TestSvcToolValidate(t *testing.T) {
 	if msg := st.refused("validate", map[string]any{"id": launched}, "launched"); msg != "Forum "+launched+" has already been launched." {
 		t.Errorf("validate a launched forum = %q", msg)
 	}
-
-	st.host.wsErr = errSvcHost
-	st.internal("validate", map[string]any{"id": id}, "Forum "+id+" could not be validated because of an internal error.")
 }
 
 func TestSvcToolLaunch(t *testing.T) {
