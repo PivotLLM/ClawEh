@@ -49,7 +49,7 @@ SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 FUSION_SERVICE="${FUSION_SERVICE:-}"   # optional: a Fusion service the token's agent lists in mcp_tools
 UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of an agent with Fusion on and nothing listed
-NOSHELL_SERVICE_TOKEN="${NOSHELL_SERVICE_TOKEN:-}"   # optional: service token of the agent Bob, whose tools leave out shell_exec
+NOSHELL_SERVICE_TOKEN="${NOSHELL_SERVICE_TOKEN:-}"   # required by 4b.1b: service token of the agent Bob, whose tools leave out shell_exec
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 GATEWAY_LOG="${GATEWAY_LOG:-}"     # optional: the gateway's log file, for background-behaviour checks
@@ -638,7 +638,7 @@ else
     if [ -n "$NOSHELL_SERVICE_TOKEN" ]; then
         ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
             -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$NOSHELL_SERVICE_TOKEN")" 2>&1)
-        if echo "$ns" | grep -qF "Bob is not allowed to run shell commands." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+        if echo "$ns" | grep -qF "Bob is not allowed to run shell commands. This is a configured access restriction" && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
             echo "    ${GREEN}PASS${NC}: refused, naming Bob"
             PASS_COUNT=$((PASS_COUNT + 1))
         else
@@ -647,7 +647,8 @@ else
             FAIL_COUNT=$((FAIL_COUNT + 1))
         fi
     else
-        echo "    SKIP: needs NOSHELL_SERVICE_TOKEN"
+        echo "    ${RED}FAIL${NC}: NOSHELL_SERVICE_TOKEN is not set (the service token of Bob, whose tools leave out shell_exec)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 
     run_test_not_auth_err "4b.2 web_search — token accepted" \

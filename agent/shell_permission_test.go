@@ -5,12 +5,12 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -251,24 +251,58 @@ func TestShell_ActingAsTheAgent(t *testing.T) {
 
 // TestShell_FreshAgentNever: a fresh temporary agent has no tools: asked to
 // run a command, it is refused by name, even when its creator may run them.
+// An unnamed one is called "temporary agent <short id>", never its UUID.
 func TestShell_FreshAgentNever(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []tools.FreshOption
+		want func(id string) string
+	}{
+		{"named", []tools.FreshOption{tools.WithName("Bob")}, func(string) string { return "Bob" }},
+		{"unnamed", nil, func(id string) string { return "temporary agent " + agentreg.ShortID(id) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+			cfg := forumConfig(t, true, false)
+			cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
+			cfg.Agents.List[0].Tools = []string{"*"}
+			model := &shellModel{}
+			r := newForumRig(t, cfg, model)
+			id, err := newAgentServices(r.al, "alice").CreateFresh("alpha", tc.opts...)
+			if err != nil {
+				t.Fatalf("CreateFresh: %v", err)
+			}
+			want := tc.want(id)
+			reply, err := r.al.Ask(context.Background(), "Alice", id, "run it", 5*time.Second)
+			if err != nil {
+				t.Fatalf("Ask: %v", err)
+			}
+			checkShell(t, "fresh agent", reply.Text, want, false)
+			checkOneResult(t, "fresh agent", model, want, false)
+		})
+	}
+}
+
+// TestShell_UnnamedCloneUsesSourceName: a clone of an agent with no name is
+// refused under its source's display name (the source's id), not the
+// clone's UUID.
+func TestShell_UnnamedCloneUsesSourceName(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
-	cfg := forumConfig(t, true, false)
-	cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
-	cfg.Agents.List[0].Tools = []string{"*"}
+	cfg := shellConfig(t)
+	cfg.Agents.List[1].Name = "" // Bob has no name: his display name is "bob"
 	model := &shellModel{}
-	r := newForumRig(t, cfg, model)
-	id, err := newAgentServices(r.al, "alice").CreateFresh("alpha")
+	al, _ := messagingLoop(t, cfg, model)
+
+	cloneID, err := newAgentServices(al, "helper").CreateClone("bob")
 	if err != nil {
-		t.Fatalf("CreateFresh: %v", err)
+		t.Fatalf("clone bob: %v", err)
 	}
-	fresh, _ := r.al.GetRegistry().Get(id)
-	reply, err := r.al.Ask(context.Background(), "Alice", id, "run it", 5*time.Second)
+	reply, err := al.Ask(context.Background(), "Helper", cloneID, "run it", 5*time.Second)
 	if err != nil {
-		t.Fatalf("Ask: %v", err)
+		t.Fatalf("ask the clone: %v", err)
 	}
-	checkShell(t, "fresh agent", reply.Text, fresh.Config.DisplayName(), false)
-	checkOneResult(t, "fresh agent", model, fresh.Config.DisplayName(), false)
+	checkShell(t, "unnamed clone", reply.Text, "bob", false)
+	checkOneResult(t, "unnamed clone", model, "bob", false)
 }
 
 // TestShell_HumanAgentNever: an agent that stands for a person has no tools,
@@ -302,7 +336,7 @@ func TestShell_HumanAgentNever(t *testing.T) {
 }
 
 // TestShell_ConfigSwitches: tools, deny_tools and tool_overrides decide it
-// as before; tools.exec.allow_remote, gone, changes nothing.
+// as before.
 func TestShell_ConfigSwitches(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -315,11 +349,6 @@ func TestShell_ConfigSwitches(t *testing.T) {
 		{"deny_tools", func(c *config.Config) { c.Agents.List[0].DenyTools = []string{"shell_exec"} }, false},
 		{"tool_overrides off", func(c *config.Config) { c.Tools.Overrides["shell_exec"] = false }, false},
 		{"tool_overrides unset", func(c *config.Config) { delete(c.Tools.Overrides, "shell_exec") }, false},
-		{"old allow_remote false", func(c *config.Config) {
-			if err := json.Unmarshal([]byte(`{"tools":{"exec":{"allow_remote":false}}}`), c); err != nil {
-				panic(err)
-			}
-		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
@@ -381,4 +410,49 @@ func TestShell_ReloadTurnsItOff(t *testing.T) {
 	}
 	checkShell(t, "Alice after the reload", ask("alice"), "Alice", false)
 	checkShell(t, "Alice's clone after the reload", ask(cloneID), "Alice", false)
+}
+
+// TestShell_DelegationThroughAllowAgents: Bob has no shell_exec, but an
+// agent_spawn targeting Alice runs as Alice (her clone), so Bob reaches her
+// shell when his subagents.allow_agents covers her, and is refused the spawn
+// when it does not.
+func TestShell_DelegationThroughAllowAgents(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		allow []string
+	}{
+		{"allow_agents covers alice", []string{"alice"}},
+		{"allow_agents empty", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+			cfg := shellConfig(t)
+			cfg.Tools.Overrides["agent_spawn"] = true
+			cfg.Agents.List[1].Tools = []string{"file_*", "agent_spawn"}
+			cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: tc.allow}
+			model := &shellModel{}
+			al, _ := messagingLoop(t, cfg, model)
+
+			bob, _ := al.GetRegistry().Get("bob")
+			if _, has := bob.Tools.Get("shell_exec"); has {
+				t.Fatal("Bob has shell_exec: the check proves nothing")
+			}
+			res := bob.Tools.ExecuteWithContext(context.Background(), "agent_spawn",
+				map[string]any{"task": "run it", "mode": "wait", "agent_id": "alice"},
+				"telegram", "chat-bob", nil)
+			if tc.allow == nil {
+				if !res.IsError || !strings.Contains(res.ForLLM, "not allowed to spawn agent 'alice'") {
+					t.Fatalf("spawn of alice: %+v, want refused", res)
+				}
+				if got := model.take(); len(got) != 0 {
+					t.Fatalf("shell_exec ran %q, want no call", got)
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatalf("spawn of alice: %s", res.ForLLM)
+			}
+			checkOneResult(t, "Bob's spawn of alice", model, "Alice", true)
+		})
+	}
 }

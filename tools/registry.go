@@ -418,6 +418,15 @@ func advertisedName(t Tool, internal string) string {
 	return internal
 }
 
+// isRegistered reports whether name (internal key or ExternalName) is in the
+// registry at all, hidden or not.
+func (r *ToolRegistry) isRegistered(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, _ := r.findAnyLocked(name)
+	return entry != nil
+}
+
 // findAnyLocked returns the entry and internal name for a tool by internal key or
 // ExternalName, IGNORING TTL so hidden (unpromoted) tools are found. Caller holds
 // at least r.mu.RLock.
@@ -517,8 +526,11 @@ func (r *ToolRegistry) executeWithContext(
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
 	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
-	if !ok && name == ShellToolName {
-		// Not registered: the agent's tool permissions do not include it.
+	if !ok && name == ShellToolName && !r.isRegistered(name) {
+		// Not registered at all: the agent's tool permissions do not include
+		// it. A registered entry that is only hidden by progressive discovery
+		// (TTL expired) is permitted, so it takes the ordinary not-found path
+		// below rather than being refused as a permission.
 		logger.WarnCF("tool", "Shell command refused: not allowed for this agent",
 			map[string]any{"tool": name, "agent": r.owner})
 		return ErrorResult(ShellNotAllowedMessage(r.owner)).WithError(fmt.Errorf("tool not permitted: %s", name))

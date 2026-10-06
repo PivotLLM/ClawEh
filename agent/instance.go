@@ -188,7 +188,7 @@ func newAgentInstance(
 
 	toolsRegistry := tools.NewToolRegistry()
 	if agentCfg != nil {
-		toolsRegistry.SetOwner(agentCfg.DisplayName())
+		toolsRegistry.SetOwner(registryOwnerName(spec, agentCfg, cfg))
 	}
 
 	sessionsDir := filepath.Join(stateDir, "sessions")
@@ -591,4 +591,24 @@ func compressionOptions(c *config.CompressionConfig) []ctxengine.Option {
 		}
 	}
 	return opts
+}
+
+// registryOwnerName is the name refusals use for the agent. A config agent
+// (and any agent with a name) is its display name. An unnamed clone acts as
+// its source, so it is the source's display name rather than the clone's
+// UUID; an unnamed fresh temporary agent is a short neutral label.
+func registryOwnerName(spec agentreg.Spec, agentCfg *config.AgentConfig, cfg *config.Config) string {
+	if strings.TrimSpace(agentCfg.Name) != "" {
+		return agentCfg.Name
+	}
+	switch {
+	case spec.IsClone():
+		if src := cfg.AgentByID(spec.SourceID); src != nil {
+			return src.DisplayName()
+		}
+		return spec.SourceID
+	case spec.Fresh:
+		return "temporary agent " + agentreg.ShortID(spec.ID)
+	}
+	return agentCfg.DisplayName()
 }

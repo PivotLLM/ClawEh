@@ -127,6 +127,19 @@ func ShellNotAllowedMessage(agent string) string {
 	return agent + " is not allowed to run shell commands."
 }
 
+// restrictionNotice tells a model that a refusal is configuration, not a
+// fault, so it neither retries nor improvises a workaround.
+const restrictionNotice = "This is a configured access restriction, not a bug or an outage. " +
+	"Do not retry this call, and do not attempt to work around it by other means."
+
+// ShellNotAllowedMCPMessage is ShellNotAllowedMessage followed by the
+// configured-restriction notice NotEnabledMessage also carries. It is used on
+// the MCP path only, where the caller is a model (a CLI provider) rather than
+// a person reading a reply.
+func ShellNotAllowedMCPMessage(agent string) string {
+	return ShellNotAllowedMessage(agent) + " " + restrictionNotice
+}
+
 // NotEnabledMessage is returned when the caller is authenticated but the
 // resolved agent may not use the tool — either it is absent from that agent's
 // registry or an ACL policy refused it. The wording is deliberately
@@ -135,13 +148,13 @@ func ShellNotAllowedMessage(agent string) string {
 // cannot call and must read this refusal as a configuration decision rather
 // than a fault — otherwise it retries or improvises a workaround instead of
 // telling the user. It does not disclose which of the two causes applied.
+// shell_exec is refused with ShellNotAllowedMessage instead (in the loop) or
+// ShellNotAllowedMCPMessage (over MCP), which name the agent; the latter
+// appends the same restriction notice used here.
 func NotEnabledMessage(name string) string {
-	return fmt.Sprintf(
-		"Permission denied: the tool %q is not enabled for this agent. "+
-			"This is a configured access restriction, not a bug or an outage. "+
-			"Do not retry this call, and do not attempt to work around it by other means. "+
-			"If this tool is needed, tell the user it must be enabled for this agent.",
-		name)
+	return fmt.Sprintf("Permission denied: the tool %q is not enabled for this agent. ", name) +
+		restrictionNotice + " " +
+		"If this tool is needed, tell the user it must be enabled for this agent."
 }
 
 // UserResult creates a ToolResult with content for both LLM and user.

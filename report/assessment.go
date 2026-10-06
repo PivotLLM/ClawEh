@@ -226,9 +226,16 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 	ex := cfg.Tools.Exec
-	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access",
-		ifStr(len(shell) == 0, "No enabled agent has shell_exec.",
-			"shell_exec: "+strings.Join(shell, ", ")+"; deny patterns "+onOff(ex.EnableDenyPatterns)+"."))
+	shellText := "No enabled agent has shell_exec."
+	if len(shell) > 0 {
+		shellText = "shell_exec: " + strings.Join(shell, ", ")
+		if via := shellDelegators(agents, shell); len(via) > 0 {
+			shellText += "; also via allow_agents: " + strings.Join(via, ", ")
+		}
+		shellText += "; deny patterns " + onOff(ex.EnableDenyPatterns) + "."
+	}
+	shellText += " CLI models with Allow CLI to bypass restrictions have their own shell."
+	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText)
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
 	// does not, so a confined agent with shell_exec is confined in name only.
@@ -366,6 +373,25 @@ func certificateExpiryRow(cfg *config.Config, now time.Time) (action bool, item,
 		return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expired on %s (%d days ago).", date, -daysLeft)
 	}
 	return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expires on %s (%d days).", date, daysLeft)
+}
+
+// shellDelegators are the enabled agents without shell_exec whose
+// subagents.allow_agents covers an agent that has it: a sub-agent they start
+// on that agent runs as it, shell included.
+func shellDelegators(agents []*config.AgentConfig, shell []string) []string {
+	var out []string
+	for _, a := range agents {
+		if slices.Contains(shell, a.ID) || a.Subagents == nil {
+			continue
+		}
+		for _, target := range a.Subagents.AllowAgents {
+			if target == "*" || slices.ContainsFunc(shell, func(id string) bool { return strings.EqualFold(id, target) }) {
+				out = append(out, a.ID)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func ifStr(cond bool, yes, no string) string {

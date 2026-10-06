@@ -745,10 +745,11 @@ func containsString(haystack []string, needle string) bool {
 }
 
 // notAllowedMessage is the refusal of a tool the token's agent may not use:
-// shell_exec names the agent, any other tool gets tools.NotEnabledMessage.
+// shell_exec names the agent and adds the configured-restriction notice (the
+// caller is a model), any other tool gets tools.NotEnabledMessage.
 func notAllowedMessage(reg *tools.ToolRegistry, toolName string) string {
 	if toolName == tools.ShellToolName {
-		return tools.ShellNotAllowedMessage(reg.Owner())
+		return tools.ShellNotAllowedMCPMessage(reg.Owner())
 	}
 	return tools.NotEnabledMessage(toolName)
 }

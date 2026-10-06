@@ -176,3 +176,28 @@ func TestToolRegistry_Version_IncreasesOnRegister(t *testing.T) {
 		t.Errorf("Version should increase after Register: v0=%d, v1=%d", v0, v1)
 	}
 }
+
+// TestToolRegistry_ShellRefusalOnlyWhenNotRegistered: an unregistered
+// shell_exec is refused naming the agent; one registered but hidden by
+// progressive discovery is permitted, so it is not refused as a permission
+// (it takes the ordinary not-found path in the loop and runs for the host).
+func TestToolRegistry_ShellRefusalOnlyWhenNotRegistered(t *testing.T) {
+	ctx := context.Background()
+	missing := NewToolRegistry()
+	missing.SetOwner("Bob")
+	if res := missing.Execute(ctx, ShellToolName, nil); !res.IsError || res.ForLLM != "Bob is not allowed to run shell commands." {
+		t.Errorf("unregistered: %+v, want the refusal naming Bob", res)
+	}
+
+	hidden := NewToolRegistry()
+	hidden.SetOwner("Alice")
+	hidden.RegisterHidden(&mockTool{name: ShellToolName})
+	res := hidden.Execute(ctx, ShellToolName, nil)
+	if !res.IsError || res.ForLLM == ShellNotAllowedMessage("Alice") {
+		t.Errorf("hidden in the loop: %+v, want not-found, not the permission refusal", res)
+	}
+	res = hidden.ExecuteForHost(ctx, ShellToolName, nil, "", "", nil)
+	if res.IsError || res.ForLLM != "tool executed: "+ShellToolName {
+		t.Errorf("hidden for the host: %+v, want it run", res)
+	}
+}
