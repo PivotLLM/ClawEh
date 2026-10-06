@@ -446,7 +446,7 @@ func dispatchToolCall(
 	if !toolOK {
 		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
-		return tools.NotEnabledMessage(toolName), true
+		return notAllowedMessage(reg, toolName), true
 	}
 
 	if policy == nil {
@@ -455,7 +455,7 @@ func dispatchToolCall(
 	if !policy.IsAllowed(agentName, toolName) {
 		logger.WarnCF("mcpserver", "MCP tool denied",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
-		return tools.NotEnabledMessage(toolName), true
+		return notAllowedMessage(reg, toolName), true
 	}
 
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved
@@ -469,11 +469,8 @@ func dispatchToolCall(
 	// dispatch) arrive here, not through the loop, and would otherwise start at
 	// depth 0 whatever the turn's depth.
 	ctx = toolsagents.WithSpawnDepth(ctx, rec.depth)
-	// Likewise the turn's ask chain and remote-origin mark (SetTurnScope).
+	// Likewise the turn's ask chain (SetTurnScope).
 	ctx = tools.WithAskChain(ctx, rec.askChain)
-	if rec.remote {
-		ctx = tools.WithRemoteOrigin(ctx)
-	}
 
 	// Carry the session's source channel/chatID so tools that re-inject a turn
 	// (e.g. session_clear) can route the follow-up back to the originating user
@@ -574,7 +571,7 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: targetSession,
-		Metadata:   bus.SetRemoteOrigin(bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth), rec.remote),
+		Metadata:   bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
@@ -745,4 +742,13 @@ func stringSliceFromAny(v any) []string {
 
 func containsString(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
+}
+
+// notAllowedMessage is the refusal of a tool the token's agent may not use:
+// shell_exec names the agent, any other tool gets tools.NotEnabledMessage.
+func notAllowedMessage(reg *tools.ToolRegistry, toolName string) string {
+	if toolName == tools.ShellToolName {
+		return tools.ShellNotAllowedMessage(reg.Owner())
+	}
+	return tools.NotEnabledMessage(toolName)
 }

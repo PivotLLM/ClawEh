@@ -187,6 +187,9 @@ func newAgentInstance(
 	_ = restrict // restrict is available to providers via cfg and defaults
 
 	toolsRegistry := tools.NewToolRegistry()
+	if agentCfg != nil {
+		toolsRegistry.SetOwner(agentCfg.DisplayName())
+	}
 
 	sessionsDir := filepath.Join(stateDir, "sessions")
 

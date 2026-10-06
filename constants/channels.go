@@ -15,9 +15,7 @@ var internalChannels = map[string]struct{}{
 
 // AgentMessageChannel is the channel of a turn started by an ask (an
 // agent_message with a wait, /ask, or the forum): the final reply is handed
-// to the asker and anything else the turn publishes on it is dropped. An ask
-// that began with a remote chat carries the remote-origin mark
-// (tools.RemoteOrigin), so tools restricted to local use still refuse it.
+// to the asker and anything else the turn publishes on it is dropped.
 const AgentMessageChannel = "agent_message"
 
 // IsInternalChannel returns true if the channel is an internal channel.

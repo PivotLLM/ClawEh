@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -213,21 +212,18 @@ func TestHumanAgent_HasNoAgentMessage(t *testing.T) {
 	}
 }
 
-// An ask from a remote, nested exchange reaches the person exactly as any
-// other: the depth, chain and remote mark ride on the turn, not on what the
-// person sees, and the answer comes back ok.
-func TestHumanAgent_RemoteOriginAndDepthPassThrough(t *testing.T) {
+// An ask from a nested exchange reaches the person exactly as any other: the
+// depth and chain ride on the turn, not on what the person sees, and the
+// answer comes back ok.
+func TestHumanAgent_DepthAndChainPassThrough(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 60), &countingProvider{})
 
-	ctx := tools.WithRemoteOrigin(tools.WithAskChain(toolsagents.WithSpawnDepth(context.Background(), 1), []string{"alice"}))
+	ctx := tools.WithAskChain(toolsagents.WithSpawnDepth(context.Background(), 1), []string{"alice"})
 	result := askInBackground(ctx, al, "Approve?", 30*time.Second)
 	posted := expectPosted(t, msgBus)
 	if posted.Content != askHeader(sender{name: "Alice"})+"\nApprove?" {
 		t.Fatalf("Bob was shown %q", posted.Content)
-	}
-	if strings.Contains(posted.Content, "remote") {
-		t.Fatalf("the request carried the exchange's marks: %+v", posted)
 	}
 	publishIn(t, msgBus, fromBob("b1", "Approved."))
 	if r := <-result; r.Outcome != bus.OutcomeOK || r.Text != "Approved." {

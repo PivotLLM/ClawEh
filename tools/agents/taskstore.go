@@ -67,10 +67,6 @@ type TaskRecord struct {
 	// spawned by a primary turn). Persisted so the depth survives the detached
 	// async context and process restarts; the worker runs at SpawnDepth+1.
 	SpawnDepth int `json:"spawn_depth,omitempty"`
-	// RemoteOrigin records that the spawning turn came from a remote chat
-	// (tools.RemoteOrigin), so the detached worker, a relaunch after a
-	// restart, and the re-entered result keep the mark.
-	RemoteOrigin bool `json:"remote_origin,omitempty"`
 }
 
 // TaskResults is the worker's output payload, persisted to <uuid>-results.json.

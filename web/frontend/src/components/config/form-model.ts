@@ -6,7 +6,6 @@ export interface CoreConfigForm {
   baseDir: string
   commonDir: string
   restrictToWorkspace: boolean
-  allowRemote: boolean
   streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
@@ -56,7 +55,6 @@ export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
   commonDir: "",
   restrictToWorkspace: true,
-  allowRemote: true,
   streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
@@ -143,8 +141,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const summarization = asRecord(root.summarization)
   const devices = asRecord(root.devices)
   const logging = asRecord(root.logging)
-  const tools = asRecord(root.tools)
-  const exec = asRecord(tools.exec)
 
   const agentList = Array.isArray(agents.list) ? agents.list : []
   const defaultAgentId = asString(
@@ -161,10 +157,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.restrict_to_workspace === undefined
         ? EMPTY_FORM.restrictToWorkspace
         : asBool(defaults.restrict_to_workspace),
-    allowRemote:
-      exec.allow_remote === undefined
-        ? EMPTY_FORM.allowRemote
-        : asBool(exec.allow_remote),
     streamToolActivity:
       defaults.stream_tool_activity === undefined
         ? EMPTY_FORM.streamToolActivity

@@ -73,11 +73,9 @@ When Alice asks Bob:
 - A failed turn returns "Bob's turn failed: …", a turn stopped with `/cancel`
   "Bob's turn was cancelled before it replied.", and an empty one "Bob gave no
   reply.".
-- `shell_exec` in Bob's turn follows where the exchange began: if it began
-  with a message on a chat (Telegram, Slack, …), it answers "shell_exec is
-  off for work started from a chat; set tools.exec.allow_remote to allow it."
-  unless `tools.exec.allow_remote` is on, as it would in that chat. An
-  exchange that began locally (the CLI, the forum) keeps today's behaviour.
+- Bob's turn uses Bob's own tools: he can run `shell_exec` only if his tool
+  permissions include it, and otherwise gets "Bob is not allowed to run shell
+  commands.", whoever asked and wherever the exchange began.
 - Restarting ClawEh abandons asks in progress; an asked turn is not replayed.
 
 ### Depth

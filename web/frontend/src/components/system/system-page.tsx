@@ -354,11 +354,6 @@ export function SystemPage() {
             models: summarizationModels,
             debug_capture: form.summarizationDebugCapture,
           },
-          tools: {
-            exec: {
-              allow_remote: form.allowRemote,
-            },
-          },
           devices: {
             enabled: form.devicesEnabled,
             monitor_usb: form.monitorUSB,

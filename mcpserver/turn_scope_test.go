@@ -15,17 +15,16 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// scopeTool records the ask chain and remote-origin mark it ran with.
+// scopeTool records the ask chain it ran with.
 type scopeTool struct {
-	chain  []string
-	remote bool
+	chain []string
 }
 
 func (s *scopeTool) Name() string               { return "probe" }
 func (s *scopeTool) Description() string        { return "records turn scope" }
 func (s *scopeTool) Parameters() map[string]any { return map[string]any{} }
 func (s *scopeTool) Execute(ctx context.Context, _ map[string]any) *tools.ToolResult {
-	s.chain, s.remote = tools.AskChain(ctx), tools.RemoteOrigin(ctx)
+	s.chain = tools.AskChain(ctx)
 	return &tools.ToolResult{ForLLM: "ok", ForUser: "for the chat"}
 }
 
@@ -40,31 +39,31 @@ func dispatchScope(t *testing.T, st *SessionTokenStore, tok string, msgBus *bus.
 	return tool
 }
 
-// A CLI agent's tool calls carry the ask chain and remote-origin mark of the
-// turn holding the token, as in-process calls do (so an agent waiting in the
+// A CLI agent's tool calls carry the ask chain of the turn holding the
+// token, as in-process calls do (so an agent waiting in the
 // exchange cannot be asked over MCP either); a later turn replaces them, and
 // a token rotation keeps them.
 func TestDispatch_CarriesTurnScope(t *testing.T) {
 	st := newSessionTokenStore()
 	st.Issue("alice", "agent:alice:main", "/ws")
 
-	st.SetTurnScope("agent:alice:main", []string{"bob", "alice"}, true)
+	st.SetTurnScope("agent:alice:main", []string{"bob", "alice"})
 	tok := st.Issue("alice", "agent:alice:main", "/ws") // rotation keeps the scope
 	got := dispatchScope(t, st, tok, nil)
-	if !slices.Equal(got.chain, []string{"bob", "alice"}) || !got.remote {
-		t.Fatalf("scope = %v remote=%v, want [bob alice] remote", got.chain, got.remote)
+	if !slices.Equal(got.chain, []string{"bob", "alice"}) {
+		t.Fatalf("scope = %v, want [bob alice]", got.chain)
 	}
 
-	st.SetTurnScope("agent:alice:main", []string{"alice"}, false)
+	st.SetTurnScope("agent:alice:main", []string{"alice"})
 	got = dispatchScope(t, st, tok, nil)
-	if !slices.Equal(got.chain, []string{"alice"}) || got.remote {
-		t.Fatalf("scope after a local turn = %v remote=%v, want [alice] local", got.chain, got.remote)
+	if !slices.Equal(got.chain, []string{"alice"}) {
+		t.Fatalf("scope after a later turn = %v, want [alice]", got.chain)
 	}
 
 	svc := "SST" + strings.Repeat("cd", 32)
 	st.RegisterService(svc, "alice", "/ws")
-	if got := dispatchScope(t, st, svc, nil); got.chain != nil || got.remote {
-		t.Fatalf("service token scope = %v remote=%v, want none", got.chain, got.remote)
+	if got := dispatchScope(t, st, svc, nil); got.chain != nil {
+		t.Fatalf("service token scope = %v, want none", got.chain)
 	}
 }
 

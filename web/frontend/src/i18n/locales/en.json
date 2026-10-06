@@ -482,8 +482,6 @@
       "common_dir_hint": "Shared directory agents can read/write (default: <agents>/common). Set an absolute path to place it anywhere.",
       "restrict_workspace": "Restrict to workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
-      "allow_remote": "Allow remote shell execution",
-      "allow_remote_hint": "When enabled, shell commands can also run for remote sessions or non-local contexts. When disabled, shell execution stays limited to local safe contexts.",
       "stream_tool_activity": "Stream tool activity",
       "stream_tool_activity_hint": "When enabled, the assistant's inter-tool narration and each tool's intermediate output are sent to the chat as it works. When disabled (default), the user receives only the final answer.",
       "max_tokens": "Max tokens",

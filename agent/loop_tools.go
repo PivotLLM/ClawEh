@@ -478,7 +478,7 @@ func (al *AgentLoop) runTaskSupervision() {
 	now := time.Now().Unix()
 	for _, m := range managers {
 		m.SuperviseOnce(now, func(rec *toolsagents.TaskRecord) tools.AsyncCallback {
-			return al.taskPointerCallback(rec.Channel, rec.ChatID, rec.OwnerAgentID, rec.SpawnDepth, rec.RemoteOrigin)
+			return al.taskPointerCallback(rec.Channel, rec.ChatID, rec.OwnerAgentID, rec.SpawnDepth)
 		})
 	}
 }
@@ -487,9 +487,8 @@ func (al *AgentLoop) runTaskSupervision() {
 // publishes the compact completion pointer to the task's origin channel (the
 // agent reads the referenced result file). Mirrors the inline async-tool callback
 // used for the initial in-turn spawn. spawnDepth is the spawning turn's depth,
-// carried on the re-injected message so the re-entered turn is not lower;
-// remote, the spawning turn's remote-origin mark, is carried the same way.
-func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, spawnDepth int, remote bool) tools.AsyncCallback {
+// carried on the re-injected message so the re-entered turn is not lower.
+func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, spawnDepth int) tools.AsyncCallback {
 	return func(cbCtx context.Context, result *tools.ToolResult) {
 		if result == nil {
 			return
@@ -527,7 +526,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: ownerAgentID}
 			msg.SessionKey = routing.BuildAgentMainSessionKey(ownerAgentID)
 		}
-		msg.Metadata = bus.SetRemoteOrigin(bus.SetSpawnDepth(msg.Metadata, spawnDepth), remote)
+		msg.Metadata = bus.SetSpawnDepth(msg.Metadata, spawnDepth)
 		if err := al.bus.PublishInbound(pubCtx, msg); err != nil {
 			logger.WarnCF("agent", "Failed to publish async task result to agent", map[string]any{
 				"channel": channel,

@@ -108,7 +108,6 @@ type probeTool struct {
 	depths  []int
 	channel []string
 	chains  [][]string
-	remote  []bool
 }
 
 func (p *probeTool) Name() string               { return "probe_tool" }
@@ -120,7 +119,6 @@ func (p *probeTool) Execute(ctx context.Context, _ map[string]any) *tools.ToolRe
 	p.depths = append(p.depths, toolsagents.SpawnDepth(ctx))
 	p.channel = append(p.channel, tools.ToolChannel(ctx))
 	p.chains = append(p.chains, tools.AskChain(ctx))
-	p.remote = append(p.remote, tools.RemoteOrigin(ctx))
 	return tools.NewToolResult("probe ok")
 }
 
@@ -229,38 +227,7 @@ func TestAsk_TurnRunsTools(t *testing.T) {
 	if got := strings.Join(probe.chains[0], ","); got != "alice,bob" {
 		t.Fatalf("ask chain in Bob's turn = %q, want alice,bob", got)
 	}
-	if probe.remote[0] {
-		t.Fatal("an ask from a local turn ran remote")
-	}
 	noOutbound(t, msgBus)
-}
-
-// TestRemoteOrigin_Hops: a turn on a remote chat runs remote and an ask from
-// it hands the mark on; a turn on an internal channel runs local.
-func TestRemoteOrigin_Hops(t *testing.T) {
-	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
-
-	al, msgBus := messagingLoop(t, messagingConfig(t), toolThenText())
-	probe := &probeTool{}
-	al.RegisterTool(probe)
-
-	tg := inbound("c1", "m1", "go")
-	tg.Channel = "telegram"
-	dispatch(al, tg)
-	nextOutbound(t, msgBus)
-	local := inbound("c2", "m2", "go")
-	local.Channel = "cli"
-	dispatch(al, local)
-	nextOutbound(t, msgBus)
-	if _, err := al.Ask(tools.WithRemoteOrigin(context.Background()), "Alice", "bob", "go", 5*time.Second); err != nil {
-		t.Fatalf("Ask: %v", err)
-	}
-
-	probe.mu.Lock()
-	defer probe.mu.Unlock()
-	if want := []bool{true, false, true}; !slices.Equal(probe.remote, want) {
-		t.Fatalf("remote marks (telegram turn, cli turn, ask from remote) = %v, want %v", probe.remote, want)
-	}
 }
 
 // asyncTool finishes in the background, then reports "background done".
@@ -480,7 +447,7 @@ type scopeSTI struct {
 	scopes  map[string][]string
 }
 
-func (s *scopeSTI) SetTurnScope(sessionKey string, chain []string, _ bool) {
+func (s *scopeSTI) SetTurnScope(sessionKey string, chain []string) {
 	s.scopeMu.Lock()
 	defer s.scopeMu.Unlock()
 	if s.scopes == nil {
@@ -892,28 +859,6 @@ func TestAsk_CancelledBeforeStart(t *testing.T) {
 		}
 	default:
 		t.Fatal("no reply delivered")
-	}
-}
-
-// TestRemoteOrigin_AsyncReentry: a background result of remote-origin work
-// re-enters marked remote (and an internal message without the mark stays
-// local); a local one stays local.
-func TestRemoteOrigin_AsyncReentry(t *testing.T) {
-	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
-
-	for _, remote := range []bool{false, true} {
-		msgBus := bus.NewMessageBus()
-		al := mustNewAgentLoop(t, newTestConfig(t), msgBus, &mockProvider{}, nil)
-		al.taskPointerCallback("subagent", "x", "main", 1, remote)(context.Background(), &tools.ToolResult{ForLLM: "done"})
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		msg, ok := msgBus.ConsumeInbound(ctx)
-		cancel()
-		if !ok {
-			t.Fatal("no re-entry published")
-		}
-		if got := tools.RemoteOrigin(withInboundOrigin(context.Background(), msg)); got != remote {
-			t.Fatalf("re-entered turn remote = %v, want %v", got, remote)
-		}
 	}
 }
 

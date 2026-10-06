@@ -136,12 +136,11 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	// The agents waiting on this turn, the running agent included: none of
-	// them may be asked from it (see Ask). Recorded on the session token with
-	// the turn's remote-origin mark, so a CLI provider's MCP tool calls carry
-	// both too.
+	// them may be asked from it (see Ask). Recorded on the session token, so
+	// a CLI provider's MCP tool calls carry it too.
 	ctx = tools.WithAskChainAgent(ctx, agent.ID)
 	if sti != nil {
-		sti.SetTurnScope(opts.SessionKey, tools.AskChain(ctx), tools.RemoteOrigin(ctx))
+		sti.SetTurnScope(opts.SessionKey, tools.AskChain(ctx))
 	}
 
 	// Record the inbound source on the session token record so MCP-routed tool
@@ -1327,7 +1326,6 @@ func (al *AgentLoop) runLLMIteration(
 				// its source's main conversation, as a sub-agent's always has.
 				resultAgentID, resultSessionKey := asyncResultTarget(agent)
 				turnDepth := toolsagents.SpawnDepth(ctx)
-				turnRemote := tools.RemoteOrigin(ctx)
 				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
@@ -1378,8 +1376,7 @@ func (al *AgentLoop) runLLMIteration(
 						Content:    content,
 						SessionKey: resultSessionKey,
 						// The re-entered turn runs at this turn's depth, never lower.
-						// and as remote as this turn.
-						Metadata: bus.SetRemoteOrigin(bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth), turnRemote),
+						Metadata: bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth),
 					}); err != nil {
 						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
 							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})

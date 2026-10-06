@@ -50,7 +50,7 @@ func shellSummary(cfg *config.Config) string {
 		}
 	}
 	ex := cfg.Tools.Exec
-	policy := "deny patterns " + onOff(ex.EnableDenyPatterns) + ", remote commands " + onOff(ex.AllowRemote)
+	policy := "deny patterns " + onOff(ex.EnableDenyPatterns)
 	if len(with) == 0 {
 		return "No enabled agent has shell_exec (" + policy + ")."
 	}

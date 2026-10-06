@@ -31,7 +31,7 @@ func FuzzLoadConfig(f *testing.F) {
 		`{"channels":{"device":{"enabled":true,"port":18791,"allow_origins":["*"]}}}`,
 		`{"gateway":{"port":"not-a-number"}}`,
 		`{"gateway":{"port":-1,"allowed_cidrs":["10.0.0.0/8","garbage"]}}`,
-		`{"tools":{"exec":{"allow_remote":true},"web":{"proxy":"http://127.0.0.1:7890"}}}`,
+		`{"tools":{"exec":{"enable_deny_patterns":true},"web":{"proxy":"http://127.0.0.1:7890"}}}`,
 		`{"agents":{"list":[{"allow_from":"single"}]},"channels":{"line":{"allow_from":["a","b"]}}}`,
 		`{"summarization":{"models":["a"]},"maestro":{"enabled":"yes"}}`,
 		strings.Repeat("[", 5000) + strings.Repeat("]", 5000),

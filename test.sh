@@ -558,6 +558,11 @@ PY
         "name": "alice",
         "tools": ["*", "cogmem_*"],
         "fusion": true
+      },
+      {
+        "id": "bob",
+        "name": "Bob",
+        "tools": ["file_*"]
       }
     ]
   },
@@ -707,8 +712,9 @@ EOF
                 # headless service session on /mcp + /internal).
                 TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
                 ALICE_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
+                BOB_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
                 mkdir -p "$INTEG_HOME/internal"
-                printf '{"main":"%s","alice":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
+                printf '{"main":"%s","alice":"%s","bob":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" "$BOB_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
@@ -796,6 +802,7 @@ EOF
                        SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
                        FUSION_SERVICE="$FUSION_SERVICE" \
                        UNGRANTED_SERVICE_TOKEN="$ALICE_SERVICE_TOKEN" \
+                       NOSHELL_SERVICE_TOKEN="$BOB_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        GATEWAY_LOG="$INTEG_LOG" \

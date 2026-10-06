@@ -190,11 +190,10 @@ type SessionTokenIssuer interface {
 	// so MCP tool calls made with the session's token (CLI providers) run at
 	// it. No-op when the sessionKey is unknown.
 	SetDepth(sessionKey string, depth int)
-	// SetTurnScope records the ask chain and the remote-origin mark of the
-	// turn starting on sessionKey (see tools.AskChain, tools.RemoteOrigin), so
-	// MCP tool calls made with the session's token carry them. No-op when the
-	// sessionKey is unknown.
-	SetTurnScope(sessionKey string, askChain []string, remote bool)
+	// SetTurnScope records the ask chain of the turn starting on sessionKey
+	// (see tools.AskChain), so MCP tool calls made with the session's token
+	// carry it. No-op when the sessionKey is unknown.
+	SetTurnScope(sessionKey string, askChain []string)
 	// Source returns the source SetSource last recorded for sessionKey (empty
 	// when none or unknown).
 	Source(sessionKey string) (channel, chatID string)

@@ -54,7 +54,7 @@ func (r *recordingSTI) SetDepth(sessionKey string, depth int) {
 	r.depths = append(r.depths, depthCall{sessionKey: sessionKey, depth: depth})
 }
 
-func (r *recordingSTI) SetTurnScope(string, []string, bool) {}
+func (r *recordingSTI) SetTurnScope(string, []string) {}
 
 func (r *recordingSTI) Source(sessionKey string) (string, string) {
 	r.mu.Lock()

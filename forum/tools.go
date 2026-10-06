@@ -49,9 +49,6 @@ type ToolHost interface {
 	// Workspace is the agent's workspace, the ConfigDir of an inline
 	// configuration.
 	Workspace(agentID string) (string, error)
-	// Remote reports whether the call is part of work that began on a
-	// remote chat; a forum it launches carries the mark (Origin.Remote).
-	Remote(call *toolspec.ToolCall) bool
 }
 
 // Tools returns the nine forum tools over svc. Every handler resolves the
@@ -247,7 +244,6 @@ func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) (LaunchO
 		Scope: scope,
 		Origin: Origin{
 			AgentID: scope.AgentID, Channel: call.Channel, ChatID: call.ChatID, Session: call.Session,
-			Remote: t.host.Remote(call),
 		},
 		ReadAllowed: func(abs string) error {
 			return t.host.ReadAllowed(scope.AgentID, abs)

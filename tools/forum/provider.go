@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/constants"
 	forumpkg "github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -152,19 +151,6 @@ func (h *toolHost) ReadAllowed(agentID, absPath string) error {
 	default:
 		return errors.New("its file permissions do not allow it")
 	}
-}
-
-// Remote reports whether the call is part of work that began on a remote
-// chat: the turn carries the remote-origin mark, or the call came on a
-// channel that is not internal (an empty channel counts as remote).
-func (h *toolHost) Remote(call *global.ToolCall) bool {
-	if call == nil {
-		return true
-	}
-	if call.Ctx != nil && tools.RemoteOrigin(call.Ctx) {
-		return true
-	}
-	return !constants.IsInternalChannel(strings.TrimSpace(call.Channel))
 }
 
 // Workspace is the agent's workspace.

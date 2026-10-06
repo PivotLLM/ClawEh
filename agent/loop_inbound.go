@@ -668,7 +668,6 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	}
 	ctx = withInboundSpawnDepth(ctx, msg, maxDepth)
 	ctx = withInboundAskChain(ctx, msg)
-	ctx = withInboundOrigin(ctx, msg)
 
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {

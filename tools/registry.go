@@ -40,6 +40,9 @@ type ToolRegistry struct {
 	tools   map[string]*ToolEntry
 	mu      sync.RWMutex
 	version atomic.Uint64 // incremented on Register/RegisterHidden for cache invalidation
+	// owner is the display name of the agent the registry belongs to, named
+	// in refusals (see ShellNotAllowedMessage). Set once before use.
+	owner string
 }
 
 func NewToolRegistry() *ToolRegistry {
@@ -47,6 +50,13 @@ func NewToolRegistry() *ToolRegistry {
 		tools: make(map[string]*ToolEntry),
 	}
 }
+
+// SetOwner records the display name of the agent the registry belongs to.
+// Call it before the registry is shared.
+func (r *ToolRegistry) SetOwner(name string) { r.owner = name }
+
+// Owner is the display name SetOwner recorded ("" when none).
+func (r *ToolRegistry) Owner() string { return r.owner }
 
 func (r *ToolRegistry) Register(tool Tool) {
 	r.mu.Lock()
@@ -507,6 +517,12 @@ func (r *ToolRegistry) executeWithContext(
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
 	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
+	if !ok && name == ShellToolName {
+		// Not registered: the agent's tool permissions do not include it.
+		logger.WarnCF("tool", "Shell command refused: not allowed for this agent",
+			map[string]any{"tool": name, "agent": r.owner})
+		return ErrorResult(ShellNotAllowedMessage(r.owner)).WithError(fmt.Errorf("tool not permitted: %s", name))
+	}
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
 			map[string]any{
@@ -527,7 +543,11 @@ func (r *ToolRegistry) executeWithContext(
 				map[string]any{
 					"tool": canonical,
 				})
-			return ErrorResult(NotEnabledMessage(name)).WithError(fmt.Errorf("tool not permitted: %s", name))
+			msg := NotEnabledMessage(name)
+			if canonical == ShellToolName {
+				msg = ShellNotAllowedMessage(r.owner)
+			}
+			return ErrorResult(msg).WithError(fmt.Errorf("tool not permitted: %s", name))
 		}
 	}
 

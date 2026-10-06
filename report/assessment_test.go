@@ -188,9 +188,6 @@ func TestAssessment_Marks(t *testing.T) {
 	if r := assessmentRow(t, s, "Shell access"); r[0] != "" {
 		t.Errorf("shell row with deny patterns on should not be marked: %v", r)
 	}
-	if r := assessmentRow(t, s, "Shell from chats"); r[0] != "" || !strings.Contains(r[2], "sub-agents and asks") {
-		t.Errorf("shell from chats row = %v", r)
-	}
 	if r := assessmentRow(t, s, "Channels accepting any sender"); r[0] != "*" || !strings.Contains(r[2], "telegram-bob") {
 		t.Errorf("any-sender row = %v", r)
 	}
@@ -212,13 +209,6 @@ func TestAssessment_Marks(t *testing.T) {
 		t.Errorf("shell row = %v", r)
 	}
 
-	cfg.Tools.Exec.AllowRemote = true
-	s = collectAssessment(t.Context(), cfg, env)
-	for _, row := range s.Tables[0].Rows {
-		if row[1] == "Shell from chats" {
-			t.Errorf("shell from chats row shown with allow_remote on: %v", row)
-		}
-	}
 	if r := assessmentRow(t, s, "Message content in logs"); r[0] != "*" || !strings.Contains(r[2], "log_message_content") {
 		t.Errorf("logging row = %v", r)
 	}

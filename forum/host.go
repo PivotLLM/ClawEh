@@ -167,10 +167,6 @@ type Origin struct {
 	Channel string `json:"channel,omitempty"`
 	ChatID  string `json:"chat_id,omitempty"`
 	Session string `json:"session,omitempty"`
-	// Remote marks a forum launched by work that began on a remote chat
-	// (the host's remote-origin mark): its asks carry the mark, so tools
-	// restricted to local work stay refused in its turns.
-	Remote bool `json:"remote,omitempty"`
 }
 
 // Notifier tells the launching agent that a forum reached a terminal state.

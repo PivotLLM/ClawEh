@@ -23,7 +23,6 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
-	"github.com/PivotLLM/ClawEh/tools/shell"
 )
 
 // forumToolNames are the nine tools an agent with the `forum` switch gets.
@@ -196,13 +195,19 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// launchForum runs forum_launch as Alice from channel ("telegram" is a
-// remote chat, "cli" local) and returns the new forum's id.
+// launchForum runs forum_launch as Alice from channel with
+// forumLaunchConfig and returns the new forum's id.
 func launchForum(t *testing.T, al *AgentLoop, channel string) string {
+	t.Helper()
+	return launchForumWith(t, al, channel, forumLaunchConfig)
+}
+
+// launchForumWith is launchForum with the forum configuration launchConfig.
+func launchForumWith(t *testing.T, al *AgentLoop, channel, launchConfig string) string {
 	t.Helper()
 	alice, _ := al.GetRegistry().Get("alice")
 	var cfgObj map[string]any
-	if err := json.Unmarshal([]byte(forumLaunchConfig), &cfgObj); err != nil {
+	if err := json.Unmarshal([]byte(launchConfig), &cfgObj); err != nil {
 		t.Fatal(err)
 	}
 	res := alice.Tools.ExecuteWithContext(context.Background(), "forum_launch", map[string]any{"config": cfgObj}, channel, "chat-1", nil)
@@ -419,38 +424,66 @@ func TestForumHost_Agents(t *testing.T) {
 	}
 }
 
-// TestForum_RemoteMarkReachesParticipants: a forum launched from a remote
-// chat carries the remote-origin mark into its turns, so a participant's
-// shell_exec is refused as it would be in that chat; one launched locally
-// runs it.
-func TestForum_RemoteMarkReachesParticipants(t *testing.T) {
+// TestForum_ShellFollowsTheParticipant: a forum turn runs with the
+// participant's own shell_exec permission, wherever the forum was launched
+// from: Bob, or a clone of Bob, runs it when Bob's tools allow it and is
+// refused, by name, when they do not.
+func TestForum_ShellFollowsTheParticipant(t *testing.T) {
+	cloneConfig := strings.Replace(forumLaunchConfig, `"bob": {"agent": "bob",`, `"bob": {"clone": "bob",`, 1)
+	if cloneConfig == forumLaunchConfig {
+		t.Fatal("the clone configuration is the same as the existing-agent one")
+	}
 	for _, tc := range []struct {
-		channel string
-		want    string
+		name     string
+		launch   string
+		bobTools []string
+		want     string
 	}{
-		{"telegram", shell.RemoteRefusal},
-		{"cli", "forum-shell-ok"},
+		{"existing, allowed", forumLaunchConfig, []string{"*"}, "forum-shell-ok"},
+		{"existing, not allowed", forumLaunchConfig, []string{"file_*"}, "Bob is not allowed to run shell commands."},
+		{"clone, allowed", cloneConfig, []string{"*"}, "forum-shell-ok"},
+		{"clone, not allowed", cloneConfig, []string{"file_*"}, "Bob is not allowed to run shell commands."},
 	} {
-		t.Run(tc.channel, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 			model := &forumModel{bobTool: "shell_exec", bobArgs: `{"command":"echo forum-shell-ok"}`}
 			cfg := forumConfig(t, true, false)
+			cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
+			cfg.Agents.List[1].Tools = tc.bobTools
 			r := newForumRig(t, cfg, model)
-			bob, _ := r.al.GetRegistry().Get("bob")
-			exec, err := shell.NewExecToolWithConfig(bob.Workspace, false, cfg) // tools.exec.allow_remote off
-			if err != nil {
-				t.Fatal(err)
-			}
-			bob.Tools.Register(exec)
 
-			id := launchForum(t, r.al, tc.channel)
+			id := launchForumWith(t, r.al, "telegram", tc.launch)
 			waitCompleted(t, r, id)
 			model.mu.Lock()
 			defer model.mu.Unlock()
-			if len(model.toolSeen) != 1 || !strings.Contains(model.toolSeen[0], tc.want) {
-				t.Errorf("Bob's shell_exec in a forum launched from %s returned %q, want %q", tc.channel, model.toolSeen, tc.want)
+			if len(model.toolSeen) != 1 || !strings.Contains(model.toolSeen[0], tc.want) ||
+				(strings.Contains(tc.want, "not allowed") && model.toolSeen[0] != tc.want) {
+				t.Errorf("Bob's shell_exec in the forum returned %q, want %q", model.toolSeen, tc.want)
 			}
 		})
+	}
+}
+
+// TestForum_FreshParticipantHasNoShell: a fresh temporary agent has no
+// tools, so it can never run shell commands, even when its owner can.
+func TestForum_FreshParticipantHasNoShell(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	cfg := forumConfig(t, true, false)
+	cfg.Tools.Overrides = map[string]bool{"shell_exec": true}
+	cfg.Agents.List[0].Tools = []string{"*"}
+	r := newForumRig(t, cfg, &forumModel{})
+	id, err := r.host.CreateFresh(context.Background(), forum.FreshSpec{Model: "alpha", Owner: "alice"})
+	if err != nil {
+		t.Fatalf("CreateFresh: %v", err)
+	}
+	fresh, ok := r.al.GetRegistry().Get(id)
+	if !ok {
+		t.Fatal("the fresh agent is not registered")
+	}
+	res := fresh.Tools.ExecuteWithContext(context.Background(), "shell_exec",
+		map[string]any{"command": "echo forum-shell-ok"}, "telegram", "chat-1", nil)
+	if !res.IsError || !strings.HasSuffix(res.ForLLM, "is not allowed to run shell commands.") {
+		t.Errorf("fresh agent's shell_exec = %+v, want a refusal", res)
 	}
 }
 
@@ -507,7 +540,7 @@ func TestForumHost_AskChecksTheLauncherNow(t *testing.T) {
 
 // TestForumHost_NoticeRouting: the completion notice always lands in the
 // launcher's own conversation. The chat recorded at launch is not used: a
-// remote launch has the answer posted to the launcher's default chat when
+// launch from a chat has the answer posted to the launcher's default chat when
 // it has one, and nowhere otherwise; a local launch is never posted.
 func TestForumHost_NoticeRouting(t *testing.T) {
 	result := &forum.Result{ForumID: "f1", Name: "review", Status: forum.StatusCompleted}
@@ -517,8 +550,8 @@ func TestForumHost_NoticeRouting(t *testing.T) {
 		origin   forum.Origin
 		wantChat string // "" = nothing posted
 	}{
-		{"remote, default chat", true, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere", Remote: true}, "u1"},
-		{"remote, no default chat", false, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere", Remote: true}, ""},
+		{"chat, default chat", true, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere"}, "u1"},
+		{"chat, no default chat", false, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere"}, ""},
 		{"local", true, forum.Origin{AgentID: "alice", Channel: "cli", ChatID: "elsewhere"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

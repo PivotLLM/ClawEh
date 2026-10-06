@@ -21,7 +21,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 		t.Errorf("Files = %q\nwant %q", files[1], want)
 	}
 	_, shell := findRow(t, tb, "Shell")
-	if shell[1] != "shell_exec allowed for alice, bob; deny patterns on, remote commands off." {
+	if shell[1] != "shell_exec allowed for alice, bob; deny patterns on." {
 		t.Errorf("Shell = %q", shell[1])
 	}
 	_, out := findRow(t, tb, "Outbound network")
@@ -71,7 +71,7 @@ func TestCollectSummary_NoShell(t *testing.T) {
 	cfg.Agents.List[0].Tools = []string{"file_read"}
 	cfg.Agents.List[1].Tools = []string{"file_read"}
 	_, shell := findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Shell")
-	if shell[1] != "No enabled agent has shell_exec (deny patterns on, remote commands off)." {
+	if shell[1] != "No enabled agent has shell_exec (deny patterns on)." {
 		t.Errorf("Shell = %q", shell[1])
 	}
 }

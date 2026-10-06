@@ -150,23 +150,3 @@ func (nopHost) Debugf(string, ...any) {}
 func (nopHost) Infof(string, ...any)  {}
 func (nopHost) Warnf(string, ...any)  {}
 func (nopHost) Errorf(string, ...any) {}
-
-// Remote: the remote-origin mark, or a call on a channel that is not
-// internal (an empty one counts as remote).
-func TestToolHostRemote(t *testing.T) {
-	h := &toolHost{cfg: scopeConfig(), agentID: "alice"}
-	for _, tc := range []struct {
-		name string
-		call *global.ToolCall
-		want bool
-	}{
-		{"telegram", &global.ToolCall{Ctx: context.Background(), Channel: "telegram"}, true},
-		{"cli", &global.ToolCall{Ctx: context.Background(), Channel: "cli"}, false},
-		{"cli with the mark", &global.ToolCall{Ctx: tools.WithRemoteOrigin(context.Background()), Channel: "cli"}, true},
-		{"no channel", &global.ToolCall{Ctx: context.Background()}, true},
-	} {
-		if got := h.Remote(tc.call); got != tc.want {
-			t.Errorf("%s: Remote = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}

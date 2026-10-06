@@ -226,17 +226,9 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 	ex := cfg.Tools.Exec
-	add(len(shell) > 0 && (!ex.EnableDenyPatterns || ex.AllowRemote), "Shell access",
+	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access",
 		ifStr(len(shell) == 0, "No enabled agent has shell_exec.",
-			"shell_exec: "+strings.Join(shell, ", ")+"; deny patterns "+onOff(ex.EnableDenyPatterns)+", remote commands "+onOff(ex.AllowRemote)+"."))
-
-	// Awareness only: with remote commands off, shell_exec also refuses work a
-	// chat started on an internal channel (its sub-agents, asks and background
-	// results), which used to run.
-	if len(shell) > 0 && !ex.AllowRemote {
-		add(false, "Shell from chats",
-			"Blocked for work started from a chat, including its sub-agents and asks (tools.exec.allow_remote is off).")
-	}
+			"shell_exec: "+strings.Join(shell, ", ")+"; deny patterns "+onOff(ex.EnableDenyPatterns)+"."))
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
 	// does not, so a confined agent with shell_exec is confined in name only.

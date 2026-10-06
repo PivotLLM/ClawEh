@@ -49,9 +49,9 @@ so a participant cannot spawn workers or ask other agents, and forum tools
 answer "Forum tools are not available at the maximum sub-agent depth.". A
 temporary agent a forum created has no forum tools at all.
 
-A forum launched from a chat (Telegram, Slack, …) counts as work from that
-chat in every turn: `shell_exec` is refused there unless
-`tools.exec.allow_remote` is on, as it would be in the chat itself.
+Each participant's turn uses that participant's own tools (a clone uses its
+source's): it can run `shell_exec` only if the agent's tool permissions
+include it, wherever the forum was launched from.
 
 ## Configuration overview
 

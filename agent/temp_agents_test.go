@@ -236,7 +236,7 @@ func TestSubagentSpawn_CreatesAndDeletesClone(t *testing.T) {
 	t.Run("agent_spawn background", func(t *testing.T) {
 		done := make(chan *tools.ToolResult, 1)
 		if _, err := main.spawnMgr.SpawnCallback("do it", "job", "", "cli", "direct", "", nil,
-			func(_ context.Context, r *tools.ToolResult) { done <- r }, 0, false); err != nil {
+			func(_ context.Context, r *tools.ToolResult) { done <- r }, 0); err != nil {
 			t.Fatalf("SpawnCallback: %v", err)
 		}
 		if r := <-done; r.IsError {

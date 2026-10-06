@@ -45,11 +45,10 @@ type sessionRecord struct {
 	// this token run at it, so a CLI provider's spawns stay within
 	// max_subagent_depth. Service tokens have no turn and stay at 0.
 	depth int
-	// askChain and remote are the ask chain and remote-origin mark of the
-	// session's current turn (SetTurnScope), applied to tool calls presented
-	// with this token like depth. Service tokens have neither.
+	// askChain is the ask chain of the session's current turn
+	// (SetTurnScope), applied to tool calls presented with this token like
+	// depth. Service tokens have none.
 	askChain []string
-	remote   bool
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
@@ -148,7 +147,6 @@ func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		rec.chatID = s.tokens[old].chatID
 		rec.depth = s.tokens[old].depth
 		rec.askChain = s.tokens[old].askChain
-		rec.remote = s.tokens[old].remote
 		delete(s.tokens, old)
 	}
 	s.tokens[tok] = rec
@@ -289,13 +287,12 @@ func (s *SessionTokenStore) SetDepth(sessionKey string, depth int) {
 	s.tokens[tok] = rec
 }
 
-// SetTurnScope records the ask chain and remote-origin mark of the turn now
-// running on sessionKey on its conversation token, so MCP tool calls made with
-// it (a CLI provider's) carry them as in-process tool calls do: an agent
-// waiting in the exchange cannot be asked, and a turn that began with a remote
-// chat stays remote. Called by the agent loop at the start of every turn.
+// SetTurnScope records the ask chain of the turn now running on sessionKey on
+// its conversation token, so MCP tool calls made with it (a CLI provider's)
+// carry it as in-process tool calls do: an agent waiting in the exchange
+// cannot be asked. Called by the agent loop at the start of every turn.
 // No-op if the session has no token.
-func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string, remote bool) {
+func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string) {
 	if sessionKey == "" {
 		return
 	}
@@ -310,7 +307,6 @@ func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string, r
 		return
 	}
 	rec.askChain = slices.Clone(askChain)
-	rec.remote = remote
 	s.tokens[tok] = rec
 }
 

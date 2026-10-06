@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -27,7 +26,6 @@ type ExecTool struct {
 	allowPatterns       []*regexp.Regexp
 	customAllowPatterns []*regexp.Regexp
 	restrictToWorkspace bool
-	allowRemote         bool
 }
 
 var (
@@ -112,14 +110,10 @@ func NewExecTool(workingDir string, restrict bool) (*ExecTool, error) {
 func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Config) (*ExecTool, error) {
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
-	// Default fallback for the nil-config path (tests only); production always
-	// passes a config whose tools.exec.allow_remote defaults to false.
-	allowRemote := true
 
 	if config != nil {
 		execConfig := config.Tools.Exec
 		enableDenyPatterns := execConfig.EnableDenyPatterns
-		allowRemote = execConfig.AllowRemote
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
@@ -159,7 +153,6 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 		allowPatterns:       nil,
 		customAllowPatterns: customAllowPatterns,
 		restrictToWorkspace: restrict,
-		allowRemote:         allowRemote,
 	}, nil
 }
 
@@ -188,35 +181,10 @@ func (t *ExecTool) Parameters() map[string]any {
 	}
 }
 
-// RemoteRefusal is shell_exec's answer to work started from a chat (the chat
-// itself, or a sub-agent, ask or background result it started) while
-// tools.exec.allow_remote is off.
-const RemoteRefusal = "shell_exec is off for work started from a chat; set tools.exec.allow_remote to allow it."
-
 func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	command, ok := args["command"].(string)
 	if !ok {
 		return tools.ErrorResult("command is required")
-	}
-
-	// GHSA-pv8c-p6jf-3fpp: block exec from remote channels (e.g. Telegram webhooks)
-	// unless explicitly opted-in via config. Fail-closed: empty channel = blocked.
-	if !t.allowRemote {
-		channel := tools.ToolChannel(ctx)
-		if channel == "" {
-			if v, ok := args["__channel"].(string); ok {
-				channel = v
-			}
-		}
-		channel = strings.TrimSpace(channel)
-		// Work that began with a remote chat stays remote on an internal
-		// channel too: an ask, a sub-agent, a background result.
-		if channel == "" {
-			return tools.ErrorResult("exec is restricted to internal channels")
-		}
-		if !constants.IsInternalChannel(channel) || tools.RemoteOrigin(ctx) {
-			return tools.ErrorResult(RemoteRefusal)
-		}
 	}
 
 	cwd := t.workingDir

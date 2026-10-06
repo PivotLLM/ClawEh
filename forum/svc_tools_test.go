@@ -25,10 +25,7 @@ import (
 type svcToolHost struct {
 	base, workspace string
 	wsErr           error
-	remote          bool
 }
-
-func (h *svcToolHost) Remote(*toolspec.ToolCall) bool { return h.remote }
 
 func (h *svcToolHost) Scope(call *toolspec.ToolCall) (Scope, error) {
 	if call.AgentID == "denied" {

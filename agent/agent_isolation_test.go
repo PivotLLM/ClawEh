@@ -119,7 +119,7 @@ func TestAgentIsolation_TaskPointerCallbackCarriesOwnerAgent(t *testing.T) {
 		bus: msgBus,
 	}
 
-	cb := al.taskPointerCallback("slack", "C123", "bob", 2, false)
+	cb := al.taskPointerCallback("slack", "C123", "bob", 2)
 	cb(context.Background(), &tools.ToolResult{
 		ForLLM: "task finished",
 	})

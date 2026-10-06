@@ -49,6 +49,7 @@ SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 FUSION_SERVICE="${FUSION_SERVICE:-}"   # optional: a Fusion service the token's agent lists in mcp_tools
 UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of an agent with Fusion on and nothing listed
+NOSHELL_SERVICE_TOKEN="${NOSHELL_SERVICE_TOKEN:-}"   # optional: service token of the agent Bob, whose tools leave out shell_exec
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 GATEWAY_LOG="${GATEWAY_LOG:-}"     # optional: the gateway's log file, for background-behaviour checks
@@ -628,10 +629,26 @@ else
 
     print_section "4b. Remaining provider tools (graceful probes)"
 
-    # shell_exec is restricted to internal channels, so over MCP it returns a
-    # clean "restricted" error rather than running — a graceful probe.
-    run_test_not_auth_err "4b.1 shell_exec — token accepted" \
-        "shell_exec" '{"command":"echo mcp-shell-ok"}'
+    # shell_exec follows the token's agent: the session token's agent has it
+    # and runs it over MCP; Bob's tools leave it out and he is refused by name.
+    run_test_ok_auth "4b.1 shell_exec runs for an agent allowed it" \
+        "shell_exec" '{"command":"echo mcp-shell-ok"}' "mcp-shell-ok"
+
+    echo "  4b.1b shell_exec refused for an agent not allowed it (service token)"
+    if [ -n "$NOSHELL_SERVICE_TOKEN" ]; then
+        ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+            -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$NOSHELL_SERVICE_TOKEN")" 2>&1)
+        if echo "$ns" | grep -qF "Bob is not allowed to run shell commands." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, naming Bob"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: Bob's service token was not refused by name"
+            echo "$ns" | head -5 | sed 's/^/      /'
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+    else
+        echo "    SKIP: needs NOSHELL_SERVICE_TOKEN"
+    fi
 
     run_test_not_auth_err "4b.2 web_search — token accepted" \
         "web_search" '{"query":"hello"}'
@@ -1031,6 +1048,18 @@ if [ -n "$SERVICE_TOKEN" ]; then
     else
         echo "    ${RED}FAIL${NC}: service token rejected as session_token parameter"
         echo "    Output: $st_i"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    echo "  7.3 service token of an agent allowed shell_exec runs it"
+    st_sh=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+        -call "shell_exec" -params "$(printf '{"command":"echo svc-shell-ok","session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
+    if echo "$st_sh" | grep -q "Tool call succeeded" && echo "$st_sh" | grep -qF "svc-shell-ok"; then
+        echo "    ${GREEN}PASS${NC}: shell_exec ran with the service token"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: shell_exec did not run with the service token"
+        echo "    Output: $st_sh"
         TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 fi  # end service-token tier

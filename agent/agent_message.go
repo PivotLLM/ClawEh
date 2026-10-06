@@ -57,16 +57,6 @@ func withInboundAskChain(ctx context.Context, msg bus.InboundMessage) context.Co
 	return tools.WithAskChain(ctx, chain)
 }
 
-// withInboundOrigin marks ctx remote when msg comes from a remote chat (any
-// non-internal channel) or continues work that did (bus.MetaRemoteOrigin).
-// An already remote ctx stays remote.
-func withInboundOrigin(ctx context.Context, msg bus.InboundMessage) context.Context {
-	if !constants.IsInternalChannel(msg.Channel) || inboundMetadata(msg, bus.MetaRemoteOrigin) == "1" {
-		return tools.WithRemoteOrigin(ctx)
-	}
-	return ctx
-}
-
 // askRegistry holds the asks waiting for their reply, by ask id (the chat id
 // of the ask's message). The zero value is ready to use.
 type askRegistry struct {
@@ -444,7 +434,6 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 		meta[metadataKeyAskChain] = strings.Join(chain, ",")
 	}
 	meta = bus.SetSpawnDepth(meta, depth+1)
-	meta = bus.SetRemoteOrigin(meta, tools.RemoteOrigin(ctx))
 	msg := bus.InboundMessage{
 		Channel:   constants.AgentMessageChannel,
 		ChatID:    id,

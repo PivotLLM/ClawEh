@@ -1,14 +1,18 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 func TestAgentModels_RoundTrip(t *testing.T) {
@@ -348,42 +352,32 @@ func TestConfig_Complete(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ExecAllowRemoteDisabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if cfg.Tools.Exec.AllowRemote {
-		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be false (exec restricted to internal channels by default)")
+// TestLoadConfig_ExecAllowRemoteIsUnknown: tools.exec.allow_remote was
+// removed; an old config that still sets it loads, and the key is warned
+// about as unknown like any other.
+func TestLoadConfig_ExecAllowRemoteIsUnknown(t *testing.T) {
+	data := []byte(`{"tools":{"exec":{"enable_deny_patterns":true,"allow_remote":true}}}`)
+	doc, err := decodeDocument(data)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	if got, want := unknownConfigKeys(doc), []string{"tools.exec.allow_remote"}; !slices.Equal(got, want) {
+		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)
+	}
 
-func TestLoadConfig_ExecAllowRemoteDefaultsFalseWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"enable_deny_patterns":true}}}`), 0o600); err != nil {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err = os.WriteFile(configPath, data, 0o600); err != nil {
 		t.Fatalf("WriteFile() error: %v", err)
 	}
-
-	cfg, err := LoadConfig(configPath)
+	var buf bytes.Buffer
+	restore := logger.RedirectForTest(&buf)
+	_, err = LoadConfig(configPath)
+	restore()
 	if err != nil {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
-	if cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should default to false when unset in config file")
-	}
-}
-
-func TestLoadConfig_ExecAllowRemoteCanBeEnabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"allow_remote":true}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should be true when explicitly enabled in config file")
+	if !strings.Contains(buf.String(), "unknown config key: tools.exec.allow_remote") {
+		t.Fatalf("no unknown-key warning for tools.exec.allow_remote; log:\n%s", buf.String())
 	}
 }
 

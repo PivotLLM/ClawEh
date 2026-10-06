@@ -123,9 +123,6 @@ func (h *ForumHost) Ask(ctx context.Context, agentID, message string, wait time.
 		return forum.Reply{}, refusal
 	}
 	askCtx := toolsagents.WithSpawnDepth(ctx, cfg.Agents.Defaults.GetMaxSubagentDepth()-1)
-	if info.Origin.Remote {
-		askCtx = tools.WithRemoteOrigin(askCtx)
-	}
 	reply, err := al.Ask(askCtx, h.sender(al, ctx), agentID, message, wait)
 	stopping := !al.running.Load()
 	switch {
@@ -333,9 +330,10 @@ func (h *ForumHost) Touch(_ context.Context, launcherID, agentID string) error {
 // background result for the launching agent, in its one conversation, and
 // the call returns without waiting for the agent's turn. The chat recorded
 // at launch is not trusted (it lives in the launcher's workspace): a forum
-// launched from a remote chat has the agent's answer posted to its own
-// default chat (its default binding) when it has one; otherwise, and for a
-// forum launched locally, the answer stays in the conversation.
+// launched from a chat (a channel that is not internal) has the agent's
+// answer posted to its own default chat (its default binding) when it has
+// one; otherwise, and for a forum launched locally, the answer stays in the
+// conversation.
 func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, result *forum.Result) error {
 	al, err := h.bound()
 	if err != nil {
@@ -351,12 +349,12 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 	// processSystemMessage keeps a result of the ask channel in the agent's
 	// main conversation and sends it to no chat.
 	channel, chatID := constants.AgentMessageChannel, ""
-	if cfg := al.GetConfig(); origin.Remote && cfg != nil {
+	if cfg := al.GetConfig(); !constants.IsInternalChannel(origin.Channel) && cfg != nil {
 		if c, id, _, ok := cfg.CronTarget(origin.AgentID); ok {
 			channel, chatID = c, id
 		}
 	}
-	meta := bus.SetRemoteOrigin(map[string]string{metadataKeyPreresolvedAgentID: origin.AgentID}, origin.Remote)
+	meta := map[string]string{metadataKeyPreresolvedAgentID: origin.AgentID}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{

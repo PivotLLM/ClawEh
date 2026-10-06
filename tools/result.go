@@ -114,6 +114,19 @@ func ErrorResult(message string) *ToolResult {
 	}
 }
 
+// ShellToolName is the published name of the shell tool.
+const ShellToolName = "shell_exec"
+
+// ShellNotAllowedMessage is the refusal of a shell_exec call by an agent
+// whose tool permissions do not include it, on any channel and over MCP.
+// agent is the agent's display name.
+func ShellNotAllowedMessage(agent string) string {
+	if agent == "" {
+		agent = "This agent"
+	}
+	return agent + " is not allowed to run shell commands."
+}
+
 // NotEnabledMessage is returned when the caller is authenticated but the
 // resolved agent may not use the tool — either it is absent from that agent's
 // registry or an ACL policy refused it. The wording is deliberately

@@ -63,20 +63,3 @@ func TestExecTool_PathTraversal_Blocked(t *testing.T) {
 		t.Error("path traversal '../' should be blocked")
 	}
 }
-
-func TestExecTool_Execute_AllowRemote(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Tools.Exec.AllowRemote = true
-
-	tool, err := NewExecToolWithConfig("", false, cfg)
-	if err != nil {
-		t.Fatalf("NewExecToolWithConfig() error = %v", err)
-	}
-
-	// With allowRemote=true, should work from any channel.
-	result := tool.Execute(context.Background(), map[string]any{
-		"command": "echo allow-remote-test",
-	})
-	// May succeed or fail depending on command availability; just no panic.
-	_ = result
-}

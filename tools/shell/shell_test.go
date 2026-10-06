@@ -308,116 +308,27 @@ func TestShellTool_WorkingDir_SymlinkEscape(t *testing.T) {
 	}
 }
 
-// TestShellTool_RemoteChannelBlockedByDefault verifies exec is blocked for remote channels
-func TestShellTool_RemoteChannelBlockedByDefault(t *testing.T) {
+// TestShellTool_RunsOnEveryChannel: shell_exec has no channel rule. Whether
+// an agent may run it is its tool permission alone (enforced where the tool
+// is registered and dispatched), so the tool itself runs the same on a chat
+// channel, the WebUI chat, cli, an internal channel or none.
+func TestShellTool_RunsOnEveryChannel(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tools.Exec.EnableDenyPatterns = true
-	cfg.Tools.Exec.AllowRemote = false
 
 	tool, err := NewExecToolWithConfig("", false, cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error: %v", err)
 	}
-	ctx := tools.WithToolContext(context.Background(), "telegram", "chat-1")
-	result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
-
-	if !result.IsError {
-		t.Fatal("expected remote-channel exec to be blocked")
-	}
-	if result.ForLLM != RemoteRefusal {
-		t.Errorf("expected %q, got: %s", RemoteRefusal, result.ForLLM)
-	}
-}
-
-// TestShellTool_RemoteOriginBlocked: work that began with a remote chat is
-// refused on an internal channel too (an ask, a sub-agent clone), unless
-// allow_remote is on; the same channels with a local origin keep running.
-func TestShellTool_RemoteOriginBlocked(t *testing.T) {
-	for _, channel := range []string{constants.AgentMessageChannel, "subagent", "system"} {
-		for _, tc := range []struct {
-			remote, allowRemote, wantBlocked bool
-		}{
-			{remote: false, allowRemote: false, wantBlocked: false},
-			{remote: true, allowRemote: false, wantBlocked: true},
-			{remote: true, allowRemote: true, wantBlocked: false},
-		} {
-			cfg := &config.Config{}
-			cfg.Tools.Exec.EnableDenyPatterns = true
-			cfg.Tools.Exec.AllowRemote = tc.allowRemote
-
-			tool, err := NewExecToolWithConfig("", false, cfg)
-			if err != nil {
-				t.Fatalf("NewExecToolWithConfig() error: %v", err)
-			}
-			ctx := tools.WithToolContext(context.Background(), channel, "x")
-			if tc.remote {
-				ctx = tools.WithRemoteOrigin(ctx)
-			}
-			result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
-			blocked := result.IsError && result.ForLLM == RemoteRefusal
-			if blocked != tc.wantBlocked {
-				t.Fatalf("%s remote=%v allow_remote=%v: blocked=%v, want %v (%s)",
-					channel, tc.remote, tc.allowRemote, blocked, tc.wantBlocked, result.ForLLM)
-			}
+	for _, channel := range []string{"telegram", "webui", "cli", constants.AgentMessageChannel, "subagent", "system", ""} {
+		ctx := tools.WithToolContext(context.Background(), channel, "x")
+		result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
+		if result.IsError {
+			t.Fatalf("channel %q: shell_exec refused: %s", channel, result.ForLLM)
 		}
-	}
-}
-
-// TestShellTool_InternalChannelAllowed verifies exec is allowed for internal channels
-func TestShellTool_InternalChannelAllowed(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Tools.Exec.EnableDenyPatterns = true
-	cfg.Tools.Exec.AllowRemote = false
-
-	tool, err := NewExecToolWithConfig("", false, cfg)
-	if err != nil {
-		t.Fatalf("NewExecToolWithConfig() error: %v", err)
-	}
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-	result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
-
-	if result.IsError {
-		t.Fatalf("expected internal channel exec to succeed, got: %s", result.ForLLM)
-	}
-	if !strings.Contains(result.ForLLM, "hi") {
-		t.Errorf("expected output to contain 'hi', got: %s", result.ForLLM)
-	}
-}
-
-// TestShellTool_EmptyChannelBlockedWhenNotAllowRemote verifies fail-closed when no channel context
-func TestShellTool_EmptyChannelBlockedWhenNotAllowRemote(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Tools.Exec.EnableDenyPatterns = true
-	cfg.Tools.Exec.AllowRemote = false
-
-	tool, err := NewExecToolWithConfig("", false, cfg)
-	if err != nil {
-		t.Fatalf("NewExecToolWithConfig() error: %v", err)
-	}
-	result := tool.Execute(context.Background(), map[string]any{
-		"command": "echo hi",
-	})
-
-	if !result.IsError {
-		t.Fatal("expected exec with empty channel to be blocked when allowRemote=false")
-	}
-}
-
-// TestShellTool_AllowRemoteBypassesChannelCheck verifies allowRemote=true permits any channel
-func TestShellTool_AllowRemoteBypassesChannelCheck(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Tools.Exec.EnableDenyPatterns = true
-	cfg.Tools.Exec.AllowRemote = true
-
-	tool, err := NewExecToolWithConfig("", false, cfg)
-	if err != nil {
-		t.Fatalf("NewExecToolWithConfig() error: %v", err)
-	}
-	ctx := tools.WithToolContext(context.Background(), "telegram", "chat-1")
-	result := tool.Execute(ctx, map[string]any{"command": "echo hi"})
-
-	if result.IsError {
-		t.Fatalf("expected allowRemote=true to permit remote channel, got: %s", result.ForLLM)
+		if !strings.Contains(result.ForLLM, "hi") {
+			t.Errorf("channel %q: output = %q, want it to contain hi", channel, result.ForLLM)
+		}
 	}
 }
 

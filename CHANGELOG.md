@@ -14,17 +14,21 @@ observe does not need an entry.
 
 ### Security
 
-- **BREAKING: `shell_exec` follows where the work began, not only the channel
-  it runs on.** A sub-agent (`agent_spawn`, Maestro dispatch), an ask
-  (`agent_message`, `/ask`) or a background result started from a message on a
-  chat such as Telegram or Slack used to run on an internal channel and could
-  use `shell_exec` even with `tools.exec.allow_remote` off. It is now refused
-  there as it is in the chat itself. Work that began locally (the CLI) is
-  unchanged. To let such work run shell commands again, set
-  `tools.exec.allow_remote: true`, which allows it from chats too. The refusal
-  now reads "shell_exec is off for work started from a chat; set
-  tools.exec.allow_remote to allow it.", and the Check Up page shows a "Shell
-  from chats" row while it applies.
+- **BREAKING: `tools.exec.allow_remote` is removed; `shell_exec` is only the
+  agent's own permission.** Whether an agent may run shell commands is now
+  decided by that agent's tool permission for `shell_exec` alone (its `tools`
+  and `deny_tools`, with `tool_overrides.shell_exec` for the install), off by
+  default. It applies on every channel and to everything acting as the agent:
+  sub-agents, Maestro workers, asks, forum turns and calls with its MCP
+  session or service tokens. Agents that have `shell_exec` turned on can now
+  run it when messaged from a chat such as Telegram or the WebUI chat, which
+  `allow_remote: false` used to block. To keep an agent from running shell
+  commands, turn `shell_exec` off for it (remove it from its `tools`, or add
+  it to its `deny_tools`). An `allow_remote` left in `config.json` is ignored
+  and logged as an unknown key, `CLAW_TOOLS_EXEC_ALLOW_REMOTE` is no longer
+  read, and the WebUI setting is gone. Check Up's Shell access row lists the
+  agents that have `shell_exec`. A refused call now reads "Alice is not
+  allowed to run shell commands.", naming the agent.
 
 - **Idle connections to the device listener time out.** A plain HTTP
   keep-alive connection that sends nothing for 30 seconds is closed
@@ -336,9 +340,8 @@ observe does not need an entry.
   kept under `<workspace>/forums/<id>/`, with a live `transcript.md`; temporary
   participants are deleted when the forum ends, and the launching agent is told
   "Forum <name> finished: <status>" (posted to its default chat if it launched
-  the forum from a chat). A forum launched from a chat counts as work from that
-  chat, so `shell_exec` stays refused in its turns unless
-  `tools.exec.allow_remote` is on. Forums survive a restart and resume where
+  the forum from a chat). Each participant uses its own tools (a clone its
+  source's). Forums survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A forum that stops on an error raises
   the "Forum stopped" alert. Check Up shows a Forum row per agent and lists

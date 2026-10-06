@@ -59,24 +59,3 @@ func TestSvcDeleteNamesTheLauncher(t *testing.T) {
 		}
 	}
 }
-
-// A forum launched by work from a remote chat records the mark.
-func TestSvcToolLaunchRecordsRemote(t *testing.T) {
-	for _, remote := range []bool{false, true} {
-		st := svcToolSetup(t)
-		st.host.remote = remote
-		out := st.ok("launch", map[string]any{"config": svcConfigMap(t, svcSimpleJSON)})
-		id := strings.TrimSuffix(strings.TrimPrefix(out, "Forum "), " launched.")
-		store, err := OpenStore(st.e.scope.BaseDirectory, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		snap, err := store.ReadSnapshot()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if snap.Origin.Remote != remote {
-			t.Errorf("remote launch %v: Origin.Remote = %v", remote, snap.Origin.Remote)
-		}
-	}
-}

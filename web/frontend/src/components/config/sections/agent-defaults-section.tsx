@@ -56,14 +56,6 @@ export function AgentDefaultsSection({
       />
 
       <SwitchCardField
-        label={t("pages.config.allow_remote")}
-        hint={t("pages.config.allow_remote_hint")}
-        layout="setting-row"
-        checked={form.allowRemote}
-        onCheckedChange={(checked) => onFieldChange("allowRemote", checked)}
-      />
-
-      <SwitchCardField
         label={t("pages.config.stream_tool_activity")}
         hint={t("pages.config.stream_tool_activity_hint")}
         layout="setting-row"
