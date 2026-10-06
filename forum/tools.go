@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -82,7 +83,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "config", Type: "object", Description: "The forum configuration as a JSON object (use this or config_file)"},
 		{Name: "config_file", Type: "string", Description: "Path of a forum configuration file the agent may read (use this or config)"},
 	}
-	return []toolspec.ToolDefinition{
+	defs := []toolspec.ToolDefinition{
 		{Name: "models", Description: "List the models the calling agent may give to fresh forum participants", Handler: t.models, Category: "forum"},
 		{Name: "validate", Description: "Validate a forum configuration without creating anything", Handler: t.validate, Category: "forum", Parameters: configParams},
 		{Name: "launch", Description: "Validate and launch a forum; returns its ID and runs it in the background", Handler: t.launch, Category: "forum", Parameters: configParams},
@@ -94,6 +95,48 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "cancel", Description: "Stop the forum, keep its partial work and finalize it as cancelled", Handler: t.cancel, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "results", Description: "Results of a forum: each final output's author, layer, round, size, file and text (long text is cut; the file has it all), and the transcript's path", Handler: t.results, Category: "forum", Parameters: []toolspec.Parameter{id}},
 		{Name: "delete", Description: "Delete a paused or finished forum's directory", Handler: t.delete, Category: "forum", Parameters: []toolspec.Parameter{id}},
+	}
+	for i := range defs {
+		defs[i].Handler = t.refuseUnknownArgs(defs[i].Parameters, defs[i].Handler)
+	}
+	return defs
+}
+
+// refuseUnknownArgs wraps a handler so a call with an argument the tool does
+// not declare is refused in one sentence naming it, rather than the argument
+// being ignored (forum_status with forum_id would otherwise list every forum).
+// A scope refusal (a call from inside a forum turn) still comes first.
+func (t *toolSuite) refuseUnknownArgs(params []toolspec.Parameter, next toolspec.ToolHandler) toolspec.ToolHandler {
+	known := make(map[string]bool, len(params))
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		known[p.Name] = true
+		names = append(names, p.Name)
+	}
+	return func(call *toolspec.ToolCall) (*toolspec.Result, error) {
+		var unknown []string
+		for name := range call.Args {
+			if !known[name] {
+				unknown = append(unknown, name)
+			}
+		}
+		if len(unknown) == 0 {
+			return next(call)
+		}
+		if _, err := t.host.Scope(call); err != nil {
+			return scopeFailure(err)
+		}
+		slices.Sort(unknown)
+		msg := "Unknown argument " + unknown[0]
+		if len(unknown) > 1 {
+			msg = "Unknown arguments " + strings.Join(unknown, ", ")
+		}
+		if len(names) == 0 {
+			msg += "; this tool takes no arguments."
+		} else {
+			msg += "; use " + strings.Join(names, " or ") + "."
+		}
+		return &toolspec.Result{ForLLM: msg, IsError: true}, nil
 	}
 }
 

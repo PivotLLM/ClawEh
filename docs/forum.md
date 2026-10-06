@@ -104,7 +104,8 @@ without creating anything.
 `forum_launch` answers "Forum <id> launched." at once; the forum runs in the
 background. `forum_status` shows its progress, `forum_pause` / `forum_resume`
 / `forum_cancel` control it, and `forum_results` returns its results (see
-[Results](#results)). When
+[Results](#results)). A forum tool called with an argument it does not take
+is refused, naming it ("Unknown argument forum_id; use id."). When
 it ends (completed, incomplete, failed or cancelled) Alice gets
 `[System: forum] Forum design-review finished: completed (id <id>).` in her
 conversation. If she launched it from a chat, her answer goes to her default

@@ -464,3 +464,28 @@ func isRefusal(err error) bool {
 	var r interface{ Refusal() bool }
 	return errors.As(err, &r) && r.Refusal()
 }
+
+// An argument a tool does not declare is refused in one sentence naming it,
+// and the operation does not run.
+func TestSvcToolsRefuseUnknownArguments(t *testing.T) {
+	st := svcToolSetup(t)
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"status", map[string]any{"forum_id": "x"}, "Unknown argument forum_id; use id."},
+		{"results", map[string]any{"forum_id": "x"}, "Unknown argument forum_id; use id."},
+		{"models", map[string]any{"verbose": true}, "Unknown argument verbose; this tool takes no arguments."},
+		{"validate", map[string]any{"cfg": "x", "file": "y"}, "Unknown arguments cfg, file; use config or config_file."},
+	} {
+		res, err := st.call(tc.tool, tc.args)
+		if err != nil || res == nil || !res.IsError || res.ForLLM != tc.want {
+			t.Errorf("%s(%v) = %+v, %v; want %q", tc.tool, tc.args, res, err, tc.want)
+		}
+	}
+	// Declared arguments still work.
+	if out := st.ok("status", map[string]any{}); !strings.HasPrefix(out, "[") {
+		t.Errorf("status without arguments = %q, want the forum list", out)
+	}
+}

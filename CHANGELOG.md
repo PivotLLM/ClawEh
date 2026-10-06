@@ -360,7 +360,9 @@ observe does not need an entry.
   file holding all of it) and 16,000 characters for all outputs together
   (`forum.MaxResultInlineTotalChars`; later outputs are listed without text),
   and the transcript's path. With the default workspace restrictions the
-  agent's file tools can read its `forums/` folder but not write to it. Each participant uses its own tools (a clone its
+  agent's file tools can read its `forums/` folder but not write to it. A forum
+  tool called with an argument it does not take is refused, naming it
+  ("Unknown argument forum_id; use id."). Each participant uses its own tools (a clone its
   source's). Forums survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums
   still run, resume and are cleaned up. A forum that stops on an error raises
