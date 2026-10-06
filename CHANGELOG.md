@@ -895,6 +895,16 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Saving on the Agents page no longer erases agent settings it does not
+  show.** Any change on that page (a tool, a model, a toggle, adding or
+  deleting an agent) rewrote every agent from the fields the page edits, so
+  each agent lost its `workspace`, `subagents` (`allow_agents` and `models`),
+  `memory`, `compression`, `context_eviction`, `archive_message_count`,
+  `archive_days`, `summary_max_count`, `summary_retention_days` and
+  `archive_content_max_bytes`. These are now kept. If you set any of them by
+  hand and have since saved on the Agents page, check `agents.list` in
+  `config.json` and set them again.
+
 - **Every scheduled (cron) job fire now reaches the agent.** Repeated fires of
   the same job were treated as duplicates when the conversation was compacted,
   so a fire arriving while a compaction ran could be dropped and the agent
