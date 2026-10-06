@@ -43,7 +43,30 @@ import (
 // was opened for (Store.owner), when that is known.
 func checkOwner(s *Store, snap *Snapshot) error {
 	if s.owner != "" && snap.Origin.AgentID != s.owner {
-		return corrupt("%s names launcher %q, not %q", fileSnapshot, snap.Origin.AgentID, s.owner)
+		return foreign("%s names launcher %q, not %q", fileSnapshot, snap.Origin.AgentID, s.owner)
+	}
+	return nil
+}
+
+// errForeign marks a forum whose records name another agent than the one
+// whose scope it was opened in; it is always reported with ErrCorrupt.
+var errForeign = errors.New("the forum belongs to another agent")
+
+// foreign is a corrupt error that also wraps errForeign.
+func foreign(format string, args ...any) error {
+	return fmt.Errorf("%w: %w: %s", ErrCorrupt, errForeign, fmt.Sprintf(format, args...))
+}
+
+// checkForumOwner refuses a forum whose forum-meta.json names another
+// owner than the agent the store was opened for (Store.owner), like
+// checkOwner does for a run's snapshot.
+func checkForumOwner(s *Store) error {
+	m, err := s.ReadForumMeta()
+	if err != nil {
+		return err
+	}
+	if s.owner != "" && m.Owner != s.owner {
+		return foreign("%s names launcher %q, not %q", fileMeta, m.Owner, s.owner)
 	}
 	return nil
 }

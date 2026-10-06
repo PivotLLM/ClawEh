@@ -872,10 +872,16 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	switch {
 	case errors.Is(err, ErrNotFound) && validForumID(id):
 		return nil
+	case errors.Is(err, errForeign):
+		return err
 	case errors.Is(err, ErrCorrupt) && validForumID(id):
-		// A directory too damaged to open as a forum can never run.
+		// A directory too damaged to open as a forum can never run; it
+		// is still refused when its owner record names another agent.
 		store = newForumHandle(scope.BaseDirectory, id)
 		store.owner = scope.AgentID
+		if ownerErr := checkForumOwner(store); errors.Is(ownerErr, errForeign) {
+			return ownerErr
+		}
 	case err != nil:
 		return err
 	}
@@ -1127,16 +1133,19 @@ func (s *Service) isClosed() bool {
 }
 
 // open resolves a forum ID within the scope: OpenStore(scope.BaseDirectory,
-// id), ErrNotFound when absent. A forum whose latest run names another
-// launcher is ErrCorrupt (checkOwner): the directory lives in the agent's
-// workspace and is not trusted for whose it is. A forum with no run has
-// no owner record and nothing privileged to protect.
+// id), ErrNotFound when absent. A forum whose forum-meta.json or latest
+// run names another launcher is ErrCorrupt wrapping errForeign
+// (checkForumOwner, checkOwner): the directory lives in the agent's
+// workspace and is not trusted for whose it is.
 func (s *Service) open(scope Scope, id string) (*Store, error) {
 	store, err := OpenStore(scope.BaseDirectory, id)
 	if err != nil {
 		return nil, err
 	}
 	store.owner = scope.AgentID
+	if err := checkForumOwner(store); err != nil {
+		return nil, err
+	}
 	if n, runErr := latestRun(store); runErr == nil && n > 0 {
 		if snap, snapErr := store.Run(n).ReadSnapshot(); snapErr == nil {
 			if err := checkOwner(store, snap); err != nil {

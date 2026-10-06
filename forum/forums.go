@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -47,6 +48,10 @@ func (s *Service) NewForum(_ context.Context, scope Scope) (string, error) {
 	raw, err := formatConfig([]byte(`{}`))
 	if err != nil {
 		return "", err
+	}
+	// The owner first: a forum.json is never without one (ListIncomplete).
+	if err := store.WriteForumMeta(&ForumMeta{Owner: scope.AgentID, CreatedAt: time.Now().UTC()}); err != nil {
+		return "", errors.Join(err, guard.Remove())
 	}
 	if err := store.WriteForumConfig(raw); err != nil {
 		return "", errors.Join(err, guard.Remove())

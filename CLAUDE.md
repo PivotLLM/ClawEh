@@ -220,7 +220,9 @@ production instance directly; test against a dev instance.
   `forum_config_update`, `forum_config_export`, `forum_validate`,
   `forum_launch`, `forum_status`, `forum_pause`, `forum_resume`,
   `forum_cancel`, `forum_results`, `forum_delete`. A forum is a config and
-  zero or more runs (`forum/forums.go`): `forums/<id>/forum.json` (the current
+  zero or more runs (`forum/forums.go`): `forums/<id>/forum-meta.json` (the
+  owner, checked on every operation like a run snapshot's launcher),
+  `forums/<id>/forum.json` (the current
   config, edited by `_template`/`_import`/`_update`, the last an RFC 7386
   merge patch, `forum/mergepatch.go`, whenever the latest run is not running)
   and `forums/<id>/runs/<n>/` (everything a run produces; earlier runs are

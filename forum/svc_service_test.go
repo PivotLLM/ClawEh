@@ -211,8 +211,8 @@ func TestSvcLaunchFailuresLeaveTheForum(t *testing.T) {
 				return err
 			})
 			slices.Sort(left)
-			if err != nil || !slices.Equal(left, []string{fileConfig, dirRuns}) {
-				t.Errorf("entries left in the forum = %v (%v), want only %s and an empty %s/", left, err, fileConfig, dirRuns)
+			if err != nil || !slices.Equal(left, []string{fileMeta, fileConfig, dirRuns}) {
+				t.Errorf("entries left in the forum = %v (%v), want only %s, %s and an empty %s/", left, err, fileMeta, fileConfig, dirRuns)
 			}
 			created, deleted := e.agents.createdIDs(), e.agents.deletedIDs()
 			slices.Sort(created)
@@ -1017,10 +1017,17 @@ func TestSvcRecover(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(oldUnlaunched, "draft.json"), []byte(`{}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		ownerless := filepath.Join(e.scope.BaseDirectory, uuid.NewString())
+		if err := os.MkdirAll(filepath.Join(ownerless, dirRuns), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ownerless, fileConfig), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
 			t.Fatal(err)
 		}
-		for _, dir := range []string{old, oldUnlaunched} {
+		for _, dir := range []string{old, oldUnlaunched, ownerless} {
 			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("%s is still there: %v", dir, err)
 			}

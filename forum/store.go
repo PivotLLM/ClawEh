@@ -38,6 +38,7 @@ import (
 //	  .cleanup/<forum-uuid>.<run>.<name>   markers for work a restart must finish, per run
 //	  .cleanup/<forum-uuid>/               a forum directory staged for removal (Remove)
 //	  <forum-uuid>/
+//	    forum-meta.json       ForumMeta: the owner, written once before forum.json
 //	    forum.json            the current configuration (indented), edited between runs
 //	    runs/<n>/             run n (1, 2, 3, ...), never changed by a later run:
 //	      forum.json            the configuration the run used
@@ -79,6 +80,7 @@ import (
 // File and directory names.
 const (
 	fileConfig       = "forum.json"
+	fileMeta         = "forum-meta.json"
 	fileSnapshot     = "snapshot.json"
 	fileParticipants = "participants.json"
 	fileState        = "state.json"
@@ -253,7 +255,7 @@ func CreateStore(base, forumID string) (*Store, error) {
 
 // OpenStore opens an existing forum directory and returns its handle (run
 // 0). It fails with ErrNotFound if forumID is not a forum ID or the
-// directory or its forum.json is missing, and with ErrCorrupt wrapped
+// directory, its forum.json or its forum-meta.json is missing, and with ErrCorrupt wrapped
 // around the detail if the layout is unusable (the directory or forum.json
 // has the wrong type, or runs/ is missing or not a directory). It does not
 // verify contents; see Verify.
@@ -283,6 +285,11 @@ func OpenStore(base, forumID string) (*Store, error) {
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("%w: forum %s: %s is not a regular file", ErrCorrupt, forumID, fileConfig)
 	}
+	if !regularFile(filepath.Join(s.dir, fileMeta)) {
+		// A forum without its owner record is a leftover (Recover removes
+		// it), never anyone's forum.
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, forumID)
+	}
 	if fi, err = os.Lstat(filepath.Join(s.dir, dirRuns)); err != nil || !fi.IsDir() {
 		return nil, fmt.Errorf("%w: forum %s: %s/ is missing or not a directory", ErrCorrupt, forumID, dirRuns)
 	}
@@ -290,7 +297,7 @@ func OpenStore(base, forumID string) (*Store, error) {
 }
 
 // ListForums returns the forum IDs under base: every directory whose name
-// is a UUID and that contains forum.json, sorted. Dot-directories (.locks,
+// is a UUID and that contains forum-meta.json and forum.json, sorted. Dot-directories (.locks,
 // .cleanup) are skipped. A missing base is an empty list, not an error. A
 // directory without forum.json (a forum whose creation died before writing
 // it) is not a forum and is not listed.
@@ -304,12 +311,18 @@ func ListForums(base string) ([]string, error) {
 	}
 	ids := []string{}
 	for _, e := range entries {
-		if e.IsDir() && validForumID(e.Name()) && regularFile(filepath.Join(base, e.Name(), fileConfig)) {
+		if e.IsDir() && validForumID(e.Name()) && complete(filepath.Join(base, e.Name())) {
 			ids = append(ids, e.Name())
 		}
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// complete reports whether a forum directory has both forum-meta.json and
+// forum.json, which NewForum writes in that order.
+func complete(dir string) bool {
+	return regularFile(filepath.Join(dir, fileMeta)) && regularFile(filepath.Join(dir, fileConfig))
 }
 
 // regularFile reports whether p is a regular file (not followed if a link).
@@ -318,9 +331,10 @@ func regularFile(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// ListIncomplete returns the forum IDs under base whose directories hold no
-// forum.json (a forum whose creation died before it wrote the file),
-// sorted. Recover removes them.
+// ListIncomplete returns the forum IDs under base whose directories lack
+// forum-meta.json or forum.json (a forum whose creation died before it
+// wrote both, or a leftover without an owner record), sorted. Recover
+// removes them.
 func ListIncomplete(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -331,7 +345,7 @@ func ListIncomplete(base string) ([]string, error) {
 	}
 	ids := []string{}
 	for _, e := range entries {
-		if e.IsDir() && validForumID(e.Name()) && !regularFile(filepath.Join(base, e.Name(), fileConfig)) {
+		if e.IsDir() && validForumID(e.Name()) && !complete(filepath.Join(base, e.Name())) {
 			ids = append(ids, e.Name())
 		}
 	}
@@ -737,7 +751,7 @@ func (s *Store) unlock() error {
 	f := s.lk.f
 	s.lk.f = nil
 	var err error
-	if rmErr := os.Remove(f.Name()); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) { //nolint:gosec // the lock file this store opened
+	if rmErr := os.Remove(f.Name()); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 		err = rmErr
 	}
 	if relErr := releaseFile(f); relErr != nil {
@@ -773,6 +787,41 @@ func (s *Store) WriteForumConfig(raw []byte) error {
 		return fmt.Errorf("write the configuration of forum %s: %w", s.id, err)
 	}
 	return nil
+}
+
+// WriteForumMeta writes forum-meta.json once; it fails if the file exists.
+func (s *Store) WriteForumMeta(m *ForumMeta) error {
+	data, err := marshalRecord(m)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", fileMeta, err)
+	}
+	if err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileMeta, data, true) }); err != nil {
+		return fmt.Errorf("write the owner of forum %s: %w", s.id, err)
+	}
+	return nil
+}
+
+// ReadForumMeta reads forum-meta.json without following a symbolic link;
+// ErrNotFound if absent, ErrCorrupt if it does not decode or names no
+// owner.
+func (s *Store) ReadForumMeta() (*ForumMeta, error) {
+	var data []byte
+	err := s.inDir(func(r *os.Root) error {
+		if err := lstatRegular(r, fileMeta); err != nil {
+			return err
+		}
+		var err error
+		data, err = r.ReadFile(fileMeta)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read the owner of forum %s: %w", s.id, notFound(err))
+	}
+	var m ForumMeta
+	if err := json.Unmarshal(data, &m); err != nil || m.Owner == "" {
+		return nil, corrupt("%s does not name an owner", fileMeta)
+	}
+	return &m, nil
 }
 
 // ReadForumConfig returns the forum's current configuration

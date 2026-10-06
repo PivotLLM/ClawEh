@@ -501,45 +501,65 @@ func TestSvcToolExportImportRoundTrip(t *testing.T) {
 }
 
 // Another agent cannot reach a forum: its forums live in its own workspace,
-// and a forum whose run names another launcher is refused as damaged.
+// and a forum whose owner record (forum-meta.json) or run names another
+// launcher is refused as damaged, whether or not it has run, delete
+// included.
 func TestSvcToolOwnership(t *testing.T) {
-	st := svcToolSetup(t)
-	id := st.newForum(svcSimpleJSON)
-	if out := st.ok("launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
-		t.Fatalf("launch = %q", out)
-	}
-	st.e.ctrls.get(t, id)
-	st.stopped(id)
-	bobHost := &svcToolHost{base: filepath.Join(t.TempDir(), "forums"), workspace: st.e.workspace}
-	bob := map[string]toolspec.ToolDefinition{}
-	for _, d := range Tools(st.e.svc, bobHost) {
-		bob[d.Name] = d
-	}
-	calls := map[string]map[string]any{
-		"config_template": {"id": id, "name": "council"},
-		"config_import":   {"id": id, "config": map[string]any{}},
-		"config_update":   {"id": id, "changes": map[string]any{"name": "x"}},
-		"config_export":   {"id": id},
-		"validate":        {"id": id},
-		"launch":          {"id": id},
-		"status":          {"id": id},
-	}
-	for name, args := range calls {
-		res, err := bob[name].Handler(&toolspec.ToolCall{Ctx: t.Context(), Args: args, AgentID: "bob"})
-		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum "+id+" was not found." {
-			t.Errorf("%s by bob in his own scope = %+v, %v", name, res, err)
-		}
-	}
-	// The same directory reached in bob's name (copied, or the scope
-	// misconfigured) names the launcher as its owner.
-	for name, args := range calls {
-		res, err := st.callAs("bob", name, args)
-		if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum "+id+" is damaged and cannot be used." {
-			t.Errorf("%s by bob on the launcher's forum = %+v, %v", name, res, err)
-		}
-	}
-	if got := st.export(id); !reflect.DeepEqual(got, svcConfigMap(t, svcSimpleJSON)) {
-		t.Errorf("the configuration changed: %v", got)
+	for _, launched := range []bool{false, true} {
+		t.Run(fmt.Sprintf("launched=%v", launched), func(t *testing.T) {
+			st := svcToolSetup(t)
+			id := st.newForum(svcSimpleJSON)
+			if launched {
+				if out := st.ok("launch", map[string]any{"id": id}); out != "Forum "+id+" launched (run 1)." {
+					t.Fatalf("launch = %q", out)
+				}
+				st.e.ctrls.get(t, id)
+				st.stopped(id)
+			}
+			bobHost := &svcToolHost{base: filepath.Join(t.TempDir(), "forums"), workspace: st.e.workspace}
+			bob := map[string]toolspec.ToolDefinition{}
+			for _, d := range Tools(st.e.svc, bobHost) {
+				bob[d.Name] = d
+			}
+			calls := map[string]map[string]any{
+				"config_template": {"id": id, "name": "council"},
+				"config_import":   {"id": id, "config": map[string]any{}},
+				"config_update":   {"id": id, "changes": map[string]any{"name": "x"}},
+				"config_export":   {"id": id},
+				"validate":        {"id": id},
+				"launch":          {"id": id},
+				"status":          {"id": id},
+				"results":         {"id": id},
+				"pause":           {"id": id},
+				"resume":          {"id": id},
+				"cancel":          {"id": id},
+				"delete":          {"id": id},
+			}
+			for name, args := range calls {
+				res, err := bob[name].Handler(&toolspec.ToolCall{Ctx: t.Context(), Args: args, AgentID: "bob"})
+				want := "Forum " + id + " was not found."
+				if name == "delete" {
+					want = "Forum " + id + " is deleted." // deleting an absent ID succeeds
+				}
+				if err != nil || res == nil || res.ForLLM != want {
+					t.Errorf("%s by bob in his own scope = %+v, %v", name, res, err)
+				}
+			}
+			// The same directory reached in bob's name (copied, or the scope
+			// misconfigured) names the launcher as its owner.
+			for name, args := range calls {
+				res, err := st.callAs("bob", name, args)
+				if err != nil || res == nil || !res.IsError || res.ForLLM != "Forum "+id+" is damaged and cannot be used." {
+					t.Errorf("%s by bob on the launcher's forum = %+v, %v", name, res, err)
+				}
+			}
+			if got := st.export(id); !reflect.DeepEqual(got, svcConfigMap(t, svcSimpleJSON)) {
+				t.Errorf("the configuration changed: %v", got)
+			}
+			if !slices.Equal(st.e.forumIDs(), []string{id}) {
+				t.Errorf("forums = %v, want the launcher's forum kept", st.e.forumIDs())
+			}
+		})
 	}
 }
 

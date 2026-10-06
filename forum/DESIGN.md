@@ -115,6 +115,7 @@ What crosses each boundary:
   .cleanup/<uuid>.<n>.notice         run n's completion notice not yet delivered
   .cleanup/<uuid>/                   a forum directory staged for removal (Remove)
   <uuid>/
+    forum-meta.json                  the owner (ForumMeta), written once before forum.json
     forum.json                       the current configuration (indented, no HTML escaping)
     runs/<n>/                        run n = 1, 2, 3, …; never changed by a later run
       forum.json  snapshot.json  participants.json  state.json  result.json
@@ -368,8 +369,12 @@ are logged, never shown to the agent.
     every run. `name` is optional: `Snapshot.Label()` (the name, or the ID)
     labels summaries, results, the notice and the transcript heading. A
     forum whose latest run names another launcher is `ErrCorrupt` when
-    opened in a scope (`Service.open`); a forum with no run has no owner
-    record and nothing privileged to protect. There is no template store:
+    opened in a scope (`Service.open`), and so is one whose
+    `forum-meta.json` (`ForumMeta`: the owner, written once by `forum_new`
+    before `forum.json`) names another agent (`checkForumOwner`); both wrap
+    `errForeign`, which `delete` refuses too. A directory without
+    `forum-meta.json` or `forum.json` is not a forum: it is not listed or
+    opened, and recovery removes it. There is no template store:
     configurations move between forums by export and import.
 
 ## 8. Still inferred (rev 3 and rev 5 do not say)

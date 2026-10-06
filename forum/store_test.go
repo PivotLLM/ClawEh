@@ -78,6 +78,9 @@ func stNewRun(t *testing.T, base string) *Store {
 	if err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}
+	if err = f.WriteForumMeta(&ForumMeta{Owner: "launcher"}); err != nil {
+		t.Fatalf("WriteForumMeta: %v", err)
+	}
 	if err = f.WriteForumConfig([]byte("{}\n")); err != nil {
 		t.Fatalf("WriteForumConfig: %v", err)
 	}
@@ -339,6 +342,12 @@ func TestOpenStore(t *testing.T) {
 	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("missing runs/: %v, want ErrCorrupt", err)
 	}
+	if err := os.Remove(filepath.Join(s.Dir(), fileMeta)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenStore(base, s.ID()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("open without forum-meta.json: %v, want ErrNotFound", err)
+	}
 	if err := os.Remove(filepath.Join(s.Dir(), fileConfig)); err != nil {
 		t.Fatal(err)
 	}
@@ -359,10 +368,24 @@ func TestListForums(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := s.WriteForumMeta(&ForumMeta{Owner: "launcher"}); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.WriteForumConfig([]byte(`{}`)); err != nil {
 			t.Fatal(err)
 		}
 		want = append(want, s.ID())
+	}
+	// Not listed either: a configuration without its owner record.
+	ownerless, createErr := CreateStore(base, uuid.NewString())
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	if err := ownerless.WriteForumConfig([]byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if incomplete, err := ListIncomplete(base); err != nil || !slices.Contains(incomplete, ownerless.ID()) {
+		t.Errorf("ListIncomplete = %v, %v; want the forum without an owner", incomplete, err)
 	}
 	// Not listed: a root whose creation died before forum.json, a non-UUID
 	// directory, and a plain file named like a forum.

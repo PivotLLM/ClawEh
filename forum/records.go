@@ -411,6 +411,14 @@ type LayerProgress struct {
 	Outputs   int       `json:"outputs"`
 }
 
+// ForumMeta (forum-meta.json) records whose forum it is: the agent that
+// created it and when. It is written once, before forum.json, so a forum
+// with a configuration always has one.
+type ForumMeta struct {
+	Owner     string    `json:"owner"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Summary is one forum's progress as forum_status reports it.
 type Summary struct {
 	ForumID string `json:"forum_id"`

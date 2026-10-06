@@ -230,6 +230,7 @@ Everything is under the launching agent's workspace:
 
 ```
 <workspace>/forums/<id>/
+  forum-meta.json       which agent the forum belongs to
   forum.json            the configuration, as it stands now
   runs/<n>/             run n (1, 2, 3, ...), never changed by a later run
     forum.json          the configuration this run used
