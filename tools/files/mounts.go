@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // MountSpec is a resolved external mount: a top-level name → absolute directory.
@@ -83,7 +85,19 @@ func newMountFs(inner fileSystem, specs []MountSpec) *mountFs {
 }
 
 func readOnlyMountErr(name string) error {
-	return fmt.Errorf("mount %q is read-only; grant it write access to modify it", name)
+	return tools.Refusal(fmt.Errorf("mount %q is read-only; grant it write access to modify it", name))
+}
+
+// CheckWrite refuses a write to a read-only mount; other paths ask the layer
+// below.
+func (m *mountFs) CheckWrite(path string) error {
+	if me, _, ok := m.resolve(path); ok {
+		if !me.writable {
+			return readOnlyMountErr(me.name)
+		}
+		return nil
+	}
+	return checkWrite(m.inner, path)
 }
 
 // resolve returns the resolved mount and the path relative to the mount root

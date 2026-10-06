@@ -79,7 +79,7 @@ func (t *CopyFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 	data, err := copyFileViaFs(t.sysFs, src, dst, overwrite)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	forLLM := fmt.Sprintf("File copied: %s -> %s", src, dst)

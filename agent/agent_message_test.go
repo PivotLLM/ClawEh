@@ -671,8 +671,10 @@ func TestAgentMessageTool_AllowAgents(t *testing.T) {
 			if res.IsError != tc.wantErr || !strings.Contains(res.ForLLM, tc.want) {
 				t.Fatalf("result = %+v, want error=%v containing %q", res, tc.wantErr, tc.want)
 			}
-			// A permission refusal is expected, logged as a warning.
-			if refusal := strings.HasPrefix(tc.want, "You may not message"); tools.IsRefusal(res.Err) != refusal {
+			// A permission refusal or an unknown agent is expected, logged as
+			// a warning.
+			refusal := strings.HasPrefix(tc.want, "You may not message") || strings.HasPrefix(tc.want, "There is no agent")
+			if tools.IsRefusal(res.Err) != refusal {
 				t.Fatalf("IsRefusal = %v, want %v for %+v", !refusal, refusal, res)
 			}
 		})

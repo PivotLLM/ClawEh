@@ -154,6 +154,10 @@ func TestShellTool_DangerousCommand(t *testing.T) {
 	if !strings.Contains(result.ForLLM, "blocked") && !strings.Contains(result.ForUser, "blocked") {
 		t.Errorf("Expected 'blocked' message, got ForLLM: %s, ForUser: %s", result.ForLLM, result.ForUser)
 	}
+	// A guard block is an expected refusal, logged as a warning.
+	if !tools.IsRefusal(result.Err) {
+		t.Errorf("guard block is not marked as a refusal: %v", result.Err)
+	}
 }
 
 func TestShellTool_DangerousCommand_KillBlocked(t *testing.T) {

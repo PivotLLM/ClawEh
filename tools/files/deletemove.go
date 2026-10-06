@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -52,20 +53,20 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 		return tools.ErrorResult("path is required")
 	}
 	if !getBoolArg(args, "sure", false) {
-		return tools.ErrorResult("refusing to delete: pass sure=true to confirm deleting " + path)
+		return errResult(tools.Refusal(errors.New("refusing to delete: pass sure=true to confirm deleting " + path)))
 	}
 	if backupFilePattern.MatchString(filepath.Base(path)) {
 		return tools.ErrorResult("refusing to delete a backup file (<name>.NNNN): " + path)
 	}
 	info, err := t.sysFs.Stat(path)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	if info.IsDir() {
 		return tools.ErrorResult("path is a directory; file_delete removes files only: " + path)
 	}
 	if err := t.sysFs.Remove(path); err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	return tools.SilentResult("File deleted: " + path)
 }
@@ -119,13 +120,18 @@ func (t *MoveFileTool) Execute(_ context.Context, args map[string]any) *tools.To
 	}
 	overwrite := getBoolArg(args, "overwrite", false)
 
+	// The source must be removable: checked before copying, so a move out of a
+	// read-only area is refused and leaves no copy behind.
+	if err := checkWrite(t.sysFs, src); err != nil {
+		return errResult(err)
+	}
 	// Copy first; only remove the source once the copy has succeeded. See the
 	// type comment for why this is copy-then-delete rather than rename.
 	if _, err := copyFileViaFs(t.sysFs, src, dst, overwrite); err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	if err := t.sysFs.Remove(src); err != nil {
-		return tools.ErrorResult(fmt.Sprintf("copied to %s but failed to remove source %s: %v", dst, src, err))
+		return tools.ErrorResult(fmt.Sprintf("copied to %s but failed to remove source %s: %v", dst, src, err)).WithError(err)
 	}
 	return tools.SilentResult(fmt.Sprintf("File moved: %s -> %s", src, dst))
 }

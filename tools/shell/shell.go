@@ -192,7 +192,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		if t.restrictToWorkspace && t.workingDir != "" {
 			resolvedWD, err := validatePath(wd, t.workingDir, true)
 			if err != nil {
-				return tools.ErrorResult("Command blocked by safety guard (" + err.Error() + ")")
+				return guardRefusal("Command blocked by safety guard (" + err.Error() + ")")
 			}
 			cwd = resolvedWD
 		} else {
@@ -208,7 +208,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	}
 
 	if guardError := t.guardCommand(command, cwd); guardError != "" {
-		return tools.ErrorResult(guardError)
+		return guardRefusal(guardError)
 	}
 
 	// Re-resolve symlinks immediately before execution to shrink the TOCTOU window
@@ -228,7 +228,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		}
 		rel, err := filepath.Rel(wsResolved, resolved)
 		if err != nil || !filepath.IsLocal(rel) {
-			return tools.ErrorResult("Command blocked by safety guard (working directory escaped workspace)")
+			return guardRefusal("Command blocked by safety guard (working directory escaped workspace)")
 		}
 		cwd = resolved
 	}
@@ -457,4 +457,10 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 		t.allowPatterns = append(t.allowPatterns, re)
 	}
 	return nil
+}
+
+// guardRefusal is the result for a command the safety guard blocked: an
+// expected refusal (logged as a warning), not a failure.
+func guardRefusal(msg string) *tools.ToolResult {
+	return tools.ErrorResult(msg).WithError(tools.Refusal(errors.New(msg)))
 }

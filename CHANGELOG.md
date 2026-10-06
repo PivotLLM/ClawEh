@@ -662,8 +662,11 @@ observe does not need an entry.
   configuration (an `agent_message` target outside `subagents.allow_agents`,
   a message over the 8,000-character limit, a forum tool called inside a
   forum turn or at the maximum sub-agent depth, a `/ask` or `/whisper` the
-  sender may not send) is logged at WARN as "Tool call refused" (or "Agent
-  message refused"). Genuine tool failures stay at ERROR, so `error.log`
+  sender may not send, an `agent_message` to an agent that does not exist, a
+  file tool's read or write outside the agent's permitted folders, a
+  `shell_exec` command blocked by the safety guard, a `file_delete` without
+  `sure=true`) is logged at WARN as "Tool call refused" (or "Agent message
+  refused"). Genuine tool failures stay at ERROR, so `error.log`
   holds only faults.
 
 - **A sub-agent (`agent_spawn`, Maestro dispatch) now runs as a temporary
@@ -1061,6 +1064,14 @@ observe does not need an entry.
 - **Each config warning is logged once at startup.** The configuration was
   read twice when the service started, so every "unknown config key" (and
   other load-time) warning appeared twice in the log.
+- **A file tool refused a write only after starting the work.** `file_move`
+  out of a folder the agent may read but not write (such as `forums/` or
+  `skills/`) copied the file and then failed to remove the source, leaving a
+  copy behind. `file_edit` matched the text first, so a non-unique match was
+  reported instead of the refusal, and `file_edit_lines` reported a failed
+  backup. `file_move`, `file_edit`, `file_append` and the line and byte edit
+  tools now check write permission first: the call is refused with "write
+  denied …" and nothing is copied, matched or backed up.
 - **New conversation archives, cognitive memory and the alerts log are
   private from the start.** An agent's new `sessions/*.archive.db` and
   `cogmem/cogmem.db` (each with its `-wal` and `-shm` files) and

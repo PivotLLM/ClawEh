@@ -94,7 +94,7 @@ func runMessageTool(host tools.ToolDeps, call *global.ToolCall) *global.Result {
 
 	target := host.Cfg.FindAgent(ref)
 	if target == nil {
-		return fail("There is no agent named %s.", ref)
+		return refuse("There is no agent named %s.", ref)
 	}
 	name := target.DisplayName()
 	if !host.Agents.CanTarget(target.ID) {

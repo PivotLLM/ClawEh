@@ -52,7 +52,7 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 	if restrict {
 		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", errors.New("access denied: path is outside the workspace")
+			return "", tools.Refusal(errors.New("access denied: path is outside the workspace"))
 		}
 
 		var resolved string
@@ -63,13 +63,13 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 		if resolved, err = filepath.EvalSymlinks(absPath); err == nil {
 			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", errors.New("access denied: symlink resolves outside workspace")
+				return "", tools.Refusal(errors.New("access denied: symlink resolves outside workspace"))
 			}
 		} else if os.IsNotExist(err) {
 			var parentResolved string
 			if parentResolved, err = resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
 				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", errors.New("access denied: symlink resolves outside workspace")
+					return "", tools.Refusal(errors.New("access denied: symlink resolves outside workspace"))
 				}
 			} else if !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to resolve path: %w", err)
@@ -239,7 +239,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	// offset (optional, default 0)
 	offset, err := getInt64Arg(args, "offset", 0)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	if offset < 0 {
 		return tools.ErrorResult("offset must be >= 0")
@@ -248,7 +248,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	// length (optional, capped at MaxReadFileSize)
 	length, err := getInt64Arg(args, "length", t.maxSize)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	if length <= 0 {
 		return tools.ErrorResult("length must be > 0")
@@ -260,16 +260,16 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	// Line mode (file_read_lines): read a numbered slice of lines.
 	startLine, err := getInt64Arg(args, "start_line", 1)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	lineCount, err := getInt64Arg(args, "line_count", defaultReadLineCount)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	file, err := t.sysFs.Open(path)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	defer utils.CloseQuietly(file)
 
@@ -284,14 +284,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	sniff := make([]byte, 512)
 	sniffN, err := file.Read(sniff)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err)).WithError(err)
 	}
 
 	// Reset read position to beginning before applying the caller's offset.
 	if seeker, ok := file.(io.Seeker); ok {
 		_, err = seeker.Seek(0, io.SeekStart)
 		if err != nil {
-			return tools.ErrorResult(fmt.Sprintf("failed to reset file position after sniff: %v", err))
+			return tools.ErrorResult(fmt.Sprintf("failed to reset file position after sniff: %v", err)).WithError(err)
 		}
 	} else {
 		if offset < int64(sniffN) && offset > 0 {
@@ -318,14 +318,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if seeker, ok := file.(io.Seeker); ok {
 		_, err = seeker.Seek(offset, io.SeekStart)
 		if err != nil {
-			return tools.ErrorResult(fmt.Sprintf("failed to seek to offset %d: %v", offset, err))
+			return tools.ErrorResult(fmt.Sprintf("failed to seek to offset %d: %v", offset, err)).WithError(err)
 		}
 	} else if offset > 0 {
 		remaining := offset - int64(sniffN)
 		if remaining > 0 {
 			_, err = io.CopyN(io.Discard, file, remaining)
 			if err != nil {
-				return tools.ErrorResult(fmt.Sprintf("failed to advance to offset %d: %v", offset, err))
+				return tools.ErrorResult(fmt.Sprintf("failed to advance to offset %d: %v", offset, err)).WithError(err)
 			}
 		}
 	}
@@ -333,7 +333,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	probe := make([]byte, length+1)
 	n, err := io.ReadFull(file, probe)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return tools.ErrorResult(fmt.Sprintf("failed to read file content: %v", err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read file content: %v", err)).WithError(err)
 	}
 
 	hasMore := int64(n) > length
@@ -427,7 +427,7 @@ func (t *ReadFileTool) readLines(file io.Reader, path string, startLine, lineCou
 		lastLine = cur
 	}
 	if err := scanner.Err(); err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to read lines: %v", err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read lines: %v", err)).WithError(err)
 	}
 
 	if emitted == 0 {
@@ -581,12 +581,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *tools
 
 	if getBoolArg(args, "backup", false) {
 		if _, err := backupExistingFile(t.sysFs, path); err != nil {
-			return tools.ErrorResult(err.Error())
+			return errResult(err)
 		}
 	}
 
 	if err := t.sysFs.WriteFile(path, []byte(content)); err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	forLLM := "File written: " + path
@@ -649,7 +649,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 
 	entries, err := t.sysFs.ReadDir(path)
 	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to read directory: %v", err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read directory: %v", err)).WithError(err)
 	}
 	return formatDirEntries(entries)
 }
@@ -731,6 +731,29 @@ type fileSystem interface {
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
 	Remove(path string) error
+}
+
+// writeChecker is implemented by the layers that refuse writes by path, so a
+// tool can be refused before it starts work it could not finish (a move that
+// would copy and then fail to remove the source, an edit that would match
+// text or write a backup first).
+type writeChecker interface {
+	CheckWrite(path string) error
+}
+
+// checkWrite returns the refusal fsys would give a write to path, or nil when
+// no layer refuses it by policy (the write itself can still fail).
+func checkWrite(fsys fileSystem, path string) error {
+	if c, ok := fsys.(writeChecker); ok {
+		return c.CheckWrite(path)
+	}
+	return nil
+}
+
+// errResult is the error result for err, keeping err so the registry can
+// tell an expected refusal (tools.IsRefusal) from a failure.
+func errResult(err error) *tools.ToolResult {
+	return tools.ErrorResult(err.Error()).WithError(err)
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -1189,8 +1212,11 @@ func (r *readScopedFs) readAllowed(path string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, "))
+	return tools.Refusal(fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, ")))
 }
+
+// CheckWrite asks the layer below: reads are this layer's only concern.
+func (r *readScopedFs) CheckWrite(path string) error { return checkWrite(r.inner, path) }
 
 func (r *readScopedFs) ReadFile(path string) ([]byte, error) {
 	if err := r.readAllowed(path); err != nil {
@@ -1293,9 +1319,18 @@ func (w *writeScopedFs) writeAllowed(path string) error {
 	}
 
 	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
-		return fmt.Errorf("write denied: outside %s", w.writeRoot)
+		return tools.Refusal(fmt.Errorf("write denied: outside %s", w.writeRoot))
 	}
 	return nil
+}
+
+// CheckWrite refuses a write to path that writeAllowed, or a layer below,
+// would refuse.
+func (w *writeScopedFs) CheckWrite(path string) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return checkWrite(w.inner, path)
 }
 
 func (w *writeScopedFs) ReadFile(path string) ([]byte, error) {
