@@ -95,12 +95,10 @@ func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
-	time.Sleep(3 * interval) // let the watcher capture its baseline
-
 	// Simulate a force-reload: the config changes and the out-of-band path
 	// applies it, then tells the watcher via markApplied().
 	writeConfig(t, path, "force-applied")
-	markApplied()
+	markApplied(configFileStateOf(path))
 
 	// The watcher must not deliver a reload for the already-applied change.
 	select {
@@ -115,6 +113,82 @@ func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 	case <-ch:
 	case <-time.After(2 * time.Second):
 		t.Fatal("a new change after markApplied should still reload")
+	}
+}
+
+// TestConfigWatcher_MarkAppliedDropsQueuedReload: a forced reload can take
+// longer than the watcher's debounce, so the watcher may already have queued
+// a reload for the same change by the time markApplied is called. That reload
+// is dropped; it would apply the change a second time.
+func TestConfigWatcher_MarkAppliedDropsQueuedReload(t *testing.T) {
+	store, path := seedStore(t)
+
+	interval := 10 * time.Millisecond
+	debounce := 50 * time.Millisecond
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
+	defer stop()
+	// markApplied returns once the watcher has taken the seed file as its
+	// baseline, so the write below is a change it sees.
+	markApplied(configFileStateOf(path))
+
+	writeConfig(t, path, "force-applied")
+	applied := configFileStateOf(path) // what the forced reload reads
+	waitUntil(t, "the watcher to queue a reload", func() bool { return len(ch) == 1 })
+	markApplied(applied)
+	if len(ch) != 0 {
+		t.Fatal("the reload queued for the applied change is still queued after markApplied")
+	}
+	select {
+	case <-ch:
+		t.Fatal("watcher fired a redundant reload after markApplied()")
+	case <-time.After(debounce + 200*time.Millisecond):
+	}
+
+	writeConfig(t, path, "later-edit")
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a new change after markApplied should still reload")
+	}
+}
+
+// TestConfigWatcher_MarkAppliedKeepsLaterChange: a change written after the
+// forced reload read the file is newer than the state it marks applied, so it
+// is still reloaded even though markApplied dropped the queued reload.
+func TestConfigWatcher_MarkAppliedKeepsLaterChange(t *testing.T) {
+	store, path := seedStore(t)
+
+	interval := 10 * time.Millisecond
+	debounce := 50 * time.Millisecond
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
+	defer stop()
+	markApplied(configFileStateOf(path))
+
+	writeConfig(t, path, "force-applied")
+	applied := configFileStateOf(path)
+	writeConfig(t, path, "written while the forced reload ran, longer")
+	waitUntil(t, "the watcher to queue a reload", func() bool { return len(ch) == 1 })
+	markApplied(applied)
+
+	select {
+	case got := <-ch:
+		if got == nil {
+			t.Fatal("nil config reloaded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the change written after the forced reload read the file was not reloaded")
+	}
+}
+
+// waitUntil polls cond until it holds, failing the test after ten seconds.
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

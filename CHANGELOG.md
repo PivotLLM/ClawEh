@@ -1165,6 +1165,10 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Saving the configuration in the WebUI reloads it once.** When applying
+  the saved configuration took longer than the config file watcher's quiet
+  period, the watcher reloaded the same change a second time afterwards,
+  restarting channels and interrupting an active chat again.
 - **An agent no longer briefly loses an MCP server's tools when the server
   reconnects or changes its tool list.** The tools were removed and then
   registered again, so a turn running at that moment could find them missing.

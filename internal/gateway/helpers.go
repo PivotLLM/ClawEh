@@ -476,6 +476,9 @@ func gatewayCmd(debug bool) error {
 
 		case done := <-forceReload:
 			logger.Info("Forced config reload requested via API")
+			// Taken before reading, so a change written while this reload
+			// runs is newer than what the watcher is told was applied.
+			applied := configFileStateOf(store.Path())
 			if _, lerr := store.Reload(); lerr != nil {
 				done <- lerr
 				break
@@ -490,7 +493,7 @@ func gatewayCmd(debug bool) error {
 			if rerr == nil {
 				// Tell the watcher we've applied the current file so it doesn't
 				// fire a second, disruptive reload for the same change.
-				markConfigApplied()
+				markConfigApplied(applied)
 			}
 			done <- rerr
 
@@ -1312,15 +1315,23 @@ func restartServices(
 // already applied, so it does not reload for it again. interval controls how often the
 // file is polled; callers should pass cfg.ConfigReloadInterval() so the value
 // honours the config override and MinConfigReloadIntervalSeconds floor.
-// Returns a channel for config updates and a stop function.
-func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) (chan *config.Config, func(), func()) {
+// Returns a channel for config updates, a stop function and markApplied.
+//
+// markApplied is for a reload applied outside the watcher (the force-reload
+// API): given the file state that reload read (configFileStateOf, taken
+// before reading), the watcher takes it as applied and drops a reload it has
+// already queued, which would apply the same change a second time. A later
+// change to the file still reloads. It returns once the watcher has done so.
+// The queue is drained safely because the caller is the queue's only reader.
+func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) (chan *config.Config, func(), func(configFileState)) {
 	configPath := store.Path()
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
-	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
-	// it already applied the current on-disk config, so the watcher advances its
-	// baseline instead of firing a second, disruptive reload for the same change.
-	markCh := make(chan struct{}, 1)
+	type mark struct {
+		applied configFileState
+		done    chan struct{}
+	}
+	markCh := make(chan mark)
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
@@ -1423,14 +1434,20 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 					logger.Warn("⚠ Previous config reload still in progress, will retry")
 				}
 
-			case <-markCh:
-				// A force-reload already applied the current on-disk config;
-				// advance the baseline so we don't re-fire for the same change.
-				appliedModTime = getFileModTime(configPath)
-				appliedSize = getFileSize(configPath)
-				observedModTime = appliedModTime
-				observedSize = appliedSize
+			case m := <-markCh:
+				// A force-reload applied this file state: take it as the
+				// baseline, and drop a reload queued meanwhile, so the same
+				// change is not applied twice. A file that has changed since
+				// differs from the baseline and reloads after the debounce.
+				appliedModTime, appliedSize = m.applied.modTime, m.applied.size
+				observedModTime, observedSize = appliedModTime, appliedSize
 				pending = false
+				select {
+				case <-configChan:
+					logger.Info("Dropped a queued config reload: the forced reload already applied it")
+				default:
+				}
+				close(m.done)
 
 			case <-stop:
 				return
@@ -1443,14 +1460,27 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 		wg.Wait()
 	}
 
-	markApplied := func() {
+	markApplied := func(applied configFileState) {
+		m := mark{applied: applied, done: make(chan struct{})}
 		select {
-		case markCh <- struct{}{}:
-		default:
+		case markCh <- m:
+			<-m.done
+		case <-stop:
 		}
 	}
 
 	return configChan, stopFunc, markApplied
+}
+
+// configFileState identifies a version of the config file for the watcher.
+type configFileState struct {
+	modTime time.Time
+	size    int64
+}
+
+// configFileStateOf returns the current state of the file at path.
+func configFileStateOf(path string) configFileState {
+	return configFileState{modTime: getFileModTime(path), size: getFileSize(path)}
 }
 
 // getFileModTime returns the modification time of a file, or zero time if file doesn't exist
