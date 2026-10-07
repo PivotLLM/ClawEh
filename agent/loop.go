@@ -416,6 +416,24 @@ func (al *AgentLoop) Stop() {
 	}
 }
 
+// WaitTurns blocks until every turn and model request the loop started has
+// returned, or until ctx ends, whose error it then returns. Call it after Stop
+// and after Run has returned: a turn Stop cancelled may still be unwinding
+// and writing to its session.
+func (al *AgentLoop) WaitTurns(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		al.activeRequests.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // BeginMCPShutdown stops the MCP liveness probes and refuses reconnects, so
 // servers the stop signal killed are not respawned while the gateway shuts
 // down. The first step of a shutdown; Close closes the servers.
