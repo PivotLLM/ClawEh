@@ -12,7 +12,7 @@ weeks of chat and still left over 100 messages":
    prefix ends before the history begins. *(implemented, tests passing)*
 
 Problem 2 is worth more than problem 1: measured over 31 days of production logs it
-accounts for ~48% of amber's and ~61% of wendy's full-price input tokens.
+accounts for ~48% of alice's and ~61% of bob's full-price input tokens.
 
 ---
 
@@ -22,10 +22,10 @@ accounts for ~48% of amber's and ~61% of wendy's full-price input tokens.
 
 | # | Finding | Evidence |
 |---|---|---|
-| 1 | Tool-call **arguments** were never evictable. The reader sweep only rewrote `role=tool` content; a `file_write` body lives in the assistant message's `ToolCalls` and is counted in full by the estimator. | 45% of wendy's live window was `file_write` arguments |
+| 1 | Tool-call **arguments** were never evictable. The reader sweep only rewrote `role=tool` content; a `file_write` body lives in the assistant message's `ToolCalls` and is counted in full by the estimator. | 45% of bob's live window was `file_write` arguments |
 | 2 | **No age-based trigger or retention** anywhere. `selectTail` retained by token budget only, and `providers.Message` carries no timestamp. | sam: 88 messages spanning 49 days, never compacted |
 | 3 | `retain_token_percent` (20) **equalled** `min_percent` (20), so every pass shaved back to exactly the floor and re-fired on the next message. | 29 of 32 production compactions fired at 20.0–22.9% |
-| 4 | The **estimator ignored `reasoning_content`** and `ResponsesReasoning`, both replayed to the provider on every turn. | 103 KB — 49% — of wendy's window was uncounted |
+| 4 | The **estimator ignored `reasoning_content`** and `ResponsesReasoning`, both replayed to the provider on every turn. | 103 KB — 49% — of bob's window was uncounted |
 | 5 | Three trigger paths measured three different things; the primary one (turn boundary) counted the least. | `triggerCheck` used history only, no reserve, no tool schemas |
 
 ### Changes made
@@ -66,12 +66,12 @@ Measured against the live instance (5-day slice, after the percentage budget app
 
 | agent | window | tail today | at 40 k | at 20 k | effective saving 40 k / 20 k |
 |---|---|---|---|---|---|
-| amber | 1 M | 75.6 k (440 msgs) | 263 msgs | 160 msgs | 4.0 M / 6.2 M per month |
-| wendy | 900 k | 90 k (137 msgs) | 58 msgs | 26 msgs | 5.8 M / 8.1 M per month |
-| dawn | 128 k | 12.8 k (238 msgs) | no-op | no-op | — |
+| alice | 1 M | 75.6 k (440 msgs) | 263 msgs | 160 msgs | 4.0 M / 6.2 M per month |
+| bob | 900 k | 90 k (137 msgs) | 58 msgs | 26 msgs | 5.8 M / 8.1 M per month |
+| agent3 | 128 k | 12.8 k (238 msgs) | no-op | no-op | — |
 
-Going from 40 k to 20 k buys another ~4.5 M effective tokens and costs amber 103 recent
-messages and wendy 32 — leaving wendy 26 messages, a few exchanges for an agent mid-chapter.
+Going from 40 k to 20 k buys another ~4.5 M effective tokens and costs alice 103 recent
+messages and bob 32 — leaving bob 26 messages, a few exchanges for an agent mid-chapter.
 Not worth it now that those tokens are cached. 40 k captures most of the saving and stays a
 no-op on the 128 k agents.
 
@@ -98,15 +98,15 @@ Everything except `static prompt` sits behind a string that changes every minute
 
 | | 1st dispatch of a turn | later dispatches (same minute) |
 |---|---|---|
-| amber | **5.6%** cached | 70.1% cached |
-| wendy | **1.6%** cached | 88.8% cached |
+| alice | **5.6%** cached | 70.1% cached |
+| bob | **1.6%** cached | 88.8% cached |
 
 Cross-turn caching is absent; within-turn caching works. Over 31 days:
 
 | agent | full-price input today | if the prefix were stable | reduction |
 |---|---|---|---|
-| amber | 70.4 M | 36.4 M | 48% |
-| wendy | 64.0 M | 24.8 M | 61% |
+| alice | 70.4 M | 36.4 M | 48% |
+| bob | 64.0 M | 24.8 M | 61% |
 
 ### Target structure
 
@@ -133,7 +133,7 @@ Cache extends to *current turn − 1*: one turn's tokens are re-sent instead of 
 - **STABLE stays in the prefix.** It is always-on identity content, not material selected
   for this turn, so it gains nothing from adjacency and is free to cache.
 
-Wendy's attachment set changes on only 18% of consecutive turns (177 unchanged / 39
+Bob's attachment set changes on only 18% of consecutive turns (177 unchanged / 39
 changed), with sizes clustering at ~69 KB and ~39–46 KB — a stable core plus one document
 that comes and goes. The sticky/routed split therefore self-tunes: whatever is marked
 sticky gets cached, and `set_sticky` on the domain is the operator's lever.

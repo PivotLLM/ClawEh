@@ -21,14 +21,14 @@ func TestNewNamedStore_TightensLoosePermissions(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"amber":[{"id":"a1","name":"gps","token":"tok","created_at_ms":1}]}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"alice":[{"id":"a1","name":"gps","token":"tok","created_at_ms":1}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s, err := NewNamedStore(path)
 	if err != nil {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
-	if got := s.List("amber"); len(got) != 1 || got[0].Token != "tok" {
+	if got := s.List("alice"); len(got) != 1 || got[0].Token != "tok" {
 		t.Fatalf("List = %+v, want the one stored token", got)
 	}
 	fi, err := os.Stat(path)
@@ -47,7 +47,7 @@ func TestNamedStore_CreateListValidateDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
 
-	tok, err := s.Create("amber", "gps")
+	tok, err := s.Create("alice", "gps")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -55,14 +55,14 @@ func TestNamedStore_CreateListValidateDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("Create returned incomplete token: %+v", tok)
 	}
 
-	list := s.List("amber")
+	list := s.List("alice")
 	if len(list) != 1 || list[0].ID != tok.ID {
 		t.Fatalf("List = %+v, want the one created token", list)
 	}
 
 	// The token validates back to its agent.
-	if agentID, ok := s.Validate(tok.Token); !ok || agentID != "amber" {
-		t.Fatalf("Validate(created) = (%q,%v), want (amber,true)", agentID, ok)
+	if agentID, ok := s.Validate(tok.Token); !ok || agentID != "alice" {
+		t.Fatalf("Validate(created) = (%q,%v), want (alice,true)", agentID, ok)
 	}
 
 	// Unknown token does not validate.
@@ -71,10 +71,10 @@ func TestNamedStore_CreateListValidateDelete_RoundTrip(t *testing.T) {
 	}
 
 	// Delete removes it; a second delete is a no-op.
-	if !s.Delete("amber", tok.ID) {
+	if !s.Delete("alice", tok.ID) {
 		t.Fatal("Delete(existing) = false, want true")
 	}
-	if s.Delete("amber", tok.ID) {
+	if s.Delete("alice", tok.ID) {
 		t.Fatal("Delete(already gone) = true, want false")
 	}
 	if _, ok := s.Validate(tok.Token); ok {
@@ -97,7 +97,7 @@ func TestNamedStore_Persist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
-	created, err := s1.Create("dawn", "alarm")
+	created, err := s1.Create("bob", "alarm")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -107,8 +107,8 @@ func TestNamedStore_Persist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore(reload): %v", err)
 	}
-	if agentID, ok := s2.Validate(created.Token); !ok || agentID != "dawn" {
-		t.Fatalf("reloaded Validate = (%q,%v), want (dawn,true)", agentID, ok)
+	if agentID, ok := s2.Validate(created.Token); !ok || agentID != "bob" {
+		t.Fatalf("reloaded Validate = (%q,%v), want (bob,true)", agentID, ok)
 	}
 }
 
@@ -117,32 +117,32 @@ func TestNamedStore_MultiplePerAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
-	a := mustCreate(t, s, "amber", "one")
-	b := mustCreate(t, s, "amber", "two")
+	a := mustCreate(t, s, "alice", "one")
+	b := mustCreate(t, s, "alice", "two")
 
-	if len(s.List("amber")) != 2 {
-		t.Fatalf("List(amber) len = %d, want 2", len(s.List("amber")))
+	if len(s.List("alice")) != 2 {
+		t.Fatalf("List(alice) len = %d, want 2", len(s.List("alice")))
 	}
 	// Both validate to the same agent.
-	if id, ok := s.Validate(a.Token); !ok || id != "amber" {
+	if id, ok := s.Validate(a.Token); !ok || id != "alice" {
 		t.Fatalf("Validate(a) = (%q,%v)", id, ok)
 	}
-	if id, ok := s.Validate(b.Token); !ok || id != "amber" {
+	if id, ok := s.Validate(b.Token); !ok || id != "alice" {
 		t.Fatalf("Validate(b) = (%q,%v)", id, ok)
 	}
 
 	// Deleting one leaves the other valid.
-	if !s.Delete("amber", a.ID) {
+	if !s.Delete("alice", a.ID) {
 		t.Fatal("Delete(a) = false")
 	}
 	if _, ok := s.Validate(a.Token); ok {
 		t.Fatal("deleted token a still validates")
 	}
-	if id, ok := s.Validate(b.Token); !ok || id != "amber" {
+	if id, ok := s.Validate(b.Token); !ok || id != "alice" {
 		t.Fatalf("token b should still validate after deleting a: (%q,%v)", id, ok)
 	}
-	if len(s.List("amber")) != 1 {
-		t.Fatalf("List(amber) after delete = %d, want 1", len(s.List("amber")))
+	if len(s.List("alice")) != 1 {
+		t.Fatalf("List(alice) after delete = %d, want 1", len(s.List("alice")))
 	}
 }
 
@@ -194,19 +194,19 @@ func TestNamedStore_EffectiveDefaults(t *testing.T) {
 func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok := mustCreate(t, s, "amber", "gps")
-	if !s.Update("amber", tok.ID, 3, 15) {
+	tok := mustCreate(t, s, "alice", "gps")
+	if !s.Update("alice", tok.ID, 3, 15) {
 		t.Fatal("Update returned false")
 	}
 
 	// First 3 requests within the window are allowed.
 	for i := range 3 {
-		if allowed, _ := s.Allow("amber", tok.ID); !allowed {
+		if allowed, _ := s.Allow("alice", tok.ID); !allowed {
 			t.Fatalf("request %d unexpectedly blocked", i+1)
 		}
 	}
 	// The 4th trips the limit → blocked, retryAfter ≈ 15m.
-	allowed, retry := s.Allow("amber", tok.ID)
+	allowed, retry := s.Allow("alice", tok.ID)
 	if allowed {
 		t.Fatal("4th request should be blocked")
 	}
@@ -217,7 +217,7 @@ func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 	// Still blocked before expiry, and the block is NOT extended: advance 5m and
 	// the remaining should shrink toward ~10m, not reset to 15m.
 	now = now.Add(5 * time.Minute)
-	allowed, retry = s.Allow("amber", tok.ID)
+	allowed, retry = s.Allow("alice", tok.ID)
 	if allowed {
 		t.Fatal("still within block window, should be blocked")
 	}
@@ -227,7 +227,7 @@ func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 
 	// After the block expires, requests flow again (counters reset).
 	now = now.Add(11 * time.Minute)
-	if allowed, _ := s.Allow("amber", tok.ID); !allowed {
+	if allowed, _ := s.Allow("alice", tok.ID); !allowed {
 		t.Fatal("request after block expiry should be allowed")
 	}
 }
@@ -235,18 +235,18 @@ func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 func TestNamedStore_Allow_WindowSlides(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok := mustCreate(t, s, "amber", "gps")
-	s.Update("amber", tok.ID, 2, 15)
+	tok := mustCreate(t, s, "alice", "gps")
+	s.Update("alice", tok.ID, 2, 15)
 
-	if allowed, _ := s.Allow("amber", tok.ID); !allowed {
+	if allowed, _ := s.Allow("alice", tok.ID); !allowed {
 		t.Fatal("req 1 blocked")
 	}
-	if allowed, _ := s.Allow("amber", tok.ID); !allowed {
+	if allowed, _ := s.Allow("alice", tok.ID); !allowed {
 		t.Fatal("req 2 blocked")
 	}
 	// Move past the 60s window so the earlier hits prune out; new request is fine.
 	now = now.Add(61 * time.Second)
-	if allowed, _ := s.Allow("amber", tok.ID); !allowed {
+	if allowed, _ := s.Allow("alice", tok.ID); !allowed {
 		t.Fatal("req after window slide should be allowed")
 	}
 }
@@ -254,26 +254,26 @@ func TestNamedStore_Allow_WindowSlides(t *testing.T) {
 func TestNamedStore_ResetBlocks(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	a := mustCreate(t, s, "amber", "gps")
-	b := mustCreate(t, s, "amber", "alarm")
-	s.Update("amber", a.ID, 1, 15)
-	s.Update("amber", b.ID, 1, 15)
+	a := mustCreate(t, s, "alice", "gps")
+	b := mustCreate(t, s, "alice", "alarm")
+	s.Update("alice", a.ID, 1, 15)
+	s.Update("alice", b.ID, 1, 15)
 
 	// Trip both into a block.
-	s.Allow("amber", a.ID)
-	s.Allow("amber", a.ID)
-	s.Allow("amber", b.ID)
-	s.Allow("amber", b.ID)
+	s.Allow("alice", a.ID)
+	s.Allow("alice", a.ID)
+	s.Allow("alice", b.ID)
+	s.Allow("alice", b.ID)
 
 	// Clear just "gps" by name.
-	if n := s.ResetBlocks("amber", "gps"); n != 1 {
+	if n := s.ResetBlocks("alice", "gps"); n != 1 {
 		t.Fatalf("ResetBlocks(gps) = %d, want 1", n)
 	}
-	if allowed, _ := s.Allow("amber", a.ID); !allowed {
+	if allowed, _ := s.Allow("alice", a.ID); !allowed {
 		t.Fatal("gps should be unblocked after reset")
 	}
 	// alarm is still blocked; clear-all removes it.
-	if n := s.ResetBlocks("amber", ""); n != 1 {
+	if n := s.ResetBlocks("alice", ""); n != 1 {
 		t.Fatalf("ResetBlocks(all) = %d, want 1", n)
 	}
 }
@@ -281,13 +281,13 @@ func TestNamedStore_ResetBlocks(t *testing.T) {
 func TestNamedStore_Quota(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok := mustCreate(t, s, "amber", "gps")
-	s.Update("amber", tok.ID, 3, 15)
+	tok := mustCreate(t, s, "alice", "gps")
+	s.Update("alice", tok.ID, 3, 15)
 
-	s.Allow("amber", tok.ID)
-	s.Allow("amber", tok.ID)
+	s.Allow("alice", tok.ID)
+	s.Allow("alice", tok.ID)
 
-	q := s.Quota("amber")
+	q := s.Quota("alice")
 	if len(q) != 1 {
 		t.Fatalf("Quota len = %d, want 1", len(q))
 	}
@@ -296,9 +296,9 @@ func TestNamedStore_Quota(t *testing.T) {
 	}
 
 	// Trip into a block; Quota reflects Blocked + remaining.
-	s.Allow("amber", tok.ID)
-	s.Allow("amber", tok.ID)
-	q = s.Quota("amber")
+	s.Allow("alice", tok.ID)
+	s.Allow("alice", tok.ID)
+	q = s.Quota("alice")
 	if !q[0].Blocked || q[0].BlockRemaining <= 0 {
 		t.Fatalf("Quota after trip = %+v, want blocked with remaining", q[0])
 	}
@@ -307,17 +307,17 @@ func TestNamedStore_Quota(t *testing.T) {
 func TestNamedStore_UpdatePersists(t *testing.T) {
 	path := NamedTokenPath(t.TempDir())
 	s1 := mustOpen(t, path)
-	tok := mustCreate(t, s1, "amber", "gps")
-	if !s1.Update("amber", tok.ID, 12, 7) {
+	tok := mustCreate(t, s1, "alice", "gps")
+	if !s1.Update("alice", tok.ID, 12, 7) {
 		t.Fatal("Update returned false")
 	}
 	// A reload sees the persisted config.
 	s2 := mustOpen(t, path)
-	got := s2.List("amber")
+	got := s2.List("alice")
 	if len(got) != 1 || got[0].RatePerMin != 12 || got[0].BlockMinutes != 7 {
 		t.Fatalf("reloaded config = %+v, want rate=12 block=7", got)
 	}
-	if s1.Update("amber", "nope", 1, 1) {
+	if s1.Update("alice", "nope", 1, 1) {
 		t.Fatal("Update(missing) should return false")
 	}
 }
@@ -327,11 +327,11 @@ func TestNamedStore_EmptyPathInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore(\"\"): %v", err)
 	}
-	tok, err := s.Create("amber", "x")
+	tok, err := s.Create("alice", "x")
 	if err != nil {
 		t.Fatalf("Create on in-memory store: %v", err)
 	}
-	if id, ok := s.Validate(tok.Token); !ok || id != "amber" {
+	if id, ok := s.Validate(tok.Token); !ok || id != "alice" {
 		t.Fatalf("in-memory Validate = (%q,%v)", id, ok)
 	}
 }

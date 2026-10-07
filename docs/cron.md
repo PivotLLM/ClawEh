@@ -37,7 +37,7 @@ config. A default must resolve to a concrete chat in one of two ways:
 that peer:
 
 ```json
-{ "agent_id": "karen", "default": true,
+{ "agent_id": "alice", "default": true,
   "match": { "channel": "slack", "peer": { "kind": "channel", "id": "C0…" } } }
 ```
 
@@ -47,8 +47,8 @@ Set `deliver_to` to the chat id cron output should go to. This is **delivery-onl
 does not change routing or who may message the bot.
 
 ```json
-{ "agent_id": "penny", "default": true,
-  "match": { "channel": "telegram-Penny" },
+{ "agent_id": "bob", "default": true,
+  "match": { "channel": "telegram-Bob" },
   "deliver_to": "123456789", "deliver_peer_kind": "direct" }
 ```
 
@@ -59,7 +59,7 @@ Channels list, selecting a peerless channel as default reveals a chat-id field.
 
 By default an agent schedules and manages **only its own** jobs. An agent with
 `"global_cron": true` in its config may create and manage jobs for **any** agent by
-passing the `agent` parameter (`cron_schedule` → `{"action":"add","agent":"karen",…}`).
+passing the `agent` parameter (`cron_schedule` → `{"action":"add","agent":"alice",…}`).
 Typically a single orchestrator agent has this. Without it, targeting another agent is
 rejected.
 
@@ -139,7 +139,7 @@ on each other's shared session state.
 | Field | Type | Description |
 |---|---|---|
 | `message` | string | The message injected inbound when the job fires |
-| `channel` | string | Channel to deliver to (e.g. `"slack"`, `"telegram-Amber"`) |
+| `channel` | string | Channel to deliver to (e.g. `"slack"`, `"telegram-Alice"`) |
 | `to` | string | Channel or user ID to deliver to (e.g. a Slack channel ID `C0ABC123` or user ID `U0ABC123`) |
 | `peer_kind` | string | `"channel"` (default) or `"direct"` — see [peer_kind](#peer_kind) |
 | `watch` | object | Optional probe. When present the job only delivers `message` if the watched values changed — see [Watch jobs](#watch-jobs). With a `listen` schedule it is the tool the listener keeps calling — see [Listen jobs](#listen-jobs) |

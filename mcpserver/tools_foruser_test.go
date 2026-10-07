@@ -131,7 +131,7 @@ func TestDispatch_SilentToolResultIsNotPublished(t *testing.T) {
 }
 
 // TestDispatch_ForUserDroppedWhenNoActiveChannel confirms that when a session
-// has no recorded channel/chatID (e.g. a CLI-only session or a Dawn-initiated
+// has no recorded channel/chatID (e.g. a CLI-only session or an agent-initiated
 // MCP call before any human chatted) and a tool returns ForUser, the MCP
 // dispatch path silently drops the publish: no error to the caller, no
 // injection into ForLLM, and an info-level log line is emitted.

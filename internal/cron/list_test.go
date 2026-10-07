@@ -47,7 +47,7 @@ func TestCronListShowsAgent(t *testing.T) {
 
 	owned, err := cs.AddJob("Owned", cron.CronSchedule{Kind: "cron", Expr: "0 9 * * *"}, "m", "agent", "slack", "C1", "channel")
 	require.NoError(t, err)
-	owned.AgentID = "amber"
+	owned.AgentID = "alice"
 	require.NoError(t, cs.UpdateJob(owned))
 
 	unowned, err := cs.AddJob("Legacy", cron.CronSchedule{Kind: "cron", Expr: "0 10 * * *"}, "m", "agent", "slack", "C2", "channel")
@@ -58,6 +58,6 @@ func TestCronListShowsAgent(t *testing.T) {
 	out := captureStdout(t, func() { cronListCmd(storePath) })
 
 	assert.Contains(t, out, "Agent:")
-	assert.Contains(t, out, "amber")
+	assert.Contains(t, out, "alice")
 	assert.Contains(t, out, "(operator/legacy)")
 }

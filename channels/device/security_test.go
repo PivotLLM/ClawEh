@@ -24,7 +24,7 @@ import (
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
-// recordingQuerier knows the agents amber, wendy and bob and counts History
+// recordingQuerier knows the agents alice, agent3 and bob and counts History
 // reads (each would open that session's store).
 type recordingQuerier struct {
 	mu      sync.Mutex
@@ -32,9 +32,9 @@ type recordingQuerier struct {
 }
 
 func (q *recordingQuerier) Agents() ([]DeviceAgentInfo, string, string) {
-	return []DeviceAgentInfo{{ID: "amber"}, {ID: "wendy"}, {ID: "bob"}}, "amber", "agent:amber:main"
+	return []DeviceAgentInfo{{ID: "alice"}, {ID: "agent3"}, {ID: "bob"}}, "alice", "agent:alice:main"
 }
-func (q *recordingQuerier) DefaultAgentID() string { return "amber" }
+func (q *recordingQuerier) DefaultAgentID() string { return "alice" }
 func (q *recordingQuerier) History(key string) []DeviceHistoryMessage {
 	q.mu.Lock()
 	q.history = append(q.history, key)

@@ -67,8 +67,8 @@ func TestRecordAndQueryFilters(t *testing.T) {
 	events := []Event{
 		{TS: base, Kind: KindToolCall, Agent: "alice", Session: "s1", Channel: "slack", Sender: "u1", Tool: "file_read", Outcome: OutcomeOK, DurationMS: 12, TurnID: "aaaa1111"},
 		{TS: base.Add(time.Minute), Kind: KindToolCall, Agent: "bob", Session: "s2", Tool: "exec", Outcome: OutcomeError, DurationMS: 5},
-		{TS: base.Add(2 * time.Minute), Kind: KindConfigWrite, Actor: "eric", Sender: "127.0.0.1", Summary: "providers", Details: `{"keys":["providers"]}`, Outcome: OutcomeOK},
-		{TS: base.Add(3 * time.Minute), Kind: KindAuth, Actor: "eric", Sender: "127.0.0.1", Summary: "login", Outcome: OutcomeOK},
+		{TS: base.Add(2 * time.Minute), Kind: KindConfigWrite, Actor: "admin", Sender: "127.0.0.1", Summary: "providers", Details: `{"keys":["providers"]}`, Outcome: OutcomeOK},
+		{TS: base.Add(3 * time.Minute), Kind: KindAuth, Actor: "admin", Sender: "127.0.0.1", Summary: "login", Outcome: OutcomeOK},
 	}
 	for _, e := range events {
 		s.Record(e)
@@ -405,7 +405,7 @@ func TestDefaultInitAuthClose(t *testing.T) {
 		t.Errorf("Path = %q", Default().Path())
 	}
 
-	Auth("login", "eric", "10.0.0.1", OutcomeError)
+	Auth("login", "admin", "10.0.0.1", OutcomeError)
 	flush(t, Default())
 	rows, err := Default().Query(context.Background(), Filter{Kind: KindAuth})
 	if err != nil {
@@ -415,7 +415,7 @@ func TestDefaultInitAuthClose(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
 	got := rows[0]
-	if got.Actor != "eric" || got.Sender != "10.0.0.1" || got.Summary != "login" || got.Outcome != OutcomeError {
+	if got.Actor != "admin" || got.Sender != "10.0.0.1" || got.Summary != "login" || got.Outcome != OutcomeError {
 		t.Errorf("auth row = %+v", got)
 	}
 
@@ -434,9 +434,9 @@ func TestActorContext(t *testing.T) {
 	if got := ActorFromContext(context.Background()); got != "" {
 		t.Errorf("empty ctx actor = %q", got)
 	}
-	ctx := WithActor(context.Background(), "eric")
-	if got := ActorFromContext(ctx); got != "eric" {
-		t.Errorf("actor = %q, want eric", got)
+	ctx := WithActor(context.Background(), "admin")
+	if got := ActorFromContext(ctx); got != "admin" {
+		t.Errorf("actor = %q, want admin", got)
 	}
 	// The exported key is the contract the auth middleware uses directly.
 	ctx = context.WithValue(context.Background(), ActorKey, "bob")

@@ -237,13 +237,13 @@ func TestConnWatch_AllStoppedEndsOutageSilently(t *testing.T) {
 // The alert text at the production threshold.
 func TestConnAlertText(t *testing.T) {
 	g := newConnAggregator()
-	tg := NewBaseChannel("telegram-Penny", nil, nil, nil)
+	tg := NewBaseChannel("telegram-Alice", nil, nil, nil)
 	g.failure(tg, time.Now().Add(-18*time.Minute), "boom")
 	down := g.expired(tg, ConnDownAlertAfter)
 	want := alerter.Alert{
 		Title:       "Telegram down",
 		Description: "1 bot, no working connection for 10m",
-		Details:     "Channels: telegram-Penny\nLast error: boom",
+		Details:     "Channels: telegram-Alice\nLast error: boom",
 		EventID:     "telegram",
 	}
 	if *down != want {

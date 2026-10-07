@@ -29,12 +29,12 @@ func (hostFakeRunner) RunSync(context.Context, string, string) (*global.SyncResu
 // contract CLI providers rely on: the host never applies discovery.
 func TestHost_ServesRealMaestroSuiteInFull(t *testing.T) {
 	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{
-		{ID: "penny", Maestro: &config.MaestroConfig{Enabled: true}},
+		{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}},
 	}}}
 	built := tools.NamespacedProvider("maestro", toolsmaestro.GlobalProvider).Build(tools.ToolDeps{
 		Cfg:       cfg,
 		AgentCfg:  &cfg.Agents.List[0],
-		AgentID:   "penny",
+		AgentID:   "alice",
 		Workspace: t.TempDir(),
 		Spawn:     hostFakeRunner{},
 	})
@@ -46,8 +46,8 @@ func TestHost_ServesRealMaestroSuiteInFull(t *testing.T) {
 		reg.RegisterSuiteHidden(tl)
 	}
 
-	regs := map[string]*tools.ToolRegistry{"penny": reg}
-	st, tok := seedSessionToken("penny")
+	regs := map[string]*tools.ToolRegistry{"alice": reg}
+	st, tok := seedSessionToken("alice")
 	resolver := resolverFor(regs)
 
 	srv := server.NewMCPServer("t", "0")

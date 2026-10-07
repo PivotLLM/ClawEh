@@ -39,11 +39,11 @@ describe("ProviderCard", () => {
     renderCard({
       protocol: "antigravity-cli",
       ready: true,
-      resolved_command: "/home/eric/bin/agy",
+      resolved_command: "/home/admin/bin/agy",
     })
     expect(screen.getByText("providers.status.configured")).toBeTruthy()
     // Blank command, but the card still says which binary will run.
-    expect(screen.getByText("/home/eric/bin/agy")).toBeTruthy()
+    expect(screen.getByText("/home/admin/bin/agy")).toBeTruthy()
   })
 
   it("does not call a CLI provider configured because a stale path is set", () => {

@@ -34,18 +34,18 @@ func maestroRegistryFor(t *testing.T, agentID string) *tools.ToolRegistry {
 // catalogue advertises them.
 func TestHost_MaestroToolsGatedPerAgent(t *testing.T) {
 	regs := map[string]*tools.ToolRegistry{
-		"penny": maestroRegistryFor(t, "penny"),
+		"alice": maestroRegistryFor(t, "alice"),
 		"bob":   tools.NewToolRegistry(), // no Maestro
 	}
 	st := newSessionTokenStore()
-	pennyTok := st.Issue("penny", "test:penny:main", "/tmp/archive/penny")
+	aliceTok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	bobTok := st.Issue("bob", "test:bob:main", "/tmp/archive/bob")
 	resolver := resolverFor(regs)
 
 	out, isErr := dispatchToolCall(context.Background(), "maestro_health",
-		map[string]any{"session_token": pennyTok}, st, resolver, nil, acl.Default, nil, nil)
+		map[string]any{"session_token": aliceTok}, st, resolver, nil, acl.Default, nil, nil)
 	if isErr || !strings.Contains(out, `"dispatch":"host"`) {
-		t.Fatalf("penny (maestro on) must dispatch: isErr=%v out=%s", isErr, out)
+		t.Fatalf("alice (maestro on) must dispatch: isErr=%v out=%s", isErr, out)
 	}
 
 	out, isErr = dispatchToolCall(context.Background(), "maestro_health",
@@ -54,15 +54,15 @@ func TestHost_MaestroToolsGatedPerAgent(t *testing.T) {
 		t.Fatalf("bob (maestro off) executed a Maestro tool: %s", out)
 	}
 	if strings.Contains(out, `"dispatch":"host"`) {
-		t.Error("bob received penny's Maestro output")
+		t.Error("bob received alice's Maestro output")
 	}
 }
 
 // TestHost_MaestroToolRejectsBadTokens: no token, an unknown token and a
 // malformed token are all refused before any Maestro code runs.
 func TestHost_MaestroToolRejectsBadTokens(t *testing.T) {
-	regs := map[string]*tools.ToolRegistry{"penny": maestroRegistryFor(t, "penny")}
-	st, _ := seedSessionToken("penny")
+	regs := map[string]*tools.ToolRegistry{"alice": maestroRegistryFor(t, "alice")}
+	st, _ := seedSessionToken("alice")
 	resolver := resolverFor(regs)
 	for name, tok := range map[string]any{"missing": nil, "unknown": "SST" + strings.Repeat("0", 64), "malformed": "not-a-token"} {
 		args := map[string]any{}

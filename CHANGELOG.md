@@ -814,7 +814,7 @@ observe does not need an entry.
   Providers page checkbox, the Check Up rows, the configuration report and the
   "declined to use tools" reply all use it, so enabling the CLI's skip-permissions
   flag reads as allowing something. The config key `bypass_restrictions` is
-  unchanged. The reply now starts with the assistant's name ("Karen: The Claude
+  unchanged. The reply now starts with the assistant's name ("Alice: The Claude
   CLI declined to use tools…"). The Agents page shows one line under a model
   chain when a model's `extra_args` still carries the CLI's bypass flag while the
   provider's setting is off ("`<CLI>` is not allowed to bypass its

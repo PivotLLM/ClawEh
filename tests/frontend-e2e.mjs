@@ -23,6 +23,7 @@
 // (18790) unless --allow-prod is passed.
 
 import { existsSync } from "node:fs"
+import { homedir } from "node:os"
 
 const args = process.argv.slice(2)
 const arg = (name, fallback) => {
@@ -48,7 +49,7 @@ const PW =
   "/home/ai/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs"
 const CHROME =
   process.env.CHROME_PATH ??
-  "/home/eric/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome"
+  `${homedir()}/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome`
 
 if (!existsSync(CHROME)) {
   console.error(`Chromium not found at ${CHROME}. Set CHROME_PATH.`)

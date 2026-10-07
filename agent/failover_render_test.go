@@ -285,15 +285,15 @@ func TestFormatRemaining(t *testing.T) {
 // shared channel shows whose CLI refused; other errors are unchanged.
 func TestRenderTurnErrorFor_NamesTheAssistant(t *testing.T) {
 	declined := &providers.CLIDeclinedError{Message: "The Claude CLI declined to use tools (Write)."}
-	got := renderTurnErrorFor("Karen", context.Background(), time.Minute, declined)
-	if got != "Karen: The Claude CLI declined to use tools (Write)." {
+	got := renderTurnErrorFor("Alice", context.Background(), time.Minute, declined)
+	if got != "Alice: The Claude CLI declined to use tools (Write)." {
 		t.Errorf("got %q", got)
 	}
 	if got := renderTurnErrorFor("", context.Background(), time.Minute, declined); got != declined.Message {
 		t.Errorf("unnamed: got %q", got)
 	}
-	plain := renderTurnErrorFor("Karen", context.Background(), 15*time.Minute, errors.New("context deadline exceeded"))
-	if strings.HasPrefix(plain, "Karen:") {
+	plain := renderTurnErrorFor("Alice", context.Background(), 15*time.Minute, errors.New("context deadline exceeded"))
+	if strings.HasPrefix(plain, "Alice:") {
 		t.Errorf("a non-declined error must not be prefixed: %q", plain)
 	}
 }

@@ -22,11 +22,11 @@ func TestSyncServiceTokens_HashedValuesResolveByPlaintext(t *testing.T) {
 	plain := "SST" + strings.Repeat("ab", 32)
 	hashed := tokenhash.Hash(plain)
 
-	s.SyncServiceTokens(map[string]string{"amber": hashed}, func(string) string { return "/ws/sessions" })
+	s.SyncServiceTokens(map[string]string{"alice": hashed}, func(string) string { return "/ws/sessions" })
 
 	rec, ok := s.Resolve(plain)
-	if !ok || rec.agentID != "amber" {
-		t.Fatalf("Resolve(plaintext) = (%+v,%v), want amber's service record", rec, ok)
+	if !ok || rec.agentID != "alice" {
+		t.Fatalf("Resolve(plaintext) = (%+v,%v), want alice's service record", rec, ok)
 	}
 	if _, ok := s.Resolve(hashed); ok {
 		t.Error("presenting the stored hash must not authenticate")
@@ -149,26 +149,26 @@ func TestSyncServiceTokens_Reconciles(t *testing.T) {
 	arch := func(string) string { return "/ws/sessions" }
 
 	// A live conversation token must survive a service-token sync.
-	convTok := s.Issue("amber", "agent:amber:main", "/ws/amber/sessions")
+	convTok := s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
-	s.SyncServiceTokens(map[string]string{"amber": "SSTamber", "dawn": "SSTdawn"}, arch)
-	if _, ok := s.Resolve("SSTamber"); !ok {
-		t.Error("amber service token not registered")
+	s.SyncServiceTokens(map[string]string{"alice": "SSTalice", "bob": "SSTbob"}, arch)
+	if _, ok := s.Resolve("SSTalice"); !ok {
+		t.Error("alice service token not registered")
 	}
-	if _, ok := s.Resolve("SSTdawn"); !ok {
-		t.Error("dawn service token not registered")
+	if _, ok := s.Resolve("SSTbob"); !ok {
+		t.Error("bob service token not registered")
 	}
 
-	// Re-sync without dawn → dawn revoked, amber rotated, conversation untouched.
-	s.SyncServiceTokens(map[string]string{"amber": "SSTamber2"}, arch)
-	if _, ok := s.Resolve("SSTdawn"); ok {
-		t.Error("dawn service token should be revoked after removal from the set")
+	// Re-sync without bob → bob revoked, alice rotated, conversation untouched.
+	s.SyncServiceTokens(map[string]string{"alice": "SSTalice2"}, arch)
+	if _, ok := s.Resolve("SSTbob"); ok {
+		t.Error("bob service token should be revoked after removal from the set")
 	}
-	if _, ok := s.Resolve("SSTamber"); ok {
-		t.Error("old amber service token should be replaced")
+	if _, ok := s.Resolve("SSTalice"); ok {
+		t.Error("old alice service token should be replaced")
 	}
-	if _, ok := s.Resolve("SSTamber2"); !ok {
-		t.Error("new amber service token should resolve")
+	if _, ok := s.Resolve("SSTalice2"); !ok {
+		t.Error("new alice service token should resolve")
 	}
 	if _, ok := s.Resolve(convTok); !ok {
 		t.Error("conversation token must not be disturbed by service-token sync")

@@ -88,14 +88,14 @@ distinction that does real work.
     list currently filters to active, so there is no way to see one to restore
     it.
 25. **Bulk select** with a checkbox column and apply-to-selected for retype,
-    retire and delete. Penny alone has 279 near-identical cron entries; one row
+    retire and delete. One agent alone has 279 near-identical cron entries; one row
     at a time is not a workflow.
 26. **Add a memory**, with `origin=user`, `status=active`, confidence `1.0`, and
     type chosen from the same dropdown.
 27. **Add a domain**, since an added memory needs somewhere to live.
 28. Remove the now-dead `prio` and `source` fields from the row display.
 
-Item 26 is worth more than it looks: dropping `source` gives up the "did Eric
+Item 26 is worth more than it looks: dropping `source` gives up the "did the operator
 say this or did it infer it" signal, but that was only ever the model's
 self-report. `origin=user` is the same distinction, verifiable, and already
 flagged to the assistant in the prompt.
@@ -153,7 +153,7 @@ flagged to the assistant in the prompt.
     asks which when you pick the file.
 44a. Import re-mints domain and memory IDs on the way in, so a dump can be
     loaded into a *different* agent — seeding a new writing assistant from
-    Wendy's craft domains, say. Nothing references memory IDs across runs, so
+    Bob's craft domains, say. Nothing references memory IDs across runs, so
     restoring to the same agent under fresh IDs breaks nothing.
 45. **WebUI**: export downloads a file, import accepts one, both on the memory
     page alongside the curation controls from §6.
@@ -184,7 +184,7 @@ flagged to the assistant in the prompt.
 Two consequences of shipping together, both handled in the plan: the automatic
 pre-migration snapshot (item 42) is the safety net rather than a precaution, and
 item 25 (bulk select) is on the critical path rather than a convenience —
-without it there is no practical way to clear Penny's 279 cron entries once they
+without it there is no practical way to clear that agent's 279 cron entries once they
 are prompt-resident.
 
 Also settled: both the automatic snapshot and export/import ship (items 42–48);

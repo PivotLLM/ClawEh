@@ -75,7 +75,7 @@ func TestHandleListAudit_PaginationAndFilters(t *testing.T) {
 			Agent: "alice", Session: "s1", Tool: "t", DurationMS: int64(i),
 		})
 	}
-	store.Record(audit.Event{TS: base.Add(time.Hour), Kind: audit.KindAuth, Actor: "eric", Summary: "login", Outcome: audit.OutcomeOK})
+	store.Record(audit.Event{TS: base.Add(time.Hour), Kind: audit.KindAuth, Actor: "admin", Summary: "login", Outcome: audit.OutcomeOK})
 	store.Record(audit.Event{TS: base.Add(2 * time.Hour), Kind: audit.KindToolCall, Agent: "bob", Tool: "t"})
 	flushAudit(t)
 
@@ -178,7 +178,7 @@ func TestConfigWrite_AuditRecordsKeysNotValues(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(string(body)))
 	req.RemoteAddr = "192.0.2.7:51000"
-	req = req.WithContext(audit.WithActor(req.Context(), "eric"))
+	req = req.WithContext(audit.WithActor(req.Context(), "admin"))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -204,7 +204,7 @@ func TestConfigWrite_AuditRecordsKeysNotValues(t *testing.T) {
 	}
 	patchRow, putRow := rows[0], rows[1]
 
-	if putRow.Actor != "eric" || putRow.Sender != "192.0.2.7" || putRow.Outcome != audit.OutcomeOK {
+	if putRow.Actor != "admin" || putRow.Sender != "192.0.2.7" || putRow.Outcome != audit.OutcomeOK {
 		t.Errorf("PUT row = %+v", putRow)
 	}
 	if putRow.Summary != "providers" || putRow.Details != `{"keys":["providers"]}` {

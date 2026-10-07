@@ -9,7 +9,7 @@ import (
 
 // runReasoningOnlyTurn drives one iteration where the model returns empty content
 // but populated reasoning_content (the degenerate "reasoning-only" case that hit
-// Wendy), and returns the user-facing finalContent.
+// an agent in production), and returns the user-facing finalContent.
 func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 	t.Helper()
 	tl := newTestAgentLoop(t)

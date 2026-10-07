@@ -19,7 +19,7 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:     ws,
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
+		CallerAgentID: "alice",
 		RunFull: func(_ context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 			return &global.SyncResult{Content: "SENSITIVE WORKER OUTPUT", Iterations: 2}, func() {}, nil
 		},
@@ -77,7 +77,7 @@ func TestRun_UsesRunFull(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:     ws,
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
+		CallerAgentID: "alice",
 		RunFull: func(_ context.Context, agentID, task, model string, _ []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -100,8 +100,8 @@ func TestRun_UsesRunFull(t *testing.T) {
 	if callCount != 1 {
 		t.Fatalf("runFull called %d times, want 1", callCount)
 	}
-	if gotAgent != "penny" {
-		t.Errorf("self-spawn should target owner 'penny', got %q", gotAgent)
+	if gotAgent != "alice" {
+		t.Errorf("self-spawn should target owner 'alice', got %q", gotAgent)
 	}
 	if released != 1 {
 		t.Errorf("worker released %d times, want 1", released)
@@ -136,7 +136,7 @@ func TestRun_PassesMediaToRunFull(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
+		CallerAgentID: "alice",
 		RunFull: func(_ context.Context, _, _, _ string, media []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()

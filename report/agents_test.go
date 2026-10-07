@@ -81,7 +81,7 @@ func TestCollectAgents_UnrestrictedIsHighlighted(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.RestrictToWorkspace = false
 	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
-	if len(fa.Rows) == 0 || fa.Rows[0][0] != "anything user eric can access" {
+	if len(fa.Rows) == 0 || fa.Rows[0][0] != "anything user admin can access" {
 		t.Fatalf("first row = %v", fa.Rows)
 	}
 	if fa.Rows[0][1] != "[read/write]" || !strings.Contains(fa.Rows[0][2], "restrict_to_workspace is off") {
@@ -99,7 +99,7 @@ func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.AllowReadOutsideWorkspace = true
 	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
-	if fa.Rows[0][0] != "anything user eric can read" || fa.Rows[0][1] != "[read]" {
+	if fa.Rows[0][0] != "anything user admin can read" || fa.Rows[0][1] != "[read]" {
 		t.Errorf("first row = %v", fa.Rows[0])
 	}
 	if !isHighlighted(fa, 0) {

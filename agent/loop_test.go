@@ -1797,36 +1797,36 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 			List: []config.AgentConfig{
-				{ID: "dawn", Name: "Dawn"},
-				{ID: "penny", Name: "Penny", Default: true},
+				{ID: "alice", Name: "Alice"},
+				{ID: "bob", Name: "Bob", Default: true},
 			},
 		},
 	}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Originator known: route to that agent (Dawn) in the carried session.
-	dawnSession := routing.BuildAgentMainSessionKey("dawn")
+	// Originator known: route to that agent (Alice) in the carried session.
+	aliceSession := routing.BuildAgentMainSessionKey("alice")
 	agent, sessionKey := al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:    "system",
-		SessionKey: dawnSession,
-		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		SessionKey: aliceSession,
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if agent == nil || agent.ID != "dawn" {
-		t.Fatalf("expected routing to dawn, got %v", agent)
+	if agent == nil || agent.ID != "alice" {
+		t.Fatalf("expected routing to alice, got %v", agent)
 	}
-	if sessionKey != dawnSession {
-		t.Errorf("session key = %q, want %q", sessionKey, dawnSession)
+	if sessionKey != aliceSession {
+		t.Errorf("session key = %q, want %q", sessionKey, aliceSession)
 	}
 
 	// Originator known but session_key absent: fall back to that agent's main session.
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:  "system",
-		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if agent == nil || agent.ID != "dawn" {
-		t.Fatalf("expected routing to dawn, got %v", agent)
+	if agent == nil || agent.ID != "alice" {
+		t.Fatalf("expected routing to alice, got %v", agent)
 	}
-	if want := routing.BuildAgentMainSessionKey("dawn"); sessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("alice"); sessionKey != want {
 		t.Errorf("session key = %q, want %q", sessionKey, want)
 	}
 
@@ -1834,18 +1834,18 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:    "system",
 		SessionKey: "slack:C9",
-		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if want := routing.BuildAgentMainSessionKey("dawn"); agent == nil || agent.ID != "dawn" || sessionKey != want {
-		t.Errorf("agent=%v session=%q, want dawn/%s", agent, sessionKey, want)
+	if want := routing.BuildAgentMainSessionKey("alice"); agent == nil || agent.ID != "alice" || sessionKey != want {
+		t.Errorf("agent=%v session=%q, want alice/%s", agent, sessionKey, want)
 	}
 
-	// No originator: fall back to the default agent (Penny) and its main session.
+	// No originator: fall back to the default agent (Bob) and its main session.
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{Channel: "system"})
-	if agent == nil || agent.ID != "penny" {
-		t.Fatalf("expected fallback to default (penny), got %v", agent)
+	if agent == nil || agent.ID != "bob" {
+		t.Fatalf("expected fallback to default (bob), got %v", agent)
 	}
-	if want := routing.BuildAgentMainSessionKey("penny"); sessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("bob"); sessionKey != want {
 		t.Errorf("session key = %q, want %q", sessionKey, want)
 	}
 
@@ -2187,54 +2187,54 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 			List: []config.AgentConfig{
-				{ID: "dawn", Name: "Dawn"},
-				{ID: "penny", Name: "Penny", Default: true},
+				{ID: "alice", Name: "Alice"},
+				{ID: "bob", Name: "Bob", Default: true},
 			},
 		},
 		Bindings: []config.AgentBinding{
-			// Dawn owns a specific Slack channel.
-			{AgentID: "dawn", Match: config.BindingMatch{
+			// Alice owns a specific Slack channel.
+			{AgentID: "alice", Match: config.BindingMatch{
 				Channel: "slack",
 				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0AN5SN702V"},
 			}},
-			// Penny is the Slack-wide catch-all (binding.account match).
-			{AgentID: "penny", Match: config.BindingMatch{Channel: "slack"}},
+			// Bob is the Slack-wide catch-all (binding.account match).
+			{AgentID: "bob", Match: config.BindingMatch{Channel: "slack"}},
 		},
 	}
 
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Baseline: without preresolved metadata, a direct peer with ID "dawn"
-	// falls through to Penny's account-level binding. This is the old bug.
+	// Baseline: without preresolved metadata, a direct peer with ID "alice"
+	// falls through to Bob's account-level binding. This is the old bug.
 	msg := bus.InboundMessage{
 		Channel: "slack",
 		ChatID:  "C0AN5SN702V",
-		Peer:    bus.Peer{Kind: "direct", ID: "dawn"},
+		Peer:    bus.Peer{Kind: "direct", ID: "alice"},
 	}
 	route, agent, err := al.resolveMessageRoute(msg)
 	if err != nil {
 		t.Fatalf("baseline resolveMessageRoute: %v", err)
 	}
-	if agent.ID != "penny" {
-		t.Fatalf("baseline: expected fallthrough to penny (the bug), got %q", agent.ID)
+	if agent.ID != "bob" {
+		t.Fatalf("baseline: expected fallthrough to bob (the bug), got %q", agent.ID)
 	}
 	if route.MatchedBy != "binding.account" {
 		t.Errorf("baseline: expected matched_by=binding.account, got %q", route.MatchedBy)
 	}
 
-	// With preresolved metadata: must route to Dawn regardless of bindings.
-	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "dawn"}
+	// With preresolved metadata: must route to Alice regardless of bindings.
+	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "alice"}
 	route, agent, err = al.resolveMessageRoute(msg)
 	if err != nil {
 		t.Fatalf("preresolved resolveMessageRoute: %v", err)
 	}
-	if agent.ID != "dawn" {
-		t.Errorf("expected routing to dawn, got %q", agent.ID)
+	if agent.ID != "alice" {
+		t.Errorf("expected routing to alice, got %q", agent.ID)
 	}
 	if route.MatchedBy != "preresolved" {
 		t.Errorf("expected matched_by=preresolved, got %q", route.MatchedBy)
 	}
-	if want := routing.BuildAgentMainSessionKey("dawn"); route.SessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("alice"); route.SessionKey != want {
 		t.Errorf("expected session key %q, got %q", want, route.SessionKey)
 	}
 

@@ -147,7 +147,7 @@ started with an operator surprised by their own configuration.
 - **Anything the user is told about names the thing.** A reply or alert about
   an agent names the agent; one about a model names the model. "The CLI
   declined" in a channel shared by several assistants tells the operator
-  nothing; "Karen: the Claude CLI declined…" does.
+  nothing; "Alice: the Claude CLI declined…" does.
 - **An ignored value is visible where it lives, not only in a log.** Logs are
   for after the fact; the WebUI is where the mistake is being made.
 

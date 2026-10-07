@@ -176,7 +176,7 @@ func danglingRefConfigJSON(marker string) string {
 		"models": [{"model_name": "good", "model": "gpt-4o", "provider": "p", "enabled": true}],
 		"agents": {
 			"defaults": {"models": []},
-			"list": [{"id": "Amber", "name": "Amber", "default": true, "models": ["DeepSeek 4 Pro", "good"]}]
+			"list": [{"id": "Alice", "name": "Alice", "default": true, "models": ["DeepSeek 4 Pro", "good"]}]
 		},
 		"_marker": "` + marker + `"
 	}`
@@ -194,8 +194,8 @@ func waitReload(t *testing.T, ch <-chan *config.Config) *config.Config {
 	}
 }
 
-// amberRemovedDesc is the alert description for Amber's removed reference.
-const amberRemovedDesc = `Amber listed model "DeepSeek 4 Pro", which no longer exists; it was removed from Amber's model list and the next model in the list is now used. Nothing else to do — check Amber's models on the Agents page if you want a different one.`
+// aliceRemovedDesc is the alert description for Alice's removed reference.
+const aliceRemovedDesc = `Alice listed model "DeepSeek 4 Pro", which no longer exists; it was removed from Alice's model list and the next model in the list is now used. Nothing else to do — check Alice's models on the Agents page if you want a different one.`
 
 // TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile: an old reference
 // to a deleted model must not block an unrelated change. The reload is applied
@@ -236,7 +236,7 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const wantEvent = "model-ref:agents.list[Amber].models"
+	const wantEvent = "model-ref:agents.list[Alice].models"
 	got := rec.Alerts()
 	if len(got) != 1 {
 		t.Fatalf("alerts = %+v, want exactly one", got)
@@ -244,8 +244,8 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	if got[0].EventID != wantEvent || got[0].Title != "Agent references a missing model" {
 		t.Fatalf("alert = %+v, want EventID %q and the missing-model title", got[0], wantEvent)
 	}
-	if got[0].Description != amberRemovedDesc {
-		t.Fatalf("description = %q, want %q", got[0].Description, amberRemovedDesc)
+	if got[0].Description != aliceRemovedDesc {
+		t.Fatalf("description = %q, want %q", got[0].Description, aliceRemovedDesc)
 	}
 	if got[0].Priority != alerter.Normal {
 		t.Fatalf("alert priority = %d, want Normal", got[0].Priority)
@@ -335,26 +335,26 @@ func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
 func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	rec := testalerts.Install(t)
 	m := &modelRefAlerts{}
-	amber := config.DanglingModelReference{Site: "agents.list[Amber].models", Alias: "DeepSeek 4 Pro", Agent: "Amber"}
+	alice := config.DanglingModelReference{Site: "agents.list[Alice].models", Alias: "DeepSeek 4 Pro", Agent: "Alice"}
 	defaults := config.DanglingModelReference{Site: "agents.defaults.image_model", Alias: "gone"}
 	skipped := func(refs ...config.DanglingModelReference) modelRefPrune { return modelRefPrune{skipped: refs} }
 
-	m.report(rec, skipped(amber))
-	m.report(rec, skipped(amber))
+	m.report(rec, skipped(alice))
+	m.report(rec, skipped(alice))
 	if n := len(rec.Alerts()); n != 1 {
 		t.Fatalf("after a repeat: %d alerts, want 1", n)
 	}
-	m.report(rec, skipped(amber, defaults))
+	m.report(rec, skipped(alice, defaults))
 	if n := len(rec.Alerts()); n != 2 {
 		t.Fatalf("after a new reference: %d alerts, want 2", n)
 	}
 	m.report(rec, modelRefPrune{}) // fixed
-	m.report(rec, skipped(amber))
+	m.report(rec, skipped(alice))
 	got := rec.Alerts()
-	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[Amber].models" {
-		t.Fatalf("after fix and reappearance: %+v, want a third alert for Amber", got)
+	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[Alice].models" {
+		t.Fatalf("after fix and reappearance: %+v, want a third alert for Alice", got)
 	}
-	want := `Amber lists model "DeepSeek 4 Pro", which is missing or unusable; it was skipped and the next model in the list is used. Pick a model for Amber on the Agents page to clear this.`
+	want := `Alice lists model "DeepSeek 4 Pro", which is missing or unusable; it was skipped and the next model in the list is used. Pick a model for Alice on the Agents page to clear this.`
 	if got[0].Description != want {
 		t.Fatalf("description = %q, want %q", got[0].Description, want)
 	}
@@ -362,13 +362,13 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 		t.Fatalf("defaults alert EventID = %q", got[1].EventID)
 	}
 
-	m.report(rec, modelRefPrune{removed: []config.DanglingModelReference{amber, defaults}})
+	m.report(rec, modelRefPrune{removed: []config.DanglingModelReference{alice, defaults}})
 	got = rec.Alerts()
 	if len(got) != 5 {
 		t.Fatalf("after a removal: %d alerts, want 5", len(got))
 	}
-	if got[3].Description != amberRemovedDesc {
-		t.Fatalf("removed description = %q, want %q", got[3].Description, amberRemovedDesc)
+	if got[3].Description != aliceRemovedDesc {
+		t.Fatalf("removed description = %q, want %q", got[3].Description, aliceRemovedDesc)
 	}
 	wantSite := `agents.defaults.image_model named model "gone", which no longer exists; it was removed from agents.defaults.image_model. Nothing else to do — choose an existing model there if you want one.`
 	if got[4].Description != wantSite {

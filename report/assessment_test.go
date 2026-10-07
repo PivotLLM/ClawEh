@@ -203,7 +203,7 @@ func TestAssessment_Marks(t *testing.T) {
 	cfg.Tools.Exec.EnableDenyPatterns = false
 	cfg.Logging.LogMessageContent = true
 	s = collectAssessment(t.Context(), cfg, env)
-	if r := assessmentRow(t, s, "File confinement"); r[0] != "*" || !strings.Contains(r[2], "anything user eric can access") {
+	if r := assessmentRow(t, s, "File confinement"); r[0] != "*" || !strings.Contains(r[2], "anything user admin can access") {
 		t.Errorf("unconfined file row = %v", r)
 	}
 	if r := assessmentRow(t, s, "Shell access"); r[0] != "*" || !strings.Contains(r[2], "deny patterns off") {

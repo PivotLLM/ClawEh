@@ -29,13 +29,13 @@ func TestNamespacedProvider_SuiteGating(t *testing.T) {
 
 	// Suite off (maestro default off) → no tools, even though they're default-deny
 	// the gate is the flag, not ToolEnabled.
-	off := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: &config.MaestroConfig{Enabled: false}})
-	if got := p.Build(ToolDeps{Cfg: off, AgentID: "amber"}); len(got) != 0 {
+	off := cfgWithAgent(config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: false}})
+	if got := p.Build(ToolDeps{Cfg: off, AgentID: "alice"}); len(got) != 0 {
 		t.Errorf("disabled suite should yield no tools, got %d", len(got))
 	}
 	// Suite on → ALL tools (bypassing the per-tool default-deny filter).
-	on := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: &config.MaestroConfig{Enabled: true}})
-	if got := p.Build(ToolDeps{Cfg: on, AgentID: "amber"}); len(got) != 2 {
+	on := cfgWithAgent(config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}})
+	if got := p.Build(ToolDeps{Cfg: on, AgentID: "alice"}); len(got) != 2 {
 		t.Errorf("enabled suite should register all tools, got %d", len(got))
 	}
 	// Describe collapses the whole suite to one catalog entry, marked.
@@ -46,12 +46,12 @@ func TestNamespacedProvider_SuiteGating(t *testing.T) {
 }
 
 func TestSuiteDefaults(t *testing.T) {
-	c := cfgWithAgent(config.AgentConfig{ID: "amber"}) // no flags set
+	c := cfgWithAgent(config.AgentConfig{ID: "alice"}) // no flags set
 	// cogmem defaults ON; maestro defaults OFF.
-	if !c.AgentSuiteEnabled("amber", "cogmem") {
+	if !c.AgentSuiteEnabled("alice", "cogmem") {
 		t.Error("cogmem should default on")
 	}
-	if c.AgentSuiteEnabled("amber", "maestro") {
+	if c.AgentSuiteEnabled("alice", "maestro") {
 		t.Error("maestro should default off")
 	}
 	// Unknown agent: cogmem still on, others off.
@@ -60,8 +60,8 @@ func TestSuiteDefaults(t *testing.T) {
 	}
 	// cogmem explicitly disabled.
 	no := false
-	c2 := cfgWithAgent(config.AgentConfig{ID: "amber", Cogmem: &no})
-	if c2.AgentSuiteEnabled("amber", "cogmem") {
+	c2 := cfgWithAgent(config.AgentConfig{ID: "alice", Cogmem: &no})
+	if c2.AgentSuiteEnabled("alice", "cogmem") {
 		t.Error("cogmem:false should disable")
 	}
 }

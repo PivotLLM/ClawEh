@@ -23,7 +23,7 @@ func newRunSyncSpawner(t *testing.T) (*Spawner, *sync.Mutex, *[]string) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:      t.TempDir(),
 		Live:           NewLiveSet(),
-		CallerAgentID:  "penny",
+		CallerAgentID:  "alice",
 		SelfCandidates: []providers.FallbackCandidate{{Alias: "Pro", Model: "claude-x", Provider: "anthropic"}},
 		RunFull: func(_ context.Context, _, _, model string, _ []string) (*global.SyncResult, func(), error) {
 			mu.Lock()

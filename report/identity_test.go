@@ -10,7 +10,7 @@ func TestCollectIdentity(t *testing.T) {
 	s := collectIdentity(t.Context(), cfg, env)
 	tb := s.Tables[0]
 	_, r := findRow(t, tb, "Runs as")
-	if r[1] != "user eric, group staff" {
+	if r[1] != "user admin, group staff" {
 		t.Errorf("Runs as = %q", r[1])
 	}
 	_, r = findRow(t, tb, "Version")

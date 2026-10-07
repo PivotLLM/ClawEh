@@ -871,7 +871,7 @@ func newChannelWorker(name string, ch Channel) *channelWorker {
 	if r, ok := channelRateConfig[name]; ok {
 		rateVal = r
 	} else {
-		// Named channel variants (e.g. "telegram-amber") inherit the base channel's rate.
+		// Named channel variants (e.g. "telegram-alice") inherit the base channel's rate.
 		for prefix, r := range channelRateConfig {
 			if strings.HasPrefix(name, prefix+"-") {
 				rateVal = r

@@ -40,7 +40,7 @@ func TestRuntimeConfig_RemovesMissingModelReferenceFromFile(t *testing.T) {
 	if got := cfg.Agents.List[0].Models; !slices.Equal(got, []string{"good"}) {
 		t.Fatalf("runtime models = %q, want [good]", got)
 	}
-	want := []config.DanglingModelReference{{Site: "agents.list[Amber].models", Alias: "DeepSeek 4 Pro", Agent: "Amber"}}
+	want := []config.DanglingModelReference{{Site: "agents.list[Alice].models", Alias: "DeepSeek 4 Pro", Agent: "Alice"}}
 	if !slices.Equal(prune.removed, want) || len(prune.skipped) != 0 {
 		t.Fatalf("prune = %+v, want removed %+v and nothing skipped", prune, want)
 	}
@@ -52,7 +52,7 @@ func TestRuntimeConfig_RemovesMissingModelReferenceFromFile(t *testing.T) {
 		t.Fatalf("config file still names the missing model:\n%s", onDisk)
 	}
 	(&modelRefAlerts{}).report(rec, prune)
-	if got := rec.Alerts(); len(got) != 1 || got[0].Description != amberRemovedDesc {
+	if got := rec.Alerts(); len(got) != 1 || got[0].Description != aliceRemovedDesc {
 		t.Fatalf("alerts = %+v, want one with the removed description", got)
 	}
 
@@ -88,7 +88,7 @@ func TestRuntimeConfig_InvalidModelStaysInFile(t *testing.T) {
 		],
 		"agents": {
 			"defaults": {"models": []},
-			"list": [{"id": "Amber", "name": "Amber", "default": true, "models": ["orphan", "good"]}]
+			"list": [{"id": "Alice", "name": "Alice", "default": true, "models": ["orphan", "good"]}]
 		}
 	}`
 	store := openStore(t, t.TempDir(), body)
@@ -162,7 +162,7 @@ func TestRuntimeConfig_ReadOnlyConfigFallsBackToRuntimePrune(t *testing.T) {
 		t.Fatal("read-only config file changed")
 	}
 	(&modelRefAlerts{}).report(rec, prune)
-	if got := rec.Alerts(); len(got) != 1 || got[0].EventID != "model-ref:agents.list[Amber].models" {
+	if got := rec.Alerts(); len(got) != 1 || got[0].EventID != "model-ref:agents.list[Alice].models" {
 		t.Fatalf("alerts = %+v, want one missing-model alert", got)
 	}
 }

@@ -88,7 +88,7 @@ func fixtureEnv(dataDir string) Environment {
 		DataDir:    dataDir,
 		Executable: "/usr/local/bin/alice",
 		Hostname:   "testbox",
-		User:       "eric",
+		User:       "admin",
 		Group:      "staff",
 		OS:         "linux",
 		Arch:       "amd64",
@@ -175,7 +175,7 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	cfg.Channels.Slack = config.SlackConfig{Enabled: true, BotToken: secretSlackBot, AppToken: secretSlackApp}
 	cfg.Channels.Matrix = config.MatrixConfig{
 		Enabled: true, Homeserver: "https://matrix.example.com", UserID: "@alice:example.com",
-		AccessToken: secretMatrix, AllowFrom: []string{"@eric:example.com"},
+		AccessToken: secretMatrix, AllowFrom: []string{"@admin:example.com"},
 	}
 	cfg.Channels.LINE = config.LINEConfig{
 		Enabled: true, ChannelSecret: secretLINE, ChannelAccessToken: secretLINEAccess,

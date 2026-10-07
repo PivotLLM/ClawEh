@@ -13,26 +13,26 @@ import (
 // order, with original casing preserved.
 func TestSessionChannelsForAgent_FiltersByAgentID(t *testing.T) {
 	bindings := []config.AgentBinding{
-		{AgentID: "amber", Match: config.BindingMatch{Channel: "telegram-Amber"}},
-		{AgentID: "dawn", Match: config.BindingMatch{Channel: "telegram-Dawn"}},
-		{AgentID: "karen", Match: config.BindingMatch{Channel: "telegram-Karen"}},
-		{AgentID: "dawn", Match: config.BindingMatch{Channel: "slack"}},
-		{AgentID: "dawn", Match: config.BindingMatch{Channel: "webui"}},
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "telegram-Alice"}},
+		{AgentID: "bob", Match: config.BindingMatch{Channel: "telegram-Bob"}},
+		{AgentID: "agent3", Match: config.BindingMatch{Channel: "telegram-Agent3"}},
+		{AgentID: "bob", Match: config.BindingMatch{Channel: "slack"}},
+		{AgentID: "bob", Match: config.BindingMatch{Channel: "webui"}},
 		// Duplicate channel for same agent (different peer) — must be deduped.
-		{AgentID: "dawn", Match: config.BindingMatch{Channel: "Slack"}},
+		{AgentID: "bob", Match: config.BindingMatch{Channel: "Slack"}},
 	}
 
-	got := sessionChannelsForAgent(bindings, "dawn")
-	want := []string{"telegram-Dawn", "slack", "webui"}
+	got := sessionChannelsForAgent(bindings, "bob")
+	want := []string{"telegram-Bob", "slack", "webui"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sessionChannelsForAgent(dawn) = %v, want %v", got, want)
+		t.Fatalf("sessionChannelsForAgent(bob) = %v, want %v", got, want)
 	}
 
 	// Single-channel agent — only its one channel returned, no leakage.
-	gotAmber := sessionChannelsForAgent(bindings, "amber")
-	wantAmber := []string{"telegram-Amber"}
-	if !reflect.DeepEqual(gotAmber, wantAmber) {
-		t.Errorf("sessionChannelsForAgent(amber) = %v, want %v", gotAmber, wantAmber)
+	gotAlice := sessionChannelsForAgent(bindings, "alice")
+	wantAlice := []string{"telegram-Alice"}
+	if !reflect.DeepEqual(gotAlice, wantAlice) {
+		t.Errorf("sessionChannelsForAgent(alice) = %v, want %v", gotAlice, wantAlice)
 	}
 
 	// Unknown agent — empty (no fallback to global list).
@@ -47,9 +47,9 @@ func TestSessionChannelsForAgent_FiltersByAgentID(t *testing.T) {
 // (which would silently widen the leak window).
 func TestSessionChannelsForAgent_NormalizesAgentID(t *testing.T) {
 	bindings := []config.AgentBinding{
-		{AgentID: "  DAWN ", Match: config.BindingMatch{Channel: "slack"}},
+		{AgentID: "  BOB ", Match: config.BindingMatch{Channel: "slack"}},
 	}
-	got := sessionChannelsForAgent(bindings, "dawn")
+	got := sessionChannelsForAgent(bindings, "bob")
 	if len(got) != 1 || got[0] != "slack" {
 		t.Errorf("normalised match failed: got %v, want [slack]", got)
 	}

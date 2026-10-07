@@ -9,7 +9,7 @@ import (
 // orders Agent (with friendly mode) then Status then Task, points at the results
 // file, and that the LLM-facing side carries the untrusted-data security warning.
 func TestCompletionResult_OrderModeSecurity(t *testing.T) {
-	sm := &SubagentManager{ownerAgentID: "penny"}
+	sm := &SubagentManager{ownerAgentID: "alice"}
 	rec := &TaskRecord{
 		UUID: "u1", Name: "job", AgentID: "", Mode: "callback",
 		Status: StatusDone, ResultsPath: "tasks/u1-results.json",

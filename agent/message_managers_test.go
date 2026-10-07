@@ -22,29 +22,29 @@ func TestBuildMessageManagers_TracksConfig(t *testing.T) {
 	}
 
 	cfg := mk([]config.AgentConfig{
-		{ID: "amber", Default: true, Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
-		{ID: "karen"}, // no message config → disabled
+		{ID: "alice", Default: true, Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
+		{ID: "bob"}, // no message config → disabled
 	})
 	reg := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 	m := buildMessageManagers(reg, cfg)
-	if _, ok := m["amber"]; !ok {
-		t.Error("amber (window>0) should have a message-token manager")
+	if _, ok := m["alice"]; !ok {
+		t.Error("alice (window>0) should have a message-token manager")
 	}
-	if _, ok := m["karen"]; ok {
-		t.Error("karen (no message config) must not have a manager")
+	if _, ok := m["bob"]; ok {
+		t.Error("bob (no message config) must not have a manager")
 	}
 
-	// Config change: amber disabled, karen enabled. A rebuild must follow it.
+	// Config change: alice disabled, bob enabled. A rebuild must follow it.
 	cfg2 := mk([]config.AgentConfig{
-		{ID: "amber", Default: true},
-		{ID: "karen", Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
+		{ID: "alice", Default: true},
+		{ID: "bob", Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
 	})
 	reg2 := mustNewAgentRegistry(t, cfg2, &mockRegistryProvider{})
 	m2 := buildMessageManagers(reg2, cfg2)
-	if _, ok := m2["amber"]; ok {
-		t.Error("amber must lose its manager after the message endpoint is disabled")
+	if _, ok := m2["alice"]; ok {
+		t.Error("alice must lose its manager after the message endpoint is disabled")
 	}
-	if _, ok := m2["karen"]; !ok {
-		t.Error("karen should gain a manager after the message endpoint is enabled")
+	if _, ok := m2["bob"]; !ok {
+		t.Error("bob should gain a manager after the message endpoint is enabled")
 	}
 }

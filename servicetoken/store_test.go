@@ -42,7 +42,7 @@ func TestLoad_MissingFileIsEmpty(t *testing.T) {
 
 func TestSaveLoad_RoundTrip(t *testing.T) {
 	path := Path(t.TempDir())
-	in := map[string]string{"amber": Hash("SSTaaa"), "dawn": Hash("SSTbbb")}
+	in := map[string]string{"alice": Hash("SSTaaa"), "bob": Hash("SSTbbb")}
 	if err := Save(path, in); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(out) != 2 || out["amber"] != Hash("SSTaaa") || out["dawn"] != Hash("SSTbbb") {
+	if len(out) != 2 || out["alice"] != Hash("SSTaaa") || out["bob"] != Hash("SSTbbb") {
 		t.Errorf("round-trip mismatch: %v", out)
 	}
 }
@@ -88,8 +88,8 @@ func TestLoad_MigratesPlaintextFileOnce(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	plain := map[string]string{"amber": "SST" + strings.Repeat("ab", 32), "dawn": "SST" + strings.Repeat("cd", 32)}
-	if err := os.WriteFile(path, []byte(`{"amber":"`+plain["amber"]+`","dawn":"`+plain["dawn"]+`"}`), 0o644); err != nil {
+	plain := map[string]string{"alice": "SST" + strings.Repeat("ab", 32), "bob": "SST" + strings.Repeat("cd", 32)}
+	if err := os.WriteFile(path, []byte(`{"alice":"`+plain["alice"]+`","bob":"`+plain["bob"]+`"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,7 +126,7 @@ func TestLoad_MigratesPlaintextFileOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(hashed file): %v", err)
 	}
-	if len(again) != len(got) || again["amber"] != got["amber"] || again["dawn"] != got["dawn"] {
+	if len(again) != len(got) || again["alice"] != got["alice"] || again["bob"] != got["bob"] {
 		t.Errorf("second Load differs: %v vs %v", again, got)
 	}
 	if fi2, statErr := os.Stat(path); statErr == nil && !fi2.ModTime().Equal(before) {
@@ -135,8 +135,8 @@ func TestLoad_MigratesPlaintextFileOnce(t *testing.T) {
 }
 
 func TestAgents_SortedNoTokens(t *testing.T) {
-	ids := Agents(map[string]string{"zeb": "x", "amber": "y", "dawn": "z"})
-	want := []string{"amber", "dawn", "zeb"}
+	ids := Agents(map[string]string{"zeb": "x", "alice": "y", "bob": "z"})
+	want := []string{"alice", "bob", "zeb"}
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Errorf("Agents = %v, want %v", ids, want)
 	}

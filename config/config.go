@@ -987,7 +987,7 @@ type SessionConfig struct {
 
 // DefaultBinding returns the agent's binding marked Default, or false if none.
 // Agent ids are matched case-insensitively: binding agent_ids are author-cased
-// (e.g. "Karen") while a session-derived caller id is lowercased ("karen").
+// (e.g. "Alice") while a session-derived caller id is lowercased ("alice").
 func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Bindings {
