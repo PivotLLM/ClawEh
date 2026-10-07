@@ -262,12 +262,14 @@ func TestCtlUnsuccessfulOutcomeResends(t *testing.T) {
 }
 
 // ctlCooldown makes alice's models in cooldown until until (forever when
-// until is zero) and shortens the hold's polling for the test.
+// until is zero), shortens the hold's polling and removes the release
+// delay for the test.
 func ctlCooldown(t *testing.T, f *ctlForum, until time.Time) {
 	t.Helper()
 	poll := cooldownPoll
 	cooldownPoll = 10 * time.Millisecond
 	t.Cleanup(func() { cooldownPoll = poll })
+	ctlReleaseDelay(t, func() time.Duration { return 0 })
 	f.host.Cooldown = func(agentID string) (string, time.Duration) {
 		if agentID != "alice" {
 			return "", 0

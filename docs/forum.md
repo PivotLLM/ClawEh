@@ -284,7 +284,8 @@ write to it, and cannot read another agent's forums.
 - Each participant's own settings (its `request_timeout`, its tool limits)
   still apply to its turns.
 - A turn whose participant's models are all in cooldown is held until one is
-  available and then sent; the wait counts against `call_timeout_seconds`
+  available and then sent after a random 2 to 5 seconds, so held turns do
+  not all reach the model at once; the wait counts against `call_timeout_seconds`
   (and the run's `max_duration_seconds`). A cooldown that ends within the
   call timeout costs nothing. One that outlasts it (or leaves less than a
   second) is recorded as a timeout attempt without being sent, and that

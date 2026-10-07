@@ -281,8 +281,12 @@ contract beyond the interface signatures:
   within the call timeout costs no attempt and no call. One that outlasts
   it, or ends with less than `minHeldWait` (1 s) left, is recorded as a
   `timeout` attempt without being sent: it uses an attempt and counts
-  toward `max_calls`, like any timeout. Pause, cancel and the run deadline
-  end the hold as they end any turn.
+  toward `max_calls`, like any timeout. Once the cooldown ends, a held turn
+  waits a random `releaseDelay` (`releaseDelayMin` 2 s to `releaseDelayMax`
+  5 s, within the call timeout, held again if the model is back in cooldown)
+  so the turns it held do not reach the model at once; a turn that was not
+  held is never delayed. Pause, cancel and the run deadline
+  end the hold and the delay as they end any turn.
 - `Agents` over the registry, `Host.Schemas = forum.JSONSchemaValidator{}`.
 
 Tool failures are one sentence naming the forum; error chains and paths

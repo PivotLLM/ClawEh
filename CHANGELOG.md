@@ -414,7 +414,8 @@ observe does not need an entry.
   tool called with an argument it does not take is refused, naming it
   ("Unknown argument forum_id; use id."). Each participant uses its own tools (a clone its
   source's). A turn whose participant's models are all in cooldown waits
-  for one to come back within `call_timeout_seconds`: a cooldown that ends
+  for one to come back within `call_timeout_seconds`, then a random 2 to 5
+  seconds so held turns do not all resend at once: a cooldown that ends
   in time costs nothing, and one that outlasts it is recorded as a timeout
   attempt (counted toward `max_calls`). Runs survive a restart and resume where
   they stopped. Turning the switch off removes the tools; the agent's forums

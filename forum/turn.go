@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -164,6 +165,20 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 // looks again: the model may come back early, or the forum be paused.
 var cooldownPoll = time.Second
 
+// releaseDelayMin and releaseDelayMax bound the random delay a turn held
+// back by a cooldown waits once the cooldown ends, so the turns it held do
+// not all reach the model at once.
+const (
+	releaseDelayMin = 2 * time.Second
+	releaseDelayMax = 5 * time.Second
+)
+
+// releaseDelay draws a held turn's release delay, uniformly in
+// [releaseDelayMin, releaseDelayMax]; a variable so tests can fix it.
+var releaseDelay = func() time.Duration {
+	return releaseDelayMin + rand.N(releaseDelayMax-releaseDelayMin+1) //nolint:gosec // G404: load spreading, not security
+}
+
 // minHeldWait is the least time a turn held back by a cooldown must have
 // left of its call timeout to be sent; with less, the attempt ends as a
 // timeout instead of being sent with no time to answer.
@@ -175,9 +190,11 @@ const minHeldWait = time.Second
 // together stay within the call timeout (bounded by the run deadline,
 // c.wait), counted from the start of the hold: deadline is that time, zero
 // when there was no hold. expired reports that the cooldown outlasted it,
-// or ended with less than minHeldWait left; the attempt then ends as a
-// timeout without being sent. A pause, cancel
-// or end of ctx ends the hold early; reserve then stops the turn.
+// or ended with less than minHeldWait left after the release delay
+// (releaseDelay, waited once the cooldown ends, still within the call
+// timeout); the attempt then ends as a timeout without being sent. A model
+// back in cooldown after the delay is held again. A pause, cancel
+// or end of ctx ends the hold or the delay early; reserve then stops the turn.
 func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
 	if c.host.Cooldown == nil {
 		return time.Time{}, false
@@ -198,28 +215,56 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 				ref, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
-		pause := time.NewTimer(min(left, deadline.Sub(now), cooldownPoll))
-		select {
-		case <-ctx.Done():
-			pause.Stop()
-			return deadline, false
-		case <-pause.C:
-		}
-		if c.interrupted() {
+		if !c.holdFor(ctx, min(left, deadline.Sub(now), cooldownPoll)) {
 			return deadline, false
 		}
 		next, nextLeft := c.host.Cooldown(w.p.AgentID)
-		if nextLeft <= 0 {
-			if time.Until(deadline) < minHeldWait {
-				c.host.Logger.Infof("forum %s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
-					ref, w.layer.ID, w.turn, model, w.p.ID)
-				return deadline, true
-			}
-			c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn",
-				ref, w.layer.ID, w.turn, w.p.ID)
+		if nextLeft > 0 {
+			model, left = next, nextLeft
+			continue
+		}
+		delay := releaseDelay()
+		if time.Until(deadline)-delay < minHeldWait {
+			c.host.Logger.Infof("forum %s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
+				ref, w.layer.ID, w.turn, model, w.p.ID)
+			return deadline, true
+		}
+		c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn in %s",
+			ref, w.layer.ID, w.turn, w.p.ID, delay.Round(time.Millisecond))
+		if !c.holdFor(ctx, delay) {
 			return deadline, false
 		}
+		next, nextLeft = c.host.Cooldown(w.p.AgentID)
+		if nextLeft <= 0 {
+			return deadline, false
+		}
+		c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is in cooldown again",
+			ref, w.layer.ID, w.turn, next, w.p.ID)
 		model, left = next, nextLeft
+	}
+}
+
+// holdFor waits d in steps of at most cooldownPoll, reporting false as soon
+// as ctx ends or a pause or cancel is requested.
+func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
+	end := time.Now().Add(d)
+	for {
+		step := min(time.Until(end), cooldownPoll)
+		if step > 0 {
+			pause := time.NewTimer(step)
+			select {
+			case <-ctx.Done():
+				pause.Stop()
+				return false
+			case <-pause.C:
+			}
+		}
+		if c.interrupted() {
+			return false
+		}
+		if !time.Now().Before(end) {
+			return true
+		}
 	}
 }
 
