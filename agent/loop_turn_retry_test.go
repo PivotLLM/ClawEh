@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -76,5 +78,24 @@ func TestClassifyLLMError(t *testing.T) {
 					tt.err, gotTimeout, gotContext, tt.wantTimeout, tt.wantContext)
 			}
 		})
+	}
+}
+
+// A model call cut off by the turn budget is not retried, so no retry is
+// logged: the budget is spent and the turn ends with the time-limit reply.
+func TestTimeoutRetry_NotLoggedWhenBudgetSpent(t *testing.T) {
+	logs := &safeBufLoop{}
+	t.Cleanup(logger.RedirectForTest(logs))
+	cfg := newTestConfig(t)
+	cfg.Agents.Defaults.TurnTimeout = 1
+	al, msgBus, _ := newBlockingLoop(t, cfg)
+
+	dispatch(al, inbound("c1", "id1", "hello"))
+	out := nextOutbound(t, msgBus)
+	if !strings.Contains(out.Content, "ran past the 1s time limit") {
+		t.Fatalf("reply = %q, want the time-limit message", out.Content)
+	}
+	if strings.Contains(logs.String(), "retrying after backoff") {
+		t.Errorf("a retry was logged for a turn whose budget had run out:\n%s", logs.String())
 	}
 }

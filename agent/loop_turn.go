@@ -964,6 +964,11 @@ func (al *AgentLoop) runLLMIteration(
 			isTimeoutError, isContextError := classifyLLMError(err, activeProvider, activeModel)
 
 			if isTimeoutError && retry < maxRetries {
+				// A turn whose budget has run out is not retried, so no
+				// retry is logged.
+				if ctx.Err() != nil {
+					return "", false, false, "", 0, ctx.Err()
+				}
 				backoff := withJitter(time.Duration(retry+1) * 5 * time.Second)
 				logger.WarnCF("agent", "Timeout error, retrying after backoff", map[string]any{
 					"error":   err.Error(),

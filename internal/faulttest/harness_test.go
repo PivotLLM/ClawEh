@@ -280,8 +280,8 @@ func (l *loop) turn(content string) (reply string, notices []string) {
 	return replies[0], notices
 }
 
-// cooldowns runs /cooldowns and returns its rendering of the process-wide
-// cooldown tracker.
+// cooldowns runs /cooldowns and returns its rendering of the loop's cooldown
+// tracker (each loop has its own).
 func (l *loop) cooldowns() string {
 	l.t.Helper()
 	reply, notices := l.turn("/cooldowns list")
