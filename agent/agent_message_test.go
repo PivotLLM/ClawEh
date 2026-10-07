@@ -838,7 +838,8 @@ func TestCommands_WhisperMarksAPerson(t *testing.T) {
 // TestCommands_AskStopsWithTheService: a /ask still waiting when the service
 // stops is abandoned without posting anything.
 func TestCommands_AskStopsWithTheService(t *testing.T) {
-	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	logs := &safeBufLoop{}
+	t.Cleanup(logger.RedirectForTest(logs))
 
 	model := newGatedRecorder()
 	al, msgBus := messagingLoop(t, messagingConfig(t), model)
@@ -848,12 +849,23 @@ func TestCommands_AskStopsWithTheService(t *testing.T) {
 	al.runMu.Unlock()
 	defer close(model.gate)
 
-	dispatch(al, bus.InboundMessage{
+	// Sent through the bus, as Run receives it: u1's chat is Bob's main
+	// conversation, so the asked turn may queue behind the command's and run
+	// on the goroutine that dispatched the command. That must be one of the
+	// loop's, never the test's, or the test blocks in the gated model.
+	if err := msgBus.PublishInbound(context.Background(), bus.InboundMessage{
 		Channel: "telegram", ChatID: "chat-u1", SenderID: "u1", Content: "/ask bob hi",
 		Peer: bus.Peer{Kind: "direct", ID: "u1"},
-	})
+	}); err != nil {
+		t.Fatalf("PublishInbound: %v", err)
+	}
 	model.waitStarted(t)
 	stop()
+	// The ask runs on a goroutine of its own, which logs as it gives up: wait
+	// for that, so it is not still logging when the test restores the logger.
+	eventually(t, "the /ask to be abandoned", func() bool {
+		return strings.Contains(logs.String(), "/ask abandoned: the service is stopping")
+	})
 	noOutbound(t, msgBus)
 }
 

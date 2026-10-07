@@ -83,12 +83,14 @@ func (p *recordingProvider) call(i int) recordedCall {
 	return p.calls[i]
 }
 
-// waitStarted fails the test unless a gated call starts in time.
+// waitStarted fails the test unless a gated call starts in time. The bound is
+// generous: an agent's first turn creates its session stores first, which can
+// take seconds on a busy disk.
 func (p *recordingProvider) waitStarted(t *testing.T) {
 	t.Helper()
 	select {
 	case <-p.started:
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("model call did not start")
 	}
 }
