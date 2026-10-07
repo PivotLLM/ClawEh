@@ -14,7 +14,7 @@ export const CUSTOM_MODEL = "__custom__"
 // Models surfaced as "(Recommended)" in the wizard (and sorted to the top),
 // keyed by provider name → model id.
 export const RECOMMENDED_MODEL: Record<string, string> = {
-  "OpenRouter Chat": "deepseek/deepseek-v4-flash",
+  "OpenRouter Chat DeepSeek": "~deepseek/deepseek-flash-latest",
 }
 // Sentinel for "let the CLI use its own default model" — maps to a model whose
 // id is the CLI protocol (e.g. "antigravity-cli"), which the provider treats as

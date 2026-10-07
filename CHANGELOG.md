@@ -714,6 +714,20 @@ observe does not need an entry.
 
 ### Changed
 
+- **New installs get an updated list of built-in providers and models (all
+  disabled).** Added Claude CLI Fable, Gemini 3.8 Flash, DeepSeek Flash,
+  Grok 4.7 (default, High, Medium, None), OpenRouter Fable/Kimi/Gemini Flash/
+  GLM/GPT Terra Latest, OpenRouter GPT 6 Astra/Sol/Luna, OpenRouter DeepSeek
+  Flash/Pro Latest (on a new "OpenRouter Chat DeepSeek" provider), Bedrock
+  Opus 5.5, Sonnet 5.5 and GPT 6 Astra; Claude CLI Opus now asks for "Opus".
+  Removed older entries (Grok 4.3, DeepSeek Chat, Gemini 3.5 Flash, OpenRouter
+  DeepSeek V4, Bedrock Opus 4.8/Sonnet 4.6, Moonshot v1 8k, Nemotron 4 340b,
+  Groq and Cerebras Llama 3.3 70b, Avian Kimi k2.5, OpenRouter GPT 5.4,
+  OpenRouter Elephant, Gemini 3.1 Flash Lite Preview). The DeepSeek provider
+  sets `require_reasoning_content` and NVIDIA sets `strict_compat`. The setup
+  wizard now recommends OpenRouter DeepSeek Flash Latest. Existing
+  configurations are not changed.
+
 - **A message dropped because its recipient is offline or can't be reached
   no longer raises the "Channel send failed" alert.** A send now says why it
   failed: the channel is not configured, the channel is not running, the
