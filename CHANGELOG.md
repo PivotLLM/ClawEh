@@ -23,7 +23,7 @@ observe does not need an entry.
   `tools.tool_overrides.shell_exec` has no effect (a warning names it at
   load, Check Up shows it, and the Tools page no longer lists `shell_exec`).
   Migration: add `shell_exec` to the `tools` of each agent that should keep
-  running shell commands, or tick *Allow shell commands* on its card. Clones
+  running shell commands, or turn on *Allow shell commands* on its card. Clones
   inherit the setting; fresh temporary and human agents never have it. It
   applies on every channel and to everything acting as the agent: sub-agents,
   Maestro workers, asks, forum turns and calls with its MCP session or

@@ -17,7 +17,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   // Only per-tool (native) tools are listed here — these are the tools always in
   // the agent's context. Suites (cogmem, maestro, fusion) are all-or-nothing and
   // controlled by their own toggles below, so they are intentionally not shown.
-  // shell_exec has its own "Allow shell commands" box and is granted only by
+  // shell_exec has its own "Allow shell commands" switch and is granted only by
   // name, so it is not listed here, and every change below keeps its entry.
   const perToolTools = catalog.tools.filter(
     (t) => !t.suite && t.name !== SHELL_TOOL,

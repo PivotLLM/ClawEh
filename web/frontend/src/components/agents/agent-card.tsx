@@ -30,7 +30,6 @@ import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { noteKey, uniqueNotes } from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 
@@ -330,18 +329,18 @@ export function AgentCard({
           )}
 
           <div className="space-y-1.5">
-            <label className="flex cursor-pointer items-center gap-2 select-none">
-              <Checkbox
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-foreground text-xs font-semibold">
+                {t("agents.allowShell")}
+              </p>
+              <Switch
                 checked={shellAllowed(tools)}
                 onCheckedChange={(v) =>
-                  onToolsChange(withShellAllowed(tools, v === true))
+                  onToolsChange(withShellAllowed(tools, v))
                 }
                 aria-label={t("agents.allowShell")}
               />
-              <span className="text-foreground text-xs font-semibold">
-                {t("agents.allowShell")}
-              </span>
-            </label>
+            </div>
             <p className="text-muted-foreground text-xs">
               {t("agents.allowShellHint")}
             </p>
