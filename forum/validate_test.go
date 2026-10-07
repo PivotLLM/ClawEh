@@ -462,6 +462,13 @@ func TestValidateStaticPlaceholders(t *testing.T) {
 	cfgtWantIssue(t, err, "brief.task", "placeholder")
 	cfgtWantIssue(t, err, "layers[0].instructions", "placeholder")
 
+	// A schema's strings are real data: a pattern "<\w+>" is accepted.
+	cfg = cfgtExample(t)
+	cfg.Schemas["tag"] = cfgtRaw(`{"type":"string","pattern":"<\\w+>"}`)
+	if err := ValidateStatic(cfg); err != nil {
+		t.Errorf("a schema pattern is refused: %v", err)
+	}
+
 	for _, text := range []string{"Is a<b?", "<b>bold</b> text", "<>", "<a<b>", "<a>b>", "see <x>", "<x> first", "x"} {
 		cfg := cfgtExample(t)
 		cfg.Layers[2].Instructions = text

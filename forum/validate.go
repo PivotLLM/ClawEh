@@ -142,7 +142,7 @@ func (e *ValidationError) Error() string {
 //
 // Placeholders
 //   - no string anywhere in the configuration (inline JSON source values
-//     and schemas included) is entirely a template placeholder "<...>"
+//     included, schemas excluded) is entirely a template placeholder "<...>"
 //     (isPlaceholder).
 func ValidateStatic(cfg *Config) error {
 	v := &staticValidator{cfg: cfg, layerIndex: map[string]int{}}
@@ -297,7 +297,7 @@ func (v *staticValidator) run() {
 }
 
 // placeholders reports every string in the configuration, at any depth
-// (inline JSON source values and schemas included), that is still a
+// (inline JSON source values included; schemas excluded), that is still a
 // template placeholder (isPlaceholder). It walks the configuration's JSON
 // form, so a field added later is covered without a change here.
 func (v *staticValidator) placeholders() {
@@ -305,10 +305,11 @@ func (v *staticValidator) placeholders() {
 	if err != nil {
 		return // only an invalid inline value or schema, which Decode reports
 	}
-	var doc any
+	var doc map[string]any
 	if json.Unmarshal(raw, &doc) != nil {
 		return
 	}
+	delete(doc, "schemas") // JSON Schema strings (a pattern "<\w+>") are real data
 	v.placeholderWalk("", doc)
 }
 
