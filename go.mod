@@ -3,7 +3,7 @@ module github.com/PivotLLM/ClawEh
 go 1.27.1
 
 require (
-	github.com/PivotLLM/MCPFusion v0.4.3
+	github.com/PivotLLM/MCPFusion v0.4.4
 	github.com/PivotLLM/Maestro v0.5.5
 	github.com/PivotLLM/cogmem v0.0.5
 	github.com/PivotLLM/ctxengine v0.0.7
