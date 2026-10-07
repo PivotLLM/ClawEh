@@ -380,7 +380,8 @@ observe does not need an entry.
   finishes; end your turn instead of checking status.", and the guide tells
   the agent to wait for the notice rather than poll, and to run the same
   forum on new material by changing only its source and launching again.
-  `forum_validate` reports every problem at once. The transcript quotes each
+  `forum_validate` reports every problem at once, including any value that
+  is still an unfilled `<...>` template placeholder. The transcript quotes each
   output in a code block and, for a layer read anonymously, shows the letter
   next to the author ("Bob (Response A)"). `forum_results` names the
   transcript only once it exists, and lists the other layers' outputs when

@@ -139,6 +139,11 @@ func (e *ValidationError) Error() string {
 //   - schema, when set, names a configured schema that is a JSON object
 //     (it becomes the required `assessment`);
 //   - allow_directed is a plain flag; nothing further to check statically.
+//
+// Placeholders
+//   - no string anywhere in the configuration (inline JSON source values
+//     and schemas included) is entirely a template placeholder "<...>"
+//     (isPlaceholder).
 func ValidateStatic(cfg *Config) error {
 	v := &staticValidator{cfg: cfg, layerIndex: map[string]int{}}
 	v.run()
@@ -288,6 +293,56 @@ func (v *staticValidator) run() {
 	v.limits()
 	v.layers()
 	v.resultLayers()
+	v.placeholders()
+}
+
+// placeholders reports every string in the configuration, at any depth
+// (inline JSON source values and schemas included), that is still a
+// template placeholder (isPlaceholder). It walks the configuration's JSON
+// form, so a field added later is covered without a change here.
+func (v *staticValidator) placeholders() {
+	raw, err := json.Marshal(v.cfg)
+	if err != nil {
+		return // only an invalid inline value or schema, which Decode reports
+	}
+	var doc any
+	if json.Unmarshal(raw, &doc) != nil {
+		return
+	}
+	v.placeholderWalk("", doc)
+}
+
+func (v *staticValidator) placeholderWalk(path string, node any) {
+	switch n := node.(type) {
+	case string:
+		if isPlaceholder(n) {
+			v.addf(path, "is still a placeholder; replace it.")
+		}
+	case []any:
+		for i, e := range n {
+			v.placeholderWalk(fmt.Sprintf("%s[%d]", path, i), e)
+		}
+	case map[string]any:
+		for _, k := range sortedKeys(n) {
+			child := k
+			if path != "" {
+				child = path + "." + k
+			}
+			v.placeholderWalk(child, n[k])
+		}
+	}
+}
+
+// isPlaceholder reports whether s, trimmed of surrounding whitespace, is
+// entirely a template placeholder: "<", at least one character, ">", with
+// no other angle bracket inside ("<a model from forum_models>"). Text that
+// merely contains angle brackets ("Is a<b?", "<b>bold</b> text") is not.
+func isPlaceholder(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) <= 2 || s[0] != '<' || s[len(s)-1] != '>' {
+		return false
+	}
+	return !strings.ContainsAny(s[1:len(s)-1], "<>")
 }
 
 func (v *staticValidator) brief() {

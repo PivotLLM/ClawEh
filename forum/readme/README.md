@@ -132,3 +132,5 @@ To start another forum from this one, `forum_config_export` it and
 The templates are complete examples: `forum_config_template` with one of the
 names below puts it in a forum's configuration, and `forum_readme` with
 `template` shows it.
+Text in the form `<...>` is a placeholder to replace. Never use that form
+for real content: validation refuses any value that is entirely `<...>`.

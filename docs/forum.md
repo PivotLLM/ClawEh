@@ -186,8 +186,11 @@ A template's models are placeholders such as `"<a model from forum_models>"`;
 the `writing` template's topic is a source `file` whose path is a `<...>`
 placeholder (so the next topic is one `forum_config_update` of that path),
 and the `council` template's question is an inline `<...>` placeholder.
-Validation names every participant whose model is still a placeholder and a
-topic file that cannot be read. The guide and
+Text in the form `<...>` is always a placeholder to replace and never real
+content: validation refuses any value, anywhere in the configuration, that is
+entirely `<...>` (after trimming spaces), naming its path, such as
+`sources.question.inline: is still a placeholder; replace it.`. Text that
+only contains angle brackets, such as `Is a<b?`, is unaffected. The guide and
 templates are embedded in the binary (`forum/readme/`).
 
 ## Running it

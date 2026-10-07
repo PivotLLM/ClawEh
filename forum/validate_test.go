@@ -423,3 +423,51 @@ func TestWithinShare(t *testing.T) {
 		}
 	}
 }
+
+// Any string of the configuration that is entirely a "<...>" placeholder is
+// refused with its path; text that only contains angle brackets is not.
+func TestValidateStaticPlaceholders(t *testing.T) {
+	refused := []struct {
+		name   string
+		mutate func(c *Config)
+		path   string
+	}{
+		{"layer instructions", func(c *Config) { c.Layers[2].Instructions = "<x>" }, "layers[2].instructions"},
+		{"padded success criterion", func(c *Config) { c.Brief.SuccessCriteria = []string{"ok", " \t<the criterion>\n"} }, "brief.success_criteria[1]"},
+		{"brief purpose", func(c *Config) { c.Brief.Purpose = "<purpose>" }, "brief.purpose"},
+		{"forum name", func(c *Config) { c.Name = "<name>" }, "name"},
+		{"participant model", func(c *Config) { c.Participants["chair"] = Participant{Model: "<a model from forum_models>"} }, "participants.chair.model"},
+		{"participant name", func(c *Config) { c.Participants["chair"] = Participant{Model: "default", Name: "<name>"} }, "participants.chair.name"},
+		{"source file", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "<path of the topic>"} }, "sources.report.file"},
+		{"inline text", func(c *Config) {
+			c.Sources["report"] = Source{Decode: FormatMarkdown, Inline: cfgtRaw(`"<the question>"`)}
+		}, "sources.report.inline"},
+		{"string inside inline json", func(c *Config) {
+			c.Sources["report"] = Source{Decode: FormatJSON, Inline: cfgtRaw(`{"items":[1,"<item>"]}`)}
+		}, "sources.report.inline.items[1]"},
+	}
+	for _, tt := range refused {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := cfgtExample(t)
+			tt.mutate(cfg)
+			cfgtWantIssue(t, ValidateStatic(cfg), tt.path, "is still a placeholder; replace it.")
+		})
+	}
+
+	// Every placeholder is listed at once.
+	cfg := cfgtExample(t)
+	cfg.Brief.Task = "<task>"
+	cfg.Layers[0].Instructions = "<x>"
+	err := ValidateStatic(cfg)
+	cfgtWantIssue(t, err, "brief.task", "placeholder")
+	cfgtWantIssue(t, err, "layers[0].instructions", "placeholder")
+
+	for _, text := range []string{"Is a<b?", "<b>bold</b> text", "<>", "<a<b>", "<a>b>", "see <x>", "<x> first", "x"} {
+		cfg := cfgtExample(t)
+		cfg.Layers[2].Instructions = text
+		cfg.Sources["report"] = Source{Decode: FormatMarkdown, Inline: cfgtRaw(`"` + text + `"`)}
+		if err := ValidateStatic(cfg); err != nil {
+			t.Errorf("%q is refused: %v", text, err)
+		}
+	}
+}

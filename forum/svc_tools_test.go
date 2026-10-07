@@ -854,9 +854,13 @@ func TestReadmeTemplatesInStep(t *testing.T) {
 // templateModelPlaceholder matches the model placeholders of the templates.
 var templateModelPlaceholder = regexp.MustCompile(`"<(?:a model|model \d) from forum_models>"`)
 
-// A template passes forum_validate once its model and file placeholders
-// are filled; unfilled, validation names every participant whose model is
-// a placeholder and every source whose file is one.
+// templatePlaceholder matches any JSON string of a template that is
+// entirely a "<...>" placeholder.
+var templatePlaceholder = regexp.MustCompile(`"\s*<[^<>"]+>\s*"`)
+
+// A template passes forum_validate once its placeholders are filled;
+// unfilled, validation reports every placeholder, naming every participant
+// whose model is one and every source whose file or inline text is one.
 func TestReadmeTemplatesValidate(t *testing.T) {
 	st := svcToolSetup(t)
 	for _, tpl := range templates {
@@ -878,26 +882,38 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 			id := st.newForum("")
 			st.ok("config_template", map[string]any{"id": id, "name": tpl.name})
 			msg := st.refused("validate", map[string]any{"id": id}, "participants.")
+			if got, want := strings.Count(msg, "is still a placeholder; replace it."), len(templatePlaceholder.FindAllString(raw, -1)); got != want {
+				t.Errorf("validation reports %d placeholders, the template has %d:\n%s", got, want, msg)
+			}
 			fill := map[string]any{}
 			for pid := range placeholders {
-				if !strings.Contains(msg, "participants."+pid+".model") {
+				if !strings.Contains(msg, "participants."+pid+".model: is still a placeholder") {
 					t.Errorf("validation does not name participant %s:\n%s", pid, msg)
 				}
 				fill[pid] = map[string]any{"model": "default"}
 			}
 			sources := map[string]any{}
 			for sid, src := range cfg.Sources {
-				if !strings.HasPrefix(src.File, "<") {
-					continue
+				var inline string // stays "" for a file source
+				if src.Inline != nil && json.Unmarshal(src.Inline, &inline) != nil {
+					t.Fatalf("source %s: inline is not a string", sid)
 				}
-				if !strings.Contains(msg, "sources."+sid) {
-					t.Errorf("validation does not name source %s:\n%s", sid, msg)
+				switch {
+				case isPlaceholder(src.File):
+					if !strings.Contains(msg, "sources."+sid+".file: is still a placeholder") {
+						t.Errorf("validation does not name source %s:\n%s", sid, msg)
+					}
+					file := sid + ".md"
+					if err := os.WriteFile(filepath.Join(st.e.workspace, file), []byte("Alice and Bob.\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					sources[sid] = map[string]any{"file": file}
+				case isPlaceholder(inline):
+					if !strings.Contains(msg, "sources."+sid+".inline: is still a placeholder") {
+						t.Errorf("validation does not name source %s:\n%s", sid, msg)
+					}
+					sources[sid] = map[string]any{"inline": "Should Alice or Bob <b>chair</b> the meeting, given a<b?"}
 				}
-				file := sid + ".md"
-				if err := os.WriteFile(filepath.Join(st.e.workspace, file), []byte("Alice and Bob.\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				sources[sid] = map[string]any{"file": file}
 			}
 			st.ok("config_update", map[string]any{"id": id, "changes": map[string]any{"participants": fill, "sources": sources}})
 			if out := st.ok("validate", map[string]any{"id": id}); out != "The configuration is valid." {
