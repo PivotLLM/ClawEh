@@ -1163,6 +1163,7 @@ observe does not need an entry.
 
 ### Fixed
 
+- Deleting every provider or model in the WebUI no longer brings the built-in list back after a restart.
 - **Tool arguments that take any JSON object are declared as such.** A tool
   parameter that is an object with no listed members (such as
   `forum_config_update`'s `changes`, `forum_config_import`'s `config` and

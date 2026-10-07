@@ -104,7 +104,7 @@ type Config struct {
 	Session       SessionConfig       `json:"session,omitempty"`
 	AgentMentions AgentMentionConfig  `json:"agent_mentions,omitempty"`
 	Channels      ChannelsConfig      `json:"channels"`
-	Providers     []Provider          `json:"providers,omitempty"`
+	Providers     []Provider          `json:"providers"`
 	Models        []ModelConfig       `json:"models"` // Models, each reached through a named provider
 	Summarization SummarizationConfig `json:"summarization,omitempty"`
 	Gateway       GatewayConfig       `json:"gateway"`
@@ -138,14 +138,21 @@ type Config struct {
 }
 
 // MarshalJSON implements custom JSON marshaling for Config to omit the session
-// section when empty. The providers list omits naturally via its slice tag.
+// section when empty, and to write an empty providers or models list as [],
+// never null or absent: LoadConfig fills a list whose key is absent with the
+// built-in defaults, so an operator who deleted every entry must have that
+// choice written down.
 func (c *Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
-		Session *SessionConfig `json:"session,omitempty"`
+		Session   *SessionConfig `json:"session,omitempty"`
+		Providers []Provider     `json:"providers"`
+		Models    []ModelConfig  `json:"models"`
 		*Alias
 	}{
-		Alias: (*Alias)(c),
+		Providers: nonNilSlice(c.Providers),
+		Models:    nonNilSlice(c.Models),
+		Alias:     (*Alias)(c),
 	}
 
 	// Only include session if not empty
@@ -169,7 +176,31 @@ type AgentsConfig struct {
 	// <data_dir>/common (see Config.ResolveCommonDir).
 	CommonDir string        `json:"common_dir,omitempty" env:"CLAW_AGENTS_COMMON_DIR"`
 	Defaults  AgentDefaults `json:"defaults"`
-	List      []AgentConfig `json:"list,omitempty"`
+	// List is never omitted: LoadConfig fills an absent list with the built-in
+	// default agent, so an emptied list is written as [] (see MarshalJSON).
+	List []AgentConfig `json:"list"`
+}
+
+// MarshalJSON writes an empty agent list as [], never null; see List.
+func (a AgentsConfig) MarshalJSON() ([]byte, error) {
+	type Alias AgentsConfig
+	aux := struct {
+		List []AgentConfig `json:"list"`
+		Alias
+	}{
+		List:  nonNilSlice(a.List),
+		Alias: Alias(a),
+	}
+	return json.Marshal(aux)
+}
+
+// nonNilSlice returns s, or an empty slice when s is nil, so it encodes as []
+// rather than null.
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // SummarizationConfig is the global, deployment-wide summarization model chain.
