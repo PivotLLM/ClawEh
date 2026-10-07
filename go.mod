@@ -5,9 +5,9 @@ go 1.27.1
 require (
 	github.com/PivotLLM/MCPFusion v0.4.4
 	github.com/PivotLLM/Maestro v0.5.5
-	github.com/PivotLLM/cogmem v0.0.5
-	github.com/PivotLLM/ctxengine v0.0.7
-	github.com/PivotLLM/spawnllm v0.1.15
+	github.com/PivotLLM/cogmem v0.0.6
+	github.com/PivotLLM/ctxengine v0.0.8
+	github.com/PivotLLM/spawnllm v0.1.16
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.5
