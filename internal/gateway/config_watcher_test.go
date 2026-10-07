@@ -202,12 +202,12 @@ func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 60 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
-	// Let the watcher capture its baseline against the seed file before the first
-	// real change, so A is reliably detected as new.
-	time.Sleep(3 * interval)
+	// The watcher takes the seed file as its baseline before the first real
+	// change, so A is reliably detected as new (markApplied returns once it has).
+	markApplied(configFileStateOf(path))
 
 	// First change A is delivered into the cap-1 buffer; we intentionally do NOT
 	// read it yet, simulating a consumer still busy with a prior reload. Poll until
@@ -283,9 +283,9 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 50 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
 	defer stop()
-	time.Sleep(3 * interval) // let the watcher capture its baseline
+	markApplied(configFileStateOf(path)) // the seed file is the watcher's baseline
 
 	if err := os.WriteFile(path, []byte(danglingRefConfigJSON("first")), 0o600); err != nil {
 		t.Fatal(err)
@@ -382,9 +382,9 @@ func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 50 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
+	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
 	defer stop()
-	time.Sleep(3 * interval)
+	markApplied(configFileStateOf(path)) // the seed file is the watcher's baseline
 
 	body := `{"models":[],"agents":{"defaults":{"models":[]}},
 		"bindings":[{"agent_id":"main","default":true,"match":{"channel":""}}]}`
