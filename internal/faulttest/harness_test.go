@@ -39,7 +39,11 @@ const (
 	// (agent/loop_turn.go).
 	compressionNotice = "Context window exceeded. Compressing history and retrying..."
 
-	turnWait = 5 * time.Second
+	// turnWait bounds every wait for something the loop does. A wait ends as
+	// soon as it happens, so the bound only matters when it never does; it
+	// is generous because a turn's session writes can stall for seconds on a
+	// busy disk (the whole test suite runs in parallel).
+	turnWait = 30 * time.Second
 	quiet    = 300 * time.Millisecond
 )
 
