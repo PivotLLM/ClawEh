@@ -86,9 +86,12 @@ func inbound(chat, id, content string) bus.InboundMessage {
 }
 
 // nextOutbound returns the next reply the loop published, or fails the test.
+// The bound is generous: it only matters when no reply comes, and an agent's
+// first turn creates its session stores, which can take seconds on a busy
+// disk.
 func nextOutbound(t *testing.T, msgBus *bus.MessageBus) bus.OutboundMessage {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, ok := msgBus.SubscribeOutbound(ctx)
 	if !ok {
