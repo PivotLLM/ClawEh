@@ -535,7 +535,7 @@ func TestHumanAgent_NoModelPathsNoTools(t *testing.T) {
 	}
 	al.RegisterTool(&noopWriteFile{})
 	conn := &climcp.ServerConnection{Name: "srv", Tools: []mcpgo.Tool{mcpgo.NewTool("lookup")}}
-	if n := registerMCPServerToolsOn(bob, nil, "srv", conn); n != 0 {
+	if n := len(mcpServerToolEntries(bob, nil, "srv", conn)); n != 0 {
 		t.Errorf("MCP refresh registered %d tools on a human agent", n)
 	}
 	if n := bob.Tools.Count(); n != 0 {

@@ -182,6 +182,34 @@ func (r *ToolRegistry) RemoveByPrefix(prefix string) int {
 	return removed
 }
 
+// ReplaceByPrefix swaps every registered tool whose name starts with prefix for
+// entries, in one step: a concurrent reader (a turn listing its tools, a tool
+// call) sees the old set or the new one, never neither. An entry whose name
+// lacks the prefix is registered all the same; the caller keeps them in step.
+// Returns how many tools were removed. The version is bumped when anything was
+// removed or added.
+func (r *ToolRegistry) ReplaceByPrefix(prefix string, entries []ToolEntry) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			removed++
+		}
+	}
+	for i := range entries {
+		entry := entries[i]
+		r.tools[entry.Tool.Name()] = &entry
+	}
+	if removed > 0 || len(entries) > 0 {
+		r.version.Add(1)
+	}
+	logger.DebugCF("tools", "Replaced tools by prefix",
+		map[string]any{"prefix": prefix, "removed": removed, "added": len(entries)})
+	return removed
+}
+
 // PromoteTools atomically reveals the named non-core tools with the given TTL,
 // expands to whole reveal-together groups, then prunes the revealed set back to
 // visibleBudget by hiding the lowest-remaining-TTL tools. Holding the lock across

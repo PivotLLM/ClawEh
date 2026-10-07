@@ -267,26 +267,25 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 	return nil
 }
 
-// registerMCPServerTools replaces one server's tools on every agent: the
-// server's previous registrations are removed first, then the current list is
-// registered onto each agent whose mcp_tools allow-list admits it, so a renamed
-// or removed tool disappears and an unchanged one carries a fresh definition.
-// Returns the registrations removed and added. Split out so the background
-// retry loop and the tools-changed handler can register just the server
-// concerned (registering all servers would re-register — and log-warn over —
-// live ones).
+// registerMCPServerTools replaces one server's tools on every agent with its
+// current list (none when conn is nil: the server is gone), gated by each
+// agent's mcp_tools allow-list, so a renamed or removed tool disappears and an
+// unchanged one carries a fresh definition. Returns the registrations removed
+// and added. Split out so the background retry loop and the tools-changed
+// handler can register just the server concerned (registering all servers
+// would re-register — and log-warn over — live ones).
 //
-// Removal is by name prefix ("mcp_<server>_"), which a server whose sanitized
-// name extends this one's ("alice" and "alice_docs") shares, so such servers
-// are put back afterwards, shortest prefix first so a later pass never undoes
-// an earlier one.
+// Each agent's registry is swapped in one step (ToolRegistry.ReplaceByPrefix),
+// so a turn running meanwhile never finds the server's tools missing. The swap
+// is by name prefix ("mcp_<server>_"), which a server whose sanitized name
+// extends this one's ("alice" and "alice_docs") shares, so such servers' tools
+// are part of the new set, shortest prefix first so a longer one wins a name
+// both produce.
 func (al *AgentLoop) registerMCPServerTools(
 	mgr *mcp.Manager,
 	serverName string,
 	conn *mcp.ServerConnection,
 ) (removed, added int) {
-	removed, added = al.replaceMCPServerTools(mgr, serverName, conn)
-
 	prefix := tools.MCPServerPrefix(serverName)
 	servers := mgr.GetServers()
 	var siblings []string
@@ -298,64 +297,46 @@ func (al *AgentLoop) registerMCPServerTools(
 	sort.Slice(siblings, func(i, j int) bool {
 		return len(tools.MCPServerPrefix(siblings[i])) < len(tools.MCPServerPrefix(siblings[j]))
 	})
-	for _, name := range siblings {
-		al.replaceMCPServerTools(mgr, name, servers[name])
+
+	reg := al.GetRegistry()
+	for _, agentID := range reg.All() {
+		agent, ok := reg.Get(agentID)
+		if !ok || agent.Tools == nil {
+			continue
+		}
+		var entries []tools.ToolEntry
+		if conn != nil {
+			entries = mcpServerToolEntries(agent, mgr, serverName, conn)
+		}
+		for _, name := range siblings {
+			entries = append(entries, mcpServerToolEntries(agent, mgr, name, servers[name])...)
+		}
+		removed += agent.Tools.ReplaceByPrefix(prefix, entries)
+		added += len(entries)
 	}
 	return removed, added
 }
 
-// removeMCPServerTools drops one server's tools from every agent registry and
-// returns how many registrations went.
-func (al *AgentLoop) removeMCPServerTools(serverName string) int {
-	removed := 0
-	reg := al.GetRegistry()
-	prefix := tools.MCPServerPrefix(serverName)
-	for _, agentID := range reg.All() {
-		if agent, ok := reg.Get(agentID); ok && agent.Tools != nil {
-			removed += agent.Tools.RemoveByPrefix(prefix)
-		}
-	}
-	return removed
-}
-
-// replaceMCPServerTools is registerMCPServerTools for one server alone: remove
-// its previous registrations, then register its current list.
-func (al *AgentLoop) replaceMCPServerTools(
-	mgr *mcp.Manager,
-	serverName string,
-	conn *mcp.ServerConnection,
-) (removed, added int) {
-	removed = al.removeMCPServerTools(serverName)
-	reg := al.GetRegistry()
-	for _, agentID := range reg.All() {
-		if agent, ok := reg.Get(agentID); ok {
-			added += registerMCPServerToolsOn(agent, mgr, serverName, conn)
-		}
-	}
-	return removed, added
-}
-
-// registerMCPToolsOn registers every connected server's tools on one agent,
-// for an agent built after MCP was initialized (a temporary agent). No-op
-// while MCP is not running.
+// registerMCPToolsOn replaces every MCP tool on one agent with the connected
+// servers' current tools (none while MCP is not running), for an agent built
+// after MCP was initialized (a temporary agent).
 func (al *AgentLoop) registerMCPToolsOn(agent *AgentInstance) {
-	mgr := al.mcp.peekManager()
-	if mgr == nil {
-		return
+	var entries []tools.ToolEntry
+	if mgr := al.mcp.peekManager(); mgr != nil {
+		for serverName, conn := range mgr.GetServers() {
+			entries = append(entries, mcpServerToolEntries(agent, mgr, serverName, conn)...)
+		}
 	}
-	for serverName, conn := range mgr.GetServers() {
-		registerMCPServerToolsOn(agent, mgr, serverName, conn)
-	}
+	agent.Tools.ReplaceByPrefix(tools.MCPToolPrefix, entries)
 }
 
-// registerMCPServerToolsOn registers one server's tools on one agent, gated
-// by its mcp_tools allow-list, and returns how many it registered. A fresh
-// temporary agent gets none.
-func registerMCPServerToolsOn(agent *AgentInstance, mgr *mcp.Manager, serverName string, conn *mcp.ServerConnection) int {
+// mcpServerToolEntries returns one server's tools as registry entries for one
+// agent, gated by its mcp_tools allow-list. A fresh temporary agent gets none.
+func mcpServerToolEntries(agent *AgentInstance, mgr *mcp.Manager, serverName string, conn *mcp.ServerConnection) []tools.ToolEntry {
 	if agent.toolless() {
-		return 0
+		return nil
 	}
-	added := 0
+	var entries []tools.ToolEntry
 	for _, tool := range conn.Tools {
 		// Gate on the dedicated per-agent MCP allow-list (mcp_tools), which
 		// matches <server>_<tool> by equality-or-prefix. This is separate
@@ -371,14 +352,16 @@ func registerMCPServerToolsOn(agent *AgentInstance, mgr *mcp.Manager, serverName
 		// discovery is on (decided during provider registration and stored on
 		// the instance), hide them behind search_tools; otherwise advertise.
 		// A namespace pinned via always_shown_namespaces stays visible.
+		// Hidden ones are grouped by server so a reveal-together server
+		// unlocks as a set.
 		if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
-			// Group by server so a reveal-together server unlocks as a set.
-			agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
+			entries = append(entries, tools.ToolEntry{
+				Tool: mcpTool, Group: serverName, RevealTogether: conn.RevealTogether(),
+			})
 		} else {
-			agent.Tools.Register(mcpTool)
+			entries = append(entries, tools.ToolEntry{Tool: mcpTool, IsCore: true})
 		}
 
-		added++
 		logger.DebugCF("agent", "Registered MCP tool",
 			map[string]any{
 				"agent_id": agent.ID,
@@ -387,7 +370,7 @@ func registerMCPServerToolsOn(agent *AgentInstance, mgr *mcp.Manager, serverName
 				"name":     mcpTool.Name(),
 			})
 	}
-	return added
+	return entries
 }
 
 // refreshMCPServerTools is the manager's tools-changed handler: it re-registers
@@ -403,13 +386,13 @@ func (al *AgentLoop) refreshMCPServerTools(mgr *mcp.Manager, server string) {
 		return
 	}
 
-	var removed, added, current int
-	if conn, ok := mgr.GetServer(server); ok {
+	// A server that is gone (conn nil) leaves its tools out of the new set.
+	conn, _ := mgr.GetServer(server)
+	current := 0
+	if conn != nil {
 		current = len(conn.Tools)
-		removed, added = al.registerMCPServerTools(mgr, server, conn)
-	} else {
-		removed = al.removeMCPServerTools(server)
 	}
+	removed, added := al.registerMCPServerTools(mgr, server, conn)
 	logger.InfoCF("agent", "MCP server tools re-registered",
 		map[string]any{
 			"server":               server,

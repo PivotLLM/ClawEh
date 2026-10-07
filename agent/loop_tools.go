@@ -73,7 +73,6 @@ func (al *AgentLoop) agentInserted(_ agentreg.Spec, inst *AgentInstance) {
 	}
 	al.mcp.refreshMu.Lock()
 	defer al.mcp.refreshMu.Unlock()
-	inst.Tools.RemoveByPrefix(tools.MCPToolPrefix)
 	al.registerMCPToolsOn(inst)
 }
 

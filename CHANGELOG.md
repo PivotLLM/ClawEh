@@ -1165,6 +1165,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **An agent no longer briefly loses an MCP server's tools when the server
+  reconnects or changes its tool list.** The tools were removed and then
+  registered again, so a turn running at that moment could find them missing.
+  They are now replaced in one step. Also, when a server goes away, a server
+  whose name starts with its name (`alice` and `alice_docs`) keeps its tools.
 - Deleting every provider, model or agent in the WebUI no longer brings the built-in list back after a restart.
 - **Tool arguments that take any JSON object are declared as such.** A tool
   parameter that is an object with no listed members (such as
