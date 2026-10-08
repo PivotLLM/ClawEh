@@ -654,7 +654,7 @@ func TestRouterDedupePerRecipient(t *testing.T) {
 
 func TestRouterSpecExamples(t *testing.T) {
 	t.Run("one-to-one", func(t *testing.T) {
-		// rev 3 §4: filter authors, select last_per_participant, name one to.
+		// Filter authors, select last_per_participant, name one to.
 		f := routerNewFixture(t)
 		f.routerStandardOutputs()
 		layer := f.routerConsumer("use", []string{"alice", "bob"},
@@ -686,7 +686,7 @@ func TestRouterSpecExamples(t *testing.T) {
 		}
 	})
 	t.Run("specification example: report layer", func(t *testing.T) {
-		// §7: report takes source:report, layer:review and an optional
+		// The example: report takes source:report, layer:review and an optional
 		// layer:debate; with debate disabled the optional route is missing.
 		f := routerNewFixture(t)
 		f.routerStandardOutputs()

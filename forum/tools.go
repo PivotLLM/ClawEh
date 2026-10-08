@@ -22,7 +22,7 @@ import (
 	"github.com/PivotLLM/toolspec"
 )
 
-// Seam (e): the tool definitions (spec §9). Names are bare; the host's
+// The tool definitions. Names are bare; the host's
 // aggregator mounts them under the "forum" namespace (forum_models,
 // forum_launch, ...) and gates the whole suite on the calling agent's
 // `forum` permission. The wiring into ClawEh (a tools/forum provider that

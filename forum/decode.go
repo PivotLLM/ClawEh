@@ -17,8 +17,8 @@ import (
 	"strings"
 )
 
-// Seam (a): strict decoding (spec §3: reject unknown fields and duplicate
-// keys before anything else is checked).
+// Strict decoding: unknown fields and duplicate keys are refused before
+// anything else is checked.
 
 // decodeConfig parses one configuration document strictly, in two stages, and
 // reports problems as a *ValidationError.
@@ -172,7 +172,7 @@ func jsonTypeName(t reflect.Type) string {
 // checkDuplicateKeys walks the token stream of data and fails on the first
 // object that repeats a key, naming the key and its JSON path (for example
 // "participants.alice"). encoding/json silently keeps the last duplicate, so
-// this walk is what enforces §3. It does not decode into Go values and
+// this walk is what refuses duplicates. It does not decode into Go values and
 // accepts any well-formed JSON; malformed JSON is reported as a syntax error.
 func checkDuplicateKeys(data []byte) error {
 	w := &jsonWalker{dec: newTokenDecoder(data), data: data}

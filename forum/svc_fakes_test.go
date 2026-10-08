@@ -22,8 +22,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Test helpers of seam (e), prefixed svc so they cannot collide with the
-// helpers of the other seams in the same package.
+// Test helpers of the service tests, prefixed svc so they cannot collide with the
+// helpers of the other tests in the same package.
 
 // svcConfigJSON has an existing participant (alice), a clone with a model
 // override (bob), a fresh moderator (editor), a file, an inline text and an
@@ -197,7 +197,7 @@ func (a *svcAgents) setDeleteErr(id string, err error) {
 }
 
 // svcNotifier records completion notices and, at each one, checks the
-// order §9 requires: result.json is on disk and the forum's temporary
+// order completion requires: result.json is on disk and the forum's temporary
 // agents are already deleted (no agents marker left).
 type svcNotifier struct {
 	base string

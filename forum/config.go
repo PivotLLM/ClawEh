@@ -12,15 +12,14 @@ import (
 	"strings"
 )
 
-// Seam (a): configuration contract (spec rev 5 §3, §3.1, §3.2; rev 3 §4
-// routes and §6 moderator, which rev 5 inherits). Field names and JSON tags
-// follow the spec exactly. Decoding is in decode.go, validation in
-// validate.go.
+// The configuration contract (DESIGN.md §2): the types an agent's forum.json
+// decodes into. The JSON tags are the configuration's field names.
+// Decoding is in decode.go, validation in validate.go.
 
 // configVersion is the only format version this package accepts.
 const configVersion = 1
 
-// Config is one complete forum procedure (§3).
+// Config is one complete forum procedure.
 type Config struct {
 	Version      int                        `json:"version"`
 	Name         string                     `json:"name,omitempty"`
@@ -31,14 +30,14 @@ type Config struct {
 	Layers       []Layer                    `json:"layers"`
 	Limits       Limits                     `json:"limits"`
 	// Seed drives random routing; nil means "generate at launch and persist
-	// in snapshot.json" (§3).
+	// in snapshot.json".
 	Seed *int64 `json:"seed,omitempty"`
 	// ResultLayers are the layer IDs included in the result, in order; empty
-	// means the last enabled layer (§3).
+	// means the last enabled layer.
 	ResultLayers []string `json:"result_layers,omitempty"`
 }
 
-// Brief is shared with every participant (§3). Secrets belong in
+// Brief is shared with every participant. Secrets belong in
 // selectively routed sources, never here.
 type Brief struct {
 	Purpose         string   `json:"purpose"`
@@ -50,7 +49,7 @@ type Brief struct {
 // Format is a content format: how a source is decoded or an output is kept.
 type Format string
 
-// Content formats (§3 `decode`, §3.2 `output.format`).
+// Content formats (a source's `decode`, a layer's `output.format`).
 const (
 	FormatText     Format = "text"
 	FormatMarkdown Format = "markdown"
@@ -70,7 +69,7 @@ func (f Format) Extension() string {
 	return ".txt"
 }
 
-// Source is subject matter routed into layers (§3). Exactly one of Inline
+// Source is subject matter routed into layers. Exactly one of Inline
 // and File is set.
 type Source struct {
 	Decode Format `json:"decode"`
@@ -81,7 +80,7 @@ type Source struct {
 	// File is a path the launching agent's file tools would read: relative
 	// to its workspace, or under one of its mounts (maestro/..., a
 	// configured mount); the host resolves it (preflightEnv.ResolveFile).
-	// It is read once at launch and copied into sources/ (§8), so later
+	// It is read once at launch and copied into sources/, so later
 	// edits do not affect a running forum.
 	File string `json:"file,omitempty"`
 }
@@ -89,21 +88,21 @@ type Source struct {
 // ParticipantForm is which of the three participant forms an entry uses.
 type ParticipantForm string
 
-// Participant forms (§3.1).
+// Participant forms.
 const (
 	FormExisting ParticipantForm = "existing" // `agent`: the real agent
 	FormClone    ParticipantForm = "clone"    // `clone`: temporary copy, deleted when the forum ends
 	FormFresh    ParticipantForm = "fresh"    // `model`: temporary agent with no tools
 )
 
-// Participant is one entry of `participants` (§3.1). Exactly one of Agent,
+// Participant is one entry of `participants`. Exactly one of Agent,
 // Clone or Model (without Agent/Clone) selects the form.
 type Participant struct {
 	Agent string `json:"agent,omitempty"`
 	Clone string `json:"clone,omitempty"`
 	// Model is the fresh participant's model (one of the launching agent's
 	// models), or for the clone form an optional override that must be one
-	// of the source agent's models (§2.4). An existing agent always runs on
+	// of the source agent's models. An existing agent always runs on
 	// its own model; `model` on the `agent` form is rejected.
 	Model        string    `json:"model,omitempty"`
 	SystemPrompt string    `json:"system_prompt,omitempty"`
@@ -130,7 +129,7 @@ func (p Participant) Form() ParticipantForm {
 	}
 }
 
-// Delivery is when a layer publishes its turns (§3.2, §5).
+// Delivery is when a layer publishes its turns.
 type Delivery string
 
 // Delivery modes.
@@ -139,7 +138,7 @@ const (
 	DeliveryPerTurn    Delivery = "per_turn"    // each turn is committed and published before the next is sent
 )
 
-// Layer is one ordered interaction (§3.2). The array order in Config.Layers
+// Layer is one ordered interaction. The array order in Config.Layers
 // is the execution order; IDs are stable and never renumbered.
 type Layer struct {
 	ID string `json:"id"`
@@ -156,7 +155,7 @@ type Layer struct {
 	MaxRounds int      `json:"max_rounds"`
 	// MaxCalls is this layer's optional budget: messages sent to its
 	// participants and moderator, repairs included. Exhausting it ends the
-	// layer with reason EndCallLimit (§3.2).
+	// layer with reason EndCallLimit.
 	MaxCalls  int        `json:"max_calls,omitempty"`
 	Output    Output     `json:"output"`
 	Moderator *Moderator `json:"moderator,omitempty"`
@@ -165,7 +164,7 @@ type Layer struct {
 // IsEnabled applies the default of true.
 func (l Layer) IsEnabled() bool { return l.Enabled == nil || *l.Enabled }
 
-// Output is a layer's output contract (§3.2; rev 3 §4 projection rules).
+// Output is a layer's output contract (DESIGN.md §7.6 for `share`).
 type Output struct {
 	Format Format `json:"format"`
 	// Schema names an entry of Config.Schemas; JSON only.
@@ -179,7 +178,7 @@ type Output struct {
 	Share *[]string `json:"share,omitempty"`
 }
 
-// Route selection, view and distribution values (rev 3 §4).
+// Route selection, view and distribution values.
 type (
 	Select     string
 	View       string
@@ -199,7 +198,7 @@ const (
 	DistributeRandom          Distribute = "random"           // shuffled records dealt round-robin to the recipients
 )
 
-// Route is one input of a layer or of a moderator (rev 3 §4).
+// Route is one input of a layer or of a moderator.
 type Route struct {
 	// From is "source:<id>" or "layer:<id>"; a layer must be earlier in the
 	// configuration (backward only).
@@ -251,7 +250,7 @@ func (r Route) Producer() (RouteKind, string, error) {
 }
 
 // ConversationView is how much of the layer's conversation the moderator
-// is shown (rev 3 §6).
+// is shown.
 type ConversationView string
 
 // Conversation views.
@@ -260,7 +259,7 @@ const (
 	ConversationViewFull      ConversationView = "full"      // full current-layer outputs
 )
 
-// Moderator configures a layer's moderator (rev 5 §6, rev 3 §6). Its
+// Moderator configures a layer's moderator. Its
 // participant must not be one of the layer's participants.
 type Moderator struct {
 	Participant string `json:"participant"`
@@ -276,11 +275,11 @@ type Moderator struct {
 	Schema string `json:"schema,omitempty"`
 	// AllowDirected adds the optional engine-owned `directed` array to the
 	// effective decision schema, letting the moderator address the layer's
-	// participants individually (§6 directed messages).
+	// participants individually (directed messages).
 	AllowDirected bool `json:"allow_directed,omitempty"`
 }
 
-// Limits protect against a runaway forum (§3). All five are required and
+// Limits protect against a runaway forum. All five are required and
 // positive; host ceilings (Service option WithHostLimits) are enforced by
 // runPreflight.
 type Limits struct {
@@ -295,7 +294,7 @@ type Limits struct {
 	MaxParallelCalls   int `json:"max_parallel_calls"`
 }
 
-// DecisionKind is the engine-owned moderator verdict (§6).
+// DecisionKind is the engine-owned moderator verdict.
 type DecisionKind string
 
 // Moderator decisions.
@@ -305,7 +304,7 @@ const (
 	DecisionStop     DecisionKind = "STOP"  // ends the layer
 )
 
-// Decision is the moderator's JSON reply (rev 3 §6). Decision, Reason,
+// Decision is the moderator's JSON reply. Decision, Reason,
 // Guidance and Directed are engine-owned; Assessment follows
 // Moderator.Schema. CONTINUE and STOP require null guidance, GUIDE a
 // nonempty one.
@@ -319,7 +318,7 @@ type Decision struct {
 
 // DirectedMessage is a private note from the moderator to one participant,
 // delivered inside that participant's next turn of this forum and never
-// written to the transcript (§6).
+// written to the transcript.
 type DirectedMessage struct {
 	To   string `json:"to"`
 	Text string `json:"text"`
@@ -352,7 +351,7 @@ func valueList[T ~string](values []T) string {
 	return strings.Join(parts, ", ")
 }
 
-// configIDPattern is the configuration ID syntax (§3): letters, digits,
+// configIDPattern is the configuration ID syntax: letters, digits,
 // underscore and hyphen, not starting with a digit.
 var configIDPattern = regexp.MustCompile(`^[A-Za-z_-][A-Za-z0-9_-]*$`)
 
@@ -394,7 +393,7 @@ func (c *Config) EffectiveResultLayers() []string {
 }
 
 // effectiveModeratorSchema builds the decision schema the moderator of
-// layer is held to (rev 3 §6): a closed object with required `decision`
+// layer is held to: a closed object with required `decision`
 // (enum CONTINUE, GUIDE, STOP), `reason` (string) and `guidance` (string
 // or null); a required `assessment` holding assessment (the schema named
 // by Moderator.Schema) when that is set; and, when AllowDirected is set,

@@ -13,12 +13,11 @@ import (
 	"unicode"
 )
 
-// Shared contract: the record types written to and read from a forum
-// directory (spec §8, rev 3 §8) and the derived State. Every seam reads
-// these; the store writes them. Changing a field here is a cross-seam
-// change and is agreed between owners first (DESIGN.md).
+// The record types written to and read from a forum directory, and the
+// derived State (DESIGN.md §4). Every part of the package reads them; the
+// store writes them.
 
-// Status is a forum's lifecycle state (§9).
+// Status is a forum's lifecycle state.
 type Status string
 
 // Run states. The last four are terminal. StatusNew is a forum's status
@@ -48,11 +47,12 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// EndReason says why a layer or the run ended (§3.2, §5, §8).
+// EndReason says why a layer or the run ended.
 type EndReason string
 
 // End reasons. EndRoundLimit, EndCallLimit and EndModeratorStop end a
-// layer (§3.2, §5: a layer that runs every round ends with round_limit);
+// layer (a layer that runs every round ends with round_limit, DESIGN.md
+// §7.1);
 // the others end the run.
 const (
 	EndCompleted         EndReason = "completed"          // the run: every enabled layer ended without a run-ending reason
@@ -63,15 +63,16 @@ const (
 	EndDeadline          EndReason = "deadline"           // limits.max_duration_seconds elapsed: run incomplete
 	EndAttemptsExhausted EndReason = "attempts_exhausted" // a turn used max_attempts_per_turn without a valid output: run failed
 	EndModeratorFailed   EndReason = "moderator_failed"   // the moderator produced no valid decision: run failed
-	EndParticipantGone   EndReason = "participant_gone"   // a temporary participant disappeared (§8): run failed
+	EndParticipantGone   EndReason = "participant_gone"   // a temporary participant disappeared: run failed
 	EndHostError         EndReason = "host_error"         // a transport or store error: run failed
 	EndCorrupt           EndReason = "corrupt"            // the forum's records failed verification during the run: run failed
 	EndCancelled         EndReason = "cancelled"          // forum_cancel
 )
 
 // Snapshot (snapshot.json) is everything launch resolved that a resume must
-// not recompute (rev 3 §8: resolved models, base directory, source hashes,
-// effective limits, seed, original deadline, effective moderator schemas).
+// not recompute: resolved models, base directory, source hashes, effective
+// limits, seed, original deadline, effective moderator schemas (DESIGN.md
+// §5.7).
 // It is written before the first dispatch and never changed.
 type Snapshot struct {
 	ForumID string `json:"forum_id"`
@@ -81,7 +82,7 @@ type Snapshot struct {
 	LaunchedAt    time.Time `json:"launched_at"`
 	BaseDirectory string    `json:"base_directory"`
 	// Deadline is LaunchedAt + limits.max_duration_seconds; every wait is
-	// bounded by it and restart does not extend it (§5).
+	// bounded by it and restart does not extend it.
 	Deadline time.Time `json:"deadline"`
 	Origin   Origin    `json:"origin"`
 	// ConfigDigest is the hex SHA-256 of the run's forum.json; verify
@@ -154,7 +155,7 @@ type SourceRecord struct {
 	Digest string `json:"digest"`
 }
 
-// ParticipantRecord is one entry of participants.json (§8): how a
+// ParticipantRecord is one entry of participants.json: how a
 // participant is realised for this forum. Written before the first dispatch.
 type ParticipantRecord struct {
 	ID   string          `json:"id"`
@@ -168,7 +169,7 @@ type ParticipantRecord struct {
 	// Model is the resolved model (Snapshot.Models) when one applies.
 	Model string `json:"model,omitempty"`
 	// Mode is the fresh participant's mode; FreshModeSingleShot changes what
-	// the controller sends it (§3.1).
+	// the controller sends it.
 	Mode FreshMode `json:"mode,omitempty"`
 }
 
@@ -214,7 +215,7 @@ type InputItem struct {
 // LayerInputs (layers/<id>/inputs.json) is a layer's resolved routing:
 // what each participant, and the moderator, receives from sources and
 // earlier layers. Random distribution is decided here and persisted before
-// the first dispatch, so a resume never reshuffles (§4).
+// the first dispatch, so a resume never reshuffles.
 type LayerInputs struct {
 	LayerID string `json:"layer_id"`
 	// Participants maps a participant ID to its ordered, deduplicated items.
@@ -249,9 +250,9 @@ func moderatorTurnID(round int) string {
 }
 
 // AttemptRequest (calls/<turn>/<attempt>/request.json) records exactly what
-// was sent (§8). It is written, and the attempt committed (CommitAttempt),
+// was sent. It is written, and the attempt committed (CommitAttempt),
 // before the Ask; an attempt with no reply is one whose outcome is unknown
-// (§8 restart).
+// .
 type AttemptRequest struct {
 	Layer       string    `json:"layer"`
 	Round       int       `json:"round"`
@@ -290,8 +291,8 @@ type AttemptRecord struct {
 	Reply   *AttemptReply
 }
 
-// OutputRecord is the attributed artifact of one successful turn (§4). Its
-// files live in the attempt directory that produced it (rev 3 §8).
+// OutputRecord is the attributed artifact of one successful turn. Its
+// files live in the attempt directory that produced it.
 type OutputRecord struct {
 	OutputID      string `json:"output_id"`
 	LayerID       string `json:"layer_id"`
@@ -390,7 +391,7 @@ type State struct {
 	// Seq is the last commit applied.
 	Seq int `json:"seq"`
 	// Calls counts every CommitAttempt in the forum, replied or not
-	// (restart resets no limits, §5).
+	// (restart resets no limits).
 	Calls     int                    `json:"calls"`
 	Layers    map[string]*LayerState `json:"layers"`
 	UpdatedAt time.Time              `json:"updated_at"`
@@ -408,7 +409,7 @@ type LayerResult struct {
 // layers' outputs, completeness and omissions. For a running forum the
 // service builds a partial one from State with Complete false; the file is
 // written only at a terminal state, before the launching agent is notified
-// (§9).
+// .
 type Result struct {
 	ForumID string `json:"forum_id"`
 	Run     int    `json:"run"`

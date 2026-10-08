@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Seam (d): the controller (spec §5, §6, §2.3, §8 restart). A forumController
+// The controller. A forumController
 // executes one forum from its on-disk state. It is built only by openForum
 // (recover.go), whether the forum was launched a moment ago or is being
 // resumed after a restart: there is one code path, driven by what the
@@ -24,7 +24,7 @@ import (
 // Run is idempotent over the store. It walks the enabled layers in
 // snapshot order, skips every layer, round and turn that already has a
 // commit, and performs the first action that does not. A turn whose
-// latest attempt has no reply is resent (§8). Nothing is kept in memory
+// latest attempt has no reply is resent. Nothing is kept in memory
 // that is not also on disk before the next dispatch.
 
 // forumController runs one forum.
@@ -58,7 +58,7 @@ type forumController struct {
 	// attempts caches forumStore.ListAttempts per layer at openForum and is updated
 	// as requests and replies are written.
 	attempts map[string][]AttemptRecord
-	// gone lists the created participants openForum found missing (§8); Run
+	// gone lists the created participants openForum found missing; Run
 	// ends the forum failed when it is non-empty.
 	gone []string
 
@@ -452,8 +452,8 @@ func (c *forumController) endLayer(layer Layer, reason EndReason) error {
 
 // produced returns every layer's published outputs, for the router. An
 // after_round round that never reached its publication (a layer ended by
-// its call budget mid-round) stays hidden (rev 3 §8 "partial rounds
-// remain hidden"): its outputs are committed but never routed.
+// its call budget mid-round) stays hidden: its outputs are committed but
+// never routed.
 func (c *forumController) produced() map[string][]OutputRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -479,7 +479,7 @@ func publishedOutputs(layer Layer, ls *LayerState) []OutputRecord {
 	return orderOutputs(layer, out)
 }
 
-// runRound runs one round of a layer per its delivery mode (§5). It
+// runRound runs one round of a layer per its delivery mode. It
 // returns the reason that stops the layer or the run, or "" to continue;
 // "" with the round unpublished means a pause or cancel stopped it early.
 func (c *forumController) runRound(ctx context.Context, layer Layer, round int) (EndReason, error) {
@@ -563,7 +563,7 @@ func (c *forumController) runRoundAfterRound(ctx context.Context, layer Layer, r
 
 // runRoundPerTurn dispatches each turn in participant order with cutoff =
 // the current last commit seq, commits it and writes it to the transcript
-// before sending the next (§5). A turn that is already committed is
+// before sending the next. A turn that is already committed is
 // skipped, which is how a resume lands on the first unfinished turn.
 func (c *forumController) runRoundPerTurn(ctx context.Context, layer Layer, round int) (EndReason, error) {
 	for _, pid := range layer.Participants {
@@ -740,8 +740,7 @@ func (c *forumController) crashed(event string) bool {
 // writes result.json (ensureResult). Once a cancel is requested the run
 // ends cancelled whatever the reason (cancellation dominates). A forum
 // already terminal is left as it is. Deleting temporary agents and
-// notifying the launcher are the service's job, after this returns (§9
-// Completion).
+// notifying the launcher are the service's job, after this returns.
 func (c *forumController) end(status Status, reason EndReason) (Status, error) {
 	commit := &Commit{Kind: CommitEnded, Status: status, Reason: reason}
 	err := c.commitWhen(func(st *State) error {

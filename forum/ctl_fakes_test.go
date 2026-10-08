@@ -19,8 +19,8 @@ import (
 	"time"
 )
 
-// Test helpers of seam (d), prefixed ctl so they cannot collide with the
-// helpers of the other seams in the same package.
+// Test helpers of the controller tests, prefixed ctl so they cannot collide with the
+// helpers of the other tests in the same package.
 
 // ctlCall is one Ask the fake messenger received, with the header of the
 // controller's message parsed.

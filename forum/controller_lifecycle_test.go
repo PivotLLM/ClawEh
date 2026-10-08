@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// ctlExampleReply scripts the §7 example: findings JSON in review, text
+// ctlExampleReply scripts the example configuration: findings JSON in review, text
 // in debate, GUIDE then STOP from the chair, a Markdown report.
 func ctlExampleReply(f *ctlForum, cl ctlCall) Reply {
 	switch {
@@ -35,7 +35,7 @@ func ctlExampleReply(f *ctlForum, cl ctlCall) Reply {
 	return f.reply(cl)
 }
 
-// The spec §7 example end to end: Alice as herself, Bob as a clone, the
+// The example configuration end to end: Alice as herself, Bob as a clone, the
 // chair and the editor fresh.
 func TestCtlSpecExample(t *testing.T) {
 	f := ctlLaunchRaw(t, []byte(cfgtExampleJSON))
@@ -377,7 +377,7 @@ func TestCtlRestartUncertainCountsTheOriginal(t *testing.T) {
 	ctlWant(t, "state calls", f.state().Calls, 1)
 }
 
-// ctlCrashConfig is the §7 example with every controller path switched
+// ctlCrashConfig is the example configuration with every controller path switched
 // on: a directed message and an assessment, a JSON repair, a moderator
 // that guides then stops.
 func ctlCrashConfig(t *testing.T) []byte {

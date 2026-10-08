@@ -13,9 +13,10 @@ import (
 	"slices"
 )
 
-// Seam (b): verification and replay (spec §8, rev 3 §8: "verify hashes,
-// replay commits, and resume the first unfinished controller action"). The
-// commit log is the truth; State is what replay derives from it alone.
+// Verification and replay (DESIGN.md §5.1, §5.10): a run is opened by
+// verifying its hashes, replaying its commits and resuming the first
+// unfinished controller action. The commit log is the truth; State is what
+// replay derives from it alone.
 
 // verify checks a forum directory before it is opened for execution:
 //

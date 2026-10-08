@@ -11,7 +11,7 @@ import (
 	"slices"
 )
 
-// Seam (d): opening a forum for execution (spec §8 restart). openForum is the
+// Opening a forum for execution. openForum is the
 // only constructor of forumController, used both right after Launch and on
 // resume, so restart recovery is the ordinary start path.
 
@@ -26,7 +26,7 @@ import (
 //  2. Compile the configured schemas (compileSchemas).
 //  3. Read participants.json. For every participant with Created true,
 //     check Agents.Exists; a missing one is recorded so that Run ends the
-//     forum failed with EndParticipantGone instead of recreating it (§8).
+//     forum failed with EndParticipantGone instead of recreating it.
 //     For an existing participant a missing agent is EndHostError at its
 //     first dispatch, not at openForum.
 //  4. Build the router over the store's ReadFile.
@@ -116,7 +116,7 @@ func compileSchemas(cfg *Config, snap *Snapshot) (named, decision map[string]*co
 // (Created true) whose agent no longer exists, sorted. The error is for an
 // Agents.Exists failure only. openForum records the result in forumController.gone;
 // a non-empty list makes Run end the forum failed with EndParticipantGone
-// (§8), so the failure is reported through the ordinary path rather than
+// , so the failure is reported through the ordinary path rather than
 // as an error at openForum.
 func checkCreated(ctx context.Context, agents Agents, parts *Participants) ([]string, error) {
 	var gone []string

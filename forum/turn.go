@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Seam (d): one participant turn (spec §2.3, §5; rev 3 §8 attempt
-// reservation and recovery): composing the message, the attempt loop with
-// bounded repair, output validation and publication.
+// One participant turn: composing the message, the attempt loop with
+// bounded repair (attempt reservation and recovery, DESIGN.md §5.3),
+// output validation and publication.
 
 // work is one unit the attempt loop performs: a participant turn or a
 // moderator check.
@@ -53,10 +53,10 @@ type attemptResult struct {
 // or the reason the forum or layer must stop, or nil and "" when a pause
 // or cancel interrupted it. cutoff is the last commit seq the participant
 // may see. For a per_turn layer the committed output is also written to
-// the transcript here (published at commit, §5).
+// the transcript here (published at commit).
 //
 // Attempts are numbered from the attempts already reserved for this turn
-// ID (uncertain ones included, §8) up to limits.max_attempts_per_turn; see
+// ID (uncertain ones included) up to limits.max_attempts_per_turn; see
 // perform for adoption, resend and repair. Rejected content is never
 // published; every attempt stays on disk.
 func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
@@ -97,8 +97,8 @@ func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, p
 //  1. The latest reserved attempt decides the next step:
 //     - an accepted reply (no issues) without a committed result: the
 //     process died between reply and commit; it is adopted without
-//     calling again (rev 3 §8);
-//     - no reply (uncertain, §8) or an unsuccessful outcome (timeout,
+//     calling again;
+//     - no reply (uncertain) or an unsuccessful outcome (timeout,
 //     error, cancelled, empty): its message is resent unchanged as a new
 //     attempt;
 //     - a rejected reply: the next attempt is a repair (repairFor);
@@ -324,7 +324,7 @@ func (c *forumController) reserve(ctx context.Context, layer Layer, req *Attempt
 // request and its reservation on disk without a reply: after RequestCancel
 // it is an interruption (nil reply, no reason); when ctx ended or the host
 // is shutting down (ErrShuttingDown) it is returned as the error, leaving
-// the attempt uncertain (§8: resent at the next start) and the forum as it
+// the attempt uncertain (resent at the next start) and the forum as it
 // is; otherwise it is the hostFailure reason. A cancelled turn while ctx
 // has ended (the service is closing) is treated the same way: the
 // shutdown cancelled it, so no failed reply is recorded.
@@ -502,7 +502,7 @@ func (c *forumController) contact(participantID, layerID string) (briefed, intro
 }
 
 // composeTurnMessage builds what the participant is sent for this turn
-// (§2.3). Peer and source content is quoted data, attributed:
+// . Peer and source content is quoted data, attributed:
 //
 //   - the brief, on the participant's first message in the forum;
 //   - its private instructions, the layer's instructions and its routed
@@ -517,7 +517,7 @@ func (c *forumController) contact(participantID, layerID string) (briefed, intro
 // A FreshModeSingleShot participant remembers nothing, so it gets
 // everything every time: brief, instructions, layer instructions, routed
 // inputs and the layer's whole eligible conversation up to cutoff, its
-// own outputs included and marked as its own (§3.1). Directed messages
+// own outputs included and marked as its own. Directed messages
 // are delivered once, to every participant mode alike.
 func (c *forumController) composeTurnMessage(layer Layer, round int, p ParticipantRecord, cutoff int) (string, error) {
 	briefed, introduced, through := c.contact(p.ID, layer.ID)
@@ -758,8 +758,8 @@ func (c *forumController) layerEvents(layer Layer, afterSeq, throughSeq int, ful
 	return events, nil
 }
 
-// withoutAuthor drops the outputs authored by id (§2.3: never resend a
-// participant's own outputs).
+// withoutAuthor drops the outputs authored by id (a participant is never
+// sent its own outputs).
 func withoutAuthor(events []forumEvent, id string) []forumEvent {
 	out := events[:0:0]
 	for _, ev := range events {
@@ -775,7 +775,7 @@ func withoutAuthor(events []forumEvent, id string) []forumEvent {
 // participantID in CommitModerated entries of any layer with afterSeq <
 // Seq <= throughSeq, in order: those decided since its last message.
 // They are delivered once, inside its next turn of this forum, and never
-// written to the transcript (§6).
+// written to the transcript.
 func (c *forumController) pendingDirected(participantID string, afterSeq, throughSeq int) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -850,8 +850,8 @@ func fence(info, content string) string {
 // JSON value (a fenced ```json block around it is accepted and the fence
 // removed); the value is re-encoded canonically and, when schema is
 // non-nil, validated, the SchemaViolationError messages being the issues.
-// When out.Share is set, every share pointer must resolve (rev 3 §4
-// "missing share paths fail output validation"). A non-empty issues list
+// When out.Share is set, every share pointer must resolve (a missing share
+// path fails the output's validation). A non-empty issues list
 // means the attempt is rejected and nothing is stored.
 func validateOutput(out Output, text string, schema *compiledSchema) (content []byte, issues []string) {
 	if strings.TrimSpace(text) == "" {
@@ -936,8 +936,7 @@ func publishedProjection(out Output, full []byte) ([]byte, error) {
 // contract only: it has the original request and its reply already. A
 // single_shot participant remembers nothing, so it gets the original
 // message again (the latest non-repair one), its rejected reply quoted,
-// and the issues (rev 3 §5 "repair attempts containing the invalid
-// response and errors").
+// and the issues.
 func (c *forumController) repairFor(w work, prior []AttemptRecord) string {
 	last := lastAttempt(prior)
 	header := c.turnHeader(w.layer, w.round)

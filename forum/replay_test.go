@@ -19,7 +19,7 @@ import (
 )
 
 // Helpers in this file are prefixed rp so they cannot collide with other
-// seams' test helpers in the same package.
+// tests' helpers in the same package.
 
 // rpRun drives a store the way the controller does: append a commit,
 // fold it into the in-memory State with replayApply, rewrite state.json.

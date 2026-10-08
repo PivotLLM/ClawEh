@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// TestPreflightExample runs the spec example through the whole check path:
+// TestPreflightExample runs the example configuration through the whole check path:
 // decodeConfig, validateStatic, runPreflight.
 func TestPreflightExample(t *testing.T) {
 	cfg, err := decodeConfig([]byte(cfgtExampleJSON))

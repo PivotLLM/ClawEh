@@ -14,8 +14,8 @@ import (
 	"strings"
 )
 
-// Seam (c): JSON Pointer (RFC 6901) support for `share` and `paths` (rev 3
-// §4 projection rules). The standard library has no pointer implementation
+// JSON Pointer (RFC 6901) support for `share` and `paths` (DESIGN.md §7.6:
+// projection rules). The standard library has no pointer implementation
 // and no dependency is added for one.
 
 // errArrayTraversal is returned when a pointer token is applied to an
@@ -74,8 +74,8 @@ func tokensPrefix(a, b []string) bool {
 	return true
 }
 
-// checkProjection validates a `share` or `paths` allowlist statically (rev
-// 3 §4): every pointer is valid and nonempty (the root cannot be a
+// checkProjection validates a `share` or `paths` allowlist statically
+// (DESIGN.md §7.6): every pointer is valid and nonempty (the root cannot be a
 // projection member), and no pointer is a prefix of another (overlap). It
 // returns one message per offending pointer; an empty list is valid. Used
 // by validateStatic. Array traversal cannot be told from an object member
@@ -173,8 +173,8 @@ func encodeJSONValue(v any) ([]byte, error) {
 // object structure kept (a pointer "/a/b" yields {"a":{"b":...}}); a
 // selected member may contain whole arrays or objects. An empty pointer
 // list yields {}. A pointer that resolves to nothing, or that traverses
-// an array, is an error (rev 3 §4: "missing share paths fail output
-// validation", "invalid/missing paths fail"). The pointers must also pass
+// an array, is an error: a missing `share` path fails the output's
+// validation, a missing `paths` path fails the route. The pointers must also pass
 // checkProjection. The result is compact encoding/json output with sorted
 // keys and no HTML escaping.
 func projectOutput(doc []byte, pointers []string) ([]byte, error) {

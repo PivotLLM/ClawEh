@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// Seam (e): the lifecycle service (spec §9). One Service per process owns
+// The lifecycle service. One Service per process owns
 // every running controller, the per-forum locks, temporary-agent cleanup
 // and the completion notice. The tools in tools.go are thin wrappers over
 // it.
@@ -49,18 +49,18 @@ import (
 
 // keepAliveInterval is how often the temporary agents of paused and
 // running forums are touched so they outlive the registry's idle TTL, and
-// how often pending temporary-agent deletions are retried (§9, DESIGN.md
-// §7.10).
+// how often pending temporary-agent deletions and completion notices are
+// retried (DESIGN.md §7.10).
 const keepAliveInterval = time.Hour
 
 // cleanupNotice is the marker (<base>/.cleanup/<uuid>.<run>.notice) of a
 // run's completion notice not yet delivered. It is written at launch and
 // cleared once the launcher has been notified, so a restart between the
-// terminal commit and the notice still delivers it (§9 Completion).
+// terminal commit and the notice still delivers it.
 const cleanupNotice = "notice"
 
 // Scope is the caller's base scope: its agent ID and the absolute base
-// directory its forums live in (<workspace>/forums, §2.2). Every ID-only
+// directory its forums live in (<workspace>/forums). Every ID-only
 // operation resolves the forum inside that directory and nowhere else.
 type Scope struct {
 	AgentID       string
@@ -181,8 +181,8 @@ type run struct {
 // Option configures a Service.
 type Option func(*Service)
 
-// WithHostLimits sets ceilings on every configuration's limits (§3 "host
-// ceilings also apply"); a zero field is no ceiling.
+// WithHostLimits sets ceilings on every configuration's limits (DESIGN.md
+// §7.5); a zero field is no ceiling.
 func WithHostLimits(l Limits) Option {
 	return func(s *Service) { s.hostLimits = l }
 }
@@ -241,14 +241,14 @@ func invalidState(format string, args ...any) error {
 // errClosed is returned by operations that would start a run after Close.
 var errClosed = errors.New("the forum service is shut down")
 
-// Models lists the models agentID may give to fresh participants (§2.4):
+// Models lists the models agentID may give to fresh participants:
 // Agents.Models(agentID) as is.
 func (s *Service) Models(ctx context.Context, agentID string) ([]ModelInfo, error) {
 	return s.host.Agents.Models(ctx, agentID)
 }
 
 // Validate runs decodeConfig, validateStatic and runPreflight on raw without
-// creating anything (§9 forum_validate). It returns nil, a
+// creating anything (forum_validate). It returns nil, or a
 // *ValidationError listing every finding.
 func (s *Service) Validate(ctx context.Context, raw []byte, opts LaunchOptions) error {
 	_, _, err := s.check(ctx, raw, opts)
@@ -290,7 +290,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 }
 
 // Launch validates the forum's current configuration and starts a new run
-// of it from the beginning, numbered after the latest (§9 forum_launch),
+// of it from the beginning, numbered after the latest (forum_launch),
 // and returns the run's number. Steps, in order:
 //
 //  1. Serialise with the forum's other control operations and Lock the
@@ -957,11 +957,10 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	return nil
 }
 
-// Recover is called once at startup with every agent's scope (§2.2: the
-// binding is rebuilt by scanning workspaces; §2 "resume unfinished work
-// after reboot"). Per scope it first removes roots staged for deletion
-// (listStaged, removeStaged), then applies recoverOne to every forum in
-// listForums. Errors are logged per forum and do not stop the scan; a
+// Recover is called once at startup with every agent's scope, so the
+// forums interrupted by a restart continue (DESIGN.md §7.18). Per scope it
+// first removes roots staged for deletion (listStaged, removeStaged), then
+// applies recoverOne to every forum in listForums. Errors are logged per forum and do not stop the scan; a
 // forum that cannot be reopened (other than one locked by another
 // process) is also reported through Host.OnStuck. The returned error is
 // the first one, for the caller's log line.

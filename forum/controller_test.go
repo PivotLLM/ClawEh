@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Every row of the §5 table, with what each participant may and may not
+// Every delivery and visibility rule, with what each participant may and may not
 // see when its message is composed.
 func TestCtlExecutionTable(t *testing.T) {
 	type visibility struct {
@@ -108,7 +108,7 @@ func TestCtlExecutionTable(t *testing.T) {
 	}
 }
 
-// §2.3: the first message in the forum carries the brief; the first in a
+// The first message in the forum carries the brief; the first in a
 // layer the private instructions, layer instructions and routed inputs;
 // later messages only what is new. Source text is quoted data.
 func TestCtlDeltaMessages(t *testing.T) {

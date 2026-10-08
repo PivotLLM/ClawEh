@@ -28,7 +28,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Seam (b): the on-disk store (spec §8, rev 3 §8). A forum is a directory
+// The on-disk store (DESIGN.md §4). A forum is a directory
 // under a base directory holding its current configuration and its runs;
 // one forumStore is either the forum directory (run 0: the configuration, the
 // lock, the list of runs, removal) or one run of it (everything below):
@@ -58,7 +58,7 @@ import (
 // The lock is the forum's, shared by every forumStore handle derived from one
 // opening (Run, CreateRun, OpenRun), so a run holds the same lock as the
 // forum it belongs to. Locks and cleanup staging sit beside the forum
-// directories, not inside them (rev 3 §8), so removing one never removes
+// directories, not inside them, so removing one never removes
 // the lock protecting it. Every write
 // of a whole file is atomic and durable (writeFileAt): an exclusive write
 // links its temporary file to the target, so a racing second writer fails
@@ -821,7 +821,7 @@ func (s *forumStore) unlock() error {
 
 // WriteConfig writes the run's forum.json, the configuration the run
 // uses (the forum's forum.json as Launch accepted it); it fails if the file
-// already exists (a run's configuration never changes, §3.2).
+// already exists (a run's configuration never changes).
 func (s *forumStore) WriteConfig(raw []byte) error {
 	return s.writeRel(fileConfig, raw, true)
 }
@@ -925,7 +925,7 @@ func (s *forumStore) ReadSnapshot() (*Snapshot, error) {
 	return &snap, nil
 }
 
-// WriteParticipants writes participants.json (§8: before the first
+// WriteParticipants writes participants.json (before the first
 // dispatch). Rewriting it is allowed only while the commit log is empty
 // (before CommitLaunched); afterwards it fails with ErrInvalidState.
 func (s *forumStore) WriteParticipants(p *Participants) error {
@@ -965,7 +965,7 @@ func (s *forumStore) WriteSource(id string, format Format, content []byte) (Sour
 
 // WriteLayerInputs writes layers/<layer>/inputs.json. It fails if the file
 // already exists: inputs are resolved once per layer and a resume reads
-// them back (§4 random assignments are never reshuffled).
+// them back (random assignments are never reshuffled, DESIGN.md §5.6).
 func (s *forumStore) WriteLayerInputs(in *LayerInputs) error {
 	if !validID(in.LayerID) {
 		return fmt.Errorf("write layer inputs: %q is not a layer ID", in.LayerID)
@@ -1486,7 +1486,7 @@ func (s *forumStore) ReadResult() (*Result, error) {
 
 // AppendTranscript appends text (which the caller terminates with a
 // newline) to transcript.md and fsyncs. With ReplaceTranscript it is the
-// only write to that file; callers pass only public material (§8). Writes
+// only write to that file; callers pass only public material. Writes
 // are serialised, so entries never interleave.
 func (s *forumStore) AppendTranscript(text string) error {
 	if err := s.writeTranscript(os.O_APPEND, []byte(text)); err != nil {

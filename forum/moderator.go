@@ -15,14 +15,13 @@ import (
 	"strings"
 )
 
-// Seam (d): moderation (rev 5 §6, rev 3 §6). The moderator is a
+// Moderation. The moderator is a
 // participant invoked in a controller role after a round; its decision is
 // JSON held to the layer's effective schema (Snapshot.ModeratorSchemas).
 
 // moderatorDue reports whether the moderator is consulted after round:
 // round >= m.AfterRound and (round - m.AfterRound) % m.EveryRounds == 0.
-// The caller also requires round < max_rounds (rev 3 §6 "while below
-// max_rounds").
+// The caller also requires round < max_rounds (DESIGN.md §7.2).
 func moderatorDue(m *Moderator, round int) bool {
 	if m == nil || round < m.AfterRound || m.EveryRounds <= 0 {
 		return false
@@ -40,7 +39,7 @@ func moderatorDue(m *Moderator, round int) bool {
 // (parseDecision against c.decisionSchemas[layer.ID]) differ. A decision
 // already committed for this round is returned at once, so guidance is
 // never duplicated. Exhausting the attempts returns EndModeratorFailed
-// (§5 "moderator failure stops the run as failed").
+// (a moderator failure ends the run failed).
 func (c *forumController) runModerator(ctx context.Context, layer Layer, round int) (*Decision, EndReason, error) {
 	if d := c.committedDecision(layer.ID, round); d != nil {
 		return d, "", nil
@@ -102,8 +101,8 @@ const (
 	headingDecision     = "## Your decision"
 )
 
-// composeModeratorMessage builds the moderator's message after round (rev
-// 3 §6): the brief on its first message in the forum; its instructions,
+// composeModeratorMessage builds the moderator's message after round: the
+// brief on its first message in the forum; its instructions,
 // its role, the layer's instructions and its routed inputs
 // (LayerInputs.Moderator) on its first check in the layer; the layer's
 // conversation since its last message (published or full outputs per
@@ -111,7 +110,7 @@ const (
 // effective schema verbatim (sent with every request). A single_shot
 // moderator gets everything every time, including its own previous
 // decisions in the layer; one that keeps its conversation is never sent
-// its own decisions again (§2.3).
+// its own decisions again.
 func (c *forumController) composeModeratorMessage(layer Layer, round int, m ParticipantRecord, cutoff int) (string, error) {
 	briefed, introduced, through := c.contact(m.ID, layer.ID)
 	single := m.Mode == FreshModeSingleShot

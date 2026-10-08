@@ -11,13 +11,13 @@ import (
 	"testing"
 )
 
-// The §7 example's layers: [0] review (alice, bob; json "findings"),
+// The example configuration's layers: [0] review (alice, bob; json "findings"),
 // [1] debate (alice, bob; text; moderator chair), [2] report (editor;
 // markdown).
 
 func TestValidateStaticExample(t *testing.T) {
 	if err := validateStatic(cfgtExample(t)); err != nil {
-		t.Fatalf("the spec example must validate: %v", err)
+		t.Fatalf("the example configuration must validate: %v", err)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestValidateStaticAccepts(t *testing.T) {
 }
 
 // TestValidateStaticProjection covers the share and paths pointer checks,
-// which validateStatic delegates to checkProjection (seam c).
+// which validateStatic delegates to checkProjection (jsonpointer.go).
 func TestValidateStaticProjection(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -28,7 +28,7 @@ import (
 )
 
 // Helpers in this file are prefixed st so they cannot collide with other
-// seams' test helpers in the same package.
+// tests' helpers in the same package.
 
 // stConfig is a two-layer forum: "debate" (after_round, two rounds,
 // moderated, JSON output with share) and "summary" (per_turn, one round,

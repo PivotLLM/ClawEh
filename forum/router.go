@@ -14,7 +14,7 @@ import (
 	"slices"
 )
 
-// Seam (c): the router (rev 3 §4, which rev 5 inherits). It turns a
+// The router (DESIGN.md §2). It turns a
 // layer's routes into the LayerInputs each participant and the moderator
 // receive from sources and earlier layers. It knows nothing about turns
 // within the layer: peer events inside a layer are the controller's

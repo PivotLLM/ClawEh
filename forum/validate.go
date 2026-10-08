@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// Seam (a): validation. validateStatic needs nothing but the configuration;
+// Validation. validateStatic needs nothing but the configuration;
 // runPreflight additionally consults the host (agents, models, schemas, source
 // files). forum_validate runs both; forum_launch runs both and then uses the
 // resolvedConfig result.
@@ -54,10 +54,9 @@ func (e *ValidationError) Error() string {
 }
 
 // validateStatic checks everything that can be checked without the host and
-// returns a *ValidationError listing every finding, or nil. The checks, by
-// spec section:
+// returns a *ValidationError listing every finding, or nil. The checks:
 //
-// §3 IDs and references
+// IDs and references
 //   - every participant, source, schema and layer ID matches validID; layer
 //     IDs are unique (participant, source and schema duplicates are already
 //     rejected by decodeConfig); no two participant, source or layer IDs are
@@ -72,7 +71,7 @@ func (e *ValidationError) Error() string {
 //   - result_layers name existing, enabled, distinct layers;
 //   - every limit is positive.
 //
-// §3.1 participants
+// Participants
 //   - exactly one form: agent, clone, or model without agent/clone;
 //   - `model` is rejected on the agent form (an existing agent always runs
 //     on its own model); on the clone form it is an optional override;
@@ -86,7 +85,7 @@ func (e *ValidationError) Error() string {
 //     so it can hold only one seat. Clones of one source are separate
 //     agents and are allowed.
 //
-// §3.2 layers
+// Layers
 //   - participants nonempty, unique, each naming a configured participant;
 //     result_layers likewise unique;
 //   - instructions nonempty; delivery is after_round or per_turn;
@@ -97,7 +96,7 @@ func (e *ValidationError) Error() string {
 //     schema; output.share, when present, passes checkProjection (an
 //     empty array is valid and publishes nothing).
 //
-// Routes (rev 3 §4; layer inputs and moderator inputs)
+// Routes (layer inputs and moderator inputs)
 //   - from parses (Route.Producer); a source producer exists; a layer
 //     producer exists and precedes the consuming layer in the array;
 //   - a non-optional route from a disabled layer is an error when the
@@ -126,11 +125,11 @@ func (e *ValidationError) Error() string {
 //   - same_participant requires every recipient to be a participant of the
 //     producing layer;
 //   - a random route from a source (one record) to more than one recipient
-//     must be optional (rev 3: fewer records than recipients requires
-//     optional). For layer producers the record count is not known
+//     must be optional (fewer records than recipients). For layer
+//     producers the record count is not known
 //     statically; the router enforces it at run time.
 //
-// §6 moderator
+// Moderator
 //   - participant names a configured participant that is not one of the
 //     layer's participants;
 //   - after_round and every_rounds positive, after_round < max_rounds
@@ -176,7 +175,7 @@ type preflightEnv struct {
 type resolvedConfig struct {
 	// Models maps a participant ID to the model it runs on for this forum:
 	// every fresh participant, plus clones with a `model` override. Resume
-	// never substitutes another model (§2.4).
+	// never substitutes another model.
 	Models map[string]string
 	// Schemas are the compiled named schemas.
 	Schemas map[string]*compiledSchema
@@ -191,7 +190,7 @@ type resolvedConfig struct {
 }
 
 // runPreflight checks the configuration against the host without creating
-// anything (§2.4, §3). It requires a configuration that passed
+// anything. It requires a configuration that passed
 // validateStatic. It returns a *ValidationError listing every finding, or
 // the resolvedConfig result. Only participants used by enabled layers (as
 // participants or moderators) are checked. Checks:
