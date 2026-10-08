@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,10 +36,28 @@ type webuiConn struct {
 	closed    atomic.Bool
 }
 
+// errConnClosed is returned by writeJSON on a connection already closed.
+var errConnClosed = errors.New("connection closed")
+
+// connGone reports whether a write error means the browser has gone or is
+// going (closed tab, dropped network, close handshake under way) rather than
+// a fault on this side, such as a message that does not encode.
+func connGone(err error) bool {
+	var closeErr *websocket.CloseError
+	return errors.Is(err, errConnClosed) ||
+		errors.Is(err, websocket.ErrCloseSent) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.As(err, &closeErr)
+}
+
 // writeJSON sends a JSON message to the connection with write locking.
 func (pc *webuiConn) writeJSON(v any) error {
 	if pc.closed.Load() {
-		return errors.New("connection closed")
+		return errConnClosed
 	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
@@ -283,34 +304,43 @@ func (c *WebUIChannel) broadcastToSession(chatID string, msg WebUIMessage) error
 	sessionID := strings.TrimPrefix(chatID, "webui:")
 	msg.SessionID = sessionID
 
-	var sent, matched bool
+	// A connection that is closed, or whose write fails because the browser
+	// went away, does not count: the session is then offline, not failing.
+	var sent bool
+	var fault error
 	c.connections.Range(func(key, value any) bool {
 		pc, ok := value.(*webuiConn)
-		if !ok {
+		if !ok || pc.sessionID != sessionID || pc.closed.Load() {
 			return true
 		}
-		if pc.sessionID == sessionID {
-			matched = true
-			if err := pc.writeJSON(msg); err != nil {
-				logger.DebugCF("webui", "Write to connection failed", map[string]any{
-					"conn_id": pc.id,
-					"error":   err.Error(),
-				})
-			} else {
-				sent = true
-			}
+		err := pc.writeJSON(msg)
+		switch {
+		case err == nil:
+			sent = true
+		case connGone(err) || pc.closed.Load():
+			logger.DebugCF("webui", "Write to closing connection failed", map[string]any{
+				"conn_id": pc.id,
+				"error":   err.Error(),
+			})
+		default:
+			logger.DebugCF("webui", "Write to connection failed", map[string]any{
+				"conn_id": pc.id,
+				"error":   err.Error(),
+			})
+			fault = err
 		}
 		return true
 	})
 
-	if !matched {
+	switch {
+	case sent:
+		return nil
+	case fault != nil:
+		return fmt.Errorf("write to session %s failed: %v: %w", sessionID, fault, channels.ErrSendFailed)
+	default:
 		// No browser has this session open: the recipient is offline.
 		return fmt.Errorf("no open browser session %s: %w", sessionID, channels.ErrRecipientOffline)
 	}
-	if !sent {
-		return fmt.Errorf("no write to session %s succeeded: %w", sessionID, channels.ErrSendFailed)
-	}
-	return nil
 }
 
 // handleWebSocket upgrades the HTTP connection and manages the WebSocket lifecycle.
