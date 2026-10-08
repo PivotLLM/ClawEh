@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -270,7 +271,7 @@ func newHumanProblems(before, next *Config) []error {
 	var errs []error
 	for _, p := range next.HumanProblems() {
 		if p.Kind != HumanNoChat && !had[p.key()] {
-			errs = append(errs, fmt.Errorf("%s", p.Message))
+			errs = append(errs, errors.New(p.Message))
 		}
 	}
 	return errs

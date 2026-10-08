@@ -529,7 +529,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 
 // publishCancelledReplies sends the final "cancelled" reply for each message
 // that requires one (bus.MetaReplyRequired) and was dropped by /cancel before
-// its turn ran. Messages without the flag get nothing, as before.
+// its turn ran. Messages without the flag get nothing.
 func (al *AgentLoop) publishCancelledReplies(ctx context.Context, msgs []bus.InboundMessage) {
 	for _, m := range msgs {
 		if !m.ReplyRequired() {
@@ -1056,8 +1056,8 @@ func (al *AgentLoop) runMeteredTurn(ctx context.Context, agent *AgentInstance, o
 // other async tool carries the originating agent on preresolved_agent_id and its
 // session on session_key, so the completion is handled by the SPAWNING agent in
 // its own session — not whichever agent happens to be the default. Falls back to
-// the default agent and that agent's main session when no originator is given
-// (legacy behavior). A preresolved agent that does not exist is never replaced
+// the default agent and that agent's main session when no originator is given.
+// A preresolved agent that does not exist is never replaced
 // by another: the message is dropped. Returns (nil, "") when no agent is
 // available or the addressed one is gone.
 func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentInstance, string) {
