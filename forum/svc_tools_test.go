@@ -940,3 +940,13 @@ func TestSvcToolRefusalsAreMarked(t *testing.T) {
 		}
 	}
 }
+
+// Every tool has a verb for its internal-failure message.
+func TestSvcToolVerbsComplete(t *testing.T) {
+	e := svcSetup(t)
+	for _, def := range Tools(e.svc, &svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}) {
+		if toolVerbs[def.Name] == "" {
+			t.Errorf("tool %s has no verb in toolVerbs", def.Name)
+		}
+	}
+}

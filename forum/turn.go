@@ -135,8 +135,8 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 			req.Message, req.ThroughSeq, req.Repair = c.repairFor(w, prior), last.Request.ThroughSeq, true
 		}
 		deadline, expired := c.awaitModel(ctx, w)
-		wait, reason, err := c.reserve(ctx, w.layer, req, deadline)
-		if err != nil || reason != "" || wait < 0 {
+		wait, reserved, reason, err := c.reserve(ctx, w.layer, req, deadline)
+		if err != nil || !reserved {
 			return attemptResult{reason: reason}, err
 		}
 		// A held turn never goes out without time to answer (the clock
@@ -274,47 +274,48 @@ func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
 }
 
 // reserve is the reservation step of one attempt: under dispatchMu it
-// refuses when a pause or cancel was requested (wait -1), stops at a limit
-// (checkLimits), writes request.json and commits CommitAttempt, which only
-// lands while the forum is running. It returns the Ask wait, which ends by
-// deadline when that is set (a turn held back by awaitModel).
-func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (time.Duration, EndReason, error) {
+// declines when a pause or cancel was requested, stops at a limit
+// (checkLimits, reason set), writes request.json and commits
+// CommitAttempt, which only lands while the forum is running. reserved
+// reports that the attempt was committed; wait is then the Ask wait, which
+// ends by deadline when that is set (a turn held back by awaitModel).
+func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (wait time.Duration, reserved bool, reason EndReason, err error) {
 	c.dispatchMu.Lock()
 	defer c.dispatchMu.Unlock()
 	if c.interrupted() {
-		return -1, "", nil
+		return 0, false, "", nil
 	}
-	if err := ctx.Err(); err != nil {
-		return -1, "", err
+	if err = ctx.Err(); err != nil {
+		return 0, false, "", err
 	}
 	now := time.Now()
 	if reason := c.checkLimits(layer, 1, now); reason != "" {
 		c.host.Logger.Warnf("%s: %s/%s not sent: %s", c.logName, req.Layer, req.Turn, reason)
-		return -1, reason, nil
+		return 0, false, reason, nil
 	}
-	wait := c.wait(now)
+	wait = c.wait(now)
 	if !deadline.IsZero() {
 		wait = max(min(wait, deadline.Sub(now)), 0)
 	}
 	req.SentAt = now.UTC()
 	req.WaitSeconds = int(wait / time.Second)
 	if err := c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
-		return -1, "", err
+		return 0, false, "", err
 	}
-	err := c.commitWhen(statusIs(StatusRunning), &Commit{
+	err = c.commitWhen(statusIs(StatusRunning), &Commit{
 		Kind: CommitAttempt, Layer: req.Layer, Round: req.Round, Turn: req.Turn, TurnKind: req.Kind,
 		Participant: req.Participant, Attempt: req.Attempt, ThroughSeq: req.ThroughSeq,
 	}, func() {
 		c.attempts[req.Layer] = append(c.attempts[req.Layer], AttemptRecord{Request: *req})
 	})
 	if errors.Is(err, errSkip) {
-		return -1, "", nil // paused or cancelled between the check and the commit
+		return 0, false, "", nil // paused or cancelled between the check and the commit
 	}
 	if err != nil {
-		return -1, "", err
+		return 0, false, "", err
 	}
 	c.host.Logger.Debugf("%s: %s/%s attempt %d sent to %s (wait %s)", c.logName, req.Layer, req.Turn, req.Attempt, req.Participant, wait)
-	return wait, "", nil
+	return wait, true, "", nil
 }
 
 // dispatch performs the Ask of a reserved attempt and records its reply:

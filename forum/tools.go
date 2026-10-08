@@ -595,9 +595,9 @@ func (r refused) Unwrap() error { return r.error }
 func (refused) Refusal() bool   { return true }
 
 // toolVerbs is the past participle of each tool's operation, for the
-// internal-failure message.
+// internal-failure message. Every tool has one (a test keeps them in step).
 var toolVerbs = map[string]string{
-	"new": "created", "config_template": "changed", "config_import": "changed",
+	"readme": "read", "models": "listed", "new": "created", "config_template": "changed", "config_import": "changed",
 	"config_update": "changed", "config_export": "exported",
 	"validate": "validated", "launch": "launched", "status": "read", "results": "read",
 	"pause": "paused", "resume": "resumed", "cancel": "cancelled", "delete": "deleted",

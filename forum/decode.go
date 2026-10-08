@@ -20,29 +20,35 @@ import (
 // Seam (a): strict decoding (spec §3: reject unknown fields and duplicate
 // keys before anything else is checked).
 
-// Decode parses one configuration document strictly and returns a
-// *ValidationError listing every finding:
+// Decode parses one configuration document strictly, in two stages, and
+// reports problems as a *ValidationError.
 //
-//   - malformed JSON and trailing content after the one JSON value are an
-//     error (reported with line and column);
-//   - an unknown field anywhere in the document is an error naming its path;
-//     field names match exactly (encoding/json alone would accept "Version"
-//     for "version");
-//   - a duplicate key in any object is an error naming its path, which is
-//     also how duplicate participant, source and schema IDs are caught,
-//     since those are map keys (checkDuplicateKeys covers the untyped parts:
-//     schemas and inline JSON sources);
-//   - a value of the wrong JSON type is an error naming its path;
-//   - an explicit layer `max_calls` of 0 is an error (an absent one means
-//     "no layer budget", and the Go zero value cannot tell the two apart);
-//   - an explicit `"share": null` is an error: an absent share publishes
-//     the whole output and `[]` publishes nothing, and a null would be
-//     silently read as absent;
-//   - Version must equal ConfigVersion.
+// The first stage walks the document and stops it from decoding at all;
+// the configuration is nil and the error lists what it found:
 //
-// Decode does not validate references or limits; call ValidateStatic next.
-// When the document decodes but breaks one of the rules above, Decode
-// returns the configuration together with the *ValidationError.
+//   - malformed JSON and trailing content after the one JSON value
+//     (reported with line and column);
+//   - an unknown field anywhere in the document, naming its path; field
+//     names match exactly (encoding/json alone would accept "Version" for
+//     "version");
+//   - a duplicate key in any object, naming its path, which is also how
+//     duplicate participant, source and schema IDs are caught, since those
+//     are map keys (checkDuplicateKeys covers the untyped parts: schemas
+//     and inline JSON sources);
+//   - a value of the wrong JSON type, naming its path.
+//
+// The second stage checks the decoded configuration and returns it
+// together with the error, so a caller can report ValidateStatic's
+// findings at the same time:
+//
+//   - Version must equal ConfigVersion;
+//   - an explicit layer `max_calls` of 0 (an absent one means "no layer
+//     budget", and the Go zero value cannot tell the two apart);
+//   - an explicit `"share": null`: an absent share publishes the whole
+//     output and `[]` publishes nothing, and a null would be silently read
+//     as absent.
+//
+// Decode does not validate references or limits; ValidateStatic does.
 func Decode(data []byte) (*Config, error) {
 	w := &jsonWalker{dec: newTokenDecoder(data), data: data}
 	if err := w.document(reflect.TypeFor[Config]()); err != nil {

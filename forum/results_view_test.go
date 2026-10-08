@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -185,4 +186,27 @@ func TestResultsView_ResentAfterRestart(t *testing.T) {
 	if b.Attempt != 1 || b.Note != "" {
 		t.Errorf("plain output = %+v", b)
 	}
+}
+
+// The guide states the limits the code applies.
+func TestGuideStatesTheLimits(t *testing.T) {
+	g := strings.Join(strings.Fields(guide()), " ")
+	for _, want := range []string{
+		"at most " + groupDigits(MaxNameChars) + " characters",
+		"up to " + groupDigits(MaxResultInlineChars) + " characters",
+		groupDigits(MaxResultInlineTotalChars) + " characters for all outputs together",
+	} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide does not say %q", want)
+		}
+	}
+}
+
+// groupDigits writes n with a comma between thousands, as the guide does.
+func groupDigits(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

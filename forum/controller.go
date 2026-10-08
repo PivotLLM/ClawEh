@@ -773,13 +773,20 @@ func (c *Controller) ensureResult() error {
 	return c.durable("result", func() error { return c.store.WriteResult(res) })
 }
 
-// buildResult builds the Result manifest from the loaded records: the
-// result layers in snapshot order with their published outputs. It is a
-// partial manifest (Complete false, no EndedAt) unless the status is
-// terminal. Omissions name what the result lacks (DESIGN §8.9): a result
-// layer that did not run or did not end, a turn of a started round with
-// no committed output, and an after_round round whose outputs were
-// committed but never published.
+// buildResult builds the Result manifest from the loaded records, the one
+// builder of result.json and of every partial manifest (Complete false, no
+// EndedAt, while the status is not terminal):
+//
+//   - Layers: the result layers in snapshot order with their published
+//     outputs only, so an after_round round that was not published never
+//     shows;
+//   - Omissions (DESIGN.md §8.9): a result layer that did not run or did
+//     not end, a turn of a started round with no committed output, and an
+//     after_round round whose outputs were committed but never published;
+//   - OtherLayers, only when the result layers have no output at all: the
+//     other enabled layers' outputs, the published ones while the run
+//     goes on and every committed one once it has ended, so the launcher
+//     can reach the work of a run that failed early.
 func buildResult(cfg *Config, snap *Snapshot, st *State) *Result {
 	res := &Result{
 		ForumID:    snap.ForumID,

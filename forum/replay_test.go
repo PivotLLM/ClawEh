@@ -520,7 +520,7 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 		} else if err := os.WriteFile(r.s.Path(fileState), []byte(r.states[k-2]), filePerm); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), tmpPrefix+"crash"), []byte(`{"seq":`), filePerm); err != nil {
+		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), TempPrefix+"crash"), []byte(`{"seq":`), filePerm); err != nil {
 			t.Fatal(err)
 		}
 

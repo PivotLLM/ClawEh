@@ -204,7 +204,7 @@ func TestCreateStoreLayout(t *testing.T) {
 	s := stNewStore(t)
 	base := s.base
 	for _, d := range []string{
-		s.Dir(), filepath.Join(s.Dir(), dirRuns), s.Root(), filepath.Join(base, dirLocks), filepath.Join(base, dirCleanup),
+		s.Dir(), filepath.Join(s.Dir(), dirRuns), s.Root(), filepath.Join(base, LocksDir), filepath.Join(base, dirCleanup),
 		s.Path(dirSources), s.Path(dirLayers), s.Path(dirCommits),
 	} {
 		stIsPerm(t, d, dirPerm)
@@ -629,7 +629,7 @@ func TestStoreOrphanAttemptRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The crash also left an attempt directory being assembled.
-	if err := os.Mkdir(filepath.Join(s.Path("layers/debate/calls/"+turn), tmpPrefix+"attempt-crash"), dirPerm); err != nil {
+	if err := os.Mkdir(filepath.Join(s.Path("layers/debate/calls/"+turn), TempPrefix+"attempt-crash"), dirPerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1033,7 +1033,7 @@ func TestStoreCrashLeftovers(t *testing.T) {
 	s := stNewStore(t)
 	stLaunch(t, s, stConfig())
 	for _, dir := range []string{dirCommits, "."} {
-		if err := os.WriteFile(filepath.Join(s.Path(dir), tmpPrefix+"123"), []byte(`{"seq":2,"kind":"pau`), filePerm); err != nil {
+		if err := os.WriteFile(filepath.Join(s.Path(dir), TempPrefix+"123"), []byte(`{"seq":2,"kind":"pau`), filePerm); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1406,7 +1406,7 @@ func TestStoreExclusiveWriteRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), tmpPrefix) {
+		if strings.HasPrefix(e.Name(), TempPrefix) {
 			t.Errorf("leftover temporary file %s", e.Name())
 		}
 	}
@@ -1520,27 +1520,27 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 	s := stNewStore(t)
 	stLaunch(t, s, stConfig())
 	turnDir := s.Path("layers/debate/calls/" + TurnID(1, "alice"))
-	if err := os.MkdirAll(filepath.Join(turnDir, tmpPrefix+"attempt-x"), dirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Join(turnDir, TempPrefix+"attempt-x"), dirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(turnDir, tmpPrefix+"attempt-x", fileRequest), []byte("{}"), filePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(turnDir, TempPrefix+"attempt-x", fileRequest), []byte("{}"), filePerm); err != nil {
 		t.Fatal(err)
 	}
 	other, err := newForumHandle(s.base, s.id).CreateRun(2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	untouched := filepath.Join(other.Path(dirCommits), tmpPrefix+"other-run")
+	untouched := filepath.Join(other.Path(dirCommits), TempPrefix+"other-run")
 	if err := os.WriteFile(untouched, []byte("partial"), filePerm); err != nil {
 		t.Fatal(err)
 	}
 	leftovers := [...]string{
-		filepath.Join(s.Root(), tmpPrefix+"1"),
-		filepath.Join(s.Path(dirCommits), tmpPrefix+"2"),
-		filepath.Join(s.Path(dirSources), tmpPrefix+"3"),
-		filepath.Join(s.Dir(), tmpPrefix+"config"),
-		filepath.Join(s.Dir(), dirRuns, tmpPrefix+"run-x"),
-		filepath.Join(turnDir, tmpPrefix+"attempt-x"), // a directory, created above
+		filepath.Join(s.Root(), TempPrefix+"1"),
+		filepath.Join(s.Path(dirCommits), TempPrefix+"2"),
+		filepath.Join(s.Path(dirSources), TempPrefix+"3"),
+		filepath.Join(s.Dir(), TempPrefix+"config"),
+		filepath.Join(s.Dir(), dirRuns, TempPrefix+"run-x"),
+		filepath.Join(turnDir, TempPrefix+"attempt-x"), // a directory, created above
 	}
 	for _, p := range leftovers[:5] {
 		if err := os.WriteFile(p, []byte("partial"), filePerm); err != nil {

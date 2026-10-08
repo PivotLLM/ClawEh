@@ -39,7 +39,7 @@ func TestToolHostScope(t *testing.T) {
 	alice := &toolHost{cfg: scopeConfig(), agentID: "alice", workspace: ws}
 
 	got, err := alice.Scope(callAt(2))
-	if err != nil || got != (forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, BaseDirName)}) {
+	if err != nil || got != (forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumpkg.BaseDirName)}) {
 		t.Fatalf("Scope below the maximum depth = %+v, %v", got, err)
 	}
 	if _, err := alice.Scope(callAt(3)); !errors.Is(err, forumpkg.ErrForumDepth) {

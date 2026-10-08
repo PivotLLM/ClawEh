@@ -839,10 +839,10 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 }
 
 // Results returns the result of one run of a forum (its latest when run is
-// 0): result.json for a terminal run, or a partial manifest (buildResult
-// over the current state, Complete false) for any other, built exactly as
-// the controller builds result.json, so a round that was not published
-// stays hidden. A forum with no run is refused.
+// 0): result.json for a terminal run, or a partial manifest for any other.
+// Both come from buildResult, which shows a result layer's published
+// outputs only and the other layers' outputs only when the result layers
+// have none. A forum with no run is refused.
 func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*Result, error) {
 	if r, ok := s.running(scope, id); ok && (run == 0 || run == r.store.RunNumber()) {
 		if st := r.ctrl.State(); !st.Status.Terminal() {
