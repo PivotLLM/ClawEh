@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -283,7 +284,11 @@ func TestSvcModels(t *testing.T) {
 func TestSvcStatusAndList(t *testing.T) {
 	e := svcSetup(t)
 	first, _ := e.launch("")
-	time.Sleep(2 * time.Millisecond)
+	// The second launch must be later than the first for the list order.
+	firstAt := e.summary(first).LaunchedAt
+	for !time.Now().UTC().After(firstAt) {
+		runtime.Gosched()
+	}
 	second, _ := e.launch(svcSimpleJSON)
 
 	sum, err := e.svc.Status(t.Context(), e.scope, first, 0)
@@ -1445,7 +1450,6 @@ func (f svcMessengerFunc) Ask(ctx context.Context, agentID, message string, wait
 // retried by the keep-alive loop until they are gone.
 func TestSvcCleanupIsRetried(t *testing.T) {
 	e := svcSetup(t)
-	e.svc.keepAliveEvery = 10 * time.Millisecond
 	id, c := e.launch("")
 	created := e.agents.createdIDs()
 	e.agents.setDeleteErr(created[0], errSvcHost)
@@ -1454,17 +1458,21 @@ func TestSvcCleanupIsRetried(t *testing.T) {
 	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion failed")
 	}
-	svcEventually(t, "retry logged", func() bool { return e.logger.has("retried every") })
+	if e.cleanupsPending() != 1 {
+		t.Fatal("the failed deletion is not queued for a retry")
+	}
+	e.svc.keepAliveTick(t.Context()) // still failing: kept
+	if _, ok := e.marker(id, cleanupAgents); !ok || e.cleanupsPending() != 1 {
+		t.Fatal("a failed retry dropped the deletion")
+	}
 	e.agents.setDeleteErr(created[0], nil)
-	svcEventually(t, "agents deleted", func() bool {
-		_, ok := e.marker(id, cleanupAgents)
-		return !ok && slices.Contains(e.agents.deletedIDs(), created[0])
-	})
-	svcEventually(t, "retry set emptied", func() bool {
-		e.svc.mu.Lock()
-		defer e.svc.mu.Unlock()
-		return len(e.svc.cleanups) == 0
-	})
+	e.svc.keepAliveTick(t.Context())
+	if _, ok := e.marker(id, cleanupAgents); ok || !slices.Contains(e.agents.deletedIDs(), created[0]) {
+		t.Error("the retry did not delete the agent")
+	}
+	if e.cleanupsPending() != 0 {
+		t.Error("the retry set is not empty")
+	}
 }
 
 // A temporary agent the host deletes when its turn ends is not a failure: it
@@ -1472,7 +1480,6 @@ func TestSvcCleanupIsRetried(t *testing.T) {
 // is retried, so a restart before the turn ends still deletes it.
 func TestSvcCleanupPendingTurn(t *testing.T) {
 	e := svcSetup(t)
-	e.svc.keepAliveEvery = 10 * time.Millisecond
 	id, c := e.launch("")
 	created := e.agents.createdIDs()
 	e.agents.setDeleteErr(created[0], fmt.Errorf("%w: busy", ErrDeletePending))
@@ -1485,18 +1492,18 @@ func TestSvcCleanupPendingTurn(t *testing.T) {
 	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion is pending")
 	}
-	time.Sleep(100 * time.Millisecond) // retries while the turn still runs keep it listed
-	e.svc.mu.Lock()
-	retried := len(e.svc.cleanups) == 1
-	e.svc.mu.Unlock()
-	if _, ok := e.marker(id, cleanupAgents); !ok || !retried {
-		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %v)", ok, retried)
+	// Retries while the turn still runs keep it listed.
+	for range 3 {
+		e.svc.keepAliveTick(t.Context())
+	}
+	if _, ok := e.marker(id, cleanupAgents); !ok || e.cleanupsPending() != 1 {
+		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %d)", ok, e.cleanupsPending())
 	}
 	e.agents.setDeleteErr(created[0], nil) // the turn ended: the agent is gone
-	svcEventually(t, "marker cleared by the retry", func() bool {
-		_, ok := e.marker(id, cleanupAgents)
-		return !ok
-	})
+	e.svc.keepAliveTick(t.Context())
+	if _, ok := e.marker(id, cleanupAgents); ok || e.cleanupsPending() != 0 {
+		t.Error("the retry did not clear the marker")
+	}
 }
 
 // The temporary agents of a running forum are touched too.

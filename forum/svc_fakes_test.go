@@ -705,6 +705,24 @@ func (e *svcEnv) running(id string) {
 	})
 }
 
+// cleanupsPending is how many runs wait for a temporary-agent deletion
+// retry.
+func (e *svcEnv) cleanupsPending() int {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	return len(e.svc.cleanups)
+}
+
+// summary is the status of a forum's latest run.
+func (e *svcEnv) summary(id string) *Summary {
+	e.t.Helper()
+	sum, err := e.svc.Status(e.t.Context(), e.scope, id, 0)
+	if err != nil {
+		e.t.Fatalf("status %s: %v", id, err)
+	}
+	return sum
+}
+
 // noticeTries is how many tries of run 1's completion notice have failed
 // in this process and wait for a retry (0 when none is pending).
 func (e *svcEnv) noticeTries(id string) int {
