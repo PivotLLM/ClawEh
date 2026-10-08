@@ -110,7 +110,8 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   start, `internal/gateway/fatal.go` alerts, shuts down cleanly and exits 3 so systemd
   restarts the process.
 - **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
-  DB via `VACUUM INTO`, `internal/`, credentials, TLS); `claw backup` / `claw restore`. See
+  DB via `VACUUM INTO`, `internal/`, credentials, TLS, every agent's `forums/` without
+  `.locks/` and `.tmp-*`, `collectForums`); `claw backup` / `claw restore`. See
   `docs/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`

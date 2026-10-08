@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -144,7 +145,7 @@ func (p *Plan) Apply(now time.Time) (string, error) {
 
 	// Check every database before touching the live home.
 	for _, e := range p.Entries {
-		if s, ok := staged[e.Name]; ok && isDB(s) {
+		if s, ok := staged[e.Name]; ok && isDB(s) && !slices.Contains(p.Manifest.Plain, e.Name) {
 			if err := QuickCheck(s); err != nil {
 				return "", fmt.Errorf("restore aborted, nothing was changed: restored database failed integrity check: %w", err)
 			}

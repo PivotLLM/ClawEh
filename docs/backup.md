@@ -18,16 +18,25 @@ relative to `CLAW_HOME`):
 | `internal/` | claw's own state: service and integration tokens, the device pairing database (`gateway.db`), the Fusion OAuth token store (`fusion-tokens.db`), the audit log (`audit.db`). `claw.pid` and `claw.lock` are left out. |
 | `agents/<agent>/sessions/*.archive.db` | Session archives. |
 | `agents/<agent>/cogmem/*.db` | Cognitive memory. |
+| `agents/<agent>/forums/` | The agent's forums: each forum's configuration and every run's files, and the markers of cleanup a restart must finish (`.cleanup/`). The forum lock files (`.locks/`) and temporary files of a write in progress (`.tmp-*`) are left out. |
 | any other `*.db` / `*.sqlite` under `CLAW_HOME` | |
 
-If `agents.base_dir` points outside `CLAW_HOME`, its databases are stored under
-`external/agents/` and the manifest records the real directory.
+If `agents.base_dir` points outside `CLAW_HOME`, its databases and forums are
+stored under `external/agents/` and the manifest records the real directory.
+
+Forum files are copied as they are; symbolic links in an agent's `forums/`
+folder are never followed. A forum running during the backup is copied file by
+file, not at a single instant. Each file is whole, because the forum writes
+every file to a temporary name and then renames it into place. After a restore,
+such a run is recovered from its commit log like a run interrupted by a
+restart, and its `transcript.md` (the one file appended in place, which may end
+part-way through an entry) is rebuilt then.
 
 **Not included:** `media/` (tool-produced files, a cache), `logs/`, per-agent
 `tmp/`, temporary agents (`internal/temp/` and `internal/temp_agents.json`:
-sub-agent runs, deleted when they finish), the `cogmem/subagents/` snapshots
-earlier versions left behind, previous backups, and SQLite `-wal`/`-shm` files
-(see below). Agent `files/` and `skills/` are not
+sub-agent runs, deleted when they finish), the
+`cogmem/subagents/` snapshots earlier versions left behind, previous backups,
+forum lock and temporary files, and SQLite `-wal`/`-shm` files (see below). Agent `files/` and `skills/` are not
 part of the backup; treat them like any other directory you own.
 
 ## How databases are copied

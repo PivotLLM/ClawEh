@@ -716,6 +716,9 @@ observe does not need an entry.
 
 ### Changed
 
+- The nightly backup and `claw backup` now include each agent's forums
+  (`forums/`), and `claw restore` puts them back. The forum lock files and
+  temporary files of a write in progress are left out.
 - **Recalled memory is labelled as injected.** Memory that cogmem adds to a turn
   now starts with "## Injected cogmem domain: <name> (<id>) — <reason>", so the
   model can tell recalled memory from the conversation (cogmem v0.0.6).

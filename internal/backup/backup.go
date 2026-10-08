@@ -92,6 +92,14 @@ const (
 	tempAgentsList = internalDir + "/temp_agents.json"
 )
 
+// The forum store's layout inside an agent workspace (forum/store.go): the
+// directory, its lock files and the prefix of its temporary files.
+const (
+	forumsDir      = "forums"
+	forumLocksDir  = ".locks"
+	forumTmpPrefix = ".tmp-"
+)
+
 // isTempAgentPath reports whether an archive name belongs to the temporary
 // agents.
 func isTempAgentPath(name string) bool {
@@ -131,6 +139,10 @@ type Manifest struct {
 	Home      string    `json:"claw_home"`
 	AgentsDir string    `json:"agents_dir,omitempty"` // set only when outside claw_home
 	Files     []string  `json:"files"`                // archive paths, in archive order
+	// Plain lists the archive paths with a database extension that were
+	// copied byte for byte (forum files), so a restore does not check them
+	// as SQLite databases.
+	Plain []string `json:"plain,omitempty"`
 }
 
 // Skipped is a database left out of the archive because it failed quick_check.
@@ -222,6 +234,9 @@ func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, er
 		}
 		files = append(files, r)
 		m.Files = append(m.Files, e.name)
+		if !e.db && isDB(e.name) {
+			m.Plain = append(m.Plain, e.name)
+		}
 	}
 
 	tmpArchive := filepath.Join(tmpDir, "archive.tar.gz")
@@ -369,6 +384,27 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 			return nil, false, err
 		}
 	}
+	// Every agent's forums, before the database walk so a forum file with a
+	// database extension (a materialised source) is copied as it is.
+	external := src.AgentsDir != "" && !within(src.Home, src.AgentsDir)
+	if src.AgentsDir != "" {
+		agentsPrefix := externalAgentsPrefix
+		if !external {
+			rel, err := filepath.Rel(filepath.Clean(src.Home), filepath.Clean(src.AgentsDir))
+			if err != nil {
+				return nil, false, fmt.Errorf("backup: %w", err)
+			}
+			agentsPrefix = ""
+			if rel != "." {
+				agentsPrefix = filepath.ToSlash(rel) + "/"
+			}
+		}
+		if err := collectForums(src.AgentsDir, agentsPrefix, dest, func(path, name string) {
+			add(entry{src: path, name: name})
+		}); err != nil {
+			return nil, false, err
+		}
+	}
 	// Databases anywhere else under Home.
 	dbOnly := func(path, name string) {
 		if isDB(path) && !isTempAgentPath(name) {
@@ -378,14 +414,80 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	if err := walk(src.Home, "", dest, dbOnly); err != nil {
 		return nil, false, err
 	}
-	external := false
-	if src.AgentsDir != "" && !within(src.Home, src.AgentsDir) {
-		external = true
+	if external {
 		if err := walk(src.AgentsDir, externalAgentsPrefix, dest, dbOnly); err != nil {
 			return nil, false, err
 		}
 	}
 	return out, external, nil
+}
+
+// collectForums calls fn(path, archiveName) for every file of every agent's
+// forums directory (<agentsDir>/<agent>/forums/) with archive name
+// prefix+<agent>/forums/<rel>. The forum store's lock files (.locks/) and the
+// temporary files a write in progress or a crash leaves (.tmp-*) are skipped;
+// its cleanup markers (.cleanup/) are state and are kept. Symbolic links are
+// never followed, at any level: an agent directory or forums directory that
+// is a link is skipped like any link inside. Every file the store publishes is
+// written whole (a temporary file renamed or linked into place), so a plain
+// copy taken while a forum runs reads each file either before or after a
+// write, never torn. The copy is not one instant across files; a restored run
+// is recovered from its commit log like one interrupted by a restart, which
+// also rebuilds transcript.md, the one file appended in place.
+func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) error {
+	agents, err := os.ReadDir(agentsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("backup: read %s: %w", agentsDir, err)
+	}
+	for _, a := range agents {
+		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
+			continue
+		}
+		base := prefix + a.Name() + "/" + forumsDir + "/"
+		if isTempAgentPath(base) {
+			continue
+		}
+		root := filepath.Join(agentsDir, a.Name(), forumsDir)
+		fi, err := os.Lstat(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("backup: stat %s: %w", root, err)
+		}
+		if !fi.IsDir() {
+			continue
+		}
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if path == root {
+				return nil
+			}
+			rel, rerr := filepath.Rel(root, path)
+			if rerr != nil {
+				return rerr
+			}
+			if d.IsDir() {
+				if path == filepath.Clean(skip) || rel == forumLocksDir || strings.HasPrefix(d.Name(), forumTmpPrefix) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forumTmpPrefix) {
+				return nil
+			}
+			fn(path, base+filepath.ToSlash(rel))
+			return nil
+		}); err != nil {
+			return fmt.Errorf("backup: walk %s: %w", root, err)
+		}
+	}
+	return nil
 }
 
 // walk calls fn(path, archiveName) for every regular file under root, skipping
