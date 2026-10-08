@@ -491,7 +491,8 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 }
 
 // sendHTMLChunk sends a single HTML message, falling back to the original
-// markdown as plain text on parse failure so users never see raw HTML tags.
+// markdown as plain text when Telegram cannot parse the HTML, so users never
+// see raw HTML tags. Any other failure is classified as it is.
 func (c *TelegramChannel) sendHTMLChunk(
 	ctx context.Context, chatID int64, threadID int, htmlContent, mdFallback string, replyToID string,
 ) error {
@@ -508,11 +509,10 @@ func (c *TelegramChannel) sendHTMLChunk(
 	}
 
 	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
-		// A chat that does not exist fails the same way in plain text.
-		if recipientNotFound(err) {
-			return fmt.Errorf("telegram send: %w: %w", channels.ErrRecipientNotFound, redactErr(err))
+		if !htmlParseError(err) {
+			return classifySendErr("telegram send", err)
 		}
-		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
+		logger.WarnCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
 			"error": redactErr(err).Error(),
 		})
 		tgMsg.Text = mdFallback
@@ -542,12 +542,24 @@ var recipientNotFoundReasons = []string{
 	"group chat was upgraded to a supergroup",
 }
 
+// htmlParseError reports whether err is Telegram refusing the message's HTML
+// markup (400 "can't parse entities"), the one failure plain text can fix.
+func htmlParseError(err error) bool {
+	var apiErr *ta.Error
+	return errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(apiErr.Description), "can't parse entities")
+}
+
 // recipientNotFound reports whether err is a Telegram API error saying the
-// chat cannot be reached at all.
+// chat cannot be reached at all. Every 403 is one: Telegram answers 403 only
+// when the bot may not write to that chat.
 func recipientNotFound(err error) bool {
 	var apiErr *ta.Error
 	if !errors.As(err, &apiErr) {
 		return false
+	}
+	if apiErr.ErrorCode == http.StatusForbidden {
+		return true
 	}
 	desc := strings.ToLower(apiErr.Description)
 	for _, r := range recipientNotFoundReasons {
@@ -559,13 +571,22 @@ func recipientNotFound(err error) bool {
 }
 
 // classifySendErr maps a failed Telegram send to a channel sentinel: a chat
-// that cannot be reached is ErrRecipientNotFound, anything else
-// ErrTemporary (retried). The redacted API error is kept for the log.
+// that cannot be reached is ErrRecipientNotFound, a 429 ErrRateLimit, any
+// other 4xx ErrSendFailed (the same request fails again), anything else
+// ErrTemporary (retried). The redacted error is kept so logs and alerts say
+// why.
 func classifySendErr(op string, err error) error {
-	if recipientNotFound(err) {
-		return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, redactErr(err))
+	sentinel := channels.ErrTemporary
+	var apiErr *ta.Error
+	switch {
+	case recipientNotFound(err):
+		sentinel = channels.ErrRecipientNotFound
+	case errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusTooManyRequests:
+		sentinel = channels.ErrRateLimit
+	case errors.As(err, &apiErr) && apiErr.ErrorCode >= 400 && apiErr.ErrorCode < 500:
+		sentinel = channels.ErrSendFailed
 	}
-	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
+	return fmt.Errorf("%s: %w: %w", op, sentinel, redactErr(err))
 }
 
 // StartTyping implements channels.TypingCapable.
@@ -743,7 +764,8 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		utils.CloseQuietly(file)
 
 		if err != nil {
-			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
+			// The manager logs and alerts the failure by its classification.
+			logger.DebugCF("telegram", "Failed to send media", map[string]any{
 				"type":  part.Type,
 				"error": redactErr(err).Error(),
 			})

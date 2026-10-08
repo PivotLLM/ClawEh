@@ -4,7 +4,8 @@
 package config
 
 import (
-	"fmt"
+	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/logger"
@@ -20,16 +21,27 @@ import (
 //   - skills:   workspace skills (skills.NewSkillsLoader, the skills tools)
 //   - tasks:    sub-agent results (tools/agents taskstore)
 //   - tmp:      inbound attachments and transcriptions (agent loop)
-//   - forums:   the agent's forums (tools/forum BaseDirName)
+//   - forums:   the agent's forums (WorkspaceForumsDir)
 //   - maestro:  Maestro data (MaestroMountName)
 //   - sessions: conversation archives (the session store)
 //   - cogmem:   cognitive memory (cogmemhost.DirName)
-//   - state:    persisted agent state (state.NewManager, message tokens)
+//   - state:    in-flight turns kept for restart recovery (state.NewManager,
+//     state.json) and the external-message tokens (message-tokens.json)
 //   - common:   the shared directory's tools namespace
 var ReservedWorkspaceNames = []string{
-	"files", "skills", "tasks", "tmp", "forums", MaestroMountName,
+	"files", "skills", "tasks", "tmp", WorkspaceForumsDir, MaestroMountName,
 	"sessions", "cogmem", "state", "common",
 }
+
+// WorkspaceForumsDir is the folder in an agent's workspace that holds its
+// forums (the forum tools' base directory).
+const WorkspaceForumsDir = "forums"
+
+// AlwaysReadableWorkspaceDirs are the workspace folders an agent may always
+// read when workspace_read_subdirs limits its reads: tasks/ (sub-agent
+// results), tmp/ (inbound attachments) and the forums folder (its forums'
+// results). Writes stay confined to the write area.
+var AlwaysReadableWorkspaceDirs = []string{"tasks", "tmp", WorkspaceForumsDir}
 
 // IsReservedWorkspaceName reports whether name, trimmed and in any case, is one
 // of ReservedWorkspaceNames.
@@ -73,23 +85,14 @@ func (m IgnoredMount) key() string {
 // so it cannot block an unrelated save, including the one that renames it;
 // it is ignored until then.
 func newReservedMounts(before, next *Config) []error {
-	had := make(map[string]bool)
-	for _, m := range before.IgnoredMounts() {
-		had[m.key()] = true
-	}
-	var errs []error
-	for _, m := range next.IgnoredMounts() {
-		if had[m.key()] {
-			continue
-		}
-		name := m.Agent
-		if ac := next.agentByID(m.Agent); ac != nil {
-			name = agentLabel(ac)
-		}
-		msg := fmt.Sprintf("%s's mount %q uses a reserved name; choose another name.", name, m.Mount)
-		errs = append(errs, fmt.Errorf("%s", msg))
-	}
-	return errs
+	return newProblems(before.IgnoredMounts(), next.IgnoredMounts(), IgnoredMount.key,
+		func(m IgnoredMount) error {
+			name := m.Agent
+			if ac := next.agentByID(m.Agent); ac != nil {
+				name = agentLabel(ac)
+			}
+			return errors.New(name + "'s mount " + strconv.Quote(m.Mount) + " uses a reserved name; choose another name.")
+		})
 }
 
 // warnReservedMounts logs one warning per mount set aside for a reserved name.

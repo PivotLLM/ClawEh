@@ -81,7 +81,10 @@ type Server struct {
 
 	inbound InboundFunc
 	querier AgentQuerier // optional: serves agents.list / chat.history to operator clients
-	conns   sync.Map     // chatID -> *liveConn (the newest connection per device)
+	// staleWarned holds "deviceID|agentID" for each stale assignment already
+	// logged, so a device that keeps talking logs it once.
+	staleWarned sync.Map
+	conns       sync.Map // chatID -> *liveConn (the newest connection per device)
 
 	// live is every post-handshake connection, so a stop or a device removal
 	// can close all of them, not only the newest per device. stopped refuses
@@ -969,7 +972,7 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 		agents, defaultID, _ = s.querier.Agents()
 	}
 	current := defaultID
-	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" && s.assignedAgentRuns(dev.AgentID) {
 		current = dev.AgentID
 	}
 
@@ -1079,6 +1082,17 @@ func (s *Server) agentExists(id string) bool {
 	return false
 }
 
+// assignedAgentRuns reports whether a per-device assignment names an agent the
+// loop runs. Unlike agentExists it admits human agents (the turn reaches them
+// and they refuse it themselves). Without a querier nothing can be checked and
+// the assignment is honoured.
+func (s *Server) assignedAgentRuns(id string) bool {
+	if s.querier == nil {
+		return true
+	}
+	return s.querier.HasAgent(id)
+}
+
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
 // Both chat.send and chat.history go through it, so a device always reads the
 // transcript it writes.
@@ -1107,9 +1121,17 @@ func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested
 			agentID = d
 		}
 	}
-	// Per-device assignment overrides the gateway default for node clients.
+	// Per-device assignment overrides the gateway default for node clients, but
+	// only while the assigned agent exists: the loop drops a turn preresolved to
+	// a missing agent, so a stale assignment would leave the device unanswered.
 	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		agentID = dev.AgentID
+		if s.assignedAgentRuns(dev.AgentID) {
+			agentID = dev.AgentID
+		} else if _, seen := s.staleWarned.LoadOrStore(lc.deviceID+"|"+dev.AgentID, true); !seen {
+			logger.WarnCF("device", "assigned agent not found; using the default agent", map[string]any{
+				"deviceId": lc.deviceID, "device": dev.DisplayName, "assignedAgent": dev.AgentID, "agent": agentID,
+			})
+		}
 	}
 	return routing.BuildAgentMainSessionKey(agentID), nil
 }

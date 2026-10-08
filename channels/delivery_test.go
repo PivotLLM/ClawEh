@@ -307,3 +307,56 @@ func TestSendWithRetry_AlertDescription(t *testing.T) {
 		})
 	}
 }
+
+// A media send is retried and reported like a text one: a permanent failure
+// is tried once and alerts, a transient one alerts after its retries, and the
+// alert counts the retries actually made.
+func TestSendMediaWithRetry_FailureAlerts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		err       error
+		wantCalls int
+		want      string
+	}{
+		{"permanent failure", ErrSendFailed, 1, "test: a file could not be delivered"},
+		{"not running", ErrNotRunning, 1, "test: a file could not be delivered because the channel is not running"},
+		{"after retries", ErrTemporary, maxRetries + 1, "test: a file could not be delivered after 3 retries"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newTestManager()
+			rec := &alertRecorder{}
+			m.SetAlerter(rec)
+			ch := &mediaMock{err: fmt.Errorf("upload: %w", tt.err)}
+			w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+			m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+			if ch.calls != tt.wantCalls {
+				t.Fatalf("SendMedia called %d times, want %d", ch.calls, tt.wantCalls)
+			}
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if len(rec.alerts) != 1 || rec.alerts[0].Title != "Channel send failed" ||
+				rec.alerts[0].Description != tt.want || rec.alerts[0].EventID != "test" {
+				t.Fatalf("alerts = %+v, want one with description %q", rec.alerts, tt.want)
+			}
+		})
+	}
+}
+
+// A media send to a receive-only account or an offline recipient is not
+// alerted, like text.
+func TestSendMediaWithRetry_ExpectedStatesDoNotAlert(t *testing.T) {
+	for _, sentinel := range []error{ErrReceiveOnly, ErrRecipientOffline} {
+		m := newTestManager()
+		rec := &alertRecorder{}
+		m.SetAlerter(rec)
+		ch := &mediaMock{err: fmt.Errorf("x: %w", sentinel)}
+		w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+		m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+		if ch.calls != 1 || len(rec.alerts) != 0 {
+			t.Fatalf("%v: calls = %d, alerts = %+v; want 1 call, no alert", sentinel, ch.calls, rec.alerts)
+		}
+	}
+}

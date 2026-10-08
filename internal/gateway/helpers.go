@@ -329,9 +329,16 @@ func gatewayCmd(debug bool) error {
 	// The forum service exists before the loop builds the agents' tools.
 	forumHost := agent.NewForumHost()
 	forumSvc := newForumService(forumHost)
+	// Closed here on any return before the services own it; from then on
+	// shutdownGateway closes it.
+	forumOwned := true
+	defer func() {
+		if forumOwned {
+			closeForums(forumSvc)
+		}
+	}()
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher, agent.OwnsDataDir())
 	if err != nil {
-		closeForums(forumSvc)
 		return fmt.Errorf("error creating agent loop: %w", err)
 	}
 	forumHost.Bind(agentLoop)
@@ -374,10 +381,10 @@ func gatewayCmd(debug bool) error {
 	// Setup and start all services
 	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath, store, fatal)
 	if err != nil {
-		closeForums(forumSvc)
 		return err
 	}
 	services.Forum = forumSvc
+	forumOwned = false
 	// The Logs page tails the alerts file the alerter writes.
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())

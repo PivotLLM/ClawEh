@@ -124,7 +124,7 @@ func TestSend_FailureRedactsToken(t *testing.T) {
 		assert.NotContains(t, err.Error(), testSecret)
 	}
 	assert.Contains(t, editErr.Error(), "bot<redacted>")
-	assert.Contains(t, buf.String(), "bot<redacted>", "the send failure is logged")
+	assert.Contains(t, sendErr.Error(), "bot<redacted>", "the send error keeps its (redacted) cause for the manager's log and alert")
 	assert.NotContains(t, buf.String(), testSecret)
 }
 

@@ -31,6 +31,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -92,16 +93,8 @@ const (
 	tempAgentsList = internalDir + "/temp_agents.json"
 )
 
-// The forum store's layout inside an agent workspace (forum/store.go): the
-// directory, its lock files and the prefix of its temporary files.
-const (
-	forumsDir      = "forums"
-	forumLocksDir  = ".locks"
-	forumTmpPrefix = ".tmp-"
-)
-
 // isTempAgentPath reports whether an archive name belongs to the temporary
-// agents.
+// agents (internal/temp/ and their list), which are never backed up.
 func isTempAgentPath(name string) bool {
 	return name == tempAgentsList || strings.HasPrefix(name, tempAgentsDir)
 }
@@ -446,11 +439,15 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
 			continue
 		}
-		base := prefix + a.Name() + "/" + forumsDir + "/"
+		base := prefix + a.Name() + "/" + config.WorkspaceForumsDir + "/"
+		// Temporary agents' workspaces live in internal/temp/, never in the
+		// agents directory; this only matters when agents.base_dir is set to
+		// CLAW_HOME's internal/ (or internal/temp/) folder, where it keeps them
+		// out like the rest of internal/temp/.
 		if isTempAgentPath(base) {
 			continue
 		}
-		root := filepath.Join(agentsDir, a.Name(), forumsDir)
+		root := filepath.Join(agentsDir, a.Name(), config.WorkspaceForumsDir)
 		fi, err := os.Lstat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -473,12 +470,12 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 				return rerr
 			}
 			if d.IsDir() {
-				if path == filepath.Clean(skip) || rel == forumLocksDir || strings.HasPrefix(d.Name(), forumTmpPrefix) {
+				if path == filepath.Clean(skip) || rel == forum.LocksDir || strings.HasPrefix(d.Name(), forum.TmpPrefix) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forumTmpPrefix) {
+			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forum.TmpPrefix) {
 				return nil
 			}
 			fn(path, base+filepath.ToSlash(rel))

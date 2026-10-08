@@ -403,15 +403,18 @@ func (h *Handler) resolvePending(w http.ResponseWriter, r *http.Request, approve
 }
 
 type pairedDeviceView struct {
-	DeviceID     string   `json:"device_id"`
-	DisplayName  string   `json:"display_name"`
-	Platform     string   `json:"platform"`
-	ClientMode   string   `json:"client_mode"`
-	Roles        []string `json:"roles"`
-	Scopes       []string `json:"scopes"`
-	AgentID      string   `json:"agent_id"` // per-device assigned agent ("" = default)
-	ApprovedAtMs int64    `json:"approved_at_ms"`
-	LastSeenAtMs int64    `json:"last_seen_at_ms"`
+	DeviceID    string   `json:"device_id"`
+	DisplayName string   `json:"display_name"`
+	Platform    string   `json:"platform"`
+	ClientMode  string   `json:"client_mode"`
+	Roles       []string `json:"roles"`
+	Scopes      []string `json:"scopes"`
+	AgentID     string   `json:"agent_id"` // per-device assigned agent ("" = default)
+	// AgentMissing is true when agent_id names an agent that is no longer
+	// configured or is disabled; the device then talks to the default agent.
+	AgentMissing bool  `json:"agent_missing"`
+	ApprovedAtMs int64 `json:"approved_at_ms"`
+	LastSeenAtMs int64 `json:"last_seen_at_ms"`
 }
 
 // agentOption is a selectable agent for the per-device assistant dropdown.
@@ -446,15 +449,26 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
 		return
 	}
+	// An assignment counts while it names an enabled agent (human agents
+	// included): the device channel then routes to it, otherwise to the
+	// default agent.
+	agents := configuredAgents(cfg)
+	known := make(map[string]bool, len(cfg.Agents.List))
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].IsEnabled() {
+			known[routing.NormalizeAgentID(cfg.Agents.List[i].ID)] = true
+		}
+	}
 	views := make([]pairedDeviceView, 0, len(paired))
 	for _, d := range paired {
 		views = append(views, pairedDeviceView{
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
 			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
+			AgentMissing: d.AgentID != "" && !known[routing.NormalizeAgentID(d.AgentID)],
 			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": configuredAgents(cfg)})
+	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": agents})
 }
 
 // handleDeviceAgent assigns (or clears) the agent a paired device routes to. Body:

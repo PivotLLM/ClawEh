@@ -42,19 +42,31 @@ func filesSummary(cfg *config.Config, env Environment) string {
 	}
 }
 
+// shellSummary is the summary's Shell row: who may run shell commands and,
+// when anyone may, whether the deny patterns apply.
 func shellSummary(cfg *config.Config) string {
+	text, allowed := shellAccess(cfg)
+	if allowed {
+		text += "; deny patterns " + onOff(cfg.Tools.Exec.EnableDenyPatterns)
+	}
+	return text + "."
+}
+
+// shellAccess names the enabled agents allowed shell commands, by display
+// name, without a closing period, and reports whether there are any: the
+// opening of the Shell rows of the summary and of the assessment, which say
+// it the same way.
+func shellAccess(cfg *config.Config) (string, bool) {
 	var with []string
 	for _, a := range enabledAgents(cfg) {
-		if agentHasTool(a, "shell_exec") {
-			with = append(with, a.ID)
+		if agentHasTool(a, config.ShellExecTool) {
+			with = append(with, a.DisplayName())
 		}
 	}
-	ex := cfg.Tools.Exec
-	policy := "deny patterns " + onOff(ex.EnableDenyPatterns)
 	if len(with) == 0 {
-		return "No enabled agent has shell_exec (" + policy + ")."
+		return "No enabled agent is allowed shell commands", false
 	}
-	return "shell_exec allowed for " + strings.Join(with, ", ") + "; " + policy + "."
+	return "Allow shell commands: " + strings.Join(with, ", "), true
 }
 
 func hostOf(raw string) string {

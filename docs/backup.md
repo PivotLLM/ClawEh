@@ -24,6 +24,12 @@ relative to `CLAW_HOME`):
 If `agents.base_dir` points outside `CLAW_HOME`, its databases and forums are
 stored under `external/agents/` and the manifest records the real directory.
 
+**Agents with their own `workspace`.** Only workspaces in `agents.base_dir`
+are fully covered. For an agent whose `workspace` setting points elsewhere, a
+workspace under `CLAW_HOME` contributes its databases (sessions, memory) but
+not its forums, and a workspace outside `CLAW_HOME` contributes nothing. Back
+such a folder up yourself, or move the agent into `agents.base_dir`.
+
 Forum files are copied as they are; symbolic links in an agent's `forums/`
 folder are never followed. A forum running during the backup is copied file by
 file, not at a single instant. Each file is whole, because the forum writes
@@ -110,6 +116,10 @@ Archives are self-contained: one file is one restorable backup.
    archived copies are put in place. Delete that directory once you are happy
    with the result.
 5. Start ClawEh.
+
+A restore puts back only what the archive holds: an agent with its own
+`workspace` outside `agents.base_dir` is restored without the parts listed
+above as not covered.
 
 Restoring onto a new host: install ClawEh, set `CLAW_HOME` (or use the
 default), copy the archive over, and run the same command. Paths inside the

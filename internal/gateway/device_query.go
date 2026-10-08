@@ -44,6 +44,13 @@ func (q deviceAgentQuerier) DefaultAgentID() string {
 	return q.al.GetRegistry().DefaultID()
 }
 
+// HasAgent reports whether id names a configured agent the loop runs, human
+// agents included.
+func (q deviceAgentQuerier) HasAgent(id string) bool {
+	_, ok := q.al.GetRegistry().GetConfigured(id)
+	return ok
+}
+
 // History returns the user/assistant text turns stored for a session key. A
 // key whose agent is not registered returns nothing: reading it would create a
 // session database in some other agent's store.

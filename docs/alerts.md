@@ -55,7 +55,7 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | HTTP listener stopped | The loopback or HTTPS listener died after start; ClawEh exits so the service manager restarts it | `http` |
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |
 | | Channel failed to start | A channel has failed to start ten times in a row; retries continue every five minutes | channel name |
-| | Channel send failed | An outbound message was dropped by a channel that reports itself not running, or after its send retries; never for a recipient that is offline or can't be reached | channel name |
+| | Channel send failed | An outbound message or file was dropped by a channel that reports itself not running, or after its send retries; never for a recipient that is offline or can't be reached | channel name |
 | | Channel receive loop stopped | The device listener failed; it re-listens with backoff while the channel still reports running | channel name |
 | | `<Platform>` down | Channels of one platform have had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`); one alert per platform | platform (`telegram`) |
 | | `<Platform>` up | Every channel in a platform outage has reconnected | platform + `-up` |
