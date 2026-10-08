@@ -21,16 +21,26 @@ import (
 //   - skills:   workspace skills (skills.NewSkillsLoader, the skills tools)
 //   - tasks:    sub-agent results (tools/agents taskstore)
 //   - tmp:      inbound attachments and transcriptions (agent loop)
-//   - forums:   the agent's forums (tools/forum BaseDirName)
+//   - forums:   the agent's forums (WorkspaceForumsDir)
 //   - maestro:  Maestro data (MaestroMountName)
 //   - sessions: conversation archives (the session store)
 //   - cogmem:   cognitive memory (cogmemhost.DirName)
 //   - state:    persisted agent state (state.NewManager, message tokens)
 //   - common:   the shared directory's tools namespace
 var ReservedWorkspaceNames = []string{
-	"files", "skills", "tasks", "tmp", "forums", MaestroMountName,
+	"files", "skills", "tasks", "tmp", WorkspaceForumsDir, MaestroMountName,
 	"sessions", "cogmem", "state", "common",
 }
+
+// WorkspaceForumsDir is the folder in an agent's workspace that holds its
+// forums (the forum tools' base directory).
+const WorkspaceForumsDir = "forums"
+
+// AlwaysReadableWorkspaceDirs are the workspace folders an agent may always
+// read when workspace_read_subdirs limits its reads: tasks/ (sub-agent
+// results), tmp/ (inbound attachments) and the forums folder (its forums'
+// results). Writes stay confined to the write area.
+var AlwaysReadableWorkspaceDirs = []string{"tasks", "tmp", WorkspaceForumsDir}
 
 // IsReservedWorkspaceName reports whether name, trimmed and in any case, is one
 // of ReservedWorkspaceNames.

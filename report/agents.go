@@ -12,15 +12,13 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/forum"
 )
 
 // sensitiveTools are the internal tools that reach beyond the agent's own
 // workspace read: run programs, change files, send messages, install code,
 // or start other agents (or give them turns).
 var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn", "agent_message"}
-
-// forumLaunchTool is the forum tool that starts other agents' turns.
-const forumLaunchTool = "forum_launch"
 
 // folderRow is one line of the Folder access table before sorting.
 type folderRow struct {
@@ -40,6 +38,13 @@ type folderAccess struct {
 	rows map[string]*folderRow
 	// special is the one highlighted "anything" row, kept first.
 	special *folderRow
+}
+
+// alwaysReadableNotes says what each of config.AlwaysReadableWorkspaceDirs holds.
+var alwaysReadableNotes = map[string]string{
+	"tasks":                   "sub-agent results",
+	"tmp":                     "inbound attachments",
+	config.WorkspaceForumsDir: "the agent's forums",
 }
 
 func (f *folderAccess) add(path string, read, write bool, note string) {
@@ -88,9 +93,9 @@ func agentFolderAccess(cfg *config.Config, env Environment, a *config.AgentConfi
 			for _, sub := range d.WorkspaceReadSubdirs {
 				fa.add(filepath.Join(ws, sub), true, false, "workspace read area")
 			}
-			fa.add(filepath.Join(ws, "tasks"), true, false, "sub-agent results (always readable)")
-			fa.add(filepath.Join(ws, "tmp"), true, false, "inbound attachments (always readable)")
-			fa.add(filepath.Join(ws, "forums"), true, false, "the agent's forums (always readable)")
+			for _, sub := range config.AlwaysReadableWorkspaceDirs {
+				fa.add(filepath.Join(ws, sub), true, false, alwaysReadableNotes[sub]+" (always readable)")
+			}
 		}
 		for _, p := range cfg.Tools.AllowReadPaths {
 			fa.add(p, true, false, "pattern (allow_read_paths)")
@@ -173,8 +178,8 @@ func agentToolsTable(a *config.AgentConfig) Table {
 	}
 	// forum_launch gives other agents turns; the forum switch, not the
 	// tools list, grants it.
-	if a.Forum && !a.IsToolDenied(forumLaunchTool) {
-		cells = append(cells, row(forumLaunchTool, "yes (Allow forum)"))
+	if a.Forum && !a.IsToolDenied(forum.LaunchTool) {
+		cells = append(cells, row(forum.LaunchTool, "yes (Allow forum)"))
 	}
 	for i := 0; i < len(cells); i += 2 {
 		r := row(cells[i][0], cells[i][1], "", "")
@@ -271,7 +276,7 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 	d := cfg.Agents.Defaults
 	readSubdirs := append([]string{}, d.WorkspaceReadSubdirs...)
 	if len(readSubdirs) > 0 {
-		readSubdirs = append(readSubdirs, "tasks", "tmp", "forums")
+		readSubdirs = append(readSubdirs, config.AlwaysReadableWorkspaceDirs...)
 	}
 	defaults := pairs("Defaults (agents.defaults)",
 		row("restrict_to_workspace", onOff(d.RestrictToWorkspace)),
