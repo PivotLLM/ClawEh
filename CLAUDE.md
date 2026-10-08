@@ -450,9 +450,10 @@ Hard-won learnings (don't relearn these):
   and closes its connections. Pending pairings: at most 20, each expires after 10 minutes.
 - **Agent selection / session scope:** the client encodes the selected agent as the session
   key's 2nd segment (`agent:<id>:<peer>:<profile>`); node clients send the `main` sentinel and
-  use their per-device assignment (else the default agent; an assignment to an agent that
-  no longer exists or is disabled is ignored with one WARN, and `GET /api/devices` marks it
-  `agent_missing`, which the Devices page shows). Every device joins the selected
+  use their per-device assignment (else the default agent; an assignment to an agent the
+  loop does not run — deleted, disabled, or a human agent set aside — is ignored with one
+  WARN, and `GET /api/devices` marks it `agent_missing` + `agent_state` by the same rule
+  (`assignedAgentState`), which the Devices page shows). Every device joins the selected
   agent's main conversation (`agent:<id>:main`), whatever the rest of the key says — one
   agent, one history, one memory across the R1, the app, Slack, Telegram, and MCP service
   tokens. There are no session modes; an unknown agent id is refused. `chat.history` resolves

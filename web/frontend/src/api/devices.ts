@@ -38,9 +38,14 @@ export interface PairedDevice {
   roles: string[]
   scopes: string[]
   agent_id: string
-  // agent_id names an agent that no longer exists or is disabled; the device
-  // talks to the default agent.
+  // agent_id normalized: the id agents[] lists it under ("" when unassigned).
+  agent_ref?: string
+  // The assigned agent's display name while it is configured.
+  agent_name?: string
+  // The service does not run the assigned agent; the device talks to the
+  // default agent. agent_state says why.
   agent_missing: boolean
+  agent_state?: "not_found" | "disabled" | "set_aside"
   approved_at_ms: number
   last_seen_at_ms: number
 }

@@ -192,5 +192,8 @@ func TestDeviceList_MarksMissingAgent(t *testing.T) {
 		if d.AgentMissing != want[d.DeviceID] {
 			t.Errorf("%s: agent_missing = %v, want %v", d.DeviceID, d.AgentMissing, want[d.DeviceID])
 		}
+		if d.DeviceID == "dev1" && (d.AgentState != "not_found" || d.AgentRef != "removed") {
+			t.Errorf("dev1: agent_state %q, agent_ref %q, want not_found, removed", d.AgentState, d.AgentRef)
+		}
 	}
 }

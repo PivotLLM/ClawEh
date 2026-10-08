@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import {
   type DeviceStatus,
+  type PairedDevice,
   approveDevice,
   assignDeviceAgent,
   generateDevicePairing,
@@ -136,13 +137,17 @@ export function DevicesPage() {
   const pendingList = pending.data?.pending ?? []
   const pairedList = paired.data?.devices ?? []
   const agentOptions = paired.data?.agents ?? []
-  // A stale assignment names an agent that was deleted (not among the
-  // options) or one that is disabled (still listed, by its name).
-  const staleAgentNote = (agentId: string) => {
-    const known = agentOptions.find((a) => a.id === agentId)
-    return known
-      ? t("pages.devices.agent_disabled", { agent: known.name })
-      : t("pages.devices.agent_missing", { agent: agentId })
+  // Why an assignment is ignored, as the server reports it.
+  const staleAgentNote = (d: PairedDevice) => {
+    const agent = d.agent_name || d.agent_id
+    switch (d.agent_state) {
+      case "disabled":
+        return t("pages.devices.agent_disabled", { agent })
+      case "set_aside":
+        return t("pages.devices.agent_set_aside", { agent })
+      default:
+        return t("pages.devices.agent_missing", { agent })
+    }
   }
 
   return (
@@ -352,7 +357,7 @@ export function DevicesPage() {
                           data-testid="device-agent-missing"
                           className="text-xs text-amber-600 dark:text-amber-400"
                         >
-                          {staleAgentNote(d.agent_id)}
+                          {staleAgentNote(d)}
                         </p>
                       )}
                     </div>
@@ -361,7 +366,7 @@ export function DevicesPage() {
                         <select
                           className="border-border bg-background rounded border px-2 py-1 text-sm"
                           aria-label="Assistant"
-                          value={d.agent_id}
+                          value={d.agent_ref ?? d.agent_id}
                           disabled={assignAgentMut.isPending}
                           onChange={(e) =>
                             assignAgentMut.mutate({
@@ -370,11 +375,14 @@ export function DevicesPage() {
                             })
                           }
                         >
-                          <option value="">Default assistant</option>
-                          {d.agent_missing &&
-                            !agentOptions.some((a) => a.id === d.agent_id) && (
-                              <option value={d.agent_id}>{d.agent_id}</option>
-                            )}
+                          <option value="">
+                            {t("pages.devices.default_assistant")}
+                          </option>
+                          {d.agent_state === "not_found" && (
+                            <option value={d.agent_ref ?? d.agent_id}>
+                              {d.agent_id}
+                            </option>
+                          )}
                           {agentOptions.map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.name}

@@ -799,8 +799,10 @@
     },
     "devices": {
       "connect_to": "Devices will connect to",
+      "default_assistant": "Default assistant",
       "agent_missing": "Ignored: {{agent}} no longer exists; using the default agent.",
-      "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent."
+      "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent.",
+      "agent_set_aside": "Ignored: {{agent}} is set aside; using the default agent."
     }
   },
   "providers": {

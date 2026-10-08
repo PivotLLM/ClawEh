@@ -410,11 +410,18 @@ type pairedDeviceView struct {
 	Roles       []string `json:"roles"`
 	Scopes      []string `json:"scopes"`
 	AgentID     string   `json:"agent_id"` // per-device assigned agent ("" = default)
-	// AgentMissing is true when agent_id names an agent that is no longer
-	// configured or is disabled; the device then talks to the default agent.
-	AgentMissing bool  `json:"agent_missing"`
-	ApprovedAtMs int64 `json:"approved_at_ms"`
-	LastSeenAtMs int64 `json:"last_seen_at_ms"`
+	// AgentRef is agent_id normalized: the id agents[] lists it under.
+	AgentRef string `json:"agent_ref,omitempty"`
+	// AgentName is the assigned agent's display name while it is configured.
+	AgentName string `json:"agent_name,omitempty"`
+	// AgentMissing is true when agent_id names an agent the service does not
+	// run; the device then talks to the default agent. AgentState says why:
+	// "not_found" (no longer configured), "disabled", or "set_aside" (a
+	// human agent breaking the human-agent rules).
+	AgentMissing bool   `json:"agent_missing"`
+	AgentState   string `json:"agent_state,omitempty"`
+	ApprovedAtMs int64  `json:"approved_at_ms"`
+	LastSeenAtMs int64  `json:"last_seen_at_ms"`
 }
 
 // agentOption is a selectable agent for the per-device assistant dropdown.
@@ -438,6 +445,35 @@ func configuredAgents(cfg *config.Config) []agentOption {
 	return out
 }
 
+// assignedAgentState returns the display name of the agent a device is
+// assigned to (normalized id ref) and, when the service does not run it, why:
+// "not_found", "disabled", or "set_aside" for a human agent breaking the
+// human-agent rules. It is the rule the running service applies (the device
+// channel honours an assignment only to an agent the loop runs; the loop's
+// configuration disables the set-aside agents, config.PruneHumanProblems).
+// Human agents that follow the rules count as running.
+func assignedAgentState(cfg *config.Config, ref string) (name, state string) {
+	var ac *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == ref {
+			ac = &cfg.Agents.List[i]
+			break
+		}
+	}
+	switch {
+	case ac == nil:
+		return "", "not_found"
+	case !ac.IsEnabled():
+		return ac.DisplayName(), "disabled"
+	}
+	for _, p := range cfg.HumanProblems() {
+		if p.SetsAgentAside() && routing.NormalizeAgentID(p.Agent) == ref {
+			return ac.DisplayName(), "set_aside"
+		}
+	}
+	return ac.DisplayName(), ""
+}
+
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	store, cfg, err := h.openDeviceStore(r.Context())
 	if err != nil {
@@ -449,24 +485,20 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
 		return
 	}
-	// An assignment counts while it names an enabled agent (human agents
-	// included): the device channel then routes to it, otherwise to the
-	// default agent.
 	agents := configuredAgents(cfg)
-	known := make(map[string]bool, len(cfg.Agents.List))
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].IsEnabled() {
-			known[routing.NormalizeAgentID(cfg.Agents.List[i].ID)] = true
-		}
-	}
 	views := make([]pairedDeviceView, 0, len(paired))
 	for _, d := range paired {
-		views = append(views, pairedDeviceView{
+		v := pairedDeviceView{
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
 			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
-			AgentMissing: d.AgentID != "" && !known[routing.NormalizeAgentID(d.AgentID)],
 			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
-		})
+		}
+		if d.AgentID != "" {
+			v.AgentRef = routing.NormalizeAgentID(d.AgentID)
+			v.AgentName, v.AgentState = assignedAgentState(cfg, v.AgentRef)
+			v.AgentMissing = v.AgentState != ""
+		}
+		views = append(views, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": agents})
 }

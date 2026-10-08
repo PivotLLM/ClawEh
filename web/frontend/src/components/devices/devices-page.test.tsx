@@ -119,27 +119,70 @@ describe("DevicesPage", () => {
 
   it("marks an assignment to a deleted agent", async () => {
     renderPage([], {
-      devices: [{ ...pairedDevice, agent_id: "bob", agent_missing: true }],
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "Bob",
+          agent_ref: "bob",
+          agent_missing: true,
+          agent_state: "not_found",
+        },
+      ],
       agents: [{ id: "alice", name: "Alice" }],
     })
     const note = await screen.findByTestId("device-agent-missing")
-    expect(note.textContent).toBe("pages.devices.agent_missing:bob")
+    expect(note.textContent).toBe("pages.devices.agent_missing:Bob")
     const select = screen.getByLabelText("Assistant") as HTMLSelectElement
     expect(select.value).toBe("bob")
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "pages.devices.default_assistant",
+      "Bob",
+      "Alice",
+    ])
   })
 
-  it("names a disabled agent in the note", async () => {
+  it("names a disabled agent in the note, with one option for it", async () => {
     renderPage([], {
-      devices: [{ ...pairedDevice, agent_id: "bob", agent_missing: true }],
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "Bob",
+          agent_ref: "bob",
+          agent_name: "Bob B.",
+          agent_missing: true,
+          agent_state: "disabled",
+        },
+      ],
+      agents: [{ id: "bob", name: "Bob B." }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_disabled:Bob B.")
+    const select = screen.getByLabelText("Assistant") as HTMLSelectElement
+    expect(select.value).toBe("bob")
+    expect(screen.getAllByRole("option")).toHaveLength(2)
+  })
+
+  it("marks a human agent that is set aside", async () => {
+    renderPage([], {
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "bob",
+          agent_ref: "bob",
+          agent_name: "Bob",
+          agent_missing: true,
+          agent_state: "set_aside",
+        },
+      ],
       agents: [{ id: "bob", name: "Bob" }],
     })
     const note = await screen.findByTestId("device-agent-missing")
-    expect(note.textContent).toBe("pages.devices.agent_disabled:Bob")
+    expect(note.textContent).toBe("pages.devices.agent_set_aside:Bob")
   })
 
   it("shows no note for a valid assignment", async () => {
     renderPage([], {
-      devices: [{ ...pairedDevice, agent_id: "alice" }],
+      devices: [{ ...pairedDevice, agent_id: "alice", agent_ref: "alice" }],
       agents: [{ id: "alice", name: "Alice" }],
     })
     await screen.findByText("Kitchen R1")

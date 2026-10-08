@@ -989,10 +989,12 @@ observe does not need an entry.
   "Rabbit R1 · from 203.0.113.5"), so a request that merely claims a device's
   name can be told from the real one.
 
-- A device assigned to an agent that no longer exists (or is disabled) talks
-  to the default agent. `GET /api/devices` marks it with `agent_missing`, and
-  the Devices page shows "Ignored: Bob no longer exists; using the default
-  agent." at the device's assistant.
+- A device assigned to an agent the service does not run (deleted, disabled,
+  or a human agent set aside by the human-agent rules) talks to the default
+  agent. `GET /api/devices` marks it with `agent_missing` and says why in
+  `agent_state` (`not_found`, `disabled`, `set_aside`), and the Devices page
+  shows it at the device's assistant ("Ignored: Bob no longer exists; using
+  the default agent.").
 
 - The systemd unit `claw install` writes (and `claw.service`) now uses
   `KillMode=mixed`: a stop sends SIGTERM to ClawEh alone, which shuts
