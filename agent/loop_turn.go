@@ -1050,6 +1050,18 @@ func (al *AgentLoop) runLLMIteration(
 		if err != nil && shuttingDown(ctx) {
 			return "", false, false, "", iteration, fmt.Errorf("LLM call interrupted: %w", context.Cause(ctx))
 		}
+		if err != nil && stoppedOnPurpose(ctx) {
+			// Cancelled on purpose (/cancel, or an asker such as a forum that
+			// stopped waiting): not a failure of the call.
+			logger.InfoCF("agent", "LLM call stopped: the turn was cancelled",
+				map[string]any{
+					"agent_id":  agent.ID,
+					"iteration": iteration,
+					"model":     activeModel,
+					"cause":     context.Cause(ctx).Error(),
+				})
+			return "", false, false, "", iteration, fmt.Errorf("LLM call stopped: %w: %w", context.Cause(ctx), err)
+		}
 		if err != nil {
 			logger.ErrorCF("agent", "LLM call failed",
 				map[string]any{

@@ -169,6 +169,13 @@ type AgentLoop struct {
 // so it is replayed when the gateway starts again.
 var errShuttingDown = errors.New("the service is shutting down")
 
+// stoppedOnPurpose reports whether ctx was cancelled on purpose: by /cancel,
+// or because the asker of the turn stopped waiting for it.
+func stoppedOnPurpose(ctx context.Context) bool {
+	cause := context.Cause(ctx)
+	return errors.Is(cause, errCancelledByUser) || errors.Is(cause, errAskerStopped)
+}
+
 // shuttingDown reports whether ctx was cancelled by Stop.
 func shuttingDown(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), errShuttingDown)
