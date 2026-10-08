@@ -1169,6 +1169,16 @@ observe does not need an entry.
 
 ### Fixed
 
+- **`msg_send` says what became of the message.** It used to answer
+  "Message sent to …" even when the channel dropped the message, so the agent
+  believed an offline device had received it. It now waits up to the
+  5 seconds it already allowed for the send and answers "Message delivered to
+  device:<id>.", or "Not sent: device:<id> is offline." (also "can't be
+  reached", "is not set up", "is unavailable", "is receive-only", "couldn't
+  reach"), or "Message queued for delivery to …" when the channel has not
+  reported by then. The chat is named once: `device:<id>`, not
+  `device:device:<id>`. A message that was not sent no longer counts as the
+  turn's reply, so the final reply is still sent.
 - **Saving the configuration in the WebUI reloads it once.** When applying
   the saved configuration took longer than the config file watcher's quiet
   period, the watcher reloaded the same change a second time afterwards,

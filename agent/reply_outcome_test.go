@@ -6,16 +6,20 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
+	toolsmsg "github.com/PivotLLM/ClawEh/tools/msg"
 )
 
 // fixedProvider answers every Chat call with the same response and error.
@@ -544,5 +548,65 @@ func TestAsyncResult_CarriesTurnDepth(t *testing.T) {
 		if got := in.Metadata[bus.MetaSpawnDepth]; got != tc.want {
 			t.Fatalf("spawn_depth %q: re-injected depth = %q, want %q", tc.value, got, tc.want)
 		}
+	}
+}
+
+// TestMsgSend_ReportsDelivery: msg_send waits for the channel's delivery
+// report (OnDelivery) and says what became of the message: delivered, or
+// not sent and why. A message to an internal channel, which reports no
+// delivery, is queued without waiting.
+func TestMsgSend_ReportsDelivery(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+
+	for _, tc := range []struct {
+		name     string
+		channel  string
+		chatID   string
+		delivery error
+		want     string
+	}{
+		{"delivered", "device", "device:abc", nil, "Message delivered to device:abc."},
+		{"offline", "device", "device:abc", fmt.Errorf("%w: device not connected", channels.ErrRecipientOffline), "Not sent: device:abc is offline."},
+		{"not found", "device", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached."},
+		{"not set up", "device", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up."},
+		{"not running", "device", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable."},
+		{"internal channel", "cli", "direct", nil, "Message queued for delivery to cli:direct."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools.RegisterProvider(tools.NamespacedProvider("msg", toolsmsg.GlobalProvider))
+			msgBus := bus.NewMessageBus()
+			cfg := newTestConfig(t)
+			cfg.Agents.List[0].Tools = []string{"*"}
+			al := mustNewAgentLoop(t, cfg, msgBus, &sequenceProvider{}, nil)
+			agent := al.GetRegistry().Default()
+			if _, ok := agent.Tools.Get("msg_send"); !ok {
+				t.Fatal("the agent has no msg_send")
+			}
+			results := make(chan *tools.ToolResult, 1)
+			go func() {
+				results <- agent.Tools.ExecuteWithContext(context.Background(), "msg_send",
+					map[string]any{"content": "hi"}, tc.channel, tc.chatID, nil)
+			}()
+			out := nextOutbound(t, msgBus)
+			if out.Channel != tc.channel || out.ChatID != tc.chatID || out.Content != "hi" {
+				t.Fatalf("outbound = %+v", out)
+			}
+			if constants.IsInternalChannel(tc.channel) {
+				if out.OnDelivery != nil {
+					t.Error("a message to an internal channel waits for a delivery report")
+				}
+			} else {
+				out.OnDelivery(tc.delivery)
+			}
+			select {
+			case res := <-results:
+				if res.ForLLM != tc.want || res.IsError != (tc.delivery != nil) {
+					t.Errorf("msg_send = %q (error %v), want %q", res.ForLLM, res.IsError, tc.want)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("msg_send did not return on the delivery report")
+			}
+		})
 	}
 }
