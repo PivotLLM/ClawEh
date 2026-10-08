@@ -93,9 +93,9 @@ type Manager struct {
 	mediaStore    media.MediaStore
 	dispatchTask  *asyncTask
 	mu            sync.RWMutex
-	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
-	typingStops   sync.Map // "channel:chatID" → func()
-	reactionUndos sync.Map // "channel:chatID" → reactionEntry
+	placeholders  sync.Map // "channel:chatID" → placeholderEntry
+	typingStops   sync.Map // "channel:chatID" → typingEntry
+	reactionUndos sync.Map // "channel:chatID:messageID" → reactionEntry
 	// alerter, when set, hears about channels that give up (start or send).
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter

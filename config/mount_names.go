@@ -25,7 +25,8 @@ import (
 //   - maestro:  Maestro data (MaestroMountName)
 //   - sessions: conversation archives (the session store)
 //   - cogmem:   cognitive memory (cogmemhost.DirName)
-//   - state:    persisted agent state (state.NewManager, message tokens)
+//   - state:    in-flight turns kept for restart recovery (state.NewManager,
+//     state.json) and the external-message tokens (message-tokens.json)
 //   - common:   the shared directory's tools namespace
 var ReservedWorkspaceNames = []string{
 	"files", "skills", "tasks", "tmp", WorkspaceForumsDir, MaestroMountName,
