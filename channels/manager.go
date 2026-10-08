@@ -970,7 +970,10 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		return nil // placeholder was edited successfully, skip Send
 	}
 
-	retries, err := retrySend(ctx, func() error { return w.ch.Send(ctx, msg) })
+	// One SendProgress across the retries: a channel that splits the message
+	// further resumes after the parts it already delivered.
+	sendCtx := WithSendProgress(ctx)
+	retries, err := retrySend(ctx, func() error { return w.ch.Send(sendCtx, msg) })
 	if err != nil && ctx.Err() == nil {
 		m.reportSendFailure(name, msg.ChatID, "message", err, retries)
 	}

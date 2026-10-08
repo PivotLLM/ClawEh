@@ -459,8 +459,13 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 	// The Manager already splits messages to ≤4000 chars (WithMaxMessageLength),
 	// so msg.Content is guaranteed to be within that limit. We still need to
-	// check if HTML expansion pushes it beyond Telegram's 4096-char API limit.
-	replyToID := msg.ReplyToMessageID
+	// check if HTML expansion pushes it beyond Telegram's 4096-char API limit,
+	// and split such a chunk into parts.
+	//
+	// A retry of this message (same SendProgress on ctx) skips the parts an
+	// earlier attempt delivered, so the chat never sees them twice.
+	progress := channels.SendProgressFrom(ctx)
+	part := 0
 	queue := []string{msg.Content}
 	for len(queue) > 0 {
 		chunk := queue[0]
@@ -480,19 +485,30 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 			continue
 		}
 
+		if part < progress.Delivered() {
+			part++
+			continue
+		}
+		// Only the first part is a reply; the others are normal messages.
+		replyToID := ""
+		if part == 0 {
+			replyToID = msg.ReplyToMessageID
+		}
 		if err := c.sendHTMLChunk(ctx, chatID, threadID, htmlContent, chunk, replyToID); err != nil {
 			return err
 		}
-		// Only the first chunk should be a reply; subsequent chunks are normal messages.
-		replyToID = ""
+		progress.MarkDelivered()
+		part++
 	}
 
 	return nil
 }
 
-// sendHTMLChunk sends a single HTML message, falling back to the original
-// markdown as plain text when Telegram cannot parse the HTML, so users never
-// see raw HTML tags. Any other failure is classified as it is.
+// sendHTMLChunk sends a single HTML message. When Telegram cannot parse the
+// HTML it sends the original markdown as plain text, so users never see raw
+// HTML tags; when the message it replies to is gone it sends the message
+// without the reply link. Each is tried at most once; any other failure is
+// classified as it is.
 func (c *TelegramChannel) sendHTMLChunk(
 	ctx context.Context, chatID int64, threadID int, htmlContent, mdFallback string, replyToID string,
 ) error {
@@ -508,18 +524,25 @@ func (c *TelegramChannel) sendHTMLChunk(
 		}
 	}
 
-	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
-		if !htmlParseError(err) {
+	_, err := c.bot.SendMessage(ctx, tgMsg)
+	for err != nil {
+		switch {
+		case tgMsg.ReplyParameters != nil && replyTargetGone(err):
+			logger.InfoCF("telegram", "Message replied to is gone, sending without the reply link", map[string]any{
+				"chat_id":  chatID,
+				"reply_to": replyToID,
+			})
+			tgMsg.ReplyParameters = nil
+		case tgMsg.ParseMode != "" && htmlParseError(err):
+			logger.WarnCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
+				"error": redactErr(err).Error(),
+			})
+			tgMsg.Text = mdFallback
+			tgMsg.ParseMode = ""
+		default:
 			return classifySendErr("telegram send", err)
 		}
-		logger.WarnCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
-			"error": redactErr(err).Error(),
-		})
-		tgMsg.Text = mdFallback
-		tgMsg.ParseMode = ""
-		if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
-			return classifySendErr("telegram send", err)
-		}
+		_, err = c.bot.SendMessage(ctx, tgMsg)
 	}
 	return nil
 }
@@ -548,6 +571,19 @@ func htmlParseError(err error) bool {
 	var apiErr *ta.Error
 	return errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusBadRequest &&
 		strings.Contains(strings.ToLower(apiErr.Description), "can't parse entities")
+}
+
+// replyTargetGone reports whether err is Telegram refusing a reply because
+// the message it replies to no longer exists (400 "message to be replied not
+// found"; deleted, or in another chat).
+func replyTargetGone(err error) bool {
+	var apiErr *ta.Error
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode != http.StatusBadRequest {
+		return false
+	}
+	desc := strings.ToLower(apiErr.Description)
+	return strings.Contains(desc, "message to be replied not found") ||
+		strings.Contains(desc, "message to reply not found")
 }
 
 // recipientNotFound reports whether err is a Telegram API error saying the
