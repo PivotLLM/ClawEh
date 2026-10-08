@@ -434,6 +434,9 @@ type Result struct {
 	// Transcript is the path of transcript.md relative to the run's
 	// directory.
 	Transcript string `json:"transcript"`
+	// ResentAfterRestart counts the committed outputs, of every layer, whose
+	// turn was sent again after a restart (Summary.ResentAfterRestart).
+	ResentAfterRestart int `json:"resent_after_restart,omitempty"`
 }
 
 // LayerProgress is one layer's line in a status summary.

@@ -797,19 +797,18 @@ func TestForumNoticeText(t *testing.T) {
 	}
 }
 
-// TestForumNoticeText_Resent: the notice counts the result outputs resent
-// after a restart.
+// TestForumNoticeText_Resent: the notice gives the result's count of
+// outputs from turns resent after a restart (every layer's, as forum_status).
 func TestForumNoticeText_Resent(t *testing.T) {
-	out := func(resent bool) forum.OutputRecord { return forum.OutputRecord{Resent: resent} }
 	for _, tc := range []struct {
-		layers []forum.LayerResult
+		resent int
 		want   string
 	}{
-		{nil, "Forum f1 run 1 finished: completed."},
-		{[]forum.LayerResult{{Outputs: []forum.OutputRecord{out(false), out(true)}}}, "Forum f1 run 1 finished: completed. 1 output was resent after a restart."},
-		{[]forum.LayerResult{{Outputs: []forum.OutputRecord{out(true)}}, {Outputs: []forum.OutputRecord{out(true)}}}, "Forum f1 run 1 finished: completed. 2 outputs were resent after a restart."},
+		{0, "Forum f1 run 1 finished: completed."},
+		{1, "Forum f1 run 1 finished: completed. 1 output came from a turn resent after a restart."},
+		{2, "Forum f1 run 1 finished: completed. 2 outputs came from turns resent after a restart."},
 	} {
-		got := forumNoticeText(&forum.Result{ForumID: "f1", Run: 1, Status: forum.StatusCompleted, Layers: tc.layers})
+		got := forumNoticeText(&forum.Result{ForumID: "f1", Run: 1, Status: forum.StatusCompleted, ResentAfterRestart: tc.resent})
 		if got != tc.want {
 			t.Errorf("%q, want %q", got, tc.want)
 		}

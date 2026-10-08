@@ -798,6 +798,8 @@ func buildResult(cfg *Config, snap *Snapshot, st *State) *Result {
 		Calls:      st.Calls,
 		Layers:     []LayerResult{},
 		Transcript: fileTranscript,
+		// Every layer's, as forum_status counts them.
+		ResentAfterRestart: resentAfterRestart(st),
 	}
 	if st.Status.Terminal() {
 		res.EndedAt = st.UpdatedAt

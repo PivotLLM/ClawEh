@@ -448,8 +448,9 @@ observe does not need an entry.
   if the forum was launched from a chat, and nowhere otherwise. Temporary
   participants are deleted when the run ends. A notice that cannot be
   delivered, or results that cannot be written, are tried again every hour,
-  up to five times in all, then given up with a warning in the log; the notice
-  also says how many outputs were resent after a restart. Runs survive a
+  up to five times per start of the service, then given up with a warning in
+  the log. The notice also says how many outputs came from turns resent after
+  a restart, the count `forum_status` gives. Runs survive a
   restart and resume where they stopped. A run that stops on an error raises the "Forum
   run stopped" alert. The nightly backup and `claw backup` include each
   agent's `forums/` (without lock files or temporary files of a write in

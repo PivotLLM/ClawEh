@@ -1991,13 +1991,27 @@ func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 		if ls := st.Layers[l.ID]; ls != nil {
 			p.Started, p.Ended, p.EndReason = ls.Started, ls.Ended, ls.EndReason
 			p.Round, p.Calls, p.Outputs = ls.Round, ls.Calls, len(ls.Outputs)
-			for _, o := range ls.Outputs {
-				if o.Resent {
-					sum.ResentAfterRestart++
-				}
-			}
 		}
 		sum.Layers = append(sum.Layers, p)
 	}
+	sum.ResentAfterRestart = resentAfterRestart(st)
 	return sum
+}
+
+// resentAfterRestart counts the committed outputs of every layer whose turn
+// was sent again after a restart (OutputRecord.Resent): the one count
+// forum_status and the completion notice give.
+func resentAfterRestart(st *State) int {
+	n := 0
+	for _, ls := range st.Layers {
+		if ls == nil {
+			continue
+		}
+		for _, o := range ls.Outputs {
+			if o.Resent {
+				n++
+			}
+		}
+	}
+	return n
 }

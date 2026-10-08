@@ -222,8 +222,8 @@ found (a WebUI chat with no browser open), the answer goes to her default
 chat (her default binding) instead, or nowhere when she has none; it stays in
 her conversation either way. A forum launched locally is never posted.
 If the notice cannot be delivered, or the run's results cannot be written,
-it is tried again every hour, up to five times in all, and then given up
-with a warning in the log.
+it is tried again every hour, up to five times per start of the service,
+and then given up with a warning in the log.
 `forum_delete` removes a forum and all its runs, unless a run is running;
 an unknown ID answers "Forum <id> was not found.".
 
@@ -231,9 +231,9 @@ A run survives a restart: an interrupted run resumes where it stopped, and a
 turn that was in progress is sent again (an existing agent may see that
 message twice). `forum_results` then gives that output's `attempt` with
 the note "resent after a restart; the earlier attempts have no output",
-`forum_status` counts such outputs (`resent_after_restart`), and the
-completion notice says how many there were ("2 outputs were resent after a
-restart."). A launch
+`forum_status` counts such outputs in every layer (`resent_after_restart`),
+and the completion notice gives the same count ("2 outputs came from turns
+resent after a restart."). A launch
 interrupted before its run started leaves the forum
 as it was. A run that stops on an error raises the "Forum run stopped" alert
 and continues with `forum_resume` or at the next start.

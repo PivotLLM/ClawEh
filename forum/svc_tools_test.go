@@ -768,7 +768,8 @@ func TestSvcToolsRefusedAtMaximumDepth(t *testing.T) {
 	}
 }
 
-// isRefusal mirrors the host's tools.IsExpectedRefusal (forum does not import tools).
+// isRefusal mirrors the host's tools.IsExpectedRefusal (forum does not
+// import tools).
 func isRefusal(err error) bool {
 	var r interface{ Refusal() bool }
 	return errors.As(err, &r) && r.Refusal()

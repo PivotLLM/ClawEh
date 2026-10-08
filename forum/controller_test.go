@@ -652,6 +652,7 @@ func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	ctlWant(t, "resent outputs", resent, 1)
 	sum := summaryOf(f.cfg, f.snap, st2)
 	ctlWant(t, "status resent_after_restart", sum.ResentAfterRestart, 1)
+	ctlWant(t, "result resent_after_restart", buildResult(f.cfg, f.snap, st2).ResentAfterRestart, 1)
 }
 
 // Running a forum twice from the same configuration and seed gives the
