@@ -3,8 +3,11 @@ package msg
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
@@ -45,8 +48,8 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 	}
 
 	// - ForLLM contains send status description
-	if result.ForLLM != "Message sent to test-channel:test-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to test-channel:test-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message delivered to test-channel:test-chat-id." {
+		t.Errorf("Expected ForLLM 'Message delivered to test-channel:test-chat-id.', got '%s'", result.ForLLM)
 	}
 
 	// - ForUser is empty (user already received message directly)
@@ -93,8 +96,8 @@ func TestMessageTool_Execute_IgnoresSuppliedChannel(t *testing.T) {
 	if !result.Silent {
 		t.Error("Expected Silent=true")
 	}
-	if result.ForLLM != "Message sent to session-channel:session-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to session-channel:session-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message delivered to session-channel:session-chat-id." {
+		t.Errorf("Expected ForLLM 'Message delivered to session-channel:session-chat-id.', got '%s'", result.ForLLM)
 	}
 }
 
@@ -120,7 +123,7 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	}
 
 	// - ForLLM contains error description
-	expectedErrMsg := "sending message: network error"
+	expectedErrMsg := "Not sent: couldn't reach test-channel:test-chat-id."
 	if result.ForLLM != expectedErrMsg {
 		t.Errorf("Expected ForLLM '%s', got '%s'", expectedErrMsg, result.ForLLM)
 	}
@@ -131,6 +134,44 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	}
 	if !errors.Is(result.Err, sendErr) {
 		t.Errorf("Expected Err to be sendErr, got %v", result.Err)
+	}
+}
+
+// TestMessageTool_Execute_Outcomes: the result says what became of the
+// message, naming the chat once (no doubled channel prefix): delivered,
+// queued when no outcome was known in time, or not sent and why. Only a
+// delivered or queued message counts as the round's reply.
+func TestMessageTool_Execute_Outcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		chatID  string
+		err     error
+		want    string
+		isError bool
+	}{
+		{"delivered", "device:abc", nil, "Message delivered to device:abc.", false},
+		{"delivered, bare chat id", "12345", nil, "Message delivered to device:12345.", false},
+		{"queued", "device:abc", ErrQueued, "Message queued for delivery to device:abc.", false},
+		{"offline", "device:abc", fmt.Errorf("%w: device not connected", channels.ErrRecipientOffline), "Not sent: device:abc is offline.", true},
+		{"not found", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached.", true},
+		{"not set up", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up.", true},
+		{"not running", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable.", true},
+		{"receive-only", "device:abc", channels.ErrReceiveOnly, "Not sent: device:abc is receive-only.", true},
+		{"other failure", "device:abc", fmt.Errorf("%w: boom", channels.ErrSendFailed), "Not sent: couldn't reach device:abc.", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := NewMessageTool()
+			tool.SetSendCallback(func(context.Context, string, string, string) error { return tc.err })
+			var sent atomic.Bool
+			ctx := tools.WithRoundSentFlag(tools.WithToolContext(context.Background(), "device", tc.chatID), &sent)
+			result := tool.Execute(ctx, map[string]any{"content": "hi"})
+			if result.ForLLM != tc.want || result.IsError != tc.isError {
+				t.Errorf("result = %q (error %v), want %q (error %v)", result.ForLLM, result.IsError, tc.want, tc.isError)
+			}
+			if sent.Load() == tc.isError || tool.HasSentInRound() == tc.isError {
+				t.Errorf("round marked sent = %v, want %v", sent.Load(), !tc.isError)
+			}
+		})
 	}
 }
 

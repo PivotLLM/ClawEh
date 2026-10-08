@@ -96,13 +96,37 @@ func (al *AgentLoop) registerAgentTools(
 		if cfg.Tools.IsToolEnabled("msg_send") {
 			mt := toolsmsg.NewMessageTool()
 			mt.SetSendCallback(func(ctx context.Context, channel, chatID, content string) error {
+				// One bound for queueing the message and learning its
+				// delivery: a channel reports an offline, unknown or
+				// stopped recipient at once (never retried); a slower
+				// outcome is reported as queued.
 				pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 				defer pubCancel()
-				return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-					Channel: channel,
-					ChatID:  chatID,
-					Content: content,
-				})
+				msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content}
+				// Internal channels never reach the channel manager, which
+				// reports deliveries.
+				internal := constants.IsInternalChannel(channel)
+				delivered := make(chan error, 1)
+				if !internal {
+					msg.OnDelivery = func(err error) {
+						select {
+						case delivered <- err:
+						default:
+						}
+					}
+				}
+				if err := al.bus.PublishOutbound(pubCtx, msg); err != nil {
+					return err
+				}
+				if internal {
+					return toolsmsg.ErrQueued
+				}
+				select {
+				case err := <-delivered:
+					return err
+				case <-pubCtx.Done():
+					return toolsmsg.ErrQueued
+				}
 			})
 			messageTool = mt
 		}
