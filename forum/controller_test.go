@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -410,6 +411,25 @@ func TestCtlLimits(t *testing.T) {
 		ctlWant(t, "reason", f.result().Reason, EndDeadline)
 		ctlWant(t, "calls", len(f.msg.all()), 0)
 	})
+	// A call the deadline cuts ends the run incomplete (deadline), whether
+	// or not it was the turn's last allowed attempt.
+	for _, attempts := range []int{1, 2} {
+		t.Run("deadline cuts attempt with "+strconv.Itoa(attempts)+" allowed", func(t *testing.T) {
+			l := ctlLayer("talk", DeliveryPerTurn, 1, FormatText)
+			l.Participants = []string{"alice"}
+			cfg := ctlConfig(l)
+			cfg.Limits.MaxAttemptsPerTurn = attempts
+			f := ctlLaunch(t, cfg, ctlDeadline(300*time.Millisecond))
+			f.msg.respond = func(cl ctlCall) (Reply, error) {
+				time.Sleep(cl.Wait) // the host's wait elapses with the deadline
+				return Reply{Outcome: OutcomeTimeout}, nil
+			}
+			_, st := f.run()
+			ctlWant(t, "status", st, StatusIncomplete)
+			ctlWant(t, "reason", f.result().Reason, EndDeadline)
+			ctlWant(t, "calls", len(f.msg.all()), 1)
+		})
+	}
 	t.Run("wait bounded by the deadline", func(t *testing.T) {
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)), ctlDeadline(5*time.Second))
 		_, st := f.run()

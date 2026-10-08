@@ -154,6 +154,12 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 		if len(reply.Issues) == 0 {
 			return attemptResult{req: req, reply: reply}, nil
 		}
+		// A wait the run deadline cut is the deadline stopping the run, not
+		// an attempt the participant used up, even on its last attempt.
+		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(time.Now()) {
+			c.host.Logger.Warnf("forum %s: %s/%s attempt %d cut by the run deadline", c.snap.ForumID, w.layer.ID, w.turn, attempt)
+			return attemptResult{reason: EndDeadline}, nil
+		}
 		c.host.Logger.Warnf("forum %s: %s/%s attempt %d rejected: %s", c.snap.ForumID, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
 		prior = c.turnAttempts(w.layer.ID, w.turn)
 	}

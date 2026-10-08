@@ -626,6 +626,11 @@ func (c *Controller) interrupted() bool {
 	return c.pause.Load() || c.cancel.Load()
 }
 
+// deadlinePassed reports whether the run deadline has been reached at now.
+func (c *Controller) deadlinePassed(now time.Time) bool {
+	return !now.Before(c.snap.Deadline)
+}
+
 // wait returns the Ask wait: limits.call_timeout_seconds bounded by the
 // time left to the run deadline (never negative).
 func (c *Controller) wait(now time.Time) time.Duration {
