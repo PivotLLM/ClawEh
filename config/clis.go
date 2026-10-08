@@ -163,13 +163,21 @@ func CLIArgs(protocol string, bypass bool, extraArgs []string) []string {
 			args = append(args, a)
 		}
 	}
-	if len(stripped) > 0 {
-		// Not an alert: a configuration state. The Agents page shows it under
-		// the model chain and the Check Up page lists the provider setting.
-		logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Allow CLI to bypass restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
-			map[string]any{"protocol": agent.Protocol, "flags": strings.Join(stripped, " ")})
-	}
+	WarnIgnoredBypassArgs(agent.Protocol, stripped)
 	return args
+}
+
+// WarnIgnoredBypassArgs logs the permission-bypass flags of a model's
+// extra_args that are not passed because the provider's bypass_restrictions
+// is off. It logs nothing for no flags.
+func WarnIgnoredBypassArgs(protocol string, flags []string) {
+	if len(flags) == 0 {
+		return
+	}
+	// Not an alert: a configuration state. The Agents page shows it under
+	// the model chain and the Check Up page lists the provider setting.
+	logger.WarnCF("config", "ignoring permission-bypass flag in extra_args: Allow CLI to bypass restrictions is off for this provider; tick it in the WebUI (or set bypass_restrictions) to pass it",
+		map[string]any{"protocol": protocol, "flags": strings.Join(flags, " ")})
 }
 
 // CLIEnv returns the environment for a CLI model: the protocol's required

@@ -6,6 +6,7 @@ package providers
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -25,14 +26,19 @@ type ProviderDispatcher struct {
 	mu    sync.RWMutex
 	cache map[string]LLMProvider
 	cfg   *config.Config
+	// bypassWarned lists the models whose ignored permission-bypass flags
+	// GetIsolated has logged for cfg, so a fresh agent's CLI calls (each
+	// building its own provider, several per turn) log them once.
+	bypassWarned map[string]bool
 }
 
 // NewProviderDispatcher creates a new dispatcher with the given config.
 func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
 	logBypassEnabled(cfg)
 	return &ProviderDispatcher{
-		cache: make(map[string]LLMProvider),
-		cfg:   cfg,
+		cache:        make(map[string]LLMProvider),
+		cfg:          cfg,
+		bypassWarned: make(map[string]bool),
 	}
 }
 
@@ -116,6 +122,35 @@ func (d *ProviderDispatcher) Flush(cfg *config.Config) {
 	defer d.mu.Unlock()
 	d.cache = make(map[string]LLMProvider)
 	d.cfg = cfg
+	d.bypassWarned = make(map[string]bool)
+}
+
+// withoutBypassArgs returns model's extra_args without the CLI's
+// permission-bypass flags. When prov's bypass_restrictions is off, the
+// flags are also logged, once per model and configuration (cfg).
+func (d *ProviderDispatcher) withoutBypassArgs(cfg *config.Config, model *config.ModelConfig, prov *config.Provider) []string {
+	agent := config.CLIAgentByProtocol(prov.Protocol)
+	var kept, stripped []string
+	for _, a := range model.ExtraArgs {
+		if slices.Contains(agent.BypassArgs, a) {
+			stripped = append(stripped, a)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	if len(stripped) == 0 || prov.BypassRestrictions {
+		return kept
+	}
+	d.mu.Lock()
+	warn := d.cfg == cfg && !d.bypassWarned[model.ModelName]
+	if warn {
+		d.bypassWarned[model.ModelName] = true
+	}
+	d.mu.Unlock()
+	if warn {
+		config.WarnIgnoredBypassArgs(agent.Protocol, stripped)
+	}
+	return kept
 }
 
 // GetIsolated returns the provider for alias as a fresh temporary agent uses
@@ -153,6 +188,10 @@ func (d *ProviderDispatcher) GetIsolated(alias, workspace string) (LLMProvider, 
 	}
 	isolated := *prov
 	isolated.BypassRestrictions = false
+	// The bypass flags are left out here, whatever the provider says, so
+	// building the provider does not log them on every call; the ones the
+	// provider's own setting ignores are logged once per configuration.
+	matched.ExtraArgs = d.withoutBypassArgs(cfgSnapshot, matched, prov)
 	matched.Workspace = workspace
 	if matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
 		matched.RequestTimeout = cfgSnapshot.Agents.Defaults.RequestTimeout
