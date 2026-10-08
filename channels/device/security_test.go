@@ -38,6 +38,7 @@ func (q *recordingQuerier) DefaultAgentID() string { return "alice" }
 func (q *recordingQuerier) HasAgent(id string) bool {
 	return id == "alice" || id == "agent3" || id == "bob"
 }
+
 func (q *recordingQuerier) History(key string) []DeviceHistoryMessage {
 	q.mu.Lock()
 	q.history = append(q.history, key)
