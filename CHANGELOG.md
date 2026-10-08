@@ -355,7 +355,9 @@ observe does not need an entry.
   be allowed to talk to Bob from that chat: the chat routes to Bob, or a
   binding matching the channel, account and chat names Bob as its agent or in
   its `agent_mentions`. Otherwise the answer is "You don't have permission to
-  /ask Bob"; an unknown name gets "There is no agent named Bob.". Bob is told
+  /ask Bob."; an unknown name gets "There is no agent named Bob.". A failure is
+  one sentence naming the agent ("Could not ask Bob.", "Could not whisper to
+  Bob.", with the reason when it is the depth limit or a wait cycle). Bob is told
   the sender is a person and how they wrote ("Alice (a person, via /ask on
   telegram)"; from the WebUI chat, "the WebUI user (a person, via /ask on
   webui)"), so a person cannot pass for an agent of the same name. Both
@@ -399,12 +401,13 @@ observe does not need an entry.
   one with `run`; status also gives the number of runs and whether the
   configuration changed since the latest. `forum_pause`, `forum_resume` and
   `forum_cancel` act on the latest run; a paused run whose configuration has
-  changed is not resumed, and launching then cancels it without a notice.
+  changed is not resumed ("the configuration changed; launch to start a new
+  run"), and launching then cancels it without a notice.
   Formatting, member order and number spelling are not changes. To run the
   same forum on new material (a book, chapter by chapter), change only its
   source and launch again; `forum_config_export` and `forum_config_import`
   copy a configuration to another forum. `forum_delete` removes the forum with
-  all its runs. A layer input with `"anonymous": true` shows that layer's
+  all its runs; an unknown ID answers "Forum <id> was not found.". A layer input with `"anonymous": true` shows that layer's
   outputs as "Response A", "Response B", … without authors and without the
   reader's own, other readers of the layer see "Bob (Response A)", and
   `forum_validate` refuses a setup where a reader could still learn the
@@ -417,7 +420,10 @@ observe does not need an entry.
   characters (longer text is cut and names the file holding all of it) and
   16,000 characters for all outputs together (later outputs are listed without
   text), and the transcript's path once the transcript exists; when the result
-  layers have no output it lists the other layers'. The transcript quotes each
+  layers have no output it lists the other layers'. Each output names its
+  attempt; one whose turn was sent again after a restart carries the note
+  "resent after a restart; the earlier attempts have no output", and
+  `forum_status` counts them (`resent_after_restart`). The transcript quotes each
   output in a code block and, for a layer read anonymously, shows the letter
   next to the author. When a run stops waiting for a participant (the call
   timeout, the run's `max_duration_seconds`, `forum_cancel`), the participant's
@@ -440,8 +446,11 @@ observe does not need an entry.
   WebUI chat included; when that chat is no longer known (the run ended after
   a restart) or is offline or not found, it goes to the agent's default chat
   if the forum was launched from a chat, and nowhere otherwise. Temporary
-  participants are deleted when the run ends. Runs survive a restart and
-  resume where they stopped. A run that stops on an error raises the "Forum
+  participants are deleted when the run ends. A notice that cannot be
+  delivered, or results that cannot be written, are tried again every hour,
+  up to five times in all, then given up with a warning in the log; the notice
+  also says how many outputs were resent after a restart. Runs survive a
+  restart and resume where they stopped. A run that stops on an error raises the "Forum
   run stopped" alert. The nightly backup and `claw backup` include each
   agent's `forums/` (without lock files or temporary files of a write in
   progress), and `claw restore` puts them back.
@@ -475,7 +484,10 @@ observe does not need an entry.
   while waiting. A human agent takes no other work: scheduling a job for it
   and sending it an external message are refused, someone writing to it
   directly (a mention, a device) is told "Bob only answers questions from
-  agents.", and claw's own messages to it are dropped. Devices do not list
+  agents.", and claw's own messages to it (a forum notice, for example) are
+  dropped and never taken for the person's answer. A question still waiting
+  when the service stops is withdrawn and the asker is told "The request was
+  cancelled because the service is shutting down.". Devices do not list
   human agents. It runs no model (no tools, memory, summarization or image
   description), is never the default agent, and can never be cloned or
   spawned. Its card on the Agents page shows only its models and its default
@@ -570,7 +582,9 @@ observe does not need an entry.
   `GET /api/report/pdf`, and `GET /api/report/assessment`, the same rows as
   JSON
   (`{"identity":{name,version,build,platform,generated_at},"assessment":[{action,item,status}]}`).
-  Secret values never appear. See `docs/report.md`.
+  Rows about an agent name it by its display name, and the `shell_exec` row
+  reads the same on the page and in the PDF. Secret values never appear. See
+  `docs/report.md`.
 
 - **Operator alerts.** Conditions the operator should hear about are written
   to `<CLAW_HOME>/logs/alerts.log` (or the file named by `ALERTER_LOG`), one
@@ -813,7 +827,16 @@ observe does not need an entry.
   Discord channel or user that is unknown or refuses the bot's messages. The
   alert is raised only for a channel that reports itself not running or a send
   that failed after its retries; an offline or unreachable recipient is logged
-  as a warning and not retried. A human agent's question that cannot be posted
+  as a warning and not retried. A WebUI tab that closes while a reply is being
+  sent counts as offline. Files and attachments are retried and reported like
+  text, including the alert ("a file could not be delivered"), and the
+  Telegram, Slack and Discord alerts carry the platform's reason. Telegram
+  sends a reply as plain text only when Telegram cannot parse its formatting;
+  a 403 means the chat can't be reached (a warning, no alert), a 429 is a rate
+  limit (retried), and any other 4xx fails at once. A Telegram reply too long
+  for one message that is retried resends only the parts not yet delivered,
+  and a reply to a message that was deleted is sent without the reply link. A
+  human agent's question that cannot be posted
   now tells the asker why (see the human agents entry under Added), and Check
   Up marks a human agent whose chat is on a channel that is not set up.
 
@@ -841,8 +864,9 @@ observe does not need an entry.
   another agent) is logged at WARN as "Tool call refused" (or "Agent message
   refused"). A `msg_send` the channel could not deliver because the chat is
   offline, unreachable, receive-only or not set up is logged once, as the
-  channel's warning, not again as a failed tool call. Genuine tool failures
-  stay at ERROR, so `error.log` holds only faults.
+  channel's warning, not again as a failed tool call. A turn stopped on
+  purpose (`/cancel`, or a forum that stopped waiting) logs its model call at
+  INFO. Genuine tool failures stay at ERROR, so `error.log` holds only faults.
 
 - **A sub-agent (`agent_spawn`, Maestro dispatch) now runs as a temporary
   clone of its agent** instead of in a sub-agent session of the agent. What it
@@ -857,8 +881,14 @@ observe does not need an entry.
   result is delivered; one left by a stop or crash mid-run is removed at the
   next start. Its late async results go to the agent's main conversation, and
   a message for a temporary agent that no longer exists is dropped, never
-  handed to another agent. Temporary agents never appear on the Agents page,
-  in the Check Up report or in a device's agent list.
+  handed to another agent (a sender waiting for a reply is told "Agent <id> no
+  longer exists."). Temporary agents never appear on the Agents page, in the
+  Check Up report or in a device's agent list. A saved temporary agent (a
+  forum participant) is deleted only when the configuration no longer allows
+  it (its model or source agent is gone), never because it failed to load;
+  when `internal/temp_agents.json` cannot be read, is damaged or was written
+  by a newer release, the saved temporary agents are kept and new ones are not
+  saved until the file is fixed.
 
 - **BREAKING: one conversation per agent; session modes are removed.** Every
   message to an agent, from any chat, device, the WebUI chat, `claw agent` or
@@ -957,6 +987,11 @@ observe does not need an entry.
   pairing request's name (`remote_ip` from `GET /api/devices/pending`, as
   "Rabbit R1 · from 203.0.113.5"), so a request that merely claims a device's
   name can be told from the real one.
+
+- A device assigned to an agent that no longer exists (or is disabled) talks
+  to the default agent. `GET /api/devices` marks it with `agent_missing`, and
+  the Devices page shows "Ignored: Bob no longer exists; using the default
+  agent." at the device's assistant.
 
 - The systemd unit `claw install` writes (and `claw.service`) now uses
   `KillMode=mixed`: a stop sends SIGTERM to ClawEh alone, which shuts
@@ -1205,6 +1240,12 @@ observe does not need an entry.
   agent's message token (`POST /api/message/{token}`).
 
 ### Fixed
+
+- **Saving the configuration no longer leaves session databases open.** The
+  agents a save replaces are closed once they are idle.
+
+- **An agent added by a configuration reload has its interrupted turns
+  answered after a restart**, like an agent that was configured at startup.
 
 - **`msg_send` says what became of the message.** It used to answer
   "Message sent to …" even when the channel dropped the message, so the agent
