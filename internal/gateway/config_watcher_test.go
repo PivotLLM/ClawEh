@@ -49,16 +49,21 @@ func writeConfig(t *testing.T, path, extra string) {
 func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 	store, path := seedStore(t)
 
+	// The burst outlasts the debounce window, so a reload during it would mean
+	// a write did not reset the timer; each gap is a tenth of the window, so a
+	// scheduling delay would have to be ten times the gap to fire one early.
 	interval := 10 * time.Millisecond
-	debounce := 120 * time.Millisecond
+	debounce := 400 * time.Millisecond
+	gap := debounce / 10
 	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
 	defer stop()
 
-	// Burst of three writes, each spaced under the debounce window so each resets
-	// the timer. No reload should fire during the burst.
-	for i := range 3 {
-		writeConfig(t, path, time.Duration(i).String()+"-burst")
-		time.Sleep(50 * time.Millisecond) // < debounce
+	start := time.Now()
+	for i := 0; time.Since(start) < debounce+5*gap; i++ {
+		// A different length every time, so the change is seen even where the
+		// file system's modification times are coarse.
+		writeConfig(t, path, strings.Repeat("x", i+1))
+		time.Sleep(gap)
 	}
 
 	// Nothing should have been delivered yet (the timer kept resetting).

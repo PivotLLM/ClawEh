@@ -315,14 +315,21 @@ func TestWorkerRateLimiter(t *testing.T) {
 		w.queue <- bus.OutboundMessage{Channel: "test", ChatID: "1", Content: fmt.Sprintf("msg%d", i)}
 	}
 
-	// Wait enough time for all messages to be sent (4 msgs at 2/s = ~2s, give extra margin)
-	time.Sleep(3 * time.Second)
-
-	mu.Lock()
-	times := make([]time.Time, len(sendTimes))
-	copy(times, sendTimes)
-	mu.Unlock()
-
+	// Wait until all four are sent (about 1.5s at 2/s).
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		times = append(times[:0], sendTimes...)
+		mu.Unlock()
+		if len(times) >= 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 4 sends, got %d", len(times))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if len(times) != 4 {
 		t.Fatalf("expected 4 sends, got %d", len(times))
 	}
