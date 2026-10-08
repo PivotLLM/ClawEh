@@ -450,7 +450,7 @@ func (h *ForumHost) OnStuck(forumID string, run int, origin forum.Origin, err er
 		return
 	}
 	who := origin.AgentID
-	if r, err := h.registry(); err == nil {
+	if r, rerr := h.registry(); rerr == nil {
 		if a, ok := r.Get(origin.AgentID); ok && a != nil {
 			who = a.DisplayName()
 		}

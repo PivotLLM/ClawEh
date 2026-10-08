@@ -22,16 +22,23 @@ import (
 func TestRestore_UnusableStateFileKeepsEverything(t *testing.T) {
 	cases := map[string]func(t *testing.T, statePath string){
 		"corrupt": func(t *testing.T, statePath string) {
+			t.Helper()
 			writeFile(t, statePath, []byte("{not json"))
 		},
 		"empty": func(t *testing.T, statePath string) {
+			t.Helper()
 			writeFile(t, statePath, nil)
 		},
 		"newer version": func(t *testing.T, statePath string) {
-			data, _ := json.Marshal(stateFile{Version: stateFileVersion + 1})
+			t.Helper()
+			data, err := json.Marshal(stateFile{Version: stateFileVersion + 1})
+			if err != nil {
+				t.Fatal(err)
+			}
 			writeFile(t, statePath, data)
 		},
 		"unreadable": func(t *testing.T, statePath string) {
+			t.Helper()
 			// A directory where the file should be: reading it fails.
 			if err := os.MkdirAll(filepath.Join(statePath, "x"), 0o700); err != nil {
 				t.Fatal(err)
@@ -229,7 +236,11 @@ func writeFile(t *testing.T, path string, data []byte) {
 	}
 }
 
+// readMaybe is the file's content, or nil when it cannot be read.
 func readMaybe(path string) []byte {
-	data, _ := os.ReadFile(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
 	return data
 }

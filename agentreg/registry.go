@@ -876,7 +876,7 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 		return spec, fmt.Sprintf("model(s) %v no longer configured", missing), nil
 	}
 	if err := refuseHuman(cfg, spec); err != nil {
-		return spec, err.Error(), nil
+		return spec, err.Error(), nil //nolint:nilerr // a refusal is a reason the configuration cannot build it, not a failure
 	}
 	return spec, "", nil
 }

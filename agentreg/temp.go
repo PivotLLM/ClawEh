@@ -463,7 +463,7 @@ func (r *Registry[T]) Sweep(now time.Time) int {
 		}
 		// Only a configuration that can no longer build it deletes it; a
 		// failure to derive its spec says nothing about that.
-		if _, gone, _ := r.respec(r.cfg, e.spec, r.entries); gone != "" {
+		if _, gone, err := r.respec(r.cfg, e.spec, r.entries); err == nil && gone != "" {
 			victims = append(victims, victim{id, gone})
 		}
 	}
