@@ -15,7 +15,7 @@ type externalRefusalError struct{ error }
 
 func (externalRefusalError) Refusal() bool { return true }
 
-func TestIsRefusal(t *testing.T) {
+func TestIsExpectedRefusal(t *testing.T) {
 	base := errors.New("no")
 	for _, tc := range []struct {
 		name string

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"github.com/PivotLLM/ClawEh/agentreg"
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -17,19 +16,7 @@ func canSpawnSubagent(registry *AgentRegistry, parentAgentID, targetAgentID stri
 	if !ok {
 		return false
 	}
-	if parent.Subagents == nil || parent.Subagents.AllowAgents == nil {
-		return false
-	}
-	targetNorm := routing.NormalizeAgentID(targetAgentID)
-	for _, allowed := range parent.Subagents.AllowAgents {
-		if allowed == "*" {
-			return true
-		}
-		if routing.NormalizeAgentID(allowed) == targetNorm {
-			return true
-		}
-	}
-	return false
+	return parent.Subagents.Allows(targetAgentID)
 }
 
 // forEachTool calls fn for every tool registered under name across all

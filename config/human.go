@@ -264,17 +264,13 @@ func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bo
 // too, for a shared model name), not its text, so renaming an agent does not
 // turn an old problem into a new one.
 func newHumanProblems(before, next *Config) []error {
-	had := make(map[string]bool)
-	for _, p := range before.HumanProblems() {
-		had[p.key()] = true
-	}
-	var errs []error
-	for _, p := range next.HumanProblems() {
-		if p.Kind != HumanNoChat && !had[p.key()] {
-			errs = append(errs, errors.New(p.Message))
-		}
-	}
-	return errs
+	return newProblems(before.HumanProblems(), next.HumanProblems(), HumanProblem.key,
+		func(p HumanProblem) error {
+			if p.Kind == HumanNoChat {
+				return nil
+			}
+			return errors.New(p.Message)
+		})
 }
 
 // PruneHumanProblems makes the running copy obey the human-agent rules and
