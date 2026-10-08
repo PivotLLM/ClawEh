@@ -208,10 +208,11 @@ type svcNotifier struct {
 	mu         sync.Mutex
 	notices    []*Result
 	origins    []Origin
+	chats      []Chat
 	violations []string
 }
 
-func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, res *Result) error {
+func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, chat Chat, res *Result) error {
 	if n.block != nil {
 		select {
 		case <-n.block:
@@ -223,6 +224,7 @@ func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, res *Res
 	defer n.mu.Unlock()
 	n.notices = append(n.notices, res)
 	n.origins = append(n.origins, origin)
+	n.chats = append(n.chats, chat)
 	if _, err := os.Stat(filepath.Join(n.base, res.ForumID, dirRuns, strconv.Itoa(res.Run), fileResult)); err != nil {
 		n.violations = append(n.violations, "notice before result.json: "+err.Error())
 	}
@@ -245,6 +247,16 @@ func (n *svcNotifier) last() (*Result, Origin) {
 		return nil, Origin{}
 	}
 	return n.notices[len(n.notices)-1], n.origins[len(n.origins)-1]
+}
+
+// lastChat returns the launching chat of the latest notice.
+func (n *svcNotifier) lastChat() Chat {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.chats) == 0 {
+		return Chat{}
+	}
+	return n.chats[len(n.chats)-1]
 }
 
 func (n *svcNotifier) problems() []string {

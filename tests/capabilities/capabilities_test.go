@@ -277,7 +277,7 @@ func (nopForumHost) CreateFresh(context.Context, forum.FreshSpec) (string, error
 }
 func (nopForumHost) Delete(context.Context, string, string) error { return nil }
 func (nopForumHost) Touch(context.Context, string, string) error  { return nil }
-func (nopForumHost) ForumFinished(context.Context, forum.Origin, *forum.Result) error {
+func (nopForumHost) ForumFinished(context.Context, forum.Origin, forum.Chat, *forum.Result) error {
 	return nil
 }
 func (nopForumHost) Debugf(string, ...any) {}

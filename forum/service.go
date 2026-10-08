@@ -137,8 +137,14 @@ type Service struct {
 	// notifying lists the runs whose completion notice is being
 	// delivered, so a notice is never sent twice concurrently.
 	notifying map[runKey]bool
-	keepAlive sync.Once
-	wg        sync.WaitGroup
+	// launchChats holds the chat each run was launched from, as the
+	// launching tool call reported it. It is kept in memory only: the
+	// origin recorded in snapshot.json lives in the launcher's workspace
+	// and is not trusted, so a run whose launch this process did not see
+	// (one resumed after a restart) has no entry.
+	launchChats map[runKey]Chat
+	keepAlive   sync.Once
+	wg          sync.WaitGroup
 }
 
 // runKey names one run of one forum.
@@ -198,6 +204,7 @@ func New(host Host, opts ...Option) *Service {
 		controls:       map[string]*controlLock{},
 		stuck:          map[runKey]bool{},
 		notifying:      map[runKey]bool{},
+		launchChats:    map[runKey]Chat{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -397,7 +404,12 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 			return 0, errors.Join(err, s.revertRun(ctx, run))
 		}
 	}
+	// Recorded before the run starts, so even a run that ends at once
+	// finds it.
+	key := keyOf(run)
+	s.setLaunchChat(key, Chat{Channel: opts.Origin.Channel, ChatID: opts.Origin.ChatID})
 	if err = s.start(run, ctrl); err != nil { //nolint:contextcheck // the run outlives the launching call; its context is the service's
+		s.takeLaunchChat(key)
 		return 0, errors.Join(err, s.revertRun(ctx, run))
 	}
 	return n, nil
@@ -936,6 +948,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	}
 	s.forgetPaused(id)
 	s.forgetCleanups(id)
+	s.forgetLaunchChats(id)
 	if err := store.Remove(); err != nil {
 		return err
 	}
@@ -1525,7 +1538,7 @@ func (s *Service) notify(store *Store, origin Origin, res *Result) {
 			delete(s.notifying, key)
 			s.mu.Unlock()
 		}()
-		if err := s.host.Notifier.ForumFinished(s.ctx, origin, res); err != nil {
+		if err := s.host.Notifier.ForumFinished(s.ctx, origin, s.launchChat(key), res); err != nil {
 			s.host.Logger.Warnf("forum %s: notifying agent %s: %v", id, origin.AgentID, err)
 			if s.ctx.Err() != nil {
 				return
@@ -1533,6 +1546,7 @@ func (s *Service) notify(store *Store, origin Origin, res *Result) {
 		} else {
 			s.host.Logger.Infof("forum %s: %s; agent %s notified", id, res.Status, origin.AgentID)
 		}
+		s.takeLaunchChat(key)
 		if err := store.ClearCleanup(cleanupNotice); err != nil {
 			s.host.Logger.Warnf("forum %s: notice marker: %v", id, err)
 		}
@@ -1654,6 +1668,42 @@ func (s *Service) forgetCleanups(id string) {
 	for key := range s.cleanups {
 		if key.id == id {
 			delete(s.cleanups, key)
+		}
+	}
+}
+
+// setLaunchChat records the chat run key was launched from.
+func (s *Service) setLaunchChat(key runKey, chat Chat) {
+	if chat == (Chat{}) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.launchChats[key] = chat
+}
+
+// launchChat returns the chat run key was launched from, or the zero Chat
+// when this process did not see the launch.
+func (s *Service) launchChat(key runKey) Chat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.launchChats[key]
+}
+
+// takeLaunchChat forgets the chat run key was launched from.
+func (s *Service) takeLaunchChat(key runKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.launchChats, key)
+}
+
+// forgetLaunchChats forgets the launching chats of every run of forum id.
+func (s *Service) forgetLaunchChats(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.launchChats {
+		if key.id == id {
+			delete(s.launchChats, key)
 		}
 	}
 }

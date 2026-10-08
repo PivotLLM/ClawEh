@@ -846,6 +846,9 @@ func TestSvcCompletionNotice(t *testing.T) {
 	if origin != (Origin{AgentID: "launcher", Channel: "test", ChatID: "chat-1"}) {
 		t.Errorf("notice origin = %+v", origin)
 	}
+	if chat := e.notifier.lastChat(); chat != (Chat{Channel: "test", ChatID: "chat-1"}) {
+		t.Errorf("notice launching chat = %+v, want the launch call's", chat)
+	}
 	if _, ok := e.marker(id, cleanupNotice); ok {
 		t.Error("notice marker left behind")
 	}
@@ -863,6 +866,27 @@ func TestSvcCompletionNotice(t *testing.T) {
 	}
 	if e.notifier.count() != 1 || len(e.agents.deletedIDs()) != 2 {
 		t.Errorf("after restart: %d notices, deleted %v", e.notifier.count(), e.agents.deletedIDs())
+	}
+}
+
+// The launching chat is known only to the process that saw the launch: a
+// run that ends after a restart is notified without it, whatever the
+// forum's directory records.
+func TestSvcNoticeLaunchChatAfterRestart(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	e.restart() // running on disk, no live controller
+	e.appendCommits(id, Commit{Kind: CommitCancelRequested})
+	if err := e.svc.Cancel(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusCancelled)
+	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+	if chat := e.notifier.lastChat(); chat != (Chat{}) {
+		t.Errorf("launching chat after a restart = %+v, want none", chat)
+	}
+	if _, origin := e.notifier.last(); origin.ChatID != "chat-1" {
+		t.Errorf("recorded origin = %+v", origin)
 	}
 }
 

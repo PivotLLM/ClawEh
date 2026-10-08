@@ -117,7 +117,7 @@ func askBob(id, content string) bus.InboundMessage {
 // sendAsk registers ask id as core Ask does and dispatches askBob(id,
 // content) in the background; the returned channel gets the ask's reply.
 func sendAsk(al *AgentLoop, id, content string) <-chan tools.AgentReply {
-	replies := al.asks.open("ask-"+id, "Alice", time.Now().Add(time.Minute))
+	replies := al.asks.open("ask-"+id, "Alice", time.Now().Add(time.Minute), false)
 	go dispatch(al, askBob(id, content))
 	return replies
 }
@@ -317,7 +317,7 @@ func TestHumanAgent_ShutdownCancels(t *testing.T) {
 
 	ctx, stop := context.WithCancelCause(context.Background())
 	al.activeRequests.Add(1)
-	replies := al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute))
+	replies := al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute), false)
 	go al.processSessionMessage(ctx, askBob("r1", "Still there?"))
 	expectPosted(t, msgBus)
 	stop(errShuttingDown)
@@ -390,7 +390,7 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 
 	results := make(chan string, 2)
 	for _, q := range []string{"first", "second"} {
-		al.asks.open("ask-"+q, "Alice", time.Now().Add(time.Minute))
+		al.asks.open("ask-"+q, "Alice", time.Now().Add(time.Minute), false)
 		go func() {
 			out, err := al.runAgentLoop(context.Background(), bob, processOptions{
 				SessionKey: key, Channel: constants.AgentMessageChannel, ChatID: "ask-" + q, UserMessage: q, ReplyRequired: true,
@@ -511,7 +511,7 @@ func TestHumanAgent_RefusesNonHumanProvider(t *testing.T) {
 	other.Providers = []config.Provider{{Name: "People", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:1", APIKey: "k"}}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &countingProvider{}, providers.NewProviderDispatcher(other))
 	bob, _ := al.GetRegistry().Get("bob")
-	al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute))
+	al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute), false)
 	_, err := al.runAgentLoop(context.Background(), bob, processOptions{
 		SessionKey: "agent:bob:main", Channel: constants.AgentMessageChannel, ChatID: "ask-1", UserMessage: "q", ReplyRequired: true,
 	})

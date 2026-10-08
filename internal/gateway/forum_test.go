@@ -82,7 +82,7 @@ func (gwForumHost) CreateFresh(context.Context, forum.FreshSpec) (string, error)
 }
 func (gwForumHost) Delete(context.Context, string, string) error { return nil }
 func (gwForumHost) Touch(context.Context, string, string) error  { return nil }
-func (gwForumHost) ForumFinished(context.Context, forum.Origin, *forum.Result) error {
+func (gwForumHost) ForumFinished(context.Context, forum.Origin, forum.Chat, *forum.Result) error {
 	return nil
 }
 func (gwForumHost) Debugf(string, ...any) {}

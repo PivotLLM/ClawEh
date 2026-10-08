@@ -123,7 +123,10 @@ func (h *ForumHost) Ask(ctx context.Context, agentID, message string, wait time.
 		return forum.Reply{}, refusal
 	}
 	askCtx := toolsagents.WithSpawnDepth(ctx, cfg.Agents.Defaults.GetMaxSubagentDepth()-1)
-	reply, err := al.Ask(askCtx, h.sender(al, ctx), agentID, message, wait)
+	// The participant's turn ends when the forum stops waiting for it (the
+	// call timeout, the run deadline, a cancel), so its model call is not
+	// left running for a reply nobody reads.
+	reply, err := al.askStoppingTurn(askCtx, h.sender(al, ctx), agentID, message, wait)
 	stopping := !al.running.Load()
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -322,7 +325,8 @@ func (h *ForumHost) CreateFresh(_ context.Context, spec forum.FreshSpec) (string
 
 // Delete implements forum.Agents: only a forum participant the launcher
 // owns is deleted; an agent that is already gone counts as deleted; one in
-// a turn is refused (agentreg.ErrBusy) and retried later.
+// a turn (a turn the forum stopped waiting for, which is being cancelled)
+// is deleted as soon as that turn ends.
 func (h *ForumHost) Delete(_ context.Context, launcherID, agentID string) error {
 	r, err := h.registry()
 	if err != nil {
@@ -334,7 +338,7 @@ func (h *ForumHost) Delete(_ context.Context, launcherID, agentID string) error 
 	if !ownedParticipant(r, launcherID, agentID) {
 		return fmt.Errorf("agent %s is not a forum participant of %s; not deleted", agentID, launcherID)
 	}
-	if err := r.Delete(agentID); err != nil && !errors.Is(err, agentreg.ErrNotFound) {
+	if err := r.DeleteWhenIdle(agentID); err != nil && !errors.Is(err, agentreg.ErrNotFound) {
 		return err
 	}
 	return nil
@@ -355,13 +359,16 @@ func (h *ForumHost) Touch(_ context.Context, launcherID, agentID string) error {
 
 // ForumFinished implements forum.Notifier: the notice is queued as a
 // background result for the launching agent, in its one conversation, and
-// the call returns without waiting for the agent's turn. The chat recorded
-// at launch is not trusted (it lives in the launcher's workspace): a forum
-// launched from a chat (a channel that is not internal) has the agent's
-// answer posted to its own default chat (its default binding) when it has
-// one; otherwise, and for a forum launched locally, the answer stays in the
-// conversation.
-func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, result *forum.Result) error {
+// the call returns without waiting for the agent's turn. The agent's answer
+// goes to the chat the forum was launched from when this process saw the
+// launch (chat, kept in the forum service's memory). The chat recorded at
+// launch in the launcher's workspace is not trusted: when the launching
+// chat is unknown (the run ended after a restart), or the answer finds it
+// offline or not found, a forum launched from a chat (a channel that is not
+// internal) has the answer posted to the launcher's own default chat (its
+// default binding) when it has one; otherwise, and for a forum launched
+// locally, the answer stays in the conversation.
+func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat forum.Chat, result *forum.Result) error {
 	al, err := h.bound()
 	if err != nil {
 		return err
@@ -371,26 +378,45 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, resu
 	}
 	// processSystemMessage keeps a result of the ask channel in the agent's
 	// main conversation and sends it to no chat.
-	channel, chatID := constants.AgentMessageChannel, ""
-	if cfg := al.GetConfig(); !constants.IsInternalChannel(origin.Channel) && cfg != nil {
+	defChannel, defChatID := constants.AgentMessageChannel, ""
+	launchChat := chat.Channel != "" && chat.ChatID != "" && !constants.IsInternalChannel(chat.Channel)
+	if cfg := al.GetConfig(); cfg != nil && (launchChat || !constants.IsInternalChannel(origin.Channel)) {
 		if c, id, _, ok := cfg.CronTarget(origin.AgentID); ok {
-			channel, chatID = c, id
+			defChannel, defChatID = c, id
 		}
 	}
+	channel, chatID := defChannel, defChatID
 	meta := map[string]string{metadataKeyPreresolvedAgentID: origin.AgentID}
+	if launchChat {
+		channel, chatID = chat.Channel, chat.ChatID
+		if defChannel != constants.AgentMessageChannel && (defChannel != channel || defChatID != chatID) {
+			meta[metadataKeyFallbackChannel], meta[metadataKeyFallbackChatID] = defChannel, defChatID
+		}
+	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
 		SenderID:   forumNoticeSender,
 		ChatID:     channel + ":" + chatID,
-		Content:    fmt.Sprintf("Forum %s run %d finished: %s.", forum.Ref(result.Name, result.ForumID), result.Run, result.Status),
+		Content:    forumNoticeText(result),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,
 	}); err != nil {
 		return fmt.Errorf("queue the notice for agent %s: %w", origin.AgentID, err)
 	}
 	return nil
+}
+
+// forumNoticeText is the completion notice: the run's status and, when it
+// says more than the status, its reason, in the words forum_status uses
+// ("finished: incomplete (deadline).").
+func forumNoticeText(result *forum.Result) string {
+	status := string(result.Status)
+	if result.Reason != "" && string(result.Reason) != status {
+		status += " (" + string(result.Reason) + ")"
+	}
+	return fmt.Sprintf("Forum %s run %d finished: %s.", forum.Ref(result.Name, result.ForumID), result.Run, status)
 }
 
 // OnStuck is forum.Host.OnStuck: an operator alert naming the forum, its

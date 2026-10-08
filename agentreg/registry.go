@@ -209,6 +209,9 @@ type meta struct {
 	ttl      time.Duration
 	lastUsed atomic.Int64 // unix nanoseconds
 	busy     atomic.Int32 // turns in progress
+	// deleteWhenIdle marks an agent DeleteWhenIdle found in a turn: the
+	// turn that leaves it idle deletes it.
+	deleteWhenIdle atomic.Bool
 }
 
 func newMeta(now time.Time, ttl time.Duration) *meta {
@@ -553,9 +556,14 @@ func (r *Registry[T]) endTurn(e *entry[T]) func() {
 	return func() {
 		once.Do(func() {
 			e.meta.touch(r.now())
-			e.meta.busy.Add(-1)
+			idle := e.meta.busy.Add(-1) == 0
 			if persisted(e.spec) {
 				r.persist()
+			}
+			if idle && e.meta.deleteWhenIdle.Load() {
+				// Not on the turn's own goroutine: deleting closes the
+				// instance the turn has just finished with.
+				go r.deleteDeferred(e.spec.ID)
 			}
 		})
 	}

@@ -351,6 +351,53 @@ func TestDeleteRefusedMidTurn(t *testing.T) {
 	}
 }
 
+// DeleteWhenIdle deletes an idle agent at once and one in a turn as soon as
+// its last turn ends; it refuses what Delete refuses otherwise.
+func TestDeleteWhenIdle(t *testing.T) {
+	r := mustNew(t, testConfig(t), newFakeHost())
+
+	idle := mustCreate(t, r, config.AgentConfig{})
+	if err := r.DeleteWhenIdle(idle); err != nil {
+		t.Fatalf("DeleteWhenIdle of an idle agent: %v", err)
+	}
+	if _, ok := r.Get(idle); ok {
+		t.Fatal("an idle agent was not deleted at once")
+	}
+
+	busy := mustCreate(t, r, config.AgentConfig{})
+	end1, _ := r.BeginTurn(busy, mustGet(t, r, busy))
+	end2, _ := r.BeginTurn(busy, mustGet(t, r, busy))
+	if err := r.DeleteWhenIdle(busy); err != nil {
+		t.Fatalf("DeleteWhenIdle mid-turn: %v", err)
+	}
+	if _, ok := r.Get(busy); !ok {
+		t.Fatal("an agent in a turn was deleted")
+	}
+	end1()
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := r.Get(busy); !ok {
+		t.Fatal("deleted while another turn was running")
+	}
+	end2()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := r.Get(busy); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("not deleted after its last turn ended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := r.DeleteWhenIdle("alice"); !errors.Is(err, ErrNotTemp) {
+		t.Errorf("DeleteWhenIdle of a config agent = %v, want ErrNotTemp", err)
+	}
+	if err := r.DeleteWhenIdle("no-such-agent"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteWhenIdle of an unknown agent = %v, want ErrNotFound", err)
+	}
+}
+
 // CreateInTurn begins the turn before the agent is visible: it cannot be
 // deleted until the turn ends.
 func TestCreateInTurn(t *testing.T) {

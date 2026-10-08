@@ -280,7 +280,7 @@ func TestHumanAgent_AnswerAfterAskerLeftIsAcknowledged(t *testing.T) {
 	cfg.Agents.Defaults.MaxConcurrentTurns = 1
 	al, msgBus, _ := newHumanLoopWith(t, cfg)
 
-	al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute))
+	al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute), false)
 	// The turn runs with a slot, so after the answer it must take one back
 	// before it can hand the answer on: holding the slot holds it there.
 	slot := &turnSlot{al: al}
