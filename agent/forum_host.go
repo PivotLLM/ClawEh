@@ -326,7 +326,7 @@ func (h *ForumHost) CreateFresh(_ context.Context, spec forum.FreshSpec) (string
 // Delete implements forum.Agents: only a forum participant the launcher
 // owns is deleted; an agent that is already gone counts as deleted; one in
 // a turn (a turn the forum stopped waiting for, which is being cancelled)
-// is deleted as soon as that turn ends.
+// is deleted as soon as that turn ends (forum.ErrDeletePending).
 func (h *ForumHost) Delete(_ context.Context, launcherID, agentID string) error {
 	r, err := h.registry()
 	if err != nil {
@@ -338,7 +338,11 @@ func (h *ForumHost) Delete(_ context.Context, launcherID, agentID string) error 
 	if !ownedParticipant(r, launcherID, agentID) {
 		return fmt.Errorf("agent %s is not a forum participant of %s; not deleted", agentID, launcherID)
 	}
-	if err := r.DeleteWhenIdle(agentID); err != nil && !errors.Is(err, agentreg.ErrNotFound) {
+	err = r.DeleteWhenIdle(agentID)
+	if errors.Is(err, agentreg.ErrDeletePending) {
+		return fmt.Errorf("%w: %w", forum.ErrDeletePending, err)
+	}
+	if err != nil && !errors.Is(err, agentreg.ErrNotFound) {
 		return err
 	}
 	return nil

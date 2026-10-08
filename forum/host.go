@@ -150,9 +150,9 @@ type Agents interface {
 	// Delete removes a temporary agent the forum launched by launcherID
 	// created. Deleting an agent that is already gone is not an error. An
 	// agent still in a turn (one the forum stopped waiting for) may be
-	// deleted by the host once that turn ends, returning nil; the host may
-	// instead refuse it, or an agent that is not a forum participant owned
-	// by launcherID (the cleanup marker lives in the launcher's workspace
+	// deleted by the host once that turn ends, returning an error wrapping
+	// ErrDeletePending; the host may instead refuse it, or an agent that is
+	// not a forum participant owned by launcherID (the cleanup marker lives in the launcher's workspace
 	// and is not trusted); the caller retries later (the TTL is the
 	// backstop).
 	Delete(ctx context.Context, launcherID, agentID string) error

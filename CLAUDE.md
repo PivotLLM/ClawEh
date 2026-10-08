@@ -253,7 +253,7 @@ production instance directly; test against a dev instance.
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
   `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`;
   `Delete` of one still in a turn deletes it when the turn ends,
-  `DeleteWhenIdle`);
+  `DeleteWhenIdle`, `forum.ErrDeletePending`, kept in the cleanup marker);
   the completion notice (status and end reason) as a `system` inbound to the
   launcher's main conversation;
   `OnStuck` raises the `forum:<id>:<run>` alert; `Cooldown` reads the shared

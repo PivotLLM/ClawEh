@@ -367,8 +367,8 @@ func TestDeleteWhenIdle(t *testing.T) {
 	busy := mustCreate(t, r, config.AgentConfig{})
 	end1, _ := r.BeginTurn(busy, mustGet(t, r, busy))
 	end2, _ := r.BeginTurn(busy, mustGet(t, r, busy))
-	if err := r.DeleteWhenIdle(busy); err != nil {
-		t.Fatalf("DeleteWhenIdle mid-turn: %v", err)
+	if err := r.DeleteWhenIdle(busy); !errors.Is(err, ErrDeletePending) {
+		t.Fatalf("DeleteWhenIdle mid-turn = %v, want ErrDeletePending", err)
 	}
 	if _, ok := r.Get(busy); !ok {
 		t.Fatal("an agent in a turn was deleted")

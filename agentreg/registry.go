@@ -77,6 +77,10 @@ var ErrNotFound = errors.New("agent not found")
 // ErrBusy is returned by Delete for an agent that is in a turn.
 var ErrBusy = errors.New("agent is in a turn")
 
+// ErrDeletePending is returned by DeleteWhenIdle for an agent in a turn: it
+// is deleted when that turn ends.
+var ErrDeletePending = errors.New("agent is deleted when its turn ends")
+
 // ErrNotTemp is returned by Delete for a config agent.
 var ErrNotTemp = errors.New("agent is not a temporary agent")
 

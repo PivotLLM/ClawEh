@@ -365,8 +365,10 @@ func (r *Registry[T]) Delete(id string) error {
 }
 
 // DeleteWhenIdle is Delete for an agent that may be in a turn: an idle one
-// is deleted now, one in a turn as soon as its last turn ends. It refuses
-// what Delete refuses, except an agent in a turn.
+// is deleted now, one in a turn as soon as its last turn ends (it then
+// returns ErrDeletePending, wrapped). It refuses what Delete refuses, except
+// an agent in a turn. A pending deletion is not saved: an agent whose turn
+// is ended by the service stopping is restored at the next start.
 func (r *Registry[T]) DeleteWhenIdle(id string) error {
 	id = routing.NormalizeAgentID(id)
 	r.mu.RLock()
@@ -391,7 +393,7 @@ func (r *Registry[T]) DeleteWhenIdle(id string) error {
 	case errors.Is(err, ErrBusy):
 		logger.InfoCF("agent", "Temporary agent is in a turn; it is deleted when the turn ends",
 			map[string]any{"agent_id": id, "label": e.spec.Label()})
-		return nil
+		return fmt.Errorf("%w: %s", ErrDeletePending, e.spec.Label())
 	case errors.Is(err, ErrNotFound):
 		return nil // a turn ending meanwhile deleted it
 	}

@@ -1420,6 +1420,38 @@ func TestSvcCleanupIsRetried(t *testing.T) {
 	})
 }
 
+// A temporary agent the host deletes when its turn ends is not a failure: it
+// is logged at Info, the notice is still sent, and it stays in the marker and
+// is retried, so a restart before the turn ends still deletes it.
+func TestSvcCleanupPendingTurn(t *testing.T) {
+	e := svcSetup(t)
+	e.svc.keepAliveEvery = 10 * time.Millisecond
+	id, c := e.launch("")
+	created := e.agents.createdIDs()
+	e.agents.setDeleteErr(created[0], fmt.Errorf("%w: busy", ErrDeletePending))
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+	if !e.logger.has("are deleted when their turns end") || e.logger.has("retried every") {
+		t.Errorf("pending deletion logged as a failure: %v", e.logger.lines)
+	}
+	if _, ok := e.marker(id, CleanupAgents); !ok {
+		t.Fatal("the agents marker is gone although a deletion is pending")
+	}
+	time.Sleep(100 * time.Millisecond) // retries while the turn still runs keep it listed
+	e.svc.mu.Lock()
+	retried := len(e.svc.cleanups) == 1
+	e.svc.mu.Unlock()
+	if _, ok := e.marker(id, CleanupAgents); !ok || !retried {
+		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %v)", ok, retried)
+	}
+	e.agents.setDeleteErr(created[0], nil) // the turn ended: the agent is gone
+	svcEventually(t, "marker cleared by the retry", func() bool {
+		_, ok := e.marker(id, CleanupAgents)
+		return !ok
+	})
+}
+
 // The temporary agents of a running forum are touched too.
 func TestSvcKeepAliveTouchesRunningForums(t *testing.T) {
 	e := svcSetup(t)
