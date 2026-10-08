@@ -70,6 +70,7 @@ type pendingAsk struct {
 	from     string                // the asker's name
 	deadline time.Time             // when the asker stops waiting
 	gone     chan struct{}         // closed once the ask is answered or given up
+	stopTurn bool                  // the asked turn is cancelled once the asker gives up
 }
 
 // askWait is what a turn answering an ask knows of its asker: who it is,
@@ -78,17 +79,19 @@ type askWait struct {
 	from     string
 	deadline time.Time
 	gone     <-chan struct{}
+	stopTurn bool // the turn is to be cancelled once gone is closed
 }
 
 // open registers ask id from the asker from, who waits until deadline, and
-// returns the channel its reply arrives on.
-func (r *askRegistry) open(id, from string, deadline time.Time) <-chan tools.AgentReply {
+// returns the channel its reply arrives on. With stopTurn, the asked turn is
+// cancelled once the asker stops waiting.
+func (r *askRegistry) open(id, from string, deadline time.Time, stopTurn bool) <-chan tools.AgentReply {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.waiting == nil {
 		r.waiting = make(map[string]*pendingAsk)
 	}
-	p := &pendingAsk{replies: make(chan tools.AgentReply, 1), from: from, deadline: deadline, gone: make(chan struct{})}
+	p := &pendingAsk{replies: make(chan tools.AgentReply, 1), from: from, deadline: deadline, gone: make(chan struct{}), stopTurn: stopTurn}
 	r.waiting[id] = p
 	return p.replies
 }
@@ -139,7 +142,7 @@ func (r *askRegistry) wait(id string) (askWait, bool) {
 	if !ok {
 		return askWait{}, false
 	}
-	return askWait{from: p.from, deadline: p.deadline, gone: p.gone}, true
+	return askWait{from: p.from, deadline: p.deadline, gone: p.gone, stopTurn: p.stopTurn}, true
 }
 
 // waitGraph records which agent's turn is waiting on an ask to which, across
@@ -373,11 +376,19 @@ func waitSeconds(d time.Duration) int {
 // max_subagent_depth is refused, as is one to an agent waiting in the same
 // exchange. The reply is handed back here and never published to a channel.
 func (al *AgentLoop) Ask(ctx context.Context, from, agentID, message string, wait time.Duration) (tools.AgentReply, error) {
-	return al.ask(ctx, sender{name: strings.TrimSpace(from)}, agentID, message, wait)
+	return al.ask(ctx, sender{name: strings.TrimSpace(from)}, agentID, message, wait, false)
 }
 
-// ask is Ask from from.
-func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message string, wait time.Duration) (tools.AgentReply, error) {
+// askStoppingTurn is Ask, except that the asked turn is cancelled (and its
+// model call with it) as soon as the asker stops waiting: at the end of the
+// wait or when ctx ends. A turn of a person is not cancelled; its request is
+// withdrawn as for any ask.
+func (al *AgentLoop) askStoppingTurn(ctx context.Context, from, agentID, message string, wait time.Duration) (tools.AgentReply, error) {
+	return al.ask(ctx, sender{name: strings.TrimSpace(from)}, agentID, message, wait, true)
+}
+
+// ask is Ask from from; stopTurn is askStoppingTurn's.
+func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message string, wait time.Duration, stopTurn bool) (tools.AgentReply, error) {
 	switch {
 	case from.name == "":
 		return tools.AgentReply{}, errors.New("ask: the sender is required")
@@ -438,7 +449,7 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 	}
 
 	id := "ask-" + uuid.NewString()
-	replies := al.asks.open(id, from.name, time.Now().Add(wait))
+	replies := al.asks.open(id, from.name, time.Now().Add(wait), stopTurn)
 	meta := map[string]string{
 		metadataKeyPreresolvedAgentID: target.ID,
 		bus.MetaReplyRequired:         "1",
@@ -662,7 +673,7 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 	go func() {
 		defer cancel()
 		defer stop()
-		reply, err := al.ask(askCtx, from, target.ID, text, wait)
+		reply, err := al.ask(askCtx, from, target.ID, text, wait, false)
 		if errors.Is(err, context.Canceled) {
 			logger.InfoCF("agent", "/ask abandoned: the service is stopping",
 				map[string]any{"agent_id": target.ID, "channel": msg.Channel, "chat_id": msg.ChatID})

@@ -364,6 +364,51 @@ func (r *Registry[T]) Delete(id string) error {
 	return r.deleteEntry(routing.NormalizeAgentID(id), "deleted")
 }
 
+// DeleteWhenIdle is Delete for an agent that may be in a turn: an idle one
+// is deleted now, one in a turn as soon as its last turn ends. It refuses
+// what Delete refuses, except an agent in a turn.
+func (r *Registry[T]) DeleteWhenIdle(id string) error {
+	id = routing.NormalizeAgentID(id)
+	r.mu.RLock()
+	e, ok := r.entries[id]
+	switch {
+	case r.closed:
+		r.mu.RUnlock()
+		return ErrClosed
+	case !ok:
+		r.mu.RUnlock()
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
+	case e.spec.Origin != OriginTemp:
+		r.mu.RUnlock()
+		return fmt.Errorf("%w: %s", ErrNotTemp, id)
+	}
+	// Marked before the attempt: a turn that ends (or starts and ends)
+	// meanwhile sees the mark and deletes it.
+	e.meta.deleteWhenIdle.Store(true)
+	r.mu.RUnlock()
+	err := r.deleteEntry(id, "deleted")
+	switch {
+	case errors.Is(err, ErrBusy):
+		logger.InfoCF("agent", "Temporary agent is in a turn; it is deleted when the turn ends",
+			map[string]any{"agent_id": id, "label": e.spec.Label()})
+		return nil
+	case errors.Is(err, ErrNotFound):
+		return nil // a turn ending meanwhile deleted it
+	}
+	return err
+}
+
+// deleteDeferred deletes an agent DeleteWhenIdle marked, once its turn has
+// ended. An agent already gone, or back in a turn (whose end retries), is
+// left as it is.
+func (r *Registry[T]) deleteDeferred(id string) {
+	err := r.deleteEntry(id, "deleted after its turn")
+	if err != nil && !errors.Is(err, ErrBusy) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrClosed) {
+		logger.WarnCF("agent", "Temporary agent could not be deleted after its turn",
+			map[string]any{"agent_id": id, "error": err.Error()})
+	}
+}
+
 func (r *Registry[T]) deleteEntry(id, reason string) error {
 	r.mu.Lock()
 	e, ok := r.entries[id]

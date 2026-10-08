@@ -53,7 +53,10 @@ type Messenger interface {
 	// uncertain and resumes at the next start instead of recording a failed
 	// attempt. Every call, whatever its result, is one of the forum's calls.
 	// ctx carries the forum the ask is made for (AskInfoFromContext), so
-	// the host can name the launching agent as the sender.
+	// the host can name the launching agent as the sender. When Ask
+	// returns without the reply (the wait elapsed, ctx ended), the host
+	// should stop the agent's turn, so a model call nobody waits for any
+	// more is not left running.
 	Ask(ctx context.Context, agentID, message string, wait time.Duration) (Reply, error)
 }
 
@@ -145,11 +148,13 @@ type Agents interface {
 	// CreateFresh creates a fresh temporary agent and returns its UUID.
 	CreateFresh(ctx context.Context, spec FreshSpec) (agentID string, err error)
 	// Delete removes a temporary agent the forum launched by launcherID
-	// created. Deleting an agent that is already gone is not an error. The
-	// host may refuse while the agent is mid-turn, or an agent that is not a
-	// forum participant owned by launcherID (the cleanup marker lives in the
-	// launcher's workspace and is not trusted); the caller retries later
-	// (the TTL is the backstop).
+	// created. Deleting an agent that is already gone is not an error. An
+	// agent still in a turn (one the forum stopped waiting for) may be
+	// deleted by the host once that turn ends, returning nil; the host may
+	// instead refuse it, or an agent that is not a forum participant owned
+	// by launcherID (the cleanup marker lives in the launcher's workspace
+	// and is not trusted); the caller retries later (the TTL is the
+	// backstop).
 	Delete(ctx context.Context, launcherID, agentID string) error
 	// Touch refreshes the last-used time of a temporary agent the forum
 	// launched by launcherID created, so a paused forum keeps its
@@ -169,10 +174,23 @@ type Origin struct {
 	Session string `json:"session,omitempty"`
 }
 
+// Chat is the chat a run was launched from, as the launching tool call
+// reported it (its channel and chat ID). The service keeps it in memory
+// only and never reads it from the forum's directory, so the host may
+// trust it; it is the zero Chat when the launch was not seen by this
+// process (a run resumed or notified after a restart) or did not come from
+// a chat.
+type Chat struct {
+	Channel string
+	ChatID  string
+}
+
 // Notifier tells the launching agent that a forum reached a terminal state.
 type Notifier interface {
 	// ForumFinished delivers the notice as a delayed reply to the launching
-	// message. It is called only after result.json is committed. An error
+	// message: to chat when it is known, otherwise as the host decides from
+	// origin (whose chat, read from the forum's directory, is untrusted).
+	// It is called only after result.json is committed. An error
 	// is logged by the service; the forum's state does not depend on it.
 	//
 	// It should hand the notice off and return rather than wait for the
@@ -182,7 +200,7 @@ type Notifier interface {
 	// starts), but Service.Close waits for it until Close's context ends.
 	// ctx is cancelled when the service closes; a notice that fails then
 	// is delivered at the next start.
-	ForumFinished(ctx context.Context, origin Origin, result *Result) error
+	ForumFinished(ctx context.Context, origin Origin, chat Chat, result *Result) error
 }
 
 // Logger is the subset of the host's logger the package uses. ClawEh's

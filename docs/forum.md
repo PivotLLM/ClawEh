@@ -212,10 +212,15 @@ starts. A forum tool called with an argument it does not take is refused,
 naming it ("Unknown argument forum_id; use id."). When a run ends
 (completed, incomplete, failed or cancelled) Alice gets
 `[System: forum] Forum design-review (<id>) run 1 finished: completed.` in
-her conversation. If she launched it from a chat, her answer goes to her
-default chat (her default binding), or nowhere when she has none; a forum
-launched locally is never posted. `forum_delete` removes a forum and all its
-runs, unless a run is running.
+her conversation; a run that did not complete also gives the reason, in the
+words `forum_status` uses ("finished: incomplete (deadline).", "finished:
+failed (attempts_exhausted)."). If she launched it from a chat, her answer
+goes to that chat (the WebUI chat included). When that chat is not known any
+more (the run ended after a restart), or the answer finds it offline or not
+found (a WebUI chat with no browser open), the answer goes to her default
+chat (her default binding) instead, or nowhere when she has none; it stays in
+her conversation either way. A forum launched locally is never posted.
+`forum_delete` removes a forum and all its runs, unless a run is running.
 
 A run survives a restart: an interrupted run resumes where it stopped, and a
 turn that was in progress is sent again (an existing agent may see that
@@ -296,6 +301,12 @@ write to it, and cannot read another agent's forums.
   attempt counts toward `max_attempts_per_turn` and `max_calls` like any
   timeout. The wait is logged at INFO with the forum, the participant and
   the model.
+- When a run stops waiting for a turn (its call timeout, the run's deadline,
+  a cancel), the participant's turn is cancelled, so its model call is
+  aborted rather than finishing for no one. A turn the deadline cuts ends the
+  run incomplete (`deadline`), even when it was the turn's last allowed
+  attempt.
 - Temporary participants are created for each run, kept alive while it is
-  paused and deleted when it ends; the registry's 24-hour idle limit is only a
+  paused and deleted when it ends (one whose turn is still being cancelled
+  as soon as that turn ends); the registry's 24-hour idle limit is only a
   backstop.

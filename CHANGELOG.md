@@ -404,8 +404,15 @@ observe does not need an entry.
   kept under `<workspace>/forums/<id>/` (`forum.json`, the configuration, and
   `runs/<n>/` per run, with a live `transcript.md`); temporary participants
   are deleted when the run ends, and the launching agent is told
-  "Forum <name> (<id>) run <n> finished: <status>." (posted to its default chat if it
-  launched the forum from a chat). `forum_results` returns each final output's
+  "Forum <name> (<id>) run <n> finished: <status>." with the reason when the
+  run did not complete ("finished: incomplete (deadline)."). Its answer goes
+  to the chat the forum was launched from, the WebUI chat included; when that
+  chat is no longer known (the run ended after a restart) or is offline or not
+  found, it goes to the agent's default chat if it launched the forum from a
+  chat, and nowhere otherwise. When a run stops waiting for a participant (the
+  call timeout, the run's `max_duration_seconds`, `forum_cancel`), the
+  participant's model call is aborted, and a call the deadline cuts ends the
+  run incomplete (`deadline`), even on the turn's last attempt. `forum_results` returns each final output's
   author, layer, round, size and file, with its text inline up to 4,000
   characters (`forum.MaxResultInlineChars`; longer text is cut and names the
   file holding all of it) and 16,000 characters for all outputs together

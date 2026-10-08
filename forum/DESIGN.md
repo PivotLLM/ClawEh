@@ -269,6 +269,27 @@ contract beyond the interface signatures:
   host checks every ask against the launcher's current permissions.
 - `Notifier.ForumFinished` hands the notice off and returns; it is called
   on its own goroutine, and `Close` waits for it until its context ends.
+  It gets the run's launching chat (`Chat`: the channel and chat ID of the
+  `forum_launch` call), which the service keeps in memory only
+  (`launchChats`, keyed by forum and run, set before the run starts,
+  dropped after the notice, on supersede and on delete); it is never read
+  from the forum directory, so the host may deliver to it. It is the zero
+  `Chat` for a run whose launch this process did not see (a restart).
+  ClawEh posts the agent's answer to it, falling back to the launcher's
+  default binding when it is unknown or the answer finds it offline or not
+  found (`fallback_channel`/`fallback_chat_id` on the system message,
+  `systemReplyFallback`). The notice text adds the end reason when it says
+  more than the status: "run 1 finished: incomplete (deadline)."
+- An Ask that returns without the reply (the wait elapsed, ctx ended:
+  the call timeout, the run deadline, a cancel) should stop the
+  participant's turn. ClawEh's `ForumHost.Ask` uses `askStoppingTurn`: the
+  asked turn's context is cancelled once the asker stops waiting, so the
+  model call is aborted. `Agents.Delete` of a participant still in that
+  turn deletes it when the turn ends (`agentreg.DeleteWhenIdle`) and
+  returns nil, so cleanup does not wait for the keep-alive retry.
+- An attempt whose wait the run deadline cut (a `timeout` reply at or
+  after the deadline) ends the run `incomplete (deadline)`, not
+  `failed (attempts_exhausted)`, even on the turn's last allowed attempt.
 - `Host.OnStuck` (optional) tells the launcher and may raise an operator
   alert; it must not block.
 - `Host.Cooldown` (optional, `ForumHost.Cooldown` over the shared cooldown

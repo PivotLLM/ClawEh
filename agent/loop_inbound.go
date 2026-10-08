@@ -355,6 +355,23 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	turnTimeout = al.humanTurnBudget(msg, turnTimeout)
 	turnCtx, turnCancel := context.WithTimeout(turnParent, turnTimeout)
 	defer turnCancel()
+	// An ask whose asker gives up on it (the forum's) ends the turn then,
+	// so its model call is aborted rather than finishing for no one. A
+	// person's turn withdraws its request instead (askHuman).
+	if msg.Channel == constants.AgentMessageChannel && al.humanTarget(msg) == nil {
+		if w, ok := al.asks.wait(msg.ChatID); ok && w.stopTurn {
+			var stopTurn context.CancelCauseFunc
+			turnCtx, stopTurn = context.WithCancelCause(turnCtx)
+			defer stopTurn(nil)
+			go func(ctx context.Context) {
+				select {
+				case <-w.gone:
+					stopTurn(errAskerStopped)
+				case <-ctx.Done():
+				}
+			}(turnCtx)
+		}
+	}
 	// One id per turn, carried on the context so every log line and audit row
 	// the turn produces can be pulled together.
 	turnCtx = withTurnID(turnCtx, newTurnID())
@@ -413,6 +430,12 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			return
 		}
 		response, outcome = err.Error(), bus.OutcomeError
+	case err != nil && msg.Channel == constants.AgentMessageChannel && errors.Is(context.Cause(turnCtx), errAskerStopped):
+		// The asker stopped waiting and the turn was cancelled for it
+		// (askStoppingTurn): nobody is waiting for a reply.
+		logger.InfoCF("agent", "Asked turn cancelled: the asker stopped waiting",
+			turnFields(turnCtx, map[string]any{"ask_id": msg.ChatID, "agent_id": inboundMetadata(msg, metadataKeyPreresolvedAgentID)}))
+		return
 	case errors.Is(err, errAskerStopped):
 		// The asker stopped waiting for a person's answer: it has its own
 		// outcome, and the person was told (askHuman).
@@ -950,6 +973,7 @@ func (al *AgentLoop) processSystemMessage(
 		DefaultResponse: "Background task completed.",
 		SendResponse:    !askOrigin,
 		OutcomeOut:      outcome,
+		OnReplyDelivery: al.systemReplyFallback(ctx, msg, agent.ID, originChannel, originChatID),
 	})
 	if askOrigin && err == nil {
 		// Kept in the conversation; not sent anywhere.
@@ -958,6 +982,47 @@ func (al *AgentLoop) processSystemMessage(
 		return "", nil
 	}
 	return response, err
+}
+
+// Metadata of a "system" message naming the chat its reply falls back to
+// when the chat in its ChatID is offline or unknown (the forum's notice:
+// the launching chat first, the launcher's default chat after).
+const (
+	metadataKeyFallbackChannel = "fallback_channel"
+	metadataKeyFallbackChatID  = "fallback_chat_id"
+)
+
+// systemReplyFallback returns the OnReplyDelivery of a system message's
+// reply: when msg names a fallback chat and the reply could not reach its
+// own chat because the recipient is offline or not found, the same reply is
+// sent to the fallback chat. It returns nil when msg names no fallback.
+func (al *AgentLoop) systemReplyFallback(ctx context.Context, msg bus.InboundMessage, agentID, channel, chatID string) func(string, error) {
+	fbChannel := inboundMetadata(msg, metadataKeyFallbackChannel)
+	fbChatID := inboundMetadata(msg, metadataKeyFallbackChatID)
+	if fbChannel == "" || fbChatID == "" {
+		return nil
+	}
+	ctx = context.WithoutCancel(ctx)
+	return func(reply string, err error) {
+		if !errors.Is(err, channels.ErrRecipientOffline) && !errors.Is(err, channels.ErrRecipientNotFound) {
+			return
+		}
+		fields := map[string]any{
+			"agent_id": agentID, "sender_id": msg.SenderID, "channel": channel, "chat_id": chatID,
+			"fallback_channel": fbChannel, "fallback_chat_id": fbChatID, "error": err.Error(),
+		}
+		// OnDelivery must not block: the fallback is published on its own.
+		go func() {
+			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			if perr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{Channel: fbChannel, ChatID: fbChatID, Content: reply}); perr != nil {
+				fields["publish_error"] = perr.Error()
+				logger.WarnCF("agent", "Reply's chat unavailable; the fallback chat could not be queued either", fields)
+				return
+			}
+			logger.InfoCF("agent", "Reply's chat unavailable; reply sent to the fallback chat", fields)
+		}()
+	}
 }
 
 // runMeteredTurn runs the turn with usage accounting and folds its cost into

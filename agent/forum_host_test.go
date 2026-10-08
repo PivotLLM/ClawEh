@@ -7,15 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -136,6 +139,7 @@ type forumModel struct {
 	askDepths []int    // the sub-agent depth of every forum turn
 	toolSeen  []string // the tool results Bob's turns received
 	block     bool     // forum turns wait for their context to end
+	aborted   int      // blocked forum turns whose context ended
 	bobTool   string   // the tool Bob's forum turn calls (forum_status when empty)
 	bobArgs   string   // its JSON arguments ({} when empty)
 }
@@ -156,6 +160,9 @@ func (m *forumModel) Chat(ctx context.Context, messages []providers.Message, _ [
 	switch {
 	case forumTurn && block:
 		<-ctx.Done()
+		m.mu.Lock()
+		m.aborted++
+		m.mu.Unlock()
 		return nil, ctx.Err()
 	case last.Role == "tool":
 		m.mu.Lock()
@@ -366,6 +373,81 @@ func TestForum_RecoverResumesAfterRestart(t *testing.T) {
 	eventually(t, "the temporary participant's deletion", func() bool { return len(r2.al.GetRegistry().ListTemp()) == 0 })
 	if !second.sawUser("Give one view.") {
 		t.Error("Bob's interrupted turn was not resent after the restart")
+	}
+}
+
+// forumSlowConfig is one fresh participant's turn, with one attempt and the
+// run deadline given in seconds.
+func forumSlowConfig(deadlineSeconds int) string {
+	return `{
+  "version": 1, "name": "slow",
+  "brief": {"purpose": "Exercise the forum wiring.", "task": "Give one view."},
+  "participants": {
+    "fresh": {"model": "alpha", "system_prompt": "` + freshPrompt + `", "mode": "context"}
+  },
+  "limits": {"max_calls": 10, "max_duration_seconds": ` + strconv.Itoa(deadlineSeconds) + `,
+    "call_timeout_seconds": 60, "max_attempts_per_turn": 1, "max_parallel_calls": 1},
+  "layers": [
+    {"id": "talk", "participants": ["fresh"], "instructions": "Give one view.",
+     "delivery": "per_turn", "max_rounds": 1, "output": {"format": "text"}}
+  ]
+}`
+}
+
+// TestForum_StopCancelsTheTurn: when a run stops waiting for a participant
+// (its deadline, a cancel), the participant's turn is cancelled, so its
+// model call is aborted rather than left running, and the run's temporary
+// agent is deleted as soon as that turn ends. A deadline that cuts the only
+// allowed attempt ends the run incomplete (deadline).
+func TestForum_StopCancelsTheTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deadline   int
+		cancel     bool
+		wantStatus forum.Status
+		wantReason forum.EndReason
+	}{
+		{"deadline", 1, false, forum.StatusIncomplete, forum.EndDeadline},
+		{"cancel", 600, true, forum.StatusCancelled, forum.EndCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+			model := &forumModel{block: true}
+			r := newForumRig(t, forumConfig(t, true, false), model)
+			start := time.Now()
+			id := launchForumWith(t, r.al, "cli", forumSlowConfig(tc.deadline))
+			eventually(t, "the participant's turn", func() bool {
+				model.mu.Lock()
+				defer model.mu.Unlock()
+				return len(model.askDepths) > 0
+			})
+			if len(r.al.GetRegistry().ListTemp()) != 1 {
+				t.Fatalf("temporary agents = %v, want the participant", r.al.GetRegistry().ListTemp())
+			}
+			if tc.cancel {
+				if err := r.svc.Cancel(context.Background(), aliceScope(t, r.al), id); err != nil {
+					t.Fatalf("Cancel: %v", err)
+				}
+			}
+			eventually(t, "the model call to be aborted", func() bool {
+				model.mu.Lock()
+				defer model.mu.Unlock()
+				return model.aborted == 1
+			})
+			if took := time.Since(start); took > 8*time.Second {
+				t.Errorf("model call aborted after %s", took)
+			}
+			var res *forum.Result
+			eventually(t, "the run to end", func() bool {
+				got, err := r.svc.Results(context.Background(), aliceScope(t, r.al), id, 0)
+				res = got
+				return err == nil && got.Status.Terminal()
+			})
+			if res.Status != tc.wantStatus || res.Reason != tc.wantReason {
+				t.Errorf("run ended %s (%s), want %s (%s)", res.Status, res.Reason, tc.wantStatus, tc.wantReason)
+			}
+			eventually(t, "the temporary participant's deletion", func() bool { return len(r.al.GetRegistry().ListTemp()) == 0 })
+		})
 	}
 }
 
@@ -582,20 +664,51 @@ func TestForumHost_AskChecksTheLauncherNow(t *testing.T) {
 }
 
 // TestForumHost_NoticeRouting: the completion notice always lands in the
-// launcher's own conversation. The chat recorded at launch is not used: a
-// launch from a chat has the answer posted to the launcher's default chat when
-// it has one, and nowhere otherwise; a local launch is never posted.
+// launcher's own conversation, and the answer goes to the chat the forum was
+// launched from when the service knows it (in memory). When it does not (a
+// restart), or the answer finds it offline or not found, a launch from a
+// chat has the answer posted to the launcher's default chat when it has one,
+// and nowhere otherwise; the chat recorded at launch in the workspace is
+// never used, and a local launch is never posted.
 func TestForumHost_NoticeRouting(t *testing.T) {
 	result := &forum.Result{ForumID: "f1", Run: 1, Name: "review", Status: forum.StatusCompleted}
+	webui := forum.Chat{Channel: "webui", ChatID: "webui:s1"}
+	fromChat := forum.Origin{AgentID: "alice", Channel: "webui", ChatID: "webui:s1"}
+	type post struct{ channel, chatID string }
 	for _, tc := range []struct {
-		name     string
-		binding  bool
-		origin   forum.Origin
-		wantChat string // "" = nothing posted
+		name    string
+		binding bool
+		origin  forum.Origin
+		chat    forum.Chat
+		// delivery is what the launching chat reports; nil = delivered.
+		delivery error
+		want     []post // in order; none = nothing posted
 	}{
-		{"chat, default chat", true, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere"}, "u1"},
-		{"chat, no default chat", false, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere"}, ""},
-		{"local", true, forum.Origin{AgentID: "alice", Channel: "cli", ChatID: "elsewhere"}, ""},
+		{"launching chat", true, fromChat, webui, nil, []post{{"webui", "webui:s1"}}},
+		{
+			"launching chat offline, default chat", true, fromChat, webui,
+			fmt.Errorf("%w: no open browser session", channels.ErrRecipientOffline),
+			[]post{{"webui", "webui:s1"}, {"telegram", "u1"}},
+		},
+		{
+			"launching chat not found, default chat", true, fromChat, webui,
+			fmt.Errorf("%w: gone", channels.ErrRecipientNotFound),
+			[]post{{"webui", "webui:s1"}, {"telegram", "u1"}},
+		},
+		{
+			"launching chat failed otherwise, no fallback", true, fromChat, webui,
+			fmt.Errorf("%w: boom", channels.ErrSendFailed),
+			[]post{{"webui", "webui:s1"}},
+		},
+		{
+			"launching chat offline, no default chat", false, fromChat, webui,
+			fmt.Errorf("%w: no open browser session", channels.ErrRecipientOffline),
+			[]post{{"webui", "webui:s1"}},
+		},
+		{"launching chat unknown (restart), default chat", true, fromChat, forum.Chat{}, nil, []post{{"telegram", "u1"}}},
+		{"recorded chat elsewhere is not used", true, forum.Origin{AgentID: "alice", Channel: "telegram", ChatID: "elsewhere"}, forum.Chat{}, nil, []post{{"telegram", "u1"}}},
+		{"launching chat unknown, no default chat", false, fromChat, forum.Chat{}, nil, nil},
+		{"local", true, forum.Origin{AgentID: "alice", Channel: "cli", ChatID: "elsewhere"}, forum.Chat{Channel: "cli", ChatID: "elsewhere"}, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
@@ -608,21 +721,79 @@ func TestForumHost_NoticeRouting(t *testing.T) {
 			}
 			model := &forumModel{}
 			r := newForumRig(t, cfg, model)
-			if err := r.host.ForumFinished(context.Background(), tc.origin, result); err != nil {
+			if err := r.host.ForumFinished(context.Background(), tc.origin, tc.chat, result); err != nil {
 				t.Fatalf("ForumFinished: %v", err)
 			}
 			eventually(t, "the notice in Alice's conversation", func() bool {
 				return model.sawUser("[System: forum] Forum review (f1) run 1 finished: completed.")
 			})
-			if tc.wantChat == "" {
-				noOutbound(t, r.bus)
-				return
+			var content string
+			for i, want := range tc.want {
+				out := chatOutbound(t, r.bus)
+				if out.Channel != want.channel || out.ChatID != want.chatID {
+					t.Fatalf("answer %d posted to %s/%s, want %s/%s", i+1, out.Channel, out.ChatID, want.channel, want.chatID)
+				}
+				if i == 0 {
+					content = out.Content
+					if out.OnDelivery != nil {
+						out.OnDelivery(tc.delivery)
+					}
+				} else if out.Content != content {
+					t.Errorf("fallback content = %q, want the same answer %q", out.Content, content)
+				}
 			}
-			out := nextOutbound(t, r.bus)
-			if out.Channel != "telegram" || out.ChatID != tc.wantChat {
-				t.Errorf("answer posted to %s/%s, want telegram/%s", out.Channel, out.ChatID, tc.wantChat)
-			}
+			noChatOutbound(t, r.bus)
 		})
+	}
+}
+
+// chatOutbound returns the next outbound message to a chat, skipping the
+// copy of a system turn's reply runTurn hands to the internal "system"
+// channel (which the channel manager drops).
+func chatOutbound(t *testing.T, msgBus *bus.MessageBus) bus.OutboundMessage {
+	t.Helper()
+	for {
+		if out := nextOutbound(t, msgBus); out.Channel != "system" {
+			return out
+		}
+	}
+}
+
+// noChatOutbound fails on any outbound message to a chat for a short while.
+func noChatOutbound(t *testing.T, msgBus *bus.MessageBus) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	for {
+		out, ok := msgBus.SubscribeOutbound(ctx)
+		if !ok {
+			return
+		}
+		if out.Channel != "system" {
+			t.Fatalf("unexpected outbound %+v", out)
+		}
+	}
+}
+
+// TestForumNoticeText: the notice names the run's status and, when it adds
+// anything, the reason, in forum_status's words.
+func TestForumNoticeText(t *testing.T) {
+	for _, tc := range []struct {
+		status forum.Status
+		reason forum.EndReason
+		want   string
+	}{
+		{forum.StatusCompleted, forum.EndCompleted, "Forum review (f1) run 2 finished: completed."},
+		{forum.StatusIncomplete, forum.EndDeadline, "Forum review (f1) run 2 finished: incomplete (deadline)."},
+		{forum.StatusFailed, forum.EndAttemptsExhausted, "Forum review (f1) run 2 finished: failed (attempts_exhausted)."},
+		{forum.StatusIncomplete, forum.EndForumCallLimit, "Forum review (f1) run 2 finished: incomplete (forum_call_limit)."},
+		{forum.StatusCancelled, forum.EndCancelled, "Forum review (f1) run 2 finished: cancelled."},
+		{forum.StatusCompleted, "", "Forum review (f1) run 2 finished: completed."},
+	} {
+		got := forumNoticeText(&forum.Result{ForumID: "f1", Run: 2, Name: "review", Status: tc.status, Reason: tc.reason})
+		if got != tc.want {
+			t.Errorf("%s/%s: %q, want %q", tc.status, tc.reason, got, tc.want)
+		}
 	}
 }
 

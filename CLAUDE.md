@@ -247,9 +247,15 @@ production instance directly; test against a dev instance.
   (`agent/forum_host.go`): Messenger over the core Ask at depth
   `max_subagent_depth`-1 (the turn runs at the maximum) with the launcher as
   sender (`forum.AskInfoFromContext`), shutdown mapped to `forum.ErrShuttingDown`;
+  the asked turn is cancelled once the forum stops waiting (`askStoppingTurn`:
+  call timeout, run deadline, cancel), and a timeout the run deadline cut ends
+  the run `incomplete (deadline)`;
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
-  `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`);
-  the completion notice as a `system` inbound to the launcher's main conversation;
+  `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`;
+  `Delete` of one still in a turn deletes it when the turn ends,
+  `DeleteWhenIdle`);
+  the completion notice (status and end reason) as a `system` inbound to the
+  launcher's main conversation;
   `OnStuck` raises the `forum:<id>:<run>` alert; `Cooldown` reads the shared
   cooldown tracker, so a turn whose models are all in cooldown is held
   within its call timeout (a cooldown that ends in time costs nothing; one
@@ -265,8 +271,11 @@ production instance directly; test against a dev instance.
   `allow_agents` (or must reach a forum participant it owns), `Delete`/`Touch`
   name the launcher and act only on its participants, a store opened in a
   scope refuses a snapshot naming another launcher, and the notice ignores
-  the recorded chat (a launch from a chat answers on the launcher's default
-  binding).
+  the recorded chat: the agent's answer goes to the launching chat the
+  service kept in memory (`forum.Chat`, `Service.launchChats`), and when that
+  is unknown (a restart) or reports offline/not found, to the launcher's
+  default binding (`fallback_channel`/`fallback_chat_id` metadata,
+  `systemReplyFallback` in `agent/loop_inbound.go`), or nowhere.
   `Recover` runs once the loop has `Started()`, over every config agent (the
   switch gates only the tools); `Close` runs first in `shutdownGateway`, before
   the loop stops. A reload rebuilds the tools; running forums continue.

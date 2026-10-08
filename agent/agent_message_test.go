@@ -875,7 +875,7 @@ func TestAsk_CancelledBeforeStart(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
 	al := &AgentLoop{}
-	replies := al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute))
+	replies := al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute), false)
 	al.publishCancelledReplies(context.Background(), []bus.InboundMessage{{
 		Channel: constants.AgentMessageChannel, ChatID: "ask-1",
 		Metadata: map[string]string{bus.MetaReplyRequired: "1"},

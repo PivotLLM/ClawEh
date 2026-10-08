@@ -61,6 +61,10 @@ type processOptions struct {
 	// still owes the sender its reply.
 	MessageID     string
 	ReplyRequired bool
+	// OnReplyDelivery, when set with SendResponse, is told how the delivery
+	// of the reply ended (bus.OutboundMessage.OnDelivery), with the reply.
+	// It must not block.
+	OnReplyDelivery func(reply string, err error)
 }
 
 // setOutcome records how the turn ended in opts.OutcomeOut, when requested.
@@ -366,10 +370,15 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 7. Optional: send response via bus
 	if opts.SendResponse {
+		var onDelivery func(error)
+		if opts.OnReplyDelivery != nil {
+			onDelivery = func(err error) { opts.OnReplyDelivery(finalContent, err) }
+		}
 		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-			Channel: opts.Channel,
-			ChatID:  opts.ChatID,
-			Content: finalContent,
+			Channel:    opts.Channel,
+			ChatID:     opts.ChatID,
+			Content:    finalContent,
+			OnDelivery: onDelivery,
 		}); err != nil {
 			logger.WarnCF("agent", "Failed to publish response",
 				map[string]any{"error": err.Error(), "channel": opts.Channel, "session": opts.SessionKey})

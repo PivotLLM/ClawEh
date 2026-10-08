@@ -173,7 +173,7 @@ func (nopHost) CreateFresh(context.Context, forumpkg.FreshSpec) (string, error) 
 }
 func (nopHost) Delete(context.Context, string, string) error { return nil }
 func (nopHost) Touch(context.Context, string, string) error  { return nil }
-func (nopHost) ForumFinished(context.Context, forumpkg.Origin, *forumpkg.Result) error {
+func (nopHost) ForumFinished(context.Context, forumpkg.Origin, forumpkg.Chat, *forumpkg.Result) error {
 	return nil
 }
 func (nopHost) Debugf(string, ...any) {}
