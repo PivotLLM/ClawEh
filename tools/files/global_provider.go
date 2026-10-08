@@ -369,10 +369,13 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 	for _, mc := range mounts {
 		name := strings.TrimSpace(mc.Name)
 		// EffectiveMounts has already set aside configured mounts with a
-		// reserved name, so a "maestro" here is the automatic one.
-		if err := config.ValidateMountName(name); err != nil && name != config.MaestroMountName {
-			logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
-			continue
+		// reserved name, so a "maestro" here is the automatic one, which
+		// alone may use that name: only the configured mounts are validated.
+		if name != config.MaestroMountName {
+			if err := config.ValidateMountName(name); err != nil {
+				logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
+				continue
+			}
 		}
 		key := strings.ToLower(name)
 		if seen[key] {

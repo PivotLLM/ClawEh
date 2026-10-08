@@ -413,27 +413,19 @@ func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
-// resolveWith is resolve with an ignoreTTL switch. The host path passes true so a
-// discovery-hidden (TTL-expired) tool still resolves for execution — progressive
-// discovery never gates the MCP host; authorization there is the ACL policy.
-func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (*ToolEntry, string, bool) {
+// resolveWith looks name up by internal key or ExternalName, once. entry is
+// nil when no such tool is registered; callable is false when it is
+// registered but hidden by progressive discovery (TTL expired) and ignoreTTL
+// is false. The host path passes ignoreTTL true: progressive discovery never
+// gates the MCP host, where authorization is the ACL policy.
+func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (entry *ToolEntry, canonical string, callable bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if entry, ok := r.tools[name]; ok {
-		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
-			return nil, "", false
-		}
-		return entry, name, true
+	entry, canonical = r.findAnyLocked(name)
+	if entry == nil {
+		return nil, "", false
 	}
-	for internal, entry := range r.tools {
-		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
-			continue
-		}
-		if en, ok := entry.Tool.(ExternalNamer); ok && en.ExternalName() == name {
-			return entry, internal, true
-		}
-	}
-	return nil, "", false
+	return entry, canonical, ignoreTTL || entry.IsCore || entry.TTL > 0
 }
 
 // advertisedName is the model-facing name for a tool: the bare ExternalName for
@@ -445,15 +437,6 @@ func advertisedName(t Tool, internal string) string {
 		}
 	}
 	return internal
-}
-
-// isRegistered reports whether name (internal key or ExternalName) is in the
-// registry at all, hidden or not.
-func (r *ToolRegistry) isRegistered(name string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	entry, _ := r.findAnyLocked(name)
-	return entry != nil
 }
 
 // findAnyLocked returns the entry and internal name for a tool by internal key or
@@ -555,7 +538,7 @@ func (r *ToolRegistry) executeWithContext(
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
 	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
-	if !ok && name == config.ShellExecTool && !r.isRegistered(name) {
+	if entry == nil && name == config.ShellExecTool {
 		// Not registered at all: the agent's tool permissions do not include
 		// it. A registered entry that is only hidden by progressive discovery
 		// (TTL expired) is permitted, so it takes the ordinary not-found path

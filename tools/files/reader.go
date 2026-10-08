@@ -35,7 +35,8 @@ func ReadPolicy(c *config.Config) (restrict bool, allow []*regexp.Regexp) {
 
 // Reader reads files on an agent's behalf through exactly the fileSystem stack
 // the file tools use: workspace sandbox → allow-list patterns → read-scope
-// subdirs (files/, skills/, tasks/, tmp/) → external mounts (maestro/, ...).
+// subdirs (the configured ones plus the always-readable tasks/, tmp/ and
+// forums/) → external mounts (maestro/, ...).
 // A path a Reader can open is a path file_read would open, and nothing more —
 // the permission check is the same code, not a reimplementation of it.
 //

@@ -42,14 +42,6 @@ type ToolProvider interface {
 	Describe() []ToolDescriptor
 }
 
-// EffectiveStateDir is StateDir, or Workspace when StateDir is unset.
-func (d ToolDeps) EffectiveStateDir() string {
-	if d.StateDir != "" {
-		return d.StateDir
-	}
-	return d.Workspace
-}
-
 // ToolDeps carries everything a tool package needs at construction time.
 // Fields are optional — providers check for nil/zero before using.
 type ToolDeps struct {
@@ -105,4 +97,12 @@ type ToolDeps struct {
 
 	// Shared pre-built tool instances
 	MessageTool Tool // shared msg_send instance; may be nil
+}
+
+// EffectiveStateDir is StateDir, or Workspace when StateDir is unset.
+func (d ToolDeps) EffectiveStateDir() string {
+	if d.StateDir != "" {
+		return d.StateDir
+	}
+	return d.Workspace
 }
