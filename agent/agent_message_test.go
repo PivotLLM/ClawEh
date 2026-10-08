@@ -262,7 +262,7 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 	pending := make(chan bool, 1)
 	model := chatFunc(func(ctx context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
 		if u := lastUser(messages); strings.Contains(u, "[System: async:async_tool]") {
-			_, rec := al.agentStates["bob"].GetPendingTurn("agent:bob:main")
+			_, rec := testStateManager(t, al, "bob").GetPendingTurn("agent:bob:main")
 			pending <- rec
 			results <- u
 			return &providers.LLMResponse{Content: "noted"}, nil

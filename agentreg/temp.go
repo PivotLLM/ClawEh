@@ -445,8 +445,9 @@ func (r *Registry[T]) deleteEntry(id, reason string) error {
 }
 
 // Sweep deletes every temporary agent that is not in a turn and has been idle
-// longer than its TTL, or that the current configuration can no longer build.
-// It returns how many it deleted.
+// longer than its TTL, or that the current configuration can no longer build,
+// and retries releasing the replaced instances the host could not release
+// before. It returns how many agents it deleted.
 func (r *Registry[T]) Sweep(now time.Time) int {
 	type victim struct{ id, reason string }
 	var victims []victim
@@ -460,11 +461,14 @@ func (r *Registry[T]) Sweep(now time.Time) int {
 			victims = append(victims, victim{id, "idle " + idle.Round(time.Second).String()})
 			continue
 		}
-		if _, reason := r.respec(r.cfg, e.spec, r.entries); reason != "" {
-			victims = append(victims, victim{id, reason})
+		// Only a configuration that can no longer build it deletes it; a
+		// failure to derive its spec says nothing about that.
+		if _, gone, _ := r.respec(r.cfg, e.spec, r.entries); gone != "" {
+			victims = append(victims, victim{id, gone})
 		}
 	}
 	r.mu.RUnlock()
+	r.retryOrphans()
 
 	deleted := 0
 	for _, v := range victims {

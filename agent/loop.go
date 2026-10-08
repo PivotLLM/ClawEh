@@ -64,7 +64,11 @@ type AgentLoop struct {
 	// are minted/revoked from the WebUI. The same instance is shared with the API
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
 	namedTokens *msgtoken.NamedStore
-	agentStates map[string]*state.Manager // agentID -> per-agent state manager
+	// agentStates holds the restart-recovery state managers of config
+	// agents, by workspace (one manager per state file), made on first use so
+	// an agent a reload adds gets one too. Guarded by agentStatesMu.
+	agentStatesMu sync.Mutex
+	agentStates   map[string]*state.Manager
 	// sessions holds the per-session dispatch state (session scope key →
 	// *sessionState): the goroutine running the session's turns, the messages
 	// queued behind it and the /cancel bookkeeping. The scope key is resolved via
@@ -313,9 +317,7 @@ func NewAgentLoop(
 
 	// Per-agent state managers and message-token managers: config agents only.
 	for _, agentID := range registry.List() {
-		if agentInstance, ok := registry.Get(agentID); ok {
-			al.agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-		}
+		al.stateManager(agentID)
 	}
 	al.messageManagers = buildMessageManagers(registry, cfg)
 
