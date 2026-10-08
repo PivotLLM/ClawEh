@@ -1992,6 +1992,11 @@ func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 		if ls := st.Layers[l.ID]; ls != nil {
 			p.Started, p.Ended, p.EndReason = ls.Started, ls.Ended, ls.EndReason
 			p.Round, p.Calls, p.Outputs = ls.Round, ls.Calls, len(ls.Outputs)
+			for _, o := range ls.Outputs {
+				if o.Resent {
+					sum.ResentAfterRestart++
+				}
+			}
 		}
 		sum.Layers = append(sum.Layers, p)
 	}

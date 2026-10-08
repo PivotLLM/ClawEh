@@ -635,6 +635,23 @@ func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	ctlWant(t, "status", st, StatusCompleted)
 	att := f.attempts("talk")
 	ctlWant(t, "bob round 2 attempts", len(att), 4+1) // the uncertain attempt was resent and counted
+	// The output says it was resent, so its empty first attempt does not
+	// read as missing output; status counts it.
+	st2 := f.state()
+	resent := 0
+	for _, o := range st2.Layers["talk"].Outputs {
+		want := o.ParticipantID == "bob" && o.Round == 2
+		if o.Resent != want {
+			t.Errorf("%s round %d: resent = %v, want %v", o.ParticipantID, o.Round, o.Resent, want)
+		}
+		if o.Resent {
+			resent++
+			ctlWant(t, "resent output's attempt", o.Attempt, 2)
+		}
+	}
+	ctlWant(t, "resent outputs", resent, 1)
+	sum := summaryOf(f.cfg, f.snap, st2)
+	ctlWant(t, "status resent_after_restart", sum.ResentAfterRestart, 1)
 }
 
 // Running a forum twice from the same configuration and seed gives the

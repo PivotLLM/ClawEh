@@ -312,6 +312,10 @@ type OutputRecord struct {
 	PublishedDigest string `json:"published_digest"`
 	Turn            string `json:"turn"`
 	Attempt         int    `json:"attempt"`
+	// Resent is true when an earlier attempt of the turn got no reply
+	// because the host restarted, and its message was sent again: the
+	// earlier attempt's directory holds no output.
+	Resent bool `json:"resent,omitempty"`
 }
 
 // CommitKind is the kind of one commit-log entry.
@@ -460,15 +464,18 @@ type Summary struct {
 	// Run is the run the summary describes (0 for a new forum), Runs how
 	// many the forum has, and ConfigChanged whether the forum's
 	// configuration differs from the one its latest run used.
-	Run           int             `json:"run,omitempty"`
-	Runs          int             `json:"runs"`
-	ConfigChanged bool            `json:"config_changed,omitempty"`
-	Status        Status          `json:"status"`
-	Reason        EndReason       `json:"reason,omitempty"`
-	LaunchedAt    time.Time       `json:"launched_at,omitzero"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	Deadline      time.Time       `json:"deadline,omitzero"`
-	Calls         int             `json:"calls"`
-	MaxCalls      int             `json:"max_calls"`
-	Layers        []LayerProgress `json:"layers"`
+	Run           int       `json:"run,omitempty"`
+	Runs          int       `json:"runs"`
+	ConfigChanged bool      `json:"config_changed,omitempty"`
+	Status        Status    `json:"status"`
+	Reason        EndReason `json:"reason,omitempty"`
+	LaunchedAt    time.Time `json:"launched_at,omitzero"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Deadline      time.Time `json:"deadline,omitzero"`
+	Calls         int       `json:"calls"`
+	MaxCalls      int       `json:"max_calls"`
+	// ResentAfterRestart counts the committed outputs whose turn was sent
+	// again after a restart (OutputRecord.Resent).
+	ResentAfterRestart int             `json:"resent_after_restart,omitempty"`
+	Layers             []LayerProgress `json:"layers"`
 }

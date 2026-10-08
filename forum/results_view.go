@@ -56,17 +56,25 @@ type LayerOutput struct {
 // cannot be read is Unreadable, with no size or text; its File is shown
 // only when the recorded path stays inside the forum.
 type OutputView struct {
-	Author        string `json:"author"`
-	Layer         string `json:"layer"`
-	Round         int    `json:"round"`
-	Format        Format `json:"format"`
-	Size          int    `json:"size"`
+	Author string `json:"author"`
+	Layer  string `json:"layer"`
+	Round  int    `json:"round"`
+	Format Format `json:"format"`
+	Size   int    `json:"size"`
+	// Attempt is the attempt of the turn that produced the output; File is
+	// in its directory. Note says why earlier attempts have no output when
+	// the turn was resent after a restart.
+	Attempt       int    `json:"attempt"`
+	Note          string `json:"note,omitempty"`
 	File          string `json:"file,omitempty"`
 	Text          string `json:"text"`
 	Truncated     bool   `json:"truncated,omitempty"`
 	InlineOmitted bool   `json:"inline_omitted,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
 }
+
+// resentNote marks an output whose turn was resent after a restart.
+const resentNote = "resent after a restart; the earlier attempts have no output"
 
 // truncatedNote follows an output cut at its inline limit.
 func truncatedNote(path string) string {
@@ -104,7 +112,10 @@ func renderLayers(layers []LayerResult, prefix string, read prefixReader, budget
 	for _, l := range layers {
 		lo := LayerOutput{LayerID: l.LayerID, Ended: l.Ended, EndReason: l.EndReason, Outputs: make([]OutputView, 0, len(l.Outputs))}
 		for _, o := range l.Outputs {
-			ov := OutputView{Author: o.ParticipantID, Layer: o.LayerID, Round: o.Round, Format: o.Format}
+			ov := OutputView{Author: o.ParticipantID, Layer: o.LayerID, Round: o.Round, Format: o.Format, Attempt: o.Attempt}
+			if o.Resent {
+				ov.Note = resentNote
+			}
 			clean, err := rootRel(o.ContentFile)
 			if err != nil {
 				ov.Unreadable = true

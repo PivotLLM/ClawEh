@@ -167,3 +167,22 @@ func TestResultsView_NoTranscriptAndOtherLayers(t *testing.T) {
 		t.Errorf("outputs: a truncated %v in %s, b %q", a.Truncated, a.File, b.Text)
 	}
 }
+
+// An output whose turn was resent after a restart names its attempt and
+// says why the earlier ones have no output; any other output has no note.
+func TestResultsView_ResentAfterRestart(t *testing.T) {
+	resent := outputAt("alice", "layers/report/a.txt", 1)
+	resent.Attempt, resent.Resent = 2, true
+	plain := outputAt("bob", "layers/report/b.txt", 1)
+	plain.Attempt = 1
+	view := newResultsView(resultWith(StatusCompleted, resent, plain), "forums/f1", false, fakePrefix(map[string]string{
+		"layers/report/a.txt": "A.", "layers/report/b.txt": "B.",
+	}))
+	a, b := view.Layers[0].Outputs[0], view.Layers[0].Outputs[1]
+	if a.Attempt != 2 || a.Note != resentNote {
+		t.Errorf("resent output = %+v", a)
+	}
+	if b.Attempt != 1 || b.Note != "" {
+		t.Errorf("plain output = %+v", b)
+	}
+}

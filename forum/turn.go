@@ -405,6 +405,7 @@ func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *Attemp
 	out := &OutputRecord{
 		OutputID: outputID(c.snap.ForumID, layer.ID, req.Turn), LayerID: layer.ID, Round: req.Round,
 		ParticipantID: req.Participant, Format: layer.Output.Format, Turn: req.Turn, Attempt: req.Attempt,
+		Resent: c.resentAfterRestart(layer.ID, req.Turn, req.Attempt),
 	}
 	if err := c.durable("output", func() error { return c.store.WriteOutput(out, content, published) }); err != nil {
 		return nil, nil, err
@@ -429,6 +430,18 @@ func outputID(forumID, layerID, turn string) string {
 		ns = uuid.NameSpaceOID
 	}
 	return uuid.NewSHA1(ns, []byte(layerID+"/"+turn)).String()
+}
+
+// resentAfterRestart reports whether an attempt of the turn before attempt
+// has no reply: within one process every attempt gets one, so it was cut
+// by a restart and its message sent again.
+func (c *Controller) resentAfterRestart(layerID, turn string, attempt int) bool {
+	for _, a := range c.turnAttempts(layerID, turn) {
+		if a.Request.Attempt < attempt && a.Reply == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // turnAttempts returns the cached attempts of one turn ID, in order.
