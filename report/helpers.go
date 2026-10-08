@@ -195,6 +195,19 @@ func enabledAgents(cfg *config.Config) []*config.AgentConfig {
 	return out
 }
 
+// agentNames returns the display name of each agent id, or the id itself
+// for one the configuration does not list.
+func agentNames(cfg *config.Config, ids []string) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id
+		if a := cfg.AgentByID(id); a != nil {
+			out[i] = a.DisplayName()
+		}
+	}
+	return out
+}
+
 func agentIDs(agents []*config.AgentConfig) []string {
 	ids := make([]string, 0, len(agents))
 	for _, a := range agents {

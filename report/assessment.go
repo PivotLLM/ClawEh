@@ -221,23 +221,22 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 
 	var shell []string
 	for _, a := range agents {
-		if agentHasTool(a, "shell_exec") {
+		if agentHasTool(a, config.ShellExecTool) {
 			shell = append(shell, a.ID)
 		}
 	}
 	ex := cfg.Tools.Exec
-	shellText := "No enabled agent is allowed shell commands."
+	shellText, _ := shellAccess(cfg)
 	if len(shell) > 0 {
-		shellText = "Allow shell commands: " + strings.Join(shell, ", ")
 		if via := shellDelegators(agents, shell); len(via) > 0 {
-			shellText += "; also via allow_agents: " + strings.Join(via, ", ")
+			shellText += "; also via allow_agents: " + strings.Join(agentNames(cfg, via), ", ")
 		}
-		shellText += "; deny patterns " + onOff(ex.EnableDenyPatterns) + "."
+		shellText += "; deny patterns " + onOff(ex.EnableDenyPatterns)
 	}
 	if anyCLIBypass(cfg) {
-		shellText += " CLI models with Allow CLI to bypass restrictions have their own shell."
+		shellText += "; CLI models with Allow CLI to bypass restrictions have their own shell"
 	}
-	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText)
+	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText+".")
 	// An ignored value is shown where the operator looks: there is no
 	// install-wide shell switch any more.
 	if _, ok := cfg.Tools.Overrides[config.ShellExecTool]; ok {
@@ -246,7 +245,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 	// A mount named after a workspace folder is set aside at load.
 	for _, m := range cfg.IgnoredMounts() {
-		add(true, "Mount ("+m.Agent+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
+		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
 	}
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
@@ -292,8 +291,8 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 			continue
 		}
 		if channel, _, _, ok := cfg.CronTarget(a.ID); ok && !channelSetUp(cfg, channel) {
-			add(true, "Person's chat ("+a.ID+")",
-				"Channel "+channel+" is not set up, so requests can't reach "+a.ID+".")
+			add(true, "Person's chat ("+a.DisplayName()+")",
+				"Channel "+channel+" is not set up, so requests can't reach "+a.DisplayName()+".")
 		}
 	}
 

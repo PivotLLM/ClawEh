@@ -435,7 +435,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.List[0].Tools = []string{"file_read"} // Alice has no shell_exec
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: bob;") || strings.Contains(r[2], "allow_agents") {
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") || strings.Contains(r[2], "allow_agents") {
 		t.Errorf("no delegation: shell row = %v", r)
 	}
 	if !strings.Contains(r[2], "Allow CLI to bypass restrictions") {
@@ -446,7 +446,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 	for _, allow := range [][]string{{"bob"}, {"*"}, {" Bob "}} {
 		cfg.Agents.List[0].Subagents = &config.SubagentsConfig{AllowAgents: allow}
 		r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-		if !strings.Contains(r[2], "also via allow_agents: alice;") {
+		if !strings.Contains(r[2], "also via allow_agents: Alice;") {
 			t.Errorf("allow_agents %v: shell row = %v", allow, r)
 		}
 	}
@@ -467,26 +467,27 @@ func TestAssessment_ShellExplicitOnly(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	// alice has no tools key (the "*" default), bob names shell_exec.
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: bob;") {
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
 		t.Errorf("default: shell row = %v", r)
 	}
 
 	cfg.Agents.List[0].Tools = []string{"*"}
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: bob;") {
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
 		t.Errorf(`alice with "*": shell row = %v`, r)
 	}
 
 	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: alice, bob;") {
+	if !strings.Contains(r[2], "Allow shell commands: Alice, Bob;") {
 		t.Errorf("alice names shell_exec: shell row = %v", r)
 	}
 
 	cfg.Agents.List[0].DenyTools = []string{"shell_exec"}
 	cfg.Agents.List[1].DenyTools = []string{"shell_exec"}
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.HasPrefix(r[2], "No enabled agent is allowed shell commands.") {
+	// One sentence: the CLI note follows after a semicolon.
+	if r[2] != "No enabled agent is allowed shell commands; CLI models with Allow CLI to bypass restrictions have their own shell." {
 		t.Errorf("both denied: shell row = %v", r)
 	}
 }
@@ -508,7 +509,7 @@ func TestAssessment_ShellOverrideHasNoEffect(t *testing.T) {
 			t.Errorf("override %v: row = %v", v, r)
 		}
 		// The override changes nobody's access.
-		if s := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access"); !strings.Contains(s[2], "Allow shell commands: bob;") {
+		if s := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access"); !strings.Contains(s[2], "Allow shell commands: Bob;") {
 			t.Errorf("override %v: shell row = %v", v, s)
 		}
 	}
@@ -525,8 +526,8 @@ func TestAssessment_IgnoredMount(t *testing.T) {
 		}
 	}
 	cfg.Agents.List[0].Mounts = append(cfg.Agents.List[0].Mounts, config.MountConfig{Name: "Files", Path: t.TempDir()})
-	id := cfg.Agents.List[0].ID
-	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Mount ("+id+")")
+	// The row names the agent by its display name.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Mount (Alice)")
 	if r[0] == "" || r[2] != `Ignored: "Files" is a reserved name.` {
 		t.Errorf("row = %v", r)
 	}
@@ -540,7 +541,7 @@ func TestAssessment_PersonChatNotSetUp(t *testing.T) {
 	cfg.Providers = append(cfg.Providers, config.Provider{Name: "People", Protocol: config.HumanProtocol})
 	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Bob person", Model: "bob", Provider: "People", Enabled: true})
 	cfg.Agents.List[1].Models = []string{"Bob person"}
-	const item = "Person's chat (bob)"
+	const item = "Person's chat (Bob)" // by display name
 	hasRow := func() bool {
 		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
 			if row[1] == item {
