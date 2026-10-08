@@ -107,7 +107,7 @@ func sanitizeIdentifierComponent(s string) string {
 // tools from the named MCP server (e.g. "mcp_myserver_*"). Use this in an
 // agent's tools list to grant access to every tool on a server at once.
 func MCPServerPattern(serverName string) string {
-	return "mcp_" + sanitizeIdentifierComponent(serverName) + "_*"
+	return MCPServerPrefix(serverName) + "*"
 }
 
 // MCPToolPrefix is the registry-name prefix every external MCP tool carries.
@@ -117,7 +117,7 @@ const MCPToolPrefix = "mcp_"
 // named MCP server ("mcp_<server>_", sanitized like Name), so a server's tools
 // can be removed from a registry as a set (ToolRegistry.RemoveByPrefix).
 func MCPServerPrefix(serverName string) string {
-	return "mcp_" + sanitizeIdentifierComponent(serverName) + "_"
+	return MCPToolPrefix + sanitizeIdentifierComponent(serverName) + "_"
 }
 
 // Name returns the tool name, prefixed with the server name.
@@ -129,7 +129,7 @@ func (t *MCPTool) Name() string {
 	// Prefix with server name to avoid conflicts, and sanitize components
 	sanitizedServer := sanitizeIdentifierComponent(t.serverName)
 	sanitizedTool := sanitizeIdentifierComponent(t.tool.Name)
-	full := fmt.Sprintf("mcp_%s_%s", sanitizedServer, sanitizedTool)
+	full := MCPToolPrefix + sanitizedServer + "_" + sanitizedTool
 
 	// Check if sanitization was lossless (only lowercasing, no char replacement/truncation)
 	lossless := strings.ToLower(t.serverName) == sanitizedServer &&
@@ -160,7 +160,7 @@ func (t *MCPTool) Name() string {
 // (Name) is unchanged; only the externally published name differs. Implements
 // the tools.ExternalNamer interface.
 func (t *MCPTool) ExternalName() string {
-	return strings.TrimPrefix(t.Name(), "mcp_")
+	return strings.TrimPrefix(t.Name(), MCPToolPrefix)
 }
 
 // Description returns the tool description

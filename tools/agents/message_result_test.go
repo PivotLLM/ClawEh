@@ -33,8 +33,8 @@ func TestAskResult_Outcomes(t *testing.T) {
 			}
 			// A person who cannot be reached is an expected refusal (logged at
 			// WARN); a failed turn is an error.
-			if refused := tools.IsRefusal(got.Err); refused != tc.wantRefusal {
-				t.Fatalf("IsRefusal(Err) = %v, want %v", refused, tc.wantRefusal)
+			if refused := tools.IsExpectedRefusal(got.Err); refused != tc.wantRefusal {
+				t.Fatalf("IsExpectedRefusal(Err) = %v, want %v", refused, tc.wantRefusal)
 			}
 		})
 	}

@@ -674,8 +674,8 @@ func TestAgentMessageTool_AllowAgents(t *testing.T) {
 			// A permission refusal or an unknown agent is expected, logged as
 			// a warning.
 			refusal := strings.HasPrefix(tc.want, "You may not message") || strings.HasPrefix(tc.want, "There is no agent")
-			if tools.IsRefusal(res.Err) != refusal {
-				t.Fatalf("IsRefusal = %v, want %v for %+v", !refusal, refusal, res)
+			if tools.IsExpectedRefusal(res.Err) != refusal {
+				t.Fatalf("IsExpectedRefusal = %v, want %v for %+v", !refusal, refusal, res)
 			}
 		})
 	}
@@ -903,7 +903,7 @@ func TestAgentMessageTool_SizeLimit(t *testing.T) {
 	over := tool.Execute(context.Background(), map[string]any{
 		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars+1), "wait_seconds": 0,
 	})
-	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." || !tools.IsRefusal(over.Err) {
+	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." || !tools.IsExpectedRefusal(over.Err) {
 		t.Fatalf("over the limit: %+v, want the limit refusal", over)
 	}
 	at := tool.Execute(context.Background(), map[string]any{

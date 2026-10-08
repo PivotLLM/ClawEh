@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -554,14 +555,14 @@ func (r *ToolRegistry) executeWithContext(
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
 	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
-	if !ok && name == ShellToolName && !r.isRegistered(name) {
+	if !ok && name == config.ShellExecTool && !r.isRegistered(name) {
 		// Not registered at all: the agent's tool permissions do not include
 		// it. A registered entry that is only hidden by progressive discovery
 		// (TTL expired) is permitted, so it takes the ordinary not-found path
 		// below rather than being refused as a permission.
 		logger.WarnCF("tool", "Shell command refused: not allowed for this agent",
 			map[string]any{"tool": name, "agent": r.owner})
-		return ErrorResult(ShellNotAllowedMessage(r.owner)).WithError(fmt.Errorf("tool not permitted: %s", name))
+		return ErrorResult(ShellNotAllowedMessage(r.owner)).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name)))
 	}
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
@@ -584,10 +585,10 @@ func (r *ToolRegistry) executeWithContext(
 					"tool": canonical,
 				})
 			msg := NotEnabledMessage(name)
-			if canonical == ShellToolName {
+			if canonical == config.ShellExecTool {
 				msg = ShellNotAllowedMessage(r.owner)
 			}
-			return ErrorResult(msg).WithError(fmt.Errorf("tool not permitted: %s", name))
+			return ErrorResult(msg).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name)))
 		}
 	}
 
@@ -617,7 +618,7 @@ func (r *ToolRegistry) executeWithContext(
 	duration := time.Since(start)
 
 	// Log based on result type
-	if result.IsError && IsRefusal(result.Err) {
+	if result.IsError && IsExpectedRefusal(result.Err) {
 		// A configured permission or limit said no: expected, not a fault.
 		logger.WarnCF("tool", "Tool call refused",
 			map[string]any{

@@ -96,7 +96,7 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	chat := chatLabel(channel, chatID)
 	err := t.sendCallback(ctx, channel, chatID, content)
 	if err != nil && !errors.Is(err, ErrQueued) {
-		return &tools.ToolResult{ForLLM: notSentText(chat, err), IsError: true, Err: err}
+		return &tools.ToolResult{ForLLM: notSentText(chat, err), IsError: true, Err: notSentError(err)}
 	}
 
 	t.sentInRound.Store(true)
@@ -118,6 +118,22 @@ func chatLabel(channel, chatID string) string {
 		return chatID
 	}
 	return channel + ":" + chatID
+}
+
+// notSentError marks a send the channel declined because the recipient is
+// unavailable as an expected refusal: the channel has already logged it, so
+// the tool call is not logged again as a failure. Any other error is
+// returned as is.
+func notSentError(err error) error {
+	for _, expected := range []error{
+		channels.ErrUnknownChannel, channels.ErrNotRunning, channels.ErrRecipientOffline,
+		channels.ErrRecipientNotFound, channels.ErrReceiveOnly,
+	} {
+		if errors.Is(err, expected) {
+			return tools.Refusal(err)
+		}
+	}
+	return err
 }
 
 // notSentText says why a message did not reach chat, from the channel's

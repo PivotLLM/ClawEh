@@ -29,8 +29,8 @@ func TestSessionClear_RefusedInAskedTurn(t *testing.T) {
 		ctx := tools.WithSessionKey(tools.WithToolContext(context.Background(), channel, "x"), "agent:alice:main")
 		return clearTool.Execute(ctx, map[string]any{})
 	}
-	if res := run(constants.AgentMessageChannel); !res.IsError || !strings.Contains(res.ForLLM, "answering another agent's message") || cleared != 0 {
-		t.Fatalf("asked turn: %+v cleared=%d, want the refusal", res, cleared)
+	if res := run(constants.AgentMessageChannel); !res.IsError || !strings.Contains(res.ForLLM, "answering another agent's message") || !tools.IsExpectedRefusal(res.Err) || cleared != 0 {
+		t.Fatalf("asked turn: %+v cleared=%d, want an expected refusal", res, cleared)
 	}
 	if res := run("telegram"); res.IsError || cleared != 1 {
 		t.Fatalf("chat turn: %+v cleared=%d, want the clear queued", res, cleared)

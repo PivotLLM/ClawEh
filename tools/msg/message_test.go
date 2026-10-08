@@ -148,16 +148,17 @@ func TestMessageTool_Execute_Outcomes(t *testing.T) {
 		err     error
 		want    string
 		isError bool
+		refusal bool
 	}{
-		{"delivered", "device:abc", nil, "Message delivered to device:abc.", false},
-		{"delivered, bare chat id", "12345", nil, "Message delivered to device:12345.", false},
-		{"queued", "device:abc", ErrQueued, "Message queued for delivery to device:abc.", false},
-		{"offline", "device:abc", fmt.Errorf("%w: device not connected", channels.ErrRecipientOffline), "Not sent: device:abc is offline.", true},
-		{"not found", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached.", true},
-		{"not set up", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up.", true},
-		{"not running", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable.", true},
-		{"receive-only", "device:abc", channels.ErrReceiveOnly, "Not sent: device:abc is receive-only.", true},
-		{"other failure", "device:abc", fmt.Errorf("%w: boom", channels.ErrSendFailed), "Not sent: couldn't reach device:abc.", true},
+		{"delivered", "device:abc", nil, "Message delivered to device:abc.", false, false},
+		{"delivered, bare chat id", "12345", nil, "Message delivered to device:12345.", false, false},
+		{"queued", "device:abc", ErrQueued, "Message queued for delivery to device:abc.", false, false},
+		{"offline", "device:abc", fmt.Errorf("%w: device not connected", channels.ErrRecipientOffline), "Not sent: device:abc is offline.", true, true},
+		{"not found", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached.", true, true},
+		{"not set up", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up.", true, true},
+		{"not running", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable.", true, true},
+		{"receive-only", "device:abc", channels.ErrReceiveOnly, "Not sent: device:abc is receive-only.", true, true},
+		{"other failure", "device:abc", fmt.Errorf("%w: boom", channels.ErrSendFailed), "Not sent: couldn't reach device:abc.", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tool := NewMessageTool()
@@ -167,6 +168,9 @@ func TestMessageTool_Execute_Outcomes(t *testing.T) {
 			result := tool.Execute(ctx, map[string]any{"content": "hi"})
 			if result.ForLLM != tc.want || result.IsError != tc.isError {
 				t.Errorf("result = %q (error %v), want %q (error %v)", result.ForLLM, result.IsError, tc.want, tc.isError)
+			}
+			if tools.IsExpectedRefusal(result.Err) != tc.refusal {
+				t.Errorf("expected refusal = %v, want %v", !tc.refusal, tc.refusal)
 			}
 			if sent.Load() == tc.isError || tool.HasSentInRound() == tc.isError {
 				t.Errorf("round marked sent = %v, want %v", sent.Load(), !tc.isError)

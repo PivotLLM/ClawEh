@@ -751,7 +751,7 @@ func checkWrite(fsys fileSystem, path string) error {
 }
 
 // errResult is the error result for err, keeping err so the registry can
-// tell an expected refusal (tools.IsRefusal) from a failure.
+// tell an expected refusal (tools.IsExpectedRefusal) from a failure.
 func errResult(err error) *tools.ToolResult {
 	return tools.ErrorResult(err.Error()).WithError(err)
 }
