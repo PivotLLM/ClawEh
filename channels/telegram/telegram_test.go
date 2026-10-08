@@ -146,7 +146,7 @@ func TestSend_HTMLFallback_PerChunk(t *testing.T) {
 			callCount++
 			// Fail on odd calls (HTML attempt), succeed on even calls (plain text fallback)
 			if callCount%2 == 1 {
-				return nil, errors.New("Bad Request: can't parse entities")
+				return parseEntitiesResponse(), nil
 			}
 			return successResponse(t), nil
 		},
@@ -163,9 +163,19 @@ func TestSend_HTMLFallback_PerChunk(t *testing.T) {
 	assert.Equal(t, 2, len(caller.calls), "should have HTML attempt + plain text fallback")
 }
 
+// parseEntitiesResponse is Telegram refusing a message's HTML markup.
+func parseEntitiesResponse() *ta.Response {
+	return &ta.Response{Error: &ta.Error{ErrorCode: 400, Description: "Bad Request: can't parse entities: unexpected end tag"}}
+}
+
 func TestSend_HTMLFallback_BothFail(t *testing.T) {
+	calls := 0
 	caller := &stubCaller{
 		callFn: func(ctx context.Context, url string, data *ta.RequestData) (*ta.Response, error) {
+			calls++
+			if calls == 1 {
+				return parseEntitiesResponse(), nil
+			}
 			return nil, errors.New("send failed")
 		},
 	}
@@ -184,8 +194,13 @@ func TestSend_HTMLFallback_BothFail(t *testing.T) {
 func TestSend_LongMessage_HTMLFallback_StopsOnError(t *testing.T) {
 	// With a long message that gets split into 2 chunks, if both HTML and
 	// plain text fail on the first chunk, Send should return early.
+	calls := 0
 	caller := &stubCaller{
 		callFn: func(ctx context.Context, url string, data *ta.RequestData) (*ta.Response, error) {
+			calls++
+			if calls == 1 {
+				return parseEntitiesResponse(), nil
+			}
 			return nil, errors.New("send failed")
 		},
 	}
@@ -201,6 +216,22 @@ func TestSend_LongMessage_HTMLFallback_StopsOnError(t *testing.T) {
 	assert.Error(t, err)
 	// Should fail on the first chunk (2 calls: HTML + fallback), never reaching the second chunk.
 	assert.Equal(t, 2, len(caller.calls), "should stop after first chunk fails both HTML and plain text")
+}
+
+// A failure other than an HTML parse error is not tried again as plain text.
+func TestSend_NoPlainFallbackForOtherErrors(t *testing.T) {
+	caller := &stubCaller{
+		callFn: func(ctx context.Context, url string, data *ta.RequestData) (*ta.Response, error) {
+			return nil, errors.New("connection reset")
+		},
+	}
+	ch := newTestChannel(t, caller)
+
+	err := ch.Send(context.Background(), bus.OutboundMessage{ChatID: "12345", Content: "Hello"})
+
+	require.ErrorIs(t, err, channels.ErrTemporary)
+	assert.Contains(t, err.Error(), "connection reset", "the error keeps its cause")
+	assert.Len(t, caller.calls, 1)
 }
 
 func TestSend_MarkdownShortButHTMLLong_MultipleCalls(t *testing.T) {

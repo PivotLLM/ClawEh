@@ -322,7 +322,9 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content, repl
 
 // classifySendErr maps a failed Discord send to a channel sentinel: an
 // unknown channel or user, or a user who does not accept messages from the
-// bot, is ErrRecipientNotFound; anything else ErrTemporary (retried).
+// bot, is ErrRecipientNotFound; anything else ErrTemporary (retried). The
+// error is kept so logs and alerts say why; Discord errors carry no token (it
+// travels in a header).
 func classifySendErr(op string, err error) error {
 	var restErr *discordgo.RESTError
 	if errors.As(err, &restErr) && restErr.Message != nil {
@@ -332,7 +334,7 @@ func classifySendErr(op string, err error) error {
 			return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
 		}
 	}
-	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
+	return fmt.Errorf("%s: %w: %w", op, channels.ErrTemporary, err)
 }
 
 // appendContent safely appends content to existing text

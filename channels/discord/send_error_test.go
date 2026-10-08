@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -22,7 +23,11 @@ import (
 // ErrTemporary.
 func TestClassifySendErr(t *testing.T) {
 	rest := func(code int) error {
-		return &discordgo.RESTError{Message: &discordgo.APIErrorMessage{Code: code, Message: "x"}}
+		return &discordgo.RESTError{
+			Response:     &http.Response{Status: "400 Bad Request"},
+			ResponseBody: []byte(`{"message":"x"}`),
+			Message:      &discordgo.APIErrorMessage{Code: code, Message: "x"},
+		}
 	}
 	tests := []struct {
 		name string
@@ -33,13 +38,18 @@ func TestClassifySendErr(t *testing.T) {
 		{"unknown user", rest(discordgo.ErrCodeUnknownUser), channels.ErrRecipientNotFound},
 		{"cannot message user", rest(discordgo.ErrCodeCannotSendMessagesToThisUser), channels.ErrRecipientNotFound},
 		{"other API error", rest(discordgo.ErrCodeMissingAccess), channels.ErrTemporary},
-		{"no API message", &discordgo.RESTError{}, channels.ErrTemporary},
+		{"no API message", &discordgo.RESTError{Response: &http.Response{Status: "502 Bad Gateway"}}, channels.ErrTemporary},
 		{"network error", errors.New("connection reset"), channels.ErrTemporary},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := classifySendErr("discord send", tt.err); !errors.Is(got, tt.want) {
+			got := classifySendErr("discord send", tt.err)
+			if !errors.Is(got, tt.want) {
 				t.Fatalf("classifySendErr = %v, want %v", got, tt.want)
+			}
+			// The cause stays in the text that is logged and alerted.
+			if !strings.Contains(got.Error(), tt.err.Error()) {
+				t.Errorf("classifySendErr = %q, want it to keep %q", got, tt.err)
 			}
 		})
 	}

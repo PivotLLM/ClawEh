@@ -275,39 +275,39 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 
 		fi, statErr := os.Stat(localPath)
 		if statErr != nil {
-			logger.ErrorCF("slack", "Failed to stat media file", map[string]any{
+			logger.DebugCF("slack", "Failed to stat media file", map[string]any{
 				"filename": filename,
 				"error":    statErr.Error(),
 			})
-			return fmt.Errorf("slack send media: %w", channels.ErrTemporary)
+			return fmt.Errorf("slack send media: %w: %w", channels.ErrTemporary, statErr)
 		}
 		urlResp, uploadErr := c.api.GetUploadURLExternalContext(ctx, slack.GetUploadURLExternalParameters{
 			FileName: filename,
 			FileSize: int(fi.Size()),
 		})
 		if uploadErr != nil {
-			logger.ErrorCF("slack", "Failed to get upload URL", map[string]any{
+			logger.DebugCF("slack", "Failed to get upload URL", map[string]any{
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return fmt.Errorf("slack send media: %w", channels.ErrTemporary)
+			return classifySendErr("slack send media", uploadErr)
 		}
 		if uploadErr = c.api.UploadToURL(ctx, slack.UploadToURLParameters{
 			UploadURL: urlResp.UploadURL,
 			File:      localPath,
 			Filename:  filename,
 		}); uploadErr != nil {
-			logger.ErrorCF("slack", "Failed to upload media to URL", map[string]any{
+			logger.DebugCF("slack", "Failed to upload media to URL", map[string]any{
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return fmt.Errorf("slack send media: %w", channels.ErrTemporary)
+			return classifySendErr("slack send media", uploadErr)
 		}
 		if _, uploadErr = c.api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{
 			Files:   []slack.FileSummary{{ID: urlResp.FileID, Title: title}},
 			Channel: channelID,
 		}); uploadErr != nil {
-			logger.ErrorCF("slack", "Failed to complete media upload", map[string]any{
+			logger.DebugCF("slack", "Failed to complete media upload", map[string]any{
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
@@ -330,13 +330,14 @@ var recipientNotFoundErrors = map[string]bool{
 
 // classifySendErr maps a failed Slack send to a channel sentinel: a
 // conversation the app cannot post to is ErrRecipientNotFound, anything else
-// ErrTemporary (retried).
+// ErrTemporary (retried). The error is kept so logs and alerts say why; Slack
+// errors carry no token (it travels in a header).
 func classifySendErr(op string, err error) error {
 	var apiErr slack.SlackErrorResponse
 	if errors.As(err, &apiErr) && recipientNotFoundErrors[apiErr.Err] {
 		return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
 	}
-	return fmt.Errorf("%s: %w", op, channels.ErrTemporary)
+	return fmt.Errorf("%s: %w: %w", op, channels.ErrTemporary, err)
 }
 
 // ReactToMessage implements channels.ReactionCapable.

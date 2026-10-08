@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -45,6 +46,11 @@ func TestSend_ClassifiesAPIErrors(t *testing.T) {
 			err := c.Send(context.Background(), bus.OutboundMessage{Channel: "slack", ChatID: "C123", Content: "hello"})
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Send = %v, want %v", err, tt.want)
+			}
+			// Slack's reason stays in the text that is logged and alerted.
+			var apiErr slack.SlackErrorResponse
+			if !errors.As(err, &apiErr) || !strings.Contains(err.Error(), apiErr.Err) {
+				t.Errorf("Send = %q, want it to keep Slack's error", err)
 			}
 		})
 	}
