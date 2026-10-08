@@ -221,6 +221,7 @@ func (w *Watcher) notify(cfg *config.Config, agentID, relPath string) {
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "mount-notify",
+		Internal: true,
 		ChatID:   chatID,
 		Content:  "A new file is available in a mounted folder: " + relPath,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},

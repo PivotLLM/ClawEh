@@ -173,6 +173,7 @@ func TestHumanAgent_WhisperDeliveredWithNextAsk(t *testing.T) {
 	noOutbound(t, msgBus)
 	internal := toAgent("bob", "m1", "hello")
 	internal.SenderID = "system"
+	internal.Internal = true
 	dispatch(al, internal) // dropped: not an ask
 	noOutbound(t, msgBus)
 

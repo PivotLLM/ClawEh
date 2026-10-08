@@ -1386,6 +1386,7 @@ func (al *AgentLoop) runLLMIteration(
 					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",
 						SenderID:   "async:" + tc.Name,
+						Internal:   true,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: resultSessionKey,

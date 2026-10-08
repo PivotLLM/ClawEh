@@ -127,6 +127,7 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		SessionKey: sessionKey,
 		MessageID:  src.MessageID,
 		IsRetry:    true,
+		Internal:   true,
 		Metadata: map[string]string{
 			metadataKeyPreresolvedAgentID: agentID,
 		},

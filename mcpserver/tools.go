@@ -568,6 +568,7 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
 		SenderID:   "async:" + toolName,
+		Internal:   true,
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: targetSession,

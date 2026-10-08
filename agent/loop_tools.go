@@ -173,6 +173,7 @@ func (al *AgentLoop) registerAgentTools(
 				Channel:    tools.ToolChannel(ctx),
 				ChatID:     tools.ToolChatID(ctx),
 				SenderID:   "system",
+				Internal:   true,
 				SessionKey: sessionKey,
 				Content:    wrapClearNotice(message),
 				Metadata:   meta,
@@ -547,6 +548,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 		msg := bus.InboundMessage{
 			Channel:  "system",
 			SenderID: "async:agent_spawn",
+			Internal: true,
 			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
 			Content:  content,
 		}

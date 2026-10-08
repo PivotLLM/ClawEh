@@ -502,14 +502,9 @@ func humanLabel(ac *config.AgentConfig) string {
 }
 
 // fromPerson reports whether msg was written by someone, as opposed to
-// published by claw itself into a chat (a scheduled job, a webhook, a session
-// reset, an async result, a restart replay, a mount notice, a callback).
+// published by claw itself (bus.InboundMessage.Internal).
 func fromPerson(msg bus.InboundMessage) bool {
-	switch msg.SenderID {
-	case "cron", "webhook", "system", "recovery", "mount-notify":
-		return false
-	}
-	return !strings.HasPrefix(msg.SenderID, "async:") && !strings.HasPrefix(msg.SenderID, "callback")
+	return !msg.Internal
 }
 
 // humanCommand reports whether text is a command in a person's chat: only

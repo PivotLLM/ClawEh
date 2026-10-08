@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,6 +204,8 @@ func mergeMessages(batch []bus.InboundMessage) bus.InboundMessage {
 	}
 	merged.Content = strings.Join(parts, "\n")
 	merged.Media = media
+	// Someone's message merged with claw's own is someone's.
+	merged.Internal = !slices.ContainsFunc(batch, func(m bus.InboundMessage) bool { return !m.Internal })
 	return merged
 }
 
@@ -575,6 +578,7 @@ func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body st
 		ChatID:   chatID,
 		Content:  prefix + body,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
+		Internal: true,
 	}
 
 	// Publish on a fresh bounded context (not the request context) so a client
@@ -605,6 +609,7 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		ChatID:     chatID,
 		Content:    content,
 		SessionKey: sessionKey,
+		Internal:   true,
 	}
 	// Set peer so channel-based bindings (e.g. a specific Slack channel mapped
 	// to a named agent) are matched by the route resolver, exactly as they are

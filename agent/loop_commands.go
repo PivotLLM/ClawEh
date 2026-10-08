@@ -266,6 +266,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				SessionKey: opts.SessionKey,
 				Content:    wrapClearNotice(""),
 				Peer:       msg.Peer,
+				Internal:   true,
 				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 			}
 			if agent.HumanModel != "" {
@@ -372,6 +373,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				Content:  lastUserMsg,
 				Peer:     msg.Peer,
 				IsRetry:  true,
+				Internal: true,
 			}
 			go func() {
 				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

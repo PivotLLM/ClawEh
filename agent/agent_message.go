@@ -466,6 +466,7 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 		SenderID:  from.label(),
 		Content:   askHeader(from) + "\n" + message,
 		Metadata:  meta,
+		Internal:  true,
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	err := al.bus.PublishInbound(pubCtx, msg)

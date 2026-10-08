@@ -406,6 +406,7 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat
 		Content:    forumNoticeText(result),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,
+		Internal:   true,
 	}); err != nil {
 		return fmt.Errorf("queue the notice for agent %s: %w", origin.AgentID, err)
 	}
