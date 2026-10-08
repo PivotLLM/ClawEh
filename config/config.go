@@ -827,7 +827,7 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	}
 	// shell_exec is granted only by naming it: no wildcard or prefix entry
 	// includes it, and no install-wide setting turns it on or off.
-	if strings.EqualFold(name, ShellExecTool) {
+	if IsShellTool(name) {
 		return namesTool(allow, name) && !a.IsToolDenied(name)
 	}
 	// DenyTools is checked after the allow list, under the same rule; deny wins.
@@ -838,6 +838,11 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 // commands only when its own tools list names it exactly ("Allow shell
 // commands" in the WebUI); a "*" or prefix entry never includes it.
 const ShellExecTool = "shell_exec"
+
+// IsShellTool reports whether name, in any case, is the shell tool.
+func IsShellTool(name string) bool {
+	return strings.EqualFold(name, ShellExecTool)
+}
 
 // namesTool reports whether patterns names the tool exactly
 // (case-insensitive), ignoring wildcard and prefix entries.
@@ -3420,27 +3425,21 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 	return all
 }
 
+// IsToolEnabled is ToolEnabled for a caller without a per-tool default: the
+// capability gates "mcp" and "subagent" default to their settings, any other
+// tool to enabled.
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
-	// shell_exec has no install-wide switch: the agent's tools list decides.
-	if name == ShellExecTool {
-		return true
-	}
-	// Generic overrides win — this is the dynamic gating path for global-layer
-	// tools that have no dedicated typed field.
-	if v, ok := t.Overrides[name]; ok {
-		return v
-	}
-	switch name {
 	// Capability gates (off by default; these are not per-tool enables).
+	// Callers that lack a per-tool default treat any other tool as enabled
+	// unless an override disables it.
+	defaultAllow := true
+	switch name {
 	case "mcp":
-		return t.MCPClientEffectivelyEnabled()
+		defaultAllow = t.MCPClientEffectivelyEnabled()
 	case "subagent":
-		return t.Subagent.Enabled
-	default:
-		// Capability gates aside, callers that lack a per-tool default treat a
-		// tool as enabled unless an override disables it.
-		return true
+		defaultAllow = t.Subagent.Enabled
 	}
+	return t.ToolEnabled(name, defaultAllow)
 }
 
 // ToolEnabled resolves a per-tool enabled state: an explicit Overrides entry wins,
@@ -3451,7 +3450,8 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 // enabled here and any tool_overrides entry for it is ignored; whether an agent
 // gets it is decided by AgentConfig.IsToolAllowed alone.
 func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
-	if name == ShellExecTool {
+	// shell_exec has no install-wide switch: the agent's tools list decides.
+	if IsShellTool(name) {
 		return true
 	}
 	if v, ok := t.Overrides[name]; ok {

@@ -274,9 +274,33 @@ func TestToolsConfig_ShellOverrideIgnored(t *testing.T) {
 			t.Errorf("IsToolEnabled(shell_exec) with overrides %v = false, want true", overrides)
 		}
 	}
-	tc := &ToolsConfig{Overrides: map[string]bool{"file_write": false, "shell_exec": false}}
+	tc := &ToolsConfig{Overrides: map[string]bool{"file_write": false, "shell_exec": false, "Shell_Exec": false}}
 	if tc.ToolEnabled("file_write", true) {
 		t.Error("an override for another tool no longer applies")
+	}
+	// The shell tool is matched in any case, as IsToolAllowed matches it.
+	if !tc.ToolEnabled("Shell_Exec", false) || !tc.IsToolEnabled("SHELL_EXEC") {
+		t.Error("an override for the shell tool in another case still applies")
+	}
+}
+
+// IsToolEnabled keeps the capability gates and honours overrides like
+// ToolEnabled.
+func TestToolsConfig_IsToolEnabledGates(t *testing.T) {
+	tc := &ToolsConfig{}
+	if tc.IsToolEnabled("subagent") {
+		t.Error("subagent enabled without its setting")
+	}
+	if !tc.IsToolEnabled("msg_send") {
+		t.Error("an ordinary tool is disabled by default")
+	}
+	tc.Subagent.Enabled = true
+	if !tc.IsToolEnabled("subagent") {
+		t.Error("subagent disabled with its setting on")
+	}
+	tc.Overrides = map[string]bool{"subagent": false, "msg_send": false}
+	if tc.IsToolEnabled("subagent") || tc.IsToolEnabled("msg_send") {
+		t.Error("an override does not win")
 	}
 }
 

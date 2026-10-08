@@ -167,7 +167,7 @@ func agentToolsTable(a *config.AgentConfig) Table {
 	}
 	for _, s := range sensitiveTools {
 		// shell_exec is granted only by name, never by a pattern.
-		if !explicit[s] && s != config.ShellExecTool && config.MatchToolPattern(tools, s) {
+		if !explicit[s] && !config.IsShellTool(s) && config.MatchToolPattern(tools, s) {
 			cells = append(cells, row(s, "yes (by pattern)"))
 		}
 	}
