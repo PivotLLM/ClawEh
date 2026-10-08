@@ -4,7 +4,8 @@
 package config
 
 import (
-	"fmt"
+	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/logger"
@@ -73,23 +74,14 @@ func (m IgnoredMount) key() string {
 // so it cannot block an unrelated save, including the one that renames it;
 // it is ignored until then.
 func newReservedMounts(before, next *Config) []error {
-	had := make(map[string]bool)
-	for _, m := range before.IgnoredMounts() {
-		had[m.key()] = true
-	}
-	var errs []error
-	for _, m := range next.IgnoredMounts() {
-		if had[m.key()] {
-			continue
-		}
-		name := m.Agent
-		if ac := next.agentByID(m.Agent); ac != nil {
-			name = agentLabel(ac)
-		}
-		msg := fmt.Sprintf("%s's mount %q uses a reserved name; choose another name.", name, m.Mount)
-		errs = append(errs, fmt.Errorf("%s", msg))
-	}
-	return errs
+	return newProblems(before.IgnoredMounts(), next.IgnoredMounts(), IgnoredMount.key,
+		func(m IgnoredMount) error {
+			name := m.Agent
+			if ac := next.agentByID(m.Agent); ac != nil {
+				name = agentLabel(ac)
+			}
+			return errors.New(name + "'s mount " + strconv.Quote(m.Mount) + " uses a reserved name; choose another name.")
+		})
 }
 
 // warnReservedMounts logs one warning per mount set aside for a reserved name.

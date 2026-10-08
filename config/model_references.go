@@ -152,15 +152,9 @@ func (c *Config) danglingModelReferences() []DanglingModelReference {
 // form ValidateModelReferences uses. A reference that was already dangling is
 // not reported, so a save that leaves an old one alone is not blocked by it.
 func newDanglingModelReferences(before, next *Config) []error {
-	had := make(map[DanglingModelReference]bool)
-	for _, ref := range before.danglingModelReferences() {
-		had[ref] = true
-	}
-	var errs []error
-	for _, ref := range next.danglingModelReferences() {
-		if !had[ref] {
-			errs = append(errs, fmt.Errorf("%s: model %q does not exist", ref.Site, ref.Alias))
-		}
-	}
-	return errs
+	return newProblems(before.danglingModelReferences(), next.danglingModelReferences(),
+		func(ref DanglingModelReference) DanglingModelReference { return ref },
+		func(ref DanglingModelReference) error {
+			return fmt.Errorf("%s: model %q does not exist", ref.Site, ref.Alias)
+		})
 }
