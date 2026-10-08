@@ -45,8 +45,8 @@ func filesSummary(cfg *config.Config, env Environment) string {
 // shellSummary is the summary's Shell row: who may run shell commands and,
 // when anyone may, whether the deny patterns apply.
 func shellSummary(cfg *config.Config) string {
-	text, any := shellAccess(cfg)
-	if any {
+	text, allowed := shellAccess(cfg)
+	if allowed {
 		text += "; deny patterns " + onOff(cfg.Tools.Exec.EnableDenyPatterns)
 	}
 	return text + "."
