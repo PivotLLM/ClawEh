@@ -450,7 +450,6 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 	return answer, nil
 }
 
-
 // humanChat is a person's chat: the human agent it belongs to in the
 // configuration, and its running instance (nil when the agent is not run:
 // disabled, or set aside for breaking the human-agent rules).

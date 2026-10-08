@@ -1171,4 +1171,3 @@ func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
 	}
 	return &routing.RoutePeer{Kind: parentKind, ID: parentID}
 }
-
