@@ -286,7 +286,10 @@ contract beyond the interface signatures:
   asked turn's context is cancelled once the asker stops waiting, so the
   model call is aborted. `Agents.Delete` of a participant still in that
   turn deletes it when the turn ends (`agentreg.DeleteWhenIdle`) and
-  returns nil, so cleanup does not wait for the keep-alive retry.
+  returns `ErrDeletePending`: not a failure (logged at Info, the notice is
+  not held back), but the agent stays in the cleanup marker and the run in
+  the keep-alive retries, so a restart before the turn ends (the pending
+  deletion is not saved) still deletes it.
 - An attempt whose wait the run deadline cut (a `timeout` reply at or
   after the deadline) ends the run `incomplete (deadline)`, not
   `failed (attempts_exhausted)`, even on the turn's last allowed attempt.

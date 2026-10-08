@@ -1609,21 +1609,35 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 	if err != nil || len(ids) == 0 {
 		return err
 	}
-	var remaining []string
+	var remaining, pending []string
 	var failures error
 	for _, agentID := range ids {
 		err := s.host.Agents.Delete(ctx, store.owner, agentID)
-		if err == nil || errors.Is(err, ErrNotFound) {
+		switch {
+		case err == nil || errors.Is(err, ErrNotFound):
+			continue
+		case errors.Is(err, ErrDeletePending):
+			pending = append(pending, agentID)
 			continue
 		}
 		remaining = append(remaining, agentID)
 		failures = errors.Join(failures, fmt.Errorf("agent %s: %w", agentID, err))
 	}
-	if err := setAgentsMarker(store, remaining); err != nil {
+	// An agent the host deletes when its turn ends stays in the marker, and
+	// the run is retried like a failed deletion, so a restart before the
+	// turn ends still deletes it; it is not reported as a failure.
+	keep := make([]string, 0, len(remaining)+len(pending))
+	keep = append(append(keep, remaining...), pending...)
+	if err := setAgentsMarker(store, keep); err != nil {
 		return errors.Join(failures, err)
 	}
 	if failures != nil {
 		return &agentsLeftError{forumID: store.ID(), ref: storeRef(store), agents: remaining, err: failures}
+	}
+	if len(pending) > 0 {
+		s.host.Logger.Infof("forum %s run %d: temporary agents %v are deleted when their turns end", store.ID(), store.RunNumber(), pending)
+		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
+		return nil
 	}
 	s.host.Logger.Debugf("forum %s run %d: deleted temporary agents %v", store.ID(), store.RunNumber(), ids)
 	return nil
@@ -1788,8 +1802,13 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 		return false
 	}
 	defer store.Unlock()
-	if err := s.deleteTempAgents(ctx, store.Run(key.run)); err != nil {
+	run := store.Run(key.run)
+	if err := s.deleteTempAgents(ctx, run); err != nil {
 		s.host.Logger.Warnf("forum %s run %d: %v (retried every %s)", key.id, key.run, err, s.keepAliveEvery)
+		return false
+	}
+	// Agents the host deletes when their turns end are still listed.
+	if ids, err := agentsMarker(run); err != nil || len(ids) > 0 {
 		return false
 	}
 	s.host.Logger.Infof("forum %s run %d: its remaining temporary agents are deleted", key.id, key.run)

@@ -38,4 +38,9 @@ var (
 	// turn that deep). ToolHost.Scope returns an error wrapping it and the
 	// tool is refused.
 	ErrForumDepth = errors.New("forum tools are not available at the maximum sub-agent depth")
+	// ErrDeletePending: Agents.Delete found the agent in a turn and will
+	// delete it when that turn ends. The forum keeps it in its cleanup
+	// marker and retries, so a restart before the turn ends still cleans
+	// it up, but it is not a failure.
+	ErrDeletePending = errors.New("the agent is deleted when its turn ends")
 )
