@@ -144,12 +144,19 @@ agent loop, `tools.Messenger`:
 
 ```go
 Ask(ctx, from, agentID, message string, wait time.Duration) (tools.AgentReply, error)
-Whisper(ctx, from, agentID, message string) error
+Whisper(ctx, fromID, from, agentID, message string) error
 ```
 
+`from` is the sender's name as the target sees it; `Whisper`'s `fromID` is
+the sending agent's id (empty when the sender is not an agent).
+
 `AgentReply{Text, Outcome}` carries the final reply and one of `ok`,
-`error`, `cancelled`, `empty` (the bus turn outcomes) or `timeout`
-(`tools.OutcomeTimeout`). These do no `allow_agents` or channel check and
+`error`, `cancelled`, `empty` (the bus turn outcomes), `timeout`
+(`tools.OutcomeTimeout`), or, for an ask to a human agent,
+`person_cancelled` (`tools.OutcomePersonCancelled`: the person used
+`/cancel`) or `person_unreachable` (`tools.OutcomePersonUnreachable`: the
+request could not be posted to the person's chat; `Text` says why, naming
+the agent). These do no `allow_agents` or channel check and
 no size check (`tools.MaxAgentMessageChars` is enforced by the tool and the
 commands); the caller decides who may message whom. `Ask` accepts any agent in the registry,
 temporary agents included, and returns `tools.ErrNoSuchAgent`,
