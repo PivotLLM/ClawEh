@@ -932,9 +932,13 @@ func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, 
 		return m.sendWithRetry(ctx, name, w, msg)
 	}
 	var first error
-	for _, chunk := range SplitMessage(msg.Content, maxLen) {
+	for i, chunk := range SplitMessage(msg.Content, maxLen) {
 		chunkMsg := msg
 		chunkMsg.Content = chunk
+		// Only the first chunk is a reply; the others are normal messages.
+		if i > 0 {
+			chunkMsg.ReplyToMessageID = ""
+		}
 		err := m.sendWithRetry(ctx, name, w, chunkMsg)
 		if err != nil && first == nil {
 			first = err

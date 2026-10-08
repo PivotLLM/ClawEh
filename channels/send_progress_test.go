@@ -52,3 +52,30 @@ func TestSendProgress_Nil(t *testing.T) {
 		t.Fatalf("Delivered = %d, want 0", p.Delivered())
 	}
 }
+
+// A message the manager splits is a reply only in its first chunk.
+func TestSendSplit_OnlyFirstChunkIsReply(t *testing.T) {
+	m := newTestManager()
+	ch := &mockChannelWithLength{
+		mockChannel: mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error { return nil }},
+		maxLen:      10,
+	}
+	w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
+	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "aaaa bbbb cccc dddd eeee ffff", ReplyToMessageID: "42"}
+
+	if err := m.sendSplit(context.Background(), "test", w, msg); err != nil {
+		t.Fatalf("sendSplit: %v", err)
+	}
+	if len(ch.sentMessages) < 2 {
+		t.Fatalf("sent %d chunks, want at least 2", len(ch.sentMessages))
+	}
+	for i, sent := range ch.sentMessages {
+		want := ""
+		if i == 0 {
+			want = "42"
+		}
+		if sent.ReplyToMessageID != want {
+			t.Errorf("chunk %d: reply to %q, want %q", i, sent.ReplyToMessageID, want)
+		}
+	}
+}

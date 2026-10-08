@@ -107,37 +107,19 @@ func TestSend_NewMessageSendsEveryPart(t *testing.T) {
 	require.Len(t, sent(), 4)
 }
 
-// A reply to a message that no longer exists is sent once more without the
-// reply link instead of failing.
-func TestSend_ReplyTargetGone(t *testing.T) {
-	gone := `{"ok":false,"error_code":400,"description":"Bad Request: message to be replied not found"}`
-	tests := []struct {
-		name      string
-		replyTo   string
-		replies   []string
-		want      error
-		wantSends int
-	}{
-		{"resent without the reply link", "42", []string{gone}, nil, 2},
-		{"resend fails", "42", []string{gone, serverError}, channels.ErrTemporary, 2},
-		{"not a reply: a plain 400", "", []string{gone}, channels.ErrSendFailed, 1},
+// A reply asks Telegram to send it even when the message it replies to was
+// deleted (allow_sending_without_reply), so a deleted reply target still
+// delivers the message, without the reply link.
+func TestSend_ReplyAllowsSendingWithoutReply(t *testing.T) {
+	ch, sent := sendServer(t, nil)
+	require.NoError(t, ch.Send(context.Background(), bus.OutboundMessage{Channel: "telegram", ChatID: "12345", Content: "hello", ReplyToMessageID: "42"}))
+	got := sent()
+	require.Len(t, got, 1)
+	var reply struct {
+		MessageID                int  `json:"message_id"`
+		AllowSendingWithoutReply bool `json:"allow_sending_without_reply"`
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ch, sent := sendServer(t, tt.replies)
-			err := ch.Send(context.Background(), bus.OutboundMessage{Channel: "telegram", ChatID: "12345", Content: "hello", ReplyToMessageID: tt.replyTo})
-			if tt.want == nil {
-				require.NoError(t, err)
-			} else if !errors.Is(err, tt.want) {
-				t.Fatalf("Send = %v, want %v", err, tt.want)
-			}
-			got := sent()
-			require.Len(t, got, tt.wantSends)
-			if tt.wantSends == 2 {
-				require.NotEmpty(t, got[0].ReplyParameters)
-				require.Empty(t, got[1].ReplyParameters)
-				require.Equal(t, got[0].Text, got[1].Text)
-			}
-		})
-	}
+	require.NoError(t, json.Unmarshal(got[0].ReplyParameters, &reply))
+	require.Equal(t, 42, reply.MessageID)
+	require.True(t, reply.AllowSendingWithoutReply)
 }
