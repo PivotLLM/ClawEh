@@ -544,9 +544,6 @@ func TestSvcToolOwnership(t *testing.T) {
 			for name, args := range calls {
 				res, err := bob[name].Handler(&toolspec.ToolCall{Ctx: t.Context(), Args: args, AgentID: "bob"})
 				want := "Forum " + id + " was not found."
-				if name == "delete" {
-					want = "Forum " + id + " is deleted." // deleting an absent ID succeeds
-				}
 				if err != nil || res == nil || res.ForLLM != want {
 					t.Errorf("%s by bob in his own scope = %+v, %v", name, res, err)
 				}

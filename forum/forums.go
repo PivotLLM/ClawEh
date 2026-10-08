@@ -396,6 +396,7 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) error {
 	id, n := store.ID(), store.RunNumber()
 	s.takeLaunchChat(keyOf(store)) // superseded without a notice
+	s.forgetNotice(keyOf(store))
 	if damaged {
 		s.forgetPaused(id)
 		if err := s.deleteTempAgents(ctx, store); err != nil {

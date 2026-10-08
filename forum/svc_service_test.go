@@ -756,8 +756,8 @@ func TestSvcDelete(t *testing.T) {
 		if e.notifier.count() != 0 {
 			t.Error("deleting a paused forum sent a completion notice")
 		}
-		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
-			t.Errorf("second delete: %v", err)
+		if err := e.svc.Delete(t.Context(), e.scope, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("second delete: %v, want ErrNotFound", err)
 		}
 	})
 	t.Run("terminal forum is deleted", func(t *testing.T) {
@@ -821,8 +821,8 @@ func TestSvcDelete(t *testing.T) {
 	})
 	t.Run("absent and malformed IDs", func(t *testing.T) {
 		e := svcSetup(t)
-		if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
-			t.Errorf("absent forum: %v", err)
+		if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+			t.Errorf("absent forum: %v, want ErrNotFound", err)
 		}
 		if err := e.svc.Delete(t.Context(), e.scope, "../../etc"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("malformed id: %v", err)
@@ -890,27 +890,75 @@ func TestSvcNoticeLaunchChatAfterRestart(t *testing.T) {
 	}
 }
 
-func TestSvcNotifyFailureIsLogged(t *testing.T) {
+// A notice that fails keeps its marker and is retried by the keep-alive
+// loop until it is delivered.
+func TestSvcNotifyFailureIsRetried(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.failures = 2
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	for try := 1; try <= 2; try++ {
+		svcEventually(t, fmt.Sprintf("failed try %d recorded", try), func() bool {
+			return e.noticeTries(id) == try && !e.notifying(id)
+		})
+		if _, ok := e.marker(id, cleanupNotice); !ok {
+			t.Fatalf("after failed try %d the notice is no longer pending", try)
+		}
+		e.svc.keepAliveTick(t.Context())
+	}
+	svcEventually(t, "notice delivered", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.noticeTries(id) == 0 && !e.notifying(id)
+	})
+	if n := e.notifier.count(); n != 3 {
+		t.Errorf("notifier called %d times, want 3", n)
+	}
+	// Delivered: a further tick sends nothing.
+	e.svc.keepAliveTick(t.Context())
+	if n := e.notifier.count(); n != 3 {
+		t.Errorf("notifier called %d times after delivery, want 3", n)
+	}
+}
+
+// A notice that keeps failing is given up after maxNoticeTries tries, and
+// its marker cleared, so it is not retried forever.
+func TestSvcNotifyGivenUp(t *testing.T) {
 	e := svcSetup(t)
 	e.notifier.err = errSvcHost
 	id, c := e.launch("")
 	c.finish <- StatusCompleted
 	e.settled(id, StatusCompleted)
-	svcEventually(t, "notify failure logged", func() bool { return e.logger.has("forum " + id + " run 1: notifying agent launcher") })
-	svcEventually(t, "notice marker cleared", func() bool {
-		_, ok := e.marker(id, cleanupNotice)
-		return !ok // a failed notice is not retried forever
+	for try := 1; try < maxNoticeTries; try++ {
+		svcEventually(t, fmt.Sprintf("failed try %d recorded", try), func() bool {
+			return e.noticeTries(id) == try && !e.notifying(id)
+		})
+		e.svc.keepAliveTick(t.Context())
+	}
+	svcEventually(t, "notice given up", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.noticeTries(id) == 0 && !e.notifying(id)
 	})
+	if n := e.notifier.count(); n != maxNoticeTries {
+		t.Errorf("notifier called %d times, want %d", n, maxNoticeTries)
+	}
+	e.svc.keepAliveTick(t.Context())
+	if n := e.notifier.count(); n != maxNoticeTries {
+		t.Errorf("notifier called %d times after giving up, want %d", n, maxNoticeTries)
+	}
 }
 
+// A result.json that cannot be written holds the notice back; the
+// keep-alive loop writes it and notifies once it can.
 func TestSvcNoNoticeWithoutResult(t *testing.T) {
 	e := svcSetup(t)
 	id, c := e.launch("")
 	// The controller commits the end but cannot write result.json.
-	if err := os.WriteFile(e.store(id).Path(fileResult), []byte("{}"), 0o600); err != nil {
+	resultPath := e.store(id).Path(fileResult)
+	if err := os.WriteFile(resultPath, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(e.store(id).Path(fileResult), 0); err != nil {
+	if err := os.Chmod(resultPath, 0); err != nil {
 		t.Fatal(err)
 	}
 	c.finish <- StatusCompleted
@@ -921,8 +969,22 @@ func TestSvcNoNoticeWithoutResult(t *testing.T) {
 	if _, ok := e.marker(id, cleanupNotice); !ok {
 		t.Error("the notice is no longer pending")
 	}
+	if e.noticeTries(id) != 1 {
+		t.Errorf("notice tries = %d, want 1", e.noticeTries(id))
+	}
 	if len(e.agents.deletedIDs()) != 2 {
 		t.Errorf("temporary agents not deleted: %v", e.agents.deletedIDs())
+	}
+	if err := os.Remove(resultPath); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.keepAliveTick(t.Context())
+	svcEventually(t, "notice delivered", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.notifier.count() == 1
+	})
+	if res, err := e.store(id).ReadResult(); err != nil || res.Status != StatusCompleted {
+		t.Errorf("result.json = %+v, %v", res, err)
 	}
 }
 
@@ -1520,7 +1582,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.settled(id, StatusPaused)
-	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
+	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	e.svc.mu.Lock()
@@ -1637,5 +1699,63 @@ func TestSvcValidateReportsEveryProblem(t *testing.T) {
 		if !paths[want] {
 			t.Errorf("no issue about %s in %v", want, ve.Issues)
 		}
+	}
+}
+
+// Close while Recover is starting runs never adds a goroutine to the
+// WaitGroup Close is waiting on (a data race and a possible panic), and no
+// run is left live once both have returned.
+func TestSvcCloseDuringRecover(t *testing.T) {
+	for range 20 {
+		e := svcSetup(t)
+		for range 4 {
+			e.launch("")
+		}
+		e.restart()
+		svc := e.svc
+		recovered := make(chan struct{})
+		go func() {
+			defer close(recovered)
+			_ = svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope})
+		}()
+		svcClose(t, svc)
+		<-recovered
+		svc.mu.Lock()
+		live := len(svc.runs)
+		svc.mu.Unlock()
+		if live != 0 {
+			t.Fatalf("%d runs live after Close and Recover returned", live)
+		}
+		if err := svc.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Once Close has been called, Recover starts nothing: no run and no
+// completion notice, so nothing outlives Close.
+func TestSvcRecoverAfterCloseStartsNothing(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.block = make(chan struct{})
+	ended, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(ended, StatusCompleted)
+	running, _ := e.launch("")
+	e.restart() // the blocked notice is cut by the shutdown and stays pending
+	close(e.notifier.block)
+	if _, ok := e.marker(ended, cleanupNotice); !ok {
+		t.Fatal("the notice is not pending after the restart")
+	}
+	before := e.notifier.count()
+	svcClose(t, e.svc)
+	_ = e.svc.Recover(t.Context(), []Scope{e.scope})
+	if _, ok := e.svc.running(e.scope, running); ok {
+		t.Error("Recover started a run after Close")
+	}
+	e.svc.mu.Lock()
+	notifying := len(e.svc.notifying)
+	e.svc.mu.Unlock()
+	if notifying != 0 || e.notifier.count() != before {
+		t.Errorf("Recover started a notice after Close (in flight %d, sent %d, before %d)", notifying, e.notifier.count(), before)
 	}
 }

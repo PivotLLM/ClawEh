@@ -202,6 +202,9 @@ func (a *svcAgents) setDeleteErr(id string, err error) {
 type svcNotifier struct {
 	base string
 	err  error
+	// failures, when positive, fails that many notices with errSvcHost
+	// before err applies.
+	failures int
 	// block, when set, holds every notice until it is closed or ctx ends.
 	block chan struct{}
 
@@ -230,6 +233,10 @@ func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, chat Cha
 	}
 	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, CleanupAgents))); err == nil {
 		n.violations = append(n.violations, "notice before the temporary agents were deleted")
+	}
+	if n.failures > 0 {
+		n.failures--
+		return errSvcHost
 	}
 	return n.err
 }
@@ -339,7 +346,6 @@ type svcCtrl struct {
 func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
 	c.exited.Store(false)
 	c.runs.Add(1)
-	c.startedOnce.Do(func() { close(c.started) })
 	st, err := c.run(ctx)
 	if c.beforeReturn != nil {
 		c.beforeReturn(c)
@@ -349,7 +355,11 @@ func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
 }
 
 func (c *svcCtrl) run(ctx context.Context) (Status, error) {
-	switch st := c.State().Status; st {
+	st := c.State().Status
+	// Started once the state it acts on is read, so a commit the test makes
+	// after get returns is never mistaken for the state Run started from.
+	c.startedOnce.Do(func() { close(c.started) })
+	switch st {
 	case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		return st, nil
 	case StatusPausing:
@@ -694,6 +704,24 @@ func (e *svcEnv) running(id string) {
 		r, ok := e.svc.running(e.scope, id)
 		return ok && r.ctrl.State().Status == StatusRunning
 	})
+}
+
+// noticeTries is how many tries of run 1's completion notice have failed
+// in this process and wait for a retry (0 when none is pending).
+func (e *svcEnv) noticeTries(id string) int {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	if nr := e.svc.notices[runKey{id: id, run: 1}]; nr != nil {
+		return nr.tries
+	}
+	return 0
+}
+
+// notifying reports whether run 1's completion notice is being delivered.
+func (e *svcEnv) notifying(id string) bool {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	return e.svc.notifying[runKey{id: id, run: 1}]
 }
 
 // keptAlive reports whether the service keeps the forum's agents alive.

@@ -143,8 +143,11 @@ type Service struct {
 	// and is not trusted, so a run whose launch this process did not see
 	// (one resumed after a restart) has no entry.
 	launchChats map[runKey]Chat
-	keepAlive   sync.Once
-	wg          sync.WaitGroup
+	// notices holds the runs whose completion notice (or the result.json it
+	// waits for) failed; keepAlive retries them (noticeFailed).
+	notices   map[runKey]*noticeRetry
+	keepAlive sync.Once
+	wg        sync.WaitGroup
 }
 
 // runKey names one run of one forum.
@@ -205,6 +208,7 @@ func New(host Host, opts ...Option) *Service {
 		stuck:          map[runKey]bool{},
 		notifying:      map[runKey]bool{},
 		launchChats:    map[runKey]Chat{},
+		notices:        map[runKey]*noticeRetry{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -899,7 +903,7 @@ func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*
 // (Store.Remove). A forum whose records are damaged can be deleted too.
 // A running forum is refused (errBusy); a forum whose agents could not
 // all be deleted is kept and the error returned, so a retry finishes the
-// job. Deleting a forum ID that no longer exists succeeds.
+// job. A forum ID that does not exist is ErrNotFound.
 func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	defer s.control(id)()
 	r, err := s.live(ctx, scope, id)
@@ -911,8 +915,6 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	}
 	store, err := s.open(scope, id)
 	switch {
-	case errors.Is(err, ErrNotFound) && validForumID(id):
-		return nil
 	case errors.Is(err, errForeign):
 		return err
 	case errors.Is(err, ErrCorrupt) && validForumID(id):
@@ -947,8 +949,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 		}
 	}
 	s.forgetPaused(id)
-	s.forgetCleanups(id)
-	s.forgetLaunchChats(id)
+	s.forgetRuns(id)
 	if err := store.Remove(); err != nil {
 		return err
 	}
@@ -1380,9 +1381,7 @@ func (s *Service) start(store *Store, ctrl controller) error {
 	ctx, cancel := context.WithCancel(s.ctx)
 	r := &run{store: store, ctrl: ctrl, cancel: cancel, done: make(chan struct{})}
 	s.runs[id] = r
-	s.mu.Unlock()
-	s.ensureKeepAlive()
-	s.wg.Go(func() {
+	s.goLocked(func() {
 		defer close(r.done)
 		defer cancel()
 		status, err := drive(ctx, ctrl)
@@ -1409,7 +1408,29 @@ func (s *Service) start(store *Store, ctrl controller) error {
 			s.host.Logger.Infof("forum %s: run %d paused", id, store.RunNumber())
 		}
 	})
+	s.mu.Unlock()
+	s.ensureKeepAlive()
 	return nil
+}
+
+// goTracked runs fn on a goroutine Close waits for, unless the service is
+// closed, and reports whether it started. Every goroutine the service
+// starts goes through it (or goLocked).
+func (s *Service) goTracked(fn func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.goLocked(fn)
+}
+
+// goLocked is goTracked for a caller that holds s.mu. The WaitGroup is
+// added to under s.mu, which Close takes to set closed, so no goroutine is
+// added once Close has started waiting.
+func (s *Service) goLocked(fn func()) bool {
+	if s.closed {
+		return false
+	}
+	s.wg.Go(fn)
+	return true
 }
 
 // drive runs ctrl until it settles. A pause or cancel request accepted
@@ -1481,7 +1502,7 @@ func (s *Service) stuckOnce(key runKey, origin Origin, err error) {
 }
 
 // completeTerminal does the work that follows a terminal state, each step
-// only if still pending, so a restart can repeat it (§9 Completion):
+// only if still pending, so a restart can repeat it (DESIGN.md §5.11):
 //
 //  1. result.json is written if the controller did not get to it;
 //  2. the temporary agents are deleted (deleteTempAgents); a failure is
@@ -1490,9 +1511,11 @@ func (s *Service) stuckOnce(key runKey, origin Origin, err error) {
 //     committed, and the notice marker is cleared (notify, on a goroutine
 //     of its own so a blocking Notifier never holds the forum).
 //
+// A result.json that cannot be written, or a notice that fails, keeps the
+// notice marker and is retried by the keep-alive loop (noticeFailed).
+//
 // The store must be locked by the caller. Failures are logged.
 func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Config, snap *Snapshot, st *State) {
-	id := fmt.Sprintf("%s run %d", store.ID(), store.RunNumber())
 	ctx = context.WithoutCancel(ctx)
 	res, resErr := store.ReadResult()
 	if errors.Is(resErr, ErrNotFound) {
@@ -1500,57 +1523,173 @@ func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Confi
 		resErr = store.WriteResult(res)
 	}
 	if err := s.deleteTempAgents(ctx, store); err != nil {
-		s.host.Logger.Warnf("forum %s: %v (retried every %s)", id, err, s.keepAliveEvery)
-		s.registerCleanup(Scope{AgentID: snap.Origin.AgentID, BaseDirectory: store.base}, store)
+		s.host.Logger.Warnf("%s: %v (retried every %s)", logRun(store), err, s.keepAliveEvery)
+		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 	}
 	if resErr != nil {
-		s.host.Logger.Errorf("forum %s: result: %v (the launcher is notified once it is written)", id, resErr)
+		s.noticeFailed(store, fmt.Errorf("writing %s: %w", fileResult, resErr))
 		return
 	}
 	_, pending, err := store.Cleanup(cleanupNotice)
-	if err != nil {
-		s.host.Logger.Errorf("forum %s: notice marker: %v", id, err)
-		return
-	}
-	if pending {
+	switch {
+	case err != nil:
+		s.noticeFailed(store, err)
+	case pending:
 		s.notify(store, snap.Origin, res)
+	default:
+		s.forgetNotice(keyOf(store))
 	}
 }
 
 // notify delivers the completion notice on a goroutine of its own and
 // clears the notice marker afterwards. A notice that fails because the
 // service is closing keeps its marker, so the next start delivers it; any
-// other failure is logged and not retried. A notice already in flight for
-// the forum is not sent again.
+// other failure keeps it too and is retried (noticeFailed). A notice
+// already in flight for the run is not sent again.
 func (s *Service) notify(store *Store, origin Origin, res *Result) {
 	key := keyOf(store)
-	id := fmt.Sprintf("%s run %d", key.id, key.run)
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.notifying[key] {
-		s.mu.Unlock()
 		return
 	}
-	s.notifying[key] = true
-	s.mu.Unlock()
-	s.wg.Go(func() {
+	started := s.goLocked(func() {
 		defer func() {
 			s.mu.Lock()
 			delete(s.notifying, key)
 			s.mu.Unlock()
 		}()
 		if err := s.host.Notifier.ForumFinished(s.ctx, origin, s.launchChat(key), res); err != nil {
-			s.host.Logger.Warnf("forum %s: notifying agent %s: %v", id, origin.AgentID, err)
 			if s.ctx.Err() != nil {
+				s.host.Logger.Infof("%s: notifying agent %s was cut by the shutdown; it is notified at the next start", logRun(store), origin.AgentID)
 				return
 			}
-		} else {
-			s.host.Logger.Infof("forum %s: %s; agent %s notified", id, res.Status, origin.AgentID)
+			s.noticeFailed(store, fmt.Errorf("notifying agent %s: %w", origin.AgentID, err))
+			return
 		}
+		s.host.Logger.Infof("%s: %s; agent %s notified", logRun(store), res.Status, origin.AgentID)
+		s.forgetNotice(key)
 		s.takeLaunchChat(key)
 		if err := store.ClearCleanup(cleanupNotice); err != nil {
-			s.host.Logger.Warnf("forum %s: notice marker: %v", id, err)
+			s.host.Logger.Warnf("%s: notice marker: %v", logRun(store), err)
 		}
 	})
+	if started {
+		s.notifying[key] = true
+	} // else closed: nothing is sent; the marker stays for the next start
+}
+
+// maxNoticeTries is how many times this process tries a run's completion
+// notice (and the result.json it waits for) before giving it up: the first
+// try and the keep-alive loop's retries.
+const maxNoticeTries = 5
+
+// noticeRetry is a run whose completion notice failed, for the keep-alive
+// loop to retry.
+type noticeRetry struct {
+	scope Scope
+	tries int
+}
+
+// noticeFailed records a failed try of a run's completion notice (err is
+// why: result.json could not be written, or the Notifier failed). The
+// notice marker is kept and the keep-alive loop tries again; after
+// maxNoticeTries the notice is given up with a warning and its marker
+// cleared, so no later start tries it again.
+func (s *Service) noticeFailed(store *Store, err error) {
+	key := keyOf(store)
+	s.mu.Lock()
+	nr := s.notices[key]
+	if nr == nil {
+		nr = &noticeRetry{scope: Scope{AgentID: store.owner, BaseDirectory: store.base}}
+		s.notices[key] = nr
+	}
+	nr.tries++
+	tries := nr.tries
+	if tries >= maxNoticeTries {
+		delete(s.notices, key)
+	}
+	s.mu.Unlock()
+	if tries < maxNoticeTries {
+		s.host.Logger.Warnf("%s: completion notice: %v (try %d of %d; retried every %s)", logRun(store), err, tries, maxNoticeTries, s.keepAliveEvery)
+		s.ensureKeepAlive()
+		return
+	}
+	s.host.Logger.Warnf("%s: completion notice given up after %d tries: %v", logRun(store), tries, err)
+	s.takeLaunchChat(key)
+	if clearErr := store.ClearCleanup(cleanupNotice); clearErr != nil {
+		s.host.Logger.Warnf("%s: notice marker: %v", logRun(store), clearErr)
+	}
+}
+
+// forgetNotice drops a run from the notice retries.
+func (s *Service) forgetNotice(key runKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.notices, key)
+}
+
+// retryNotices retries the completion notice of every run in s.notices
+// that is not being delivered now: the run is opened and locked, and
+// completeTerminal writes result.json if it is still missing and notifies
+// if the notice is still pending. A run whose forum is gone leaves the
+// set; one whose forum is running or locked is tried at the next tick.
+func (s *Service) retryNotices(ctx context.Context) {
+	s.mu.Lock()
+	pending := make(map[runKey]Scope, len(s.notices))
+	for key, nr := range s.notices {
+		if !s.notifying[key] {
+			pending[key] = nr.scope
+		}
+	}
+	s.mu.Unlock()
+	for _, key := range sortedRunKeys(pending) {
+		if _, ok := s.running(pending[key], key.id); ok {
+			continue
+		}
+		s.retryNotice(ctx, pending[key], key)
+	}
+}
+
+// retryNotice is retryNotices for one run.
+func (s *Service) retryNotice(ctx context.Context, scope Scope, key runKey) {
+	defer s.control(key.id)()
+	store, err := s.open(scope, key.id)
+	if errors.Is(err, ErrNotFound) {
+		s.forgetNotice(key)
+		return
+	}
+	if err != nil {
+		s.host.Logger.Warnf("forum %s run %d: completion notice: %v", key.id, key.run, err)
+		return
+	}
+	if err = store.Lock(); err != nil {
+		return
+	}
+	defer store.Unlock()
+	run := store.Run(key.run)
+	cfg, snap, st, err := load(run)
+	if err != nil {
+		s.noticeFailed(run, err)
+		return
+	}
+	s.completeTerminal(ctx, run, cfg, snap, st)
+}
+
+// sortedRunKeys returns the keys of m by forum ID, then run.
+func sortedRunKeys[V any](m map[runKey]V) []runKey {
+	return slices.SortedFunc(maps.Keys(m), func(a, b runKey) int {
+		if c := strings.Compare(a.id, b.id); c != 0 {
+			return c
+		}
+		return a.run - b.run
+	})
+}
+
+// logRun names a run in a log line: "forum <ref> run <n>", the forum named
+// as messages name it (storeRef).
+func logRun(store *Store) string {
+	return fmt.Sprintf("forum %s run %d", storeRef(store), store.RunNumber())
 }
 
 // agentsMarker reads the CleanupAgents marker: the temporary agents still
@@ -1675,13 +1814,24 @@ func (s *Service) forgetCleanup(key runKey) {
 	delete(s.cleanups, key)
 }
 
-// forgetCleanups drops every run of a forum from the cleanup retries.
-func (s *Service) forgetCleanups(id string) {
+// forgetRuns drops every run of a deleted forum from the cleanup and
+// notice retries and forgets their launching chats.
+func (s *Service) forgetRuns(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key := range s.cleanups {
 		if key.id == id {
 			delete(s.cleanups, key)
+		}
+	}
+	for key := range s.notices {
+		if key.id == id {
+			delete(s.notices, key)
+		}
+	}
+	for key := range s.launchChats {
+		if key.id == id {
+			delete(s.launchChats, key)
 		}
 	}
 }
@@ -1711,21 +1861,10 @@ func (s *Service) takeLaunchChat(key runKey) {
 	delete(s.launchChats, key)
 }
 
-// forgetLaunchChats forgets the launching chats of every run of forum id.
-func (s *Service) forgetLaunchChats(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key := range s.launchChats {
-		if key.id == id {
-			delete(s.launchChats, key)
-		}
-	}
-}
-
 // ensureKeepAlive starts the keep-alive goroutine once.
 func (s *Service) ensureKeepAlive() {
 	s.keepAlive.Do(func() {
-		s.wg.Go(s.runKeepAlive)
+		s.goTracked(s.runKeepAlive)
 	})
 }
 
@@ -1745,7 +1884,8 @@ func (s *Service) runKeepAlive() {
 }
 
 // keepAliveTick touches the temporary agents of every paused and running
-// forum, then retries the pending temporary-agent deletions.
+// forum, then retries the pending temporary-agent deletions and completion
+// notices.
 func (s *Service) keepAliveTick(ctx context.Context) {
 	s.mu.Lock()
 	stores := make([]*Store, 0, len(s.paused)+len(s.runs))
@@ -1760,6 +1900,7 @@ func (s *Service) keepAliveTick(ctx context.Context) {
 		s.touchForum(ctx, store)
 	}
 	s.retryCleanups(ctx)
+	s.retryNotices(ctx)
 }
 
 // retryCleanups retries the temporary-agent deletion of every run in
@@ -1770,13 +1911,7 @@ func (s *Service) retryCleanups(ctx context.Context) {
 	s.mu.Lock()
 	pending := maps.Clone(s.cleanups)
 	s.mu.Unlock()
-	keys := slices.SortedFunc(maps.Keys(pending), func(a, b runKey) int {
-		if c := strings.Compare(a.id, b.id); c != 0 {
-			return c
-		}
-		return a.run - b.run
-	})
-	for _, key := range keys {
+	for _, key := range sortedRunKeys(pending) {
 		if _, ok := s.running(pending[key], key.id); ok {
 			continue
 		}
