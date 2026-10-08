@@ -183,7 +183,7 @@ production instance directly; test against a dev instance.
 - **Cron**: mtime-based reload from disk; only saves when jobs are due. Prevents CLI/service race.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
 - **Multiple Telegram bots**: each `telegram_bots[].id` → channel `telegram-<id>`.
-- **Bus turn contract** (`bus/types.go`, `agent/loop_inbound.go` `runTurn`): the final reply answering an inbound message carries `OutboundMessage.Outcome` (`ok`/`error`/`cancelled`/`empty`; interim messages and SendResponse/async replies leave it empty). Inbound metadata `reply_required`=`1` forces exactly one final reply (even after `msg_send`, empty, failed or cancelled; nothing on shutdown), is never merged with other queued messages, and survives restart recovery (a give-up is an `error` reply); `spawn_depth`=N raises the turn's sub-agent depth (never lowers it, clamped to `max_subagent_depth`) and async results re-enter at the spawning turn's depth. A scheduled (cron) job runs at depth 0. Each turn records its depth on the session token (`SessionTokenStore.SetDepth`) and MCP tool calls with that token run at it, so CLI-provider agents are bounded too; service tokens run at 0. Tools manage temporary agents through `ToolDeps.Agents` (`tools.AgentServices`, `agent/agent_services.go`).
+- **Bus turn contract** (`bus/types.go`, `agent/loop_inbound.go` `runTurn`): the final reply answering an inbound message carries `OutboundMessage.Outcome` (`ok`/`error`/`cancelled`/`empty`; interim messages and SendResponse/async replies leave it empty). Inbound metadata `reply_required`=`1` forces exactly one final reply (even after `msg_send`, empty, failed or cancelled; nothing on shutdown), is never merged with other queued messages, and survives restart recovery (a give-up is an `error` reply); `spawn_depth`=N raises the turn's sub-agent depth (never lowers it, clamped to `max_subagent_depth`) and async results re-enter at the spawning turn's depth. A scheduled (cron) job runs at depth 0. Each turn records its depth on the session token (`SessionTokenStore.SetDepth`) and MCP tool calls with that token run at it, so CLI-provider agents are bounded too; service tokens run at 0. Tools manage temporary agents through `ToolDeps.Agents` (`tools.AgentServices`, `agent/agent_services.go`). Every inbound message claw publishes itself (cron, webhooks, notices, recovery replays, tool and sub-agent results, asks, forum notices) sets `bus.InboundMessage.Internal`; only a message without it can be a person's answer (`fromPerson`, `agent/human.go`).
 - **Agent messages** (`agent/agent_message.go`, `docs/agent-messaging.md`): `AgentLoop`
   is the `tools.Messenger` (`Ask`, `Whisper`) behind the `agent_message` tool
   (`tools/agents/message.go`, gated by `subagents.allow_agents`), the `/ask` and `/whisper`
@@ -232,8 +232,11 @@ production instance directly; test against a dev instance.
   without a notice); `forum_status`/`forum_results` take an optional `run`
   (default the latest); pause/resume/cancel act on the latest run, and resume
   is refused once the config changed. The store's lock and the per-run
-  cleanup markers (`.cleanup/<id>.<n>.<name>`) are the forum's; a `Store` is
-  the forum handle (run 0) or a run (`Store.Run`/`CreateRun`/`OpenRun`).
+  cleanup markers (`.cleanup/<id>.<n>.<name>`) are the forum's; the unexported
+  `forumStore` is the forum handle (run 0) or a run (`Run`/`CreateRun`/`OpenRun`).
+  The on-disk names other packages need are defined once in `forum/store.go`:
+  `forum.BaseDirName` (`forums`), `LocksDir`, `TempPrefix`, and `LaunchTool`
+  (config, the backup, the file tools and Check Up use them).
   `forum_config_export` returns a forum's config to import elsewhere (no
   template store). `forum_readme` serves the agent guide and
   the built-in templates (`writing`, `council`) embedded from `forum/readme/`
@@ -265,7 +268,7 @@ production instance directly; test against a dev instance.
   (`forum.ErrForumTurn`; participants get no forum tools anyway); file
   references go through `files.Reader.Resolve`/`Allowed`. Base directory:
   `<workspace>/forums` (its file tools may read it, never write it:
-  `alwaysReadableSubdirs` in `tools/files`; `forum_results` inlines each
+  `config.AlwaysReadableWorkspaceDirs`; `forum_results` inlines each
   output up to `forum.MaxResultInlineChars`, all together up to
   `forum.MaxResultInlineTotalChars`), which the agent can still reach
   by other means, so the host trusts nothing in it: every ask is re-checked against the launcher's current
@@ -303,9 +306,17 @@ production instance directly; test against a dev instance.
   `agent_message` tool, `/ask` and `/whisper` ("Messages to other agents are
   limited to 8,000 characters."); the core Ask/Whisper (and so the forum) are
   not capped.
-- **Delivery reasons** (`channels/errors.go`): a failed send says why with a sentinel callers test with `errors.Is`, and `bus.OutboundMessage.OnDelivery` gets it: `ErrUnknownChannel` (not configured; the manager), `ErrNotRunning` (stopped, or no worker), `ErrRecipientOffline` and `ErrRecipientNotFound` (reported by the device, Telegram, Slack, Discord and WebUI channels: a paired device not connected or closing, a WebUI session with no browser open; an unknown/unpaired device, Telegram "chat not found"/upgraded to supergroup and every 403 (blocked, deactivated, can't initiate, bots, kicked), Slack `channel_not_found`/`not_in_channel`/`is_archived`, Discord unknown channel/user), `ErrReceiveOnly`, else `ErrSendFailed`/`ErrTemporary`/`ErrRateLimit` (Telegram: 429 rate limit, other 4xx send failed; it retries as plain text only on the "can't parse entities" 400). The channels keep the platform's (redacted) reason in the error, so the log and the alert say why. Only `ErrTemporary`/`ErrRateLimit`/unknown errors are retried; `sendSplit` stops at a chunk whose recipient is unavailable. Text and media share one retry loop and one failure report (`retrySend`, `reportSendFailure`). The "Channel send failed" alert fires only for a channel that reports itself not running and a send failing after its retries (incl. `ErrSendFailed`); offline/not found log at WARN, receive-only at INFO. Check Up marks a human agent whose chat is on a channel that is not set up (config-derived only, exact channel names).
+- **Delivery reasons** (`channels/errors.go`): a failed send says why with a sentinel callers test with `errors.Is`, and `bus.OutboundMessage.OnDelivery` gets it: `ErrUnknownChannel` (not configured; the manager), `ErrNotRunning` (stopped, or no worker), `ErrRecipientOffline` and `ErrRecipientNotFound` (reported by the device, Telegram, Slack, Discord and WebUI channels: a paired device not connected or closing, a WebUI session with no browser open; an unknown/unpaired device, Telegram "chat not found"/upgraded to supergroup and every 403 (blocked, deactivated, can't initiate, bots, kicked), Slack `channel_not_found`/`not_in_channel`/`is_archived`, Discord unknown channel/user), `ErrReceiveOnly`, else `ErrSendFailed`/`ErrTemporary`/`ErrRateLimit` (Telegram: 429 rate limit, other 4xx send failed; it retries as plain text only on the "can't parse entities" 400). The channels keep the platform's (redacted) reason in the error, so the log and the alert say why. Only `ErrTemporary`/`ErrRateLimit`/unknown errors are retried; `sendSplit` stops at a chunk whose recipient is unavailable. Text and media share one retry loop and one failure report (`retrySend`, `reportSendFailure`). `sendWithRetry` puts one `channels.SendProgress` on the context across a message's retries, so a channel that splits it further (Telegram, when the HTML outgrows one message) resumes after the parts already delivered; Telegram resends once without the reply link when the message replied to is gone. The "Channel send failed" alert fires only for a channel that reports itself not running and a send failing after its retries (incl. `ErrSendFailed`); offline/not found log at WARN, receive-only at INFO. Check Up marks a human agent whose chat is on a channel that is not set up (config-derived only, exact channel names).
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
+  Agent ids are normalized by `config.NormalizeAgentID` (`routing.NormalizeAgentID`
+  delegates to it); `subagents.allow_agents` is matched only by
+  `SubagentsConfig.Allows` (nil-safe; runtime and Check Up); an agent is named to people
+  and in logs only by `AgentConfig.DisplayName` / `AgentInstance.DisplayName` (name, else id).
+- **Expected refusals**: a tool error wrapped by `tools.Refusal` (or any error with a
+  `Refusal() bool` method, which packages that do not import `tools` use, such as the forum)
+  is an expected refusal (`tools.IsExpectedRefusal`) and logs at WARN "Tool call refused",
+  not ERROR.
 - **Mounts** (`agents.list[].mounts`, `tools/files/mounts.go`): an external folder reached
   as `<name>/...` beside the workspace folders. The names ClawEh uses inside a workspace
   are `config.ReservedWorkspaceNames` (one list; add a folder there when code starts
@@ -315,15 +326,19 @@ production instance directly; test against a dev instance.
   row). The automatic `maestro` mount is the only mount with a reserved name.
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.
   Config agents are built from config and rebuilt on reload (`Reload` builds the
-  whole new set, then swaps it in one step with `al.cfg`). **Temporary agents**
+  whole new set, then swaps it in one step with `al.cfg`; a replaced instance is
+  closed once no turn runs on it, and restart-recovery state is made per workspace on
+  first use, so agents a reload adds record their pending turns). **Temporary agents**
   are created at run time (`Create`, or `CreateInTurn` which begins a turn
   atomically with insertion; options `CloneOf`, `EphemeralMemory`, `Temp(ttl)`, `OwnedBy`, and for a fresh
   agent `WithSystemPrompt`, `WithoutMemory`, `SingleShot`;
   UUID ids), kept across reloads (rebuilt; a clone always from its source's
-  CURRENT config, never a stored copy; deleted when its model or clone source is
-  gone; left alone while in a turn) and, unless ephemeral, across restarts
+  CURRENT config, never a stored copy; deleted only when the config can no longer
+  build it (model or clone source gone, human), never on a build error; left alone
+  while in a turn) and, unless ephemeral, across restarts
   (`internal/temp_agents.json`; any other dir under `internal/temp/` is removed
-  at start), deleted by `Delete` (refused mid-turn; `BeginTurn` marks turns) or
+  at start, unless the file cannot be read or parsed or a newer release wrote it:
+  then every folder is kept and the file is not rewritten while the process runs), deleted by `Delete` (refused mid-turn; `BeginTurn` marks turns) or
   after `agentreg.DefaultTTL` (24h) idle by the sweep. Create/Delete take the
   registry lock only to insert/remove (builds and memory snapshots run in
   parallel with each other) and are ordered against reloads by `reloadMu`
@@ -433,7 +448,9 @@ Hard-won learnings (don't relearn these):
   and closes its connections. Pending pairings: at most 20, each expires after 10 minutes.
 - **Agent selection / session scope:** the client encodes the selected agent as the session
   key's 2nd segment (`agent:<id>:<peer>:<profile>`); node clients send the `main` sentinel and
-  use their per-device assignment (else the default agent). Every device joins the selected
+  use their per-device assignment (else the default agent; an assignment to an agent that
+  no longer exists or is disabled is ignored with one WARN, and `GET /api/devices` marks it
+  `agent_missing`, which the Devices page shows). Every device joins the selected
   agent's main conversation (`agent:<id>:main`), whatever the rest of the key says — one
   agent, one history, one memory across the R1, the app, Slack, Telegram, and MCP service
   tokens. There are no session modes; an unknown agent id is refused. `chat.history` resolves
