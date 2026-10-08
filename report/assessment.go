@@ -439,14 +439,11 @@ func anyCLIBypass(cfg *config.Config) bool {
 func shellDelegators(agents []*config.AgentConfig, shell []string) []string {
 	var out []string
 	for _, a := range agents {
-		if slices.Contains(shell, a.ID) || a.Subagents == nil {
+		if slices.Contains(shell, a.ID) {
 			continue
 		}
-		for _, target := range a.Subagents.AllowAgents {
-			if target == "*" || slices.ContainsFunc(shell, func(id string) bool { return strings.EqualFold(id, target) }) {
-				out = append(out, a.ID)
-				break
-			}
+		if slices.ContainsFunc(shell, a.Subagents.Allows) {
+			out = append(out, a.ID)
 		}
 	}
 	return out
