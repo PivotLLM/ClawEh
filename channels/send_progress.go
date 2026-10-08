@@ -27,8 +27,10 @@ func WithSendProgress(ctx context.Context) context.Context {
 // not come through the manager (a nil SendProgress delivers nothing yet and
 // records nothing).
 func SendProgressFrom(ctx context.Context) *SendProgress {
-	p, _ := ctx.Value(sendProgressKey{}).(*SendProgress)
-	return p
+	if p, ok := ctx.Value(sendProgressKey{}).(*SendProgress); ok {
+		return p
+	}
+	return nil
 }
 
 // Delivered returns the number of parts delivered by earlier attempts.
