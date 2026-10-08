@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/PivotLLM/ClawEh/config"
 )
 
 // ToolResult represents the structured return value from tool execution.
@@ -117,9 +115,6 @@ func ErrorResult(message string) *ToolResult {
 	}
 }
 
-// ShellToolName is the published name of the shell tool.
-const ShellToolName = config.ShellExecTool
-
 // ShellNotAllowedMessage is the refusal of a shell_exec call by an agent
 // whose tool permissions do not include it, on any channel and over MCP.
 // agent is the agent's display name.
@@ -225,13 +220,13 @@ func (e refusalError) Error() string { return e.err.Error() }
 func (e refusalError) Unwrap() error { return e.err }
 func (refusalError) Refusal() bool   { return true }
 
-// Refusal marks err as an expected refusal (see IsRefusal).
+// Refusal marks err as an expected refusal (see IsExpectedRefusal).
 func Refusal(err error) error { return refusalError{err: err} }
 
-// IsRefusal reports whether err, or an error it wraps, is an expected
+// IsExpectedRefusal reports whether err, or an error it wraps, is an expected
 // refusal: one created by Refusal, or any error with a Refusal() bool method
 // that returns true (so packages that do not import tools can mark theirs).
-func IsRefusal(err error) bool {
+func IsExpectedRefusal(err error) bool {
 	var r interface{ Refusal() bool }
 	return errors.As(err, &r) && r.Refusal()
 }

@@ -197,7 +197,7 @@ production instance directly; test against a dev instance.
   last reclaims; parallel waits are counted); asked turns take no slot. Whispers are held
   in memory and prepended in `runAgentLoop` (in `runHumanTurn` for a human agent) to the
   agent's next message.
-- **Turn scope** (`tools/origin.go`): the ask chain rides the context and the MCP
+- **Turn scope** (`tools/turnscope.go`): the ask chain rides the context and the MCP
   session token (`SetTurnScope`) like the sub-agent depth.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
   switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow

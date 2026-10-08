@@ -251,7 +251,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Gateway process lifecycle
 	h.registerGatewayRoutes(mux)
 
-	// Session history
+	// Session erase (DELETE /api/sessions)
 	h.registerSessionRoutes(mux)
 
 	// Cognitive-memory browser (read-only)

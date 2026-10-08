@@ -61,12 +61,12 @@ func (h *Handler) handleIgnoredMounts(w http.ResponseWriter, _ *http.Request) {
 }
 
 // humanAgentProblem is one way the configuration breaks the human-agent
-// rules, placed where the WebUI shows it:
-//   - "not_running": the agent named is not run (shown on its card);
+// rules, with where the WebUI shows it. Kind is one of:
+//   - "not_running": the agent named in Agent is not run (shown on its card);
 //   - "ignored": a human model the agent names is ignored there (a note on
 //     its card);
-//   - "setting": a global setting ignores a human model (shown on Page (/system, /models), the
-//     page that sets it).
+//   - "setting": a global setting ignores a human model (shown on Page,
+//     "/system" or "/models": the page that sets it).
 //
 // Link, when set, is the page that fixes it ("/channels" for a missing chat).
 type humanAgentProblem struct {

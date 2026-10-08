@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
-import { patchAppConfig } from "@/api/channels"
+import { HUMAN_AGENTS_QUERY_KEY, patchAppConfig } from "@/api/channels"
 import {
   type CoreConfigForm,
   EMPTY_FORM,
@@ -389,7 +389,7 @@ export function SystemPage() {
     try {
       await patchAppConfig(patch)
       // A model named here may represent a person; refresh the notes.
-      void queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
+      void queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
       setBaseline(form)
       setStatus("saved")
       clearTimeout(savedTimer.current)

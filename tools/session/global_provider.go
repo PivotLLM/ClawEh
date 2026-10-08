@@ -52,7 +52,7 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 
 	host := sessiontools.Host{
 		Compact: cd.CompactFn,
-		Clear:   refuseClearInAsk(cd.ClearFn),
+		Clear:   cd.ClearFn,
 		Log:     logToClaw,
 	}
 	if dir := cd.EffectiveStateDir(); dir != "" {
@@ -70,7 +70,7 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 			return info, nil
 		}
 	}
-	return sessiontools.Definitions(host)
+	return refuseClearInAsk(sessiontools.Definitions(host))
 }
 
 // errClearInAsk refuses session_clear in an asked turn: the conversation is
@@ -78,18 +78,23 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 // to a fresh turn the asker is not waiting for.
 var errClearInAsk = errors.New("session_clear is not available while answering another agent's message")
 
-// refuseClearInAsk wraps clear so it is refused in an asked turn (its tool
-// channel is the ask), in-process and over MCP alike. nil stays nil.
-func refuseClearInAsk(clearFn func(ctx context.Context, sessionKey, message string) error) func(ctx context.Context, sessionKey, message string) error {
-	if clearFn == nil {
-		return nil
-	}
-	return func(ctx context.Context, sessionKey, message string) error {
-		if tools.ToolChannel(ctx) == constants.AgentMessageChannel {
-			return errClearInAsk
+// refuseClearInAsk wraps the clear tool's handler so it is refused, as an
+// expected refusal, in an asked turn (its tool channel is the ask),
+// in-process and over MCP alike.
+func refuseClearInAsk(defs []global.ToolDefinition) []global.ToolDefinition {
+	for i := range defs {
+		if defs[i].Name != "clear" || defs[i].Handler == nil {
+			continue
 		}
-		return clearFn(ctx, sessionKey, message)
+		next := defs[i].Handler
+		defs[i].Handler = func(call *global.ToolCall) (*global.Result, error) {
+			if tools.ToolChannel(call.Ctx) == constants.AgentMessageChannel {
+				return &global.Result{IsError: true, ForLLM: errClearInAsk.Error(), Err: tools.Refusal(errClearInAsk)}, nil
+			}
+			return next(call)
+		}
 	}
+	return defs
 }
 
 // logToClaw routes sessiontools diagnostics into ClawEh's logger.

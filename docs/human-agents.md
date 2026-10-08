@@ -15,7 +15,8 @@ and their next message there is the answer.
    long the person may take to answer, in seconds (0 uses
    `agents.defaults.request_timeout`).
 3. **Agents page:** add an agent (for example `bob`) whose model list is only
-   that model. It must not be the default agent.
+   that model. It must not be the default agent. Its card then shows only
+   what applies to a person: the models and the default channel.
 4. **Channels:** bind one chat used by that person alone (a Telegram direct
    chat, a Slack channel of their own) to the agent, and make it the agent's
    default. That is the agent's only binding, it names one chat (not a whole

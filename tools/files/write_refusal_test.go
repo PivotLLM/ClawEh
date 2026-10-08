@@ -32,7 +32,7 @@ func assertWriteRefused(t *testing.T, res *tools.ToolResult) {
 	if !res.IsError || !strings.HasPrefix(res.ForLLM, "write denied") {
 		t.Fatalf("result = %q (error %v), want the write-denied refusal", res.ForLLM, res.IsError)
 	}
-	if !tools.IsRefusal(res.Err) {
+	if !tools.IsExpectedRefusal(res.Err) {
 		t.Errorf("write denial is not marked as a refusal: %v", res.Err)
 	}
 }
@@ -131,12 +131,12 @@ func TestReadDenialIsRefusal(t *testing.T) {
 	tool := NewReadLinesTool(workspace, true, 0)
 
 	denied := tool.Execute(context.Background(), map[string]any{"path": "forums/f1/transcript.md"})
-	if !denied.IsError || !strings.Contains(denied.ForLLM, "read denied") || !tools.IsRefusal(denied.Err) {
-		t.Fatalf("denied read = %q (refusal %v), want a read-denied refusal", denied.ForLLM, tools.IsRefusal(denied.Err))
+	if !denied.IsError || !strings.Contains(denied.ForLLM, "read denied") || !tools.IsExpectedRefusal(denied.Err) {
+		t.Fatalf("denied read = %q (refusal %v), want a read-denied refusal", denied.ForLLM, tools.IsExpectedRefusal(denied.Err))
 	}
 	missing := tool.Execute(context.Background(), map[string]any{"path": "files/nope.md"})
-	if !missing.IsError || tools.IsRefusal(missing.Err) {
-		t.Fatalf("missing file = %q (refusal %v), want a failure that is not a refusal", missing.ForLLM, tools.IsRefusal(missing.Err))
+	if !missing.IsError || tools.IsExpectedRefusal(missing.Err) {
+		t.Fatalf("missing file = %q (refusal %v), want a failure that is not a refusal", missing.ForLLM, tools.IsExpectedRefusal(missing.Err))
 	}
 }
 
@@ -145,7 +145,7 @@ func TestDeleteWithoutSureIsRefusal(t *testing.T) {
 	workspace, _ := readOnlyFixture(t)
 	tool := NewDeleteFileToolScoped(workspace, true, "files")
 	res := tool.Execute(context.Background(), map[string]any{"path": "files/x.md"})
-	if !res.IsError || !tools.IsRefusal(res.Err) {
-		t.Fatalf("result = %q (refusal %v), want a refusal", res.ForLLM, tools.IsRefusal(res.Err))
+	if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("result = %q (refusal %v), want a refusal", res.ForLLM, tools.IsExpectedRefusal(res.Err))
 	}
 }

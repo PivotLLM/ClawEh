@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // mockTool is a simple tool for registry tests.
@@ -185,19 +187,19 @@ func TestToolRegistry_ShellRefusalOnlyWhenNotRegistered(t *testing.T) {
 	ctx := context.Background()
 	missing := NewToolRegistry()
 	missing.SetOwner("Bob")
-	if res := missing.Execute(ctx, ShellToolName, nil); !res.IsError || res.ForLLM != "Bob is not allowed to run shell commands." {
+	if res := missing.Execute(ctx, config.ShellExecTool, nil); !res.IsError || res.ForLLM != "Bob is not allowed to run shell commands." || !IsExpectedRefusal(res.Err) {
 		t.Errorf("unregistered: %+v, want the refusal naming Bob", res)
 	}
 
 	hidden := NewToolRegistry()
 	hidden.SetOwner("Alice")
-	hidden.RegisterHidden(&mockTool{name: ShellToolName})
-	res := hidden.Execute(ctx, ShellToolName, nil)
+	hidden.RegisterHidden(&mockTool{name: config.ShellExecTool})
+	res := hidden.Execute(ctx, config.ShellExecTool, nil)
 	if !res.IsError || res.ForLLM == ShellNotAllowedMessage("Alice") {
 		t.Errorf("hidden in the loop: %+v, want not-found, not the permission refusal", res)
 	}
-	res = hidden.ExecuteForHost(ctx, ShellToolName, nil, "", "", nil)
-	if res.IsError || res.ForLLM != "tool executed: "+ShellToolName {
+	res = hidden.ExecuteForHost(ctx, config.ShellExecTool, nil, "", "", nil)
+	if res.IsError || res.ForLLM != "tool executed: "+config.ShellExecTool {
 		t.Errorf("hidden for the host: %+v, want it run", res)
 	}
 }

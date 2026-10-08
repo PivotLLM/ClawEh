@@ -37,7 +37,7 @@ restart the dev instance after changing listener settings by hand.
 | A running ClawEh | `make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev` |
 | An admin account | The WebUI and `/api/*` are behind a login. Create the account on the dev instance with `claw admin`, then `export CLAW_E2E_USER=… CLAW_E2E_PASSWORD=…`. The runner signs in first and stops with that instruction if it cannot |
 | At least one agent, model and provider | The plan asserts against live data; an empty install fails A3 |
-| Playwright + Chromium | Override with `PLAYWRIGHT_MODULE` / `CHROME_PATH` |
+| Playwright + Chromium | Found in the npx cache under the home directory; override with `PLAYWRIGHT_MODULE` / `CHROME_PATH` |
 
 **Every request below carries the session.** The runner keeps one browser
 context, so the cookie from `POST /api/auth/login` goes with every page it opens

@@ -71,7 +71,8 @@ type AgentReply struct {
 	// Text is the target's final reply; for OutcomeTimeout, a one-line note
 	// naming the agent and the wait.
 	Text string
-	// Outcome is ok, error, cancelled, empty, timeout or person_cancelled.
+	// Outcome is ok, error, cancelled, empty, timeout, person_cancelled or
+	// person_unreachable.
 	Outcome string
 }
 

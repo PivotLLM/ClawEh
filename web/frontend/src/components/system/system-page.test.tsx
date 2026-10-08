@@ -13,6 +13,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/api/channels", () => ({
   patchAppConfig: vi.fn().mockResolvedValue({ status: "ok" }),
+  HUMAN_AGENTS_QUERY_KEY: ["agents-human-problems"],
   getHumanAgents: vi.fn().mockResolvedValue({ problems: [], human_agents: [] }),
 }))
 

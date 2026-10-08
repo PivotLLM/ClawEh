@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
+import { HUMAN_AGENTS_QUERY_KEY } from "@/api/channels"
 import {
   type ModelInfo,
   getModels,
@@ -64,7 +65,7 @@ export function ModelsPage() {
   const fetchModels = async () => {
     await queryClient.invalidateQueries({ queryKey: ["models"] })
     // A model change can create or clear a human-agent note.
-    await queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] })
+    await queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
   }
 
   const handleToggleEnabled = async (model: ModelInfo) => {

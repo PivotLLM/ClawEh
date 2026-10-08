@@ -28,9 +28,8 @@ func (h *Handler) sessionReleaserRef() func(sessionKey string) error {
 	return h.sessionReleaser
 }
 
-// sessionsDirs returns the sessions directories for every configured agent.
-// Multiple agents may have distinct workspaces; the WebUI must search all of
-// them to enumerate or locate sessions.
+// sessionsDirs returns the sessions directory of every configured agent. The
+// memory endpoints locate each agent's memory database from it.
 func (h *Handler) sessionsDirs() ([]string, error) {
 	cfg, err := h.currentConfig()
 	if err != nil {

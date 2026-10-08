@@ -29,8 +29,8 @@ func TestIsRefusal(t *testing.T) {
 		{"marked by another package", externalRefusalError{base}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsRefusal(tc.err); got != tc.want {
-				t.Fatalf("IsRefusal = %v, want %v", got, tc.want)
+			if got := IsExpectedRefusal(tc.err); got != tc.want {
+				t.Fatalf("IsExpectedRefusal = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -245,22 +245,10 @@ func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 // the sessionKey is unknown — Issue() may not yet have been called for this
 // session, which is normal during early startup.
 func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
-	if sessionKey == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tok, ok := s.bySess[sessionKey]
-	if !ok {
-		return
-	}
-	rec, ok := s.tokens[tok]
-	if !ok {
-		return
-	}
-	rec.channel = channel
-	rec.chatID = chatID
-	s.tokens[tok] = rec
+	s.updateRecord(sessionKey, func(rec *sessionRecord) {
+		rec.channel = channel
+		rec.chatID = chatID
+	})
 }
 
 // SetDepth records the sub-agent depth of the turn now running on sessionKey
@@ -270,21 +258,7 @@ func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 // are indexed apart and never carry a depth. No-op if the session has no
 // token.
 func (s *SessionTokenStore) SetDepth(sessionKey string, depth int) {
-	if sessionKey == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tok, ok := s.bySess[sessionKey]
-	if !ok {
-		return
-	}
-	rec, ok := s.tokens[tok]
-	if !ok {
-		return
-	}
-	rec.depth = depth
-	s.tokens[tok] = rec
+	s.updateRecord(sessionKey, func(rec *sessionRecord) { rec.depth = depth })
 }
 
 // SetTurnScope records the ask chain of the turn now running on sessionKey on
@@ -293,6 +267,13 @@ func (s *SessionTokenStore) SetDepth(sessionKey string, depth int) {
 // cannot be asked. Called by the agent loop at the start of every turn.
 // No-op if the session has no token.
 func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string) {
+	chain := slices.Clone(askChain)
+	s.updateRecord(sessionKey, func(rec *sessionRecord) { rec.askChain = chain })
+}
+
+// updateRecord applies update to the conversation token record of
+// sessionKey under the store lock. No-op when the session has no token.
+func (s *SessionTokenStore) updateRecord(sessionKey string, update func(*sessionRecord)) {
 	if sessionKey == "" {
 		return
 	}
@@ -306,7 +287,7 @@ func (s *SessionTokenStore) SetTurnScope(sessionKey string, askChain []string) {
 	if !ok {
 		return
 	}
-	rec.askChain = slices.Clone(askChain)
+	update(&rec)
 	s.tokens[tok] = rec
 }
 

@@ -748,7 +748,7 @@ func containsString(haystack []string, needle string) bool {
 // shell_exec names the agent and adds the configured-restriction notice (the
 // caller is a model), any other tool gets tools.NotEnabledMessage.
 func notAllowedMessage(reg *tools.ToolRegistry, toolName string) string {
-	if toolName == tools.ShellToolName {
+	if toolName == config.ShellExecTool {
 		return tools.ShellNotAllowedMCPMessage(reg.Owner())
 	}
 	return tools.NotEnabledMessage(toolName)

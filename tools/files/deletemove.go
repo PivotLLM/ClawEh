@@ -56,14 +56,14 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 		return errResult(tools.Refusal(errors.New("refusing to delete: pass sure=true to confirm deleting " + path)))
 	}
 	if backupFilePattern.MatchString(filepath.Base(path)) {
-		return tools.ErrorResult("refusing to delete a backup file (<name>.NNNN): " + path)
+		return errResult(tools.Refusal(errors.New("refusing to delete a backup file (<name>.NNNN): " + path)))
 	}
 	info, err := t.sysFs.Stat(path)
 	if err != nil {
 		return errResult(err)
 	}
 	if info.IsDir() {
-		return tools.ErrorResult("path is a directory; file_delete removes files only: " + path)
+		return errResult(tools.Refusal(errors.New("path is a directory; file_delete removes files only: " + path)))
 	}
 	if err := t.sysFs.Remove(path); err != nil {
 		return errResult(err)
