@@ -320,14 +320,6 @@ func (al *AgentLoop) canAnswerWhisper(agent *AgentInstance) func(w whisper) bool
 	}
 }
 
-// instanceName is the agent's name, or its id when it has none.
-func instanceName(a *AgentInstance) string {
-	if strings.TrimSpace(a.Name) != "" {
-		return a.Name
-	}
-	return a.ID
-}
-
 // requestTimeoutFor is the request_timeout of agent's active model (the
 // agents.defaults value when the model sets none); 0 when neither is set.
 func (al *AgentLoop) requestTimeoutFor(agent *AgentInstance) time.Duration {
@@ -401,7 +393,7 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 	if !ok || target == nil {
 		return tools.AgentReply{}, fmt.Errorf("%w: %s", tools.ErrNoSuchAgent, agentID)
 	}
-	name := instanceName(target)
+	name := target.DisplayName()
 	cfg := al.GetConfig()
 	if !al.running.Load() || cfg == nil {
 		return tools.AgentReply{}, errors.New("the service is not running")
@@ -616,7 +608,7 @@ func (al *AgentLoop) commandTarget(command string, msg bus.InboundMessage, ref s
 	if !al.senderMayReach(msg, target.ID) {
 		logger.WarnCF("agent", "Agent message refused: the sender may not talk to the agent",
 			map[string]any{"command": command, "agent_id": target.ID, "channel": msg.Channel, "sender_id": msg.SenderID})
-		return nil, fmt.Sprintf("You don't have permission to /%s %s", command, instanceName(target))
+		return nil, fmt.Sprintf("You don't have permission to /%s %s", command, target.DisplayName())
 	}
 	return target, ""
 }
@@ -630,7 +622,7 @@ func (al *AgentLoop) commandWhisper(ctx context.Context, msg bus.InboundMessage,
 	if target == nil {
 		return refusal
 	}
-	name := instanceName(target)
+	name := target.DisplayName()
 	from := sender{name: commandSender(msg), note: personNote("whisper", msg.Channel)}
 	if err := al.whisper(ctx, from, target.ID, text); err != nil {
 		return fmt.Sprintf("Could not whisper to %s: %v", name, err)
@@ -680,7 +672,7 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 				map[string]any{"agent_id": target.ID, "channel": msg.Channel, "chat_id": msg.ChatID})
 			return
 		}
-		content := commandAskReply(instanceName(target), reply, err)
+		content := commandAskReply(target.DisplayName(), reply, err)
 		pubCtx, cancel := context.WithTimeout(askCtx, 5*time.Second)
 		defer cancel()
 		if pubErr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{

@@ -61,3 +61,17 @@ func TestReload_ClosesReplacedConfigInstanceStore(t *testing.T) {
 		t.Fatalf("ProcessDirect after reloads: %v", err)
 	}
 }
+
+// An agent is named by its trimmed name, or its id when it has none.
+func TestAgentInstance_DisplayName(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"Alice", "Alice"},
+		{"  Alice  ", "Alice"},
+		{"   ", "alice"},
+		{"", "alice"},
+	} {
+		if got := (&AgentInstance{ID: "alice", Name: tc.name}).DisplayName(); got != tc.want {
+			t.Errorf("DisplayName(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

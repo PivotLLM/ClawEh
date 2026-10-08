@@ -83,8 +83,8 @@ func newReservedMounts(before, next *Config) []error {
 			continue
 		}
 		name := m.Agent
-		if ac := next.agentByID(m.Agent); ac != nil {
-			name = agentLabel(ac)
+		if ac := next.AgentByID(m.Agent); ac != nil {
+			name = ac.DisplayName()
 		}
 		msg := fmt.Sprintf("%s's mount %q uses a reserved name; choose another name.", name, m.Mount)
 		errs = append(errs, fmt.Errorf("%s", msg))

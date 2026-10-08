@@ -141,11 +141,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 		},
 	}
 	if agent != nil {
-		if agent.Name != "" {
-			rt.AgentName = agent.Name
-		} else {
-			rt.AgentName = agent.ID
-		}
+		rt.AgentName = agent.DisplayName()
 		rt.GetContextWindow = func() int { return agent.ContextWindow }
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
 			// Resolve the model that is actually active for THIS session (the

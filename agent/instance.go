@@ -103,6 +103,12 @@ func (a *AgentInstance) Label() string {
 	return a.Spec.Label()
 }
 
+// DisplayName is the agent's name, trimmed, or its id when it has none
+// (config.AgentConfig.DisplayName).
+func (a *AgentInstance) DisplayName() string {
+	return (&config.AgentConfig{ID: a.ID, Name: a.Name}).DisplayName()
+}
+
 // toolless reports whether the agent gets no tools at all: a fresh temporary
 // agent, or a human agent (which runs no model to call them).
 func (a *AgentInstance) toolless() bool { return a.Spec.Fresh || a.HumanModel != "" }
@@ -637,7 +643,7 @@ func compressionOptions(c *config.CompressionConfig) []ctxengine.Option {
 // UUID; an unnamed fresh temporary agent is a short neutral label.
 func registryOwnerName(spec agentreg.Spec, agentCfg *config.AgentConfig, cfg *config.Config) string {
 	if strings.TrimSpace(agentCfg.Name) != "" {
-		return agentCfg.Name
+		return agentCfg.DisplayName()
 	}
 	switch {
 	case spec.IsClone():

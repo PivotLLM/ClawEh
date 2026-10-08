@@ -456,7 +456,9 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	case err != nil:
 		assistant := ""
 		if route, _, routeErr := al.resolveMessageRoute(msg); routeErr == nil {
-			assistant = al.agentDisplayName(route.AgentID)
+			if a := al.GetConfig().AgentByID(route.AgentID); a != nil {
+				assistant = a.DisplayName()
+			}
 		}
 		response, outcome = renderTurnErrorFor(assistant, turnCtx, turnTimeout, err), bus.OutcomeError
 	case response == "" || outcome == bus.OutcomeEmpty:
@@ -1170,15 +1172,3 @@ func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
 	return &routing.RoutePeer{Kind: parentKind, ID: parentID}
 }
 
-// agentDisplayName is the agent's name, or its id when it has none; empty for
-// an unknown agent.
-func (al *AgentLoop) agentDisplayName(agentID string) string {
-	a := al.GetConfig().AgentByID(agentID)
-	if a == nil {
-		return ""
-	}
-	if a.Name != "" {
-		return a.Name
-	}
-	return a.ID
-}

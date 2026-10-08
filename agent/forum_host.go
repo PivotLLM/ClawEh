@@ -183,7 +183,7 @@ func (h *ForumHost) sender(al *AgentLoop, ctx context.Context) string {
 		return "Forum"
 	}
 	if a, found := al.GetRegistry().Get(info.Origin.AgentID); found && a != nil {
-		return instanceName(a)
+		return a.DisplayName()
 	}
 	return info.Origin.AgentID
 }
@@ -433,7 +433,7 @@ func (h *ForumHost) OnStuck(forumID string, run int, origin forum.Origin, err er
 	}
 	who := origin.AgentID
 	if a, ok := al.GetRegistry().Get(origin.AgentID); ok && a != nil {
-		who = instanceName(a)
+		who = a.DisplayName()
 	}
 	details := ""
 	if err != nil {
