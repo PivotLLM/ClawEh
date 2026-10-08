@@ -12,7 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
 
 // sensitiveTools are the internal tools that reach beyond the agent's own
@@ -42,9 +42,9 @@ type folderAccess struct {
 
 // alwaysReadableNotes says what each of config.AlwaysReadableWorkspaceDirs holds.
 var alwaysReadableNotes = map[string]string{
-	"tasks":           "sub-agent results",
-	"tmp":             "inbound attachments",
-	forum.BaseDirName: "the agent's forums",
+	"tasks":             "sub-agent results",
+	"tmp":               "inbound attachments",
+	forumfs.BaseDirName: "the agent's forums",
 }
 
 func (f *folderAccess) add(path string, read, write bool, note string) {
@@ -178,8 +178,8 @@ func agentToolsTable(a *config.AgentConfig) Table {
 	}
 	// forum_launch gives other agents turns; the forum switch, not the
 	// tools list, grants it.
-	if a.Forum && !a.IsToolDenied(forum.LaunchTool) {
-		cells = append(cells, row(forum.LaunchTool, "yes (Allow forum)"))
+	if a.Forum && !a.IsToolDenied(forumfs.LaunchTool) {
+		cells = append(cells, row(forumfs.LaunchTool, "yes (Allow forum)"))
 	}
 	for i := 0; i < len(cells); i += 2 {
 		r := row(cells[i][0], cells[i][1], "", "")

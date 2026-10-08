@@ -234,9 +234,11 @@ production instance directly; test against a dev instance.
   is refused once the config changed. The store's lock and the per-run
   cleanup markers (`.cleanup/<id>.<n>.<name>`) are the forum's; the unexported
   `forumStore` is the forum handle (run 0) or a run (`Run`/`CreateRun`/`OpenRun`).
-  The on-disk names other packages need are defined once in `forum/store.go`:
-  `forum.BaseDirName` (`forums`), `LocksDir`, `TempPrefix`, and `LaunchTool`
-  (config, the backup, the file tools and Check Up use them).
+  The on-disk names other packages need are defined once in the import-free leaf
+  `forum/forumfs`: `BaseDirName` (`forums`), `LocksDir`, `TempPrefix`, `LaunchTool`
+  (the forum, config, the backup, the file tools and Check Up use them; config never
+  imports `forum`). **Invariant: `forum` imports no ClawEh package but `forum/forumfs`,
+  which imports nothing** (`forum/imports_test.go`).
   `forum_config_export` returns a forum's config to import elsewhere (no
   template store). `forum_readme` serves the agent guide and
   the built-in templates (`writing`, `council`) embedded from `forum/readme/`

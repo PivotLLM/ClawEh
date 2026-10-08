@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -97,7 +98,7 @@ func (h *ForumHost) Scopes() []forum.Scope {
 		if !ok || a.Workspace == "" {
 			continue
 		}
-		base, err := filepath.Abs(filepath.Join(a.Workspace, forum.BaseDirName))
+		base, err := filepath.Abs(filepath.Join(a.Workspace, forumfs.BaseDirName))
 		if err != nil {
 			continue
 		}

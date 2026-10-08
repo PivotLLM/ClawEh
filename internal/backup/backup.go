@@ -31,7 +31,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -439,7 +439,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
 			continue
 		}
-		base := prefix + a.Name() + "/" + forum.BaseDirName + "/"
+		base := prefix + a.Name() + "/" + forumfs.BaseDirName + "/"
 		// Temporary agents' workspaces live in internal/temp/, never in the
 		// agents directory; this only matters when agents.base_dir is set to
 		// CLAW_HOME's internal/ (or internal/temp/) folder, where it keeps them
@@ -447,7 +447,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if isTempAgentPath(base) {
 			continue
 		}
-		root := filepath.Join(agentsDir, a.Name(), forum.BaseDirName)
+		root := filepath.Join(agentsDir, a.Name(), forumfs.BaseDirName)
 		fi, err := os.Lstat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -470,12 +470,12 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 				return rerr
 			}
 			if d.IsDir() {
-				if path == filepath.Clean(skip) || rel == forum.LocksDir || strings.HasPrefix(d.Name(), forum.TempPrefix) {
+				if path == filepath.Clean(skip) || rel == forumfs.LocksDir || strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forum.TempPrefix) {
+			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
 				return nil
 			}
 			fn(path, base+filepath.ToSlash(rel))

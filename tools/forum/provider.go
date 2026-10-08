@@ -18,6 +18,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	forumpkg "github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -116,7 +117,7 @@ func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 	if !h.cfg.AgentSuiteEnabled(h.agentID, Suite) {
 		return forumpkg.Scope{}, fmt.Errorf("forum tools are not enabled for agent %s", h.agentID)
 	}
-	base, err := filepath.Abs(filepath.Join(h.workspace, forumpkg.BaseDirName))
+	base, err := filepath.Abs(filepath.Join(h.workspace, forumfs.BaseDirName))
 	if err != nil {
 		return forumpkg.Scope{}, fmt.Errorf("forum directory of agent %s: %w", h.agentID, err)
 	}

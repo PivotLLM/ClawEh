@@ -5,14 +5,18 @@
 
 package forum
 
-import "testing"
+import (
+	"testing"
 
-// LaunchTool names the launch tool as the "forum" suite publishes it.
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
+)
+
+// forumfs.LaunchTool names the launch tool as the "forum" suite publishes it.
 func TestLaunchToolMatchesPublishedName(t *testing.T) {
 	for _, def := range Tools(nil, nil) {
-		if "forum_"+def.Name == LaunchTool {
+		if "forum_"+def.Name == forumfs.LaunchTool {
 			return
 		}
 	}
-	t.Fatalf("no tool in Tools publishes as %q", LaunchTool)
+	t.Fatalf("no tool in Tools publishes as %q", forumfs.LaunchTool)
 }

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/google/uuid"
 )
 
@@ -76,25 +77,6 @@ import (
 // store tell a reserved attempt from an orphan request.json (a crash
 // between WriteAttemptRequest and AppendCommit), and refuse a second
 // output for one turn ID.
-
-// Names other packages need to recognise a forum directory (the backup
-// skips locks and temporary entries; the file tools let an agent read its
-// forums; Check Up names the tool that starts other agents' turns).
-const (
-	// BaseDirName is the directory under an agent's workspace that holds
-	// its forums (the base directory).
-	BaseDirName = "forums"
-	// LocksDir is the directory under the base directory that holds the
-	// forums' run locks.
-	LocksDir = ".locks"
-	// TempPrefix starts every temporary file or directory the store
-	// creates; readers skip such entries (they are what a crash leaves
-	// behind and were never published by a rename).
-	TempPrefix = ".tmp-"
-	// LaunchTool is the published name of the tool that starts a forum run
-	// (the "launch" tool of Tools under the "forum" namespace).
-	LaunchTool = "forum_launch"
-)
 
 // File and directory names inside the base directory.
 const (
@@ -245,7 +227,7 @@ func createStore(base, forumID string) (*forumStore, error) {
 	if !validForumID(forumID) {
 		return nil, fmt.Errorf("create forum store: %q is not a forum ID", forumID)
 	}
-	for _, d := range []string{base, filepath.Join(base, LocksDir), filepath.Join(base, dirCleanup)} {
+	for _, d := range []string{base, filepath.Join(base, forumfs.LocksDir), filepath.Join(base, dirCleanup)} {
 		if err := os.MkdirAll(d, dirPerm); err != nil {
 			return nil, fmt.Errorf("create forum store: %w", err)
 		}
@@ -467,7 +449,7 @@ func (s *forumStore) RemoveRun() error {
 	}
 	err := s.inDir(func(root *os.Root) error {
 		rel := path.Join(dirRuns, strconv.Itoa(s.run))
-		tmp := path.Join(dirRuns, TempPrefix+"run-"+uuid.NewString())
+		tmp := path.Join(dirRuns, forumfs.TempPrefix+"run-"+uuid.NewString())
 		switch err := root.Rename(rel, tmp); {
 		case errors.Is(err, fs.ErrNotExist):
 			return nil
@@ -597,7 +579,7 @@ var errWouldBlock = errors.New("lock held by another holder")
 
 // lockPath is <base>/.locks/<id>.run.
 func (s *forumStore) lockPath() string {
-	return filepath.Join(s.base, LocksDir, s.id+lockSuffix)
+	return filepath.Join(s.base, forumfs.LocksDir, s.id+lockSuffix)
 }
 
 // cleanupPath is <base>/.cleanup/<id>.<run>.<name>, or "" for the forum
@@ -616,7 +598,7 @@ const lockAttempts = 5
 
 // Lock takes the exclusive advisory lock on lockPath (flock, non-blocking)
 // and writes the PID into it. Once it holds the lock it removes every
-// temporary file or directory (TempPrefix) a crashed writer left under the
+// temporary file or directory (forumfs.TempPrefix) a crashed writer left under the
 // root (sweepTemp): no other writer can be mid-write while the lock is
 // held. It returns ErrLocked when another process,
 // or another forumStore of the same forum in this process, holds it. Exactly
@@ -634,7 +616,7 @@ func (s *forumStore) Lock() error {
 	if s.lk.f != nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(s.base, LocksDir), dirPerm); err != nil { //nolint:gosec // the lock directory under the forum base
+	if err := os.MkdirAll(filepath.Join(s.base, forumfs.LocksDir), dirPerm); err != nil { //nolint:gosec // the lock directory under the forum base
 		return fmt.Errorf("lock forum %s: %w", s.id, err)
 	}
 	p := s.lockPath()
@@ -670,7 +652,7 @@ func (s *forumStore) Lock() error {
 	return fmt.Errorf("lock forum %s: the lock file kept changing", s.id)
 }
 
-// sweepTemp removes the temporary entries (TempPrefix) a crashed writer
+// sweepTemp removes the temporary entries (forumfs.TempPrefix) a crashed writer
 // left directly in the forum directory and in runs/ (a configuration
 // write, a run being removed), and anywhere in this store's run when it is
 // one (SweepRun). Earlier runs are not walked: nothing writes to them. A
@@ -686,7 +668,7 @@ func (s *forumStore) sweepTemp() error {
 				return err
 			}
 			for _, name := range names {
-				if strings.HasPrefix(name, TempPrefix) {
+				if strings.HasPrefix(name, forumfs.TempPrefix) {
 					if err := r.RemoveAll(path.Join(dir, name)); err != nil {
 						return err
 					}
@@ -705,7 +687,7 @@ func (s *forumStore) sweepTemp() error {
 }
 
 // SweepRun removes every entry under the run's directory whose name starts
-// with TempPrefix (what a crash during a write left). Symbolic links are not
+// with forumfs.TempPrefix (what a crash during a write left). Symbolic links are not
 // followed. The caller holds the lock; openForum calls it before reading the run.
 func (s *forumStore) SweepRun() error {
 	var found []string
@@ -716,7 +698,7 @@ func (s *forumStore) SweepRun() error {
 			}
 			return err
 		}
-		if p != s.root && strings.HasPrefix(d.Name(), TempPrefix) {
+		if p != s.root && strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
 			rel, relErr := filepath.Rel(s.root, p)
 			if relErr != nil {
 				return relErr
@@ -783,7 +765,7 @@ func releaseFile(f *os.File) error {
 // removeLockFile removes <base>/.locks/<id>.run through an os.Root of the
 // lock directory.
 func removeLockFile(base, id string) error {
-	r, err := os.OpenRoot(filepath.Join(base, LocksDir))
+	r, err := os.OpenRoot(filepath.Join(base, forumfs.LocksDir))
 	if err != nil {
 		return err
 	}
@@ -1033,7 +1015,7 @@ func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 		if mkErr := mkdirAt(r, turnDir); mkErr != nil {
 			return mkErr
 		}
-		tmp := path.Join(turnDir, TempPrefix+"attempt-"+uuid.NewString())
+		tmp := path.Join(turnDir, forumfs.TempPrefix+"attempt-"+uuid.NewString())
 		if mkErr := r.Mkdir(tmp, dirPerm); mkErr != nil {
 			return mkErr
 		}
@@ -1379,7 +1361,7 @@ func (s *forumStore) ReadCommits() ([]Commit, error) {
 	commits := make([]Commit, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, TempPrefix) {
+		if strings.HasPrefix(name, forumfs.TempPrefix) {
 			continue
 		}
 		if !commitNamePattern.MatchString(name) || !e.Type().IsRegular() {
@@ -1821,7 +1803,7 @@ func mkdirAt(r *os.Root, dir string) error {
 }
 
 // writeFileAt writes data to the r-relative target atomically and
-// durably: a new temporary file (TempPrefix, created exclusively) in the
+// durably: a new temporary file (forumfs.TempPrefix, created exclusively) in the
 // target's directory is written and fsynced, then published, and the
 // directory is fsynced. Without exclusive the temporary file is renamed
 // over target. With exclusive it is hard-linked to target, which fails
@@ -1834,7 +1816,7 @@ func writeFileAt(r *os.Root, target string, data []byte, exclusive bool) error {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
 	dir := filepath.Dir(target)
-	tmpPath := filepath.Join(dir, TempPrefix+uuid.NewString())
+	tmpPath := filepath.Join(dir, forumfs.TempPrefix+uuid.NewString())
 	tmp, err := r.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", name, err)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	forumpkg "github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
@@ -39,7 +40,7 @@ func TestToolHostScope(t *testing.T) {
 	alice := &toolHost{cfg: scopeConfig(), agentID: "alice", workspace: ws}
 
 	got, err := alice.Scope(callAt(2))
-	if err != nil || got != (forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumpkg.BaseDirName)}) {
+	if err != nil || got != (forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumfs.BaseDirName)}) {
 		t.Fatalf("Scope below the maximum depth = %+v, %v", got, err)
 	}
 	if _, err := alice.Scope(callAt(3)); !errors.Is(err, forumpkg.ErrForumDepth) {
@@ -230,7 +231,7 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	    "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}}]}`
 	svc := forumpkg.New(forumpkg.Host{Messenger: modelsHost{}, Agents: modelsHost{}, Notifier: modelsHost{}, Logger: modelsHost{}})
 	err := svc.Validate(context.Background(), []byte(raw), forumpkg.LaunchOptions{
-		Scope:       forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumpkg.BaseDirName)},
+		Scope:       forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumfs.BaseDirName)},
 		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
 		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
 	})
