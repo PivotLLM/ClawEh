@@ -957,11 +957,7 @@ func reportDelivery(msg bus.OutboundMessage, err error) {
 }
 
 // sendWithRetry sends a message through the channel with rate limiting and
-// retry logic. It classifies errors to determine the retry strategy:
-//   - ErrNotRunning / ErrSendFailed / ErrReceiveOnly / ErrRecipientOffline /
-//     ErrRecipientNotFound / ErrUnknownChannel: permanent, no retry
-//   - ErrRateLimit: fixed delay retry
-//   - ErrTemporary / unknown: exponential backoff retry
+// retry logic (retrySend), then reports a failure (reportSendFailure).
 func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
@@ -974,87 +970,88 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		return nil // placeholder was edited successfully, skip Send
 	}
 
-	var lastErr error
-	retries := 0
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		retries = attempt
-		lastErr = w.ch.Send(ctx, msg)
-		if lastErr == nil {
-			return nil
-		}
+	retries, err := retrySend(ctx, func() error { return w.ch.Send(ctx, msg) })
+	if err != nil && ctx.Err() == nil {
+		m.reportSendFailure(name, msg.ChatID, "message", err, retries)
+	}
+	return err
+}
 
-		// Permanent failures — don't retry
-		if permanentSendError(lastErr) {
-			break
+// retrySend calls send until it succeeds or fails for good, and returns the
+// number of retries made and the last error. Errors are classified:
+//   - ErrNotRunning / ErrSendFailed / ErrReceiveOnly / ErrRecipientOffline /
+//     ErrRecipientNotFound / ErrUnknownChannel: permanent, no retry
+//   - ErrRateLimit: fixed delay retry
+//   - ErrTemporary / unknown: exponential backoff retry
+//
+// A ctx that ends while waiting to retry returns ctx.Err().
+func retrySend(ctx context.Context, send func() error) (int, error) {
+	for attempt := 0; ; attempt++ {
+		err := send()
+		if err == nil || permanentSendError(err) || attempt == maxRetries {
+			return attempt, err
 		}
-
-		// Last attempt exhausted — don't sleep
-		if attempt == maxRetries {
-			break
+		delay := rateLimitDelay
+		if !errors.Is(err, ErrRateLimit) {
+			delay = jitter(min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff))
 		}
-
-		// Rate limit error — fixed delay
-		if errors.Is(lastErr, ErrRateLimit) {
-			select {
-			case <-time.After(rateLimitDelay):
-				continue
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-
-		// ErrTemporary or unknown error — exponential backoff
-		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
 		select {
-		case <-time.After(jitter(backoff)):
+		case <-time.After(delay):
 		case <-ctx.Done():
-			return ctx.Err()
+			return attempt, ctx.Err()
 		}
 	}
+}
 
+// reportSendFailure logs a send (what: "message" or "file") that failed after
+// retries retries, and alerts when the failure is an outage rather than a
+// state of the recipient or the configuration.
+func (m *Manager) reportSendFailure(name, chatID, what string, err error, retries int) {
 	// Receive-only rejection is an expected operator choice, not a fault — log it
 	// at INFO so it doesn't read as an error.
-	if errors.Is(lastErr, ErrReceiveOnly) {
+	if errors.Is(err, ErrReceiveOnly) {
 		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
 			"channel": name,
-			"chat_id": msg.ChatID,
-			"detail":  lastErr.Error(),
+			"chat_id": chatID,
+			"kind":    what,
+			"detail":  err.Error(),
 		})
-		return lastErr
+		return
 	}
 
 	// A recipient that is offline or does not exist is an expected state,
 	// not an outage: logged at WARN, never alerted.
-	if recipientUnavailable(lastErr) {
-		logger.WarnCF("channels", "Send dropped: "+recipientReason(lastErr), map[string]any{
+	if recipientUnavailable(err) {
+		logger.WarnCF("channels", "Send dropped: "+recipientReason(err), map[string]any{
 			"channel": name,
-			"chat_id": msg.ChatID,
-			"error":   lastErr.Error(),
+			"chat_id": chatID,
+			"kind":    what,
+			"error":   err.Error(),
 		})
-		return lastErr
+		return
 	}
 
 	// All retries exhausted or permanent failure
 	logger.ErrorCF("channels", "Send failed", map[string]any{
 		"channel": name,
-		"chat_id": msg.ChatID,
-		"error":   lastErr.Error(),
+		"chat_id": chatID,
+		"kind":    what,
+		"error":   err.Error(),
 		"retries": retries,
 	})
-	description := name + ": a message could not be delivered"
+	description := name + ": a " + what + " could not be delivered"
 	switch {
 	case retries > 0:
 		description += " after " + strconv.Itoa(retries) + " retries"
-	case errors.Is(lastErr, ErrNotRunning):
+	case errors.Is(err, ErrNotRunning):
 		description += " because the channel is not running"
 	}
 	m.alert(alerter.Alert{
 		Title:       "Channel send failed",
 		Description: description,
-		Details:     lastErr.Error(),
+		Details:     err.Error(),
 		EventID:     name,
 	})
-	return lastErr
 }
 
 // permanentSendError reports whether err ends a send at once, without retry.
@@ -1184,8 +1181,10 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 	}
 }
 
-// sendMediaWithRetry sends a media message through the channel with rate limiting and
-// retry logic. If the channel does not implement MediaSender, it silently skips.
+// sendMediaWithRetry sends a media message through the channel with rate
+// limiting and the same retry and failure reporting as text
+// (sendWithRetry). If the channel does not implement MediaSender, it
+// silently skips.
 func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) {
 	ms, ok := w.ch.(MediaSender)
 	if !ok {
@@ -1200,69 +1199,10 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		return
 	}
 
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		lastErr = ms.SendMedia(ctx, msg)
-		if lastErr == nil {
-			return
-		}
-
-		// Permanent failures — don't retry
-		if permanentSendError(lastErr) {
-			break
-		}
-
-		// Last attempt exhausted — don't sleep
-		if attempt == maxRetries {
-			break
-		}
-
-		// Rate limit error — fixed delay
-		if errors.Is(lastErr, ErrRateLimit) {
-			select {
-			case <-time.After(rateLimitDelay):
-				continue
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		// ErrTemporary or unknown error — exponential backoff
-		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
-		select {
-		case <-time.After(jitter(backoff)):
-		case <-ctx.Done():
-			return
-		}
+	retries, err := retrySend(ctx, func() error { return ms.SendMedia(ctx, msg) })
+	if err != nil && ctx.Err() == nil {
+		m.reportSendFailure(name, msg.ChatID, "file", err, retries)
 	}
-
-	// Receive-only rejection is an expected operator choice, not a fault — log it
-	// at INFO so it doesn't read as an error.
-	if errors.Is(lastErr, ErrReceiveOnly) {
-		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
-			"channel": name,
-			"chat_id": msg.ChatID,
-			"detail":  lastErr.Error(),
-		})
-		return
-	}
-
-	if recipientUnavailable(lastErr) {
-		logger.WarnCF("channels", "SendMedia dropped: "+recipientReason(lastErr), map[string]any{
-			"channel": name,
-			"chat_id": msg.ChatID,
-			"error":   lastErr.Error(),
-		})
-		return
-	}
-
-	// All retries exhausted or permanent failure
-	logger.ErrorCF("channels", "SendMedia failed", map[string]any{
-		"channel": name,
-		"chat_id": msg.ChatID,
-		"error":   lastErr.Error(),
-		"retries": maxRetries,
-	})
 }
 
 // runTTLJanitor periodically scans the typingStops and placeholders maps
