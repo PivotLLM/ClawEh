@@ -51,10 +51,10 @@ var skipDirs = map[string]bool{"media": true, "logs": true}
 // missing and tightens it to 0700 if it is looser; refuses (returns an error
 // the caller should treat as fatal) when configPath grants any group or other
 // access, naming the chmod that fixes it; and clears group/other bits on every
-// directory and every secret-bearing file under dataDir (see isSensitive). Symlinks are never
-// followed or changed, and the media/ and logs/ trees are not entered. Every
-// change and every failure to change is reported through log, which may be
-// nil. On Windows it does nothing.
+// directory and every secret-bearing file under dataDir (see isSensitive).
+// Symlinks are never followed or changed, and the media/ and logs/ trees are
+// not entered. Every change and every failure to change is reported through
+// log, which may be nil. On Windows it does nothing.
 func Enforce(dataDir, configPath string, log func(msg string, fields map[string]any)) error {
 	if runtime.GOOS == "windows" {
 		return nil
@@ -260,8 +260,8 @@ func loose(path string) (Finding, bool, error) {
 
 // walk visits every directory and regular file under dataDir, calling found
 // for each directory, and each sensitive file, whose mode grants group/other
-// access. It reports whether it
-// stopped at walkLimit. Unreadable subtrees are skipped, not fatal.
+// access. It reports whether it stopped at walkLimit. Unreadable subtrees are
+// skipped, not fatal.
 func walk(dataDir string, found func(Finding)) (bool, error) {
 	dataDir = filepath.Clean(dataDir)
 	seen := 0
