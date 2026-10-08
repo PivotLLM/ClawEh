@@ -88,20 +88,20 @@ func (al *AgentLoop) runAgentLoop(
 	// before reaching that point, so we set it once here at the top.
 	ctx = providers.WithAgentID(ctx, agent.ID)
 
-	// Mark the agent in a turn: a temporary agent is never deleted mid-turn, and
-	// its idle time counts from the end of its last turn. A temporary agent's
-	// instance resolved before a reload rebuilt it is closed: the turn runs on
+	// Mark the agent in a turn: a temporary agent is never deleted mid-turn, its
+	// idle time counts from the end of its last turn, and an instance a reload
+	// replaced is closed only once no turn runs on it. An instance resolved
+	// before a reload replaced it is closed (or about to be): the turn runs on
 	// the current instance instead, and is dropped only when the agent is gone.
-	// (A replaced config instance is not closed, so its turn runs as before.)
 	if registry := al.GetRegistry(); registry != nil {
 		endTurn, current := registry.BeginTurn(agent.ID, agent)
-		if !current && agent.IsTemp() {
+		if !current {
 			if fresh, ok := registry.Get(agent.ID); ok {
 				agent = fresh
 				endTurn, current = registry.BeginTurn(agent.ID, agent)
 			}
 			if !current {
-				logger.WarnCF("agent", "Turn dropped: the temporary agent no longer exists",
+				logger.WarnCF("agent", "Turn dropped: the agent no longer exists",
 					map[string]any{"agent_id": agent.ID, "agent": agent.Label(), "session_key": opts.SessionKey})
 				return "", errAgentGone
 			}
@@ -1050,6 +1050,18 @@ func (al *AgentLoop) runLLMIteration(
 		if err != nil && shuttingDown(ctx) {
 			return "", false, false, "", iteration, fmt.Errorf("LLM call interrupted: %w", context.Cause(ctx))
 		}
+		if err != nil && stoppedOnPurpose(ctx) {
+			// Cancelled on purpose (/cancel, or an asker such as a forum that
+			// stopped waiting): not a failure of the call.
+			logger.InfoCF("agent", "LLM call stopped: the turn was cancelled",
+				map[string]any{
+					"agent_id":  agent.ID,
+					"iteration": iteration,
+					"model":     activeModel,
+					"cause":     context.Cause(ctx).Error(),
+				})
+			return "", false, false, "", iteration, fmt.Errorf("LLM call stopped: %w: %w", context.Cause(ctx), err)
+		}
 		if err != nil {
 			logger.ErrorCF("agent", "LLM call failed",
 				map[string]any{
@@ -1386,6 +1398,7 @@ func (al *AgentLoop) runLLMIteration(
 					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",
 						SenderID:   "async:" + tc.Name,
+						Internal:   true,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: resultSessionKey,

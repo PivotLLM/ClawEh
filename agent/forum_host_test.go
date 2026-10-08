@@ -812,3 +812,30 @@ func TestForumHost_ScopesIncludeEveryAgent(t *testing.T) {
 		t.Fatalf("scopes = %v, want every configured agent", ids)
 	}
 }
+
+// A host bound to a loop without a registry refuses or answers empty; it
+// never dereferences the missing registry.
+func TestForumHost_NilRegistry(t *testing.T) {
+	h := NewForumHost()
+	h.Bind(&AgentLoop{})
+	ctx := context.Background()
+	if scopes := h.Scopes(); scopes != nil {
+		t.Errorf("Scopes = %v, want none", scopes)
+	}
+	if _, err := h.Exists(ctx, "alice"); err == nil {
+		t.Error("Exists without a registry succeeded")
+	}
+	if _, err := h.Models(ctx, "alice"); err == nil {
+		t.Error("Models without a registry succeeded")
+	}
+	if model, wait := h.Cooldown("alice"); model != "" || wait != 0 {
+		t.Errorf("Cooldown = %q, %s; want none", model, wait)
+	}
+	if _, err := h.CreateClone(ctx, forum.CloneSpec{Source: "alice", Owner: "alice"}); err == nil {
+		t.Error("CreateClone without a registry succeeded")
+	}
+	if got := h.sender(ctx); got != "Forum" {
+		t.Errorf("sender = %q, want Forum", got)
+	}
+	h.OnStuck("f1", 1, forum.Origin{AgentID: "alice"}, nil)
+}

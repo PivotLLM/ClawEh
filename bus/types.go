@@ -30,6 +30,12 @@ type InboundMessage struct {
 	SessionKey string            `json:"session_key"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	IsRetry    bool              `json:"is_retry,omitempty"`
+	// Internal marks a message claw published itself (a scheduled job, a
+	// webhook, a notice, a recovery replay, a tool or sub-agent result, an
+	// agent's question, a forum notice, …), as opposed to one someone wrote in
+	// a chat. Every internal publisher sets it; an internal message is never
+	// taken as a person's answer.
+	Internal bool `json:"internal,omitempty"`
 }
 
 type OutboundMessage struct {

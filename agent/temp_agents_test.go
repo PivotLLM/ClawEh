@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
@@ -310,4 +312,75 @@ func TestReload_RebuildsTempAgents(t *testing.T) {
 	if fresh, ok := reg.Get(freshID); !ok || fresh.Tools.Count() != 0 {
 		t.Fatal("the fresh agent must survive the reload, still without tools")
 	}
+}
+
+// modelRecordingProvider records the model of every call.
+type modelRecordingProvider struct {
+	providers.LLMProvider
+	mu     sync.Mutex
+	models []string
+}
+
+func (p *modelRecordingProvider) Chat(
+	ctx context.Context, messages []providers.Message, defs []providers.ToolDefinition, model string, opts map[string]any,
+) (*providers.LLMResponse, error) {
+	p.mu.Lock()
+	p.models = append(p.models, model)
+	p.mu.Unlock()
+	return p.LLMProvider.Chat(ctx, messages, defs, model, opts)
+}
+
+// TestSubagentSpawn_ModelNarrowsClone: a sub-agent asked for one of the
+// target's models is a clone on that model alone, the way a forum
+// participant is (agentreg.CloneModel), and runs on it.
+func TestSubagentSpawn_ModelNarrowsClone(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+
+	cfg := newTestConfig(t)
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "one", Model: "one-wire", Provider: "p", Enabled: true},
+		{ModelName: "two", Model: "two-wire", Provider: "p", Enabled: true},
+	}
+	cfg.Agents.List[0].Models = []string{"one", "two"}
+	provider := &modelRecordingProvider{LLMProvider: &mockProvider{}}
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), provider, nil)
+
+	var cloneModel string
+	var candidates int
+	provider.LLMProvider = &inspectingProvider{LLMProvider: &mockProvider{}, inspect: func(ctx context.Context) {
+		id := providers.AgentIDFromContext(ctx)
+		if info, ok := al.GetRegistry().Info(id); ok {
+			cloneModel = info.Spec.CloneModel
+		}
+		if inst, ok := al.GetRegistry().Get(id); ok {
+			candidates = len(inst.Candidates)
+		}
+	}}
+	_, release, err := al.runSubagentTask(context.Background(), "main", "do it", "two", nil)
+	release()
+	if err != nil {
+		t.Fatalf("runSubagentTask: %v", err)
+	}
+	if cloneModel != "two" || candidates != 1 {
+		t.Fatalf("clone model = %q with %d candidates, want two alone", cloneModel, candidates)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.models) == 0 || provider.models[0] != "two-wire" {
+		t.Fatalf("models called = %v, want two-wire", provider.models)
+	}
+}
+
+// inspectingProvider calls inspect with each call's context.
+type inspectingProvider struct {
+	providers.LLMProvider
+	inspect func(context.Context)
+}
+
+func (p *inspectingProvider) Chat(
+	ctx context.Context, messages []providers.Message, defs []providers.ToolDefinition, model string, opts map[string]any,
+) (*providers.LLMResponse, error) {
+	p.inspect(ctx)
+	return p.LLMProvider.Chat(ctx, messages, defs, model, opts)
 }

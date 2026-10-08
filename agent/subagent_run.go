@@ -57,34 +57,30 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 		}
 	}
 
-	// Optional model override (already validated against the agent's candidates
-	// by the Spawner). A model that does not match is an error rather than a
+	// The clone runs on the agent's configuration; an optional model (already
+	// validated against the agent's candidates by the Spawner) narrows it to
+	// that one model. A model that does not match is an error rather than a
 	// silent run on the default model.
-	modelIdx := -1
+	opts := []agentreg.Option{agentreg.CloneOf(target.ID), agentreg.EphemeralMemory()}
 	if strings.TrimSpace(model) != "" {
 		matched, found := toolsagents.MatchCandidate(target.Candidates, model)
 		if !found {
 			return nil, noop, fmt.Errorf("%w: model %q is not configured for agent %q", global.ErrModelNotAvailable, model, agentID)
 		}
-		for i, c := range target.Candidates {
-			if c.Alias == matched.Alias && c.Model == matched.Model {
-				modelIdx = i
-				break
-			}
-		}
+		opts = append(opts, agentreg.CloneModel(candidateName(matched)))
 	}
 
 	// The clone is in a turn from the moment it exists, so nothing (a reload,
 	// the sweep) can replace or delete it before the run is over.
-	cloneID, endTurn, err := registry.CreateInTurn(config.AgentConfig{}, agentreg.CloneOf(target.ID), agentreg.EphemeralMemory())
+	cloneID, endTurn, err := registry.CreateInTurn(config.AgentConfig{}, opts...)
 	if err != nil {
 		return nil, noop, fmt.Errorf("subagent: %w", err)
 	}
 	release := func() {
 		endTurn()
 		if delErr := registry.Delete(cloneID); delErr != nil {
-			logger.WarnCF("agent", "Sub-agent clone not deleted; it is removed after 24h idle or at the next start",
-				map[string]any{"agent_id": cloneID, "error": delErr.Error()})
+			logger.WarnCF("agent", "Sub-agent clone not deleted; it is removed once idle past its TTL or at the next start",
+				map[string]any{"agent_id": cloneID, "ttl": agentreg.DefaultTTL.String(), "error": delErr.Error()})
 		}
 	}
 	clone, ok := registry.Get(cloneID)
@@ -92,14 +88,6 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 		return nil, release, fmt.Errorf("subagent: clone of %q vanished", agentID)
 	}
 	sessionKey := routing.BuildAgentMainSessionKey(clone.ID)
-
-	if modelIdx >= 0 {
-		if setErr := al.setActiveModelIndex(clone, sessionKey, modelIdx); setErr != nil {
-			logger.WarnCF("agent", "Failed to persist sub-agent model selection", map[string]any{
-				"agent": clone.Label(), "model": model, "error": setErr.Error(),
-			})
-		}
-	}
 
 	// This worker runs one level deeper than the agent that spawned it. Recording
 	// the incremented depth on the loop context bounds any further spawning the

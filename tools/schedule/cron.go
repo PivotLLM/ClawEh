@@ -550,6 +550,7 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "cron",
+		Internal: true,
 		ChatID:   chatID,
 		Content:  content,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},

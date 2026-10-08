@@ -68,7 +68,8 @@ const DefaultSystemPrompt = "You are an AI agent. Respond as requested."
 // deletes it, unless Create was given another TTL.
 const DefaultTTL = 24 * time.Hour
 
-// SweepInterval is how often RunSweeper looks for idle temporary agents.
+// SweepInterval is how often RunSweeper looks for idle temporary agents and
+// retries releasing replaced instances.
 const SweepInterval = 10 * time.Minute
 
 // ErrNotFound is returned for an id the registry does not hold.
@@ -232,6 +233,10 @@ type entry[T Instance] struct {
 	inst T
 	spec Spec
 	meta *meta
+	// retireWhenIdle marks a config instance a reload replaced; retiring is
+	// set by the one call that releases and closes it (retireIfIdle).
+	retireWhenIdle atomic.Bool
+	retiring       atomic.Bool
 }
 
 // Registry holds every agent, config and temporary.
@@ -252,8 +257,8 @@ type Registry[T Instance] struct {
 	defaultID string
 	resolver  *routing.RouteResolver
 	closed    bool
-	// orphans are instances that could not be released while Close was
-	// running; they are closed with the rest.
+	// orphans are replaced instances the host could not release yet; a
+	// sweep retries them and Close closes them with the rest.
 	orphans []*entry[T]
 
 	retire    RetireFunc[T]
@@ -270,6 +275,13 @@ type Registry[T Instance] struct {
 	privateRoot bool
 
 	persistMu sync.Mutex
+	// stateUnusable is set by restore when temp_agents.json could not be
+	// read or parsed, or a newer release wrote it: persist then leaves it
+	// alone. unrestored holds the records restore kept without rebuilding
+	// them (a build error); persist writes them back for the next start.
+	// Both are set once, before the registry is shared.
+	stateUnusable bool
+	unrestored    []tempRecord
 }
 
 // root returns the directory temporary agents are created under, making a
@@ -569,6 +581,9 @@ func (r *Registry[T]) endTurn(e *entry[T]) func() {
 				// instance the turn has just finished with.
 				go r.deleteDeferred(e.spec.ID)
 			}
+			if idle && e.retireWhenIdle.Load() {
+				go r.retireIfIdle(e) // likewise
+			}
 		})
 	}
 }
@@ -609,10 +624,12 @@ func closeQuietly[T Instance](inst T, spec Spec) {
 // Reload rebuilds the config agents from cfg with build, and rebuilds every
 // temporary agent against cfg (a clone from its source's new configuration).
 // A temporary agent cfg can no longer build (its model or clone source is
-// gone) is deleted. A temporary agent in a turn is left exactly as it is: it
-// keeps its instance and its old configuration until a later reload finds it
-// idle and rebuilds it (or a sweep finds the configuration can no longer
-// build it and deletes it); nothing else rebuilds it.
+// gone) is deleted; one that fails to build for any other reason keeps its
+// instance and previous configuration. A temporary agent in a turn is left
+// exactly as it is: it keeps its instance and its old configuration until a
+// later reload finds it idle and rebuilds it (or a sweep finds the
+// configuration can no longer build it and deletes it); nothing else
+// rebuilds it.
 //
 // Nothing changes until everything is built. Then, under the write lock,
 // commit (when not nil) runs: returning false abandons the reload; otherwise
@@ -620,8 +637,8 @@ func closeQuietly[T Instance](inst T, spec Spec) {
 // its own state with it. Creations and deletions that happened while the
 // reload was building are kept. A ctx that ends before the commit, or a
 // vetoed commit, leaves the registry as it was and closes what was built.
-// The temporary instances replaced are released and closed; replaced config
-// instances are left to the caller, as before.
+// The instances replaced are released and closed: a config agent's once no
+// turn runs on it any more.
 func (r *Registry[T]) Reload(ctx context.Context, cfg *config.Config, build BuildFunc[T], commit func() bool) error {
 	if build == nil {
 		return errors.New("agentreg: Build hook is required")
@@ -648,21 +665,30 @@ func (r *Registry[T]) Reload(ctx context.Context, cfg *config.Config, build Buil
 	r.mu.RUnlock()
 
 	rebuilt := make(map[string]*entry[T]) // by id, sharing the old entry's meta
-	doomed := make(map[string]string)     // id → reason
+	doomed := make(map[string]string)     // id → why the configuration can no longer build it
 	for _, e := range temps {
 		if e.meta.busy.Load() > 0 {
 			continue // in a turn: left as it is
 		}
-		spec, reason := r.respec(cfg, e.spec, entries)
-		if reason == "" {
-			inst, buildErr := build(cfg, spec)
-			if buildErr == nil {
-				rebuilt[spec.ID] = &entry[T]{inst: inst, spec: spec, meta: e.meta}
-				continue
-			}
-			reason = "rebuild failed: " + buildErr.Error()
+		spec, gone, err := r.respec(cfg, e.spec, entries)
+		if gone != "" {
+			doomed[e.spec.ID] = gone
+			continue
 		}
-		doomed[e.spec.ID] = reason
+		var inst T
+		if err == nil {
+			inst, err = build(cfg, spec)
+		}
+		if err != nil {
+			// Says nothing about the configuration (an I/O error, a store
+			// that would not open): the agent keeps its instance and its
+			// previous configuration, and the next reload tries again.
+			logger.WarnCF("agent", "Temporary agent kept on its previous configuration: rebuild failed", map[string]any{
+				"agent_id": e.spec.ID, "agent": e.spec.Label(), "error": err.Error(),
+			})
+			continue
+		}
+		rebuilt[spec.ID] = &entry[T]{inst: inst, spec: spec, meta: e.meta}
 	}
 
 	abandon := func(err error) error {
@@ -685,9 +711,11 @@ func (r *Registry[T]) Reload(ctx context.Context, cfg *config.Config, build Buil
 	}
 	var replaced []*entry[T]
 	var drop []*entry[T]
+	var replacedConfig []*entry[T]
 	changed := false
 	for id, cur := range r.entries {
 		if cur.spec.Origin != OriginTemp {
+			replacedConfig = append(replacedConfig, cur)
 			continue
 		}
 		nb, wasRebuilt := rebuilt[id]
@@ -719,10 +747,29 @@ func (r *Registry[T]) Reload(ctx context.Context, cfg *config.Config, build Buil
 	for _, e := range drop {
 		r.dispose(e, doomed[e.spec.ID])
 	}
+	// No turn can begin on a replaced config instance any more (BeginTurn
+	// refuses it): one not in a turn is released and closed now, one in a turn
+	// when its last turn ends.
+	for _, e := range replacedConfig {
+		e.retireWhenIdle.Store(true)
+		r.retireIfIdle(e)
+	}
 	if changed || len(replaced) > 0 {
 		r.persist()
 	}
 	return nil
+}
+
+// retireIfIdle releases and closes a replaced config instance once it is
+// marked (retireWhenIdle) and no turn runs on it. It runs from Reload and
+// from the end of each turn on the instance; the mark is set before the
+// check on one side and the turn count dropped before it on the other, so
+// whichever comes last closes it, exactly once.
+func (r *Registry[T]) retireIfIdle(e *entry[T]) {
+	if !e.retireWhenIdle.Load() || e.meta.busy.Load() > 0 || !e.retiring.CompareAndSwap(false, true) {
+		return
+	}
+	r.closeReplaced(e)
 }
 
 // closeEntries closes the instances of entries nothing else references.
@@ -732,13 +779,13 @@ func closeEntries[T Instance](entries map[string]*entry[T]) {
 	}
 }
 
-// closeReplaced releases and closes a temporary agent's instance that a
-// reload replaced. If the host cannot release it (a session still held), it
-// is left open rather than closed under its holder.
+// closeReplaced releases and closes an instance a reload replaced. If the
+// host cannot release it (a session still held), it is left open rather than
+// closed under its holder, and released by a later sweep or at shutdown.
 func (r *Registry[T]) closeReplaced(e *entry[T]) {
 	if r.retire != nil {
 		if err := r.retire(e.spec, e.inst); err != nil {
-			logger.WarnCF("agent", "Replaced temporary agent instance left open until shutdown", map[string]any{
+			logger.WarnCF("agent", "Replaced agent instance left open until it is released", map[string]any{
 				"agent_id": e.spec.ID, "agent": e.spec.Label(), "error": err.Error(),
 			})
 			r.keepOrphan(e)
@@ -748,8 +795,26 @@ func (r *Registry[T]) closeReplaced(e *entry[T]) {
 	closeQuietly(e.inst, e.spec)
 }
 
-// keepOrphan holds an instance that could not be released so Close closes
-// it; once Close has run, it is closed now.
+// retryOrphans tries again to release and close the replaced instances the
+// host could not release before; those it still cannot release stay held.
+func (r *Registry[T]) retryOrphans() {
+	r.mu.Lock()
+	orphans := r.orphans
+	r.orphans = nil
+	r.mu.Unlock()
+	for _, e := range orphans {
+		if r.retire != nil {
+			if err := r.retire(e.spec, e.inst); err != nil {
+				r.keepOrphan(e)
+				continue
+			}
+		}
+		closeQuietly(e.inst, e.spec)
+	}
+}
+
+// keepOrphan holds an instance that could not be released so a later sweep
+// or Close closes it; once Close has run, it is closed now.
 func (r *Registry[T]) keepOrphan(e *entry[T]) {
 	r.mu.Lock()
 	if !r.closed {
@@ -785,36 +850,40 @@ func (r *Registry[T]) putBack(e *entry[T]) {
 
 // respec derives a temporary agent's spec against cfg, whose config agents
 // are entries: a clone takes its source's current configuration and
-// workspace. A non-empty reason says why it can no longer be built.
-func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*entry[T]) (Spec, string) {
+// workspace. A non-empty gone says why cfg can no longer build it (its model
+// or clone source is gone, or it would stand in for a person): only that
+// deletes a temporary agent. An error is a failure to derive the spec that
+// says nothing about the configuration; the agent is kept.
+func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*entry[T]) (Spec, string, error) {
 	if spec.IsClone() {
 		src, ok := entries[spec.SourceID]
 		if !ok || src.spec.Origin != OriginConfig {
-			return spec, "clone source " + spec.SourceID + " is gone"
+			return spec, "clone source " + spec.SourceID + " is gone", nil
 		}
-		next, err := cloneSpec(src.spec, spec.ID, spec.StateDir, spec.Ephemeral)
-		if err != nil {
-			return spec, err.Error()
-		}
-		next.Owner, next.Purpose = spec.Owner, spec.Purpose
-		next.CloneModel = spec.CloneModel
 		if spec.CloneModel != "" && !sourceHasModel(cfg, src.spec.Config, spec.CloneModel) {
-			return spec, "model " + spec.CloneModel + " is no longer one of " + spec.SourceID + "'s models"
+			return spec, "model " + spec.CloneModel + " is no longer one of " + spec.SourceID + "'s models", nil
 		}
-		next.Config.Models = cloneModels(next.Config.Models, spec.CloneModel)
-		spec = next
+		cs, err := cloneSpec(src.spec, spec.ID, spec.StateDir, spec.Ephemeral)
+		if err != nil {
+			return spec, "", err
+		}
+		cs.Owner, cs.Purpose = spec.Owner, spec.Purpose
+		cs.CloneModel = spec.CloneModel
+		cs.Config.Models = cloneModels(cs.Config.Models, spec.CloneModel)
+		spec = cs
 	}
 	if missing := missingModels(cfg, spec.Config); len(missing) > 0 {
-		return spec, fmt.Sprintf("model(s) %v no longer configured", missing)
+		return spec, fmt.Sprintf("model(s) %v no longer configured", missing), nil
 	}
 	if err := refuseHuman(cfg, spec); err != nil {
-		return spec, err.Error()
+		return spec, err.Error(), nil //nolint:nilerr // a refusal is a reason the configuration cannot build it, not a failure
 	}
-	return spec, ""
+	return spec, "", nil
 }
 
 // sourceHasModel reports whether model is in a clone source's model list
-// (the default list when it names none), by model_name or wire model id.
+// (the default list when it names none), by model_name or by the wire model
+// id of an enabled model, the way missingModels matches them.
 func sourceHasModel(cfg *config.Config, ac *config.AgentConfig, model string) bool {
 	list := ac.Models
 	if len(list) == 0 && cfg != nil {
@@ -828,7 +897,8 @@ func sourceHasModel(cfg *config.Config, ac *config.AgentConfig, model string) bo
 			continue
 		}
 		for i := range cfg.Models {
-			if m := &cfg.Models[i]; m.ModelName == name && m.Model == model || m.Model == name && m.ModelName == model {
+			m := &cfg.Models[i]
+			if m.Enabled && ((m.ModelName == name && m.Model == model) || (m.Model == name && m.ModelName == model)) {
 				return true
 			}
 		}

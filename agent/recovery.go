@@ -70,7 +70,7 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		return
 	}
 
-	sm, ok := al.agentStates[agentID]
+	sm, ok := al.stateManager(agentID)
 	if !ok {
 		clearPending("No state manager for agent")
 		return
@@ -127,6 +127,7 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		SessionKey: sessionKey,
 		MessageID:  src.MessageID,
 		IsRetry:    true,
+		Internal:   true,
 		Metadata: map[string]string{
 			metadataKeyPreresolvedAgentID: agentID,
 		},
@@ -197,7 +198,7 @@ func (al *AgentLoop) recordPendingTurnSource(ctx context.Context, agent *AgentIn
 	if opts.Channel == "" || opts.ChatID == "" || constants.IsInternalChannel(opts.Channel) {
 		return
 	}
-	sm, ok := al.agentStates[agent.ID]
+	sm, ok := al.stateManager(agent.ID)
 	if !ok {
 		return
 	}
@@ -215,7 +216,7 @@ func (al *AgentLoop) recordPendingTurnSource(ctx context.Context, agent *AgentIn
 
 // clearPendingTurnSource forgets the source recorded by recordPendingTurnSource.
 func (al *AgentLoop) clearPendingTurnSource(agentID, sessionKey string) {
-	sm, ok := al.agentStates[agentID]
+	sm, ok := al.stateManager(agentID)
 	if !ok {
 		return
 	}
@@ -223,4 +224,27 @@ func (al *AgentLoop) clearPendingTurnSource(agentID, sessionKey string) {
 		logger.WarnCF("agent", "Failed to clear pending turn source",
 			map[string]any{"error": err.Error(), "session": sessionKey})
 	}
+}
+
+// stateManager returns the restart-recovery state manager of config agent
+// agentID, making it on first use: an agent a reload adds gets one as soon as
+// its first turn records where it came from. A temporary agent has none
+// (its interrupted turns are never replayed).
+func (al *AgentLoop) stateManager(agentID string) (*state.Manager, bool) {
+	registry := al.GetRegistry()
+	if registry == nil {
+		return nil, false
+	}
+	agent, ok := registry.GetConfigured(agentID)
+	if !ok {
+		return nil, false
+	}
+	al.agentStatesMu.Lock()
+	defer al.agentStatesMu.Unlock()
+	sm, ok := al.agentStates[agent.Workspace]
+	if !ok {
+		sm = state.NewManager(agent.Workspace)
+		al.agentStates[agent.Workspace] = sm
+	}
+	return sm, true
 }

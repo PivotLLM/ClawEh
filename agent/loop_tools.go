@@ -173,6 +173,7 @@ func (al *AgentLoop) registerAgentTools(
 				Channel:    tools.ToolChannel(ctx),
 				ChatID:     tools.ToolChatID(ctx),
 				SenderID:   "system",
+				Internal:   true,
 				SessionKey: sessionKey,
 				Content:    wrapClearNotice(message),
 				Metadata:   meta,
@@ -301,8 +302,13 @@ func (al *AgentLoop) registerAgentTools(
 // retireAgent is the registry's RetireFunc: before a temporary agent is
 // closed and its directory removed, its one session's context manager is
 // closed (refused while something holds it), its session tokens revoked and
-// the per-session caches the loop keeps for it dropped.
+// the per-session caches the loop keeps for it dropped. A config agent's
+// instance is retired only when a reload replaced it; the agent lives on in
+// its new instance, so only what still uses the old one is released.
 func (al *AgentLoop) retireAgent(spec agentreg.Spec, inst *AgentInstance) error {
+	if spec.Origin == agentreg.OriginConfig {
+		return al.releaseReplacedInstance(inst)
+	}
 	sessionKey := routing.BuildAgentMainSessionKey(inst.ID)
 	if !al.dropContextManager(context.Background(), inst, sessionKey, evictReasonTempDeleted) {
 		return fmt.Errorf("session %s is still in use", sessionKey)
@@ -542,6 +548,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 		msg := bus.InboundMessage{
 			Channel:  "system",
 			SenderID: "async:agent_spawn",
+			Internal: true,
 			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
 			Content:  content,
 		}
@@ -571,4 +578,31 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	return defaultAgent.Provider, true
+}
+
+// releaseReplacedInstance evicts every cached context manager still built on
+// a replaced config instance's session store, so the store can be closed. It
+// refuses while one is in use; the registry retries later. Managers already
+// rebuilt on the new instance are left alone, and so are the agent's tokens
+// and per-session caches, which belong to the agent, not the instance.
+func (al *AgentLoop) releaseReplacedInstance(inst *AgentInstance) error {
+	if inst.Sessions == nil {
+		return nil
+	}
+	var busy string
+	al.contextManagers.Range(func(key, value any) bool {
+		entry, ok := value.(*cmEntry)
+		if !ok || entry.store != inst.Sessions {
+			return true
+		}
+		if !al.tryEvictEntry(context.Background(), fmt.Sprint(key), entry, evictReasonReload) {
+			busy = entry.sessionKey
+			return false
+		}
+		return true
+	})
+	if busy != "" {
+		return fmt.Errorf("session %s is still in use", busy)
+	}
+	return nil
 }

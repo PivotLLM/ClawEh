@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/logger"
 	climcp "github.com/PivotLLM/ClawEh/mcp"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -193,6 +194,7 @@ func TestHumanAgent_OnlyAsksReachThePerson(t *testing.T) {
 
 	internal := toAgent("bob", "m1", "hello") // claw's own, not an ask, no reply required
 	internal.SenderID = "system"
+	internal.Internal = true
 	dispatch(al, internal)
 	noOutbound(t, msgBus)
 
@@ -206,6 +208,7 @@ func TestHumanAgent_OnlyAsksReachThePerson(t *testing.T) {
 
 	cron := fromBob("j1", "Time to submit the report.")
 	cron.SenderID = "cron"
+	cron.Internal = true
 	dispatch(al, cron) // routed to bob by his binding
 	noOutbound(t, msgBus)
 	if n := model.count(); n != 0 {
@@ -354,6 +357,7 @@ func TestHumanAgent_OtherTrafficUnchanged(t *testing.T) {
 	}
 	cron := fromBob("j1", "x")
 	cron.SenderID = "cron"
+	cron.Internal = true
 	if _, ok := al.humanChatOwner(cron); ok {
 		t.Fatal("a scheduled job's message was taken for the person's own")
 	}
@@ -849,4 +853,43 @@ func TestHumanAgent_DeliveredRequestKeepsWaiting(t *testing.T) {
 		t.Fatalf("reply = %+v, want Bob's answer", reply)
 	}
 	al.activeRequests.Wait()
+}
+
+// Whether a message is a person's is decided by the internal mark every claw
+// publisher sets, never by its sender id: the forum's completion notice is
+// marked, and a message from a publisher no list knows about, marked
+// internal, is not taken for the person's answer even in the person's chat.
+func TestHumanAgent_InternalMessagesNeverAnswers(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	al, msgBus, _ := newHumanLoop(t, 60)
+	host := NewForumHost()
+	host.Bind(al)
+	result := &forum.Result{ForumID: "f1", Run: 1, Name: "review", Status: forum.StatusCompleted, Complete: true}
+	if err := host.ForumFinished(context.Background(),
+		forum.Origin{AgentID: "alice", Channel: "test", ChatID: bobChat},
+		forum.Chat{Channel: "test", ChatID: bobChat}, result); err != nil {
+		t.Fatalf("ForumFinished: %v", err)
+	}
+	notice, ok := consumeInbound(t, msgBus)
+	if !ok {
+		t.Fatal("no forum notice was queued")
+	}
+	if !notice.Internal || fromPerson(notice) {
+		t.Fatalf("the forum notice is not marked internal: %+v", notice)
+	}
+	// The same notice in Bob's own chat is still not his.
+	notice.Channel, notice.ChatID, notice.Peer = "test", bobChat, bus.Peer{Kind: "direct", ID: bobChat}
+	if _, ok := al.humanChatOwner(notice); ok {
+		t.Fatal("a forum notice was taken for the person's own message")
+	}
+
+	other := fromBob("n1", "x")
+	other.SenderID = "some-new-publisher"
+	other.Internal = true
+	if _, ok := al.humanChatOwner(other); ok {
+		t.Fatal("an internal message from an unknown publisher was taken for the person's own")
+	}
+	if _, ok := al.humanChatOwner(fromBob("b1", "x")); !ok {
+		t.Fatal("the person's message was not recognised")
+	}
 }

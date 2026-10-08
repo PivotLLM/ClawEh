@@ -64,7 +64,11 @@ type AgentLoop struct {
 	// are minted/revoked from the WebUI. The same instance is shared with the API
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
 	namedTokens *msgtoken.NamedStore
-	agentStates map[string]*state.Manager // agentID -> per-agent state manager
+	// agentStates holds the restart-recovery state managers of config
+	// agents, by workspace (one manager per state file), made on first use so
+	// an agent a reload adds gets one too. Guarded by agentStatesMu.
+	agentStatesMu sync.Mutex
+	agentStates   map[string]*state.Manager
 	// sessions holds the per-session dispatch state (session scope key →
 	// *sessionState): the goroutine running the session's turns, the messages
 	// queued behind it and the /cancel bookkeeping. The scope key is resolved via
@@ -163,7 +167,14 @@ type AgentLoop struct {
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
 // is an interrupted turn: no reply is sent and its pending-turn flag is kept,
 // so it is replayed when the gateway starts again.
-var errShuttingDown = errors.New("claw shutting down")
+var errShuttingDown = errors.New("the service is shutting down")
+
+// stoppedOnPurpose reports whether ctx was cancelled on purpose: by /cancel,
+// or because the asker of the turn stopped waiting for it.
+func stoppedOnPurpose(ctx context.Context) bool {
+	cause := context.Cause(ctx)
+	return errors.Is(cause, errCancelledByUser) || errors.Is(cause, errAskerStopped)
+}
 
 // shuttingDown reports whether ctx was cancelled by Stop.
 func shuttingDown(ctx context.Context) bool {
@@ -313,9 +324,7 @@ func NewAgentLoop(
 
 	// Per-agent state managers and message-token managers: config agents only.
 	for _, agentID := range registry.List() {
-		if agentInstance, ok := registry.Get(agentID); ok {
-			al.agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-		}
+		al.stateManager(agentID)
 	}
 	al.messageManagers = buildMessageManagers(registry, cfg)
 

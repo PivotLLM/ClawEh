@@ -262,7 +262,7 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 	pending := make(chan bool, 1)
 	model := chatFunc(func(ctx context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
 		if u := lastUser(messages); strings.Contains(u, "[System: async:async_tool]") {
-			_, rec := al.agentStates["bob"].GetPendingTurn("agent:bob:main")
+			_, rec := testStateManager(t, al, "bob").GetPendingTurn("agent:bob:main")
 			pending <- rec
 			results <- u
 			return &providers.LLMResponse{Content: "noted"}, nil
@@ -783,8 +783,8 @@ func TestCommands_AskAndWhisper(t *testing.T) {
 		name, user, text, want string
 	}{
 		{"whisper allowed", "u1", "/whisper bob hello there", "Whispered to Bob."},
-		{"whisper refused", "u2", "/whisper bob hello", "You don't have permission to /whisper Bob"},
-		{"ask refused", "u2", "/ask Bob hello", "You don't have permission to /ask Bob"},
+		{"whisper refused", "u2", "/whisper bob hello", "You don't have permission to /whisper Bob."},
+		{"ask refused", "u2", "/ask Bob hello", "You don't have permission to /ask Bob."},
 		{"ask allowed", "u1", "/ask Bob hello", "Bob: reply 1"},
 		{"default agent allowed", "u2", "/ask alice hello", "Alice: reply 1"},
 		{"unknown agent", "u1", "/ask zed hello", "There is no agent named zed."},

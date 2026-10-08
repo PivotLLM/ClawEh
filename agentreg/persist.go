@@ -6,9 +6,11 @@ package agentreg
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,7 +52,7 @@ type tempRecord struct {
 // is logged: the agents keep working, they are just not restored after a
 // restart.
 func (r *Registry[T]) persist() {
-	if r.statePath == "" {
+	if r.statePath == "" || r.stateUnusable {
 		return
 	}
 	r.persistMu.Lock()
@@ -79,6 +81,8 @@ func (r *Registry[T]) persist() {
 		file.Agents = append(file.Agents, rec)
 	}
 	r.mu.RUnlock()
+	// Agents restore could not rebuild stay listed for the next start.
+	file.Agents = append(file.Agents, r.unrestored...)
 
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err == nil {
@@ -92,25 +96,36 @@ func (r *Registry[T]) persist() {
 }
 
 // restore rebuilds the temporary agents listed in temp_agents.json. One the
-// configuration can no longer build is deleted with a log line. Every other
-// directory under the temp root (an ephemeral agent, such as a sub-agent run
-// the process stopped in the middle of, or one left by a crash between
-// creating it and saving the list) is removed.
+// configuration can no longer build is deleted with a log line; one that
+// fails to build for any other reason is kept on disk and in the file for the
+// next start. Every other directory under the temp root (an ephemeral agent,
+// such as a sub-agent run the process stopped in the middle of, or one left
+// by a crash between creating it and saving the list) is removed.
+//
+// A file that cannot be read or parsed, or that a newer release wrote, is
+// left as it is, and so is every directory under the temp root: nothing is
+// restored, nothing is deleted, and the file is not rewritten while this
+// process runs.
 func (r *Registry[T]) restore() {
 	if r.statePath == "" {
 		return
 	}
 	data, err := os.ReadFile(r.statePath)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		logger.WarnCF("agent", "Failed to read temporary agents; starting without them",
-			map[string]any{"path": r.statePath, "error": err.Error()})
-	}
 	var file stateFile
-	if len(data) > 0 {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Nothing saved: every directory under the temp root is an orphan.
+	case err != nil:
+		r.keepSavedState(err)
+		return
+	default:
 		if err := json.Unmarshal(data, &file); err != nil {
-			logger.WarnCF("agent", "Failed to parse temporary agents; starting without them",
-				map[string]any{"path": r.statePath, "error": err.Error()})
-			file = stateFile{}
+			r.keepSavedState(err)
+			return
+		}
+		if file.Version > stateFileVersion {
+			r.keepSavedState(fmt.Errorf("format version %d is newer than this release's %d", file.Version, stateFileVersion))
+			return
 		}
 	}
 
@@ -129,30 +144,49 @@ func (r *Registry[T]) restore() {
 			spec = freshSpec(*rec.Config, id, spec.StateDir, rec.Mode, rec.SystemPrompt, false)
 		}
 		spec.Owner, spec.Purpose, spec.CloneModel = rec.Owner, rec.Purpose, rec.CloneModel
-		spec, reason := r.respec(r.cfg, spec, r.entries)
-		if reason == "" {
-			inst, err := r.build(r.cfg, spec)
-			if err == nil {
-				m := newMeta(rec.Created, time.Duration(rec.TTLSeconds)*time.Second)
-				m.touch(rec.LastUsed)
-				r.entries[id] = &entry[T]{inst: inst, spec: spec, meta: m}
-				restored++
-				continue
-			}
-			reason = "rebuild failed: " + err.Error()
+		spec, gone, err := r.respec(r.cfg, spec, r.entries)
+		if gone != "" {
+			removeDir(spec.StateDir)
+			logger.InfoCF("agent", "Deleted temporary agent", map[string]any{
+				"agent_id": id, "agent": spec.Label(), "reason": gone,
+			})
+			continue
 		}
-		removeDir(spec.StateDir)
-		logger.InfoCF("agent", "Deleted temporary agent", map[string]any{
-			"agent_id": id, "agent": spec.Label(), "reason": reason,
-		})
+		var inst T
+		if err == nil {
+			inst, err = r.build(r.cfg, spec)
+		}
+		if err != nil {
+			// Says nothing about the configuration: keep the record and the
+			// directory, and try again at the next start.
+			r.unrestored = append(r.unrestored, *rec)
+			logger.WarnCF("agent", "Temporary agent not restored: rebuild failed; kept for the next start", map[string]any{
+				"agent_id": id, "agent": spec.Label(), "error": err.Error(),
+			})
+			continue
+		}
+		m := newMeta(rec.Created, time.Duration(rec.TTLSeconds)*time.Second)
+		m.touch(rec.LastUsed)
+		r.entries[id] = &entry[T]{inst: inst, spec: spec, meta: m}
+		restored++
 	}
 	r.removeOrphanDirs()
-	if len(file.Agents) != restored {
+	if len(file.Agents) != restored+len(r.unrestored) {
 		r.persist()
 	}
 	if restored > 0 {
 		logger.InfoCF("agent", "Restored temporary agents", map[string]any{"count": restored})
 	}
+}
+
+// keepSavedState is restore's answer to a temp_agents.json it cannot use:
+// the file and every directory under the temp root are left alone, and the
+// file is not rewritten while this process runs (temporary agents created
+// now are not restored after a restart).
+func (r *Registry[T]) keepSavedState(err error) {
+	r.stateUnusable = true
+	logger.WarnCF("agent", "Temporary agents not restored: their list could not be read; it and their folders are kept, and new temporary agents are not saved until it is fixed or removed",
+		map[string]any{"path": r.statePath, "error": err.Error()})
 }
 
 // removeOrphanDirs removes every directory under the temp root that no
@@ -164,6 +198,9 @@ func (r *Registry[T]) removeOrphanDirs() {
 	}
 	for _, d := range dirs {
 		if e, ok := r.entries[d.Name()]; ok && e.spec.Origin == OriginTemp {
+			continue
+		}
+		if slices.ContainsFunc(r.unrestored, func(rec tempRecord) bool { return rec.ID == d.Name() }) {
 			continue
 		}
 		path := filepath.Join(r.tempRoot, d.Name())

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func mustGetAgent(t *testing.T, al *AgentLoop) *AgentInstance {
 
 func recordSource(t *testing.T, al *AgentLoop, channel, chatID string) *state.Manager {
 	t.Helper()
-	sm := al.agentStates["main"]
+	sm := testStateManager(t, al, "main")
 	if err := sm.SetPendingTurn(testSessionKey, state.PendingTurn{Channel: channel, ChatID: chatID}); err != nil {
 		t.Fatalf("SetPendingTurn: %v", err)
 	}
@@ -254,7 +255,7 @@ func TestRecoverSession_NoSourceClears(t *testing.T) {
 func TestRecoverSession_UnusedSessionClears(t *testing.T) {
 	tl, store := newRecoveryTestLoop(t)
 	const oldKey = "agent:main:webui:direct:webui:test-session"
-	sm := tl.al.agentStates["main"]
+	sm := testStateManager(t, tl.al, "main")
 	if err := sm.SetPendingTurn(oldKey, state.PendingTurn{Channel: "webui", ChatID: "chat-7"}); err != nil {
 		t.Fatalf("SetPendingTurn: %v", err)
 	}
@@ -295,16 +296,16 @@ func TestRecordPendingTurnSource_SkipsInternalChannels(t *testing.T) {
 	agent := mustGetAgent(t, tl.al)
 	for _, ch := range []string{"cli", "system", "subagent", "recovery", ""} {
 		tl.al.recordPendingTurnSource(context.Background(), agent, processOptions{SessionKey: testSessionKey, Channel: ch, ChatID: "x"})
-		if _, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); ok {
+		if _, ok := testStateManager(t, tl.al, "main").GetPendingTurn(testSessionKey); ok {
 			t.Errorf("channel %q must not be recorded", ch)
 		}
 	}
 	tl.al.recordPendingTurnSource(context.Background(), agent, processOptions{SessionKey: testSessionKey, Channel: "webui", ChatID: "x"})
-	if pt, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); !ok || pt.Channel != "webui" || pt.ChatID != "x" {
+	if pt, ok := testStateManager(t, tl.al, "main").GetPendingTurn(testSessionKey); !ok || pt.Channel != "webui" || pt.ChatID != "x" {
 		t.Errorf("recorded = %+v (ok=%v), want webui/x", pt, ok)
 	}
 	tl.al.clearPendingTurnSource("main", testSessionKey)
-	if _, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey); ok {
+	if _, ok := testStateManager(t, tl.al, "main").GetPendingTurn(testSessionKey); ok {
 		t.Error("record should be cleared")
 	}
 }
@@ -317,7 +318,7 @@ func TestRecordPendingTurnSource_KeepsReplyContract(t *testing.T) {
 	tl.al.recordPendingTurnSource(ctx, mustGetAgent(t, tl.al), processOptions{
 		SessionKey: testSessionKey, Channel: "forum", ChatID: "f/w/1", MessageID: "m1", ReplyRequired: true,
 	})
-	pt, ok := tl.al.agentStates["main"].GetPendingTurn(testSessionKey)
+	pt, ok := testStateManager(t, tl.al, "main").GetPendingTurn(testSessionKey)
 	if !ok || pt.MessageID != "m1" || !pt.ReplyRequired || pt.SpawnDepth != 2 {
 		t.Fatalf("recorded = %+v (ok=%v), want m1, reply required, depth 2", pt, ok)
 	}
@@ -333,7 +334,7 @@ func TestRecoverSession_ReplayKeepsReplyContract(t *testing.T) {
 		if flagged {
 			pt.ReplyRequired, pt.SpawnDepth = true, 2
 		}
-		if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey, pt); err != nil {
+		if err := testStateManager(t, tl.al, "main").SetPendingTurn(testSessionKey, pt); err != nil {
 			t.Fatal(err)
 		}
 		tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
@@ -363,7 +364,7 @@ func TestRecoverSession_GiveUpOnRequiredReplies(t *testing.T) {
 	for _, flagged := range []bool{false, true} {
 		tl, store := newRecoveryTestLoop(t)
 		pt := state.PendingTurn{Channel: "webui", ChatID: "chat-7", MessageID: "m1", ReplyRequired: flagged, Attempts: recoveryMaxAttempts}
-		if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey, pt); err != nil {
+		if err := testStateManager(t, tl.al, "main").SetPendingTurn(testSessionKey, pt); err != nil {
 			t.Fatal(err)
 		}
 		tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
@@ -385,12 +386,47 @@ func TestRecoverSession_GiveUpOnRequiredReplies(t *testing.T) {
 	// No user message to replay: a flagged turn still gets its error reply.
 	tl, store := newRecoveryTestLoop(t)
 	store.history = []providers.Message{{Role: "assistant", Content: "hello"}}
-	if err := tl.al.agentStates["main"].SetPendingTurn(testSessionKey,
+	if err := testStateManager(t, tl.al, "main").SetPendingTurn(testSessionKey,
 		state.PendingTurn{Channel: "webui", ChatID: "chat-7", MessageID: "m1", ReplyRequired: true}); err != nil {
 		t.Fatal(err)
 	}
 	tl.al.recoverSession(context.Background(), "main", testSessionKey, store)
 	if out, ok := consumeOutbound(t, tl.msgBus); !ok || out.Outcome != bus.OutcomeError || out.OriginalMessageID != "m1" {
 		t.Fatalf("no-history give-up = %+v (ok=%v), want an error outcome to m1", out, ok)
+	}
+}
+
+// testStateManager is the recovery state manager of config agent id.
+func testStateManager(t *testing.T, al *AgentLoop, id string) *state.Manager {
+	t.Helper()
+	sm, ok := al.stateManager(id)
+	if !ok {
+		t.Fatalf("no state manager for %s", id)
+	}
+	return sm
+}
+
+// An agent a reload adds records where its turns come from like any other, so
+// a restart can replay its interrupted turn: the source is on disk for the
+// next process.
+func TestRecordPendingTurnSource_AgentAddedByReload(t *testing.T) {
+	tl := newTestAgentLoop(t)
+	next := *tl.cfg
+	next.Agents.List = append(slices.Clone(tl.cfg.Agents.List), config.AgentConfig{ID: "bob", Name: "Bob"})
+	if err := tl.al.ReloadProviderAndConfig(context.Background(), tl.provider, &next); err != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	}
+	bob, ok := tl.al.GetRegistry().Get("bob")
+	if !ok {
+		t.Fatal("the reload did not add bob")
+	}
+	const key = "agent:bob:main"
+	tl.al.recordPendingTurnSource(context.Background(), bob,
+		processOptions{SessionKey: key, Channel: "webui", ChatID: "x", ReplyRequired: true})
+
+	// What the next process reads at startup.
+	pt, ok := state.NewManager(bob.Workspace).GetPendingTurn(key)
+	if !ok || pt.Channel != "webui" || pt.ChatID != "x" || !pt.ReplyRequired {
+		t.Fatalf("recorded source = %+v (ok=%v), want webui/x, reply required", pt, ok)
 	}
 }

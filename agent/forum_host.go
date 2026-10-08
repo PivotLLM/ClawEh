@@ -83,8 +83,12 @@ func (h *ForumHost) Scopes() []forum.Scope {
 	if err != nil {
 		return nil
 	}
-	cfg, r := al.GetConfig(), al.GetRegistry()
-	if cfg == nil || r == nil {
+	r, err := h.registry()
+	if err != nil {
+		return nil
+	}
+	cfg := al.GetConfig()
+	if cfg == nil {
 		return nil
 	}
 	var scopes []forum.Scope
@@ -126,7 +130,7 @@ func (h *ForumHost) Ask(ctx context.Context, agentID, message string, wait time.
 	// The participant's turn ends when the forum stops waiting for it (the
 	// call timeout, the run deadline, a cancel), so its model call is not
 	// left running for a reply nobody reads.
-	reply, err := al.askStoppingTurn(askCtx, h.sender(al, ctx), agentID, message, wait)
+	reply, err := al.askStoppingTurn(askCtx, h.sender(ctx), agentID, message, wait)
 	stopping := !al.running.Load()
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -161,7 +165,7 @@ func (h *ForumHost) mayAsk(al *AgentLoop, launcherID, agentID string) error {
 	if newAgentServices(al, launcherID).CanTarget(agentID) {
 		return nil
 	}
-	if ownedParticipant(al.GetRegistry(), launcherID, agentID) {
+	if r, err := h.registry(); err == nil && ownedParticipant(r, launcherID, agentID) {
 		return nil
 	}
 	return fmt.Errorf("agent %s may not take part in a forum of %s: it is not in the launcher's subagents.allow_agents", agentID, launcherID)
@@ -177,13 +181,15 @@ func ownedParticipant(r *AgentRegistry, launcherID, agentID string) bool {
 
 // sender names the forum's launching agent (from the ask's context) for the
 // participant: its name, or its id when it is gone.
-func (h *ForumHost) sender(al *AgentLoop, ctx context.Context) string {
+func (h *ForumHost) sender(ctx context.Context) string {
 	info, ok := forum.AskInfoFromContext(ctx)
 	if !ok || info.Origin.AgentID == "" {
 		return "Forum"
 	}
-	if a, found := al.GetRegistry().Get(info.Origin.AgentID); found && a != nil {
-		return instanceName(a)
+	if r, err := h.registry(); err == nil {
+		if a, found := r.Get(info.Origin.AgentID); found && a != nil {
+			return a.DisplayName()
+		}
 	}
 	return info.Origin.AgentID
 }
@@ -215,7 +221,11 @@ func (h *ForumHost) Models(_ context.Context, agentID string) ([]forum.ModelInfo
 	if err != nil {
 		return nil, err
 	}
-	a, ok := al.GetRegistry().Get(agentID)
+	r, err := h.registry()
+	if err != nil {
+		return nil, err
+	}
+	a, ok := r.Get(agentID)
 	if !ok || a == nil {
 		return nil, fmt.Errorf("%w: %s", agentreg.ErrNotFound, agentID)
 	}
@@ -236,8 +246,12 @@ func (h *ForumHost) Cooldown(agentID string) (string, time.Duration) {
 	if err != nil {
 		return "", 0
 	}
+	r, err := h.registry()
+	if err != nil {
+		return "", 0
+	}
 	tracker := al.cooldownTracker()
-	a, ok := al.GetRegistry().Get(agentID)
+	a, ok := r.Get(agentID)
 	if !ok || a == nil || tracker == nil || len(a.Candidates) == 0 {
 		return "", 0
 	}
@@ -283,11 +297,15 @@ func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string
 	if !newAgentServices(al, spec.Owner).CanTarget(spec.Source) {
 		return "", fmt.Errorf("agent %q may not target agent %q (subagents.allow_agents)", spec.Owner, spec.Source)
 	}
+	r, err := h.registry()
+	if err != nil {
+		return "", err
+	}
 	opts := []agentreg.Option{
 		agentreg.CloneOf(spec.Source), agentreg.OwnedBy(spec.Owner), agentreg.WithPurpose(tools.TempPurposeForum),
 	}
 	if spec.Model != "" {
-		src, ok := al.GetRegistry().GetConfigured(spec.Source)
+		src, ok := r.GetConfigured(spec.Source)
 		if !ok || src == nil {
 			return "", fmt.Errorf("%w: %s", agentreg.ErrNotFound, spec.Source)
 		}
@@ -297,7 +315,7 @@ func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string
 		}
 		opts = append(opts, agentreg.CloneModel(candidateName(m)))
 	}
-	return al.GetRegistry().Create(config.AgentConfig{}, opts...)
+	return r.Create(config.AgentConfig{}, opts...)
 }
 
 // CreateFresh implements forum.Agents: a fresh temporary agent on one of the
@@ -406,6 +424,7 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat
 		Content:    forumNoticeText(result),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,
+		Internal:   true,
 	}); err != nil {
 		return fmt.Errorf("queue the notice for agent %s: %w", origin.AgentID, err)
 	}
@@ -431,8 +450,10 @@ func (h *ForumHost) OnStuck(forumID string, run int, origin forum.Origin, err er
 		return
 	}
 	who := origin.AgentID
-	if a, ok := al.GetRegistry().Get(origin.AgentID); ok && a != nil {
-		who = instanceName(a)
+	if r, rerr := h.registry(); rerr == nil {
+		if a, ok := r.Get(origin.AgentID); ok && a != nil {
+			who = a.DisplayName()
+		}
 	}
 	details := ""
 	if err != nil {

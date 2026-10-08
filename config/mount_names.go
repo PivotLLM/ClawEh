@@ -88,8 +88,8 @@ func newReservedMounts(before, next *Config) []error {
 	return newProblems(before.IgnoredMounts(), next.IgnoredMounts(), IgnoredMount.key,
 		func(m IgnoredMount) error {
 			name := m.Agent
-			if ac := next.agentByID(m.Agent); ac != nil {
-				name = agentLabel(ac)
+			if ac := next.AgentByID(m.Agent); ac != nil {
+				name = ac.DisplayName()
 			}
 			return errors.New(name + "'s mount " + strconv.Quote(m.Mount) + " uses a reserved name; choose another name.")
 		})

@@ -141,11 +141,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 		},
 	}
 	if agent != nil {
-		if agent.Name != "" {
-			rt.AgentName = agent.Name
-		} else {
-			rt.AgentName = agent.ID
-		}
+		rt.AgentName = agent.DisplayName()
 		rt.GetContextWindow = func() int { return agent.ContextWindow }
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
 			// Resolve the model that is actually active for THIS session (the
@@ -266,6 +262,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				SessionKey: opts.SessionKey,
 				Content:    wrapClearNotice(""),
 				Peer:       msg.Peer,
+				Internal:   true,
 				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 			}
 			if agent.HumanModel != "" {
@@ -372,6 +369,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				Content:  lastUserMsg,
 				Peer:     msg.Peer,
 				IsRetry:  true,
+				Internal: true,
 			}
 			go func() {
 				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

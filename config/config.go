@@ -1099,10 +1099,11 @@ func (c *Config) FindAgent(ref string) *AgentConfig {
 	return nil
 }
 
-// DisplayName is the agent's name, or its id when it has none.
+// DisplayName is the agent's name, trimmed, or its id when it has none. It
+// is the one way an agent is named to people and in logs.
 func (a *AgentConfig) DisplayName() string {
-	if strings.TrimSpace(a.Name) != "" {
-		return a.Name
+	if name := strings.TrimSpace(a.Name); name != "" {
+		return name
 	}
 	return a.ID
 }

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -57,7 +58,7 @@ func (c *Config) HumanModelOf(ac *AgentConfig) (string, bool) {
 // IsHumanAgent reports whether the configured agent agentID represents a
 // person: its model list names a human model.
 func (c *Config) IsHumanAgent(agentID string) bool {
-	_, ok := c.HumanModelOf(c.agentByID(agentID))
+	_, ok := c.HumanModelOf(c.AgentByID(agentID))
 	return ok
 }
 
@@ -65,7 +66,7 @@ func (c *Config) IsHumanAgent(agentID string) bool {
 // the person's answer, in seconds: its model's request_timeout, else
 // agents.defaults.request_timeout. 0 means no limit of its own.
 func (c *Config) HumanRequestTimeout(agentID string) int {
-	model, ok := c.HumanModelOf(c.agentByID(agentID))
+	model, ok := c.HumanModelOf(c.AgentByID(agentID))
 	if !ok {
 		return 0
 	}
@@ -78,27 +79,10 @@ func (c *Config) HumanRequestTimeout(agentID string) int {
 	return c.Agents.Defaults.RequestTimeout
 }
 
-func (c *Config) agentByID(agentID string) *AgentConfig {
-	id := strings.TrimSpace(agentID)
-	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
-			return &c.Agents.List[i]
-		}
-	}
-	return nil
-}
-
 // sameAgentID matches a binding's agent id to an agent id the way
 // DefaultBinding does: case-insensitively, the agent id trimmed.
 func sameAgentID(bindingAgentID, agentID string) bool {
 	return strings.EqualFold(bindingAgentID, strings.TrimSpace(agentID))
-}
-
-func agentLabel(ac *AgentConfig) string {
-	if ac.Name != "" {
-		return ac.Name
-	}
-	return ac.ID
 }
 
 // HumanProblemKind says which rule a human-agent problem breaks.
@@ -170,7 +154,7 @@ func (c *Config) HumanProblems() []HumanProblem {
 		if !ok {
 			continue
 		}
-		name := agentLabel(ac)
+		name := ac.DisplayName()
 		add := func(kind HumanProblemKind, msg string) {
 			out = append(out, HumanProblem{Kind: kind, Agent: ac.ID, Model: model, Message: msg})
 		}
@@ -261,8 +245,8 @@ func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bo
 			continue
 		}
 		if (b.Match.Peer != nil && b.Match.Peer.ID == chatID) || b.DeliverTo == chatID {
-			if ac := c.agentByID(b.AgentID); ac != nil {
-				return agentLabel(ac), true
+			if ac := c.AgentByID(b.AgentID); ac != nil {
+				return ac.DisplayName(), true
 			}
 			return b.AgentID, true
 		}
@@ -287,7 +271,7 @@ func newHumanProblems(before, next *Config) []error {
 	var errs []error
 	for _, p := range next.HumanProblems() {
 		if p.Kind != HumanNoChat && !had[p.key()] {
-			errs = append(errs, fmt.Errorf("%s", p.Message))
+			errs = append(errs, errors.New(p.Message))
 		}
 	}
 	return errs
@@ -304,7 +288,7 @@ func (c *Config) PruneHumanProblems() []HumanProblem {
 	off := false
 	for _, p := range problems {
 		if p.SetsAgentAside() {
-			if ac := c.agentByID(p.Agent); ac != nil {
+			if ac := c.AgentByID(p.Agent); ac != nil {
 				ac.Enabled = &off
 			}
 		}

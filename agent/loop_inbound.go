@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,15 @@ const sessionIdleTTL = time.Hour
 // errCancelledByUser is the cause /cancel gives the running turn's context, so
 // the turn's failure renders as a cancellation rather than a timeout.
 var errCancelledByUser = errors.New("cancelled by /cancel")
+
+// agentGoneText is the reply to a sender that required one from an agent that
+// no longer exists.
+func agentGoneText(agentID string) string {
+	if agentID == "" {
+		return "That agent no longer exists."
+	}
+	return "Agent " + agentID + " no longer exists."
+}
 
 // errAgentGone marks a message addressed to an agent that does not exist (a
 // deleted temporary agent): it is dropped, never given to another agent.
@@ -203,6 +213,8 @@ func mergeMessages(batch []bus.InboundMessage) bus.InboundMessage {
 	}
 	merged.Content = strings.Join(parts, "\n")
 	merged.Media = media
+	// Someone's message merged with claw's own is someone's.
+	merged.Internal = !slices.ContainsFunc(batch, func(m bus.InboundMessage) bool { return !m.Internal })
 	return merged
 }
 
@@ -388,7 +400,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		// reply gets one.
 		logger.InfoCF("agent", "Request to a person cancelled by shutdown",
 			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
-		const shutdownText = "The request was cancelled because claw is shutting down."
+		const shutdownText = "The request was cancelled because the service is shutting down."
 		if msg.Channel == constants.AgentMessageChannel {
 			al.deliverAskReply(msg, shutdownText, bus.OutcomeCancelled)
 			return
@@ -420,7 +432,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		if !replyRequired {
 			return
 		}
-		response, outcome = err.Error(), bus.OutcomeError
+		response, outcome = agentGoneText(inboundMetadata(msg, metadataKeyPreresolvedAgentID)), bus.OutcomeError
 	case errors.As(err, new(humanNotAskedError)):
 		// Dropped (logged where detected): a person takes only questions from
 		// agents. Someone who wrote to it (a mention, a chat, a device) or a
@@ -453,7 +465,9 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	case err != nil:
 		assistant := ""
 		if route, _, routeErr := al.resolveMessageRoute(msg); routeErr == nil {
-			assistant = al.agentDisplayName(route.AgentID)
+			if a := al.GetConfig().AgentByID(route.AgentID); a != nil {
+				assistant = a.DisplayName()
+			}
 		}
 		response, outcome = renderTurnErrorFor(assistant, turnCtx, turnTimeout, err), bus.OutcomeError
 	case response == "" || outcome == bus.OutcomeEmpty:
@@ -515,7 +529,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 
 // publishCancelledReplies sends the final "cancelled" reply for each message
 // that requires one (bus.MetaReplyRequired) and was dropped by /cancel before
-// its turn ran. Messages without the flag get nothing, as before.
+// its turn ran. Messages without the flag get nothing.
 func (al *AgentLoop) publishCancelledReplies(ctx context.Context, msgs []bus.InboundMessage) {
 	for _, m := range msgs {
 		if !m.ReplyRequired() {
@@ -575,6 +589,7 @@ func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body st
 		ChatID:   chatID,
 		Content:  prefix + body,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
+		Internal: true,
 	}
 
 	// Publish on a fresh bounded context (not the request context) so a client
@@ -605,6 +620,7 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		ChatID:     chatID,
 		Content:    content,
 		SessionKey: sessionKey,
+		Internal:   true,
 	}
 	// Set peer so channel-based bindings (e.g. a specific Slack channel mapped
 	// to a named agent) are matched by the route resolver, exactly as they are
@@ -902,12 +918,6 @@ func (al *AgentLoop) processSystemMessage(
 		)
 	}
 
-	logger.InfoCF("agent", "Processing system message",
-		map[string]any{
-			"sender_id": msg.SenderID,
-			"chat_id":   msg.ChatID,
-		})
-
 	// Parse origin channel from chat_id (format: "channel:chat_id")
 	var originChannel, originChatID string
 	if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
@@ -917,6 +927,12 @@ func (al *AgentLoop) processSystemMessage(
 		originChannel = "cli"
 		originChatID = msg.ChatID
 	}
+	logger.InfoCF("agent", "Processing system message",
+		map[string]any{
+			"sender_id":      msg.SenderID,
+			"origin_channel": originChannel,
+			"origin_chat_id": originChatID,
+		})
 
 	// Extract subagent result from message content
 	// Format: "Task 'label' completed.\n\nResult:\n<actual content>"
@@ -1040,8 +1056,8 @@ func (al *AgentLoop) runMeteredTurn(ctx context.Context, agent *AgentInstance, o
 // other async tool carries the originating agent on preresolved_agent_id and its
 // session on session_key, so the completion is handled by the SPAWNING agent in
 // its own session — not whichever agent happens to be the default. Falls back to
-// the default agent and that agent's main session when no originator is given
-// (legacy behavior). A preresolved agent that does not exist is never replaced
+// the default agent and that agent's main session when no originator is given.
+// A preresolved agent that does not exist is never replaced
 // by another: the message is dropped. Returns (nil, "") when no agent is
 // available or the addressed one is gone.
 func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentInstance, string) {
@@ -1163,17 +1179,4 @@ func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
 		return nil
 	}
 	return &routing.RoutePeer{Kind: parentKind, ID: parentID}
-}
-
-// agentDisplayName is the agent's name, or its id when it has none; empty for
-// an unknown agent.
-func (al *AgentLoop) agentDisplayName(agentID string) string {
-	a := al.GetConfig().AgentByID(agentID)
-	if a == nil {
-		return ""
-	}
-	if a.Name != "" {
-		return a.Name
-	}
-	return a.ID
 }

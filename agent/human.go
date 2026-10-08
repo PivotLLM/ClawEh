@@ -14,7 +14,6 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -32,8 +31,10 @@ const (
 
 // humanTurnGrace is added to a human agent's request timeout when that is
 // longer than the turn budget, so the provider's own wait (an empty reply)
-// ends the turn rather than the budget (an error). 30 s pending the
-// maintainer's sign-off on the value.
+// ends the turn rather than the budget (an error). 30 s leaves the request's
+// timeout room to fire, the request to be withdrawn in the chat and the reply
+// to be delivered, without holding a turn much longer than the person was
+// given.
 const humanTurnGrace = 30 * time.Second
 
 // errHumanCancelled is how a request ends when the person sends /cancel.
@@ -393,7 +394,7 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 		logger.InfoCF("agent", "Message to a person dropped: only questions from agents reach them",
 			turnFields(ctx, map[string]any{"agent_id": agent.ID, "channel": opts.Channel, "sender_id": opts.SenderID}))
 		al.stopTyping(opts.Channel, opts.ChatID)
-		return "", humanNotAskedError{label: agentLabelForUser(agent)}
+		return "", humanNotAskedError{label: agent.DisplayName()}
 	}
 	// The asker, whose wait bounds the person's.
 	w, waiting := al.asks.wait(opts.ChatID)
@@ -404,7 +405,7 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 	cfg := al.GetConfig()
 	channel, chatID, _, ok := cfg.CronTarget(agent.ID)
 	if !ok {
-		return "", fmt.Errorf("%s has no chat to reach the person in", agentLabelForUser(agent))
+		return "", fmt.Errorf("%s has no chat to reach the person in", agent.DisplayName())
 	}
 	if al.dispatcher == nil {
 		return "", errors.New("no provider dispatcher")
@@ -423,10 +424,10 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 	resp, err := hp.Chat(providers.WithHumanRelay(ctx, relay),
 		[]providers.Message{{Role: "user", Content: opts.UserMessage}}, nil, agent.HumanModel, nil)
 	if errors.Is(err, errHumanCancelled) {
-		return "", humanCancelledError{label: agentLabelForUser(agent)}
+		return "", humanCancelledError{label: agent.DisplayName()}
 	}
 	if errors.Is(err, errChatUnreachable) {
-		return "", humanUnreachableError{label: agentLabelForUser(agent), cause: err}
+		return "", humanUnreachableError{label: agent.DisplayName(), cause: err}
 	}
 	if err != nil {
 		return "", err
@@ -447,14 +448,6 @@ func (al *AgentLoop) runHumanTurn(ctx context.Context, agent *AgentInstance, opt
 		*opts.IterationsOut = 1
 	}
 	return answer, nil
-}
-
-// agentLabelForUser names an agent in a message: its name, else its id.
-func agentLabelForUser(agent *AgentInstance) string {
-	if agent.Name != "" {
-		return agent.Name
-	}
-	return agent.ID
 }
 
 // humanChat is a person's chat: the human agent it belongs to in the
@@ -485,7 +478,7 @@ func (al *AgentLoop) humanChatOwner(msg bus.InboundMessage) (humanChat, bool) {
 		if !found || !sameChat(msg, channel, chatID) {
 			continue
 		}
-		hc := humanChat{id: routing.NormalizeAgentID(ac.ID), label: humanLabel(ac)}
+		hc := humanChat{id: routing.NormalizeAgentID(ac.ID), label: ac.DisplayName()}
 		if inst, ok := registry.GetConfigured(hc.id); ok && inst.HumanModel != "" {
 			hc.agent = inst
 		}
@@ -494,22 +487,10 @@ func (al *AgentLoop) humanChatOwner(msg bus.InboundMessage) (humanChat, bool) {
 	return humanChat{}, false
 }
 
-func humanLabel(ac *config.AgentConfig) string {
-	if ac.Name != "" {
-		return ac.Name
-	}
-	return ac.ID
-}
-
 // fromPerson reports whether msg was written by someone, as opposed to
-// published by claw itself into a chat (a scheduled job, a webhook, a session
-// reset, an async result, a restart replay, a mount notice, a callback).
+// published by claw itself (bus.InboundMessage.Internal).
 func fromPerson(msg bus.InboundMessage) bool {
-	switch msg.SenderID {
-	case "cron", "webhook", "system", "recovery", "mount-notify":
-		return false
-	}
-	return !strings.HasPrefix(msg.SenderID, "async:") && !strings.HasPrefix(msg.SenderID, "callback")
+	return !msg.Internal
 }
 
 // humanCommand reports whether text is a command in a person's chat: only

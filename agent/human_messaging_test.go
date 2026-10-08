@@ -155,7 +155,7 @@ func TestHumanAgent_SlashAskFromAllowedChat(t *testing.T) {
 		Channel: "test", ChatID: "c3", SenderID: "u3", MessageID: "a2", Content: "/ask bob hello",
 		Peer: bus.Peer{Kind: "direct", ID: "c3"},
 	})
-	if got := nextOutbound(t, msgBus); got.ChatID != "c3" || got.Content != "You don't have permission to /ask Bob" {
+	if got := nextOutbound(t, msgBus); got.ChatID != "c3" || got.Content != "You don't have permission to /ask Bob." {
 		t.Fatalf("/ask from a chat not allowed to reach Bob got %+v", got)
 	}
 }
@@ -173,6 +173,7 @@ func TestHumanAgent_WhisperDeliveredWithNextAsk(t *testing.T) {
 	noOutbound(t, msgBus)
 	internal := toAgent("bob", "m1", "hello")
 	internal.SenderID = "system"
+	internal.Internal = true
 	dispatch(al, internal) // dropped: not an ask
 	noOutbound(t, msgBus)
 
