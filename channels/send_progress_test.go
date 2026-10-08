@@ -56,10 +56,8 @@ func TestSendProgress_Nil(t *testing.T) {
 // A message the manager splits is a reply only in its first chunk.
 func TestSendSplit_OnlyFirstChunkIsReply(t *testing.T) {
 	m := newTestManager()
-	ch := &mockChannelWithLength{
-		mockChannel: mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error { return nil }},
-		maxLen:      10,
-	}
+	ch := &mockChannelWithLength{maxLen: 10}
+	ch.sendFn = func(context.Context, bus.OutboundMessage) error { return nil }
 	w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "aaaa bbbb cccc dddd eeee ffff", ReplyToMessageID: "42"}
 
