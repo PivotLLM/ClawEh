@@ -15,8 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/google/uuid"
+
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
 
 // Helpers in this file are prefixed rp so they cannot collide with other

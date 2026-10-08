@@ -25,8 +25,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/google/uuid"
+
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
 
 // The on-disk store (DESIGN.md §4). A forum is a directory

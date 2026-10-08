@@ -24,8 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/google/uuid"
+
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
 
 // Helpers in this file are prefixed st so they cannot collide with other
