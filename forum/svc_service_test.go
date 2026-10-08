@@ -256,26 +256,11 @@ func TestSvcValidate(t *testing.T) {
 	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "participants.bob.model") {
 		t.Errorf("unknown model: %v", err)
 	}
-	noSchemas := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
-	withSchema := strings.Replace(svcSimpleJSON, `"limits"`, `"schemas": {"s": {"type": "object"}}, "limits"`, 1)
-	err = noSchemas.Validate(t.Context(), []byte(withSchema), e.opts())
-	if !errors.Is(err, ErrSchemasUnavailable) {
-		t.Errorf("schemas without a validator: %v", err)
-	}
-	// A moderated layer needs the validator for its decision schema, even
-	// without named schemas, so validation catches it before Open does.
-	err = noSchemas.Validate(t.Context(), []byte(svcConfigJSON), e.opts())
-	if !errors.Is(err, ErrSchemasUnavailable) || !strings.Contains(err.Error(), "moderated layers: talk") {
-		t.Errorf("moderated layer without a validator: %v", err)
-	}
-	if err := noSchemas.Validate(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
-		t.Errorf("no schemas and no moderator without a validator: %v", err)
-	}
 }
 
 func TestSvcHostLimits(t *testing.T) {
 	e := svcSetup(t)
-	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}},
+	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger},
 		WithHostLimits(Limits{MaxCalls: 5}))
 	t.Cleanup(func() { svcClose(t, capped) })
 	err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts())
@@ -1409,7 +1394,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		return replier.Ask(ctx, agentID, msg, wait)
 	})
 	newSvc := func() *Service {
-		svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}, OnStuck: e.stuck.record})
+		svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, OnStuck: e.stuck.record})
 		t.Cleanup(func() { svcClose(t, svc) })
 		return svc
 	}
@@ -1625,7 +1610,7 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 		}
 		return replier.Ask(ctx, agentID, msg, wait)
 	})
-	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 	cfg := strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)
 	id, err := svcLaunch(t, svc, cfg, e.opts())

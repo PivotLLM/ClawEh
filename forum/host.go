@@ -7,7 +7,6 @@ package forum
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 )
@@ -212,28 +211,8 @@ type Logger interface {
 	Errorf(format string, v ...any)
 }
 
-// SchemaValidator compiles JSON Schemas (Draft 2020-12, internal references
-// only, §3). No JSON Schema library is a direct dependency of ClawEh, so the
-// host supplies one; a nil SchemaValidator makes any configuration that
-// names a schema fail preflight with ErrSchemasUnavailable.
-type SchemaValidator interface {
-	// Compile parses and compiles one schema document. It fails on a schema
-	// that is not valid Draft 2020-12 or that references anything outside
-	// itself.
-	Compile(schema json.RawMessage) (CompiledSchema, error)
-}
-
-// CompiledSchema validates JSON instances against one compiled schema.
-type CompiledSchema interface {
-	// Validate checks one JSON document. A violation is returned as a
-	// *SchemaViolationError listing every failing location, so the
-	// controller can hand the list to the participant for repair; any other
-	// error is a validator failure.
-	Validate(instance []byte) error
-}
-
-// SchemaViolationError is the error CompiledSchema.Validate returns for an
-// instance that does not satisfy the schema.
+// SchemaViolationError is the error a compiled schema's Validate returns
+// for an instance that does not satisfy the schema.
 type SchemaViolationError struct {
 	// Messages are human-readable, one per failing location, suitable for a
 	// repair message.
@@ -248,14 +227,13 @@ func (e *SchemaViolationError) Error() string {
 	return "schema violation: " + strings.Join(e.Messages, "; ")
 }
 
-// Host bundles the host-provided dependencies the service needs. Schemas
-// and OnStuck may be nil; the others are required.
+// Host bundles the host-provided dependencies the service needs. OnStuck
+// and Cooldown may be nil; the others are required.
 type Host struct {
 	Messenger Messenger
 	Agents    Agents
 	Notifier  Notifier
 	Logger    Logger
-	Schemas   SchemaValidator
 	// OnStuck, when set, is called once per run and process when a
 	// forum's run stops on an error it does not recover from by itself (a
 	// store write that fails during a run, a forum Recover cannot reopen):

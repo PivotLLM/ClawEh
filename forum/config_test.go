@@ -215,7 +215,7 @@ func TestEffectiveModeratorSchemaValidates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sch, err := JSONSchemaValidator{}.Compile(raw)
+			sch, err := compileSchema(raw)
 			if err != nil {
 				t.Fatalf("effective schema does not compile: %v\n%s", err, raw)
 			}

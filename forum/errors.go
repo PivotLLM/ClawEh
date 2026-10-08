@@ -18,9 +18,6 @@ var (
 	// state (pause a terminal forum, delete a running one, resume a forum
 	// that is not paused or interrupted).
 	ErrInvalidState = errors.New("operation not allowed in this state")
-	// ErrSchemasUnavailable: the configuration names a JSON Schema but the
-	// host provided no SchemaValidator.
-	ErrSchemasUnavailable = errors.New("JSON Schema validation is not available")
 	// ErrCorrupt: the forum directory fails verification (missing files,
 	// digest mismatch, unreadable commit).
 	ErrCorrupt = errors.New("forum directory is corrupt")

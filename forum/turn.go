@@ -848,7 +848,7 @@ func fence(info, content string) string {
 // When out.Share is set, every share pointer must resolve (rev 3 §4
 // "missing share paths fail output validation"). A non-empty issues list
 // means the attempt is rejected and nothing is stored.
-func validateOutput(out Output, text string, schema CompiledSchema) (content []byte, issues []string) {
+func validateOutput(out Output, text string, schema *compiledSchema) (content []byte, issues []string) {
 	if strings.TrimSpace(text) == "" {
 		return nil, []string{"the reply is empty"}
 	}
@@ -878,7 +878,7 @@ func validateOutput(out Output, text string, schema CompiledSchema) (content []b
 }
 
 // schemaIssues validates content against schema (nil: no check).
-func schemaIssues(schema CompiledSchema, content []byte) []string {
+func schemaIssues(schema *compiledSchema, content []byte) []string {
 	if schema == nil {
 		return nil
 	}

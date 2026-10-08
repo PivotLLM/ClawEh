@@ -289,7 +289,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	}
 	f.msg = &ctlMessenger{agents: agents}
 	f.msg.respond = func(cl ctlCall) (Reply, error) { return f.reply(cl), nil }
-	f.host = Host{Messenger: f.msg, Agents: f.agents, Notifier: nil, Logger: f.log, Schemas: JSONSchemaValidator{}}
+	f.host = Host{Messenger: f.msg, Agents: f.agents, Notifier: nil, Logger: f.log}
 	return f
 }
 

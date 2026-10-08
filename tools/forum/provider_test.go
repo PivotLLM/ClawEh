@@ -238,7 +238,6 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	res, err := forumpkg.Preflight(context.Background(), fc, forumpkg.PreflightEnv{
 		Launcher:    "alice",
 		Agents:      modelsHost{},
-		Schemas:     forumpkg.JSONSchemaValidator{},
 		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
 		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
 	})

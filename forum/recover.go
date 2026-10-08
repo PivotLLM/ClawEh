@@ -27,8 +27,7 @@ import (
 //     (SweepRun).
 //  1. Verify the directory (Verify), rebuild State from the commit log
 //     (ReplayState, never the state.json cache), read the log and every layer's attempts (Store.ListAttempts).
-//  2. Compile the configured schemas (compileSchemas); a configuration
-//     naming a schema with a nil validator is ErrSchemasUnavailable.
+//  2. Compile the configured schemas (compileSchemas).
 //  3. Read participants.json. For every participant with Created true,
 //     check Agents.Exists; a missing one is recorded so that Run ends the
 //     forum failed with EndParticipantGone instead of recreating it (§8).
@@ -64,7 +63,7 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 			return nil, fmt.Errorf("open forum: %w", err)
 		}
 	}
-	schemas, decisionSchemas, err := compileSchemas(cfg, snap, host.Schemas)
+	schemas, decisionSchemas, err := compileSchemas(cfg, snap)
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
@@ -98,23 +97,16 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 
 // compileSchemas compiles every entry of cfg.Schemas (named) and every
 // effective moderator schema in snap.ModeratorSchemas (decision, keyed by
-// layer ID). It returns empty maps when there are none, and
-// ErrSchemasUnavailable when there are some and validator is nil.
-func compileSchemas(cfg *Config, snap *Snapshot, validator SchemaValidator) (named, decision map[string]CompiledSchema, err error) {
-	named, decision = map[string]CompiledSchema{}, map[string]CompiledSchema{}
-	if len(cfg.Schemas) == 0 && len(snap.ModeratorSchemas) == 0 {
-		return named, decision, nil
-	}
-	if validator == nil {
-		return nil, nil, ErrSchemasUnavailable
-	}
+// layer ID). It returns empty maps when there are none.
+func compileSchemas(cfg *Config, snap *Snapshot) (named, decision map[string]*compiledSchema, err error) {
+	named, decision = map[string]*compiledSchema{}, map[string]*compiledSchema{}
 	for name, raw := range cfg.Schemas {
-		if named[name], err = validator.Compile(raw); err != nil {
+		if named[name], err = compileSchema(raw); err != nil {
 			return nil, nil, fmt.Errorf("compile schema %q: %w", name, err)
 		}
 	}
 	for layerID, raw := range snap.ModeratorSchemas {
-		if decision[layerID], err = validator.Compile(raw); err != nil {
+		if decision[layerID], err = compileSchema(raw); err != nil {
 			return nil, nil, fmt.Errorf("compile moderator schema of layer %q: %w", layerID, err)
 		}
 	}

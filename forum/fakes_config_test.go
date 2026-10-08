@@ -183,5 +183,5 @@ func (a *cfgtAgents) Touch(context.Context, string, string) error {
 
 // cfgtEnv is a PreflightEnv over agents with the real schema adapter.
 func cfgtEnv(agents Agents) PreflightEnv {
-	return PreflightEnv{Launcher: "launcher", Agents: agents, Schemas: JSONSchemaValidator{}}
+	return PreflightEnv{Launcher: "launcher", Agents: agents}
 }

@@ -618,7 +618,6 @@ func (e *svcEnv) newService() *Service {
 		Agents:    e.agents,
 		Notifier:  e.notifier,
 		Logger:    e.logger,
-		Schemas:   JSONSchemaValidator{},
 		OnStuck:   e.stuck.record,
 	})
 	svc.openCtrl = e.ctrls.open

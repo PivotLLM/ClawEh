@@ -764,14 +764,14 @@ func TestCtlParseDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := JSONSchemaValidator{}.Compile(raw)
+	schema, err := compileSchema(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
 		name     string
 		text     string
-		schema   CompiledSchema
+		schema   *compiledSchema
 		directed bool
 		want     DecisionKind
 		issueIn  string

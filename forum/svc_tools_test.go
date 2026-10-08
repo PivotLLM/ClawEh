@@ -703,7 +703,6 @@ func TestSvcToolError(t *testing.T) {
 			"Forum " + id + " was not deleted because its temporary agent " + agent + " could not be deleted; try again later.", errSvcHost.Error(),
 		},
 		{"closed", errClosed, id, "resume", "Forums cannot be started or changed while the service is shutting down.", ""},
-		{"schemas", fmt.Errorf("%w (the configuration names schemas: s)", ErrSchemasUnavailable), "", "launch", "JSON Schema validation is not available (the configuration names schemas: s).", ""},
 		{"one whole-document issue", argIssue("the config argument must be a JSON object"), "", "config_import", "The config argument must be a JSON object.", ""},
 		{"issues", &ValidationError{Issues: []Issue{{Path: "a", Message: "x"}, {Path: "b", Message: "y"}}}, "", "validate", "invalid configuration:\na: x\nb: y", ""},
 	}

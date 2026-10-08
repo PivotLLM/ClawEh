@@ -171,13 +171,13 @@ func TestConfigSchemaPortable(t *testing.T) {
 	}
 }
 
-func compileSchema(t *testing.T, schema map[string]any) CompiledSchema {
+func mustCompileSchema(t *testing.T, schema map[string]any) *compiledSchema {
 	t.Helper()
 	data, err := json.Marshal(schema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := JSONSchemaValidator{}.Compile(data)
+	c, err := compileSchema(data)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -209,7 +209,7 @@ func docsExample(t *testing.T) []byte {
 // Every built-in template and the documented examples match the published
 // schema; a full configuration is also a valid patch.
 func TestConfigSchemaAcceptsTemplatesAndExamples(t *testing.T) {
-	config, patch := compileSchema(t, ConfigSchema()), compileSchema(t, PatchSchema())
+	config, patch := mustCompileSchema(t, ConfigSchema()), mustCompileSchema(t, PatchSchema())
 	docs := map[string][]byte{
 		"docs/forum.md":   docsExample(t),
 		"cfgtExampleJSON": []byte(cfgtExampleJSON),
@@ -236,7 +236,7 @@ func TestConfigSchemaAcceptsTemplatesAndExamples(t *testing.T) {
 
 // The guide's example patches match the patch schema.
 func TestPatchSchemaAcceptsGuideExamples(t *testing.T) {
-	patch := compileSchema(t, PatchSchema())
+	patch := mustCompileSchema(t, PatchSchema())
 	guideText := guide()
 	for _, example := range []string{
 		`{"sources": {"question": {"inline": "Should we use Go or Python?"}}, "participants": {"chair": {"model": "<a name from forum_models>"}}}`,
@@ -253,10 +253,10 @@ func TestPatchSchemaAcceptsGuideExamples(t *testing.T) {
 }
 
 func TestConfigSchemaRefuses(t *testing.T) {
-	config, patch := compileSchema(t, ConfigSchema()), compileSchema(t, PatchSchema())
+	config, patch := mustCompileSchema(t, ConfigSchema()), mustCompileSchema(t, PatchSchema())
 	for _, tc := range []struct {
 		name, doc string
-		schema    CompiledSchema
+		schema    *compiledSchema
 	}{
 		{"unknown field", `{"version":1,"bogus":1,"brief":{"purpose":"p","task":"t"},"participants":{},"layers":[],"limits":{"max_calls":1,"max_duration_seconds":1,"call_timeout_seconds":1,"max_attempts_per_turn":1,"max_parallel_calls":1}}`, config},
 		{"limit below the minimum", `{"limits":{"max_calls":0}}`, config},
@@ -285,7 +285,7 @@ func TestConfigSchemaRefuses(t *testing.T) {
 // before it is complete) matches the import schema: nothing is required
 // there, and ValidateStatic is what reports the missing fields.
 func TestConfigSchemaAcceptsHalfBuiltConfig(t *testing.T) {
-	config := compileSchema(t, ConfigSchema())
+	config := mustCompileSchema(t, ConfigSchema())
 	for _, doc := range []string{
 		`{}`,
 		`{"version":1,"brief":{"purpose":"Review the proposal."},"participants":{"bob":{"agent":"bob"}}}`,
@@ -401,7 +401,7 @@ func TestConfigSchemaBoundsTheName(t *testing.T) {
 		t.Errorf("name schema = %v, want maxLength %d", name, MaxNameChars)
 	}
 	long := `{"name": "` + strings.Repeat("a", MaxNameChars+1) + `"}`
-	if err := compileSchema(t, ConfigSchema()).Validate([]byte(long)); err == nil {
+	if err := mustCompileSchema(t, ConfigSchema()).Validate([]byte(long)); err == nil {
 		t.Error("the schema accepts a name over the limit")
 	}
 }

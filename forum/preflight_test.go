@@ -211,11 +211,10 @@ func TestPreflightAccepts(t *testing.T) {
 				t.Errorf("effective schema lacks assessment or directed: %s", s)
 			}
 		}},
-		{"no schemas, no moderator and no validator", func(c *Config, _ *cfgtAgents, env *PreflightEnv) {
+		{"no schemas and no moderator", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
 			c.Schemas = nil
 			c.Layers[0].Output.Schema = ""
 			c.Layers[1].Moderator = nil
-			env.Schemas = nil
 		}, func(t *testing.T, r *Resolved) {
 			t.Helper()
 			if len(r.ModeratorSchemas) != 0 {
@@ -240,38 +239,6 @@ func TestPreflightAccepts(t *testing.T) {
 				tt.check(t, res)
 			}
 		})
-	}
-}
-
-func TestPreflightSchemasUnavailable(t *testing.T) {
-	env := cfgtEnv(cfgtNewAgents())
-	env.Schemas = nil
-	_, err := Preflight(context.Background(), cfgtExample(t), env)
-	if !errors.Is(err, ErrSchemasUnavailable) {
-		t.Fatalf("want ErrSchemasUnavailable, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "findings") {
-		t.Errorf("the error should name the schemas: %v", err)
-	}
-	if isIssues := errors.As(err, new(*ValidationError)); isIssues {
-		t.Error("ErrSchemasUnavailable is returned directly, not as an issue")
-	}
-}
-
-func TestPreflightModeratedLayerNeedsValidator(t *testing.T) {
-	cfg := cfgtExample(t)
-	cfg.Schemas = nil
-	cfg.Layers[0].Output.Schema = ""
-	env := cfgtEnv(cfgtNewAgents())
-	env.Schemas = nil
-	_, err := Preflight(context.Background(), cfg, env)
-	if !errors.Is(err, ErrSchemasUnavailable) || !strings.Contains(err.Error(), "moderated layers: debate") {
-		t.Fatalf("want ErrSchemasUnavailable naming layer debate, got %v", err)
-	}
-	off := false
-	cfg.Layers[1].Enabled = &off
-	if _, err := Preflight(context.Background(), cfg, env); err != nil {
-		t.Errorf("a disabled moderated layer needs no validator: %v", err)
 	}
 }
 

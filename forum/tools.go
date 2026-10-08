@@ -58,8 +58,7 @@ type ToolHost interface {
 // operation itself is a Result with IsError and one plain sentence naming
 // the forum (when there is one): an unknown forum or run, a refused state
 // (a forum that is running, or has no run yet), a forum locked by another
-// process, an invalid configuration,
-// unavailable schemas, a damaged forum, temporary agents that could not be
+// process, an invalid configuration, a damaged forum, temporary agents that could not be
 // deleted, or an internal failure. Error chains and paths never reach the
 // agent; they are logged.
 //
@@ -635,7 +634,7 @@ func expectedFailure(err error) bool {
 		return true
 	}
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrLocked) || errors.Is(err, ErrInvalidState) ||
-		errors.Is(err, ErrSchemasUnavailable) || errors.Is(err, errClosed)
+		errors.Is(err, errClosed)
 }
 
 // message is fail's sentence.
@@ -668,8 +667,6 @@ func (t *toolSuite) message(err error, id, tool string) string {
 	case errors.Is(err, ErrCorrupt):
 		t.svc.host.Logger.Errorf("forum tool %s (forum %s): %v", tool, id, err)
 		return subject + " is damaged and cannot be used."
-	case errors.Is(err, ErrSchemasUnavailable):
-		return sentence(err.Error())
 	case errors.Is(err, errClosed):
 		return "Forums cannot be started or changed while the service is shutting down."
 	case errors.Is(err, ErrInvalidState):

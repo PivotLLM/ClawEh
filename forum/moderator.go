@@ -230,7 +230,7 @@ func (c *Controller) decisionContract(layer Layer) string {
 // a violation unless allowDirected, and each directed entry must name one
 // of the layer's participants with nonempty text. Issues make the attempt
 // invalid and are sent back as a repair.
-func parseDecision(text string, schema CompiledSchema, allowDirected bool, participants []string) (*Decision, []string) {
+func parseDecision(text string, schema *compiledSchema, allowDirected bool, participants []string) (*Decision, []string) {
 	value, err := decodeJSONValue([]byte(unfence(text)))
 	if err != nil {
 		return nil, []string{"the reply is not exactly one valid JSON value: " + strings.TrimPrefix(err.Error(), "decode JSON: ")}

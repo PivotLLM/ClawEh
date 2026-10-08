@@ -30,8 +30,8 @@ import (
 // Host wiring (what ClawEh calls, in order):
 //
 //	svc := forum.New(forum.Host{Messenger: ..., Agents: ..., Notifier: ...,
-//	        Logger: ..., Schemas: forum.JSONSchemaValidator{},
-//	        OnStuck: ...},                             // optional: tell the launcher, raise an alert
+//	        Logger: ...,
+//	        OnStuck: ..., Cooldown: ...},              // optional
 //	        forum.WithHostLimits(...))                 // optional ceilings
 //	err := svc.Recover(ctx, scopes)                    // once at startup, every agent's <workspace>/forums
 //	defs := forum.Tools(svc, toolHost)                 // mount under "forum", gated by the forum permission
@@ -187,9 +187,9 @@ func WithHostLimits(l Limits) Option {
 	return func(s *Service) { s.hostLimits = l }
 }
 
-// New builds a service over the host dependencies. host.Schemas may be
-// nil; the other fields are required and New panics on a nil one, since
-// that is a wiring error, not a runtime condition.
+// New builds a service over the host dependencies. host.OnStuck and
+// host.Cooldown may be nil; the other fields are required and New panics
+// on a nil one, since that is a wiring error, not a runtime condition.
 func New(host Host, opts ...Option) *Service {
 	if host.Messenger == nil || host.Agents == nil || host.Notifier == nil || host.Logger == nil {
 		panic("forum.New: Messenger, Agents, Notifier and Logger are required")
@@ -249,7 +249,7 @@ func (s *Service) Models(ctx context.Context, agentID string) ([]ModelInfo, erro
 
 // Validate runs Decode, ValidateStatic and Preflight on raw without
 // creating anything (§9 forum_validate). It returns nil, a
-// *ValidationError listing every finding, or ErrSchemasUnavailable.
+// *ValidationError listing every finding.
 func (s *Service) Validate(ctx context.Context, raw []byte, opts LaunchOptions) error {
 	_, _, err := s.check(ctx, raw, opts)
 	return err
@@ -279,7 +279,6 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 	resolved, err := Preflight(ctx, cfg, PreflightEnv{
 		Launcher:    opts.Scope.AgentID,
 		Agents:      s.host.Agents,
-		Schemas:     s.host.Schemas,
 		HostLimits:  s.hostLimits,
 		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,

@@ -17,7 +17,7 @@ same version). It imports nothing else from ClawEh: no agent loop, no
 config, no logger, no bus. Everything the host provides arrives through
 the interfaces in `host.go`.
 
-**JSON Schema.** Validation is behind `SchemaValidator` / `CompiledSchema`.
+**JSON Schema.** Validation is behind `SchemaValidator` / `*compiledSchema`.
 `schema_jsonschema.go` is the adapter over santhosh-tekuri v6: Draft
 2020-12 by default, every external `$ref` refused (§3 "internal references
 only"), violations flattened into `SchemaViolationError.Messages` for the

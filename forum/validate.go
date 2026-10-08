@@ -158,9 +158,6 @@ type PreflightEnv struct {
 	// Launcher is the launching agent's ID.
 	Launcher string
 	Agents   Agents
-	// Schemas may be nil; a configuration naming any schema or having an
-	// enabled moderated layer then fails with ErrSchemasUnavailable.
-	Schemas SchemaValidator
 	// HostLimits are ceilings on Config.Limits; a zero field is no ceiling.
 	// A limit above its ceiling is reported as an issue naming the ceiling
 	// (it is never capped silently).
@@ -182,7 +179,7 @@ type Resolved struct {
 	// never substitutes another model (§2.4).
 	Models map[string]string
 	// Schemas are the compiled named schemas.
-	Schemas map[string]CompiledSchema
+	Schemas map[string]*compiledSchema
 	// ModeratorSchemas maps a layer ID to its effective decision schema
 	// (EffectiveModeratorSchema), for every enabled layer with a moderator;
 	// Launch stores them in Snapshot.ModeratorSchemas.
@@ -205,12 +202,8 @@ type Resolved struct {
 //   - a fresh participant's model is in Agents.Models(launcher);
 //   - neither the launcher nor a clone of it takes part in a forum with an
 //     anonymous input (it could read the forum's files and so the authors);
-//   - every named schema compiles (Schemas.Compile), and every enabled
-//     layer's effective moderator schema (EffectiveModeratorSchema)
-//     compiles too; a nil Schemas with any named schema or any enabled
-//     moderated layer (whose decision schema the controller compiles at
-//     Open) is ErrSchemasUnavailable naming them (returned directly, not
-//     as an issue);
+//   - every named schema compiles, and every enabled layer's effective
+//     moderator schema (EffectiveModeratorSchema) compiles too;
 //   - each file source resolves (ResolveFile) to a path ReadAllowed
 //     accepts (both the named path and, through any symbolic link, its
 //     target) and that exists as a regular file; it is read once, here,
@@ -221,14 +214,9 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 	if env.Agents == nil || env.Launcher == "" {
 		return nil, errors.New("preflight: launcher and Agents are required")
 	}
-	if env.Schemas == nil {
-		if err := schemasNeeded(cfg); err != nil {
-			return nil, err
-		}
-	}
 	p := &preflight{cfg: cfg, env: env, models: map[string][]ModelInfo{}, res: &Resolved{
 		Models:           map[string]string{},
-		Schemas:          map[string]CompiledSchema{},
+		Schemas:          map[string]*compiledSchema{},
 		ModeratorSchemas: map[string]json.RawMessage{},
 		SourceContents:   map[string][]byte{},
 	}}
@@ -245,29 +233,6 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 		return nil, &ValidationError{Issues: p.issues}
 	}
 	return p.res, nil
-}
-
-// schemasNeeded returns ErrSchemasUnavailable, naming what needs a JSON
-// Schema validator, when cfg names schemas or has an enabled layer with a
-// moderator (its decision schema is always validated); nil otherwise.
-func schemasNeeded(cfg *Config) error {
-	var needs []string
-	if len(cfg.Schemas) > 0 {
-		needs = append(needs, "the configuration names schemas: "+strings.Join(sortedKeys(cfg.Schemas), ", "))
-	}
-	var moderated []string
-	for _, l := range cfg.EnabledLayers() {
-		if l.Moderator != nil {
-			moderated = append(moderated, l.ID)
-		}
-	}
-	if len(moderated) > 0 {
-		needs = append(needs, "moderated layers: "+strings.Join(moderated, ", "))
-	}
-	if len(needs) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w (%s)", ErrSchemasUnavailable, strings.Join(needs, "; "))
 }
 
 // staticValidator accumulates the issues of ValidateStatic.
@@ -1084,11 +1049,11 @@ func (p *preflight) hasModel(ctx context.Context, agentID, model string) (bool, 
 	return found, strings.Join(names, ", "), nil
 }
 
-// schemas compiles every named schema and builds (and, with a validator,
-// compiles) every enabled layer's effective moderator schema.
+// schemas compiles every named schema and builds and compiles every
+// enabled layer's effective moderator schema.
 func (p *preflight) schemas() {
 	for _, id := range sortedKeys(p.cfg.Schemas) {
-		compiled, err := p.env.Schemas.Compile(p.cfg.Schemas[id])
+		compiled, err := compileSchema(p.cfg.Schemas[id])
 		if err != nil {
 			p.addf("schemas."+id, "schema %q: %v", id, err)
 			continue
@@ -1112,11 +1077,9 @@ func (p *preflight) schemas() {
 			p.addf(path, "%v", err)
 			continue
 		}
-		if p.env.Schemas != nil {
-			if _, err := p.env.Schemas.Compile(eff); err != nil {
-				p.addf(path, "layer %q: the moderator's decision schema does not compile: %v", l.ID, err)
-				continue
-			}
+		if _, err := compileSchema(eff); err != nil {
+			p.addf(path, "layer %q: the moderator's decision schema does not compile: %v", l.ID, err)
+			continue
 		}
 		p.res.ModeratorSchemas[l.ID] = eff
 	}

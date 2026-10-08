@@ -14,18 +14,15 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// JSONSchemaValidator implements SchemaValidator with
-// github.com/santhosh-tekuri/jsonschema/v6: Draft 2020-12 by default, and
-// no reference may leave the document (§3 "internal references only"). The
-// host passes it as Host.Schemas.
-type JSONSchemaValidator struct{}
-
 // schemaURL is the in-memory location every compiled schema is registered
 // under. It is never loaded from disk; the loader refuses every URL.
 const schemaURL = "forum:///schema.json"
 
-// Compile parses and compiles one schema document.
-func (JSONSchemaValidator) Compile(schema json.RawMessage) (CompiledSchema, error) {
+// compileSchema parses and compiles one JSON Schema document with
+// github.com/santhosh-tekuri/jsonschema/v6: Draft 2020-12 by default, and no
+// reference may leave the document (internal references only). It fails on
+// a schema that is not valid or that references anything outside itself.
+func compileSchema(schema json.RawMessage) (*compiledSchema, error) {
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema))
 	if err != nil {
 		return nil, fmt.Errorf("compile schema: %w", err)
@@ -43,7 +40,7 @@ func (JSONSchemaValidator) Compile(schema json.RawMessage) (CompiledSchema, erro
 	return &compiledSchema{sch: sch}, nil
 }
 
-// compiledSchema adapts *jsonschema.Schema to CompiledSchema.
+// compiledSchema validates JSON instances against one compiled schema.
 type compiledSchema struct {
 	sch *jsonschema.Schema
 }

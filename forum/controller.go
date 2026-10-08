@@ -37,8 +37,8 @@ type Controller struct {
 	// schemas are the named schemas; decisionSchemas the effective
 	// moderator schema per layer (Snapshot.ModeratorSchemas), both
 	// compiled at Open.
-	schemas         map[string]CompiledSchema
-	decisionSchemas map[string]CompiledSchema
+	schemas         map[string]*compiledSchema
+	decisionSchemas map[string]*compiledSchema
 	router          *Router
 
 	// mu guards state, commits, attempts and cancelActive. Every state

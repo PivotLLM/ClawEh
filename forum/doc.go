@@ -10,7 +10,7 @@
 //
 // The package imports no agent-loop code. Everything it needs from the host
 // arrives through the small interfaces in host.go (Messenger, Agents,
-// Notifier, Logger, SchemaValidator); ClawEh wires them in and mounts the
+// Notifier, Logger); ClawEh wires them in and mounts the
 // tools from tools.go under the "forum" namespace.
 //
 // The package is split along five seams, each in its own files (see
