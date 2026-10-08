@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -21,6 +23,26 @@ func TestCommandAskReply_Outcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := commandAskReply("Bob", tc.reply, nil); got != tc.want {
+				t.Fatalf("commandAskReply = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// An ask that fails is one plain sentence naming the agent; the underlying
+// error is never relayed to the chat.
+func TestCommandAskReply_ErrorsArePlain(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"queue failure", fmt.Errorf("queue the message: %w", errors.New("bus: context deadline exceeded")), "Could not ask Bob."},
+		{"depth", fmt.Errorf("ask: %w", tools.ErrMaxDepth), "Could not ask Bob: the maximum sub-agent depth is reached."},
+		{"loop", fmt.Errorf("ask: %w", tools.ErrAskLoop), "Could not ask Bob: it is waiting for a reply in this exchange."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commandAskReply("Bob", tools.AgentReply{}, tc.err); got != tc.want {
 				t.Fatalf("commandAskReply = %q, want %q", got, tc.want)
 			}
 		})

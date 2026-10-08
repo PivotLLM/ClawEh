@@ -608,7 +608,7 @@ func (al *AgentLoop) commandTarget(command string, msg bus.InboundMessage, ref s
 	if !al.senderMayReach(msg, target.ID) {
 		logger.WarnCF("agent", "Agent message refused: the sender may not talk to the agent",
 			map[string]any{"command": command, "agent_id": target.ID, "channel": msg.Channel, "sender_id": msg.SenderID})
-		return nil, fmt.Sprintf("You don't have permission to /%s %s", command, target.DisplayName())
+		return nil, fmt.Sprintf("You don't have permission to /%s %s.", command, target.DisplayName())
 	}
 	return target, ""
 }
@@ -625,7 +625,9 @@ func (al *AgentLoop) commandWhisper(ctx context.Context, msg bus.InboundMessage,
 	name := target.DisplayName()
 	from := sender{name: commandSender(msg), note: personNote("whisper", msg.Channel)}
 	if err := al.whisper(ctx, from, target.ID, text); err != nil {
-		return fmt.Sprintf("Could not whisper to %s: %v", name, err)
+		logger.WarnCF("agent", "/whisper failed",
+			map[string]any{"agent_id": target.ID, "channel": msg.Channel, "error": err.Error()})
+		return fmt.Sprintf("Could not whisper to %s.", name)
 	}
 	return "Whispered to " + name + "."
 }
@@ -672,6 +674,10 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 				map[string]any{"agent_id": target.ID, "channel": msg.Channel, "chat_id": msg.ChatID})
 			return
 		}
+		if err != nil && !errors.Is(err, tools.ErrMaxDepth) && !errors.Is(err, tools.ErrAskLoop) {
+			logger.WarnCF("agent", "/ask failed",
+				map[string]any{"agent_id": target.ID, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error()})
+		}
 		content := commandAskReply(target.DisplayName(), reply, err)
 		pubCtx, cancel := context.WithTimeout(askCtx, 5*time.Second)
 		defer cancel()
@@ -688,13 +694,17 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 	return ""
 }
 
-// commandAskReply renders an ask's result for the chat that sent /ask.
+// commandAskReply renders an ask's result for the chat that sent /ask: one
+// plain sentence naming the agent, never the underlying error (the caller
+// logs it).
 func commandAskReply(name string, reply tools.AgentReply, err error) string {
 	switch {
-	case errors.Is(err, tools.ErrMaxDepth) || errors.Is(err, tools.ErrAskLoop):
-		return err.Error()
+	case errors.Is(err, tools.ErrMaxDepth):
+		return fmt.Sprintf("Could not ask %s: the maximum sub-agent depth is reached.", name)
+	case errors.Is(err, tools.ErrAskLoop):
+		return fmt.Sprintf("Could not ask %s: it is waiting for a reply in this exchange.", name)
 	case err != nil:
-		return fmt.Sprintf("Could not ask %s: %v", name, err)
+		return fmt.Sprintf("Could not ask %s.", name)
 	case reply.Outcome == tools.OutcomeTimeout || reply.Outcome == tools.OutcomePersonCancelled ||
 		reply.Outcome == tools.OutcomePersonUnreachable:
 		return reply.Text

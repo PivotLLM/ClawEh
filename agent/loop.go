@@ -167,7 +167,7 @@ type AgentLoop struct {
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
 // is an interrupted turn: no reply is sent and its pending-turn flag is kept,
 // so it is replayed when the gateway starts again.
-var errShuttingDown = errors.New("claw shutting down")
+var errShuttingDown = errors.New("the service is shutting down")
 
 // shuttingDown reports whether ctx was cancelled by Stop.
 func shuttingDown(ctx context.Context) bool {

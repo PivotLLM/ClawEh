@@ -783,8 +783,8 @@ func TestCommands_AskAndWhisper(t *testing.T) {
 		name, user, text, want string
 	}{
 		{"whisper allowed", "u1", "/whisper bob hello there", "Whispered to Bob."},
-		{"whisper refused", "u2", "/whisper bob hello", "You don't have permission to /whisper Bob"},
-		{"ask refused", "u2", "/ask Bob hello", "You don't have permission to /ask Bob"},
+		{"whisper refused", "u2", "/whisper bob hello", "You don't have permission to /whisper Bob."},
+		{"ask refused", "u2", "/ask Bob hello", "You don't have permission to /ask Bob."},
 		{"ask allowed", "u1", "/ask Bob hello", "Bob: reply 1"},
 		{"default agent allowed", "u2", "/ask alice hello", "Alice: reply 1"},
 		{"unknown agent", "u1", "/ask zed hello", "There is no agent named zed."},

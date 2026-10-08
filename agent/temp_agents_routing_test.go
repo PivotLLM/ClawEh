@@ -104,6 +104,38 @@ func TestMessageForDeletedTempAgentIsDropped(t *testing.T) {
 	}
 }
 
+// A sender that requires a reply from an agent that no longer exists gets one
+// plain sentence naming the agent, not the internal error.
+func TestMessageForDeletedTempAgent_ReplyRequiredIsPlain(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+
+	tl := newTestAgentLoop(t)
+	reg := tl.al.GetRegistry()
+	id, err := reg.Create(config.AgentConfig{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := reg.Delete(id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	msg := bus.InboundMessage{
+		Channel: "telegram", ChatID: "1", SenderID: "u1", Content: "hello",
+		SessionKey: routing.BuildAgentMainSessionKey(id),
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: id, bus.MetaReplyRequired: "1"},
+	}
+	tl.al.runTurn(context.Background(), context.Background(), msg)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, ok := tl.msgBus.SubscribeOutbound(ctx)
+	if !ok {
+		t.Fatal("no reply to a sender that required one")
+	}
+	if want := "Agent " + id + " no longer exists."; out.Content != want || out.Outcome != bus.OutcomeError {
+		t.Fatalf("reply = %q (%s), want %q (error)", out.Content, out.Outcome, want)
+	}
+}
+
 // A clone's tools follow its source's current allowlist: a tool removed from
 // the source is gone from an existing clone after the reload.
 func TestReload_CloneFollowsSourceAllowlist(t *testing.T) {

@@ -15,7 +15,7 @@ func TestMessageCommands(t *testing.T) {
 		noHost                                     bool
 	}{
 		{name: "ask", text: "/ask bob what is  up?\nthanks", wantAgent: "bob", wantText: "what is  up?\nthanks"},
-		{name: "ask refused", text: "/ask bob hi", wantAgent: "bob", wantText: "hi", hostReply: "You don't have permission to /ask Bob", wantReply: "You don't have permission to /ask Bob"},
+		{name: "ask refused", text: "/ask bob hi", wantAgent: "bob", wantText: "hi", hostReply: "You don't have permission to /ask Bob.", wantReply: "You don't have permission to /ask Bob."},
 		{name: "whisper", text: "/whisper@bot alice psst", wantAgent: "alice", wantText: "psst", hostReply: "Whispered to Alice.", wantReply: "Whispered to Alice."},
 		{name: "no message", text: "/ask bob", wantReply: "Usage: /ask <agent> <message>"},
 		{name: "no agent", text: "/whisper", wantReply: "Usage: /whisper <agent> <message>"},

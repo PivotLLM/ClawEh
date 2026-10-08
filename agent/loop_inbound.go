@@ -36,6 +36,15 @@ const sessionIdleTTL = time.Hour
 // the turn's failure renders as a cancellation rather than a timeout.
 var errCancelledByUser = errors.New("cancelled by /cancel")
 
+// agentGoneText is the reply to a sender that required one from an agent that
+// no longer exists.
+func agentGoneText(agentID string) string {
+	if agentID == "" {
+		return "That agent no longer exists."
+	}
+	return "Agent " + agentID + " no longer exists."
+}
+
 // errAgentGone marks a message addressed to an agent that does not exist (a
 // deleted temporary agent): it is dropped, never given to another agent.
 var errAgentGone = errors.New("addressed agent does not exist")
@@ -391,7 +400,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		// reply gets one.
 		logger.InfoCF("agent", "Request to a person cancelled by shutdown",
 			turnFields(turnCtx, map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID}))
-		const shutdownText = "The request was cancelled because claw is shutting down."
+		const shutdownText = "The request was cancelled because the service is shutting down."
 		if msg.Channel == constants.AgentMessageChannel {
 			al.deliverAskReply(msg, shutdownText, bus.OutcomeCancelled)
 			return
@@ -423,7 +432,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 		if !replyRequired {
 			return
 		}
-		response, outcome = err.Error(), bus.OutcomeError
+		response, outcome = agentGoneText(inboundMetadata(msg, metadataKeyPreresolvedAgentID)), bus.OutcomeError
 	case errors.As(err, new(humanNotAskedError)):
 		// Dropped (logged where detected): a person takes only questions from
 		// agents. Someone who wrote to it (a mention, a chat, a device) or a
