@@ -228,33 +228,35 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	  "layers": [{"id": "read", "participants": ["reader"], "instructions": "Read.",
 	    "inputs": [{"from": "source:brief"}, {"from": "source:chapter"}, {"from": "source:notes"}],
 	    "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}}]}`
-	fc, err := forumpkg.Decode([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = forumpkg.ValidateStatic(fc); err != nil {
-		t.Fatal(err)
-	}
-	res, err := forumpkg.Preflight(context.Background(), fc, forumpkg.PreflightEnv{
-		Launcher:    "alice",
-		Agents:      modelsHost{},
+	svc := forumpkg.New(forumpkg.Host{Messenger: modelsHost{}, Agents: modelsHost{}, Notifier: modelsHost{}, Logger: modelsHost{}})
+	err := svc.Validate(context.Background(), []byte(raw), forumpkg.LaunchOptions{
+		Scope:       forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumpkg.BaseDirName)},
 		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
 		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
 	})
 	if err != nil {
-		t.Fatalf("Preflight: %v", err)
+		t.Fatalf("Validate: %v", err)
 	}
 	reader := files.NewReader(cfg, ws)
 	for id, ref := range refs {
-		want, err := reader.ReadFile(ref)
-		if err != nil {
-			t.Fatalf("file tools reading %s: %v", ref, err)
+		want, readErr := reader.ReadFile(ref)
+		if readErr != nil {
+			t.Fatalf("file tools reading %s: %v", ref, readErr)
 		}
-		if got := res.SourceContents[id]; string(got) != string(want) {
-			t.Errorf("source %s (%s) = %q, the file tools read %q", id, ref, got, want)
+		abs, resolveErr := h.ResolveFile("alice", ref)
+		if resolveErr != nil {
+			t.Fatalf("ResolveFile(%s): %v", ref, resolveErr)
+		}
+		got, readErr := os.ReadFile(abs)
+		if readErr != nil || string(got) != string(want) {
+			t.Errorf("source %s (%s) resolves to %q (%v), the file tools read %q", id, ref, got, readErr, want)
 		}
 	}
-	if got := string(res.SourceContents["chapter"]); got != "mounted chapter" {
-		t.Errorf("docs/chapter.md = %q, want the mount's file", got)
+	abs, err := h.ResolveFile("alice", "docs/chapter.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, readErr := os.ReadFile(abs); readErr != nil || string(got) != "mounted chapter" {
+		t.Errorf("docs/chapter.md = %q (%v), want the mount's file", got, readErr)
 	}
 }

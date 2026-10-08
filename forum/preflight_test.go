@@ -15,17 +15,17 @@ import (
 )
 
 // TestPreflightExample runs the spec example through the whole check path:
-// Decode, ValidateStatic, Preflight.
+// decodeConfig, validateStatic, runPreflight.
 func TestPreflightExample(t *testing.T) {
-	cfg, err := Decode([]byte(cfgtExampleJSON))
+	cfg, err := decodeConfig([]byte(cfgtExampleJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ValidateStatic(cfg); err != nil {
+	if err = validateStatic(cfg); err != nil {
 		t.Fatal(err)
 	}
 	agents := cfgtNewAgents()
-	res, err := Preflight(context.Background(), cfg, cfgtEnv(agents))
+	res, err := runPreflight(context.Background(), cfg, cfgtEnv(agents))
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -54,75 +54,75 @@ func TestPreflightExample(t *testing.T) {
 func TestPreflightRejects(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(c *Config, a *cfgtAgents, env *PreflightEnv)
+		mutate func(c *Config, a *cfgtAgents, env *preflightEnv)
 		path   string
 		want   []string
 	}{
 		{
-			"existing agent not allowed", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.allowed, "alice") },
+			"existing agent not allowed", func(_ *Config, a *cfgtAgents, _ *preflightEnv) { delete(a.allowed, "alice") },
 			"participants.alice.agent",
 			[]string{`"alice"`, "may not use"},
 		},
 		{
-			"existing agent missing", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.exists, "alice") },
+			"existing agent missing", func(_ *Config, a *cfgtAgents, _ *preflightEnv) { delete(a.exists, "alice") },
 			"participants.alice.agent",
 			[]string{`"alice"`, "does not exist"},
 		},
 		{
-			"clone source not allowed", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.allowed, "bob") },
+			"clone source not allowed", func(_ *Config, a *cfgtAgents, _ *preflightEnv) { delete(a.allowed, "bob") },
 			"participants.bob.clone",
 			[]string{`"bob"`, "may not use"},
 		},
 		{
-			"clone source missing", func(_ *Config, a *cfgtAgents, _ *PreflightEnv) { delete(a.exists, "bob") },
+			"clone source missing", func(_ *Config, a *cfgtAgents, _ *preflightEnv) { delete(a.exists, "bob") },
 			"participants.bob.clone",
 			[]string{`"bob"`, "does not exist"},
 		},
-		{"clone model not the source's", func(c *Config, a *cfgtAgents, _ *PreflightEnv) {
+		{"clone model not the source's", func(c *Config, a *cfgtAgents, _ *preflightEnv) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "huge"}
 			a.models["bob"] = []ModelInfo{{Name: "small"}}
 		}, "participants.bob.model", []string{`"huge"`, `agent "bob"`, "small"}},
-		{"clone model the launcher's only", func(c *Config, a *cfgtAgents, _ *PreflightEnv) {
+		{"clone model the launcher's only", func(c *Config, a *cfgtAgents, _ *preflightEnv) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large"}
 			a.models["bob"] = nil
 		}, "participants.bob.model", []string{`"large"`, "none"}},
-		{"fresh model unknown", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"fresh model unknown", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Participants["editor"] = Participant{Model: "gpt-x"}
 		}, "participants.editor.model", []string{`"gpt-x"`, "launching agent", "default, large"}},
-		{"fresh moderator model unknown", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"fresh moderator model unknown", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Participants["chair"] = Participant{Model: "gpt-x"}
 		}, "participants.chair.model", []string{`"gpt-x"`}},
-		{"schema does not compile", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"schema does not compile", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Schemas["findings"] = cfgtRaw(`{"type":7}`)
 		}, "schemas.findings", []string{`"findings"`}},
-		{"schema references outside itself", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"schema references outside itself", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Schemas["findings"] = cfgtRaw(`{"$ref":"https://example.com/s.json"}`)
 		}, "schemas.findings", []string{"only references inside the schema"}},
-		{"unused schema still compiles", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"unused schema still compiles", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Schemas["spare"] = cfgtRaw(`{"minLength":"x"}`)
 		}, "schemas.spare", []string{`"spare"`}},
 		{
-			"max_calls above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxCalls = 29 },
+			"max_calls above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxCalls = 29 },
 			"limits.max_calls",
 			[]string{"30", "host ceiling of 29"},
 		},
 		{
-			"duration above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxDurationSeconds = 600 },
+			"duration above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxDurationSeconds = 600 },
 			"limits.max_duration_seconds",
 			[]string{"1800", "600"},
 		},
 		{
-			"call timeout above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.CallTimeoutSeconds = 60 },
+			"call timeout above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.CallTimeoutSeconds = 60 },
 			"limits.call_timeout_seconds",
 			[]string{"host ceiling of 60"},
 		},
 		{
-			"attempts above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxAttemptsPerTurn = 1 },
+			"attempts above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxAttemptsPerTurn = 1 },
 			"limits.max_attempts_per_turn",
 			[]string{"host ceiling of 1"},
 		},
 		{
-			"parallel above ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) { env.HostLimits.MaxParallelCalls = 1 },
+			"parallel above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxParallelCalls = 1 },
 			"limits.max_parallel_calls",
 			[]string{"host ceiling of 1"},
 		},
@@ -133,10 +133,10 @@ func TestPreflightRejects(t *testing.T) {
 			agents := cfgtNewAgents()
 			env := cfgtEnv(agents)
 			tt.mutate(cfg, agents, &env)
-			if err := ValidateStatic(cfg); err != nil {
+			if err := validateStatic(cfg); err != nil {
 				t.Fatalf("the mutated configuration must pass ValidateStatic: %v", err)
 			}
-			res, err := Preflight(context.Background(), cfg, env)
+			res, err := runPreflight(context.Background(), cfg, env)
 			if res != nil {
 				t.Error("Preflight returned a result alongside issues")
 			}
@@ -148,7 +148,7 @@ func TestPreflightRejects(t *testing.T) {
 func TestPreflightDoesNotProbeForbiddenAgents(t *testing.T) {
 	agents := cfgtNewAgents()
 	delete(agents.allowed, "alice")
-	_, err := Preflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
+	_, err := runPreflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
 	cfgtWantIssue(t, err, "participants.alice.agent", "may not use")
 	if agents.called("Exists alice") {
 		t.Error("existence of an agent the launcher may not use must not be checked (or revealed)")
@@ -158,12 +158,12 @@ func TestPreflightDoesNotProbeForbiddenAgents(t *testing.T) {
 func TestPreflightAccepts(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(c *Config, a *cfgtAgents, env *PreflightEnv)
-		check  func(t *testing.T, r *Resolved)
+		mutate func(c *Config, a *cfgtAgents, env *preflightEnv)
+		check  func(t *testing.T, r *resolvedConfig)
 	}{
-		{"clone model override recorded", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"clone model override recorded", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large"}
-		}, func(t *testing.T, r *Resolved) {
+		}, func(t *testing.T, r *resolvedConfig) {
 			t.Helper()
 			if r.Models["bob"] != "large" {
 				t.Errorf("Models[bob] = %q", r.Models["bob"])
@@ -172,50 +172,50 @@ func TestPreflightAccepts(t *testing.T) {
 				t.Error("an existing agent has no forum model")
 			}
 		}},
-		{"participants of disabled layers are not checked", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"participants of disabled layers are not checked", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Participants["ghost"] = Participant{Agent: "ghost"}
 			c.Participants["spare"] = Participant{Model: "gpt-x"}
 			c.Layers = append(c.Layers, Layer{
 				ID: "extra", Enabled: new(bool), Participants: []string{"ghost", "spare"},
 				Instructions: "x", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText},
 			})
-		}, func(t *testing.T, r *Resolved) {
+		}, func(t *testing.T, r *resolvedConfig) {
 			t.Helper()
 			if _, ok := r.Models["spare"]; ok {
 				t.Error("an unused fresh participant must not be resolved")
 			}
 		}},
-		{"moderator of a disabled layer is not checked", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"moderator of a disabled layer is not checked", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Participants["chair"] = Participant{Model: "gpt-x"}
 			off := false
 			c.Layers[1].Enabled = &off
-		}, func(t *testing.T, r *Resolved) {
+		}, func(t *testing.T, r *resolvedConfig) {
 			t.Helper()
 			if len(r.ModeratorSchemas) != 0 {
 				t.Errorf("ModeratorSchemas = %v, want none for a disabled layer", r.ModeratorSchemas)
 			}
 		}},
-		{"limits equal to ceilings", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) {
+		{"limits equal to ceilings", func(_ *Config, _ *cfgtAgents, env *preflightEnv) {
 			env.HostLimits = Limits{MaxCalls: 30, MaxDurationSeconds: 1800, CallTimeoutSeconds: 300, MaxAttemptsPerTurn: 2, MaxParallelCalls: 2}
 		}, nil},
-		{"zero ceiling is no ceiling", func(_ *Config, _ *cfgtAgents, env *PreflightEnv) {
+		{"zero ceiling is no ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) {
 			env.HostLimits = Limits{MaxCalls: 100}
 		}, nil},
-		{"moderator with assessment and directed", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"moderator with assessment and directed", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Layers[1].Moderator.Schema = "findings"
 			c.Layers[1].Moderator.AllowDirected = true
-		}, func(t *testing.T, r *Resolved) {
+		}, func(t *testing.T, r *resolvedConfig) {
 			t.Helper()
 			s := string(r.ModeratorSchemas["debate"])
 			if !strings.Contains(s, `"assessment"`) || !strings.Contains(s, `"directed"`) {
 				t.Errorf("effective schema lacks assessment or directed: %s", s)
 			}
 		}},
-		{"no schemas and no moderator", func(c *Config, _ *cfgtAgents, _ *PreflightEnv) {
+		{"no schemas and no moderator", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Schemas = nil
 			c.Layers[0].Output.Schema = ""
 			c.Layers[1].Moderator = nil
-		}, func(t *testing.T, r *Resolved) {
+		}, func(t *testing.T, r *resolvedConfig) {
 			t.Helper()
 			if len(r.ModeratorSchemas) != 0 {
 				t.Errorf("ModeratorSchemas = %v, want none", r.ModeratorSchemas)
@@ -228,10 +228,10 @@ func TestPreflightAccepts(t *testing.T) {
 			agents := cfgtNewAgents()
 			env := cfgtEnv(agents)
 			tt.mutate(cfg, agents, &env)
-			if err := ValidateStatic(cfg); err != nil {
+			if err := validateStatic(cfg); err != nil {
 				t.Fatalf("ValidateStatic: %v", err)
 			}
-			res, err := Preflight(context.Background(), cfg, env)
+			res, err := runPreflight(context.Background(), cfg, env)
 			if err != nil {
 				t.Fatalf("Preflight: %v", err)
 			}
@@ -247,7 +247,7 @@ func TestPreflightHostErrors(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			agents := cfgtNewAgents()
 			agents.errOn = method
-			_, err := Preflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
+			_, err := runPreflight(context.Background(), cfgtExample(t), cfgtEnv(agents))
 			if !errors.Is(err, errCfgtHost) {
 				t.Fatalf("want the host error, got %v", err)
 			}
@@ -260,17 +260,17 @@ func TestPreflightHostErrors(t *testing.T) {
 
 func TestPreflightRequiresHost(t *testing.T) {
 	cfg := cfgtExample(t)
-	if _, err := Preflight(context.Background(), cfg, PreflightEnv{Launcher: "launcher"}); err == nil {
+	if _, err := runPreflight(context.Background(), cfg, preflightEnv{Launcher: "launcher"}); err == nil {
 		t.Error("nil Agents accepted")
 	}
-	if _, err := Preflight(context.Background(), cfg, PreflightEnv{Agents: cfgtNewAgents()}); err == nil {
+	if _, err := runPreflight(context.Background(), cfg, preflightEnv{Agents: cfgtNewAgents()}); err == nil {
 		t.Error("empty launcher accepted")
 	}
 }
 
 // cfgtFileEnv lays out a workspace with source files and returns an env
 // whose ReadAllowed admits exactly the workspace.
-func cfgtFileEnv(t *testing.T) (PreflightEnv, string, string) {
+func cfgtFileEnv(t *testing.T) (preflightEnv, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	ws := filepath.Join(root, "workspace")
@@ -339,10 +339,10 @@ func TestPreflightFileSources(t *testing.T) {
 			}
 			cfg := cfgtExample(t)
 			cfg.Sources["report"] = tt.src
-			if err := ValidateStatic(cfg); err != nil {
+			if err := validateStatic(cfg); err != nil {
 				t.Fatalf("ValidateStatic: %v", err)
 			}
-			res, err := Preflight(context.Background(), cfg, env)
+			res, err := runPreflight(context.Background(), cfg, env)
 			if tt.path != "" {
 				cfgtWantIssue(t, err, tt.path, tt.want...)
 				return
@@ -367,7 +367,7 @@ func TestPreflightReadAllowedSeesTheLexicalPath(t *testing.T) {
 	env.ReadAllowed = func(p string) error { asked = append(asked, p); return errors.New("denied") }
 	cfg := cfgtExample(t)
 	cfg.Sources["report"] = Source{Decode: FormatText, File: "docs/report.md"}
-	_, err := Preflight(context.Background(), cfg, env)
+	_, err := runPreflight(context.Background(), cfg, env)
 	cfgtWantIssue(t, err, "sources.report.file", "denied")
 	if len(asked) != 1 || asked[0] != filepath.Join(ws, "docs", "report.md") {
 		t.Errorf("ReadAllowed asked %v", asked)
@@ -386,7 +386,7 @@ func TestPreflightResolveFile(t *testing.T) {
 		env := cfgtEnv(cfgtNewAgents())
 		env.ResolveFile = resolve
 		env.ReadAllowed = func(string) error { return nil }
-		_, err := Preflight(context.Background(), cfg, env)
+		_, err := runPreflight(context.Background(), cfg, env)
 		if err == nil || errors.As(err, new(*ValidationError)) {
 			t.Errorf("%s: want a wiring error, got %v", name, err)
 		}
@@ -394,17 +394,17 @@ func TestPreflightResolveFile(t *testing.T) {
 	env := cfgtEnv(cfgtNewAgents())
 	env.ResolveFile = func(string) (string, error) { return "", errors.New("the agent may not read it") }
 	env.ReadAllowed = func(string) error { return nil }
-	_, err := Preflight(context.Background(), cfg, env)
+	_, err := runPreflight(context.Background(), cfg, env)
 	cfgtWantIssue(t, err, "sources.report.file", `"r.txt" cannot be used: the agent may not read it`)
 }
 
-// A file source is read once, at Preflight: the content handed over is
+// A file source is read once, at runPreflight: the content handed over is
 // what was checked, and a later change to the file does not reach it.
 func TestPreflightReadsSourcesOnce(t *testing.T) {
 	env, ws, _ := cfgtFileEnv(t)
 	cfg := cfgtExample(t)
 	cfg.Sources["report"] = Source{Decode: FormatMarkdown, File: "docs/report.md"}
-	res, err := Preflight(context.Background(), cfg, env)
+	res, err := runPreflight(context.Background(), cfg, env)
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -433,19 +433,19 @@ func TestPreflightLauncherWithAnonymousInput(t *testing.T) {
 	}
 }
 
-// testPreflightLauncher runs Preflight with part as participant bob and
+// testPreflightLauncher runs runPreflight with part as participant bob and
 // report reading review anonymously or not; want is the expected issue.
 func testPreflightLauncher(t *testing.T, part Participant, anonymous bool, path, want string) {
 	t.Helper()
 	cfg := cfgtExample(t)
 	cfg.Participants["bob"] = part
 	cfg.Layers[2].Inputs[1].Anonymous = anonymous
-	if err := ValidateStatic(cfg); err != nil {
+	if err := validateStatic(cfg); err != nil {
 		t.Fatal(err)
 	}
 	agents := cfgtNewAgents()
 	agents.allowed["launcher"] = true
-	_, err := Preflight(context.Background(), cfg, cfgtEnv(agents))
+	_, err := runPreflight(context.Background(), cfg, cfgtEnv(agents))
 	if !anonymous {
 		if err != nil {
 			t.Fatalf("%+v without an anonymous input: %v", part, err)

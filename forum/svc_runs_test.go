@@ -172,7 +172,7 @@ func TestSvcTwoRunsKeepSeparateFoldersAndResults(t *testing.T) {
 		t.Errorf("notices = %+v", notices)
 	}
 	for _, n := range []int{1, 2} {
-		for _, marker := range []string{CleanupAgents, cleanupNotice} {
+		for _, marker := range []string{cleanupAgents, cleanupNotice} {
 			if _, ok := e.markerRun(id, n, marker); ok {
 				t.Errorf("run %d's %s marker is left", n, marker)
 			}
@@ -286,7 +286,7 @@ func TestSvcResumeAfterAConfigChange(t *testing.T) {
 	if e.keptAlive(id) {
 		t.Error("the superseded run is still kept alive")
 	}
-	for _, marker := range []string{CleanupAgents, cleanupNotice} {
+	for _, marker := range []string{cleanupAgents, cleanupNotice} {
 		if _, ok := e.markerRun(id, 1, marker); ok {
 			t.Errorf("run 1's %s marker is left", marker)
 		}
@@ -382,7 +382,7 @@ func TestSvcNextRunSkipsALeftMarker(t *testing.T) {
 	if err = e.svc.SetConfig(t.Context(), e.scope, id, []byte(svcSimpleJSON)); err != nil {
 		t.Fatal(err)
 	}
-	f, err := OpenStore(e.scope.BaseDirectory, id)
+	f, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,10 +393,10 @@ func TestSvcNextRunSkipsALeftMarker(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("launch = run %d, %v; want run 2", n, err)
 	}
-	if marker, ok := e.markerRun(id, 1, CleanupAgents); !ok || !strings.Contains(marker, "left-by-run-1") {
+	if marker, ok := e.markerRun(id, 1, cleanupAgents); !ok || !strings.Contains(marker, "left-by-run-1") {
 		t.Errorf("run 1's marker = %q, %v; want it left as it was", marker, ok)
 	}
-	if marker, ok := e.markerRun(id, 2, CleanupAgents); !ok || strings.Contains(marker, "left-by-run-1") {
+	if marker, ok := e.markerRun(id, 2, cleanupAgents); !ok || strings.Contains(marker, "left-by-run-1") {
 		t.Errorf("run 2's marker = %q, %v; want only run 2's agents", marker, ok)
 	}
 }
@@ -535,7 +535,7 @@ func TestSvcRecoverACancellingEarlierRunWithoutMarkers(t *testing.T) {
 	e.restart()
 	e.appendCommits(id, Commit{Kind: CommitCancelRequested})
 	run1 := e.store(id)
-	for _, marker := range []string{CleanupAgents, cleanupNotice} {
+	for _, marker := range []string{cleanupAgents, cleanupNotice} {
 		if err := run1.ClearCleanup(marker); err != nil {
 			t.Fatal(err)
 		}
@@ -557,7 +557,7 @@ func TestSvcRecoverACancellingEarlierRunWithoutMarkers(t *testing.T) {
 // supersedes run 1, as a launch that then crashed would leave it.
 func svcAllocateRun2(t *testing.T, e *svcEnv, id string) {
 	t.Helper()
-	f, err := OpenStore(e.scope.BaseDirectory, id)
+	f, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +601,7 @@ func TestSvcBookChapterPerRun(t *testing.T) {
 	}
 	svcRelaunch(t, e, id)
 	for n, want := range map[int]string{1: "# Doc\n\nBody.\n", 2: "# Chapter 2\n"} {
-		f, err := OpenStore(e.scope.BaseDirectory, id)
+		f, err := openStore(e.scope.BaseDirectory, id)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -69,7 +69,7 @@ func TestConfigSchemaDocsMatchTypes(t *testing.T) {
 }
 
 // The published schemas have exactly the fields of the Go types, at every
-// depth, and are closed wherever Decode refuses unknown fields.
+// depth, and are closed wherever decodeConfig refuses unknown fields.
 func TestConfigSchemaPropertiesMatchTypes(t *testing.T) {
 	for name, schema := range map[string]map[string]any{"config": ConfigSchema(), "patch": PatchSchema()} {
 		t.Run(name, func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestConfigSchemaAcceptsTemplatesAndExamples(t *testing.T) {
 		docs["template "+tpl.name] = []byte(data)
 	}
 	for name, data := range docs {
-		if _, err := Decode(data); err != nil {
+		if _, err := decodeConfig(data); err != nil {
 			t.Errorf("%s does not decode: %v", name, err)
 		}
 		if err := config.Validate(data); err != nil {
@@ -283,7 +283,7 @@ func TestConfigSchemaRefuses(t *testing.T) {
 
 // A configuration being built step by step (what forum_config_export returns
 // before it is complete) matches the import schema: nothing is required
-// there, and ValidateStatic is what reports the missing fields.
+// there, and validateStatic is what reports the missing fields.
 func TestConfigSchemaAcceptsHalfBuiltConfig(t *testing.T) {
 	config := mustCompileSchema(t, ConfigSchema())
 	for _, doc := range []string{
@@ -294,9 +294,9 @@ func TestConfigSchemaAcceptsHalfBuiltConfig(t *testing.T) {
 		if err := config.Validate([]byte(doc)); err != nil {
 			t.Errorf("%s refused: %v", doc, err)
 		}
-		cfg, err := Decode([]byte(doc))
+		cfg, err := decodeConfig([]byte(doc))
 		if err == nil {
-			err = ValidateStatic(cfg)
+			err = validateStatic(cfg)
 		}
 		if err == nil {
 			t.Errorf("%s: ValidateStatic accepted an incomplete configuration", doc)
@@ -319,7 +319,7 @@ func TestAllowNull(t *testing.T) {
 	}
 }
 
-// Every enum the schema publishes is the list ValidateStatic accepts, and
+// Every enum the schema publishes is the list validateStatic accepts, and
 // every minimum is minPositive.
 func TestConfigSchemaEnumsAreValidatorValues(t *testing.T) {
 	props := func(s map[string]any, path ...string) map[string]any {
@@ -390,7 +390,7 @@ func TestConfigSchemaEnumsAreValidatorValues(t *testing.T) {
 	}
 }
 
-// The schema bounds the forum name as ValidateStatic does.
+// The schema bounds the forum name as validateStatic does.
 func TestConfigSchemaBoundsTheName(t *testing.T) {
 	props, ok := ConfigSchema()["properties"].(map[string]any)
 	if !ok {

@@ -59,14 +59,14 @@ type attemptResult struct {
 // ID (uncertain ones included, §8) up to limits.max_attempts_per_turn; see
 // perform for adoption, resend and repair. Rejected content is never
 // published; every attempt stays on disk.
-func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
+func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
 	p, ok := c.parts.Participants[participantID]
 	if !ok {
 		return nil, "", fmt.Errorf("%w: participant %q is not in participants.json", ErrCorrupt, participantID)
 	}
 	schema := c.schemas[layer.Output.Schema]
 	res, err := c.perform(ctx, work{
-		layer: layer, round: round, turn: TurnID(round, participantID), kind: TurnParticipant, p: p,
+		layer: layer, round: round, turn: turnID(round, participantID), kind: TurnParticipant, p: p,
 		compose: func(cutoff int) (string, error) {
 			return c.composeTurnMessage(layer, round, p, cutoff)
 		},
@@ -111,7 +111,7 @@ func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, partic
 //
 // A Messenger error is EndHostError, or EndParticipantGone for a created
 // participant the host no longer has (hostFailure).
-func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptResult, error) {
+func (c *forumController) perform(ctx context.Context, w work, cutoff int) (attemptResult, error) {
 	prior := c.turnAttempts(w.layer.ID, w.turn)
 	if last := lastAttempt(prior); last != nil && last.Reply != nil && len(last.Reply.Issues) == 0 {
 		c.host.Logger.Infof("%s: %s/%s adopting saved reply of attempt %d", c.logName, w.layer.ID, w.turn, last.Request.Attempt)
@@ -201,7 +201,7 @@ const minHeldWait = time.Second
 // timeout); the attempt then ends as a timeout without being sent. A model
 // back in cooldown after the delay is held again. A pause, cancel
 // or end of ctx ends the hold or the delay early; reserve then stops the turn.
-func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
+func (c *forumController) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
 	if c.host.Cooldown == nil {
 		return time.Time{}, false
 	}
@@ -251,7 +251,7 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 
 // holdFor waits d in steps of at most cooldownPoll, reporting false as soon
 // as ctx ends or a pause or cancel is requested.
-func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
+func (c *forumController) holdFor(ctx context.Context, d time.Duration) bool {
 	end := time.Now().Add(d)
 	for {
 		step := min(time.Until(end), cooldownPoll)
@@ -279,7 +279,7 @@ func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
 // CommitAttempt, which only lands while the forum is running. reserved
 // reports that the attempt was committed; wait is then the Ask wait, which
 // ends by deadline when that is set (a turn held back by awaitModel).
-func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (wait time.Duration, reserved bool, reason EndReason, err error) {
+func (c *forumController) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (wait time.Duration, reserved bool, reason EndReason, err error) {
 	c.dispatchMu.Lock()
 	defer c.dispatchMu.Unlock()
 	if c.interrupted() {
@@ -299,7 +299,7 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 	}
 	req.SentAt = now.UTC()
 	req.WaitSeconds = int(wait / time.Second)
-	if err := c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
+	if err = c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
 		return 0, false, "", err
 	}
 	err = c.commitWhen(statusIs(StatusRunning), &Commit{
@@ -328,7 +328,7 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 // is; otherwise it is the hostFailure reason. A cancelled turn while ctx
 // has ended (the service is closing) is treated the same way: the
 // shutdown cancelled it, so no failed reply is recorded.
-func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
+func (c *forumController) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
 	reply, err := c.host.Messenger.Ask(WithAskInfo(ctx, AskInfo{ForumID: c.snap.ForumID, Origin: c.snap.Origin}), req.AgentID, req.Message, wait)
 	if err != nil {
 		switch {
@@ -353,7 +353,7 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 // recordReply records the reply of a reserved attempt: reply.json with
 // Issues from validate when the outcome is OutcomeOK, the outcome
 // otherwise, and the attempts cache.
-func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func(string) []string) (*AttemptReply, error) {
+func (c *forumController) recordReply(req *AttemptRequest, reply Reply, validate func(string) []string) (*AttemptReply, error) {
 	rec := &AttemptReply{ReceivedAt: time.Now().UTC(), Outcome: reply.Outcome, Text: reply.Text}
 	if reply.Outcome.Successful() {
 		rec.Issues = validate(reply.Text)
@@ -379,7 +379,7 @@ func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func
 // hostFailure maps a Messenger error to the run's end reason:
 // EndParticipantGone when the participant was Created and the host says
 // the agent does not exist, EndHostError otherwise.
-func (c *Controller) hostFailure(ctx context.Context, p ParticipantRecord, err error) EndReason {
+func (c *forumController) hostFailure(ctx context.Context, p ParticipantRecord, err error) EndReason {
 	c.host.Logger.Errorf("%s: ask %s (agent %s) failed: %v", c.logName, p.ID, p.AgentID, err)
 	if p.Created {
 		if exists, existsErr := c.host.Agents.Exists(ctx, p.AgentID); existsErr == nil && !exists {
@@ -393,7 +393,7 @@ func (c *Controller) hostFailure(ctx context.Context, p ParticipantRecord, err e
 // attempt directory and commits CommitTurn. It returns the record and the
 // commit, or nil when a cancel was requested first (the reply stays on
 // disk for audit and is never published).
-func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *AttemptReply) (*OutputRecord, *Commit, error) {
+func (c *forumController) storeOutput(layer Layer, req *AttemptRequest, reply *AttemptReply) (*OutputRecord, *Commit, error) {
 	content, issues := validateOutput(layer.Output, reply.Text, c.schemas[layer.Output.Schema])
 	if len(issues) > 0 {
 		return nil, nil, fmt.Errorf("%w: accepted reply of %s/%s attempt %d no longer validates: %s",
@@ -436,7 +436,7 @@ func outputID(forumID, layerID, turn string) string {
 // resentAfterRestart reports whether an attempt of the turn before attempt
 // has no reply: within one process every attempt gets one, so it was cut
 // by a restart and its message sent again.
-func (c *Controller) resentAfterRestart(layerID, turn string, attempt int) bool {
+func (c *forumController) resentAfterRestart(layerID, turn string, attempt int) bool {
 	for _, a := range c.turnAttempts(layerID, turn) {
 		if a.Request.Attempt < attempt && a.Reply == nil {
 			return true
@@ -446,7 +446,7 @@ func (c *Controller) resentAfterRestart(layerID, turn string, attempt int) bool 
 }
 
 // turnAttempts returns the cached attempts of one turn ID, in order.
-func (c *Controller) turnAttempts(layerID, turn string) []AttemptRecord {
+func (c *forumController) turnAttempts(layerID, turn string) []AttemptRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []AttemptRecord
@@ -486,7 +486,7 @@ const (
 // whether it was ever sent anything, whether it was in this layer, and the
 // last commit its messages covered. It is derived from the CommitAttempt
 // entries, so it survives a restart.
-func (c *Controller) contact(participantID, layerID string) (briefed, introduced bool, through int) {
+func (c *forumController) contact(participantID, layerID string) (briefed, introduced bool, through int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.commits {
@@ -519,7 +519,7 @@ func (c *Controller) contact(participantID, layerID string) (briefed, introduced
 // inputs and the layer's whole eligible conversation up to cutoff, its
 // own outputs included and marked as its own (§3.1). Directed messages
 // are delivered once, to every participant mode alike.
-func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRecord, cutoff int) (string, error) {
+func (c *forumController) composeTurnMessage(layer Layer, round int, p ParticipantRecord, cutoff int) (string, error) {
 	briefed, introduced, through := c.contact(p.ID, layer.ID)
 	single := p.Mode == FreshModeSingleShot
 	full := single || !introduced
@@ -532,7 +532,7 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 		c.writeIntro(&b, layer, p, nil)
 		inputs, err := c.store.ReadLayerInputs(layer.ID)
 		if err != nil {
-			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, TurnID(round, p.ID), err)
+			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, turnID(round, p.ID), err)
 		}
 		c.writeInputs(&b, inputs.Participants[p.ID], layer.Inputs, p.ID)
 	}
@@ -572,12 +572,12 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 // turnHeader is the first line of every participant message (repairs
 // included): which forum, layer and round it belongs to, since an
 // existing agent's conversation also carries other work.
-func (c *Controller) turnHeader(layer Layer, round int) string {
+func (c *forumController) turnHeader(layer Layer, round int) string {
 	return fmt.Sprintf("Forum %q, layer %q, round %d.", c.snap.Label(), layer.ID, round)
 }
 
 // writeBrief writes the brief section.
-func (c *Controller) writeBrief(b *strings.Builder) {
+func (c *forumController) writeBrief(b *strings.Builder) {
 	br := c.cfg.Brief
 	fmt.Fprintf(b, "\n%s\nPurpose: %s\nTask: %s\n", headingBrief, br.Purpose, br.Task)
 	writeList(b, "Success criteria:", br.SuccessCriteria)
@@ -598,7 +598,7 @@ func writeList(b *strings.Builder, title string, items []string) {
 // writeIntro writes the participant's private instructions (when set) and
 // the layer's instructions; preface, when set, comes first in the layer
 // section (the moderator's role).
-func (c *Controller) writeIntro(b *strings.Builder, layer Layer, p ParticipantRecord, preface []string) {
+func (c *forumController) writeIntro(b *strings.Builder, layer Layer, p ParticipantRecord, preface []string) {
 	if instr := c.cfg.Participants[p.ID].Instructions; instr != "" {
 		fmt.Fprintf(b, "\n%s\n%s\n", headingInstructions, instr)
 	}
@@ -613,7 +613,7 @@ func (c *Controller) writeIntro(b *strings.Builder, layer Layer, p ParticipantRe
 // the inputs the items came from and pid their recipient: an anonymous
 // route addressed to pid that gave it nothing (optional, with no other
 // author's output) is written as a line saying so.
-func (c *Controller) writeInputs(b *strings.Builder, items []InputItem, routes []Route, pid string) {
+func (c *forumController) writeInputs(b *strings.Builder, items []InputItem, routes []Route, pid string) {
 	var empty []string // producing layers of anonymous routes that gave nothing
 	for i, r := range routes {
 		if !r.Anonymous || (len(r.To) > 0 && !slices.Contains(r.To, pid)) {
@@ -656,7 +656,7 @@ const noOtherResponses = "No other responses are available."
 
 // writeEvents writes layer events under heading; self names the reader so
 // its own outputs (single_shot only) are marked as such.
-func (c *Controller) writeEvents(b *strings.Builder, heading string, events []forumEvent, self string) {
+func (c *forumController) writeEvents(b *strings.Builder, heading string, events []forumEvent, self string) {
 	fmt.Fprintf(b, "\n%s\n%s\n", heading, dataNote)
 	for _, ev := range events {
 		switch {
@@ -674,7 +674,7 @@ func (c *Controller) writeEvents(b *strings.Builder, heading string, events []fo
 
 // participantName is the participant's transcript name: participants.json,
 // then the configuration, then the ID.
-func (c *Controller) participantName(id string) string {
+func (c *forumController) participantName(id string) string {
 	if p, ok := c.parts.Participants[id]; ok && p.Name != "" {
 		return p.Name
 	}
@@ -703,7 +703,7 @@ type forumEvent struct {
 // true, the moderator's `conversation_view: full`) and moderator GUIDE
 // decisions. An after_round output is visible only once its round is
 // published, in the layer's participant order.
-func (c *Controller) layerEvents(layer Layer, afterSeq, throughSeq int, full bool) ([]forumEvent, error) {
+func (c *forumController) layerEvents(layer Layer, afterSeq, throughSeq int, full bool) ([]forumEvent, error) {
 	c.mu.Lock()
 	var events []forumEvent
 	pending := map[int][]OutputRecord{} // after_round outputs by round, until published
@@ -776,7 +776,7 @@ func withoutAuthor(events []forumEvent, id string) []forumEvent {
 // Seq <= throughSeq, in order: those decided since its last message.
 // They are delivered once, inside its next turn of this forum, and never
 // written to the transcript (§6).
-func (c *Controller) pendingDirected(participantID string, afterSeq, throughSeq int) []string {
+func (c *forumController) pendingDirected(participantID string, afterSeq, throughSeq int) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []string
@@ -798,7 +798,7 @@ func (c *Controller) pendingDirected(participantID string, afterSeq, throughSeq 
 // with a named schema, the schema itself when withSchema is true (the
 // first turn in a layer, a single_shot turn and every repair) or its name
 // otherwise.
-func (c *Controller) outputContract(out Output, withSchema bool) string {
+func (c *forumController) outputContract(out Output, withSchema bool) string {
 	switch out.Format {
 	case FormatJSON:
 		s := "Reply with exactly one JSON value and nothing else."
@@ -875,7 +875,7 @@ func validateOutput(out Output, text string, schema *compiledSchema) (content []
 		return nil, issues
 	}
 	if out.Share != nil {
-		if _, err := Project(content, *out.Share); err != nil {
+		if _, err := projectOutput(content, *out.Share); err != nil {
 			return nil, []string{"the reply lacks a shared member: " + strings.TrimPrefix(err.Error(), "projection: ")}
 		}
 	}
@@ -922,13 +922,13 @@ func unfence(text string) string {
 
 // publishedProjection returns the published form of an accepted output:
 // nil (meaning "same as the full output") unless the format is JSON and
-// out.Share is set, in which case Project(full, *out.Share) (an empty
+// out.Share is set, in which case projectOutput(full, *out.Share) (an empty
 // share list publishes {}).
 func publishedProjection(out Output, full []byte) ([]byte, error) {
 	if out.Format != FormatJSON || out.Share == nil {
 		return nil, nil
 	}
-	return Project(full, *out.Share)
+	return projectOutput(full, *out.Share)
 }
 
 // repairFor builds the follow-up sent after a rejected attempt. A
@@ -938,7 +938,7 @@ func publishedProjection(out Output, full []byte) ([]byte, error) {
 // message again (the latest non-repair one), its rejected reply quoted,
 // and the issues (rev 3 §5 "repair attempts containing the invalid
 // response and errors").
-func (c *Controller) repairFor(w work, prior []AttemptRecord) string {
+func (c *forumController) repairFor(w work, prior []AttemptRecord) string {
 	last := lastAttempt(prior)
 	header := c.turnHeader(w.layer, w.round)
 	if w.kind == TurnModerator {

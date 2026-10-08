@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// fakePrefix serves files from a map the way Store.ReadPrefix does.
+// fakePrefix serves files from a map the way forumStore.ReadPrefix does.
 func fakePrefix(files map[string]string) prefixReader {
 	return func(rel string, keep int) (string, int, error) {
 		s, ok := files[rel]
@@ -123,11 +123,11 @@ func TestResultsView_PartialAndUnreadable(t *testing.T) {
 	}
 }
 
-// Store.ReadPrefix keeps only the requested prefix but counts every
+// forumStore.ReadPrefix keeps only the requested prefix but counts every
 // character, and refuses a path outside the forum.
 func TestStoreReadPrefix(t *testing.T) {
 	base := t.TempDir()
-	forum, err := CreateStore(base, "11111111-1111-4111-8111-111111111111")
+	forum, err := createStore(base, "11111111-1111-4111-8111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}

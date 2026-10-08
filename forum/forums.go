@@ -32,7 +32,7 @@ import (
 //
 // The forum's lock is held from before its directory exists until
 // forum.json is written, so Recover never removes the half-created
-// directory (ListIncomplete) from under it.
+// directory (listIncomplete) from under it.
 func (s *Service) NewForum(_ context.Context, scope Scope) (string, error) {
 	if !filepath.IsAbs(scope.BaseDirectory) {
 		return "", fmt.Errorf("new forum: base directory %q is not absolute", scope.BaseDirectory)
@@ -43,7 +43,7 @@ func (s *Service) NewForum(_ context.Context, scope Scope) (string, error) {
 		return "", err
 	}
 	defer guard.Unlock()
-	store, err := CreateStore(scope.BaseDirectory, id)
+	store, err := createStore(scope.BaseDirectory, id)
 	if err != nil {
 		return "", err
 	}
@@ -51,7 +51,7 @@ func (s *Service) NewForum(_ context.Context, scope Scope) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The owner first: a forum.json is never without one (ListIncomplete).
+	// The owner first: a forum.json is never without one (listIncomplete).
 	if err := store.WriteForumMeta(&ForumMeta{Owner: scope.AgentID, CreatedAt: time.Now().UTC()}); err != nil {
 		return "", errors.Join(err, guard.Remove())
 	}
@@ -186,7 +186,7 @@ func (s *Service) ref(scope Scope, id string) string {
 }
 
 // storeRef is ref for an open store (the forum's or one of its runs').
-func storeRef(store *Store) string {
+func storeRef(store *forumStore) string {
 	raw, _, err := store.ReadForumConfig()
 	if err != nil {
 		return store.ID()
@@ -204,7 +204,7 @@ func busy(st Status) bool {
 // startedRuns returns the runs of a forum whose launch got as far as its
 // snapshot, in ascending order; a run directory without a snapshot is a
 // launch that did not finish (or is in progress).
-func startedRuns(store *Store) ([]int, error) {
+func startedRuns(store *forumStore) ([]int, error) {
 	runs, err := store.Runs()
 	if err != nil {
 		return nil, err
@@ -219,7 +219,7 @@ func startedRuns(store *Store) ([]int, error) {
 }
 
 // latestRun returns the forum's latest started run, or 0 when it has none.
-func latestRun(store *Store) (int, error) {
+func latestRun(store *forumStore) (int, error) {
 	runs, err := startedRuns(store)
 	if err != nil || len(runs) == 0 {
 		return 0, err
@@ -230,7 +230,7 @@ func latestRun(store *Store) (int, error) {
 // refuseBusy refuses (errBusy) when the forum's latest run is busy. A
 // latest run whose records are damaged never runs again and does not
 // refuse.
-func refuseBusy(store *Store) error {
+func refuseBusy(store *forumStore) error {
 	n, err := latestRun(store)
 	if err != nil || n == 0 {
 		return err
@@ -252,7 +252,7 @@ func refuseBusy(store *Store) error {
 // are compared in canonical form (canonicalConfig), so formatting, member
 // order and number spelling are not changes; the run's ConfigDigest stays
 // the integrity check of its own copy.
-func configChanged(run *Store, current []byte) (bool, error) {
+func configChanged(run *forumStore, current []byte) (bool, error) {
 	if current == nil {
 		var err error
 		if current, _, err = run.ReadForumConfig(); err != nil {
@@ -328,12 +328,12 @@ func configName(raw []byte) string {
 // of its started runs and of the runs its cleanup markers still name (an
 // undone launch whose agents are still to delete), so a new run never
 // shares a marker with an earlier one.
-func nextRun(store *Store, started []int) (int, error) {
+func nextRun(store *forumStore, started []int) (int, error) {
 	last := 0
 	if len(started) > 0 {
 		last = started[len(started)-1]
 	}
-	for _, name := range []string{CleanupAgents, cleanupNotice} {
+	for _, name := range []string{cleanupAgents, cleanupNotice} {
 		marked, err := store.MarkedRuns(name)
 		if err != nil {
 			return 0, err
@@ -352,7 +352,7 @@ func nextRun(store *Store, started []int) (int, error) {
 // run's directory removed, so the forum is as it was before the launch.
 // The caller holds the lock. It runs even if the launching call was
 // cancelled.
-func (s *Service) revertRun(ctx context.Context, store *Store) error {
+func (s *Service) revertRun(ctx context.Context, store *forumStore) error {
 	if err := s.deleteTempAgents(context.WithoutCancel(ctx), store); err != nil {
 		s.host.Logger.Warnf("%s: undoing it: %v (retried every %s)", logRun(store), err, s.keepAliveEvery)
 		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
@@ -366,7 +366,7 @@ func (s *Service) revertRun(ctx context.Context, store *Store) error {
 // undoUnstarted reverts every run of the forum whose launch did not get as
 // far as its snapshot (revertRun) and returns the started runs. The caller
 // holds the lock.
-func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error) {
+func (s *Service) undoUnstarted(ctx context.Context, store *forumStore) ([]int, error) {
 	runs, err := store.Runs()
 	if err != nil {
 		return nil, err
@@ -393,7 +393,7 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 // started the new run itself; a run whose records are damaged only has its
 // temporary agents deleted and its notice marker cleared. The caller holds
 // the lock.
-func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) error {
+func (s *Service) supersede(ctx context.Context, store *forumStore, damaged bool) error {
 	id := store.ID()
 	s.takeLaunchChat(keyOf(store)) // superseded without a notice
 	s.forgetNotice(keyOf(store))

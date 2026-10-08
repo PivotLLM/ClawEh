@@ -17,8 +17,8 @@ import (
 // follow the spec exactly. Decoding is in decode.go, validation in
 // validate.go.
 
-// ConfigVersion is the only format version this package accepts.
-const ConfigVersion = 1
+// configVersion is the only format version this package accepts.
+const configVersion = 1
 
 // Config is one complete forum procedure (§3).
 type Config struct {
@@ -80,7 +80,7 @@ type Source struct {
 	Inline json.RawMessage `json:"inline,omitempty"`
 	// File is a path the launching agent's file tools would read: relative
 	// to its workspace, or under one of its mounts (maestro/..., a
-	// configured mount); the host resolves it (PreflightEnv.ResolveFile).
+	// configured mount); the host resolves it (preflightEnv.ResolveFile).
 	// It is read once at launch and copied into sources/ (§8), so later
 	// edits do not affect a running forum.
 	File string `json:"file,omitempty"`
@@ -282,7 +282,7 @@ type Moderator struct {
 
 // Limits protect against a runaway forum (§3). All five are required and
 // positive; host ceilings (Service option WithHostLimits) are enforced by
-// Preflight.
+// runPreflight.
 type Limits struct {
 	// MaxCalls is the forum's total budget: every message sent to a
 	// participant, repairs and moderator checks included.
@@ -325,7 +325,7 @@ type DirectedMessage struct {
 	Text string `json:"text"`
 }
 
-// The accepted values of each enumerated field, in one place: ValidateStatic
+// The accepted values of each enumerated field, in one place: validateStatic
 // checks against them and the published JSON Schema lists them. An empty
 // select, view, distribute, mode or conversation_view means its default.
 var (
@@ -339,7 +339,7 @@ var (
 )
 
 // minPositive is the smallest value of every limit, of a layer's max_rounds
-// and of a moderator's after_round and every_rounds (ValidateStatic and the
+// and of a moderator's after_round and every_rounds (validateStatic and the
 // published schema).
 const minPositive = 1
 
@@ -356,8 +356,8 @@ func valueList[T ~string](values []T) string {
 // underscore and hyphen, not starting with a digit.
 var configIDPattern = regexp.MustCompile(`^[A-Za-z_-][A-Za-z0-9_-]*$`)
 
-// ValidID reports whether id is a well-formed configuration ID.
-func ValidID(id string) bool { return configIDPattern.MatchString(id) }
+// validID reports whether id is a well-formed configuration ID.
+func validID(id string) bool { return configIDPattern.MatchString(id) }
 
 // EnabledLayers returns the enabled layers in execution order.
 func (c *Config) EnabledLayers() []Layer {
@@ -393,7 +393,7 @@ func (c *Config) EffectiveResultLayers() []string {
 	return []string{enabled[len(enabled)-1].ID}
 }
 
-// EffectiveModeratorSchema builds the decision schema the moderator of
+// effectiveModeratorSchema builds the decision schema the moderator of
 // layer is held to (rev 3 §6): a closed object with required `decision`
 // (enum CONTINUE, GUIDE, STOP), `reason` (string) and `guidance` (string
 // or null); a required `assessment` holding assessment (the schema named
@@ -408,7 +408,7 @@ func (c *Config) EffectiveResultLayers() []string {
 // so a validator enforces it; guidanceIssue states the same rule in Go. An assessment schema without its own `$id` gets
 // assessmentSchemaID, so its internal references ("#/$defs/...") resolve
 // within it rather than against the decision schema's root.
-func EffectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.RawMessage, error) {
+func effectiveModeratorSchema(layer Layer, assessment json.RawMessage) (json.RawMessage, error) {
 	if layer.Moderator == nil {
 		return nil, fmt.Errorf("layer %q has no moderator", layer.ID)
 	}

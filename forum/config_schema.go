@@ -16,9 +16,9 @@ import (
 // forum_config_import's `config` and forum_config_update's `changes` so a
 // model sees every field. It is generated from the Go types by reflection
 // (field names, types, closed objects) plus fieldDocs (descriptions), and
-// its enums and minimums are the values ValidateStatic checks against
-// (formatValues, ..., minPositive), so it cannot drift from what Decode and
-// ValidateStatic accept; a test fails when fieldDocs and the types disagree.
+// its enums and minimums are the values validateStatic checks against
+// (formatValues, ..., minPositive), so it cannot drift from what decodeConfig and
+// validateStatic accept; a test fails when fieldDocs and the types disagree.
 //
 // Nothing is required: a configuration is built step by step and may be
 // incomplete until forum_validate and forum_launch check it.
@@ -49,7 +49,7 @@ var (
 	formats = enumOf(formatValues)
 
 	fieldDocs = map[string]fieldDoc{
-		"Config.version":       {desc: "Configuration format version; always 1", min: ConfigVersion, max: ConfigVersion},
+		"Config.version":       {desc: "Configuration format version; always 1", min: configVersion, max: configVersion},
 		"Config.name":          {desc: "Optional label for the forum in status, results and notices; one line of at most 100 characters; its ID when omitted", maxLength: MaxNameChars},
 		"Config.brief":         {desc: "Shared with every participant"},
 		"Config.sources":       {desc: "Material routed into layers, by source ID (letters, digits, _ and -, not starting with a digit)"},
@@ -149,7 +149,7 @@ func ConfigSchema() map[string]any { return configSchema() }
 // their items are ConfigSchema's. The map is shared: do not modify it.
 func PatchSchema() map[string]any { return patchSchema() }
 
-// structSchema is the closed object schema of struct type t (Decode refuses
+// structSchema is the closed object schema of struct type t (decodeConfig refuses
 // unknown fields). In a patch every member may be null.
 func structSchema(t reflect.Type, patch bool) map[string]any {
 	props := map[string]any{}

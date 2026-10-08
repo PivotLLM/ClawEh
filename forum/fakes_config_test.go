@@ -66,7 +66,7 @@ const cfgtExampleJSON = `{
 // cfgtExample decodes a fresh copy of the §7 example.
 func cfgtExample(t *testing.T) *Config {
 	t.Helper()
-	cfg, err := Decode([]byte(cfgtExampleJSON))
+	cfg, err := decodeConfig([]byte(cfgtExampleJSON))
 	if err != nil {
 		t.Fatalf("decode example: %v", err)
 	}
@@ -181,7 +181,7 @@ func (a *cfgtAgents) Touch(context.Context, string, string) error {
 	return errors.New("preflight must not touch agents")
 }
 
-// cfgtEnv is a PreflightEnv over agents with the real schema adapter.
-func cfgtEnv(agents Agents) PreflightEnv {
-	return PreflightEnv{Launcher: "launcher", Agents: agents}
+// cfgtEnv is a preflightEnv over agents with the real schema adapter.
+func cfgtEnv(agents Agents) preflightEnv {
+	return preflightEnv{Launcher: "launcher", Agents: agents}
 }

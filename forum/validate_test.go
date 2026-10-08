@@ -16,7 +16,7 @@ import (
 // markdown).
 
 func TestValidateStaticExample(t *testing.T) {
-	if err := ValidateStatic(cfgtExample(t)); err != nil {
+	if err := validateStatic(cfgtExample(t)); err != nil {
 		t.Fatalf("the spec example must validate: %v", err)
 	}
 }
@@ -236,7 +236,7 @@ func TestValidateStaticRejects(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cfgtExample(t)
 			tt.mutate(cfg)
-			cfgtWantIssue(t, ValidateStatic(cfg), tt.path, tt.want...)
+			cfgtWantIssue(t, validateStatic(cfg), tt.path, tt.want...)
 		})
 	}
 }
@@ -337,7 +337,7 @@ func TestValidateStaticAccepts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cfgtExample(t)
 			tt.mutate(cfg)
-			if err := ValidateStatic(cfg); err != nil {
+			if err := validateStatic(cfg); err != nil {
 				t.Fatalf("ValidateStatic: %v", err)
 			}
 		})
@@ -345,7 +345,7 @@ func TestValidateStaticAccepts(t *testing.T) {
 }
 
 // TestValidateStaticProjection covers the share and paths pointer checks,
-// which ValidateStatic delegates to CheckProjection (seam c).
+// which validateStatic delegates to checkProjection (seam c).
 func TestValidateStaticProjection(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -362,7 +362,7 @@ func TestValidateStaticProjection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cfgtExample(t)
 			tt.mutate(cfg)
-			cfgtWantIssue(t, ValidateStatic(cfg), tt.path)
+			cfgtWantIssue(t, validateStatic(cfg), tt.path)
 		})
 	}
 }
@@ -374,12 +374,12 @@ func TestValidateStaticReportsEveryIssue(t *testing.T) {
 	cfg.Layers[0].Delivery = ""
 	cfg.Participants["alice"] = Participant{Agent: "alice", Model: "x"}
 	cfg.ResultLayers = []string{"nope"}
-	err := ValidateStatic(cfg)
+	err := validateStatic(cfg)
 	for _, path := range []string{"brief.task", "limits.max_calls", "layers[0].delivery", "participants.alice.model", "result_layers[0]"} {
 		cfgtWantIssue(t, err, path)
 	}
 	// Issues come out in a stable order.
-	again := ValidateStatic(cfg)
+	again := validateStatic(cfg)
 	if err.Error() != again.Error() {
 		t.Errorf("issue order is not deterministic:\n%v\n---\n%v", err, again)
 	}
@@ -410,12 +410,12 @@ func TestWithinShare(t *testing.T) {
 		{"/b", []string{"/a", "/c"}, false},
 		{"/b", []string{"/a", "/b/c"}, true},
 		{"/a", nil, false},
-		{"bad", []string{"/a"}, true},    // left to CheckProjection
+		{"bad", []string{"/a"}, true},    // left to checkProjection
 		{"/a~1b", []string{"/a"}, false}, // the member "a/b", not "a" then "b"
 		{"/a/b", []string{"/a~1b"}, false},
 		{"/a~1b", []string{"/a~1b"}, true},
 		{"/a~0/x", []string{"/a~0"}, true},
-		{"/a", []string{"bad"}, true}, // left to CheckProjection
+		{"/a", []string{"bad"}, true}, // left to checkProjection
 	}
 	for _, tt := range tests {
 		if got := withinShare(tt.p, tt.share); got != tt.want {
@@ -450,7 +450,7 @@ func TestValidateStaticPlaceholders(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cfgtExample(t)
 			tt.mutate(cfg)
-			cfgtWantIssue(t, ValidateStatic(cfg), tt.path, "is still a placeholder; replace it.")
+			cfgtWantIssue(t, validateStatic(cfg), tt.path, "is still a placeholder; replace it.")
 		})
 	}
 
@@ -458,14 +458,14 @@ func TestValidateStaticPlaceholders(t *testing.T) {
 	cfg := cfgtExample(t)
 	cfg.Brief.Task = "<task>"
 	cfg.Layers[0].Instructions = "<x>"
-	err := ValidateStatic(cfg)
+	err := validateStatic(cfg)
 	cfgtWantIssue(t, err, "brief.task", "placeholder")
 	cfgtWantIssue(t, err, "layers[0].instructions", "placeholder")
 
 	// A schema's strings are real data: a pattern "<\w+>" is accepted.
 	cfg = cfgtExample(t)
 	cfg.Schemas["tag"] = cfgtRaw(`{"type":"string","pattern":"<\\w+>"}`)
-	if err := ValidateStatic(cfg); err != nil {
+	if err := validateStatic(cfg); err != nil {
 		t.Errorf("a schema pattern is refused: %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestValidateStaticPlaceholders(t *testing.T) {
 		cfg := cfgtExample(t)
 		cfg.Layers[2].Instructions = text
 		cfg.Sources["report"] = Source{Decode: FormatMarkdown, Inline: cfgtRaw(`"` + text + `"`)}
-		if err := ValidateStatic(cfg); err != nil {
+		if err := validateStatic(cfg); err != nil {
 			t.Errorf("%q is refused: %v", text, err)
 		}
 	}

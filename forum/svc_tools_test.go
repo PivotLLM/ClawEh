@@ -862,7 +862,7 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 	for _, tpl := range templates {
 		t.Run(tpl.name, func(t *testing.T) {
 			raw, _ := templateConfig(tpl.name)
-			cfg, err := Decode([]byte(raw))
+			cfg, err := decodeConfig([]byte(raw))
 			if err != nil {
 				t.Fatal(err)
 			}

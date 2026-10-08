@@ -36,7 +36,7 @@ func routerNewFixture(t *testing.T) *routerFixture {
 	disabled := false
 	f := &routerFixture{
 		cfg: &Config{
-			Version: ConfigVersion,
+			Version: configVersion,
 			Participants: map[string]Participant{
 				"alice":  {Agent: "alice", Name: "Alice"},
 				"bob":    {Clone: "bob"},
@@ -71,7 +71,7 @@ func routerNewFixture(t *testing.T) *routerFixture {
 // "private":"p-<author>"} and the published one drops "private".
 func (f *routerFixture) routerAddOutput(layerID string, round int, author string) OutputRecord {
 	layer, _ := f.cfg.Layer(layerID)
-	turn := TurnID(round, author)
+	turn := turnID(round, author)
 	dir := fmt.Sprintf("layers/%s/calls/%s/1/", layerID, turn)
 	rec := OutputRecord{
 		OutputID:      layerID + "-" + turn,
@@ -112,7 +112,7 @@ func (f *routerFixture) routerRead(rel string) ([]byte, error) {
 }
 
 func (f *routerFixture) routerResolve(layer Layer) (*LayerInputs, error) {
-	return NewRouter(f.cfg, f.snap, f.routerRead).Resolve(layer, f.produced)
+	return newRouter(f.cfg, f.snap, f.routerRead).Resolve(layer, f.produced)
 }
 
 // routerIDs lists each item as "<source or output id>" for compact
@@ -733,7 +733,7 @@ func TestRouterModerator(t *testing.T) {
 		}
 	})
 	// The moderator is a moderator input's one explicit recipient, so view
-	// full needs no `to` there (ValidateStatic agrees); the moderator sees
+	// full needs no `to` there (validateStatic agrees); the moderator sees
 	// the private members a published view drops.
 	t.Run("view full without to reaches the moderator", func(t *testing.T) {
 		f := routerNewFixture(t)

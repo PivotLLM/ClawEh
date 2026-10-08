@@ -138,7 +138,7 @@ func (l *ctlLogger) Errorf(f string, v ...any) { l.addf("ERROR", f, v...) }
 // ctlForum is one launched forum on disk with its fake host.
 type ctlForum struct {
 	t      *testing.T
-	s      *Store
+	s      *forumStore
 	cfg    *Config
 	snap   *Snapshot
 	msg    *ctlMessenger
@@ -152,7 +152,7 @@ type ctlForum struct {
 // layers.
 func ctlConfig(layers ...Layer) *Config {
 	return &Config{
-		Version: ConfigVersion,
+		Version: configVersion,
 		Name:    "ctl test",
 		Brief:   Brief{Purpose: "BRIEF-PURPOSE", Task: "BRIEF-TASK", Constraints: []string{"BRIEF-CONSTRAINT"}},
 		Sources: map[string]Source{"notes": {Decode: FormatText, Inline: json.RawMessage(`"SOURCE-NOTES"`)}},
@@ -198,11 +198,11 @@ func ctlLaunch(t *testing.T, cfg *Config, opts ...ctlOption) *ctlForum {
 // ctlLaunchRaw is ctlLaunch for configuration text.
 func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	t.Helper()
-	cfg, err := Decode(raw)
+	cfg, err := decodeConfig(raw)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if err = ValidateStatic(cfg); err != nil {
+	if err = validateStatic(cfg); err != nil {
 		t.Fatalf("ValidateStatic: %v", err)
 	}
 	s := stNewStore(t)
@@ -266,7 +266,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 			if l.Moderator.Schema != "" {
 				assessment = cfg.Schemas[l.Moderator.Schema]
 			}
-			if modSchemas[l.ID], err = EffectiveModeratorSchema(l, assessment); err != nil {
+			if modSchemas[l.ID], err = effectiveModeratorSchema(l, assessment); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -320,9 +320,9 @@ func (f *ctlForum) reply(cl ctlCall) Reply {
 }
 
 // open opens the forum.
-func (f *ctlForum) open() *Controller {
+func (f *ctlForum) open() *forumController {
 	f.t.Helper()
-	c, err := Open(context.Background(), f.s, f.host)
+	c, err := openForum(context.Background(), f.s, f.host)
 	if err != nil {
 		f.t.Fatalf("Open: %v", err)
 	}
@@ -330,7 +330,7 @@ func (f *ctlForum) open() *Controller {
 }
 
 // run opens the forum and runs it, failing on an error.
-func (f *ctlForum) run() (*Controller, Status) {
+func (f *ctlForum) run() (*forumController, Status) {
 	f.t.Helper()
 	c := f.open()
 	st, err := c.Run(context.Background())
@@ -367,7 +367,7 @@ func (f *ctlForum) state() *State {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	st, err := Replay(f.cfg, f.snap, commits)
+	st, err := replay(f.cfg, f.snap, commits)
 	if err != nil {
 		f.t.Fatalf("Replay: %v", err)
 	}
@@ -434,7 +434,7 @@ func ctlJSON(t *testing.T, v any) string {
 
 // resume records the resume of a paused forum (what the service commits
 // before running it again) and runs it.
-func (f *ctlForum) resume() (*Controller, Status) {
+func (f *ctlForum) resume() (*forumController, Status) {
 	f.t.Helper()
 	if _, err := nextAppend(f.s, &Commit{Kind: CommitResumed}); err != nil {
 		f.t.Fatalf("resume: %v", err)

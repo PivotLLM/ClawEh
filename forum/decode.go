@@ -20,7 +20,7 @@ import (
 // Seam (a): strict decoding (spec §3: reject unknown fields and duplicate
 // keys before anything else is checked).
 
-// Decode parses one configuration document strictly, in two stages, and
+// decodeConfig parses one configuration document strictly, in two stages, and
 // reports problems as a *ValidationError.
 //
 // The first stage walks the document and stops it from decoding at all;
@@ -38,18 +38,18 @@ import (
 //   - a value of the wrong JSON type, naming its path.
 //
 // The second stage checks the decoded configuration and returns it
-// together with the error, so a caller can report ValidateStatic's
+// together with the error, so a caller can report validateStatic's
 // findings at the same time:
 //
-//   - Version must equal ConfigVersion;
+//   - Version must equal configVersion;
 //   - an explicit layer `max_calls` of 0 (an absent one means "no layer
 //     budget", and the Go zero value cannot tell the two apart);
 //   - an explicit `"share": null`: an absent share publishes the whole
 //     output and `[]` publishes nothing, and a null would be silently read
 //     as absent.
 //
-// Decode does not validate references or limits; ValidateStatic does.
-func Decode(data []byte) (*Config, error) {
+// decodeConfig does not validate references or limits; validateStatic does.
+func decodeConfig(data []byte) (*Config, error) {
 	w := &jsonWalker{dec: newTokenDecoder(data), data: data}
 	if err := w.document(reflect.TypeFor[Config]()); err != nil {
 		return nil, err
@@ -64,14 +64,14 @@ func Decode(data []byte) (*Config, error) {
 		return nil, &ValidationError{Issues: []Issue{decodeIssue(err)}}
 	}
 	var issues []Issue
-	if cfg.Version != ConfigVersion {
-		issues = append(issues, Issue{Path: "version", Message: fmt.Sprintf("version %d is not supported (want %d)", cfg.Version, ConfigVersion)})
+	if cfg.Version != configVersion {
+		issues = append(issues, Issue{Path: "version", Message: fmt.Sprintf("version %d is not supported (want %d)", cfg.Version, configVersion)})
 	}
 	issues = append(issues, explicitZeroLayerBudgets(data)...)
 	issues = append(issues, explicitNullShares(data)...)
 	if len(issues) > 0 {
 		// The document decoded: the configuration is returned with the
-		// issues, so a caller can report ValidateStatic's findings too.
+		// issues, so a caller can report validateStatic's findings too.
 		return &cfg, &ValidationError{Issues: issues}
 	}
 	return &cfg, nil

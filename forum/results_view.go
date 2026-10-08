@@ -82,7 +82,7 @@ func truncatedNote(path string) string {
 }
 
 // prefixReader returns the first keep characters of a forum-root-relative
-// file and its length in characters (Store.ReadPrefix).
+// file and its length in characters (forumStore.ReadPrefix).
 type prefixReader func(rel string, keep int) (string, int, error)
 
 // newResultsView renders res for forum_results. prefix is the run's

@@ -16,14 +16,14 @@ import (
 
 // transcript.md is derived: renderTranscript produces the whole file from
 // the commit log and the published files, publishTranscript appends one
-// publication live, and Open rewrites the file from the log when it
+// publication live, and openForum rewrites the file from the log when it
 // differs. Only public material is rendered: published projections, and
 // the decision, reason and guidance of moderator decisions.
 
 // renderTranscript renders the transcript: a heading naming the forum and
 // the run, then the entry of every publication commit in the in-memory
 // log. It returns the text and the seq of the last publication rendered.
-func (c *Controller) renderTranscript() (string, int, error) {
+func (c *forumController) renderTranscript() (string, int, error) {
 	c.mu.Lock()
 	commits := slices.Clone(c.commits)
 	c.mu.Unlock()
@@ -46,9 +46,9 @@ func (c *Controller) renderTranscript() (string, int, error) {
 }
 
 // regenerateTranscript makes transcript.md equal renderTranscript,
-// rewriting it in place (Store.ReplaceTranscript) only when it differs,
+// rewriting it in place (forumStore.ReplaceTranscript) only when it differs,
 // and positions the live appends after the last rendered publication.
-func (c *Controller) regenerateTranscript() error {
+func (c *forumController) regenerateTranscript() error {
 	want, last, err := c.renderTranscript()
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (c *Controller) regenerateTranscript() error {
 // per_turn CommitTurn, a CommitRoundPublished, a CommitModerated) to
 // transcript.md, once: a commit at or before the last one written is
 // skipped.
-func (c *Controller) publishTranscript(commit *Commit) error {
+func (c *forumController) publishTranscript(commit *Commit) error {
 	c.tmu.Lock()
 	defer c.tmu.Unlock()
 	if commit.Seq <= c.transcriptSeq {
@@ -95,7 +95,7 @@ func (c *Controller) publishTranscript(commit *Commit) error {
 
 // transcriptEntry renders the public entry of one commit, or "" for a
 // commit that publishes nothing.
-func (c *Controller) transcriptEntry(commit *Commit) (string, error) {
+func (c *forumController) transcriptEntry(commit *Commit) (string, error) {
 	layer, ok := c.cfg.Layer(commit.Layer)
 	if !ok {
 		return "", nil
@@ -139,7 +139,7 @@ func (c *Controller) transcriptEntry(commit *Commit) (string, error) {
 // route reads the layer anonymously, so the transcript maps the letters
 // the reviews use), then the published projection in a code fence of its
 // format, so its own headings never mix with the transcript's.
-func (c *Controller) outputEntry(layer Layer, out *OutputRecord) (string, error) {
+func (c *forumController) outputEntry(layer Layer, out *OutputRecord) (string, error) {
 	data, err := c.store.ReadFile(out.PublishedFile)
 	if err != nil {
 		return "", fmt.Errorf("transcript: read output %s: %w", out.OutputID, err)
@@ -155,7 +155,7 @@ func (c *Controller) outputEntry(layer Layer, out *OutputRecord) (string, error)
 // decisionEntry renders the public part of a decision: the decision, the
 // reason and, for GUIDE, the guidance. Never the assessment or directed
 // messages.
-func (c *Controller) decisionEntry(layer Layer, round int, d *Decision) string {
+func (c *forumController) decisionEntry(layer Layer, round int, d *Decision) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### %s · after round %d · moderator %s: %s\n\n", layer.ID, round, c.participantName(layer.Moderator.Participant), d.Decision)
 	if reason := strings.TrimSpace(d.Reason); reason != "" {

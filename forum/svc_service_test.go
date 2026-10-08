@@ -61,7 +61,7 @@ func TestSvcLaunchWritesTheForum(t *testing.T) {
 		t.Errorf("freshes = %+v", e.agents.freshes)
 	}
 
-	marker, ok := e.marker(id, CleanupAgents)
+	marker, ok := e.marker(id, cleanupAgents)
 	if !ok {
 		t.Fatal("no agents marker")
 	}
@@ -650,13 +650,13 @@ func TestSvcResults(t *testing.T) {
 // omissions name what is missing, and an after_round round that is not
 // published stays hidden.
 func TestSvcResultOmissions(t *testing.T) {
-	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)))
+	cfg, err := decodeConfig([]byte(strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &Snapshot{ForumID: "f", Layers: []string{"talk"}, ResultLayers: []string{"talk"}}
 	out := func(pid string, round int) OutputRecord {
-		return OutputRecord{OutputID: pid + strconv.Itoa(round), LayerID: "talk", Round: round, ParticipantID: pid, Turn: TurnID(round, pid)}
+		return OutputRecord{OutputID: pid + strconv.Itoa(round), LayerID: "talk", Round: round, ParticipantID: pid, Turn: turnID(round, pid)}
 	}
 	ended := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	st := &State{
@@ -779,7 +779,7 @@ func TestSvcDelete(t *testing.T) {
 		if len(e.forumIDs()) != 1 {
 			t.Fatal("the forum was removed")
 		}
-		if m, _ := e.marker(id, CleanupAgents); m != `["`+stuck+`"]` {
+		if m, _ := e.marker(id, cleanupAgents); m != `["`+stuck+`"]` {
 			t.Errorf("agents marker = %s, want only %s (an ErrNotFound delete counts as done)", m, stuck)
 		}
 		e.agents.setDeleteErr(stuck, nil)
@@ -837,7 +837,7 @@ func TestSvcCompletionNotice(t *testing.T) {
 	if _, ok := e.marker(id, cleanupNotice); ok {
 		t.Error("notice marker left behind")
 	}
-	if _, ok := e.marker(id, CleanupAgents); ok {
+	if _, ok := e.marker(id, cleanupAgents); ok {
 		t.Error("agents marker left behind")
 	}
 	if len(e.agents.deletedIDs()) != 2 {
@@ -1196,9 +1196,9 @@ func TestSvcRecover(t *testing.T) {
 // svcUnstartedRun writes run n of forum id as a launch that died before
 // its snapshot leaves it: the run's forum.json, a source, an agents marker
 // naming "leftover" and the notice marker.
-func svcUnstartedRun(t *testing.T, e *svcEnv, id string, n int) *Store {
+func svcUnstartedRun(t *testing.T, e *svcEnv, id string, n int) *forumStore {
 	t.Helper()
-	f, err := OpenStore(e.scope.BaseDirectory, id)
+	f, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1451,13 +1451,13 @@ func TestSvcCleanupIsRetried(t *testing.T) {
 	e.agents.setDeleteErr(created[0], errSvcHost)
 	c.finish <- StatusCompleted
 	e.settled(id, StatusCompleted)
-	if _, ok := e.marker(id, CleanupAgents); !ok {
+	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion failed")
 	}
 	svcEventually(t, "retry logged", func() bool { return e.logger.has("retried every") })
 	e.agents.setDeleteErr(created[0], nil)
 	svcEventually(t, "agents deleted", func() bool {
-		_, ok := e.marker(id, CleanupAgents)
+		_, ok := e.marker(id, cleanupAgents)
 		return !ok && slices.Contains(e.agents.deletedIDs(), created[0])
 	})
 	svcEventually(t, "retry set emptied", func() bool {
@@ -1482,19 +1482,19 @@ func TestSvcCleanupPendingTurn(t *testing.T) {
 	if !e.logger.has("are deleted when their turns end") || e.logger.has("retried every") {
 		t.Errorf("pending deletion logged as a failure: %v", e.logger.lines)
 	}
-	if _, ok := e.marker(id, CleanupAgents); !ok {
+	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion is pending")
 	}
 	time.Sleep(100 * time.Millisecond) // retries while the turn still runs keep it listed
 	e.svc.mu.Lock()
 	retried := len(e.svc.cleanups) == 1
 	e.svc.mu.Unlock()
-	if _, ok := e.marker(id, CleanupAgents); !ok || !retried {
+	if _, ok := e.marker(id, cleanupAgents); !ok || !retried {
 		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %v)", ok, retried)
 	}
 	e.agents.setDeleteErr(created[0], nil) // the turn ended: the agent is gone
 	svcEventually(t, "marker cleared by the retry", func() bool {
-		_, ok := e.marker(id, CleanupAgents)
+		_, ok := e.marker(id, cleanupAgents)
 		return !ok
 	})
 }
@@ -1577,7 +1577,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 		t.Errorf("%d control locks left", n)
 	}
 
-	// A damaged source fails Verify but not status or list.
+	// A damaged source fails verify but not status or list.
 	snap, err := e.store(id).ReadSnapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -1585,7 +1585,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 	if err = os.WriteFile(e.store(id).Path(snap.Sources["note"].File), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = Verify(e.store(id)); !errors.Is(err, ErrCorrupt) {
+	if _, _, err = verify(e.store(id)); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Verify: %v", err)
 	}
 	list, err := e.svc.List(t.Context(), e.scope)
@@ -1638,14 +1638,14 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 // outputs, so the work done is reachable: once it has ended every
 // committed output, while it runs only published ones.
 func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
-	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"layers": [`, `"layers": [
+	cfg, err := decodeConfig([]byte(strings.Replace(svcSimpleJSON, `"layers": [`, `"layers": [
     {"id": "answer", "participants": ["alice", "bob"], "instructions": "Answer.",
      "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}},`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &Snapshot{ForumID: "f", Layers: []string{"answer", "talk"}, ResultLayers: []string{"talk"}}
-	answer := OutputRecord{OutputID: "a1", LayerID: "answer", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")}
+	answer := OutputRecord{OutputID: "a1", LayerID: "answer", Round: 1, ParticipantID: "alice", Turn: turnID(1, "alice")}
 	st := &State{
 		Status: StatusFailed, Reason: EndAttemptsExhausted,
 		Layers: map[string]*LayerState{"answer": {Started: true, Round: 1, Outputs: []OutputRecord{answer}}},
@@ -1660,7 +1660,7 @@ func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
 	}
 	st.Status = StatusCompleted
 	st.Layers["talk"] = &LayerState{Started: true, Ended: true, RoundsPublished: 1, Outputs: []OutputRecord{
-		{OutputID: "t1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")},
+		{OutputID: "t1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: turnID(1, "alice")},
 	}}
 	if res = buildResult(cfg, snap, st); len(res.OtherLayers) != 0 {
 		t.Errorf("a result with outputs lists other layers: %+v", res.OtherLayers)
@@ -1701,7 +1701,11 @@ func TestSvcCloseDuringRecover(t *testing.T) {
 		recovered := make(chan struct{})
 		go func() {
 			defer close(recovered)
-			_ = svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope})
+			// Whatever Recover reports (a run refused because the service
+			// closed), it must not race Close.
+			if err := svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope}); err != nil {
+				t.Logf("recover: %v", err)
+			}
 		}()
 		svcClose(t, svc)
 		<-recovered
@@ -1733,7 +1737,9 @@ func TestSvcRecoverAfterCloseStartsNothing(t *testing.T) {
 	}
 	before := e.notifier.count()
 	svcClose(t, e.svc)
-	_ = e.svc.Recover(t.Context(), []Scope{e.scope})
+	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); !errors.Is(err, errClosed) {
+		t.Errorf("Recover after Close = %v, want errClosed", err)
+	}
 	if _, ok := e.svc.running(e.scope, running); ok {
 		t.Error("Recover started a run after Close")
 	}

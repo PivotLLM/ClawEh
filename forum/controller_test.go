@@ -309,7 +309,7 @@ func TestCtlCooldownHoldsTheTurn(t *testing.T) {
 	f.log.mu.Lock()
 	logged := strings.Join(f.log.lines, "\n")
 	f.log.mu.Unlock()
-	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+") run 1: one/"+TurnID(1, "alice")+": participant alice waits for model slow-model")
+	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+") run 1: one/"+turnID(1, "alice")+": participant alice waits for model slow-model")
 }
 
 // A cooldown that outlasts the call timeout ends the attempt as a timeout,
@@ -578,7 +578,7 @@ func TestCtlModeratorRepairAndFailure(t *testing.T) {
 
 // Host failures: an Ask error for an existing agent fails the run with
 // host_error; for a created participant the host no longer has, with
-// participant_gone. A participant gone before Open fails the run at once.
+// participant_gone. A participant gone before openForum fails the run at once.
 func TestCtlHostFailures(t *testing.T) {
 	t.Run("host error", func(t *testing.T) {
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
@@ -613,7 +613,7 @@ func TestCtlHostFailures(t *testing.T) {
 }
 
 // A host shutdown (ctx cancelled) leaves the forum running on disk; a
-// later Open resumes it.
+// later openForum resumes it.
 func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 2, FormatText)))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -777,7 +777,7 @@ func TestCtlValidateOutput(t *testing.T) {
 
 func TestCtlParseDecision(t *testing.T) {
 	layer := Layer{ID: "l", Participants: []string{"alice", "bob"}, Moderator: &Moderator{Participant: "chair", AllowDirected: true}}
-	raw, err := EffectiveModeratorSchema(layer, nil)
+	raw, err := effectiveModeratorSchema(layer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -848,7 +848,7 @@ func TestCtlModeratorDue(t *testing.T) {
 }
 
 // The live controller folds every commit with replayApply, so its state
-// equals Replay of the log at the end of every run.
+// equals replay of the log at the end of every run.
 func TestCtlStateMatchesReplay(t *testing.T) {
 	layer := ctlLayer("debate", DeliveryAfterRound, 3, FormatText)
 	layer.Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}

@@ -43,7 +43,7 @@ func TestValidateStaticName(t *testing.T) {
 	} {
 		cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
 		cfg.Name = tc.name
-		err := ValidateStatic(cfg)
+		err := validateStatic(cfg)
 		bad := err != nil && strings.Contains(err.Error(), "name: must be one line of at most 100 characters")
 		if bad == tc.ok {
 			t.Errorf("name %q: ValidateStatic = %v, want ok=%v", tc.name, err, tc.ok)

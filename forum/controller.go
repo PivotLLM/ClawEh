@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// Seam (d): the controller (spec §5, §6, §2.3, §8 restart). A Controller
-// executes one forum from its on-disk state. It is built only by Open
+// Seam (d): the controller (spec §5, §6, §2.3, §8 restart). A forumController
+// executes one forum from its on-disk state. It is built only by openForum
 // (recover.go), whether the forum was launched a moment ago or is being
 // resumed after a restart: there is one code path, driven by what the
 // store already holds.
@@ -27,9 +27,9 @@ import (
 // latest attempt has no reply is resent (§8). Nothing is kept in memory
 // that is not also on disk before the next dispatch.
 
-// Controller runs one forum.
-type Controller struct {
-	store *Store
+// forumController runs one forum.
+type forumController struct {
+	store *forumStore
 	cfg   *Config
 	snap  *Snapshot
 	parts *Participants
@@ -41,10 +41,10 @@ type Controller struct {
 	logName string
 	// schemas are the named schemas; decisionSchemas the effective
 	// moderator schema per layer (Snapshot.ModeratorSchemas), both
-	// compiled at Open.
+	// compiled at openForum.
 	schemas         map[string]*compiledSchema
 	decisionSchemas map[string]*compiledSchema
-	router          *Router
+	router          *router
 
 	// mu guards state, commits, attempts and cancelActive. Every state
 	// mutation goes through commitWhen, every attempts mutation through
@@ -55,10 +55,10 @@ type Controller struct {
 	// rules (eligible events, directed messages, what a participant was
 	// already sent).
 	commits []Commit
-	// attempts caches Store.ListAttempts per layer at Open and is updated
+	// attempts caches forumStore.ListAttempts per layer at openForum and is updated
 	// as requests and replies are written.
 	attempts map[string][]AttemptRecord
-	// gone lists the created participants Open found missing (§8); Run
+	// gone lists the created participants openForum found missing (§8); Run
 	// ends the forum failed when it is non-empty.
 	gone []string
 
@@ -110,7 +110,7 @@ var errRunEnded = errors.New("the forum's run has stopped")
 // participant, limits) become a terminal state and a nil error. A non-nil
 // error means the store refused a write or ctx ended (the host is
 // shutting down); the forum is then left as it is on disk, never ended
-// as failed, and a later Open resumes it. Once a cancel is requested it
+// as failed, and a later openForum resumes it. Once a cancel is requested it
 // dominates: the run ends cancelled whatever else was pending.
 //
 // Sequence: return a
@@ -129,7 +129,7 @@ var errRunEnded = errors.New("the forum's run has stopped")
 // and RequestCancel are refused (errRunEnded); the caller that started
 // Run re-reads State afterwards and calls Run again while it is pausing
 // or cancelling, so no accepted request is ever left unfinished.
-func (c *Controller) Run(ctx context.Context) (Status, error) {
+func (c *forumController) Run(ctx context.Context) (Status, error) {
 	c.mu.Lock()
 	c.exited = false
 	c.mu.Unlock()
@@ -147,7 +147,7 @@ func (c *Controller) Run(ctx context.Context) (Status, error) {
 }
 
 // run is Run's body.
-func (c *Controller) run(ctx context.Context) (Status, error) {
+func (c *forumController) run(ctx context.Context) (Status, error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	c.mu.Lock()
@@ -214,7 +214,7 @@ func (c *Controller) run(ctx context.Context) (Status, error) {
 // ErrInvalidState, naming the forum, in any other state but running:
 // cancellation dominates a pause, and a terminal forum stays terminal.
 // After Run has returned it is refused (errRunEnded, see Run).
-func (c *Controller) RequestPause() error {
+func (c *forumController) RequestPause() error {
 	err := c.commitWhen(func(st *State) error {
 		if c.exited {
 			return runEnded(c.ref, "paused")
@@ -241,7 +241,7 @@ func (c *Controller) RequestPause() error {
 // every committed output. Repeating it is harmless. It is ErrInvalidState,
 // naming the forum, when the status is terminal. After Run has returned
 // it is refused (errRunEnded, see Run).
-func (c *Controller) RequestCancel() error {
+func (c *forumController) RequestCancel() error {
 	err := c.commitWhen(func(st *State) error {
 		switch {
 		case c.exited:
@@ -273,20 +273,20 @@ func runEnded(ref, verb string) error {
 }
 
 // State returns a deep copy of the current derived state.
-func (c *Controller) State() State {
+func (c *forumController) State() State {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return cloneState(c.state)
 }
 
 // Snapshot returns the launch snapshot.
-func (c *Controller) Snapshot() *Snapshot { return c.snap }
+func (c *forumController) Snapshot() *Snapshot { return c.snap }
 
 // Config returns the configuration as launched.
-func (c *Controller) Config() *Config { return c.cfg }
+func (c *forumController) Config() *Config { return c.cfg }
 
 // Participants returns participants.json as loaded.
-func (c *Controller) Participants() *Participants { return c.parts }
+func (c *forumController) Participants() *Participants { return c.parts }
 
 // cloneState copies st so the caller can read it without the lock.
 func cloneState(st *State) State {
@@ -305,7 +305,7 @@ func cloneState(st *State) State {
 // cancelling forum ends cancelled, a pausing one commits CommitPaused. The
 // status is re-read under the commit lock, so a cancel that lands while a
 // pause is being completed still wins.
-func (c *Controller) settle() (Status, error) {
+func (c *forumController) settle() (Status, error) {
 	for {
 		switch st := c.State().Status; st {
 		case StatusCancelling:
@@ -342,7 +342,7 @@ func statusIs(want Status) func(*State) error {
 }
 
 // layerState returns a copy of a layer's state (zero when none yet).
-func (c *Controller) layerState(layerID string) LayerState {
+func (c *forumController) layerState(layerID string) LayerState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ls := c.state.Layers[layerID]; ls != nil {
@@ -369,7 +369,7 @@ func (c *Controller) layerState(layerID string) LayerState {
 // Walking every round from 1 (and skipping what is done) is what makes a
 // resume land on the first unfinished action, including a moderator check
 // after a round that was published just before a crash.
-func (c *Controller) runLayer(ctx context.Context, layer Layer) (EndReason, error) {
+func (c *forumController) runLayer(ctx context.Context, layer Layer) (EndReason, error) {
 	if !c.layerState(layer.ID).Started {
 		if err := c.startLayer(layer); err != nil {
 			return "", err
@@ -428,7 +428,7 @@ func (c *Controller) runLayer(ctx context.Context, layer Layer) (EndReason, erro
 // startLayer resolves and persists the layer's inputs (or reads an
 // existing inputs.json back, after a crash between the write and the
 // commit) and commits CommitLayerStarted.
-func (c *Controller) startLayer(layer Layer) error {
+func (c *forumController) startLayer(layer Layer) error {
 	_, err := c.store.ReadLayerInputs(layer.ID)
 	if errors.Is(err, ErrNotFound) {
 		var inputs *LayerInputs
@@ -445,7 +445,7 @@ func (c *Controller) startLayer(layer Layer) error {
 }
 
 // endLayer commits CommitLayerEnded with the reason.
-func (c *Controller) endLayer(layer Layer, reason EndReason) error {
+func (c *forumController) endLayer(layer Layer, reason EndReason) error {
 	c.host.Logger.Infof("%s: layer %s ended: %s", c.logName, layer.ID, reason)
 	return c.commit(&Commit{Kind: CommitLayerEnded, Layer: layer.ID, Reason: reason})
 }
@@ -454,7 +454,7 @@ func (c *Controller) endLayer(layer Layer, reason EndReason) error {
 // after_round round that never reached its publication (a layer ended by
 // its call budget mid-round) stays hidden (rev 3 §8 "partial rounds
 // remain hidden"): its outputs are committed but never routed.
-func (c *Controller) produced() map[string][]OutputRecord {
+func (c *forumController) produced() map[string][]OutputRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make(map[string][]OutputRecord, len(c.state.Layers))
@@ -482,7 +482,7 @@ func publishedOutputs(layer Layer, ls *LayerState) []OutputRecord {
 // runRound runs one round of a layer per its delivery mode (§5). It
 // returns the reason that stops the layer or the run, or "" to continue;
 // "" with the round unpublished means a pause or cancel stopped it early.
-func (c *Controller) runRound(ctx context.Context, layer Layer, round int) (EndReason, error) {
+func (c *forumController) runRound(ctx context.Context, layer Layer, round int) (EndReason, error) {
 	switch layer.Delivery {
 	case DeliveryAfterRound:
 		return c.runRoundAfterRound(ctx, layer, round)
@@ -502,7 +502,7 @@ func (c *Controller) runRound(ctx context.Context, layer Layer, round int) (EndR
 // participant order is returned (so the outcome does not depend on
 // timing). Turns already committed stay committed. A pause request stops
 // new dispatch and lets the in-flight turns finish.
-func (c *Controller) runRoundAfterRound(ctx context.Context, layer Layer, round int) (EndReason, error) {
+func (c *forumController) runRoundAfterRound(ctx context.Context, layer Layer, round int) (EndReason, error) {
 	cutoff := c.State().Seq
 	type result struct {
 		reason EndReason
@@ -515,7 +515,7 @@ func (c *Controller) runRoundAfterRound(ctx context.Context, layer Layer, round 
 		stopped atomic.Bool
 	)
 	for i, pid := range layer.Participants {
-		if c.committedOutput(layer.ID, TurnID(round, pid)) != nil {
+		if c.committedOutput(layer.ID, turnID(round, pid)) != nil {
 			continue
 		}
 		slots <- struct{}{}
@@ -547,7 +547,7 @@ func (c *Controller) runRoundAfterRound(ctx context.Context, layer Layer, round 
 		return "", err
 	}
 	for _, pid := range layer.Participants {
-		if c.committedOutput(layer.ID, TurnID(round, pid)) == nil {
+		if c.committedOutput(layer.ID, turnID(round, pid)) == nil {
 			return "", nil // interrupted
 		}
 	}
@@ -565,7 +565,7 @@ func (c *Controller) runRoundAfterRound(ctx context.Context, layer Layer, round 
 // the current last commit seq, commits it and writes it to the transcript
 // before sending the next (§5). A turn that is already committed is
 // skipped, which is how a resume lands on the first unfinished turn.
-func (c *Controller) runRoundPerTurn(ctx context.Context, layer Layer, round int) (EndReason, error) {
+func (c *forumController) runRoundPerTurn(ctx context.Context, layer Layer, round int) (EndReason, error) {
 	for _, pid := range layer.Participants {
 		if c.interrupted() {
 			return "", nil
@@ -573,7 +573,7 @@ func (c *Controller) runRoundPerTurn(ctx context.Context, layer Layer, round int
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if c.committedOutput(layer.ID, TurnID(round, pid)) != nil {
+		if c.committedOutput(layer.ID, turnID(round, pid)) != nil {
 			continue
 		}
 		out, reason, err := c.runTurn(ctx, layer, round, pid, c.State().Seq)
@@ -588,7 +588,7 @@ func (c *Controller) runRoundPerTurn(ctx context.Context, layer Layer, round int
 }
 
 // committedOutput returns the output committed for a turn ID, or nil.
-func (c *Controller) committedOutput(layerID, turn string) *OutputRecord {
+func (c *forumController) committedOutput(layerID, turn string) *OutputRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ls := c.state.Layers[layerID]
@@ -609,7 +609,7 @@ func (c *Controller) committedOutput(layerID, turn string) *OutputRecord {
 // counting the calls a dispatch is about to add, in that order of
 // precedence. "" means a call may be sent. Limits come from the snapshot,
 // never from a re-read configuration.
-func (c *Controller) checkLimits(layer Layer, pending int, now time.Time) EndReason {
+func (c *forumController) checkLimits(layer Layer, pending int, now time.Time) EndReason {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !now.Before(c.snap.Deadline) {
@@ -626,18 +626,18 @@ func (c *Controller) checkLimits(layer Layer, pending int, now time.Time) EndRea
 
 // interrupted reports whether a pause or cancel was requested; the caller
 // stops dispatching and lets Run finish the transition.
-func (c *Controller) interrupted() bool {
+func (c *forumController) interrupted() bool {
 	return c.pause.Load() || c.cancel.Load()
 }
 
 // deadlinePassed reports whether the run deadline has been reached at now.
-func (c *Controller) deadlinePassed(now time.Time) bool {
+func (c *forumController) deadlinePassed(now time.Time) bool {
 	return !now.Before(c.snap.Deadline)
 }
 
 // wait returns the Ask wait: limits.call_timeout_seconds bounded by the
 // time left to the run deadline (never negative).
-func (c *Controller) wait(now time.Time) time.Duration {
+func (c *forumController) wait(now time.Time) time.Duration {
 	timeout := time.Duration(c.snap.Limits.CallTimeoutSeconds) * time.Second
 	if left := c.snap.Deadline.Sub(now); left < timeout {
 		timeout = left
@@ -649,19 +649,19 @@ func (c *Controller) wait(now time.Time) time.Duration {
 }
 
 // commit appends commit to the log unconditionally (see commitWhen).
-func (c *Controller) commit(commit *Commit) error {
+func (c *forumController) commit(commit *Commit) error {
 	return c.commitWhen(nil, commit, nil)
 }
 
 // commitWhen folds commit into a copy of the state with replayApply (the
-// same fold Replay uses, so the live controller and a restart can never
+// same fold replay uses, so the live controller and a restart can never
 // disagree) and, only if that succeeds, appends it to the log, swaps the
 // copy in, records the commit in the in-memory log and rewrites
-// state.json. A commit Replay would reject never reaches the log. guard, when set, runs first under the lock and can
+// state.json. A commit replay would reject never reaches the log. guard, when set, runs first under the lock and can
 // refuse the commit (errSkip for "not needed", or an error); after, when
 // set, runs under the lock once the commit is applied. It is the only way
 // state changes.
-func (c *Controller) commitWhen(guard func(*State) error, commit *Commit, after func()) error {
+func (c *forumController) commitWhen(guard func(*State) error, commit *Commit, after func()) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.dead.Load() {
@@ -672,7 +672,7 @@ func (c *Controller) commitWhen(guard func(*State) error, commit *Commit, after 
 			return err
 		}
 	}
-	// Fold first, into a copy: a commit Replay would reject never reaches
+	// Fold first, into a copy: a commit replay would reject never reaches
 	// the log. Seq and At are the values AppendCommit is about to assign.
 	next := cloneState(c.state)
 	trial := *commit
@@ -713,7 +713,7 @@ func notCancelling(st *State) error {
 
 // durable runs one store write (outside the commit log) and then gives
 // the crash hook its chance; after a simulated crash it refuses to write.
-func (c *Controller) durable(event string, write func() error) error {
+func (c *forumController) durable(event string, write func() error) error {
 	if c.dead.Load() {
 		return errCrashed
 	}
@@ -728,7 +728,7 @@ func (c *Controller) durable(event string, write func() error) error {
 
 // crashed reports whether crashHook simulates a crash after event, and
 // marks the controller dead when it does.
-func (c *Controller) crashed(event string) bool {
+func (c *forumController) crashed(event string) bool {
 	if c.crashHook == nil || !c.crashHook(event) {
 		return false
 	}
@@ -742,7 +742,7 @@ func (c *Controller) crashed(event string) bool {
 // already terminal is left as it is. Deleting temporary agents and
 // notifying the launcher are the service's job, after this returns (§9
 // Completion).
-func (c *Controller) end(status Status, reason EndReason) (Status, error) {
+func (c *forumController) end(status Status, reason EndReason) (Status, error) {
 	commit := &Commit{Kind: CommitEnded, Status: status, Reason: reason}
 	err := c.commitWhen(func(st *State) error {
 		if st.Status.Terminal() {
@@ -763,7 +763,7 @@ func (c *Controller) end(status Status, reason EndReason) (Status, error) {
 
 // ensureResult writes result.json for a terminal forum unless it exists
 // (a crash between CommitEnded and the write leaves it missing).
-func (c *Controller) ensureResult() error {
+func (c *forumController) ensureResult() error {
 	_, err := c.store.ReadResult()
 	if err == nil || !errors.Is(err, ErrNotFound) {
 		return err

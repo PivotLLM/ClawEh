@@ -84,7 +84,7 @@ type Snapshot struct {
 	// bounded by it and restart does not extend it (§5).
 	Deadline time.Time `json:"deadline"`
 	Origin   Origin    `json:"origin"`
-	// ConfigDigest is the hex SHA-256 of the run's forum.json; Verify
+	// ConfigDigest is the hex SHA-256 of the run's forum.json; verify
 	// checks it, and the forum's current forum.json differs from the run's
 	// when its digest differs.
 	ConfigDigest string `json:"config_digest"`
@@ -95,11 +95,11 @@ type Snapshot struct {
 	// Layers are the enabled layer IDs in execution order.
 	Layers       []string `json:"layers"`
 	ResultLayers []string `json:"result_layers"`
-	// Models is Resolved.Models at launch: participant ID -> model name for
+	// Models is resolvedConfig.Models at launch: participant ID -> model name for
 	// every fresh participant and every clone with a `model` override.
 	Models map[string]string `json:"models"`
 	// ModeratorSchemas maps a layer ID to its effective decision schema
-	// (EffectiveModeratorSchema), for every enabled layer with a moderator.
+	// (effectiveModeratorSchema), for every enabled layer with a moderator.
 	ModeratorSchemas map[string]json.RawMessage `json:"moderator_schemas,omitempty"`
 	// Sources maps a source ID to its materialised copy under sources/.
 	Sources map[string]SourceRecord `json:"sources,omitempty"`
@@ -115,7 +115,7 @@ func (s *Snapshot) Label() string {
 	return s.ForumID
 }
 
-// MaxNameChars is the longest forum `name` ValidateStatic accepts, in
+// MaxNameChars is the longest forum `name` validateStatic accepts, in
 // characters; a name is also one line without control characters.
 const MaxNameChars = 100
 
@@ -234,17 +234,17 @@ const (
 	TurnModerator   TurnKind = "moderator"
 )
 
-// TurnID is the work ID of one participant turn within a layer
+// turnID is the work ID of one participant turn within a layer
 // ("r<round>-<participant>"); it names the directory
 // layers/<layer>/calls/<turn-id>/. One output is ever committed per turn ID.
-func TurnID(round int, participantID string) string {
+func turnID(round int, participantID string) string {
 	return fmt.Sprintf("r%03d-%s", round, participantID)
 }
 
-// ModeratorTurnID is the work ID of the moderator check after a round
-// ("m<round>"). Its prefix differs from TurnID's, so no participant ID
+// moderatorTurnID is the work ID of the moderator check after a round
+// ("m<round>"). Its prefix differs from turnID's, so no participant ID
 // (not even "moderator") can produce a moderator work ID.
-func ModeratorTurnID(round int) string {
+func moderatorTurnID(round int) string {
 	return fmt.Sprintf("m%03d", round)
 }
 
@@ -305,10 +305,10 @@ type OutputRecord struct {
 	// output); the same file as ContentFile unless `share` narrows a JSON
 	// output.
 	PublishedFile string `json:"published_file"`
-	// Digest is the hex SHA-256 of ContentFile; Verify checks it.
+	// Digest is the hex SHA-256 of ContentFile; verify checks it.
 	Digest string `json:"digest"`
 	// PublishedDigest is the hex SHA-256 of PublishedFile (equal to Digest
-	// when the two are the same file); Verify checks it.
+	// when the two are the same file); verify checks it.
 	PublishedDigest string `json:"published_digest"`
 	Turn            string `json:"turn"`
 	Attempt         int    `json:"attempt"`
@@ -339,7 +339,7 @@ const (
 
 // Commit is one entry of the append-only commit log (commits/<seq>.json).
 // Seq starts at 1 and has no gaps. The log is authoritative: State is
-// rebuilt from it alone by Replay.
+// rebuilt from it alone by replay.
 type Commit struct {
 	Seq         int           `json:"seq"`
 	At          time.Time     `json:"at"`
@@ -382,7 +382,7 @@ type LayerState struct {
 }
 
 // State (state.json) is the derived view of a forum. It is a cache: the
-// store rewrites it after every commit, and Replay rebuilds it from the
+// store rewrites it after every commit, and replay rebuilds it from the
 // commits when it is missing or stale.
 type State struct {
 	Status Status    `json:"status"`

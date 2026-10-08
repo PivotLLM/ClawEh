@@ -30,7 +30,7 @@ import (
 
 // Seam (b): the on-disk store (spec §8, rev 3 §8). A forum is a directory
 // under a base directory holding its current configuration and its runs;
-// one Store is either the forum directory (run 0: the configuration, the
+// one forumStore is either the forum directory (run 0: the configuration, the
 // lock, the list of runs, removal) or one run of it (everything below):
 //
 //	<base>/
@@ -53,9 +53,9 @@ import (
 //	      commits/<seq>.json    Commit, seq zero-padded to commitSeqWidth digits
 //	      state.json            State (derived cache)
 //	      result.json           Result (terminal only)
-//	      transcript.md         public transcript, appended (rewritten in place only by Open's repair)
+//	      transcript.md         public transcript, appended (rewritten in place only by openForum's repair)
 //
-// The lock is the forum's, shared by every Store handle derived from one
+// The lock is the forum's, shared by every forumStore handle derived from one
 // opening (Run, CreateRun, OpenRun), so a run holds the same lock as the
 // forum it belongs to. Locks and cleanup staging sit beside the forum
 // directories, not inside them (rev 3 §8), so removing one never removes
@@ -69,7 +69,7 @@ import (
 // goes through os.Root and refuses a symbolic link anywhere on the path
 // below the root (noSymlinks), so nothing is read from or written to
 // outside it; IDs used in paths (layer, participant, turn) are checked
-// with ValidID, forum IDs must be canonical UUIDs.
+// with validID, forum IDs must be canonical UUIDs.
 //
 // A run's store keeps an index of the commit log (last sequence number,
 // reserved attempts, turns with a committed output). It is what lets the
@@ -127,9 +127,9 @@ var commitNamePattern = regexp.MustCompile(`^[0-9]{` + strconv.Itoa(commitSeqWid
 // before the work it names starts and removed when it is done, so a
 // restart finishes it.
 const (
-	// CleanupAgents holds a JSON array of temporary agent IDs still to be
+	// cleanupAgents holds a JSON array of temporary agent IDs still to be
 	// deleted after the forum reached a terminal state or was deleted.
-	CleanupAgents = "agents.json"
+	cleanupAgents = "agents.json"
 )
 
 // attemptKey identifies one reserved attempt.
@@ -150,7 +150,7 @@ type turnKey struct {
 // those with a committed output, and each layer's last published round. The
 // store keeps one for its own checks (loaded lazily and dropped, loaded
 // false, whenever a commit write fails, so the next use re-reads the log
-// from disk); Replay builds one as it folds, and both pass it to
+// from disk); replay builds one as it folds, and both pass it to
 // checkCommit.
 type commitIndex struct {
 	loaded    bool
@@ -172,16 +172,16 @@ func newCommitIndex() *commitIndex {
 }
 
 // forumLock is a forum's cross-process lock (an flock on lockPath), shared
-// by every Store handle derived from one opening.
+// by every forumStore handle derived from one opening.
 type forumLock struct {
 	mu sync.Mutex
 	f  *os.File
 }
 
-// Store is one forum directory (run 0) or one run of it. It is safe for
+// forumStore is one forum directory (run 0) or one run of it. It is safe for
 // concurrent use by the goroutines of one controller; cross-process
 // exclusion is Lock.
-type Store struct {
+type forumStore struct {
 	base string
 	id   string
 	// dir is <base>/<id>, the forum directory.
@@ -192,7 +192,7 @@ type Store struct {
 	// run file is never read from or written to the forum directory.
 	root string
 	// owner is the agent whose scope the store was opened in (set by the
-	// service); when set, Verify refuses a snapshot naming another
+	// service); when set, verify refuses a snapshot naming another
 	// launcher, because the directory lives in that agent's workspace and
 	// is not trusted for whose forum it is.
 	owner string
@@ -206,22 +206,22 @@ type Store struct {
 	snap *Snapshot
 }
 
-// newForumHandle is the run-0 Store of <base>/<id>, with a lock of its own.
-func newForumHandle(base, id string) *Store {
-	return &Store{base: base, id: id, dir: filepath.Join(base, id), lk: &forumLock{}}
+// newForumHandle is the run-0 forumStore of <base>/<id>, with a lock of its own.
+func newForumHandle(base, id string) *forumStore {
+	return &forumStore{base: base, id: id, dir: filepath.Join(base, id), lk: &forumLock{}}
 }
 
 // Run returns the handle of run n of the forum, sharing this handle's lock
 // and owner. It does not touch the disk; see OpenRun and CreateRun.
-func (s *Store) Run(n int) *Store {
-	return &Store{
+func (s *forumStore) Run(n int) *forumStore {
+	return &forumStore{
 		base: s.base, id: s.id, dir: s.dir, run: n, owner: s.owner, lk: s.lk,
 		root: filepath.Join(s.dir, dirRuns, strconv.Itoa(n)),
 	}
 }
 
 // RunNumber is the run the store is a handle of, 0 for the forum directory.
-func (s *Store) RunNumber() int { return s.run }
+func (s *forumStore) RunNumber() int { return s.run }
 
 // validForumID reports whether id is a canonical (lower-case, hyphenated)
 // UUID, the only form a forum root may have.
@@ -230,12 +230,12 @@ func validForumID(id string) bool {
 	return err == nil && u.String() == id
 }
 
-// CreateStore creates <base>/<forumID>/ with its runs/ directory, and
+// createStore creates <base>/<forumID>/ with its runs/ directory, and
 // <base>/.locks/ and <base>/.cleanup/ if missing, and returns the forum's
 // handle (run 0). It fails if the directory already exists (a UUID
 // collision is an error, never a reuse), base is not an absolute path or
 // forumID is not a canonical UUID.
-func CreateStore(base, forumID string) (*Store, error) {
+func createStore(base, forumID string) (*forumStore, error) {
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("create forum store: base directory %q is not absolute", base)
 	}
@@ -263,13 +263,13 @@ func CreateStore(base, forumID string) (*Store, error) {
 	return s, nil
 }
 
-// OpenStore opens an existing forum directory and returns its handle (run
+// openStore opens an existing forum directory and returns its handle (run
 // 0). It fails with ErrNotFound if forumID is not a forum ID or the
 // directory, its forum.json or its forum-meta.json is missing, and with ErrCorrupt wrapped
 // around the detail if the layout is unusable (the directory or forum.json
 // has the wrong type, or runs/ is missing or not a directory). It does not
-// verify contents; see Verify.
-func OpenStore(base, forumID string) (*Store, error) {
+// verify contents; see verify.
+func openStore(base, forumID string) (*forumStore, error) {
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("open forum store: base directory %q is not absolute", base)
 	}
@@ -306,12 +306,12 @@ func OpenStore(base, forumID string) (*Store, error) {
 	return s, nil
 }
 
-// ListForums returns the forum IDs under base: every directory whose name
+// listForums returns the forum IDs under base: every directory whose name
 // is a UUID and that contains forum-meta.json and forum.json, sorted. Dot-directories (.locks,
 // .cleanup) are skipped. A missing base is an empty list, not an error. A
 // directory without forum.json (a forum whose creation died before writing
 // it) is not a forum and is not listed.
-func ListForums(base string) ([]string, error) {
+func listForums(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
@@ -341,11 +341,11 @@ func regularFile(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// ListIncomplete returns the forum IDs under base whose directories lack
+// listIncomplete returns the forum IDs under base whose directories lack
 // forum-meta.json or forum.json (a forum whose creation died before it
 // wrote both, or a leftover without an owner record), sorted. Recover
 // removes them.
-func ListIncomplete(base string) ([]string, error) {
+func listIncomplete(base string) ([]string, error) {
 	entries, err := os.ReadDir(base)
 	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
@@ -370,7 +370,7 @@ var runDirPattern = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
 // ascending order, whether or not their launch finished (see HasSnapshot).
 // Temporary entries and anything else that is not a run directory are
 // skipped.
-func (s *Store) Runs() ([]int, error) {
+func (s *forumStore) Runs() ([]int, error) {
 	entries, err := os.ReadDir(filepath.Join(s.dir, dirRuns))
 	if err != nil {
 		return nil, fmt.Errorf("list runs of forum %s: %w", s.id, err)
@@ -392,14 +392,14 @@ func (s *Store) Runs() ([]int, error) {
 
 // HasSnapshot reports whether a run's launch got as far as its snapshot: a
 // run without one never started and is undone (RemoveRun).
-func (s *Store) HasSnapshot() bool {
+func (s *forumStore) HasSnapshot() bool {
 	return s.root != "" && s.has(fileSnapshot)
 }
 
 // CreateRun creates run n's directory (runs/<n>/ with its subdirectories)
 // and returns its handle, sharing this handle's lock. It fails if the
 // directory exists. The caller holds the lock.
-func (s *Store) CreateRun(n int) (*Store, error) {
+func (s *forumStore) CreateRun(n int) (*forumStore, error) {
 	if n < 1 {
 		return nil, fmt.Errorf("create run of forum %s: bad run number %d", s.id, n)
 	}
@@ -431,7 +431,7 @@ func (s *Store) CreateRun(n int) (*Store, error) {
 // OpenRun returns the handle of an existing run, sharing this handle's
 // lock: ErrNotFound when runs/<n>/ is missing, ErrCorrupt when it or a
 // required subdirectory is not a directory.
-func (s *Store) OpenRun(n int) (*Store, error) {
+func (s *forumStore) OpenRun(n int) (*forumStore, error) {
 	if n < 1 {
 		return nil, fmt.Errorf("%w: forum %s has no run %d", ErrNotFound, s.id, n)
 	}
@@ -458,7 +458,7 @@ func (s *Store) OpenRun(n int) (*Store, error) {
 // under runs/ (one atomic step that takes the run out of Runs) and then
 // deleted; a crash part-way leaves a temporary entry the next Lock sweeps.
 // Its markers are not touched. The caller holds the lock.
-func (s *Store) RemoveRun() error {
+func (s *forumStore) RemoveRun() error {
 	if s.run < 1 {
 		return fmt.Errorf("remove run of forum %s: not a run", s.id)
 	}
@@ -488,7 +488,7 @@ func (s *Store) RemoveRun() error {
 
 // MarkedRuns returns the runs that have the cleanup marker name, in
 // ascending order, whether or not their directories still exist.
-func (s *Store) MarkedRuns(name string) ([]int, error) {
+func (s *forumStore) MarkedRuns(name string) ([]int, error) {
 	pattern := filepath.Join(s.base, dirCleanup, s.id+".*."+name)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -509,11 +509,11 @@ func (s *Store) MarkedRuns(name string) ([]int, error) {
 	return runs, nil
 }
 
-// ListStaged returns the forum IDs whose roots are staged for removal
+// listStaged returns the forum IDs whose roots are staged for removal
 // under <base>/.cleanup/ (a Remove interrupted by a crash), sorted;
-// Recover finishes removing them with RemoveStaged. A missing base or
+// Recover finishes removing them with removeStaged. A missing base or
 // cleanup directory is an empty list.
-func ListStaged(base string) ([]string, error) {
+func listStaged(base string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(base, dirCleanup))
 	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
@@ -531,11 +531,11 @@ func ListStaged(base string) ([]string, error) {
 	return ids, nil
 }
 
-// RemoveStaged removes a staged root <base>/.cleanup/<forumID>/, that
+// removeStaged removes a staged root <base>/.cleanup/<forumID>/, that
 // forum's markers and its lock file. It takes the forum's lock first and
 // fails with ErrLocked when another holder (a Remove still in progress)
 // has it. Removing a forum with nothing staged is not an error.
-func RemoveStaged(base, forumID string) error {
+func removeStaged(base, forumID string) error {
 	if !validForumID(forumID) {
 		return fmt.Errorf("remove staged forum: %q is not a forum ID", forumID)
 	}
@@ -549,7 +549,7 @@ func RemoveStaged(base, forumID string) error {
 
 // removeStagedAndMarkers deletes <base>/.cleanup/<id>/ and every
 // <base>/.cleanup/<id>.<name> marker.
-func (s *Store) removeStagedAndMarkers() error {
+func (s *forumStore) removeStagedAndMarkers() error {
 	cleanup := filepath.Join(s.base, dirCleanup)
 	if err := os.RemoveAll(filepath.Join(cleanup, s.id)); err != nil {
 		return fmt.Errorf("remove staged forum %s: %w", s.id, err)
@@ -570,18 +570,18 @@ func (s *Store) removeStagedAndMarkers() error {
 }
 
 // Root is the run directory's absolute path (empty for the forum handle).
-func (s *Store) Root() string { return s.root }
+func (s *forumStore) Root() string { return s.root }
 
 // Dir is the forum directory's absolute path.
-func (s *Store) Dir() string { return s.dir }
+func (s *forumStore) Dir() string { return s.dir }
 
 // ID is the forum's UUID.
-func (s *Store) ID() string { return s.id }
+func (s *forumStore) ID() string { return s.id }
 
 // Path joins rel onto the root. rel must be a clean relative path that
 // does not escape the root; anything else returns "" and the caller treats
 // it as corrupt input.
-func (s *Store) Path(rel string) string {
+func (s *forumStore) Path(rel string) string {
 	clean := filepath.Clean(rel)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return ""
@@ -593,14 +593,14 @@ func (s *Store) Path(rel string) string {
 var errWouldBlock = errors.New("lock held by another holder")
 
 // lockPath is <base>/.locks/<id>.run.
-func (s *Store) lockPath() string {
+func (s *forumStore) lockPath() string {
 	return filepath.Join(s.base, LocksDir, s.id+lockSuffix)
 }
 
 // cleanupPath is <base>/.cleanup/<id>.<run>.<name>, or "" for the forum
 // handle (markers are per run) or a name that is empty or not a single
 // path element.
-func (s *Store) cleanupPath(name string) string {
+func (s *forumStore) cleanupPath(name string) string {
 	if s.run < 1 || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return ""
 	}
@@ -616,16 +616,16 @@ const lockAttempts = 5
 // temporary file or directory (TempPrefix) a crashed writer left under the
 // root (sweepTemp): no other writer can be mid-write while the lock is
 // held. It returns ErrLocked when another process,
-// or another Store of the same forum in this process, holds it. Exactly
+// or another forumStore of the same forum in this process, holds it. Exactly
 // one controller may run a forum at a time; Service holds the lock from
 // Launch or Recover until the run pauses or ends. Locking a store this
-// Store already locked is a no-op.
+// forumStore already locked is a no-op.
 //
 // Unlock removes the lock file while still holding the lock, so after
 // acquiring it Lock checks that the path still names the file it locked
 // and starts again if not; without that check two holders could each
 // lock a different inode.
-func (s *Store) Lock() error {
+func (s *forumStore) Lock() error {
 	s.lk.mu.Lock()
 	defer s.lk.mu.Unlock()
 	if s.lk.f != nil {
@@ -672,7 +672,7 @@ func (s *Store) Lock() error {
 // write, a run being removed), and anywhere in this store's run when it is
 // one (SweepRun). Earlier runs are not walked: nothing writes to them. A
 // missing directory (a forum staged for removal) has nothing to sweep.
-func (s *Store) sweepTemp() error {
+func (s *forumStore) sweepTemp() error {
 	err := s.inDir(func(r *os.Root) error {
 		for _, dir := range []string{".", dirRuns} {
 			names, err := readDirNames(r, dir)
@@ -703,8 +703,8 @@ func (s *Store) sweepTemp() error {
 
 // SweepRun removes every entry under the run's directory whose name starts
 // with TempPrefix (what a crash during a write left). Symbolic links are not
-// followed. The caller holds the lock; Open calls it before reading the run.
-func (s *Store) SweepRun() error {
+// followed. The caller holds the lock; openForum calls it before reading the run.
+func (s *forumStore) SweepRun() error {
 	var found []string
 	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -755,9 +755,9 @@ func readDirNames(r *os.Root, dir string) ([]string, error) {
 	return names, err
 }
 
-// locked reports whether this Store (or a handle sharing its lock) holds
+// locked reports whether this forumStore (or a handle sharing its lock) holds
 // the forum's lock.
-func (s *Store) locked() bool {
+func (s *forumStore) locked() bool {
 	s.lk.mu.Lock()
 	defer s.lk.mu.Unlock()
 	return s.lk.f != nil
@@ -792,13 +792,13 @@ func removeLockFile(base, id string) error {
 // store is a no-op. Errors are not reported: the lock is released when
 // the file is closed whatever else fails, and a leftover lock file is
 // harmless (the next Lock reuses it).
-func (s *Store) Unlock() {
+func (s *forumStore) Unlock() {
 	_ = s.unlock() //nolint:errcheck // Unlock reports no errors; see its comment
 }
 
 // unlock is Unlock with its errors. The file is removed while the lock is
 // still held (see Lock).
-func (s *Store) unlock() error {
+func (s *forumStore) unlock() error {
 	s.lk.mu.Lock()
 	defer s.lk.mu.Unlock()
 	if s.lk.f == nil {
@@ -822,12 +822,12 @@ func (s *Store) unlock() error {
 // WriteConfig writes the run's forum.json, the configuration the run
 // uses (the forum's forum.json as Launch accepted it); it fails if the file
 // already exists (a run's configuration never changes, §3.2).
-func (s *Store) WriteConfig(raw []byte) error {
+func (s *forumStore) WriteConfig(raw []byte) error {
 	return s.writeRel(fileConfig, raw, true)
 }
 
 // ReadConfig returns the run's forum.json verbatim; ErrNotFound if absent.
-func (s *Store) ReadConfig() ([]byte, error) {
+func (s *forumStore) ReadConfig() ([]byte, error) {
 	data, err := s.ReadFile(fileConfig)
 	if err != nil {
 		return nil, notFound(err)
@@ -837,7 +837,7 @@ func (s *Store) ReadConfig() ([]byte, error) {
 
 // WriteForumConfig replaces the forum's current configuration
 // (<dir>/forum.json) with raw, atomically.
-func (s *Store) WriteForumConfig(raw []byte) error {
+func (s *forumStore) WriteForumConfig(raw []byte) error {
 	err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileConfig, raw, false) })
 	if err != nil {
 		return fmt.Errorf("write the configuration of forum %s: %w", s.id, err)
@@ -846,7 +846,7 @@ func (s *Store) WriteForumConfig(raw []byte) error {
 }
 
 // WriteForumMeta writes forum-meta.json once; it fails if the file exists.
-func (s *Store) WriteForumMeta(m *ForumMeta) error {
+func (s *forumStore) WriteForumMeta(m *ForumMeta) error {
 	data, err := marshalRecord(m)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", fileMeta, err)
@@ -860,7 +860,7 @@ func (s *Store) WriteForumMeta(m *ForumMeta) error {
 // ReadForumMeta reads forum-meta.json without following a symbolic link;
 // ErrNotFound if absent, ErrCorrupt if it does not decode or names no
 // owner.
-func (s *Store) ReadForumMeta() (*ForumMeta, error) {
+func (s *forumStore) ReadForumMeta() (*ForumMeta, error) {
 	var data []byte
 	err := s.inDir(func(r *os.Root) error {
 		if err := lstatRegular(r, fileMeta); err != nil {
@@ -883,7 +883,7 @@ func (s *Store) ReadForumMeta() (*ForumMeta, error) {
 // ReadForumConfig returns the forum's current configuration
 // (<dir>/forum.json) and when it was last written; ErrNotFound if absent.
 // It is read without following a symbolic link.
-func (s *Store) ReadForumConfig() ([]byte, time.Time, error) {
+func (s *forumStore) ReadForumConfig() ([]byte, time.Time, error) {
 	var (
 		data []byte
 		mod  time.Time
@@ -907,17 +907,17 @@ func (s *Store) ReadForumConfig() ([]byte, time.Time, error) {
 }
 
 // has reports whether the run-relative rel is a regular file.
-func (s *Store) has(rel string) bool {
+func (s *forumStore) has(rel string) bool {
 	return s.statRegular(rel) == nil
 }
 
 // WriteSnapshot writes snapshot.json; it fails if the file already exists.
-func (s *Store) WriteSnapshot(snap *Snapshot) error {
+func (s *forumStore) WriteSnapshot(snap *Snapshot) error {
 	return s.writeJSON(fileSnapshot, snap, true)
 }
 
 // ReadSnapshot reads snapshot.json; ErrNotFound if absent.
-func (s *Store) ReadSnapshot() (*Snapshot, error) {
+func (s *forumStore) ReadSnapshot() (*Snapshot, error) {
 	var snap Snapshot
 	if err := s.readJSON(fileSnapshot, &snap); err != nil {
 		return nil, err
@@ -928,7 +928,7 @@ func (s *Store) ReadSnapshot() (*Snapshot, error) {
 // WriteParticipants writes participants.json (§8: before the first
 // dispatch). Rewriting it is allowed only while the commit log is empty
 // (before CommitLaunched); afterwards it fails with ErrInvalidState.
-func (s *Store) WriteParticipants(p *Participants) error {
+func (s *forumStore) WriteParticipants(p *Participants) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadIndexLocked(); err != nil {
@@ -941,7 +941,7 @@ func (s *Store) WriteParticipants(p *Participants) error {
 }
 
 // ReadParticipants reads participants.json; ErrNotFound if absent.
-func (s *Store) ReadParticipants() (*Participants, error) {
+func (s *forumStore) ReadParticipants() (*Participants, error) {
 	var p Participants
 	if err := s.readJSON(fileParticipants, &p); err != nil {
 		return nil, err
@@ -952,8 +952,8 @@ func (s *Store) ReadParticipants() (*Participants, error) {
 // WriteSource materialises one source as sources/<id><ext> and returns its
 // record (root-relative path and digest). It fails if the file exists or
 // id is not a configuration ID.
-func (s *Store) WriteSource(id string, format Format, content []byte) (SourceRecord, error) {
-	if !ValidID(id) {
+func (s *forumStore) WriteSource(id string, format Format, content []byte) (SourceRecord, error) {
+	if !validID(id) {
 		return SourceRecord{}, fmt.Errorf("write source: %q is not a source ID", id)
 	}
 	rel := path.Join(dirSources, id+format.Extension())
@@ -966,8 +966,8 @@ func (s *Store) WriteSource(id string, format Format, content []byte) (SourceRec
 // WriteLayerInputs writes layers/<layer>/inputs.json. It fails if the file
 // already exists: inputs are resolved once per layer and a resume reads
 // them back (§4 random assignments are never reshuffled).
-func (s *Store) WriteLayerInputs(in *LayerInputs) error {
-	if !ValidID(in.LayerID) {
+func (s *forumStore) WriteLayerInputs(in *LayerInputs) error {
+	if !validID(in.LayerID) {
 		return fmt.Errorf("write layer inputs: %q is not a layer ID", in.LayerID)
 	}
 	if err := s.inRoot(func(r *os.Root) error { return mkdirAt(r, path.Join(dirLayers, in.LayerID)) }); err != nil {
@@ -977,8 +977,8 @@ func (s *Store) WriteLayerInputs(in *LayerInputs) error {
 }
 
 // ReadLayerInputs reads layers/<layer>/inputs.json; ErrNotFound if absent.
-func (s *Store) ReadLayerInputs(layerID string) (*LayerInputs, error) {
-	if !ValidID(layerID) {
+func (s *forumStore) ReadLayerInputs(layerID string) (*LayerInputs, error) {
+	if !validID(layerID) {
 		return nil, fmt.Errorf("read layer inputs: %q is not a layer ID", layerID)
 	}
 	var in LayerInputs
@@ -991,7 +991,7 @@ func (s *Store) ReadLayerInputs(layerID string) (*LayerInputs, error) {
 // attemptRel is layers/<layer>/calls/<turn>/<attempt>, or "" when an ID
 // is malformed or attempt is not positive.
 func attemptRel(layerID, turn string, attempt int) string {
-	if !ValidID(layerID) || !ValidID(turn) || attempt < 1 {
+	if !validID(layerID) || !validID(turn) || attempt < 1 {
 		return ""
 	}
 	return path.Join(dirLayers, layerID, dirCalls, turn, strconv.Itoa(attempt))
@@ -1008,7 +1008,7 @@ func attemptRel(layerID, turn string, attempt int) string {
 // that exists without a reservation is the orphan of a crash between this
 // write and its CommitAttempt; the message was never sent, so it is
 // replaced.
-func (s *Store) WriteAttemptRequest(req *AttemptRequest) error {
+func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 	rel := attemptRel(req.Layer, req.Turn, req.Attempt)
 	if rel == "" {
 		return fmt.Errorf("write attempt request: bad attempt %q/%q/%d", req.Layer, req.Turn, req.Attempt)
@@ -1056,7 +1056,7 @@ func (s *Store) WriteAttemptRequest(req *AttemptRequest) error {
 // fails if the attempt is not reserved (no CommitAttempt: invariant 3
 // orders the reservation before the Ask), the request does not exist, or
 // a reply already does.
-func (s *Store) WriteAttemptReply(layerID, turn string, attempt int, reply *AttemptReply) error {
+func (s *forumStore) WriteAttemptReply(layerID, turn string, attempt int, reply *AttemptReply) error {
 	rel := attemptRel(layerID, turn, attempt)
 	if rel == "" {
 		return fmt.Errorf("write attempt reply: bad attempt %q/%q/%d", layerID, turn, attempt)
@@ -1083,8 +1083,8 @@ func (s *Store) WriteAttemptReply(layerID, turn string, attempt int, reply *Atte
 // crash before the CommitAttempt) are not listed. A reserved attempt
 // without a readable request.json, or with an unreadable reply.json, is
 // ErrCorrupt.
-func (s *Store) ListAttempts(layerID string) ([]AttemptRecord, error) {
-	if !ValidID(layerID) {
+func (s *forumStore) ListAttempts(layerID string) ([]AttemptRecord, error) {
+	if !validID(layerID) {
 		return nil, fmt.Errorf("list attempts: %q is not a layer ID", layerID)
 	}
 	s.mu.Lock()
@@ -1139,7 +1139,7 @@ func (s *Store) ListAttempts(layerID string) ([]AttemptRecord, error) {
 // whose CommitTurn never landed (a crash between this write and the
 // commit) are not history and are replaced, which is what lets the
 // controller adopt that reply on resume.
-func (s *Store) WriteOutput(out *OutputRecord, full, published []byte) error {
+func (s *forumStore) WriteOutput(out *OutputRecord, full, published []byte) error {
 	rel := attemptRel(out.LayerID, out.Turn, out.Attempt)
 	if rel == "" {
 		return fmt.Errorf("write output: bad attempt %q/%q/%d", out.LayerID, out.Turn, out.Attempt)
@@ -1179,7 +1179,7 @@ func (s *Store) WriteOutput(out *OutputRecord, full, published []byte) error {
 // content, a source, the transcript, a record). The read is confined to
 // the root and follows no symbolic link: a path leading outside the root,
 // or one with a link anywhere below the root, fails.
-func (s *Store) ReadFile(rel string) ([]byte, error) {
+func (s *forumStore) ReadFile(rel string) ([]byte, error) {
 	var data []byte
 	err := s.inRoot(func(r *os.Root) error {
 		clean, err := rootRel(rel)
@@ -1202,7 +1202,7 @@ func (s *Store) ReadFile(rel string) ([]byte, error) {
 // same rules as ReadFile, but holds at most keep characters of it in
 // memory: it returns those first keep characters and the file's total
 // length in characters (Unicode code points; invalid bytes count one each).
-func (s *Store) ReadPrefix(rel string, keep int) (string, int, error) {
+func (s *forumStore) ReadPrefix(rel string, keep int) (string, int, error) {
 	var (
 		prefix strings.Builder
 		chars  int
@@ -1243,7 +1243,7 @@ func (s *Store) ReadPrefix(rel string, keep int) (string, int, error) {
 
 // statRegular checks that the root-relative rel is a regular file reached
 // without following a symbolic link.
-func (s *Store) statRegular(rel string) error {
+func (s *forumStore) statRegular(rel string) error {
 	return s.inRoot(func(r *os.Root) error {
 		clean, err := rootRel(rel)
 		if err != nil {
@@ -1260,14 +1260,14 @@ func (s *Store) statRegular(rel string) error {
 // refused before anything is written, with ErrInvalidState. It is
 // serialised within the process; the file is created exclusively so a
 // second writer fails rather than overwriting. The caller writes State
-// afterwards (WriteState); a crash between the two is what Replay repairs.
+// afterwards (WriteState); a crash between the two is what replay repairs.
 //
 // It enforces the log's invariants at the source with checkCommit, the
-// same check Replay applies (so the store never writes a log Replay
+// same check replay applies (so the store never writes a log replay
 // refuses), plus that a CommitAttempt's request.json exists. That needs
 // forum.json and snapshot.json, so a commit before WriteSnapshot fails
 // with ErrInvalidState. On failure c.Seq and c.At are left as they were.
-func (s *Store) AppendCommit(seq int, c *Commit) error {
+func (s *forumStore) AppendCommit(seq int, c *Commit) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadIndexLocked(); err != nil {
@@ -1300,7 +1300,7 @@ func (s *Store) AppendCommit(seq int, c *Commit) error {
 
 // checkCommitLocked rejects a commit that would break the log's
 // invariants (see AppendCommit).
-func (s *Store) checkCommitLocked(c *Commit) error {
+func (s *forumStore) checkCommitLocked(c *Commit) error {
 	if err := s.contractLocked(); err != nil {
 		return fmt.Errorf("append commit: %w", err)
 	}
@@ -1317,7 +1317,7 @@ func (s *Store) checkCommitLocked(c *Commit) error {
 }
 
 // contractLocked loads forum.json and snapshot.json for checkCommit once.
-func (s *Store) contractLocked() error {
+func (s *forumStore) contractLocked() error {
 	if s.snap != nil {
 		return nil
 	}
@@ -1332,7 +1332,7 @@ func (s *Store) contractLocked() error {
 	if err != nil {
 		return err
 	}
-	cfg, err := Decode(raw)
+	cfg, err := decodeConfig(raw)
 	if err != nil {
 		return corrupt("%s: %v", fileConfig, err)
 	}
@@ -1349,7 +1349,7 @@ func commitRel(seq int) string {
 // sequence, a file whose seq differs from its name, a stray file or an
 // unreadable file is ErrCorrupt; an empty log is an empty list. Temporary
 // files a crash left behind are ignored.
-func (s *Store) ReadCommits() ([]Commit, error) {
+func (s *forumStore) ReadCommits() ([]Commit, error) {
 	var entries []fs.DirEntry
 	err := s.inRoot(func(r *os.Root) error {
 		fi, err := r.Lstat(dirCommits)
@@ -1409,7 +1409,7 @@ func (s *Store) ReadCommits() ([]Commit, error) {
 }
 
 // loadIndexLocked builds the commit index from disk if it is not loaded.
-func (s *Store) loadIndexLocked() error {
+func (s *forumStore) loadIndexLocked() error {
 	if s.idx.loaded {
 		return nil
 	}
@@ -1426,7 +1426,7 @@ func (s *Store) loadIndexLocked() error {
 }
 
 // attemptReservedLocked reports whether a CommitAttempt names the attempt.
-func (s *Store) attemptReservedLocked(layerID, turn string, attempt int) (bool, error) {
+func (s *forumStore) attemptReservedLocked(layerID, turn string, attempt int) (bool, error) {
 	if err := s.loadIndexLocked(); err != nil {
 		return false, err
 	}
@@ -1449,10 +1449,10 @@ func (x *commitIndex) add(c *Commit) {
 	}
 }
 
-// WriteState rewrites state.json. It is a cache; see Replay. Only the
-// lock holder writes it: on a Store that does not hold the lock it fails
+// WriteState rewrites state.json. It is a cache; see replay. Only the
+// lock holder writes it: on a forumStore that does not hold the lock it fails
 // with ErrInvalidState.
-func (s *Store) WriteState(st *State) error {
+func (s *forumStore) WriteState(st *State) error {
 	if !s.locked() {
 		return fmt.Errorf("write %s: %w: the forum is not locked by this store", fileState, ErrInvalidState)
 	}
@@ -1461,7 +1461,7 @@ func (s *Store) WriteState(st *State) error {
 
 // ReadState reads state.json; ErrNotFound if absent. Callers compare
 // State.Seq with the last commit and replay when they differ.
-func (s *Store) ReadState() (*State, error) {
+func (s *forumStore) ReadState() (*State, error) {
 	var st State
 	if err := s.readJSON(fileState, &st); err != nil {
 		return nil, err
@@ -1470,13 +1470,13 @@ func (s *Store) ReadState() (*State, error) {
 }
 
 // WriteResult writes result.json once; it fails if the file exists.
-func (s *Store) WriteResult(r *Result) error {
+func (s *forumStore) WriteResult(r *Result) error {
 	return s.writeJSON(fileResult, r, true)
 }
 
 // ReadResult reads result.json; ErrNotFound while the forum is not
 // terminal.
-func (s *Store) ReadResult() (*Result, error) {
+func (s *forumStore) ReadResult() (*Result, error) {
 	var r Result
 	if err := s.readJSON(fileResult, &r); err != nil {
 		return nil, err
@@ -1488,7 +1488,7 @@ func (s *Store) ReadResult() (*Result, error) {
 // newline) to transcript.md and fsyncs. With ReplaceTranscript it is the
 // only write to that file; callers pass only public material (§8). Writes
 // are serialised, so entries never interleave.
-func (s *Store) AppendTranscript(text string) error {
+func (s *forumStore) AppendTranscript(text string) error {
 	if err := s.writeTranscript(os.O_APPEND, []byte(text)); err != nil {
 		return fmt.Errorf("append transcript: %w", err)
 	}
@@ -1499,9 +1499,9 @@ func (s *Store) AppendTranscript(text string) error {
 // existing file is truncated, written and fsynced, never replaced by
 // another file, so a reader following it (`tail -f`) keeps reading the
 // same file. A crash part-way leaves a torn transcript, which the next
-// Open regenerates from the commit log (the transcript is derived). It is
+// openForum regenerates from the commit log (the transcript is derived). It is
 // serialised with AppendTranscript.
-func (s *Store) ReplaceTranscript(data []byte) error {
+func (s *forumStore) ReplaceTranscript(data []byte) error {
 	if err := s.writeTranscript(os.O_TRUNC, data); err != nil {
 		return fmt.Errorf("replace transcript: %w", err)
 	}
@@ -1512,7 +1512,7 @@ func (s *Store) ReplaceTranscript(data []byte) error {
 // file reached without a symbolic link) with mode (os.O_APPEND or
 // os.O_TRUNC), writes data and fsyncs, and fsyncs the directory when the
 // file was created.
-func (s *Store) writeTranscript(mode int, data []byte) error {
+func (s *forumStore) writeTranscript(mode int, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.inRoot(func(r *os.Root) error {
@@ -1541,7 +1541,7 @@ func (s *Store) writeTranscript(mode int, data []byte) error {
 }
 
 // SetCleanup writes the marker <base>/.cleanup/<id>.<name> with data.
-func (s *Store) SetCleanup(name string, data []byte) error {
+func (s *forumStore) SetCleanup(name string, data []byte) error {
 	p := s.cleanupPath(name)
 	if p == "" {
 		return fmt.Errorf("write cleanup marker: bad name %q", name)
@@ -1561,7 +1561,7 @@ func (s *Store) SetCleanup(name string, data []byte) error {
 }
 
 // Cleanup reads a marker; ok is false when it is absent.
-func (s *Store) Cleanup(name string) (data []byte, ok bool, err error) {
+func (s *forumStore) Cleanup(name string) (data []byte, ok bool, err error) {
 	p := s.cleanupPath(name)
 	if p == "" {
 		return nil, false, fmt.Errorf("read cleanup marker: bad name %q", name)
@@ -1577,7 +1577,7 @@ func (s *Store) Cleanup(name string) (data []byte, ok bool, err error) {
 }
 
 // ClearCleanup removes a marker; a missing marker is not an error.
-func (s *Store) ClearCleanup(name string) error {
+func (s *forumStore) ClearCleanup(name string) error {
 	p := s.cleanupPath(name)
 	if p == "" {
 		return fmt.Errorf("clear cleanup marker: bad name %q", name)
@@ -1592,10 +1592,10 @@ func (s *Store) ClearCleanup(name string) error {
 // (keeping this store's own lock if it holds it), failing with ErrLocked
 // if another holder has it, renames the forum directory into
 // <base>/.cleanup/<id>/ (one atomic step that takes the forum out of
-// ListForums), then removes the staged copy and the markers of every run,
+// listForums), then removes the staged copy and the markers of every run,
 // and finally releases the lock and removes the lock file. A crash after the rename leaves a staged root that Recover
-// removes with RemoveStaged.
-func (s *Store) Remove() error {
+// removes with removeStaged.
+func (s *forumStore) Remove() error {
 	if err := s.Lock(); err != nil {
 		return fmt.Errorf("remove forum %s: %w", s.id, err)
 	}
@@ -1604,7 +1604,7 @@ func (s *Store) Remove() error {
 }
 
 // stageAndRemove is Remove's work while the lock is held.
-func (s *Store) stageAndRemove() error {
+func (s *forumStore) stageAndRemove() error {
 	cleanup := filepath.Join(s.base, dirCleanup)
 	if err := os.MkdirAll(cleanup, dirPerm); err != nil {
 		return fmt.Errorf("remove forum %s: %w", s.id, err)
@@ -1629,7 +1629,7 @@ func (s *Store) stageAndRemove() error {
 }
 
 // writeJSON marshals v and writes it to the root-relative rel durably.
-func (s *Store) writeJSON(rel string, v any, exclusive bool) error {
+func (s *forumStore) writeJSON(rel string, v any, exclusive bool) error {
 	data, err := marshalRecord(v)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", rel, err)
@@ -1639,7 +1639,7 @@ func (s *Store) writeJSON(rel string, v any, exclusive bool) error {
 
 // readJSON reads the root-relative rel into v. A missing file is
 // ErrNotFound and an undecodable one ErrCorrupt, both wrapped with rel.
-func (s *Store) readJSON(rel string, v any) error {
+func (s *forumStore) readJSON(rel string, v any) error {
 	data, err := s.ReadFile(rel)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", rel, notFound(err))
@@ -1691,7 +1691,7 @@ func digest(data []byte) string {
 
 // inRoot runs fn with the run's directory opened as an os.Root, so nothing
 // fn does can reach outside it. On the forum handle (no run) it fails.
-func (s *Store) inRoot(fn func(r *os.Root) error) error {
+func (s *forumStore) inRoot(fn func(r *os.Root) error) error {
 	if s.root == "" {
 		return fmt.Errorf("forum %s: %w: not a run", s.id, ErrInvalidState)
 	}
@@ -1707,7 +1707,7 @@ func (s *Store) inRoot(fn func(r *os.Root) error) error {
 }
 
 // inDir runs fn with the forum directory opened as an os.Root.
-func (s *Store) inDir(fn func(r *os.Root) error) error {
+func (s *forumStore) inDir(fn func(r *os.Root) error) error {
 	r, err := os.OpenRoot(s.dir)
 	if err != nil {
 		return err
@@ -1720,7 +1720,7 @@ func (s *Store) inDir(fn func(r *os.Root) error) error {
 }
 
 // writeRel writes data to the root-relative rel (writeFileAt).
-func (s *Store) writeRel(rel string, data []byte, exclusive bool) error {
+func (s *forumStore) writeRel(rel string, data []byte, exclusive bool) error {
 	clean, err := rootRel(rel)
 	if err != nil {
 		return fmt.Errorf("write forum file: %w", err)

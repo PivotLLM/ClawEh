@@ -30,7 +30,7 @@
 // Invariants every seam relies on:
 //
 //   - The commit log (commits/) is authoritative; state.json is a cache that
-//     Replay rebuilds from the commits.
+//     replay rebuilds from the commits.
 //   - Exactly one output is ever committed per turn (work) ID, however many
 //     attempts were sent.
 //   - Private material (participant instructions, directed messages, failed

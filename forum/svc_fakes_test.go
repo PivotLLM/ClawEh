@@ -231,7 +231,7 @@ func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, chat Cha
 	if _, err := os.Stat(filepath.Join(n.base, res.ForumID, dirRuns, strconv.Itoa(res.Run), fileResult)); err != nil {
 		n.violations = append(n.violations, "notice before result.json: "+err.Error())
 	}
-	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, CleanupAgents))); err == nil {
+	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, cleanupAgents))); err == nil {
 		n.violations = append(n.violations, "notice before the temporary agents were deleted")
 	}
 	if n.failures > 0 {
@@ -308,12 +308,12 @@ func (svcMessenger) Ask(context.Context, string, string, time.Duration) (Reply, 
 }
 
 // svcCtrl is a fake controller over a real store. It commits through the
-// store and derives its state with LoadState, so what it leaves on disk is
+// store and derives its state with loadState, so what it leaves on disk is
 // what the real controller would. Run waits until the test finishes it
 // (finish), a pause or cancel is requested, or the service closes; a
 // cancel request dominates a pause request.
 type svcCtrl struct {
-	store *Store
+	store *forumStore
 	cfg   *Config
 	snap  *Snapshot
 	parts *Participants
@@ -412,7 +412,7 @@ func (c *svcCtrl) commit(commit *Commit) error {
 	if _, err := nextAppend(c.store, commit); err != nil {
 		return err
 	}
-	st, err := ReplayState(c.store, c.cfg, c.snap) // as the real controller, the lock holder writes state.json
+	st, err := replayState(c.store, c.cfg, c.snap) // as the real controller, the lock holder writes state.json
 	if err != nil {
 		return err
 	}
@@ -484,7 +484,7 @@ type svcCtrls struct {
 	noResult   bool
 }
 
-func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error) {
+func (r *svcCtrls) open(_ context.Context, s *forumStore, _ Host) (controller, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.opens++
@@ -733,9 +733,9 @@ func (e *svcEnv) keptAlive(id string) bool {
 
 // store opens the store of a forum's latest run directly (the forum's
 // handle when it has no run).
-func (e *svcEnv) store(id string) *Store {
+func (e *svcEnv) store(id string) *forumStore {
 	e.t.Helper()
-	s, err := OpenStore(e.scope.BaseDirectory, id)
+	s, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		e.t.Fatalf("open store %s: %v", id, err)
 	}
@@ -788,7 +788,7 @@ func (e *svcEnv) markerRun(id string, n int, name string) (string, bool) {
 // forumIDs lists the forums on disk.
 func (e *svcEnv) forumIDs() []string {
 	e.t.Helper()
-	ids, err := ListForums(e.scope.BaseDirectory)
+	ids, err := listForums(e.scope.BaseDirectory)
 	if err != nil {
 		e.t.Fatal(err)
 	}

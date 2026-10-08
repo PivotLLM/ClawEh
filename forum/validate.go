@@ -20,10 +20,10 @@ import (
 	"strings"
 )
 
-// Seam (a): validation. ValidateStatic needs nothing but the configuration;
-// Preflight additionally consults the host (agents, models, schemas, source
+// Seam (a): validation. validateStatic needs nothing but the configuration;
+// runPreflight additionally consults the host (agents, models, schemas, source
 // files). forum_validate runs both; forum_launch runs both and then uses the
-// Resolved result.
+// resolvedConfig result.
 
 // Issue is one validation finding. Path is a dotted JSON path into the
 // configuration ("layers[2].inputs[0].to", "participants.alice.model");
@@ -53,14 +53,14 @@ func (e *ValidationError) Error() string {
 	return "invalid configuration:\n" + strings.Join(lines, "\n")
 }
 
-// ValidateStatic checks everything that can be checked without the host and
+// validateStatic checks everything that can be checked without the host and
 // returns a *ValidationError listing every finding, or nil. The checks, by
 // spec section:
 //
 // §3 IDs and references
-//   - every participant, source, schema and layer ID matches ValidID; layer
+//   - every participant, source, schema and layer ID matches validID; layer
 //     IDs are unique (participant, source and schema duplicates are already
-//     rejected by Decode); no two participant, source or layer IDs are
+//     rejected by decodeConfig); no two participant, source or layer IDs are
 //     equal ignoring case (strings.EqualFold), since they name files and a
 //     case-insensitive filesystem would merge them;
 //   - brief.purpose and brief.task are nonempty;
@@ -94,7 +94,7 @@ func (e *ValidationError) Error() string {
 //     limits.max_calls;
 //   - output.format is a Format; output.schema and output.share are
 //     rejected unless format is json; output.schema names a configured
-//     schema; output.share, when present, passes CheckProjection (an
+//     schema; output.share, when present, passes checkProjection (an
 //     empty array is valid and publishes nothing).
 //
 // Routes (rev 3 §4; layer inputs and moderator inputs)
@@ -119,7 +119,7 @@ func (e *ValidationError) Error() string {
 //     participants of the consuming layer and is rejected on a moderator
 //     route (the moderator is the only recipient); neither repeats an ID;
 //   - a moderator route's distribute is all (one recipient);
-//   - paths passes CheckProjection and is rejected unless the producer is
+//   - paths passes checkProjection and is rejected unless the producer is
 //     json (a json source or a json output layer); with view published and
 //     a producer `share`, each path must lie within what share publishes
 //     (it would otherwise always resolve to nothing at run time);
@@ -144,7 +144,7 @@ func (e *ValidationError) Error() string {
 //   - no string anywhere in the configuration (inline JSON source values
 //     included, schemas excluded) is entirely a template placeholder "<...>"
 //     (isPlaceholder).
-func ValidateStatic(cfg *Config) error {
+func validateStatic(cfg *Config) error {
 	v := &staticValidator{cfg: cfg, layerIndex: map[string]int{}}
 	v.run()
 	if len(v.issues) > 0 {
@@ -153,8 +153,8 @@ func ValidateStatic(cfg *Config) error {
 	return nil
 }
 
-// PreflightEnv is what Preflight needs from the host.
-type PreflightEnv struct {
+// preflightEnv is what runPreflight needs from the host.
+type preflightEnv struct {
 	// Launcher is the launching agent's ID.
 	Launcher string
 	Agents   Agents
@@ -172,8 +172,8 @@ type PreflightEnv struct {
 	ReadAllowed func(absPath string) error
 }
 
-// Resolved is what Preflight establishes and Launch records in the snapshot.
-type Resolved struct {
+// resolvedConfig is what runPreflight establishes and Launch records in the snapshot.
+type resolvedConfig struct {
 	// Models maps a participant ID to the model it runs on for this forum:
 	// every fresh participant, plus clones with a `model` override. Resume
 	// never substitutes another model (§2.4).
@@ -181,19 +181,19 @@ type Resolved struct {
 	// Schemas are the compiled named schemas.
 	Schemas map[string]*compiledSchema
 	// ModeratorSchemas maps a layer ID to its effective decision schema
-	// (EffectiveModeratorSchema), for every enabled layer with a moderator;
+	// (effectiveModeratorSchema), for every enabled layer with a moderator;
 	// Launch stores them in Snapshot.ModeratorSchemas.
 	ModeratorSchemas map[string]json.RawMessage
-	// SourceContents maps a file source's ID to the content Preflight read
+	// SourceContents maps a file source's ID to the content runPreflight read
 	// (once, from the path it checked); Launch materialises exactly these
 	// bytes and never reopens the file by path.
 	SourceContents map[string][]byte
 }
 
-// Preflight checks the configuration against the host without creating
+// runPreflight checks the configuration against the host without creating
 // anything (§2.4, §3). It requires a configuration that passed
-// ValidateStatic. It returns a *ValidationError listing every finding, or
-// the Resolved result. Only participants used by enabled layers (as
+// validateStatic. It returns a *ValidationError listing every finding, or
+// the resolvedConfig result. Only participants used by enabled layers (as
 // participants or moderators) are checked. Checks:
 //
 //   - existing and clone participants: Agents.MayTarget(launcher, id) is
@@ -203,18 +203,18 @@ type Resolved struct {
 //   - neither the launcher nor a clone of it takes part in a forum with an
 //     anonymous input (it could read the forum's files and so the authors);
 //   - every named schema compiles, and every enabled layer's effective
-//     moderator schema (EffectiveModeratorSchema) compiles too;
+//     moderator schema (effectiveModeratorSchema) compiles too;
 //   - each file source resolves (ResolveFile) to a path ReadAllowed
 //     accepts (both the named path and, through any symbolic link, its
 //     target) and that exists as a regular file; it is read once, here,
-//     into Resolved.SourceContents; a json file source's content parses
+//     into resolvedConfig.SourceContents; a json file source's content parses
 //     as one JSON value;
 //   - each limit is within HostLimits.
-func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, error) {
+func runPreflight(ctx context.Context, cfg *Config, env preflightEnv) (*resolvedConfig, error) {
 	if env.Agents == nil || env.Launcher == "" {
 		return nil, errors.New("preflight: launcher and Agents are required")
 	}
-	p := &preflight{cfg: cfg, env: env, models: map[string][]ModelInfo{}, res: &Resolved{
+	p := &preflight{cfg: cfg, env: env, models: map[string][]ModelInfo{}, res: &resolvedConfig{
 		Models:           map[string]string{},
 		Schemas:          map[string]*compiledSchema{},
 		ModeratorSchemas: map[string]json.RawMessage{},
@@ -235,7 +235,7 @@ func Preflight(ctx context.Context, cfg *Config, env PreflightEnv) (*Resolved, e
 	return p.res, nil
 }
 
-// staticValidator accumulates the issues of ValidateStatic.
+// staticValidator accumulates the issues of validateStatic.
 type staticValidator struct {
 	cfg    *Config
 	issues []Issue
@@ -268,7 +268,7 @@ func (v *staticValidator) run() {
 func (v *staticValidator) placeholders() {
 	raw, err := json.Marshal(v.cfg)
 	if err != nil {
-		return // only an invalid inline value or schema, which Decode reports
+		return // only an invalid inline value or schema, which decodeConfig reports
 	}
 	var doc map[string]any
 	if json.Unmarshal(raw, &doc) != nil {
@@ -325,7 +325,7 @@ func (v *staticValidator) sources() {
 	for _, id := range sortedKeys(v.cfg.Sources) {
 		src := v.cfg.Sources[id]
 		path := "sources." + id
-		if !ValidID(id) {
+		if !validID(id) {
 			v.addf(path, "source ID %q: %s", id, idRule)
 		}
 		if !validFormat(src.Decode) {
@@ -378,7 +378,7 @@ func (v *staticValidator) participants() {
 	for _, id := range ids {
 		p := v.cfg.Participants[id]
 		path := "participants." + id
-		if !ValidID(id) {
+		if !validID(id) {
 			v.addf(path, "participant ID %q: %s", id, idRule)
 		}
 		switch {
@@ -458,7 +458,7 @@ func (v *staticValidator) realAgents(ids []string) {
 func (v *staticValidator) schemas() {
 	for _, id := range sortedKeys(v.cfg.Schemas) {
 		path := "schemas." + id
-		if !ValidID(id) {
+		if !validID(id) {
 			v.addf(path, "schema ID %q: %s", id, idRule)
 		}
 		if !isJSONObject(v.cfg.Schemas[id]) {
@@ -498,7 +498,7 @@ func (v *staticValidator) layers() {
 				v.addf(path+".id", "layer IDs %q (%s) and %q differ only in letter case; make them differ in more than case", prev.ID, layerPath(k), l.ID)
 			}
 		}
-		if !ValidID(l.ID) {
+		if !validID(l.ID) {
 			v.addf(path+".id", "layer ID %q: %s", l.ID, idRule)
 		}
 		if prev, dup := v.layerIndex[l.ID]; dup {
@@ -650,7 +650,7 @@ func (v *staticValidator) output(path string, l Layer) {
 		}
 	}
 	if o.Share != nil {
-		for _, msg := range CheckProjection(*o.Share) {
+		for _, msg := range checkProjection(*o.Share) {
 			v.addf(path+".share", "layer %q: %s", l.ID, msg)
 		}
 	}
@@ -756,7 +756,7 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 		if !producerJSON {
 			v.addf(path+".paths", "paths apply only to JSON content; %q is not JSON", r.From)
 		}
-		for _, msg := range CheckProjection(r.Paths) {
+		for _, msg := range checkProjection(r.Paths) {
 			v.addf(path+".paths", "%s", msg)
 		}
 		if share != nil {
@@ -802,7 +802,7 @@ func (v *staticValidator) authorRefs(path string, authors []string, producer Lay
 // withinShare reports whether pointer p can resolve inside a projection
 // built from share: p equals, lies under, or encloses a shared member,
 // compared token-wise after unescaping (pointerTokens), so "/a~1b" and
-// "/a/b" differ. Invalid pointers are left to CheckProjection.
+// "/a/b" differ. Invalid pointers are left to checkProjection.
 func withinShare(p string, share []string) bool {
 	pt, err := pointerTokens(p)
 	if err != nil {
@@ -894,12 +894,12 @@ func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
 
-// preflight accumulates the issues and results of Preflight.
+// preflight accumulates the issues and results of runPreflight.
 type preflight struct {
 	cfg    *Config
-	env    PreflightEnv
+	env    preflightEnv
 	issues []Issue
-	res    *Resolved
+	res    *resolvedConfig
 	// models caches Agents.Models per agent ID.
 	models map[string][]ModelInfo
 }
@@ -927,7 +927,7 @@ func (p *preflight) participants(ctx context.Context) error {
 	for _, id := range p.usedParticipants() {
 		part, ok := p.cfg.Participants[id]
 		if !ok {
-			continue // reported by ValidateStatic
+			continue // reported by validateStatic
 		}
 		path := "participants." + id
 		switch part.Form() {
@@ -1072,7 +1072,7 @@ func (p *preflight) schemas() {
 			assessment = p.cfg.Schemas[l.Moderator.Schema]
 		}
 		path := layerPath(i) + ".moderator"
-		eff, err := EffectiveModeratorSchema(l, assessment)
+		eff, err := effectiveModeratorSchema(l, assessment)
 		if err != nil {
 			p.addf(path, "%v", err)
 			continue
@@ -1086,7 +1086,7 @@ func (p *preflight) schemas() {
 }
 
 // sources checks every file source, reads it once into
-// Resolved.SourceContents, and checks the content of json file sources.
+// resolvedConfig.SourceContents, and checks the content of json file sources.
 func (p *preflight) sources() error {
 	for _, id := range sortedKeys(p.cfg.Sources) {
 		src := p.cfg.Sources[id]
