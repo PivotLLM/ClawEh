@@ -797,6 +797,25 @@ func TestForumNoticeText(t *testing.T) {
 	}
 }
 
+// TestForumNoticeText_Resent: the notice counts the result outputs resent
+// after a restart.
+func TestForumNoticeText_Resent(t *testing.T) {
+	out := func(resent bool) forum.OutputRecord { return forum.OutputRecord{Resent: resent} }
+	for _, tc := range []struct {
+		layers []forum.LayerResult
+		want   string
+	}{
+		{nil, "Forum f1 run 1 finished: completed."},
+		{[]forum.LayerResult{{Outputs: []forum.OutputRecord{out(false), out(true)}}}, "Forum f1 run 1 finished: completed. 1 output was resent after a restart."},
+		{[]forum.LayerResult{{Outputs: []forum.OutputRecord{out(true)}}, {Outputs: []forum.OutputRecord{out(true)}}}, "Forum f1 run 1 finished: completed. 2 outputs were resent after a restart."},
+	} {
+		got := forumNoticeText(&forum.Result{ForumID: "f1", Run: 1, Status: forum.StatusCompleted, Layers: tc.layers})
+		if got != tc.want {
+			t.Errorf("%q, want %q", got, tc.want)
+		}
+	}
+}
+
 // TestForumHost_ScopesIncludeEveryAgent: recovery runs over every configured
 // agent, whatever its switch, so forums of an agent whose switch was turned
 // off are still resumed, kept alive and cleaned up.

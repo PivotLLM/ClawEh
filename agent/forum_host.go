@@ -433,13 +433,29 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat
 
 // forumNoticeText is the completion notice: the run's status and, when it
 // says more than the status, its reason, in the words forum_status uses
-// ("finished: incomplete (deadline).").
+// ("finished: incomplete (deadline)."), and how many result outputs were
+// resent after a restart (forum_results notes which).
 func forumNoticeText(result *forum.Result) string {
 	status := string(result.Status)
 	if result.Reason != "" && string(result.Reason) != status {
 		status += " (" + string(result.Reason) + ")"
 	}
-	return fmt.Sprintf("Forum %s run %d finished: %s.", forum.Ref(result.Name, result.ForumID), result.Run, status)
+	text := fmt.Sprintf("Forum %s run %d finished: %s.", forum.Ref(result.Name, result.ForumID), result.Run, status)
+	resent := 0
+	for _, l := range result.Layers {
+		for _, o := range l.Outputs {
+			if o.Resent {
+				resent++
+			}
+		}
+	}
+	switch {
+	case resent == 1:
+		text += " 1 output was resent after a restart."
+	case resent > 1:
+		text += fmt.Sprintf(" %d outputs were resent after a restart.", resent)
+	}
+	return text
 }
 
 // OnStuck is forum.Host.OnStuck: an operator alert naming the forum, its

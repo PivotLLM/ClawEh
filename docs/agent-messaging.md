@@ -127,7 +127,7 @@ The channel's own allow list applies first, as for every message.
 - Allowed `/ask`: Bob's reply is posted to the chat as "Bob: <reply>". The ask
   runs in the background, so the chat is not held while Bob works; it waits up
   to Bob's `request_timeout` (the turn timeout when none is set).
-- Not allowed: "You don't have permission to /ask Bob" (or `/whisper`).
+- Not allowed: "You don't have permission to /ask Bob." (or `/whisper`).
 - Unknown agent: "There is no agent named Bob."
 
 Bob sees the person marked as a person, with the command and the channel, so
