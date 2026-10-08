@@ -84,7 +84,7 @@ type Server struct {
 	// staleWarned holds "deviceID|agentID" for each stale assignment already
 	// logged, so a device that keeps talking logs it once.
 	staleWarned sync.Map
-	conns   sync.Map     // chatID -> *liveConn (the newest connection per device)
+	conns       sync.Map // chatID -> *liveConn (the newest connection per device)
 
 	// live is every post-handshake connection, so a stop or a device removal
 	// can close all of them, not only the newest per device. stopped refuses
