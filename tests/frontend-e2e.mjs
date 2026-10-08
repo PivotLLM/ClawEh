@@ -13,7 +13,9 @@
 // dev instance with `claw admin` and export CLAW_E2E_USER / CLAW_E2E_PASSWORD.
 //
 // Requires Playwright and a Chromium build. Both come with the playwright-mcp
-// install; override with PLAYWRIGHT_MODULE / CHROME_PATH if they live elsewhere.
+// install: Playwright is looked up in the npx cache under the home directory
+// (~/.npm/_npx/*/node_modules/playwright). Set PLAYWRIGHT_MODULE / CHROME_PATH
+// if they live elsewhere.
 //
 // SAFETY: this mutates configuration, so point it at a DEV instance. Every
 // mutation is reverted — the agent it creates is deleted, every field it edits
@@ -22,7 +24,7 @@
 // by another self-signed one. It refuses to run against the production port
 // (18790) unless --allow-prod is passed.
 
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 
 const args = process.argv.slice(2)
@@ -44,9 +46,30 @@ if (BASE.includes(":18790") && !args.includes("--allow-prod")) {
   process.exit(2)
 }
 
-const PW =
-  process.env.PLAYWRIGHT_MODULE ??
-  "/home/ai/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs"
+// findPlaywright returns the first Playwright module in the npx cache under
+// the home directory, or "" when there is none.
+const findPlaywright = () => {
+  const cache = `${homedir()}/.npm/_npx`
+  let entries = []
+  try {
+    entries = readdirSync(cache)
+  } catch {
+    return ""
+  }
+  for (const dir of entries) {
+    const mod = `${cache}/${dir}/node_modules/playwright/index.mjs`
+    if (existsSync(mod)) return mod
+  }
+  return ""
+}
+const PW = process.env.PLAYWRIGHT_MODULE || findPlaywright()
+if (!PW || !existsSync(PW)) {
+  console.error(
+    `Playwright not found${PW ? ` at ${PW}` : " in ~/.npm/_npx"}. ` +
+      "Set PLAYWRIGHT_MODULE to its index.mjs (for example .../node_modules/playwright/index.mjs).",
+  )
+  process.exit(2)
+}
 const CHROME =
   process.env.CHROME_PATH ??
   `${homedir()}/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome`
