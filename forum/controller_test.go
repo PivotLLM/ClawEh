@@ -309,7 +309,7 @@ func TestCtlCooldownHoldsTheTurn(t *testing.T) {
 	f.log.mu.Lock()
 	logged := strings.Join(f.log.lines, "\n")
 	f.log.mu.Unlock()
-	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+"): one/"+TurnID(1, "alice")+": participant alice waits for model slow-model")
+	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+") run 1: one/"+TurnID(1, "alice")+": participant alice waits for model slow-model")
 }
 
 // A cooldown that outlasts the call timeout ends the attempt as a timeout,

@@ -315,7 +315,7 @@ func TestSvcToolLaunch(t *testing.T) {
 	st.e.agents.mu.Lock()
 	st.e.agents.createErr["clone:bob"] = errSvcHost
 	st.e.agents.mu.Unlock()
-	st.internal("launch", map[string]any{"id": failing}, "Forum "+failing+" could not be launched because of an internal error.")
+	st.internal("launch", map[string]any{"id": failing}, "Forum "+st.e.ref(failing)+" could not be launched because of an internal error.")
 	if st.e.store(failing).RunNumber() != 0 {
 		t.Error("a failed launch left a run")
 	}
@@ -329,7 +329,7 @@ func TestSvcToolNew(t *testing.T) {
 	}
 	var sum Summary
 	if err := json.Unmarshal([]byte(st.ok("status", map[string]any{"id": id})), &sum); err != nil ||
-		sum.Status != StatusNew || sum.ForumID != id || sum.Name != id || sum.Runs != 0 {
+		sum.Status != StatusNew || sum.ForumID != id || sum.Name != "" || sum.Runs != 0 {
 		t.Errorf("status of a new forum = %+v (%v)", sum, err)
 	}
 	if !slices.Equal(st.e.forumIDs(), []string{id}) || len(st.e.agents.createdIDs()) != 0 {
@@ -671,7 +671,7 @@ func TestSvcToolLockedForum(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Unlock()
-	if msg := st.refused("delete", map[string]any{"id": id}, "in use"); msg != fmt.Sprintf("Forum %s is in use by another process; try again later.", id) {
+	if msg := st.refused("delete", map[string]any{"id": id}, "in use"); msg != fmt.Sprintf("Forum %s is in use by another process; try again later.", st.e.ref(id)) {
 		t.Errorf("locked = %q", msg)
 	}
 }

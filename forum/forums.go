@@ -354,7 +354,7 @@ func nextRun(store *Store, started []int) (int, error) {
 // cancelled.
 func (s *Service) revertRun(ctx context.Context, store *Store) error {
 	if err := s.deleteTempAgents(context.WithoutCancel(ctx), store); err != nil {
-		s.host.Logger.Warnf("forum %s: undoing run %d: %v (retried every %s)", store.ID(), store.RunNumber(), err, s.keepAliveEvery)
+		s.host.Logger.Warnf("%s: undoing it: %v (retried every %s)", logRun(store), err, s.keepAliveEvery)
 		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 	}
 	if err := store.ClearCleanup(cleanupNotice); err != nil {
@@ -378,7 +378,7 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 			started = append(started, n)
 			continue
 		}
-		s.host.Logger.Warnf("forum %s: run %d did not start; removing it", store.ID(), n)
+		s.host.Logger.Warnf("%s: it did not start; removing it", logRun(r))
 		if err := s.revertRun(ctx, r); err != nil {
 			return nil, err
 		}
@@ -394,13 +394,13 @@ func (s *Service) undoUnstarted(ctx context.Context, store *Store) ([]int, error
 // temporary agents deleted and its notice marker cleared. The caller holds
 // the lock.
 func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) error {
-	id, n := store.ID(), store.RunNumber()
+	id := store.ID()
 	s.takeLaunchChat(keyOf(store)) // superseded without a notice
 	s.forgetNotice(keyOf(store))
 	if damaged {
 		s.forgetPaused(id)
 		if err := s.deleteTempAgents(ctx, store); err != nil {
-			s.host.Logger.Warnf("forum %s: run %d: %v (retried every %s)", id, n, err, s.keepAliveEvery)
+			s.host.Logger.Warnf("%s: %v (retried every %s)", logRun(store), err, s.keepAliveEvery)
 			s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 		}
 		return store.ClearCleanup(cleanupNotice)
@@ -428,7 +428,7 @@ func (s *Service) supersede(ctx context.Context, store *Store, damaged bool) err
 		st := ctrl.State()
 		s.completeTerminal(ctx, store, ctrl.Config(), ctrl.Snapshot(), &st)
 	}
-	s.host.Logger.Infof("forum %s: run %d superseded by a new run: %s", id, n, status)
+	s.host.Logger.Infof("%s: superseded by a new run: %s", logRun(store), status)
 	return nil
 }
 

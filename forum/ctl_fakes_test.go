@@ -210,6 +210,11 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Unlock)
+	// The forum's current configuration and the run's copy, as a launch
+	// leaves them.
+	if err = s.WriteForumConfig(raw); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.WriteConfig(raw); err != nil {
 		t.Fatal(err)
 	}

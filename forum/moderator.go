@@ -92,7 +92,7 @@ func (c *Controller) committedDecision(layerID string, round int) *Decision {
 
 // moderatorHeader is the first line of every moderator message.
 func (c *Controller) moderatorHeader(layer Layer, round int) string {
-	return fmt.Sprintf("Forum %q, layer %q, moderator check after round %d.", c.forumName(), layer.ID, round)
+	return fmt.Sprintf("Forum %q, layer %q, moderator check after round %d.", c.snap.Label(), layer.ID, round)
 }
 
 // headingConversation and headingDecisions are the moderator's sections.
@@ -311,6 +311,6 @@ func (c *Controller) applyDecision(layer Layer, round int, d *Decision) error {
 		}
 		return err
 	}
-	c.host.Logger.Infof("forum %s: layer %s after round %d: %s", c.snap.ForumID, layer.ID, round, d.Decision)
+	c.host.Logger.Infof("%s: layer %s after round %d: %s", c.logName, layer.ID, round, d.Decision)
 	return c.publishTranscript(commit)
 }

@@ -337,7 +337,7 @@ func (s *Service) Launch(ctx context.Context, id string, opts LaunchOptions) (in
 		store.Unlock()
 		return 0, err
 	}
-	s.host.Logger.Infof("forum %s: run %d launched by agent %s", id, n, opts.Scope.AgentID)
+	s.host.Logger.Infof("%s: launched by agent %s", logRun(store.Run(n)), opts.Scope.AgentID)
 	return n, nil
 }
 
@@ -602,7 +602,7 @@ func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*S
 		run = latest
 	}
 	if run == 0 {
-		return &Summary{ForumID: id, Name: forumLabel(configName(raw), id), Status: StatusNew, UpdatedAt: mod, Layers: []LayerProgress{}}, nil
+		return &Summary{ForumID: id, Name: configName(raw), Status: StatusNew, UpdatedAt: mod, Layers: []LayerProgress{}}, nil
 	}
 	if !slices.Contains(runs, run) {
 		return nil, errNoRun(Ref(configName(raw), id), run)
@@ -637,7 +637,7 @@ func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
 	for _, id := range ids {
 		sum, err := s.Status(ctx, scope, id, 0)
 		if err != nil {
-			s.host.Logger.Warnf("forum %s: status: %v", id, err)
+			s.host.Logger.Warnf("forum %s: status: %v", s.ref(scope, id), err)
 			continue
 		}
 		out = append(out, *sum)
@@ -752,7 +752,7 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 		}
 		if changed {
 			store.Unlock()
-			return invalidState("forum %s: the config changed; launch to start a new run", storeRef(store))
+			return invalidState("forum %s: the configuration changed; launch to start a new run", storeRef(store))
 		}
 	}
 	return s.resume(ctx, store, st)
@@ -949,10 +949,11 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	}
 	s.forgetPaused(id)
 	s.forgetRuns(id)
+	name := logForum(store)
 	if err := store.Remove(); err != nil {
 		return err
 	}
-	s.host.Logger.Infof("forum %s: deleted", id)
+	s.host.Logger.Infof("%s: deleted", name)
 	return nil
 }
 
@@ -992,7 +993,7 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 		}
 		for _, id := range ids {
 			if err := s.recoverOne(ctx, scope, id); err != nil {
-				s.host.Logger.Errorf("forum %s: recover: %v", id, err)
+				s.host.Logger.Errorf("forum %s: recover: %v", s.ref(scope, id), err)
 				note(fmt.Errorf("forum %s: %w", id, err))
 				if !errors.Is(err, ErrLocked) && !errors.Is(err, errClosed) {
 					s.reportStuck(scope, id, err)
@@ -1083,7 +1084,7 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 		}
 	case StatusNew, StatusRunning, StatusPausing, StatusCancelling:
 	}
-	s.host.Logger.Infof("forum %s: resuming run %d after restart (%s)", id, run.RunNumber(), st.Status)
+	s.host.Logger.Infof("%s: resuming after restart (%s)", logRun(run), st.Status)
 	return s.openAndStart(ctx, run, nil)
 }
 
@@ -1093,7 +1094,7 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []int) {
 	marked, err := store.MarkedRuns(CleanupAgents)
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: %v", store.ID(), err)
+		s.host.Logger.Warnf("%s: %v", logForum(store), err)
 		return
 	}
 	for _, n := range marked {
@@ -1101,7 +1102,7 @@ func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []
 			continue
 		}
 		if err := s.deleteTempAgents(ctx, store.Run(n)); err != nil {
-			s.host.Logger.Warnf("forum %s: run %d that did not start: %v", store.ID(), n, err)
+			s.host.Logger.Warnf("%s: run %d that did not start: %v", logForum(store), n, err)
 		}
 	}
 }
@@ -1116,7 +1117,7 @@ func (s *Service) finishEarlier(ctx context.Context, run *Store) {
 	_, agents, agentsErr := run.Cleanup(CleanupAgents)
 	_, notice, noticeErr := run.Cleanup(cleanupNotice)
 	if err := errors.Join(agentsErr, noticeErr); err != nil {
-		s.host.Logger.Warnf("forum %s: run %d: %v", run.ID(), run.RunNumber(), err)
+		s.host.Logger.Warnf("%s: %v", logRun(run), err)
 		return
 	}
 	if !agents && !notice {
@@ -1139,7 +1140,7 @@ func (s *Service) finishEarlier(ctx context.Context, run *Store) {
 		err = s.supersede(ctx, run, false)
 	}
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: finishing run %d: %v", run.ID(), run.RunNumber(), err)
+		s.host.Logger.Warnf("%s: finishing it: %v", logRun(run), err)
 	}
 }
 
@@ -1386,7 +1387,7 @@ func (s *Service) start(store *Store, ctrl controller) error {
 		status, err := drive(ctx, ctrl)
 		if err != nil {
 			status = ctrl.State().Status
-			s.runFailed(ctrl.Snapshot(), err)
+			s.runFailed(store, ctrl.Snapshot(), err)
 		} else {
 			s.mu.Lock()
 			delete(s.stuck, keyOf(store))
@@ -1404,7 +1405,7 @@ func (s *Service) start(store *Store, ctrl controller) error {
 		}
 		s.mu.Unlock()
 		if status == StatusPaused {
-			s.host.Logger.Infof("forum %s: run %d paused", id, store.RunNumber())
+			s.host.Logger.Infof("%s: paused", logRun(store))
 		}
 	})
 	s.mu.Unlock()
@@ -1459,13 +1460,14 @@ func drive(ctx context.Context, ctrl controller) (Status, error) {
 // shutdown is expected and logged at Info; anything else is logged at
 // Error naming the forum and the run and reported once through
 // Host.OnStuck.
-func (s *Service) runFailed(snap *Snapshot, err error) {
-	id := snap.ForumID
+func (s *Service) runFailed(store *Store, snap *Snapshot, err error) {
+	id, ref := snap.ForumID, storeRef(store)
+	name := fmt.Sprintf("forum %s run %d", ref, snap.Run)
 	if errors.Is(err, ErrShuttingDown) || (s.ctx.Err() != nil && errors.Is(err, context.Canceled)) {
-		s.host.Logger.Infof("forum %s: run %d stopped by the shutdown; it resumes at the next start", id, snap.Run)
+		s.host.Logger.Infof("%s: stopped by the shutdown; it resumes at the next start", name)
 		return
 	}
-	s.host.Logger.Errorf("forum %s: run %d stopped and is stuck until it is resumed: %v", id, snap.Run, err)
+	s.host.Logger.Errorf("%s: stopped and is stuck until it is resumed: %v", name, err)
 	s.stuckOnce(runKey{id: id, run: snap.Run}, snap.Origin, err)
 }
 
@@ -1659,7 +1661,7 @@ func (s *Service) retryNotice(ctx context.Context, scope Scope, key runKey) {
 		return
 	}
 	if err != nil {
-		s.host.Logger.Warnf("forum %s run %d: completion notice: %v", key.id, key.run, err)
+		s.host.Logger.Warnf("forum %s run %d: completion notice: %v", s.ref(scope, key.id), key.run, err)
 		return
 	}
 	if err = store.Lock(); err != nil {
@@ -1685,10 +1687,15 @@ func sortedRunKeys[V any](m map[runKey]V) []runKey {
 	})
 }
 
-// logRun names a run in a log line: "forum <ref> run <n>", the forum named
-// as messages name it (storeRef).
+// logForum names a forum in a log line: "forum <ref>", the forum named as
+// messages name it (storeRef).
+func logForum(store *Store) string {
+	return "forum " + storeRef(store)
+}
+
+// logRun names a run in a log line: "forum <ref> run <n>".
 func logRun(store *Store) string {
-	return fmt.Sprintf("forum %s run %d", storeRef(store), store.RunNumber())
+	return fmt.Sprintf("%s run %d", logForum(store), store.RunNumber())
 }
 
 // agentsMarker reads the CleanupAgents marker: the temporary agents still
@@ -1773,11 +1780,11 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 		return &agentsLeftError{forumID: store.ID(), ref: storeRef(store), agents: remaining, err: failures}
 	}
 	if len(pending) > 0 {
-		s.host.Logger.Infof("forum %s run %d: temporary agents %v are deleted when their turns end", store.ID(), store.RunNumber(), pending)
+		s.host.Logger.Infof("%s: temporary agents %v are deleted when their turns end", logRun(store), pending)
 		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 		return nil
 	}
-	s.host.Logger.Debugf("forum %s run %d: deleted temporary agents %v", store.ID(), store.RunNumber(), ids)
+	s.host.Logger.Debugf("%s: deleted temporary agents %v", logRun(store), ids)
 	return nil
 }
 
@@ -1929,7 +1936,7 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 		return true
 	}
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: temporary agents: %v", key.id, err)
+		s.host.Logger.Warnf("forum %s run %d: temporary agents: %v", s.ref(scope, key.id), key.run, err)
 		return false
 	}
 	if err := store.Lock(); err != nil {
@@ -1938,14 +1945,14 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 	defer store.Unlock()
 	run := store.Run(key.run)
 	if err := s.deleteTempAgents(ctx, run); err != nil {
-		s.host.Logger.Warnf("forum %s run %d: %v (retried every %s)", key.id, key.run, err, s.keepAliveEvery)
+		s.host.Logger.Warnf("%s: %v (retried every %s)", logRun(run), err, s.keepAliveEvery)
 		return false
 	}
 	// Agents the host deletes when their turns end are still listed.
 	if ids, err := agentsMarker(run); err != nil || len(ids) > 0 {
 		return false
 	}
-	s.host.Logger.Infof("forum %s run %d: its remaining temporary agents are deleted", key.id, key.run)
+	s.host.Logger.Infof("%s: its remaining temporary agents are deleted", logRun(run))
 	return true
 }
 
@@ -1954,12 +1961,12 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 func (s *Service) touchForum(ctx context.Context, store *Store) {
 	ids, err := agentsMarker(store)
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: keep-alive: %v", store.ID(), err)
+		s.host.Logger.Warnf("%s: keep-alive: %v", logRun(store), err)
 		return
 	}
 	for _, agentID := range ids {
 		if err := s.host.Agents.Touch(ctx, store.owner, agentID); err != nil {
-			s.host.Logger.Warnf("forum %s: keep-alive of temporary agent %s: %v", store.ID(), agentID, err)
+			s.host.Logger.Warnf("%s: keep-alive of temporary agent %s: %v", logRun(store), agentID, err)
 		}
 	}
 }
@@ -1969,7 +1976,7 @@ func (s *Service) touchForum(ctx context.Context, store *Store) {
 func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 	sum := &Summary{
 		ForumID:    snap.ForumID,
-		Name:       snap.Label(),
+		Name:       snap.Name,
 		Run:        snap.Run,
 		Status:     st.Status,
 		Reason:     st.Reason,

@@ -341,7 +341,7 @@ func TestSvcListSkipsUnreadableForums(t *testing.T) {
 	if err != nil || len(list) != 0 {
 		t.Errorf("List = %v, %v", list, err)
 	}
-	if !e.logger.has("forum " + id + ": status") {
+	if !e.logger.has("forum " + e.ref(id) + ": status") {
 		t.Error("the unreadable forum was not logged")
 	}
 }
@@ -1289,7 +1289,7 @@ func TestSvcRunErrorLeavesForumInterrupted(t *testing.T) {
 		_, ok := e.svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("ERROR forum " + id + ": run 1 stopped") {
+	if !e.logger.has("ERROR forum " + e.ref(id) + " run 1: stopped") {
 		t.Error("the run error was not logged at Error")
 	}
 	if e.notifier.count() != 0 {
@@ -1407,7 +1407,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		_, ok := svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("INFO forum "+id+": run 1 stopped by the shutdown") || e.logger.has("ERROR forum "+id) {
+	if !e.logger.has("INFO forum "+e.ref(id)+" run 1: stopped by the shutdown") || e.logger.has("ERROR forum "+e.ref(id)) {
 		t.Error("the shutdown was not logged at Info only")
 	}
 	if calls := e.stuck.list(); len(calls) != 0 {
@@ -1526,7 +1526,7 @@ func TestSvcStuckIsReportedOnce(t *testing.T) {
 		_, ok := e.svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("ERROR forum " + id + ": run 1 stopped") {
+	if !e.logger.has("ERROR forum " + e.ref(id) + " run 1: stopped") {
 		t.Error("not logged at Error naming the forum")
 	}
 	if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {

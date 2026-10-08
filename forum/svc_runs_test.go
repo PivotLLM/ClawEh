@@ -257,7 +257,7 @@ func TestSvcResumeAfterAConfigChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = e.svc.Resume(t.Context(), e.scope, id)
-	if !errors.Is(err, ErrInvalidState) || err.Error() != "forum svc-test ("+id+"): the config changed; launch to start a new run" {
+	if !errors.Is(err, ErrInvalidState) || err.Error() != "forum svc-test ("+id+"): the configuration changed; launch to start a new run" {
 		t.Fatalf("resume after a change = %v", err)
 	}
 	if e.status(id) != StatusPaused {

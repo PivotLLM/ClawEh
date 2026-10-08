@@ -10,13 +10,12 @@ import (
 	"testing"
 )
 
-// Ref names a forum by "<name> (<id>)", or by its ID when it has no name
-// (a Label of an unnamed forum is its ID).
+// Ref names a forum by "<name> (<id>)", or by its ID when it has no name.
 func TestRef(t *testing.T) {
 	for _, tc := range []struct{ name, id, want string }{
 		{"writing", "f1", "writing (f1)"},
 		{"", "f1", "f1"},
-		{"f1", "f1", "f1"},
+		{"f1", "f1", "f1 (f1)"},
 		{"two\nlines\x1b[31m", "f1", "twolines[31m (f1)"},
 		{"\n\t", "f1", "f1"},
 		{strings.Repeat("é", MaxNameChars+5), "f1", strings.Repeat("é", MaxNameChars) + " (f1)"},

@@ -75,7 +75,10 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
+	ref := storeRef(s)
 	c := &Controller{
+		ref:             ref,
+		logName:         fmt.Sprintf("forum %s run %d", ref, snap.Run),
 		store:           s,
 		cfg:             cfg,
 		snap:            snap,
@@ -184,7 +187,7 @@ func (c *Controller) regenerateTranscript() error {
 		return err
 	}
 	if !bytes.Equal(have, []byte(want)) && (want != "" || have != nil) {
-		c.host.Logger.Infof("forum %s: rebuilding %s from the commit log", c.snap.ForumID, fileTranscript)
+		c.host.Logger.Infof("%s: rebuilding %s from the commit log", c.logName, fileTranscript)
 		if err := c.durable("transcript", func() error { return c.store.ReplaceTranscript([]byte(want)) }); err != nil {
 			return fmt.Errorf("rebuild transcript: %w", err)
 		}

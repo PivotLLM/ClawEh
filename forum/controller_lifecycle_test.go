@@ -239,7 +239,7 @@ func TestCtlCancelPaused(t *testing.T) {
 	ctlWant(t, "calls", len(f.msg.all()), 0)
 	for name, req := range map[string]func() error{"cancel": c.RequestCancel, "pause": c.RequestPause} {
 		reqErr := req()
-		if !errors.Is(reqErr, errRunEnded) || !errors.Is(reqErr, ErrInvalidState) || !strings.Contains(reqErr.Error(), "forum "+f.s.ID()) {
+		if !errors.Is(reqErr, errRunEnded) || !errors.Is(reqErr, ErrInvalidState) || !strings.Contains(reqErr.Error(), "forum ctl test ("+f.s.ID()+")") {
 			t.Errorf("%s after Run returned: %v, want a refusal naming the forum", name, reqErr)
 		}
 	}
@@ -658,7 +658,7 @@ func TestCtlCorruptEndsFailed(t *testing.T) {
 	ctlWant(t, "reason", f.result().Reason, EndCorrupt)
 	found := false
 	for _, line := range f.log.lines {
-		found = found || (strings.HasPrefix(line, "ERROR forum "+f.s.ID()+": its records are corrupt") && strings.Contains(line, "no longer validates"))
+		found = found || (strings.HasPrefix(line, "ERROR forum ctl test ("+f.s.ID()+") run 1: its records are corrupt") && strings.Contains(line, "no longer validates"))
 	}
 	if !found {
 		t.Errorf("the corruption was not logged at Error: %q", f.log.lines)

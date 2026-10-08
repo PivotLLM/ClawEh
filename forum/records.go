@@ -105,10 +105,14 @@ type Snapshot struct {
 	Sources map[string]SourceRecord `json:"sources,omitempty"`
 }
 
-// Label is how the forum is named to people: its configured name, or its
-// ID when it has none.
+// Label is how a forum is titled where it is rendered (the transcript
+// heading, the line heading a participant's message): its configured name,
+// or its ID when it has none. Records keep the name as configured.
 func (s *Snapshot) Label() string {
-	return forumLabel(s.Name, s.ForumID)
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.ForumID
 }
 
 // MaxNameChars is the longest forum `name` ValidateStatic accepts, in
@@ -122,8 +126,7 @@ func validName(name string) bool {
 }
 
 // Ref names a forum in a message to people or agents: "<name> (<id>)"
-// when it has a name, else its ID. A name equal to the ID (a Label of an
-// unnamed forum) counts as none. forum.json lives in the launcher's
+// when it has a name, else its ID. forum.json lives in the launcher's
 // workspace and is not trusted, so control characters are dropped and the
 // name is cut to MaxNameChars whatever validation said.
 func Ref(name, id string) string {
@@ -136,18 +139,10 @@ func Ref(name, id string) string {
 	if r := []rune(name); len(r) > MaxNameChars {
 		name = string(r[:MaxNameChars])
 	}
-	if name == "" || name == id {
+	if name == "" {
 		return id
 	}
 	return name + " (" + id + ")"
-}
-
-// forumLabel is name, or id when name is empty.
-func forumLabel(name, id string) string {
-	if name != "" {
-		return name
-	}
-	return id
 }
 
 // SourceRecord is one materialised source (sources/<id><ext>).
@@ -413,8 +408,8 @@ type LayerResult struct {
 type Result struct {
 	ForumID string `json:"forum_id"`
 	Run     int    `json:"run"`
-	// Name labels the forum: its configured name, or its ID when it has none.
-	Name       string    `json:"name"`
+	// Name is the forum's configured name; empty when it has none.
+	Name       string    `json:"name,omitempty"`
 	Status     Status    `json:"status"`
 	Reason     EndReason `json:"reason,omitempty"`
 	LaunchedAt time.Time `json:"launched_at"`
@@ -460,8 +455,8 @@ type ForumMeta struct {
 // Summary is one forum's progress as forum_status reports it.
 type Summary struct {
 	ForumID string `json:"forum_id"`
-	// Name labels the forum: its configured name, or its ID when it has none.
-	Name string `json:"name"`
+	// Name is the forum's configured name; empty when it has none.
+	Name string `json:"name,omitempty"`
 	// Run is the run the summary describes (0 for a new forum), Runs how
 	// many the forum has, and ConfigChanged whether the forum's
 	// configuration differs from the one its latest run used.

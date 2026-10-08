@@ -34,6 +34,11 @@ type Controller struct {
 	snap  *Snapshot
 	parts *Participants
 	host  Host
+	// ref names the forum in refusals (storeRef: the name in its current
+	// configuration, which cannot change while a controller is open), and
+	// logName in log lines ("forum <ref> run <n>").
+	ref     string
+	logName string
 	// schemas are the named schemas; decisionSchemas the effective
 	// moderator schema per layer (Snapshot.ModeratorSchemas), both
 	// compiled at Open.
@@ -135,7 +140,7 @@ func (c *Controller) Run(ctx context.Context) (Status, error) {
 	}()
 	status, err := c.run(ctx)
 	if err != nil && errors.Is(err, ErrCorrupt) && !c.dead.Load() {
-		c.host.Logger.Errorf("forum %s: its records are corrupt; ending it failed: %v", c.snap.ForumID, err)
+		c.host.Logger.Errorf("%s: its records are corrupt; ending it failed: %v", c.logName, err)
 		return c.end(StatusFailed, EndCorrupt)
 	}
 	return status, err
@@ -173,7 +178,7 @@ func (c *Controller) run(ctx context.Context) (Status, error) {
 		return c.settle()
 	}
 	if len(c.gone) > 0 {
-		c.host.Logger.Errorf("forum %s: temporary participants no longer exist: %v", c.snap.ForumID, c.gone)
+		c.host.Logger.Errorf("%s: temporary participants no longer exist: %v", c.logName, c.gone)
 		return c.end(StatusFailed, EndParticipantGone)
 	}
 	for _, id := range c.snap.Layers {
@@ -210,10 +215,9 @@ func (c *Controller) run(ctx context.Context) (Status, error) {
 // cancellation dominates a pause, and a terminal forum stays terminal.
 // After Run has returned it is refused (errRunEnded, see Run).
 func (c *Controller) RequestPause() error {
-	id := c.snap.ForumID
 	err := c.commitWhen(func(st *State) error {
 		if c.exited {
-			return runEnded(id, "paused")
+			return runEnded(c.ref, "paused")
 		}
 		switch st.Status {
 		case StatusRunning:
@@ -221,10 +225,10 @@ func (c *Controller) RequestPause() error {
 		case StatusPausing, StatusPaused:
 			return errSkip
 		case StatusCancelling:
-			return invalidState("forum %s is being cancelled and cannot be paused", Ref(c.snap.Name, id))
+			return invalidState("forum %s is being cancelled and cannot be paused", c.ref)
 		case StatusNew, StatusQueued, StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		}
-		return invalidState("forum %s is %s and cannot be paused", Ref(c.snap.Name, id), st.Status)
+		return invalidState("forum %s is %s and cannot be paused", c.ref, st.Status)
 	}, &Commit{Kind: CommitPauseRequested}, func() { c.pause.Store(true) })
 	if errors.Is(err, errSkip) {
 		return nil
@@ -238,13 +242,12 @@ func (c *Controller) RequestPause() error {
 // naming the forum, when the status is terminal. After Run has returned
 // it is refused (errRunEnded, see Run).
 func (c *Controller) RequestCancel() error {
-	id := c.snap.ForumID
 	err := c.commitWhen(func(st *State) error {
 		switch {
 		case c.exited:
-			return runEnded(id, "cancelled")
+			return runEnded(c.ref, "cancelled")
 		case st.Status.Terminal():
-			return invalidState("forum %s is already %s", Ref(c.snap.Name, id), st.Status)
+			return invalidState("forum %s is already %s", c.ref, st.Status)
 		case st.Status == StatusCancelling:
 			return errSkip
 		}
@@ -263,9 +266,10 @@ func (c *Controller) RequestCancel() error {
 	return nil
 }
 
-// runEnded is the refusal of a request made after Run returned.
-func runEnded(id, verb string) error {
-	return &stateError{msg: fmt.Sprintf("forum %s has stopped running and cannot be %s by this run", id, verb), cause: errRunEnded}
+// runEnded is the refusal of a request made after Run returned; ref names
+// the forum (Ref).
+func runEnded(ref, verb string) error {
+	return &stateError{msg: fmt.Sprintf("forum %s has stopped running and cannot be %s by this run", ref, verb), cause: errRunEnded}
 }
 
 // State returns a deep copy of the current derived state.
@@ -314,7 +318,7 @@ func (c *Controller) settle() (Status, error) {
 			if err != nil {
 				return "", err
 			}
-			c.host.Logger.Infof("forum %s: paused", c.snap.ForumID)
+			c.host.Logger.Infof("%s: paused", c.logName)
 			return StatusPaused, nil
 		case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled, StatusPaused:
 			return st, nil
@@ -436,13 +440,13 @@ func (c *Controller) startLayer(layer Layer) error {
 	if err != nil {
 		return fmt.Errorf("start layer %s: %w", layer.ID, err)
 	}
-	c.host.Logger.Infof("forum %s: layer %s started", c.snap.ForumID, layer.ID)
+	c.host.Logger.Infof("%s: layer %s started", c.logName, layer.ID)
 	return c.commit(&Commit{Kind: CommitLayerStarted, Layer: layer.ID})
 }
 
 // endLayer commits CommitLayerEnded with the reason.
 func (c *Controller) endLayer(layer Layer, reason EndReason) error {
-	c.host.Logger.Infof("forum %s: layer %s ended: %s", c.snap.ForumID, layer.ID, reason)
+	c.host.Logger.Infof("%s: layer %s ended: %s", c.logName, layer.ID, reason)
 	return c.commit(&Commit{Kind: CommitLayerEnded, Layer: layer.ID, Reason: reason})
 }
 
@@ -753,7 +757,7 @@ func (c *Controller) end(status Status, reason EndReason) (Status, error) {
 		return "", err
 	}
 	st := c.State()
-	c.host.Logger.Infof("forum %s: ended %s (%s) after %d calls", c.snap.ForumID, st.Status, st.Reason, st.Calls)
+	c.host.Logger.Infof("%s: ended %s (%s) after %d calls", c.logName, st.Status, st.Reason, st.Calls)
 	return st.Status, c.ensureResult()
 }
 
@@ -780,7 +784,7 @@ func buildResult(cfg *Config, snap *Snapshot, st *State) *Result {
 	res := &Result{
 		ForumID:    snap.ForumID,
 		Run:        snap.Run,
-		Name:       snap.Label(),
+		Name:       snap.Name,
 		Status:     st.Status,
 		Reason:     st.Reason,
 		LaunchedAt: snap.LaunchedAt,

@@ -114,7 +114,7 @@ func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, partic
 func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptResult, error) {
 	prior := c.turnAttempts(w.layer.ID, w.turn)
 	if last := lastAttempt(prior); last != nil && last.Reply != nil && len(last.Reply.Issues) == 0 {
-		c.host.Logger.Infof("forum %s: %s/%s adopting saved reply of attempt %d", c.snap.ForumID, w.layer.ID, w.turn, last.Request.Attempt)
+		c.host.Logger.Infof("%s: %s/%s adopting saved reply of attempt %d", c.logName, w.layer.ID, w.turn, last.Request.Attempt)
 		return attemptResult{req: &last.Request, reply: last.Reply}, nil
 	}
 	for attempt := len(prior) + 1; attempt <= c.snap.Limits.MaxAttemptsPerTurn; attempt++ {
@@ -157,13 +157,13 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 		// A wait the run deadline cut is the deadline stopping the run, not
 		// an attempt the participant used up, even on its last attempt.
 		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(time.Now()) {
-			c.host.Logger.Warnf("forum %s: %s/%s attempt %d cut by the run deadline", c.snap.ForumID, w.layer.ID, w.turn, attempt)
+			c.host.Logger.Warnf("%s: %s/%s attempt %d cut by the run deadline", c.logName, w.layer.ID, w.turn, attempt)
 			return attemptResult{reason: EndDeadline}, nil
 		}
-		c.host.Logger.Warnf("forum %s: %s/%s attempt %d rejected: %s", c.snap.ForumID, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
+		c.host.Logger.Warnf("%s: %s/%s attempt %d rejected: %s", c.logName, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
 		prior = c.turnAttempts(w.layer.ID, w.turn)
 	}
-	c.host.Logger.Errorf("forum %s: %s/%s: no valid reply from %s in %d attempts", c.snap.ForumID, w.layer.ID, w.turn, w.p.ID, c.snap.Limits.MaxAttemptsPerTurn)
+	c.host.Logger.Errorf("%s: %s/%s: no valid reply from %s in %d attempts", c.logName, w.layer.ID, w.turn, w.p.ID, c.snap.Limits.MaxAttemptsPerTurn)
 	return attemptResult{reason: w.exhausted}, nil
 }
 
@@ -211,14 +211,13 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 	}
 	start := time.Now()
 	deadline = start.Add(c.wait(start))
-	ref := Ref(c.snap.Name, c.snap.ForumID)
-	c.host.Logger.Infof("forum %s: %s/%s: participant %s waits for model %s, in cooldown for %s",
-		ref, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
+	c.host.Logger.Infof("%s: %s/%s: participant %s waits for model %s, in cooldown for %s",
+		c.logName, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
 	for {
 		now := time.Now()
 		if !now.Before(deadline) {
-			c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
-				ref, w.layer.ID, w.turn, model, w.p.ID)
+			c.host.Logger.Infof("%s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
+				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
 		if !c.holdFor(ctx, min(left, deadline.Sub(now), cooldownPoll)) {
@@ -231,12 +230,12 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 		}
 		delay := releaseDelay()
 		if time.Until(deadline)-delay < minHeldWait {
-			c.host.Logger.Infof("forum %s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
-				ref, w.layer.ID, w.turn, model, w.p.ID)
+			c.host.Logger.Infof("%s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
+				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
-		c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn in %s",
-			ref, w.layer.ID, w.turn, w.p.ID, delay.Round(time.Millisecond))
+		c.host.Logger.Infof("%s: %s/%s: the cooldown has ended; sending participant %s's turn in %s",
+			c.logName, w.layer.ID, w.turn, w.p.ID, delay.Round(time.Millisecond))
 		if !c.holdFor(ctx, delay) {
 			return deadline, false
 		}
@@ -244,8 +243,8 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 		if nextLeft <= 0 {
 			return deadline, false
 		}
-		c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is in cooldown again",
-			ref, w.layer.ID, w.turn, next, w.p.ID)
+		c.host.Logger.Infof("%s: %s/%s: model %s of participant %s is in cooldown again",
+			c.logName, w.layer.ID, w.turn, next, w.p.ID)
 		model, left = next, nextLeft
 	}
 }
@@ -290,7 +289,7 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 	}
 	now := time.Now()
 	if reason := c.checkLimits(layer, 1, now); reason != "" {
-		c.host.Logger.Warnf("forum %s: %s/%s not sent: %s", c.snap.ForumID, req.Layer, req.Turn, reason)
+		c.host.Logger.Warnf("%s: %s/%s not sent: %s", c.logName, req.Layer, req.Turn, reason)
 		return -1, reason, nil
 	}
 	wait := c.wait(now)
@@ -314,7 +313,7 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 	if err != nil {
 		return -1, "", err
 	}
-	c.host.Logger.Debugf("forum %s: %s/%s attempt %d sent to %s (wait %s)", c.snap.ForumID, req.Layer, req.Turn, req.Attempt, req.Participant, wait)
+	c.host.Logger.Debugf("%s: %s/%s attempt %d sent to %s (wait %s)", c.logName, req.Layer, req.Turn, req.Attempt, req.Participant, wait)
 	return wait, "", nil
 }
 
@@ -337,13 +336,13 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 		case ctx.Err() != nil:
 			return nil, "", ctx.Err()
 		case errors.Is(err, ErrShuttingDown):
-			c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: the host is shutting down", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+			c.host.Logger.Infof("%s: %s/%s attempt %d left unanswered: the host is shutting down", c.logName, req.Layer, req.Turn, req.Attempt)
 			return nil, "", fmt.Errorf("ask %s (agent %s): %w", p.ID, p.AgentID, err)
 		}
 		return nil, c.hostFailure(ctx, p, err), nil
 	}
 	if reply.Outcome == OutcomeCancelled && ctx.Err() != nil && !c.cancel.Load() {
-		c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+		c.host.Logger.Infof("%s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.logName, req.Layer, req.Turn, req.Attempt)
 		return nil, "", ctx.Err()
 	}
 	rec, err := c.recordReply(req, reply, validate)
@@ -380,7 +379,7 @@ func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func
 // EndParticipantGone when the participant was Created and the host says
 // the agent does not exist, EndHostError otherwise.
 func (c *Controller) hostFailure(ctx context.Context, p ParticipantRecord, err error) EndReason {
-	c.host.Logger.Errorf("forum %s: ask %s (agent %s) failed: %v", c.snap.ForumID, p.ID, p.AgentID, err)
+	c.host.Logger.Errorf("%s: ask %s (agent %s) failed: %v", c.logName, p.ID, p.AgentID, err)
 	if p.Created {
 		if exists, existsErr := c.host.Agents.Exists(ctx, p.AgentID); existsErr == nil && !exists {
 			return EndParticipantGone
@@ -417,7 +416,7 @@ func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *Attemp
 		}
 		return nil, nil, err
 	}
-	c.host.Logger.Debugf("forum %s: %s/%s committed (attempt %d)", c.snap.ForumID, layer.ID, req.Turn, req.Attempt)
+	c.host.Logger.Debugf("%s: %s/%s committed (attempt %d)", c.logName, layer.ID, req.Turn, req.Attempt)
 	return out, commit, nil
 }
 
@@ -560,15 +559,7 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 // included): which forum, layer and round it belongs to, since an
 // existing agent's conversation also carries other work.
 func (c *Controller) turnHeader(layer Layer, round int) string {
-	return fmt.Sprintf("Forum %q, layer %q, round %d.", c.forumName(), layer.ID, round)
-}
-
-// forumName is the configured name, or the forum ID.
-func (c *Controller) forumName() string {
-	if c.snap.Name != "" {
-		return c.snap.Name
-	}
-	return c.snap.ForumID
+	return fmt.Sprintf("Forum %q, layer %q, round %d.", c.snap.Label(), layer.ID, round)
 }
 
 // writeBrief writes the brief section.

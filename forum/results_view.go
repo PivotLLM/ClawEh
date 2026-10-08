@@ -25,7 +25,7 @@ const MaxResultInlineTotalChars = 16000
 type ResultsView struct {
 	ForumID    string    `json:"forum_id"`
 	Run        int       `json:"run"`
-	Name       string    `json:"name"`
+	Name       string    `json:"name,omitempty"`
 	Status     Status    `json:"status"`
 	Reason     EndReason `json:"reason,omitempty"`
 	LaunchedAt time.Time `json:"launched_at"`
