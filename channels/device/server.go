@@ -969,7 +969,7 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 		agents, defaultID, _ = s.querier.Agents()
 	}
 	current := defaultID
-	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" && s.agentExists(dev.AgentID) {
 		current = dev.AgentID
 	}
 
@@ -1107,9 +1107,17 @@ func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested
 			agentID = d
 		}
 	}
-	// Per-device assignment overrides the gateway default for node clients.
+	// Per-device assignment overrides the gateway default for node clients, but
+	// only while the assigned agent exists: the loop drops a turn preresolved to
+	// a missing agent, so a stale assignment would leave the device unanswered.
 	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		agentID = dev.AgentID
+		if s.agentExists(dev.AgentID) {
+			agentID = dev.AgentID
+		} else {
+			logger.WarnCF("device", "assigned agent not found; using the default agent", map[string]any{
+				"deviceId": lc.deviceID, "device": dev.DisplayName, "assignedAgent": dev.AgentID, "agent": agentID,
+			})
+		}
 	}
 	return routing.BuildAgentMainSessionKey(agentID), nil
 }

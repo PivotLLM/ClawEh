@@ -127,8 +127,9 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		}
 		metadata := map[string]string{"platform": "device", "device_id": deviceID}
 		// Pin the conversation session (the selected agent's main conversation,
-		// the key chat.history reads). The agent is the session key's 2nd segment;
-		// the loop falls back to default routing when it's "main"/unknown.
+		// the key chat.history reads). The agent is the session key's 2nd segment,
+		// which sessionScopeKeyFor has already resolved to an existing agent; the
+		// loop drops a turn preresolved to an agent that is gone.
 		if sessionKey != "" {
 			metadata["session_key"] = sessionKey
 			if agentID := routing.AgentIDFromSessionKey(sessionKey); agentID != "" {

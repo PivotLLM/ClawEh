@@ -149,3 +149,48 @@ func TestAuthLogin_TrustedProxy(t *testing.T) {
 		t.Errorf("audit recorded the proxy address; senders = %v", senders)
 	}
 }
+
+// GET /api/devices marks a device whose assigned agent is no longer
+// configured, so the Devices page can show the stale assignment.
+func TestDeviceList_MarksMissingAgent(t *testing.T) {
+	h := NewHandler(setupTestEnv(t))
+	ctx := context.Background()
+	store, _, err := h.openDeviceStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dev := range []struct{ id, agent string }{{"dev1", "removed"}, {"dev2", "main"}, {"dev3", ""}} {
+		reqID, err := store.CreatePending(ctx, device.PendingPairing{DeviceID: dev.id, PublicKey: "pk-" + dev.id, DisplayName: "Rabbit R1", Role: "node"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.Approve(ctx, reqID, []string{"node"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeviceAgent(ctx, dev.id, dev.agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	h.registerDeviceRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Devices []pairedDeviceView `json:"devices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"dev1": true, "dev2": false, "dev3": false}
+	if len(resp.Devices) != len(want) {
+		t.Fatalf("devices = %+v, want %d", resp.Devices, len(want))
+	}
+	for _, d := range resp.Devices {
+		if d.AgentMissing != want[d.DeviceID] {
+			t.Errorf("%s: agent_missing = %v, want %v", d.DeviceID, d.AgentMissing, want[d.DeviceID])
+		}
+	}
+}

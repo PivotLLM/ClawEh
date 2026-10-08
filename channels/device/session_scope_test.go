@@ -158,3 +158,28 @@ func TestSessionScopeKeyWithoutQuerier(t *testing.T) {
 		t.Fatalf("session key = %q, want agent:main:main", got)
 	}
 }
+
+// A device assigned to an agent that has since been removed joins the default
+// agent's conversation: the loop drops a turn preresolved to a missing agent,
+// so honouring the stale assignment would leave the device with no reply.
+func TestSessionScopeKeyIgnoresMissingAssignedAgent(t *testing.T) {
+	s := newScopeServer(t)
+	ctx := context.Background()
+	reqID, err := s.store.CreatePending(ctx, PendingPairing{
+		DeviceID: "dev1", PublicKey: "pk1", DisplayName: "Rabbit R1", Role: "node",
+	})
+	if err != nil {
+		t.Fatalf("CreatePending: %v", err)
+	}
+	if _, _, err := s.store.Approve(ctx, reqID, []string{"node"}, nil); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if err := s.store.SetDeviceAgent(ctx, "dev1", "removed"); err != nil {
+		t.Fatalf("SetDeviceAgent: %v", err)
+	}
+	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
+
+	if got := scopeKey(t, s, lc); got != "agent:alice:main" {
+		t.Fatalf("session key = %q, want agent:alice:main", got)
+	}
+}
