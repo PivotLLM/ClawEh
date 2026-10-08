@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
+  HUMAN_AGENTS_QUERY_KEY,
   type AgentToolCatalogResponse,
   getAgentTools,
   getAppConfig,
@@ -16,6 +17,7 @@ import { listCLIs } from "@/api/system"
 import { type ModelInfo, getModels } from "@/api/models"
 import { AgentCard } from "@/components/agents/agent-card"
 import {
+  type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
   agentsPayload,
@@ -101,7 +103,7 @@ export function AgentsPage() {
   // Human agents breaking their rules are not run; each card says why. Kept
   // apart from the page query so a save can refresh it alone.
   const { data: humanInfo } = useQuery({
-    queryKey: ["agents-human-problems"],
+    queryKey: HUMAN_AGENTS_QUERY_KEY,
     queryFn: getHumanAgents,
   })
   // Saved mounts set aside for a reserved name; each is marked in its row.
@@ -111,7 +113,7 @@ export function AgentsPage() {
   })
   const refreshAgentNotes = () =>
     Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["agents-human-problems"] }),
+      queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: ["agents-ignored-mounts"] }),
     ])
 
@@ -212,30 +214,19 @@ export function AgentsPage() {
     }
   }
 
-  const handleToggleAgent = async (index: number) => {
+  // toggleFlag saves one per-agent switch on its own (not threaded through
+  // the big autosave): flip returns the agent with the switch changed. Local
+  // state is updated in place instead of reloading the whole page, which
+  // would unmount the list and scroll back to the top.
+  const toggleFlag = async (
+    index: number,
+    savingKey: string,
+    flip: (agent: AgentEntry) => AgentEntry,
+  ) => {
     const list = [...(agentsCfg.list ?? [])]
-    const current = list[index]
-    list[index] = { ...current, enabled: !current.enabled }
+    list[index] = flip(list[index])
     const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`toggle-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle (not threaded through the big autosave): flip global_cron.
-  const handleToggleGlobalCron = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], global_cron: !list[index].global_cron }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`globalcron-${index}`)
+    setSaving(`${savingKey}-${index}`)
     try {
       await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
@@ -246,75 +237,28 @@ export function AgentsPage() {
     }
   }
 
-  // Independent toggle: flip the agent's Maestro tool suite on/off.
-  const handleToggleMaestro = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = {
-      ...list[index],
+  const handleToggleAgent = (index: number) =>
+    toggleFlag(index, "toggle", (a) => ({ ...a, enabled: !a.enabled }))
+  const handleToggleGlobalCron = (index: number) =>
+    toggleFlag(index, "globalcron", (a) => ({
+      ...a,
+      global_cron: !a.global_cron,
+    }))
+  const handleToggleMaestro = (index: number) =>
+    toggleFlag(index, "maestro", (a) => ({
+      ...a,
       maestro: {
-        ...(list[index].maestro ?? { enabled: false }),
-        enabled: list[index].maestro?.enabled !== true,
+        ...(a.maestro ?? { enabled: false }),
+        enabled: a.maestro?.enabled !== true,
       },
-    }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`maestro-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle: flip the agent's Fusion tool suite on/off.
-  const handleToggleFusion = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], fusion: !list[index].fusion }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`fusion-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle: allow or withhold the agent's forum tool suite.
-  const handleToggleForum = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], forum: !list[index].forum }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`forum-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle: flip the agent's cognitive-memory suite on/off (default on).
-  const handleToggleCogmem = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], cogmem: !(list[index].cogmem !== false) }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`cogmem-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
+    }))
+  const handleToggleFusion = (index: number) =>
+    toggleFlag(index, "fusion", (a) => ({ ...a, fusion: !a.fusion }))
+  const handleToggleForum = (index: number) =>
+    toggleFlag(index, "forum", (a) => ({ ...a, forum: !a.forum }))
+  // Cognitive memory is on unless set to false.
+  const handleToggleCogmem = (index: number) =>
+    toggleFlag(index, "cogmem", (a) => ({ ...a, cogmem: a.cogmem === false }))
 
   // Set the given binding (by its index in the full bindings array) as the
   // agent's default channel, clearing default on the agent's other bindings.

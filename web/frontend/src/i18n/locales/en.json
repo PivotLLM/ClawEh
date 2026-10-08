@@ -5,7 +5,7 @@
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
     "allowShell": "Allow shell commands",
     "allowShellHint": "Lets this agent run commands on this machine. Off by default.",
-    "allowShellDenied": "Ignored: Denied tools blocks shell_exec.",
+    "allowShellDenied": "Ignored: blocked by Denied tools.",
     "denyTools": "Denied tools",
     "denyToolsHint": "Tools the agent may never call, even if allowed above. Same matching as the allow lists (e.g. google_calendar_event_delete, shell_exec).",
     "denyToolsPlaceholder": "tool name (e.g. shell_exec)",
@@ -28,7 +28,7 @@
     "fusion": "Fusion (REST-API tools)",
     "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
     "forum": "Allow forum",
-    "forumHint": "Lets the agent set up forums with other agents; it can include only the agents in its subagents.allow_agents (config.json).",
+    "forumHint": "Lets this agent hold forums with the other agents it may message.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",
@@ -40,7 +40,13 @@
     "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot.",
     "eventRetention": "Event memory retention (days)",
     "retiredRetention": "Retired memory retention (days)",
-    "retentionHint": "(blank = {{days}}, -1 = keep forever)"
+    "retentionHint": "(blank = {{days}}, -1 = keep forever)",
+    "human": "Represents a person: answers are typed by hand.",
+    "humanNotRunning": "Not running: {{message}}",
+    "humanIgnored": "Ignored: {{message}}",
+    "bypassNotAllowed": "{{provider}} is not allowed to bypass its restrictions.",
+    "bypassAllow": "Allow it",
+    "mountReserved": "Ignored: \"{{name}}\" is a reserved name."
   },
   "navigation": {
     "chat": "Chat",

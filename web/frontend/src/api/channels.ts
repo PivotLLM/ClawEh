@@ -105,6 +105,10 @@ export interface HumanAgentsInfo {
   human_agents: string[]
 }
 
+// HUMAN_AGENTS_QUERY_KEY is the react-query key of getHumanAgents, shared by
+// every page that shows or refreshes the human-agent notes.
+export const HUMAN_AGENTS_QUERY_KEY = ["agents-human-problems"] as const
+
 export async function getHumanAgents(): Promise<HumanAgentsInfo> {
   const res = await request<Partial<HumanAgentsInfo>>("/api/agents/human")
   return { problems: res.problems ?? [], human_agents: res.human_agents ?? [] }

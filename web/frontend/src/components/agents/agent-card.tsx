@@ -28,7 +28,11 @@ import { Link } from "@tanstack/react-router"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
 import { ToolSelect } from "@/components/agents/tool-select"
-import { noteKey, uniqueNotes } from "@/components/human-setting-notes"
+import {
+  noteKey,
+  pageLabel,
+  uniqueNotes,
+} from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -225,15 +229,15 @@ export function AgentCard({
               key={w.provider}
               className="text-xs text-amber-600 dark:text-amber-400"
             >
-              {w.provider} is not allowed to bypass its restrictions.{" "}
+              {t("agents.bypassNotAllowed", { provider: w.provider })}{" "}
               <Link to="/providers" className="underline">
-                Allow it
+                {t("agents.bypassAllow")}
               </Link>
             </p>
           ))}
           {human && (
             <p className="text-muted-foreground text-xs">
-              Represents a person: answers are typed by hand.
+              {t("agents.human")}
             </p>
           )}
           {uniqueNotes(humanNotes).map((n) => (
@@ -242,13 +246,14 @@ export function AgentCard({
               data-testid="human-agent-problem"
               className="text-xs text-amber-600 dark:text-amber-400"
             >
-              {n.kind === "not_running" ? "Not running: " : "Ignored: "}
-              {n.message}
+              {n.kind === "not_running"
+                ? t("agents.humanNotRunning", { message: n.message })
+                : t("agents.humanIgnored", { message: n.message })}
               {n.link && (
                 <>
                   {" "}
                   <Link to={n.link} className="underline">
-                    Channels
+                    {pageLabel(n.link, t)}
                   </Link>
                 </>
               )}
@@ -365,7 +370,7 @@ export function AgentCard({
         </div>
       )}
 
-      {onMountsChange !== undefined && (
+      {!human && onMountsChange !== undefined && (
         <div className={settingsCardClass}>
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
@@ -428,7 +433,7 @@ export function AgentCard({
                       data-testid="ignored-mount"
                       className="text-xs text-amber-600 dark:text-amber-400"
                     >
-                      Ignored: &quot;{m.name}&quot; is a reserved name.
+                      {t("agents.mountReserved", { name: m.name })}
                     </p>
                   )}
                 </div>
@@ -453,11 +458,13 @@ export function AgentCard({
         </div>
       )}
 
-      <div className={settingsCardClass}>
-        <MessageTokensSection agentId={label} />
-      </div>
+      {!human && (
+        <div className={settingsCardClass}>
+          <MessageTokensSection agentId={label} />
+        </div>
+      )}
 
-      {onMessageChange !== undefined && (
+      {!human && onMessageChange !== undefined && (
         <div className={settingsCardClass}>
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
@@ -518,7 +525,7 @@ export function AgentCard({
       )}
 
       <div className={settingsCardClass}>
-        {onTemperatureChange !== undefined && (
+        {!human && onTemperatureChange !== undefined && (
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">Temperature</p>
             <div className="flex items-center gap-2">
@@ -549,7 +556,7 @@ export function AgentCard({
             forever while showing nothing for it. Only these two are ever
             deleted by age: a fact, preference, rule or operational note is
             permanent. */}
-        {onEventRetentionDaysChange !== undefined && (
+        {!human && onEventRetentionDaysChange !== undefined && (
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
               {t("agents.eventRetention")}
@@ -576,7 +583,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onRetiredRetentionDaysChange !== undefined && (
+        {!human && onRetiredRetentionDaysChange !== undefined && (
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
               {t("agents.retiredRetention")}
@@ -603,7 +610,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onShareCommonChange !== undefined && (
+        {!human && onShareCommonChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">
@@ -639,7 +646,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onMaestroChange !== undefined && (
+        {!human && onMaestroChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">
@@ -663,7 +670,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onFusionChange !== undefined && (
+        {!human && onFusionChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">
@@ -681,7 +688,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onForumChange !== undefined && (
+        {!human && onForumChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">
@@ -699,7 +706,7 @@ export function AgentCard({
           </div>
         )}
 
-        {onGlobalCronChange !== undefined && (
+        {!human && onGlobalCronChange !== undefined && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-foreground text-sm font-semibold">

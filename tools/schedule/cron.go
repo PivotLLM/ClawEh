@@ -246,7 +246,7 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	// A human agent takes work only from agents' questions: a scheduled job
 	// would post to the person with nobody waiting for the answer.
 	if cfg.IsHumanAgent(agentID) {
-		return tools.ErrorResult(fmt.Sprintf("Agent %q is a person; scheduled jobs can't be sent to them.", agentID))
+		return tools.ErrorResult(fmt.Sprintf("agent %q is a person; scheduled jobs can't be sent to them", agentID))
 	}
 	if _, _, _, ok := cfg.CronTarget(agentID); !ok {
 		return tools.ErrorResult(fmt.Sprintf("agent %q has no default channel configured; set a default channel (binding) before scheduling", agentID))
