@@ -336,7 +336,7 @@ func (c *WebUIChannel) broadcastToSession(chatID string, msg WebUIMessage) error
 	case sent:
 		return nil
 	case fault != nil:
-		return fmt.Errorf("write to session %s failed: %v: %w", sessionID, fault, channels.ErrSendFailed)
+		return fmt.Errorf("write to session %s failed: %w: %w", sessionID, fault, channels.ErrSendFailed)
 	default:
 		// No browser has this session open: the recipient is offline.
 		return fmt.Errorf("no open browser session %s: %w", sessionID, channels.ErrRecipientOffline)

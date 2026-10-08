@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // serverConn returns the server side of a live WebSocket connection whose
@@ -32,11 +33,13 @@ func serverConn(t *testing.T) *websocket.Conn {
 		t.Fatalf("dial: %v", err)
 	}
 	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close handshake body: %v", closeErr)
+		}
 	}
-	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() { utils.CloseQuietly(client) })
 	conn := <-got
-	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() { utils.CloseQuietly(conn) })
 	return conn
 }
 
@@ -62,7 +65,7 @@ func TestBroadcast_ClosingConnectionIsOffline(t *testing.T) {
 		c := testChannel(t, "tok")
 		conn := serverConn(t)
 		addConn(c, "c1", "s1", conn)
-		_ = conn.NetConn().Close()
+		utils.CloseQuietly(conn.NetConn())
 		err := c.broadcastToSession("webui:s1", newMessage(TypeMessageCreate, map[string]any{"content": "hi"}))
 		if !errors.Is(err, channels.ErrRecipientOffline) {
 			t.Fatalf("err = %v, want ErrRecipientOffline", err)
