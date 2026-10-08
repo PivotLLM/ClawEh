@@ -439,7 +439,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
 			continue
 		}
-		base := prefix + a.Name() + "/" + config.WorkspaceForumsDir + "/"
+		base := prefix + a.Name() + "/" + forum.BaseDirName + "/"
 		// Temporary agents' workspaces live in internal/temp/, never in the
 		// agents directory; this only matters when agents.base_dir is set to
 		// CLAW_HOME's internal/ (or internal/temp/) folder, where it keeps them
@@ -447,7 +447,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if isTempAgentPath(base) {
 			continue
 		}
-		root := filepath.Join(agentsDir, a.Name(), config.WorkspaceForumsDir)
+		root := filepath.Join(agentsDir, a.Name(), forum.BaseDirName)
 		fi, err := os.Lstat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -470,12 +470,12 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 				return rerr
 			}
 			if d.IsDir() {
-				if path == filepath.Clean(skip) || rel == forum.LocksDir || strings.HasPrefix(d.Name(), forum.TmpPrefix) {
+				if path == filepath.Clean(skip) || rel == forum.LocksDir || strings.HasPrefix(d.Name(), forum.TempPrefix) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forum.TmpPrefix) {
+			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forum.TempPrefix) {
 				return nil
 			}
 			fn(path, base+filepath.ToSlash(rel))

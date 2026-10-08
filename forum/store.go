@@ -79,7 +79,7 @@ import (
 
 // Names other packages need to recognise a forum directory (the backup
 // skips locks and temporary entries; the file tools let an agent read its
-// forums).
+// forums; Check Up names the tool that starts other agents' turns).
 const (
 	// BaseDirName is the directory under an agent's workspace that holds
 	// its forums (the base directory).
@@ -91,6 +91,9 @@ const (
 	// creates; readers skip such entries (they are what a crash leaves
 	// behind and were never published by a rename).
 	TempPrefix = ".tmp-"
+	// LaunchTool is the published name of the tool that starts a forum run
+	// (the "launch" tool of Tools under the "forum" namespace).
+	LaunchTool = "forum_launch"
 )
 
 // File and directory names inside the base directory.

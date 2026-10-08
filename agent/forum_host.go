@@ -97,7 +97,7 @@ func (h *ForumHost) Scopes() []forum.Scope {
 		if !ok || a.Workspace == "" {
 			continue
 		}
-		base, err := filepath.Abs(filepath.Join(a.Workspace, "forums"))
+		base, err := filepath.Abs(filepath.Join(a.Workspace, forum.BaseDirName))
 		if err != nil {
 			continue
 		}

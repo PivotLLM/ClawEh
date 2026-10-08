@@ -398,23 +398,16 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 	return specs
 }
 
-// alwaysReadableSubdirs are the workspace subdirectories an agent may always
-// read when a read scope is active, whatever workspace_read_subdirs lists:
-// tasks/ (sub-agent results the spawn callback points at), tmp/ (inbound
-// attachments, materialized there by the loop) and forums/ (the agent's own
-// forums, whose results forum_results points at). All are read-only: writes
-// stay confined to the write subdir, so the agent cannot tamper with them.
-var alwaysReadableSubdirs = []string{"tasks", "tmp", "forums"}
-
 // effectiveReadSubdirs returns the read scope for the configured subdirs: the
-// configured list plus alwaysReadableSubdirs. An empty list stays empty (reads
+// configured list plus config.AlwaysReadableWorkspaceDirs (read-only: writes
+// stay confined to the write subdir). An empty list stays empty (reads
 // are workspace-wide, so nothing needs adding).
 func effectiveReadSubdirs(configured []string) []string {
 	if len(configured) == 0 {
 		return configured
 	}
 	subdirs := configured
-	for _, name := range alwaysReadableSubdirs {
+	for _, name := range config.AlwaysReadableWorkspaceDirs {
 		subdirs = appendIfMissing(subdirs, name)
 	}
 	return subdirs

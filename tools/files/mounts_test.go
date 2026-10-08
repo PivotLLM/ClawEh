@@ -274,7 +274,7 @@ func TestResolveAgentMounts_ReservedNameIgnored(t *testing.T) {
 // The workspace folders the file tools always let an agent read are reserved,
 // so no mount can shadow them.
 func TestAlwaysReadableSubdirsReserved(t *testing.T) {
-	for _, d := range slices.Concat(alwaysReadableSubdirs, config.DefaultConfig().Agents.Defaults.WorkspaceReadSubdirs, []string{config.DefaultConfig().Agents.Defaults.WorkspaceWriteSubdir}) {
+	for _, d := range slices.Concat(config.AlwaysReadableWorkspaceDirs, config.DefaultConfig().Agents.Defaults.WorkspaceReadSubdirs, []string{config.DefaultConfig().Agents.Defaults.WorkspaceWriteSubdir}) {
 		if !config.IsReservedWorkspaceName(d) {
 			t.Errorf("%q is read by the file tools but not in config.ReservedWorkspaceNames", d)
 		}

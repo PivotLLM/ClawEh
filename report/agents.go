@@ -44,7 +44,7 @@ type folderAccess struct {
 var alwaysReadableNotes = map[string]string{
 	"tasks":                   "sub-agent results",
 	"tmp":                     "inbound attachments",
-	config.WorkspaceForumsDir: "the agent's forums",
+	forum.BaseDirName: "the agent's forums",
 }
 
 func (f *folderAccess) add(path string, read, write bool, note string) {
