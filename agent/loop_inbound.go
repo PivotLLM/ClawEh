@@ -918,12 +918,6 @@ func (al *AgentLoop) processSystemMessage(
 		)
 	}
 
-	logger.InfoCF("agent", "Processing system message",
-		map[string]any{
-			"sender_id": msg.SenderID,
-			"chat_id":   msg.ChatID,
-		})
-
 	// Parse origin channel from chat_id (format: "channel:chat_id")
 	var originChannel, originChatID string
 	if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
@@ -933,6 +927,12 @@ func (al *AgentLoop) processSystemMessage(
 		originChannel = "cli"
 		originChatID = msg.ChatID
 	}
+	logger.InfoCF("agent", "Processing system message",
+		map[string]any{
+			"sender_id":      msg.SenderID,
+			"origin_channel": originChannel,
+			"origin_chat_id": originChatID,
+		})
 
 	// Extract subagent result from message content
 	// Format: "Task 'label' completed.\n\nResult:\n<actual content>"
