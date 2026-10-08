@@ -7,7 +7,10 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { DevicesPage } from "./devices-page"
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, opts?: { agent?: string }) =>
+      opts?.agent ? `${key}:${opts.agent}` : key,
+  }),
 }))
 
 // The page links to /network; the router is not mounted here.
@@ -44,7 +47,23 @@ const pendingRequest = {
   created_at_ms: 1,
 }
 
-function renderPage(pending: object[] = []) {
+const pairedDevice = {
+  device_id: "device-fedcba9876543210",
+  display_name: "Kitchen R1",
+  platform: "android",
+  client_mode: "node",
+  roles: ["node"],
+  scopes: [],
+  agent_id: "",
+  agent_missing: false,
+  approved_at_ms: 1,
+  last_seen_at_ms: 1,
+}
+
+function renderPage(
+  pending: object[] = [],
+  paired: { devices: object[]; agents: object[] } = { devices: [], agents: [] },
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -53,7 +72,7 @@ function renderPage(pending: object[] = []) {
         ? pairStatus
         : url.endsWith("/api/devices/pending")
           ? { pending }
-          : { devices: [], agents: [] }
+          : paired
       return { ok: true, json: async () => body }
     }),
   )
@@ -96,5 +115,34 @@ describe("DevicesPage", () => {
     renderPage([{ ...pendingRequest, remote_ip: "" }])
     await screen.findByText("Rabbit R1")
     expect(screen.queryByTestId("pending-remote-ip")).toBe(null)
+  })
+
+  it("marks an assignment to a deleted agent", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, agent_id: "bob", agent_missing: true }],
+      agents: [{ id: "alice", name: "Alice" }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_missing:bob")
+    const select = screen.getByLabelText("Assistant") as HTMLSelectElement
+    expect(select.value).toBe("bob")
+  })
+
+  it("names a disabled agent in the note", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, agent_id: "bob", agent_missing: true }],
+      agents: [{ id: "bob", name: "Bob" }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_disabled:Bob")
+  })
+
+  it("shows no note for a valid assignment", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, agent_id: "alice" }],
+      agents: [{ id: "alice", name: "Alice" }],
+    })
+    await screen.findByText("Kitchen R1")
+    expect(screen.queryByTestId("device-agent-missing")).toBe(null)
   })
 })

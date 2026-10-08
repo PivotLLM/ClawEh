@@ -38,6 +38,9 @@ export interface PairedDevice {
   roles: string[]
   scopes: string[]
   agent_id: string
+  // agent_id names an agent that no longer exists or is disabled; the device
+  // talks to the default agent.
+  agent_missing: boolean
   approved_at_ms: number
   last_seen_at_ms: number
 }

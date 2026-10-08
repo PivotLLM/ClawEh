@@ -136,6 +136,14 @@ export function DevicesPage() {
   const pendingList = pending.data?.pending ?? []
   const pairedList = paired.data?.devices ?? []
   const agentOptions = paired.data?.agents ?? []
+  // A stale assignment names an agent that was deleted (not among the
+  // options) or one that is disabled (still listed, by its name).
+  const staleAgentNote = (agentId: string) => {
+    const known = agentOptions.find((a) => a.id === agentId)
+    return known
+      ? t("pages.devices.agent_disabled", { agent: known.name })
+      : t("pages.devices.agent_missing", { agent: agentId })
+  }
 
   return (
     <>
@@ -339,6 +347,14 @@ export function DevicesPage() {
                         {d.platform} · roles {d.roles.join(", ") || "—"} ·{" "}
                         {d.device_id.slice(0, 12)}…
                       </div>
+                      {d.agent_missing && (
+                        <p
+                          data-testid="device-agent-missing"
+                          className="text-xs text-amber-600 dark:text-amber-400"
+                        >
+                          {staleAgentNote(d.agent_id)}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {d.client_mode === "node" ? (
@@ -355,6 +371,10 @@ export function DevicesPage() {
                           }
                         >
                           <option value="">Default assistant</option>
+                          {d.agent_missing &&
+                            !agentOptions.some((a) => a.id === d.agent_id) && (
+                              <option value={d.agent_id}>{d.agent_id}</option>
+                            )}
                           {agentOptions.map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.name}

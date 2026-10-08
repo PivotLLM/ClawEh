@@ -798,7 +798,9 @@
       "download": "Full report"
     },
     "devices": {
-      "connect_to": "Devices will connect to"
+      "connect_to": "Devices will connect to",
+      "agent_missing": "Ignored: {{agent}} no longer exists; using the default agent.",
+      "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent."
     }
   },
   "providers": {
