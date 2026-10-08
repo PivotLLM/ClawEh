@@ -42,8 +42,8 @@ type folderAccess struct {
 
 // alwaysReadableNotes says what each of config.AlwaysReadableWorkspaceDirs holds.
 var alwaysReadableNotes = map[string]string{
-	"tasks":                   "sub-agent results",
-	"tmp":                     "inbound attachments",
+	"tasks":           "sub-agent results",
+	"tmp":             "inbound attachments",
 	forum.BaseDirName: "the agent's forums",
 }
 
