@@ -88,8 +88,15 @@ func TestDeviceQuerier_HidesHumanAgents(t *testing.T) {
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
 	t.Cleanup(al.GetRegistry().Close)
-	agents, defaultID, _ := deviceAgentQuerier{al: al}.Agents()
+	q := deviceAgentQuerier{al: al}
+	agents, defaultID, _ := q.Agents()
 	if len(agents) != 1 || agents[0].ID != "alice" || defaultID != "alice" {
 		t.Fatalf("agents = %+v, default %q; want only alice", agents, defaultID)
+	}
+	// Left out of the list, the human agent still runs: a device assigned to
+	// it keeps reaching it.
+	if !q.HasAgent("bob") || !q.HasAgent("alice") || q.HasAgent("removed") {
+		t.Fatalf("HasAgent: bob %v, alice %v, removed %v; want true, true, false",
+			q.HasAgent("bob"), q.HasAgent("alice"), q.HasAgent("removed"))
 	}
 }

@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// stubQuerier is an AgentQuerier with the agents alice, bob and third and a
+// stubQuerier is an AgentQuerier with the agents alice, bob and third (and the
+// human agent person, which agents.list leaves out) and a
 // fixed default agent; History is unused by session-scope resolution.
 type stubQuerier struct {
 	defaultAgent string
@@ -17,7 +18,18 @@ func (q stubQuerier) Agents() ([]DeviceAgentInfo, string, string) {
 	agents := []DeviceAgentInfo{{ID: "alice"}, {ID: "bob"}, {ID: "third"}}
 	return agents, q.defaultAgent, "agent:" + q.defaultAgent + ":main"
 }
-func (q stubQuerier) DefaultAgentID() string                { return q.defaultAgent }
+func (q stubQuerier) DefaultAgentID() string { return q.defaultAgent }
+
+// HasAgent admits the listed agents and the human agent "person", which
+// Agents leaves out.
+func (q stubQuerier) HasAgent(id string) bool {
+	switch id {
+	case "alice", "bob", "third", "person":
+		return true
+	}
+	return false
+}
+
 func (q stubQuerier) History(string) []DeviceHistoryMessage { return nil }
 
 func newScopeServer(t *testing.T) *Server {
@@ -174,12 +186,18 @@ func TestSessionScopeKeyIgnoresMissingAssignedAgent(t *testing.T) {
 	if _, _, err := s.store.Approve(ctx, reqID, []string{"node"}, nil); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if err := s.store.SetDeviceAgent(ctx, "dev1", "removed"); err != nil {
-		t.Fatalf("SetDeviceAgent: %v", err)
-	}
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
-
-	if got := scopeKey(t, s, lc); got != "agent:alice:main" {
-		t.Fatalf("session key = %q, want agent:alice:main", got)
+	for _, tc := range []struct{ assigned, want string }{
+		{"removed", "agent:alice:main"},
+		// A human agent is not listed to clients but still runs: the turn
+		// reaches it and it answers that it only takes questions from agents.
+		{"person", "agent:person:main"},
+	} {
+		if err := s.store.SetDeviceAgent(ctx, "dev1", tc.assigned); err != nil {
+			t.Fatalf("SetDeviceAgent: %v", err)
+		}
+		if got := scopeKey(t, s, lc); got != tc.want {
+			t.Errorf("assigned %s: session key = %q, want %s", tc.assigned, got, tc.want)
+		}
 	}
 }

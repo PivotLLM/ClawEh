@@ -411,7 +411,7 @@ type pairedDeviceView struct {
 	Scopes      []string `json:"scopes"`
 	AgentID     string   `json:"agent_id"` // per-device assigned agent ("" = default)
 	// AgentMissing is true when agent_id names an agent that is no longer
-	// configured; the device then talks to the default agent.
+	// configured or is disabled; the device then talks to the default agent.
 	AgentMissing bool  `json:"agent_missing"`
 	ApprovedAtMs int64 `json:"approved_at_ms"`
 	LastSeenAtMs int64 `json:"last_seen_at_ms"`
@@ -449,10 +449,15 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
 		return
 	}
+	// An assignment counts while it names an enabled agent (human agents
+	// included): the device channel then routes to it, otherwise to the
+	// default agent.
 	agents := configuredAgents(cfg)
-	known := make(map[string]bool, len(agents))
-	for _, a := range agents {
-		known[a.ID] = true
+	known := make(map[string]bool, len(cfg.Agents.List))
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].IsEnabled() {
+			known[routing.NormalizeAgentID(cfg.Agents.List[i].ID)] = true
+		}
 	}
 	views := make([]pairedDeviceView, 0, len(paired))
 	for _, d := range paired {
