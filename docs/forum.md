@@ -88,10 +88,11 @@ One JSON object, the forum's configuration (see
 }
 ```
 
-- `name` is optional, one line of at most 100 characters. When set it names the forum in `forum_status`,
-  `forum_results` and the transcript heading, and the tools' replies,
-  refusals and the completion notice call it "<name> (<id>)"
-  ("design-review (<id>)"); otherwise the forum's ID is used.
+- `name` is optional, one line of at most 100 characters. When set it is
+  shown as `name` in `forum_status` and `forum_results` and heads the
+  transcript, and the tools' replies, refusals, the completion notice and
+  the log call the forum "<name> (<id>)" ("design-review (<id>)");
+  otherwise the forum's ID is used.
 - `brief` goes to every participant; `instructions` only to its participant.
 - `sources` are `inline` or a `file`. A `file` is read exactly as Alice's
   file tools would read that path: relative to her workspace, or in one of
@@ -204,8 +205,8 @@ changed since the latest run (`config_changed`). `forum_pause`,
 `forum_resume` and `forum_cancel` control the latest run, and
 `forum_results` returns a run's results (see [Results](#results)). A paused
 run resumes only while the configuration is unchanged; after a change
-`forum_resume` answers "Forum design-review (<id>): the config changed;
-launch to start a new run." (formatting, key order and number spelling are not
+`forum_resume` answers "Forum design-review (<id>): the configuration
+changed; launch to start a new run." (formatting, key order and number spelling are not
 changes), and
 launching cancels the paused run (without a notice) before the new one
 starts. A forum tool called with an argument it does not take is refused,
@@ -220,11 +221,18 @@ more (the run ended after a restart), or the answer finds it offline or not
 found (a WebUI chat with no browser open), the answer goes to her default
 chat (her default binding) instead, or nowhere when she has none; it stays in
 her conversation either way. A forum launched locally is never posted.
-`forum_delete` removes a forum and all its runs, unless a run is running.
+If the notice cannot be delivered, or the run's results cannot be written,
+it is tried again every hour, up to five times in all, and then given up
+with a warning in the log.
+`forum_delete` removes a forum and all its runs, unless a run is running;
+an unknown ID answers "Forum <id> was not found.".
 
 A run survives a restart: an interrupted run resumes where it stopped, and a
 turn that was in progress is sent again (an existing agent may see that
-message twice). A launch interrupted before its run started leaves the forum
+message twice). `forum_results` then gives that output's `attempt` with
+the note "resent after a restart; the earlier attempts have no output",
+and `forum_status` counts such outputs (`resent_after_restart`). A launch
+interrupted before its run started leaves the forum
 as it was. A run that stops on an error raises the "Forum run stopped" alert
 and continues with `forum_resume` or at the next start.
 
