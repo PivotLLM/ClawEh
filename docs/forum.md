@@ -231,7 +231,9 @@ A run survives a restart: an interrupted run resumes where it stopped, and a
 turn that was in progress is sent again (an existing agent may see that
 message twice). `forum_results` then gives that output's `attempt` with
 the note "resent after a restart; the earlier attempts have no output",
-and `forum_status` counts such outputs (`resent_after_restart`). A launch
+`forum_status` counts such outputs (`resent_after_restart`), and the
+completion notice says how many there were ("2 outputs were resent after a
+restart."). A launch
 interrupted before its run started leaves the forum
 as it was. A run that stops on an error raises the "Forum run stopped" alert
 and continues with `forum_resume` or at the next start.

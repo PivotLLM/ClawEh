@@ -291,7 +291,8 @@ contract beyond the interface signatures:
   default binding when it is unknown or the answer finds it offline or not
   found (`fallback_channel`/`fallback_chat_id` on the system message,
   `systemReplyFallback`). The notice text adds the end reason when it says
-  more than the status: "run 1 finished: incomplete (deadline)."
+  more than the status: "run 1 finished: incomplete (deadline).", and the
+  number of result outputs resent after a restart, when there are any.
 - An Ask that returns without the reply (the wait elapsed, ctx ended:
   the call timeout, the run deadline, a cancel) should stop the
   participant's turn. ClawEh's `ForumHost.Ask` uses `askStoppingTurn`: the
