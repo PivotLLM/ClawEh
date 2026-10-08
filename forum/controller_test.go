@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Every row of the §5 table, with what each participant may and may not
+// Every delivery and visibility rule, with what each participant may and may not
 // see when its message is composed.
 func TestCtlExecutionTable(t *testing.T) {
 	type visibility struct {
@@ -108,7 +108,7 @@ func TestCtlExecutionTable(t *testing.T) {
 	}
 }
 
-// §2.3: the first message in the forum carries the brief; the first in a
+// The first message in the forum carries the brief; the first in a
 // layer the private instructions, layer instructions and routed inputs;
 // later messages only what is new. Source text is quoted data.
 func TestCtlDeltaMessages(t *testing.T) {
@@ -309,7 +309,7 @@ func TestCtlCooldownHoldsTheTurn(t *testing.T) {
 	f.log.mu.Lock()
 	logged := strings.Join(f.log.lines, "\n")
 	f.log.mu.Unlock()
-	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+"): one/"+TurnID(1, "alice")+": participant alice waits for model slow-model")
+	ctlContains(t, "log", logged, "INFO forum ctl test ("+f.snap.ForumID+") run 1: one/"+turnID(1, "alice")+": participant alice waits for model slow-model")
 }
 
 // A cooldown that outlasts the call timeout ends the attempt as a timeout,
@@ -578,7 +578,7 @@ func TestCtlModeratorRepairAndFailure(t *testing.T) {
 
 // Host failures: an Ask error for an existing agent fails the run with
 // host_error; for a created participant the host no longer has, with
-// participant_gone. A participant gone before Open fails the run at once.
+// participant_gone. A participant gone before openForum fails the run at once.
 func TestCtlHostFailures(t *testing.T) {
 	t.Run("host error", func(t *testing.T) {
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
@@ -613,7 +613,7 @@ func TestCtlHostFailures(t *testing.T) {
 }
 
 // A host shutdown (ctx cancelled) leaves the forum running on disk; a
-// later Open resumes it.
+// later openForum resumes it.
 func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 2, FormatText)))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -635,6 +635,23 @@ func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	ctlWant(t, "status", st, StatusCompleted)
 	att := f.attempts("talk")
 	ctlWant(t, "bob round 2 attempts", len(att), 4+1) // the uncertain attempt was resent and counted
+	// The output says it was resent, so its empty first attempt does not
+	// read as missing output; status counts it.
+	st2 := f.state()
+	resent := 0
+	for _, o := range st2.Layers["talk"].Outputs {
+		want := o.ParticipantID == "bob" && o.Round == 2
+		if o.Resent != want {
+			t.Errorf("%s round %d: resent = %v, want %v", o.ParticipantID, o.Round, o.Resent, want)
+		}
+		if o.Resent {
+			resent++
+			ctlWant(t, "resent output's attempt", o.Attempt, 2)
+		}
+	}
+	ctlWant(t, "resent outputs", resent, 1)
+	sum := summaryOf(f.cfg, f.snap, st2)
+	ctlWant(t, "status resent_after_restart", sum.ResentAfterRestart, 1)
 }
 
 // Running a forum twice from the same configuration and seed gives the
@@ -760,18 +777,18 @@ func TestCtlValidateOutput(t *testing.T) {
 
 func TestCtlParseDecision(t *testing.T) {
 	layer := Layer{ID: "l", Participants: []string{"alice", "bob"}, Moderator: &Moderator{Participant: "chair", AllowDirected: true}}
-	raw, err := EffectiveModeratorSchema(layer, nil)
+	raw, err := effectiveModeratorSchema(layer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := JSONSchemaValidator{}.Compile(raw)
+	schema, err := compileSchema(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
 		name     string
 		text     string
-		schema   CompiledSchema
+		schema   *compiledSchema
 		directed bool
 		want     DecisionKind
 		issueIn  string
@@ -831,7 +848,7 @@ func TestCtlModeratorDue(t *testing.T) {
 }
 
 // The live controller folds every commit with replayApply, so its state
-// equals Replay of the log at the end of every run.
+// equals replay of the log at the end of every run.
 func TestCtlStateMatchesReplay(t *testing.T) {
 	layer := ctlLayer("debate", DeliveryAfterRound, 3, FormatText)
 	layer.Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}

@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// Seam (e): the lifecycle service (spec §9). One Service per process owns
+// The lifecycle service. One Service per process owns
 // every running controller, the per-forum locks, temporary-agent cleanup
 // and the completion notice. The tools in tools.go are thin wrappers over
 // it.
@@ -30,8 +30,8 @@ import (
 // Host wiring (what ClawEh calls, in order):
 //
 //	svc := forum.New(forum.Host{Messenger: ..., Agents: ..., Notifier: ...,
-//	        Logger: ..., Schemas: forum.JSONSchemaValidator{},
-//	        OnStuck: ...},                             // optional: tell the launcher, raise an alert
+//	        Logger: ...,
+//	        OnStuck: ..., Cooldown: ...},              // optional
 //	        forum.WithHostLimits(...))                 // optional ceilings
 //	err := svc.Recover(ctx, scopes)                    // once at startup, every agent's <workspace>/forums
 //	defs := forum.Tools(svc, toolHost)                 // mount under "forum", gated by the forum permission
@@ -49,18 +49,18 @@ import (
 
 // keepAliveInterval is how often the temporary agents of paused and
 // running forums are touched so they outlive the registry's idle TTL, and
-// how often pending temporary-agent deletions are retried (§9, DESIGN.md
-// §7.10).
+// how often pending temporary-agent deletions and completion notices are
+// retried (DESIGN.md §7.10).
 const keepAliveInterval = time.Hour
 
 // cleanupNotice is the marker (<base>/.cleanup/<uuid>.<run>.notice) of a
 // run's completion notice not yet delivered. It is written at launch and
 // cleared once the launcher has been notified, so a restart between the
-// terminal commit and the notice still delivers it (§9 Completion).
+// terminal commit and the notice still delivers it.
 const cleanupNotice = "notice"
 
 // Scope is the caller's base scope: its agent ID and the absolute base
-// directory its forums live in (<workspace>/forums, §2.2). Every ID-only
+// directory its forums live in (<workspace>/forums). Every ID-only
 // operation resolves the forum inside that directory and nowhere else.
 type Scope struct {
 	AgentID       string
@@ -74,14 +74,14 @@ type LaunchOptions struct {
 	// filled with Scope.AgentID.
 	Origin Origin
 	// ResolveFile maps a source `file` reference to the absolute path the
-	// launching agent's file tools would read (PreflightEnv.ResolveFile).
+	// launching agent's file tools would read (preflightEnv.ResolveFile).
 	ResolveFile func(ref string) (absPath string, err error)
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path (source files). nil allows nothing.
 	ReadAllowed func(absPath string) error
 }
 
-// controller is what the service uses of a *Controller. Open returns the
+// controller is what the service uses of a *forumController. openForum returns the
 // real one; tests substitute a fake through Service.openCtrl.
 type controller interface {
 	Run(ctx context.Context) (Status, error)
@@ -93,12 +93,12 @@ type controller interface {
 	Participants() *Participants
 }
 
-// openFunc opens a locked store for execution (Open by default).
-type openFunc func(ctx context.Context, s *Store, host Host) (controller, error)
+// openFunc opens a locked store for execution (openForum by default).
+type openFunc func(ctx context.Context, s *forumStore, host Host) (controller, error)
 
-// openController adapts Open to openFunc.
-func openController(ctx context.Context, s *Store, host Host) (controller, error) {
-	c, err := Open(ctx, s, host)
+// openController adapts openForum to openFunc.
+func openController(ctx context.Context, s *forumStore, host Host) (controller, error) {
+	c, err := openForum(ctx, s, host)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ type Service struct {
 	runs   map[string]*run
 	// paused holds the stores of paused forums whose temporary agents
 	// keepAlive touches (running forums' agents are touched through runs).
-	paused map[string]*Store
+	paused map[string]*forumStore
 	// cleanups holds the runs whose temporary agents could not all be
 	// deleted at their terminal state; keepAlive retries them.
 	cleanups map[runKey]Scope
@@ -143,8 +143,11 @@ type Service struct {
 	// and is not trusted, so a run whose launch this process did not see
 	// (one resumed after a restart) has no entry.
 	launchChats map[runKey]Chat
-	keepAlive   sync.Once
-	wg          sync.WaitGroup
+	// notices holds the runs whose completion notice (or the result.json it
+	// waits for) failed; keepAlive retries them (noticeFailed).
+	notices   map[runKey]*noticeRetry
+	keepAlive sync.Once
+	wg        sync.WaitGroup
 }
 
 // runKey names one run of one forum.
@@ -154,7 +157,7 @@ type runKey struct {
 }
 
 // keyOf is the runKey of a run's store.
-func keyOf(store *Store) runKey { return runKey{id: store.ID(), run: store.RunNumber()} }
+func keyOf(store *forumStore) runKey { return runKey{id: store.ID(), run: store.RunNumber()} }
 
 // controlLock is one forum ID's control mutex with the number of
 // operations holding or waiting for it.
@@ -169,7 +172,7 @@ type controlLock struct {
 // work or registered its pause and released the lock; done is closed after
 // that.
 type run struct {
-	store  *Store
+	store  *forumStore
 	ctrl   controller
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -178,15 +181,15 @@ type run struct {
 // Option configures a Service.
 type Option func(*Service)
 
-// WithHostLimits sets ceilings on every configuration's limits (§3 "host
-// ceilings also apply"); a zero field is no ceiling.
+// WithHostLimits sets ceilings on every configuration's limits (DESIGN.md
+// §7.5); a zero field is no ceiling.
 func WithHostLimits(l Limits) Option {
 	return func(s *Service) { s.hostLimits = l }
 }
 
-// New builds a service over the host dependencies. host.Schemas may be
-// nil; the other fields are required and New panics on a nil one, since
-// that is a wiring error, not a runtime condition.
+// New builds a service over the host dependencies. host.OnStuck and
+// host.Cooldown may be nil; the other fields are required and New panics
+// on a nil one, since that is a wiring error, not a runtime condition.
 func New(host Host, opts ...Option) *Service {
 	if host.Messenger == nil || host.Agents == nil || host.Notifier == nil || host.Logger == nil {
 		panic("forum.New: Messenger, Agents, Notifier and Logger are required")
@@ -199,12 +202,13 @@ func New(host Host, opts ...Option) *Service {
 		ctx:            ctx,
 		stop:           stop,
 		runs:           map[string]*run{},
-		paused:         map[string]*Store{},
+		paused:         map[string]*forumStore{},
 		cleanups:       map[runKey]Scope{},
 		controls:       map[string]*controlLock{},
 		stuck:          map[runKey]bool{},
 		notifying:      map[runKey]bool{},
 		launchChats:    map[runKey]Chat{},
+		notices:        map[runKey]*noticeRetry{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -237,30 +241,30 @@ func invalidState(format string, args ...any) error {
 // errClosed is returned by operations that would start a run after Close.
 var errClosed = errors.New("the forum service is shut down")
 
-// Models lists the models agentID may give to fresh participants (§2.4):
+// Models lists the models agentID may give to fresh participants:
 // Agents.Models(agentID) as is.
 func (s *Service) Models(ctx context.Context, agentID string) ([]ModelInfo, error) {
 	return s.host.Agents.Models(ctx, agentID)
 }
 
-// Validate runs Decode, ValidateStatic and Preflight on raw without
-// creating anything (§9 forum_validate). It returns nil, a
-// *ValidationError listing every finding, or ErrSchemasUnavailable.
+// Validate runs decodeConfig, validateStatic and runPreflight on raw without
+// creating anything (forum_validate). It returns nil, or a
+// *ValidationError listing every finding.
 func (s *Service) Validate(ctx context.Context, raw []byte, opts LaunchOptions) error {
 	_, _, err := s.check(ctx, raw, opts)
 	return err
 }
 
-// check is the shared validation path of Validate and Launch: Decode,
-// ValidateStatic, Preflight with the service's host limits.
-func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*Config, *Resolved, error) {
-	cfg, err := Decode(raw)
+// check is the shared validation path of Validate and Launch: decodeConfig,
+// validateStatic, runPreflight with the service's host limits.
+func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*Config, *resolvedConfig, error) {
+	cfg, err := decodeConfig(raw)
 	if cfg == nil {
 		return nil, nil, err
 	}
-	// Every problem is reported at once: Decode's and ValidateStatic's.
+	// Every problem is reported at once: decodeConfig's and validateStatic's.
 	decodeErr, _ := errors.AsType[*ValidationError](err)
-	if staticErr := ValidateStatic(cfg); staticErr != nil || decodeErr != nil {
+	if staticErr := validateStatic(cfg); staticErr != nil || decodeErr != nil {
 		var issues []Issue
 		if decodeErr != nil {
 			issues = append(issues, decodeErr.Issues...)
@@ -272,10 +276,9 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 		}
 		return nil, nil, &ValidationError{Issues: issues}
 	}
-	resolved, err := Preflight(ctx, cfg, PreflightEnv{
+	resolved, err := runPreflight(ctx, cfg, preflightEnv{
 		Launcher:    opts.Scope.AgentID,
 		Agents:      s.host.Agents,
-		Schemas:     s.host.Schemas,
 		HostLimits:  s.hostLimits,
 		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,
@@ -287,26 +290,26 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 }
 
 // Launch validates the forum's current configuration and starts a new run
-// of it from the beginning, numbered after the latest (§9 forum_launch),
+// of it from the beginning, numbered after the latest (forum_launch),
 // and returns the run's number. Steps, in order:
 //
 //  1. Serialise with the forum's other control operations and Lock the
 //     forum (ErrLocked when another process has it). A running forum is
 //     refused (errBusy). Runs whose launch did not finish are undone
 //     first (undoUnstarted).
-//  2. check (Decode, ValidateStatic, Preflight) the configuration.
+//  2. check (decodeConfig, validateStatic, runPreflight) the configuration.
 //  3. CreateRun; write the run's forum.json (the configuration, indented).
 //  4. Materialise every source (WriteSource): file sources from
-//     Resolved.SourceContents, inline ones from the configuration.
+//     resolvedConfig.SourceContents, inline ones from the configuration.
 //  5. Create the temporary participants used by enabled layers
 //     (createParticipants), recording each in the run's agents marker as
 //     it is created.
 //  6. WriteParticipants; set the run's notice marker; WriteSnapshot;
 //     AppendCommit(CommitLaunched). The run is now durably accepted.
-//  7. Open the run; end a paused previous run (supersede); start the run
+//  7. Open the run (openForum); end a paused previous run (supersede); start the run
 //     goroutine.
 //
-// Launch is all or nothing for its caller: any failure, including Open
+// Launch is all or nothing for its caller: any failure, including openForum
 // failing after step 6 (nothing has been dispatched yet), deletes the
 // agents created so far and removes the run (revertRun), leaving the forum
 // as it was, and the error is returned.
@@ -334,19 +337,19 @@ func (s *Service) Launch(ctx context.Context, id string, opts LaunchOptions) (in
 		store.Unlock()
 		return 0, err
 	}
-	s.host.Logger.Infof("forum %s: run %d launched by agent %s", id, n, opts.Scope.AgentID)
+	s.host.Logger.Infof("%s: launched by agent %s", logRun(store.Run(n)), opts.Scope.AgentID)
 	return n, nil
 }
 
 // launchLocked is Launch once the forum is locked. On success the started
 // run holds the lock; on failure the caller releases it.
-func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOptions) (int, error) {
+func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts LaunchOptions) (int, error) {
 	started, err := s.undoUnstarted(ctx, store)
 	if err != nil {
 		return 0, err
 	}
 	var (
-		prev        *Store
+		prev        *forumStore
 		prevDamaged bool
 		prevPaused  bool
 	)
@@ -416,7 +419,7 @@ func (s *Service) launchLocked(ctx context.Context, store *Store, opts LaunchOpt
 }
 
 // allocate performs Launch steps 3 to 6 in the run's directory.
-func (s *Service) allocate(ctx context.Context, store *Store, raw []byte, cfg *Config, resolved *Resolved, opts LaunchOptions) error {
+func (s *Service) allocate(ctx context.Context, store *forumStore, raw []byte, cfg *Config, resolved *resolvedConfig, opts LaunchOptions) error {
 	if err := store.WriteConfig(raw); err != nil {
 		return err
 	}
@@ -467,10 +470,10 @@ func (s *Service) allocate(ctx context.Context, store *Store, raw []byte, cfg *C
 }
 
 // materialiseSources copies every source into sources/: a file source
-// from the bytes Preflight read (the file is never reopened), an inline one from the configuration
+// from the bytes runPreflight read (the file is never reopened), an inline one from the configuration
 // (a JSON string's text for text and markdown, the JSON value indented on
 // its own for json).
-func materialiseSources(store *Store, cfg *Config, resolved *Resolved) (map[string]SourceRecord, error) {
+func materialiseSources(store *forumStore, cfg *Config, resolved *resolvedConfig) (map[string]SourceRecord, error) {
 	out := make(map[string]SourceRecord, len(cfg.Sources))
 	for _, id := range sortedKeys(cfg.Sources) {
 		src := cfg.Sources[id]
@@ -520,10 +523,10 @@ func launchSeed(cfg *Config) (int64, error) {
 // fresh participant used by an enabled layer (as a participant or a
 // moderator) and returns the records of every used participant, existing
 // ones included; participants only named by disabled layers get no record.
-// Each created agent is added to the CleanupAgents marker before the next
+// Each created agent is added to the cleanupAgents marker before the next
 // is created, so whatever happens next its deletion is pending. On failure
 // the caller discards the forum, which deletes the agents in the marker.
-func (s *Service) createParticipants(ctx context.Context, store *Store, cfg *Config, resolved *Resolved, launcher string) (*Participants, error) {
+func (s *Service) createParticipants(ctx context.Context, store *forumStore, cfg *Config, resolved *resolvedConfig, launcher string) (*Participants, error) {
 	used := (&preflight{cfg: cfg}).usedParticipants()
 	out := &Participants{Participants: make(map[string]ParticipantRecord, len(used))}
 	// Agents an earlier failed launch of this run could not delete stay
@@ -577,7 +580,7 @@ func (s *Service) createParticipants(ctx context.Context, store *Store, cfg *Con
 // is 0), with the forum's run count and whether its configuration changed
 // since the latest run; a forum with no run is StatusNew. It reads the
 // records without verifying their digests (loadView); verification is
-// Open's job.
+// openForum's job.
 func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*Summary, error) {
 	store, err := s.open(scope, id)
 	if err != nil {
@@ -599,7 +602,7 @@ func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*S
 		run = latest
 	}
 	if run == 0 {
-		return &Summary{ForumID: id, Name: forumLabel(configName(raw), id), Status: StatusNew, UpdatedAt: mod, Layers: []LayerProgress{}}, nil
+		return &Summary{ForumID: id, Name: configName(raw), Status: StatusNew, UpdatedAt: mod, Layers: []LayerProgress{}}, nil
 	}
 	if !slices.Contains(runs, run) {
 		return nil, errNoRun(Ref(configName(raw), id), run)
@@ -626,7 +629,7 @@ func (s *Service) Status(_ context.Context, scope Scope, id string, run int) (*S
 // newest first (a new forum by when its configuration last changed). A
 // forum that cannot be read is logged and left out.
 func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
-	ids, err := ListForums(scope.BaseDirectory)
+	ids, err := listForums(scope.BaseDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +637,7 @@ func (s *Service) List(ctx context.Context, scope Scope) ([]Summary, error) {
 	for _, id := range ids {
 		sum, err := s.Status(ctx, scope, id, 0)
 		if err != nil {
-			s.host.Logger.Warnf("forum %s: status: %v", id, err)
+			s.host.Logger.Warnf("forum %s: status: %v", s.ref(scope, id), err)
 			continue
 		}
 		out = append(out, *sum)
@@ -653,7 +656,7 @@ func sortTime(sum *Summary) time.Time {
 }
 
 // Pause asks a forum's latest run to pause and returns at once; the status becomes
-// paused when in-flight turns finish (Controller.RequestPause). Repeating
+// paused when in-flight turns finish (forumController.RequestPause). Repeating
 // it is harmless: a pausing or paused forum is left as it is. A running
 // forum with no live controller (interrupted) is opened, paused and run to
 // its pause. Cancellation dominates: a cancelling or terminal forum is
@@ -749,7 +752,7 @@ func (s *Service) Resume(ctx context.Context, scope Scope, id string) error {
 		}
 		if changed {
 			store.Unlock()
-			return invalidState("forum %s: the config changed; launch to start a new run", storeRef(store))
+			return invalidState("forum %s: the configuration changed; launch to start a new run", storeRef(store))
 		}
 	}
 	return s.resume(ctx, store, st)
@@ -764,7 +767,7 @@ func refuseResume(ref string, st Status) error {
 
 // resume is Resume after the store is locked and its state loaded. It
 // consumes the lock: it is held by the started run or released.
-func (s *Service) resume(ctx context.Context, store *Store, st *State) error {
+func (s *Service) resume(ctx context.Context, store *forumStore, st *State) error {
 	var commit CommitKind
 	switch st.Status {
 	case StatusPaused, StatusPausing:
@@ -787,7 +790,7 @@ func (s *Service) resume(ctx context.Context, store *Store, st *State) error {
 }
 
 // Cancel stops a forum's latest run and finalises it as cancelled, keeping its partial
-// work: a live one through Controller.RequestCancel; a paused or
+// work: a live one through forumController.RequestCancel; a paused or
 // interrupted one by opening it, committing the cancel request and
 // running it to its cancelled end. Cancelled is terminal: result.json is
 // written, temporary agents deleted, the launcher notified. Repeating it
@@ -836,10 +839,10 @@ func (s *Service) Cancel(ctx context.Context, scope Scope, id string) error {
 }
 
 // Results returns the result of one run of a forum (its latest when run is
-// 0): result.json for a terminal run, or a partial manifest (buildResult
-// over the current state, Complete false) for any other, built exactly as
-// the controller builds result.json, so a round that was not published
-// stays hidden. A forum with no run is refused.
+// 0): result.json for a terminal run, or a partial manifest for any other.
+// Both come from buildResult, which shows a result layer's published
+// outputs only and the other layers' outputs only when the result layers
+// have none. A forum with no run is refused.
 func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*Result, error) {
 	if r, ok := s.running(scope, id); ok && (run == 0 || run == r.store.RunNumber()) {
 		if st := r.ctrl.State(); !st.Status.Terminal() {
@@ -896,10 +899,10 @@ func (s *Service) Results(_ context.Context, scope Scope, id string, run int) (*
 // running: it takes the forum's lock without waiting (ErrLocked when
 // another holder has it), rechecks the latest run's status, deletes the
 // temporary agents of every run (deleteTempAgents) and then the directory
-// (Store.Remove). A forum whose records are damaged can be deleted too.
+// (forumStore.Remove). A forum whose records are damaged can be deleted too.
 // A running forum is refused (errBusy); a forum whose agents could not
 // all be deleted is kept and the error returned, so a retry finishes the
-// job. Deleting a forum ID that no longer exists succeeds.
+// job. A forum ID that does not exist is ErrNotFound.
 func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	defer s.control(id)()
 	r, err := s.live(ctx, scope, id)
@@ -911,8 +914,6 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	}
 	store, err := s.open(scope, id)
 	switch {
-	case errors.Is(err, ErrNotFound) && validForumID(id):
-		return nil
 	case errors.Is(err, errForeign):
 		return err
 	case errors.Is(err, ErrCorrupt) && validForumID(id):
@@ -935,7 +936,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 			return err
 		}
 	}
-	marked, err := store.MarkedRuns(CleanupAgents)
+	marked, err := store.MarkedRuns(cleanupAgents)
 	if err != nil {
 		store.Unlock()
 		return err
@@ -947,20 +948,19 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 		}
 	}
 	s.forgetPaused(id)
-	s.forgetCleanups(id)
-	s.forgetLaunchChats(id)
+	s.forgetRuns(id)
+	name := logForum(store)
 	if err := store.Remove(); err != nil {
 		return err
 	}
-	s.host.Logger.Infof("forum %s: deleted", id)
+	s.host.Logger.Infof("%s: deleted", name)
 	return nil
 }
 
-// Recover is called once at startup with every agent's scope (§2.2: the
-// binding is rebuilt by scanning workspaces; §2 "resume unfinished work
-// after reboot"). Per scope it first removes roots staged for deletion
-// (ListStaged, RemoveStaged), then applies recoverOne to every forum in
-// ListForums. Errors are logged per forum and do not stop the scan; a
+// Recover is called once at startup with every agent's scope, so the
+// forums interrupted by a restart continue (DESIGN.md §7.18). Per scope it
+// first removes roots staged for deletion (listStaged, removeStaged), then
+// applies recoverOne to every forum in listForums. Errors are logged per forum and do not stop the scan; a
 // forum that cannot be reopened (other than one locked by another
 // process) is also reported through Host.OnStuck. The returned error is
 // the first one, for the caller's log line.
@@ -972,19 +972,19 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 		}
 	}
 	for _, scope := range scopes {
-		staged, err := ListStaged(scope.BaseDirectory)
+		staged, err := listStaged(scope.BaseDirectory)
 		if err != nil {
 			s.host.Logger.Errorf("forum recovery in %s: %v", scope.BaseDirectory, err)
 			note(err)
 		}
 		for _, id := range staged {
-			if rmErr := RemoveStaged(scope.BaseDirectory, id); rmErr != nil {
+			if rmErr := removeStaged(scope.BaseDirectory, id); rmErr != nil {
 				s.host.Logger.Errorf("forum %s: finishing its removal: %v", id, rmErr)
 				note(fmt.Errorf("forum %s: %w", id, rmErr))
 			}
 		}
 		s.removeIncomplete(scope)
-		ids, err := ListForums(scope.BaseDirectory)
+		ids, err := listForums(scope.BaseDirectory)
 		if err != nil {
 			s.host.Logger.Errorf("forum recovery in %s: %v", scope.BaseDirectory, err)
 			note(err)
@@ -992,7 +992,7 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 		}
 		for _, id := range ids {
 			if err := s.recoverOne(ctx, scope, id); err != nil {
-				s.host.Logger.Errorf("forum %s: recover: %v", id, err)
+				s.host.Logger.Errorf("forum %s: recover: %v", s.ref(scope, id), err)
 				note(fmt.Errorf("forum %s: %w", id, err))
 				if !errors.Is(err, ErrLocked) && !errors.Is(err, errClosed) {
 					s.reportStuck(scope, id, err)
@@ -1004,10 +1004,10 @@ func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 }
 
 // removeIncomplete removes the directories of forums whose creation died
-// before forum.json was written (ListIncomplete). One locked by a forum
+// before forum.json was written (listIncomplete). One locked by a forum
 // being created right now is left alone.
 func (s *Service) removeIncomplete(scope Scope) {
-	ids, err := ListIncomplete(scope.BaseDirectory)
+	ids, err := listIncomplete(scope.BaseDirectory)
 	if err != nil {
 		s.host.Logger.Warnf("forum recovery in %s: %v", scope.BaseDirectory, err)
 		return
@@ -1083,17 +1083,17 @@ func (s *Service) recoverOne(ctx context.Context, scope Scope, id string) error 
 		}
 	case StatusNew, StatusRunning, StatusPausing, StatusCancelling:
 	}
-	s.host.Logger.Infof("forum %s: resuming run %d after restart (%s)", id, run.RunNumber(), st.Status)
+	s.host.Logger.Infof("%s: resuming after restart (%s)", logRun(run), st.Status)
 	return s.openAndStart(ctx, run, nil)
 }
 
 // deleteLeftAgents deletes the temporary agents left in the agents marker
 // of a run that no longer exists (a launch undone whose agents could not
 // all be deleted). Failures are logged; the marker keeps them.
-func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []int) {
-	marked, err := store.MarkedRuns(CleanupAgents)
+func (s *Service) deleteLeftAgents(ctx context.Context, store *forumStore, started []int) {
+	marked, err := store.MarkedRuns(cleanupAgents)
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: %v", store.ID(), err)
+		s.host.Logger.Warnf("%s: %v", logForum(store), err)
 		return
 	}
 	for _, n := range marked {
@@ -1101,7 +1101,7 @@ func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []
 			continue
 		}
 		if err := s.deleteTempAgents(ctx, store.Run(n)); err != nil {
-			s.host.Logger.Warnf("forum %s: run %d that did not start: %v", store.ID(), n, err)
+			s.host.Logger.Warnf("%s: run %d that did not start: %v", logForum(store), n, err)
 		}
 	}
 }
@@ -1112,11 +1112,11 @@ func (s *Service) deleteLeftAgents(ctx context.Context, store *Store, started []
 // being launched, markers or not, is superseded (cancelled without a
 // notice), as that launch would have done. Failures are logged. The caller
 // holds the lock.
-func (s *Service) finishEarlier(ctx context.Context, run *Store) {
-	_, agents, agentsErr := run.Cleanup(CleanupAgents)
+func (s *Service) finishEarlier(ctx context.Context, run *forumStore) {
+	_, agents, agentsErr := run.Cleanup(cleanupAgents)
 	_, notice, noticeErr := run.Cleanup(cleanupNotice)
 	if err := errors.Join(agentsErr, noticeErr); err != nil {
-		s.host.Logger.Warnf("forum %s: run %d: %v", run.ID(), run.RunNumber(), err)
+		s.host.Logger.Warnf("%s: %v", logRun(run), err)
 		return
 	}
 	if !agents && !notice {
@@ -1139,7 +1139,7 @@ func (s *Service) finishEarlier(ctx context.Context, run *Store) {
 		err = s.supersede(ctx, run, false)
 	}
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: finishing run %d: %v", run.ID(), run.RunNumber(), err)
+		s.host.Logger.Warnf("%s: finishing it: %v", logRun(run), err)
 	}
 }
 
@@ -1171,13 +1171,13 @@ func (s *Service) isClosed() bool {
 	return s.closed
 }
 
-// open resolves a forum ID within the scope: OpenStore(scope.BaseDirectory,
+// open resolves a forum ID within the scope: openStore(scope.BaseDirectory,
 // id), ErrNotFound when absent. A forum whose forum-meta.json or latest
 // run names another launcher is ErrCorrupt wrapping errForeign
 // (checkForumOwner, checkOwner): the directory lives in the agent's
 // workspace and is not trusted for whose it is.
-func (s *Service) open(scope Scope, id string) (*Store, error) {
-	store, err := OpenStore(scope.BaseDirectory, id)
+func (s *Service) open(scope Scope, id string) (*forumStore, error) {
+	store, err := openStore(scope.BaseDirectory, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1199,7 +1199,7 @@ func (s *Service) open(scope Scope, id string) (*Store, error) {
 // takes its lock without waiting and loads its latest run's snapshot and
 // state; a forum with no run is refused. The caller owns the lock on
 // success; the returned store is the latest run's.
-func (s *Service) takeOver(scope Scope, id string) (*Store, *Snapshot, *State, error) {
+func (s *Service) takeOver(scope Scope, id string) (*forumStore, *Snapshot, *State, error) {
 	store, err := s.open(scope, id)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1226,7 +1226,7 @@ func (s *Service) takeOver(scope Scope, id string) (*Store, *Snapshot, *State, e
 
 // markLaunched appends the CommitLaunched a launch did not get to write
 // (status queued after a crash); any other status needs nothing.
-func markLaunched(store *Store, st *State) error {
+func markLaunched(store *forumStore, st *State) error {
 	if st.Status != StatusQueued {
 		return nil
 	}
@@ -1236,7 +1236,7 @@ func markLaunched(store *Store, st *State) error {
 // openAndStart opens a locked store, applies before to the controller (a
 // pause or cancel request), and starts the run. It consumes the lock: on
 // failure the lock is released.
-func (s *Service) openAndStart(ctx context.Context, store *Store, before func(controller) error) error {
+func (s *Service) openAndStart(ctx context.Context, store *forumStore, before func(controller) error) error {
 	if s.isClosed() {
 		store.Unlock()
 		return errClosed
@@ -1260,9 +1260,9 @@ func (s *Service) openAndStart(ctx context.Context, store *Store, before func(co
 }
 
 // loadView reads what a read-only caller (status, list, results) needs:
-// forum.json, snapshot.json and the current State (LoadState), without
-// Verify's digest checks of every source and output.
-func loadView(store *Store) (*Config, *Snapshot, *State, error) {
+// forum.json, snapshot.json and the current State (loadState), without
+// verify's digest checks of every source and output.
+func loadView(store *forumStore) (*Config, *Snapshot, *State, error) {
 	snap, err := store.ReadSnapshot()
 	if err != nil {
 		return nil, nil, nil, corrupt("%s: %v", fileSnapshot, err)
@@ -1274,11 +1274,11 @@ func loadView(store *Store) (*Config, *Snapshot, *State, error) {
 	if err != nil {
 		return nil, nil, nil, corrupt("%s: %v", fileConfig, err)
 	}
-	cfg, err := Decode(raw)
+	cfg, err := decodeConfig(raw)
 	if err != nil {
 		return nil, nil, nil, corrupt("%s: %v", fileConfig, err)
 	}
-	st, err := LoadState(store, cfg, snap)
+	st, err := loadState(store, cfg, snap)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1286,13 +1286,13 @@ func loadView(store *Store) (*Config, *Snapshot, *State, error) {
 }
 
 // load reads a forum's configuration, snapshot and current state after
-// verifying the directory (Verify).
-func load(store *Store) (*Config, *Snapshot, *State, error) {
-	cfg, snap, err := Verify(store)
+// verifying the directory (verify).
+func load(store *forumStore) (*Config, *Snapshot, *State, error) {
+	cfg, snap, err := verify(store)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	st, err := LoadState(store, cfg, snap)
+	st, err := loadState(store, cfg, snap)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1366,7 +1366,7 @@ func (s *Service) control(id string) func() {
 // the log line and, unless the host is shutting down, Host.OnStuck. The
 // lock is released and the run removed from s.runs in one step, so a
 // caller that no longer sees the run can take the lock.
-func (s *Service) start(store *Store, ctrl controller) error {
+func (s *Service) start(store *forumStore, ctrl controller) error {
 	id := store.ID()
 	s.mu.Lock()
 	if s.closed {
@@ -1380,15 +1380,13 @@ func (s *Service) start(store *Store, ctrl controller) error {
 	ctx, cancel := context.WithCancel(s.ctx)
 	r := &run{store: store, ctrl: ctrl, cancel: cancel, done: make(chan struct{})}
 	s.runs[id] = r
-	s.mu.Unlock()
-	s.ensureKeepAlive()
-	s.wg.Go(func() {
+	s.goLocked(func() {
 		defer close(r.done)
 		defer cancel()
 		status, err := drive(ctx, ctrl)
 		if err != nil {
 			status = ctrl.State().Status
-			s.runFailed(ctrl.Snapshot(), err)
+			s.runFailed(store, ctrl.Snapshot(), err)
 		} else {
 			s.mu.Lock()
 			delete(s.stuck, keyOf(store))
@@ -1406,10 +1404,32 @@ func (s *Service) start(store *Store, ctrl controller) error {
 		}
 		s.mu.Unlock()
 		if status == StatusPaused {
-			s.host.Logger.Infof("forum %s: run %d paused", id, store.RunNumber())
+			s.host.Logger.Infof("%s: paused", logRun(store))
 		}
 	})
+	s.mu.Unlock()
+	s.ensureKeepAlive()
 	return nil
+}
+
+// goTracked runs fn on a goroutine Close waits for, unless the service is
+// closed, and reports whether it started. Every goroutine the service
+// starts goes through it (or goLocked).
+func (s *Service) goTracked(fn func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.goLocked(fn)
+}
+
+// goLocked is goTracked for a caller that holds s.mu. The WaitGroup is
+// added to under s.mu, which Close takes to set closed, so no goroutine is
+// added once Close has started waiting.
+func (s *Service) goLocked(fn func()) bool {
+	if s.closed {
+		return false
+	}
+	s.wg.Go(fn)
+	return true
 }
 
 // drive runs ctrl until it settles. A pause or cancel request accepted
@@ -1439,13 +1459,14 @@ func drive(ctx context.Context, ctrl controller) (Status, error) {
 // shutdown is expected and logged at Info; anything else is logged at
 // Error naming the forum and the run and reported once through
 // Host.OnStuck.
-func (s *Service) runFailed(snap *Snapshot, err error) {
-	id := snap.ForumID
+func (s *Service) runFailed(store *forumStore, snap *Snapshot, err error) {
+	id, ref := snap.ForumID, storeRef(store)
+	name := fmt.Sprintf("forum %s run %d", ref, snap.Run)
 	if errors.Is(err, ErrShuttingDown) || (s.ctx.Err() != nil && errors.Is(err, context.Canceled)) {
-		s.host.Logger.Infof("forum %s: run %d stopped by the shutdown; it resumes at the next start", id, snap.Run)
+		s.host.Logger.Infof("%s: stopped by the shutdown; it resumes at the next start", name)
 		return
 	}
-	s.host.Logger.Errorf("forum %s: run %d stopped and is stuck until it is resumed: %v", id, snap.Run, err)
+	s.host.Logger.Errorf("%s: stopped and is stuck until it is resumed: %v", name, err)
 	s.stuckOnce(runKey{id: id, run: snap.Run}, snap.Origin, err)
 }
 
@@ -1481,7 +1502,7 @@ func (s *Service) stuckOnce(key runKey, origin Origin, err error) {
 }
 
 // completeTerminal does the work that follows a terminal state, each step
-// only if still pending, so a restart can repeat it (§9 Completion):
+// only if still pending, so a restart can repeat it (DESIGN.md §5.11):
 //
 //  1. result.json is written if the controller did not get to it;
 //  2. the temporary agents are deleted (deleteTempAgents); a failure is
@@ -1490,9 +1511,11 @@ func (s *Service) stuckOnce(key runKey, origin Origin, err error) {
 //     committed, and the notice marker is cleared (notify, on a goroutine
 //     of its own so a blocking Notifier never holds the forum).
 //
+// A result.json that cannot be written, or a notice that fails, keeps the
+// notice marker and is retried by the keep-alive loop (noticeFailed).
+//
 // The store must be locked by the caller. Failures are logged.
-func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Config, snap *Snapshot, st *State) {
-	id := fmt.Sprintf("%s run %d", store.ID(), store.RunNumber())
+func (s *Service) completeTerminal(ctx context.Context, store *forumStore, cfg *Config, snap *Snapshot, st *State) {
 	ctx = context.WithoutCancel(ctx)
 	res, resErr := store.ReadResult()
 	if errors.Is(resErr, ErrNotFound) {
@@ -1500,84 +1523,205 @@ func (s *Service) completeTerminal(ctx context.Context, store *Store, cfg *Confi
 		resErr = store.WriteResult(res)
 	}
 	if err := s.deleteTempAgents(ctx, store); err != nil {
-		s.host.Logger.Warnf("forum %s: %v (retried every %s)", id, err, s.keepAliveEvery)
-		s.registerCleanup(Scope{AgentID: snap.Origin.AgentID, BaseDirectory: store.base}, store)
+		s.host.Logger.Warnf("%s: %v (retried every %s)", logRun(store), err, s.keepAliveEvery)
+		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 	}
 	if resErr != nil {
-		s.host.Logger.Errorf("forum %s: result: %v (the launcher is notified once it is written)", id, resErr)
+		s.noticeFailed(store, fmt.Errorf("writing %s: %w", fileResult, resErr))
 		return
 	}
 	_, pending, err := store.Cleanup(cleanupNotice)
-	if err != nil {
-		s.host.Logger.Errorf("forum %s: notice marker: %v", id, err)
-		return
-	}
-	if pending {
+	switch {
+	case err != nil:
+		s.noticeFailed(store, err)
+	case pending:
 		s.notify(store, snap.Origin, res)
+	default:
+		s.forgetNotice(keyOf(store))
 	}
 }
 
 // notify delivers the completion notice on a goroutine of its own and
 // clears the notice marker afterwards. A notice that fails because the
 // service is closing keeps its marker, so the next start delivers it; any
-// other failure is logged and not retried. A notice already in flight for
-// the forum is not sent again.
-func (s *Service) notify(store *Store, origin Origin, res *Result) {
+// other failure keeps it too and is retried (noticeFailed). A notice
+// already in flight for the run is not sent again.
+func (s *Service) notify(store *forumStore, origin Origin, res *Result) {
 	key := keyOf(store)
-	id := fmt.Sprintf("%s run %d", key.id, key.run)
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.notifying[key] {
-		s.mu.Unlock()
 		return
 	}
-	s.notifying[key] = true
-	s.mu.Unlock()
-	s.wg.Go(func() {
+	started := s.goLocked(func() {
 		defer func() {
 			s.mu.Lock()
 			delete(s.notifying, key)
 			s.mu.Unlock()
 		}()
 		if err := s.host.Notifier.ForumFinished(s.ctx, origin, s.launchChat(key), res); err != nil {
-			s.host.Logger.Warnf("forum %s: notifying agent %s: %v", id, origin.AgentID, err)
 			if s.ctx.Err() != nil {
+				s.host.Logger.Infof("%s: notifying agent %s was cut by the shutdown; it is notified at the next start", logRun(store), origin.AgentID)
 				return
 			}
-		} else {
-			s.host.Logger.Infof("forum %s: %s; agent %s notified", id, res.Status, origin.AgentID)
+			s.noticeFailed(store, fmt.Errorf("notifying agent %s: %w", origin.AgentID, err))
+			return
 		}
+		s.host.Logger.Infof("%s: %s; agent %s notified", logRun(store), res.Status, origin.AgentID)
+		s.forgetNotice(key)
 		s.takeLaunchChat(key)
 		if err := store.ClearCleanup(cleanupNotice); err != nil {
-			s.host.Logger.Warnf("forum %s: notice marker: %v", id, err)
+			s.host.Logger.Warnf("%s: notice marker: %v", logRun(store), err)
 		}
+	})
+	if started {
+		s.notifying[key] = true
+	} // else closed: nothing is sent; the marker stays for the next start
+}
+
+// maxNoticeTries is how many times this process tries a run's completion
+// notice (and the result.json it waits for) before giving it up: the first
+// try and the keep-alive loop's retries.
+const maxNoticeTries = 5
+
+// noticeRetry is a run whose completion notice failed, for the keep-alive
+// loop to retry.
+type noticeRetry struct {
+	scope Scope
+	tries int
+}
+
+// noticeFailed records a failed try of a run's completion notice (err is
+// why: result.json could not be written, or the Notifier failed). The
+// notice marker is kept and the keep-alive loop tries again; after
+// maxNoticeTries the notice is given up with a warning and its marker
+// cleared, so no later start tries it again.
+func (s *Service) noticeFailed(store *forumStore, err error) {
+	key := keyOf(store)
+	s.mu.Lock()
+	nr := s.notices[key]
+	if nr == nil {
+		nr = &noticeRetry{scope: Scope{AgentID: store.owner, BaseDirectory: store.base}}
+		s.notices[key] = nr
+	}
+	nr.tries++
+	tries := nr.tries
+	if tries >= maxNoticeTries {
+		delete(s.notices, key)
+	}
+	s.mu.Unlock()
+	if tries < maxNoticeTries {
+		s.host.Logger.Warnf("%s: completion notice: %v (try %d of %d; retried every %s)", logRun(store), err, tries, maxNoticeTries, s.keepAliveEvery)
+		s.ensureKeepAlive()
+		return
+	}
+	s.host.Logger.Warnf("%s: completion notice given up after %d tries: %v", logRun(store), tries, err)
+	s.takeLaunchChat(key)
+	if clearErr := store.ClearCleanup(cleanupNotice); clearErr != nil {
+		s.host.Logger.Warnf("%s: notice marker: %v", logRun(store), clearErr)
+	}
+}
+
+// forgetNotice drops a run from the notice retries.
+func (s *Service) forgetNotice(key runKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.notices, key)
+}
+
+// retryNotices retries the completion notice of every run in s.notices
+// that is not being delivered now: the run is opened and locked, and
+// completeTerminal writes result.json if it is still missing and notifies
+// if the notice is still pending. A run whose forum is gone leaves the
+// set; one whose forum is running or locked is tried at the next tick.
+func (s *Service) retryNotices(ctx context.Context) {
+	s.mu.Lock()
+	pending := make(map[runKey]Scope, len(s.notices))
+	for key, nr := range s.notices {
+		if !s.notifying[key] {
+			pending[key] = nr.scope
+		}
+	}
+	s.mu.Unlock()
+	for _, key := range sortedRunKeys(pending) {
+		if _, ok := s.running(pending[key], key.id); ok {
+			continue
+		}
+		s.retryNotice(ctx, pending[key], key)
+	}
+}
+
+// retryNotice is retryNotices for one run.
+func (s *Service) retryNotice(ctx context.Context, scope Scope, key runKey) {
+	defer s.control(key.id)()
+	store, err := s.open(scope, key.id)
+	if errors.Is(err, ErrNotFound) {
+		s.forgetNotice(key)
+		return
+	}
+	if err != nil {
+		s.host.Logger.Warnf("forum %s run %d: completion notice: %v", s.ref(scope, key.id), key.run, err)
+		return
+	}
+	if err = store.Lock(); err != nil {
+		return
+	}
+	defer store.Unlock()
+	run := store.Run(key.run)
+	cfg, snap, st, err := load(run)
+	if err != nil {
+		s.noticeFailed(run, err)
+		return
+	}
+	s.completeTerminal(ctx, run, cfg, snap, st)
+}
+
+// sortedRunKeys returns the keys of m by forum ID, then run.
+func sortedRunKeys[V any](m map[runKey]V) []runKey {
+	return slices.SortedFunc(maps.Keys(m), func(a, b runKey) int {
+		if c := strings.Compare(a.id, b.id); c != 0 {
+			return c
+		}
+		return a.run - b.run
 	})
 }
 
-// agentsMarker reads the CleanupAgents marker: the temporary agents still
+// logForum names a forum in a log line: "forum <ref>", the forum named as
+// messages name it (storeRef).
+func logForum(store *forumStore) string {
+	return "forum " + storeRef(store)
+}
+
+// logRun names a run in a log line: "forum <ref> run <n>".
+func logRun(store *forumStore) string {
+	return fmt.Sprintf("%s run %d", logForum(store), store.RunNumber())
+}
+
+// agentsMarker reads the cleanupAgents marker: the temporary agents still
 // to be deleted (nil when the marker is absent).
-func agentsMarker(store *Store) ([]string, error) {
-	data, ok, err := store.Cleanup(CleanupAgents)
+func agentsMarker(store *forumStore) ([]string, error) {
+	data, ok, err := store.Cleanup(cleanupAgents)
 	if err != nil || !ok {
 		return nil, err
 	}
 	var ids []string
 	if err := json.Unmarshal(data, &ids); err != nil {
-		return nil, fmt.Errorf("%w: forum %s: cleanup marker %s: %w", ErrCorrupt, store.ID(), CleanupAgents, err)
+		return nil, fmt.Errorf("%w: forum %s: cleanup marker %s: %w", ErrCorrupt, store.ID(), cleanupAgents, err)
 	}
 	return ids, nil
 }
 
-// setAgentsMarker writes the CleanupAgents marker, or clears it when ids
+// setAgentsMarker writes the cleanupAgents marker, or clears it when ids
 // is empty.
-func setAgentsMarker(store *Store, ids []string) error {
+func setAgentsMarker(store *forumStore, ids []string) error {
 	if len(ids) == 0 {
-		return store.ClearCleanup(CleanupAgents)
+		return store.ClearCleanup(cleanupAgents)
 	}
 	data, err := json.Marshal(ids)
 	if err != nil {
 		return err
 	}
-	return store.SetCleanup(CleanupAgents, data)
+	return store.SetCleanup(cleanupAgents, data)
 }
 
 // agentsLeftError is deleteTempAgents' failure: the temporary agents of a
@@ -1596,7 +1740,7 @@ func (e *agentsLeftError) Error() string {
 
 func (e *agentsLeftError) Unwrap() error { return e.err }
 
-// deleteTempAgents deletes every agent in the forum's CleanupAgents
+// deleteTempAgents deletes every agent in the forum's cleanupAgents
 // marker through Agents.Delete. The marker, written at launch as each
 // agent is created, is the record of what is still to delete: once it is
 // gone there is nothing to do, so repeating the call (or a restart) never
@@ -1604,7 +1748,7 @@ func (e *agentsLeftError) Unwrap() error { return e.err }
 // that could not be deleted stay in the marker for the next attempt (the
 // keep-alive loop retries a terminal forum's, the registry's TTL is the
 // backstop); the error is an *agentsLeftError naming them.
-func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
+func (s *Service) deleteTempAgents(ctx context.Context, store *forumStore) error {
 	ids, err := agentsMarker(store)
 	if err != nil || len(ids) == 0 {
 		return err
@@ -1635,17 +1779,17 @@ func (s *Service) deleteTempAgents(ctx context.Context, store *Store) error {
 		return &agentsLeftError{forumID: store.ID(), ref: storeRef(store), agents: remaining, err: failures}
 	}
 	if len(pending) > 0 {
-		s.host.Logger.Infof("forum %s run %d: temporary agents %v are deleted when their turns end", store.ID(), store.RunNumber(), pending)
+		s.host.Logger.Infof("%s: temporary agents %v are deleted when their turns end", logRun(store), pending)
 		s.registerCleanup(Scope{AgentID: store.owner, BaseDirectory: store.base}, store)
 		return nil
 	}
-	s.host.Logger.Debugf("forum %s run %d: deleted temporary agents %v", store.ID(), store.RunNumber(), ids)
+	s.host.Logger.Debugf("%s: deleted temporary agents %v", logRun(store), ids)
 	return nil
 }
 
 // registerPaused adds a paused forum to the keep-alive set and starts the
 // keep-alive loop if needed.
-func (s *Service) registerPaused(store *Store) {
+func (s *Service) registerPaused(store *forumStore) {
 	s.mu.Lock()
 	s.paused[store.ID()] = store
 	s.mu.Unlock()
@@ -1661,7 +1805,7 @@ func (s *Service) forgetPaused(id string) {
 
 // registerCleanup records a run whose temporary agents are still to
 // delete, for the keep-alive loop to retry.
-func (s *Service) registerCleanup(scope Scope, store *Store) {
+func (s *Service) registerCleanup(scope Scope, store *forumStore) {
 	s.mu.Lock()
 	s.cleanups[keyOf(store)] = scope
 	s.mu.Unlock()
@@ -1675,13 +1819,24 @@ func (s *Service) forgetCleanup(key runKey) {
 	delete(s.cleanups, key)
 }
 
-// forgetCleanups drops every run of a forum from the cleanup retries.
-func (s *Service) forgetCleanups(id string) {
+// forgetRuns drops every run of a deleted forum from the cleanup and
+// notice retries and forgets their launching chats.
+func (s *Service) forgetRuns(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key := range s.cleanups {
 		if key.id == id {
 			delete(s.cleanups, key)
+		}
+	}
+	for key := range s.notices {
+		if key.id == id {
+			delete(s.notices, key)
+		}
+	}
+	for key := range s.launchChats {
+		if key.id == id {
+			delete(s.launchChats, key)
 		}
 	}
 }
@@ -1711,21 +1866,10 @@ func (s *Service) takeLaunchChat(key runKey) {
 	delete(s.launchChats, key)
 }
 
-// forgetLaunchChats forgets the launching chats of every run of forum id.
-func (s *Service) forgetLaunchChats(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key := range s.launchChats {
-		if key.id == id {
-			delete(s.launchChats, key)
-		}
-	}
-}
-
 // ensureKeepAlive starts the keep-alive goroutine once.
 func (s *Service) ensureKeepAlive() {
 	s.keepAlive.Do(func() {
-		s.wg.Go(s.runKeepAlive)
+		s.goTracked(s.runKeepAlive)
 	})
 }
 
@@ -1745,10 +1889,11 @@ func (s *Service) runKeepAlive() {
 }
 
 // keepAliveTick touches the temporary agents of every paused and running
-// forum, then retries the pending temporary-agent deletions.
+// forum, then retries the pending temporary-agent deletions and completion
+// notices.
 func (s *Service) keepAliveTick(ctx context.Context) {
 	s.mu.Lock()
-	stores := make([]*Store, 0, len(s.paused)+len(s.runs))
+	stores := make([]*forumStore, 0, len(s.paused)+len(s.runs))
 	for _, st := range s.paused {
 		stores = append(stores, st)
 	}
@@ -1760,6 +1905,7 @@ func (s *Service) keepAliveTick(ctx context.Context) {
 		s.touchForum(ctx, store)
 	}
 	s.retryCleanups(ctx)
+	s.retryNotices(ctx)
 }
 
 // retryCleanups retries the temporary-agent deletion of every run in
@@ -1770,13 +1916,7 @@ func (s *Service) retryCleanups(ctx context.Context) {
 	s.mu.Lock()
 	pending := maps.Clone(s.cleanups)
 	s.mu.Unlock()
-	keys := slices.SortedFunc(maps.Keys(pending), func(a, b runKey) int {
-		if c := strings.Compare(a.id, b.id); c != 0 {
-			return c
-		}
-		return a.run - b.run
-	})
-	for _, key := range keys {
+	for _, key := range sortedRunKeys(pending) {
 		if _, ok := s.running(pending[key], key.id); ok {
 			continue
 		}
@@ -1795,7 +1935,7 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 		return true
 	}
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: temporary agents: %v", key.id, err)
+		s.host.Logger.Warnf("forum %s run %d: temporary agents: %v", s.ref(scope, key.id), key.run, err)
 		return false
 	}
 	if err := store.Lock(); err != nil {
@@ -1804,28 +1944,28 @@ func (s *Service) retryCleanup(ctx context.Context, scope Scope, key runKey) boo
 	defer store.Unlock()
 	run := store.Run(key.run)
 	if err := s.deleteTempAgents(ctx, run); err != nil {
-		s.host.Logger.Warnf("forum %s run %d: %v (retried every %s)", key.id, key.run, err, s.keepAliveEvery)
+		s.host.Logger.Warnf("%s: %v (retried every %s)", logRun(run), err, s.keepAliveEvery)
 		return false
 	}
 	// Agents the host deletes when their turns end are still listed.
 	if ids, err := agentsMarker(run); err != nil || len(ids) > 0 {
 		return false
 	}
-	s.host.Logger.Infof("forum %s run %d: its remaining temporary agents are deleted", key.id, key.run)
+	s.host.Logger.Infof("%s: its remaining temporary agents are deleted", logRun(run))
 	return true
 }
 
 // touchForum touches the temporary agents of one forum (those in its
-// CleanupAgents marker), logging failures.
-func (s *Service) touchForum(ctx context.Context, store *Store) {
+// cleanupAgents marker), logging failures.
+func (s *Service) touchForum(ctx context.Context, store *forumStore) {
 	ids, err := agentsMarker(store)
 	if err != nil {
-		s.host.Logger.Warnf("forum %s: keep-alive: %v", store.ID(), err)
+		s.host.Logger.Warnf("%s: keep-alive: %v", logRun(store), err)
 		return
 	}
 	for _, agentID := range ids {
 		if err := s.host.Agents.Touch(ctx, store.owner, agentID); err != nil {
-			s.host.Logger.Warnf("forum %s: keep-alive of temporary agent %s: %v", store.ID(), agentID, err)
+			s.host.Logger.Warnf("%s: keep-alive of temporary agent %s: %v", logRun(store), agentID, err)
 		}
 	}
 }
@@ -1835,7 +1975,7 @@ func (s *Service) touchForum(ctx context.Context, store *Store) {
 func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 	sum := &Summary{
 		ForumID:    snap.ForumID,
-		Name:       snap.Label(),
+		Name:       snap.Name,
 		Run:        snap.Run,
 		Status:     st.Status,
 		Reason:     st.Reason,
@@ -1851,6 +1991,11 @@ func summaryOf(cfg *Config, snap *Snapshot, st *State) *Summary {
 		if ls := st.Layers[l.ID]; ls != nil {
 			p.Started, p.Ended, p.EndReason = ls.Started, ls.Ended, ls.EndReason
 			p.Round, p.Calls, p.Outputs = ls.Round, ls.Calls, len(ls.Outputs)
+			for _, o := range ls.Outputs {
+				if o.Resent {
+					sum.ResentAfterRestart++
+				}
+			}
 		}
 		sum.Layers = append(sum.Layers, p)
 	}

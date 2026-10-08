@@ -13,12 +13,11 @@ import (
 	"unicode"
 )
 
-// Shared contract: the record types written to and read from a forum
-// directory (spec §8, rev 3 §8) and the derived State. Every seam reads
-// these; the store writes them. Changing a field here is a cross-seam
-// change and is agreed between owners first (DESIGN.md).
+// The record types written to and read from a forum directory, and the
+// derived State (DESIGN.md §4). Every part of the package reads them; the
+// store writes them.
 
-// Status is a forum's lifecycle state (§9).
+// Status is a forum's lifecycle state.
 type Status string
 
 // Run states. The last four are terminal. StatusNew is a forum's status
@@ -48,11 +47,12 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// EndReason says why a layer or the run ended (§3.2, §5, §8).
+// EndReason says why a layer or the run ended.
 type EndReason string
 
 // End reasons. EndRoundLimit, EndCallLimit and EndModeratorStop end a
-// layer (§3.2, §5: a layer that runs every round ends with round_limit);
+// layer (a layer that runs every round ends with round_limit, DESIGN.md
+// §7.1);
 // the others end the run.
 const (
 	EndCompleted         EndReason = "completed"          // the run: every enabled layer ended without a run-ending reason
@@ -63,15 +63,16 @@ const (
 	EndDeadline          EndReason = "deadline"           // limits.max_duration_seconds elapsed: run incomplete
 	EndAttemptsExhausted EndReason = "attempts_exhausted" // a turn used max_attempts_per_turn without a valid output: run failed
 	EndModeratorFailed   EndReason = "moderator_failed"   // the moderator produced no valid decision: run failed
-	EndParticipantGone   EndReason = "participant_gone"   // a temporary participant disappeared (§8): run failed
+	EndParticipantGone   EndReason = "participant_gone"   // a temporary participant disappeared: run failed
 	EndHostError         EndReason = "host_error"         // a transport or store error: run failed
 	EndCorrupt           EndReason = "corrupt"            // the forum's records failed verification during the run: run failed
 	EndCancelled         EndReason = "cancelled"          // forum_cancel
 )
 
 // Snapshot (snapshot.json) is everything launch resolved that a resume must
-// not recompute (rev 3 §8: resolved models, base directory, source hashes,
-// effective limits, seed, original deadline, effective moderator schemas).
+// not recompute: resolved models, base directory, source hashes, effective
+// limits, seed, original deadline, effective moderator schemas (DESIGN.md
+// §5.7).
 // It is written before the first dispatch and never changed.
 type Snapshot struct {
 	ForumID string `json:"forum_id"`
@@ -81,10 +82,10 @@ type Snapshot struct {
 	LaunchedAt    time.Time `json:"launched_at"`
 	BaseDirectory string    `json:"base_directory"`
 	// Deadline is LaunchedAt + limits.max_duration_seconds; every wait is
-	// bounded by it and restart does not extend it (§5).
+	// bounded by it and restart does not extend it.
 	Deadline time.Time `json:"deadline"`
 	Origin   Origin    `json:"origin"`
-	// ConfigDigest is the hex SHA-256 of the run's forum.json; Verify
+	// ConfigDigest is the hex SHA-256 of the run's forum.json; verify
 	// checks it, and the forum's current forum.json differs from the run's
 	// when its digest differs.
 	ConfigDigest string `json:"config_digest"`
@@ -95,23 +96,27 @@ type Snapshot struct {
 	// Layers are the enabled layer IDs in execution order.
 	Layers       []string `json:"layers"`
 	ResultLayers []string `json:"result_layers"`
-	// Models is Resolved.Models at launch: participant ID -> model name for
+	// Models is resolvedConfig.Models at launch: participant ID -> model name for
 	// every fresh participant and every clone with a `model` override.
 	Models map[string]string `json:"models"`
 	// ModeratorSchemas maps a layer ID to its effective decision schema
-	// (EffectiveModeratorSchema), for every enabled layer with a moderator.
+	// (effectiveModeratorSchema), for every enabled layer with a moderator.
 	ModeratorSchemas map[string]json.RawMessage `json:"moderator_schemas,omitempty"`
 	// Sources maps a source ID to its materialised copy under sources/.
 	Sources map[string]SourceRecord `json:"sources,omitempty"`
 }
 
-// Label is how the forum is named to people: its configured name, or its
-// ID when it has none.
+// Label is how a forum is titled where it is rendered (the transcript
+// heading, the line heading a participant's message): its configured name,
+// or its ID when it has none. Records keep the name as configured.
 func (s *Snapshot) Label() string {
-	return forumLabel(s.Name, s.ForumID)
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.ForumID
 }
 
-// MaxNameChars is the longest forum `name` ValidateStatic accepts, in
+// MaxNameChars is the longest forum `name` validateStatic accepts, in
 // characters; a name is also one line without control characters.
 const MaxNameChars = 100
 
@@ -122,8 +127,7 @@ func validName(name string) bool {
 }
 
 // Ref names a forum in a message to people or agents: "<name> (<id>)"
-// when it has a name, else its ID. A name equal to the ID (a Label of an
-// unnamed forum) counts as none. forum.json lives in the launcher's
+// when it has a name, else its ID. forum.json lives in the launcher's
 // workspace and is not trusted, so control characters are dropped and the
 // name is cut to MaxNameChars whatever validation said.
 func Ref(name, id string) string {
@@ -136,18 +140,10 @@ func Ref(name, id string) string {
 	if r := []rune(name); len(r) > MaxNameChars {
 		name = string(r[:MaxNameChars])
 	}
-	if name == "" || name == id {
+	if name == "" {
 		return id
 	}
 	return name + " (" + id + ")"
-}
-
-// forumLabel is name, or id when name is empty.
-func forumLabel(name, id string) string {
-	if name != "" {
-		return name
-	}
-	return id
 }
 
 // SourceRecord is one materialised source (sources/<id><ext>).
@@ -159,7 +155,7 @@ type SourceRecord struct {
 	Digest string `json:"digest"`
 }
 
-// ParticipantRecord is one entry of participants.json (§8): how a
+// ParticipantRecord is one entry of participants.json: how a
 // participant is realised for this forum. Written before the first dispatch.
 type ParticipantRecord struct {
 	ID   string          `json:"id"`
@@ -173,7 +169,7 @@ type ParticipantRecord struct {
 	// Model is the resolved model (Snapshot.Models) when one applies.
 	Model string `json:"model,omitempty"`
 	// Mode is the fresh participant's mode; FreshModeSingleShot changes what
-	// the controller sends it (§3.1).
+	// the controller sends it.
 	Mode FreshMode `json:"mode,omitempty"`
 }
 
@@ -219,7 +215,7 @@ type InputItem struct {
 // LayerInputs (layers/<id>/inputs.json) is a layer's resolved routing:
 // what each participant, and the moderator, receives from sources and
 // earlier layers. Random distribution is decided here and persisted before
-// the first dispatch, so a resume never reshuffles (§4).
+// the first dispatch, so a resume never reshuffles.
 type LayerInputs struct {
 	LayerID string `json:"layer_id"`
 	// Participants maps a participant ID to its ordered, deduplicated items.
@@ -239,24 +235,24 @@ const (
 	TurnModerator   TurnKind = "moderator"
 )
 
-// TurnID is the work ID of one participant turn within a layer
+// turnID is the work ID of one participant turn within a layer
 // ("r<round>-<participant>"); it names the directory
 // layers/<layer>/calls/<turn-id>/. One output is ever committed per turn ID.
-func TurnID(round int, participantID string) string {
+func turnID(round int, participantID string) string {
 	return fmt.Sprintf("r%03d-%s", round, participantID)
 }
 
-// ModeratorTurnID is the work ID of the moderator check after a round
-// ("m<round>"). Its prefix differs from TurnID's, so no participant ID
+// moderatorTurnID is the work ID of the moderator check after a round
+// ("m<round>"). Its prefix differs from turnID's, so no participant ID
 // (not even "moderator") can produce a moderator work ID.
-func ModeratorTurnID(round int) string {
+func moderatorTurnID(round int) string {
 	return fmt.Sprintf("m%03d", round)
 }
 
 // AttemptRequest (calls/<turn>/<attempt>/request.json) records exactly what
-// was sent (§8). It is written, and the attempt committed (CommitAttempt),
+// was sent. It is written, and the attempt committed (CommitAttempt),
 // before the Ask; an attempt with no reply is one whose outcome is unknown
-// (§8 restart).
+// .
 type AttemptRequest struct {
 	Layer       string    `json:"layer"`
 	Round       int       `json:"round"`
@@ -295,8 +291,8 @@ type AttemptRecord struct {
 	Reply   *AttemptReply
 }
 
-// OutputRecord is the attributed artifact of one successful turn (§4). Its
-// files live in the attempt directory that produced it (rev 3 §8).
+// OutputRecord is the attributed artifact of one successful turn. Its
+// files live in the attempt directory that produced it.
 type OutputRecord struct {
 	OutputID      string `json:"output_id"`
 	LayerID       string `json:"layer_id"`
@@ -310,13 +306,17 @@ type OutputRecord struct {
 	// output); the same file as ContentFile unless `share` narrows a JSON
 	// output.
 	PublishedFile string `json:"published_file"`
-	// Digest is the hex SHA-256 of ContentFile; Verify checks it.
+	// Digest is the hex SHA-256 of ContentFile; verify checks it.
 	Digest string `json:"digest"`
 	// PublishedDigest is the hex SHA-256 of PublishedFile (equal to Digest
-	// when the two are the same file); Verify checks it.
+	// when the two are the same file); verify checks it.
 	PublishedDigest string `json:"published_digest"`
 	Turn            string `json:"turn"`
 	Attempt         int    `json:"attempt"`
+	// Resent is true when an earlier attempt of the turn got no reply
+	// because the host restarted, and its message was sent again: the
+	// earlier attempt's directory holds no output.
+	Resent bool `json:"resent,omitempty"`
 }
 
 // CommitKind is the kind of one commit-log entry.
@@ -340,7 +340,7 @@ const (
 
 // Commit is one entry of the append-only commit log (commits/<seq>.json).
 // Seq starts at 1 and has no gaps. The log is authoritative: State is
-// rebuilt from it alone by Replay.
+// rebuilt from it alone by replay.
 type Commit struct {
 	Seq         int           `json:"seq"`
 	At          time.Time     `json:"at"`
@@ -383,7 +383,7 @@ type LayerState struct {
 }
 
 // State (state.json) is the derived view of a forum. It is a cache: the
-// store rewrites it after every commit, and Replay rebuilds it from the
+// store rewrites it after every commit, and replay rebuilds it from the
 // commits when it is missing or stale.
 type State struct {
 	Status Status    `json:"status"`
@@ -391,7 +391,7 @@ type State struct {
 	// Seq is the last commit applied.
 	Seq int `json:"seq"`
 	// Calls counts every CommitAttempt in the forum, replied or not
-	// (restart resets no limits, §5).
+	// (restart resets no limits).
 	Calls     int                    `json:"calls"`
 	Layers    map[string]*LayerState `json:"layers"`
 	UpdatedAt time.Time              `json:"updated_at"`
@@ -409,12 +409,12 @@ type LayerResult struct {
 // layers' outputs, completeness and omissions. For a running forum the
 // service builds a partial one from State with Complete false; the file is
 // written only at a terminal state, before the launching agent is notified
-// (§9).
+// .
 type Result struct {
 	ForumID string `json:"forum_id"`
 	Run     int    `json:"run"`
-	// Name labels the forum: its configured name, or its ID when it has none.
-	Name       string    `json:"name"`
+	// Name is the forum's configured name; empty when it has none.
+	Name       string    `json:"name,omitempty"`
 	Status     Status    `json:"status"`
 	Reason     EndReason `json:"reason,omitempty"`
 	LaunchedAt time.Time `json:"launched_at"`
@@ -460,20 +460,23 @@ type ForumMeta struct {
 // Summary is one forum's progress as forum_status reports it.
 type Summary struct {
 	ForumID string `json:"forum_id"`
-	// Name labels the forum: its configured name, or its ID when it has none.
-	Name string `json:"name"`
+	// Name is the forum's configured name; empty when it has none.
+	Name string `json:"name,omitempty"`
 	// Run is the run the summary describes (0 for a new forum), Runs how
 	// many the forum has, and ConfigChanged whether the forum's
 	// configuration differs from the one its latest run used.
-	Run           int             `json:"run,omitempty"`
-	Runs          int             `json:"runs"`
-	ConfigChanged bool            `json:"config_changed,omitempty"`
-	Status        Status          `json:"status"`
-	Reason        EndReason       `json:"reason,omitempty"`
-	LaunchedAt    time.Time       `json:"launched_at,omitzero"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	Deadline      time.Time       `json:"deadline,omitzero"`
-	Calls         int             `json:"calls"`
-	MaxCalls      int             `json:"max_calls"`
-	Layers        []LayerProgress `json:"layers"`
+	Run           int       `json:"run,omitempty"`
+	Runs          int       `json:"runs"`
+	ConfigChanged bool      `json:"config_changed,omitempty"`
+	Status        Status    `json:"status"`
+	Reason        EndReason `json:"reason,omitempty"`
+	LaunchedAt    time.Time `json:"launched_at,omitzero"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Deadline      time.Time `json:"deadline,omitzero"`
+	Calls         int       `json:"calls"`
+	MaxCalls      int       `json:"max_calls"`
+	// ResentAfterRestart counts the committed outputs whose turn was sent
+	// again after a restart (OutputRecord.Resent).
+	ResentAfterRestart int             `json:"resent_after_restart,omitempty"`
+	Layers             []LayerProgress `json:"layers"`
 }

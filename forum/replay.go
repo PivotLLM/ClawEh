@@ -13,14 +13,15 @@ import (
 	"slices"
 )
 
-// Seam (b): verification and replay (spec §8, rev 3 §8: "verify hashes,
-// replay commits, and resume the first unfinished controller action"). The
-// commit log is the truth; State is what Replay derives from it alone.
+// Verification and replay (DESIGN.md §5.1, §5.10): a run is opened by
+// verifying its hashes, replaying its commits and resuming the first
+// unfinished controller action. The commit log is the truth; State is what
+// replay derives from it alone.
 
-// Verify checks a forum directory before it is opened for execution:
+// verify checks a forum directory before it is opened for execution:
 //
 //   - snapshot.json decodes and names this forum and run;
-//   - forum.json decodes (Decode) and its SHA-256 equals
+//   - forum.json decodes (decodeConfig) and its SHA-256 equals
 //     Snapshot.ConfigDigest;
 //   - participants.json exists and decodes;
 //   - every materialised source in Snapshot.Sources exists with the
@@ -34,14 +35,14 @@ import (
 //     SHA-256 equals its PublishedDigest.
 //
 // Every stat and read goes through the store's root-confined reader
-// (Store.ReadFile, which follows no symbolic link). Any failure is
+// (forumStore.ReadFile, which follows no symbolic link). Any failure is
 // ErrCorrupt wrapped with the detail: corrupt or missing committed
-// artifacts fail recovery rather than regenerating history. Verify only
+// artifacts fail recovery rather than regenerating history. verify only
 // reads. It returns the decoded configuration and snapshot so the caller
 // does not read them twice.
 // checkOwner refuses a snapshot whose launcher is not the agent the store
-// was opened for (Store.owner), when that is known.
-func checkOwner(s *Store, snap *Snapshot) error {
+// was opened for (forumStore.owner), when that is known.
+func checkOwner(s *forumStore, snap *Snapshot) error {
 	if s.owner != "" && snap.Origin.AgentID != s.owner {
 		return foreign("%s names launcher %q, not %q", fileSnapshot, snap.Origin.AgentID, s.owner)
 	}
@@ -58,9 +59,9 @@ func foreign(format string, args ...any) error {
 }
 
 // checkForumOwner refuses a forum whose forum-meta.json names another
-// owner than the agent the store was opened for (Store.owner), like
+// owner than the agent the store was opened for (forumStore.owner), like
 // checkOwner does for a run's snapshot.
-func checkForumOwner(s *Store) error {
+func checkForumOwner(s *forumStore) error {
 	m, err := s.ReadForumMeta()
 	if err != nil {
 		return err
@@ -71,7 +72,7 @@ func checkForumOwner(s *Store) error {
 	return nil
 }
 
-func Verify(s *Store) (*Config, *Snapshot, error) {
+func verify(s *forumStore) (*Config, *Snapshot, error) {
 	snap, err := s.ReadSnapshot()
 	if err != nil {
 		return nil, nil, corrupt("%s: %v", fileSnapshot, err)
@@ -92,7 +93,7 @@ func Verify(s *Store) (*Config, *Snapshot, error) {
 	if got := digest(raw); got != snap.ConfigDigest {
 		return nil, nil, corrupt("%s digest %s does not match the snapshot's %s", fileConfig, got, snap.ConfigDigest)
 	}
-	cfg, err := Decode(raw)
+	cfg, err := decodeConfig(raw)
 	if err != nil {
 		return nil, nil, corrupt("%s: %v", fileConfig, err)
 	}
@@ -117,7 +118,7 @@ func Verify(s *Store) (*Config, *Snapshot, error) {
 }
 
 // verifyCommit checks the artifacts one commit references.
-func verifyCommit(s *Store, c *Commit) error {
+func verifyCommit(s *forumStore, c *Commit) error {
 	switch c.Kind {
 	case CommitLayerStarted:
 		_, err := s.ReadLayerInputs(c.Layer)
@@ -143,7 +144,7 @@ func verifyCommit(s *Store, c *Commit) error {
 }
 
 // verifyDigest checks that the root-relative rel exists and hashes to want.
-func verifyDigest(s *Store, rel, want string) error {
+func verifyDigest(s *forumStore, rel, want string) error {
 	data, err := s.ReadFile(rel)
 	if err != nil {
 		return err
@@ -159,7 +160,7 @@ func corrupt(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrCorrupt, fmt.Sprintf(format, args...))
 }
 
-// Replay derives State from the commits. It is deterministic: the same
+// replay derives State from the commits. It is deterministic: the same
 // log always gives the same State (UpdatedAt is the last commit's time),
 // and the result equals the state.json a crash-free run would have
 // written, because the controller applies each commit with the same fold
@@ -180,15 +181,15 @@ func corrupt(format string, args ...any) error {
 //   - State.Calls is the number of attempt commits.
 //   - What a participant was already sent is not part of State: the
 //     controller derives it from the attempt commits themselves
-//     (Controller.contact), the one source of truth.
+//     (forumController.contact), the one source of truth.
 //   - Seq is the last commit's sequence number.
 //
 // A commit that cannot follow the ones before it is ErrCorrupt: one that
 // fails checkCommit (the check AppendCommit applies before writing, so
-// the store never writes a log Replay refuses), a seq out of order,
+// the store never writes a log replay refuses), a seq out of order,
 // launched other than first, anything after ended, or ended with a
 // non-terminal status.
-func Replay(cfg *Config, snap *Snapshot, commits []Commit) (*State, error) {
+func replay(cfg *Config, snap *Snapshot, commits []Commit) (*State, error) {
 	if cfg == nil || snap == nil {
 		return nil, errors.New("replay: configuration and snapshot are required")
 	}
@@ -209,7 +210,7 @@ func Replay(cfg *Config, snap *Snapshot, commits []Commit) (*State, error) {
 
 // checkCommit rejects a commit that cannot follow the log indexed by ix.
 // It is the one structural check of the log: AppendCommit runs it before
-// writing and Replay before folding, so the two cannot disagree. It needs
+// writing and replay before folding, so the two cannot disagree. It needs
 // nothing from disk. The rules:
 //
 //   - the kind is known; a layer, when named, is an enabled layer of the
@@ -217,14 +218,14 @@ func Replay(cfg *Config, snap *Snapshot, commits []Commit) (*State, error) {
 //     one;
 //   - attempt: a positive attempt number not reserved before, for a turn
 //     without a committed output. A participant attempt names a
-//     participant of the layer and Turn == TurnID(Round, Participant); a
+//     participant of the layer and Turn == turnID(Round, Participant); a
 //     moderator attempt names the layer's moderator and Turn ==
-//     ModeratorTurnID(Round);
+//     moderatorTurnID(Round);
 //   - turn: an Output of this layer, round and turn, by a participant of
-//     the layer, with Turn == TurnID(Round, Output.ParticipantID), whose
+//     the layer, with Turn == turnID(Round, Output.ParticipantID), whose
 //     attempt (Output.Attempt) is reserved; no earlier output for the turn;
 //   - moderated: a Decision, a layer with a moderator, Turn ==
-//     ModeratorTurnID(Round), at least one reserved attempt for that turn
+//     moderatorTurnID(Round), at least one reserved attempt for that turn
 //     and no earlier decision for it;
 //   - round_published: an after_round layer, the next round in order, and
 //     every participant's turn of that round committed;
@@ -304,7 +305,7 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		if layer.Moderator == nil {
 			return fmt.Errorf("moderation of layer %q, which has no moderator", c.Layer)
 		}
-		if want := ModeratorTurnID(c.Round); c.Turn != want {
+		if want := moderatorTurnID(c.Round); c.Turn != want {
 			return fmt.Errorf("moderation turn %q is not %q", c.Turn, want)
 		}
 		if !ix.reserved[tk] {
@@ -324,7 +325,7 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 			return fmt.Errorf("round %d published after round %d", c.Round, last)
 		}
 		for _, pid := range layer.Participants {
-			if !ix.outputs[turnKey{c.Layer, TurnID(c.Round, pid)}] {
+			if !ix.outputs[turnKey{c.Layer, turnID(c.Round, pid)}] {
 				return fmt.Errorf("round %d published before %s's turn is committed", c.Round, pid)
 			}
 		}
@@ -335,8 +336,8 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 }
 
 // checkWorkID checks that a work ID belongs to its layer: a participant
-// turn is TurnID(round, participant) for a participant of the layer, a
-// moderator check is ModeratorTurnID(round) by the layer's moderator.
+// turn is turnID(round, participant) for a participant of the layer, a
+// moderator check is moderatorTurnID(round) by the layer's moderator.
 func checkWorkID(layer Layer, kind TurnKind, round int, participant, turn string) error {
 	var want string
 	switch kind {
@@ -344,12 +345,12 @@ func checkWorkID(layer Layer, kind TurnKind, round int, participant, turn string
 		if !slices.Contains(layer.Participants, participant) {
 			return fmt.Errorf("participant %q is not in layer %q", participant, layer.ID)
 		}
-		want = TurnID(round, participant)
+		want = turnID(round, participant)
 	case TurnModerator:
 		if layer.Moderator == nil || layer.Moderator.Participant != participant {
 			return fmt.Errorf("%q is not the moderator of layer %q", participant, layer.ID)
 		}
-		want = ModeratorTurnID(round)
+		want = moderatorTurnID(round)
 	default:
 		return fmt.Errorf("unknown turn kind %q", kind)
 	}
@@ -372,11 +373,11 @@ func replayInitialState(snap *Snapshot) *State {
 	return st
 }
 
-// replayApply folds one commit into st (see Replay for the rules). It is
+// replayApply folds one commit into st (see replay for the rules). It is
 // the single fold for the commit log: the controller applies each new
-// commit with it and Replay is a loop over it, so the two cannot
+// commit with it and replay is a loop over it, so the two cannot
 // disagree. It does not repeat checkCommit: the controller folds only
-// commits AppendCommit accepted (after checkCommit), and Replay runs
+// commits AppendCommit accepted (after checkCommit), and replay runs
 // checkCommit itself. On error st may be partly updated and must be
 // discarded.
 func replayApply(cfg *Config, snap *Snapshot, st *State, c *Commit) error {
@@ -491,22 +492,22 @@ func roundComplete(layer Layer, ls *LayerState, round int) bool {
 // Two ways to obtain State, for two kinds of caller. Nothing else reads
 // state.json.
 //
-//   - ReplayState is the controller's (Open): it always rebuilds State
+//   - replayState is the controller's (openForum): it always rebuilds State
 //     from the commit log and rewrites state.json, so a damaged or
 //     hand-edited cache can never steer a run. The caller holds the lock.
-//   - LoadState is for read-only callers (status, results), which do not
+//   - loadState is for read-only callers (status, results), which do not
 //     hold the lock: it may use state.json as a cache and never writes.
 
-// ReplayState rebuilds State from the commit log alone (Replay), ignoring
+// replayState rebuilds State from the commit log alone (replay), ignoring
 // state.json, and rewrites state.json with the result. Only the lock
 // holder may call it: on an unlocked store it fails with ErrInvalidState
 // (WriteState).
-func ReplayState(s *Store, cfg *Config, snap *Snapshot) (*State, error) {
+func replayState(s *forumStore, cfg *Config, snap *Snapshot) (*State, error) {
 	commits, err := s.ReadCommits()
 	if err != nil {
 		return nil, fmt.Errorf("replay state: %w", err)
 	}
-	st, err := Replay(cfg, snap, commits)
+	st, err := replay(cfg, snap, commits)
 	if err != nil {
 		return nil, fmt.Errorf("replay state: %w", err)
 	}
@@ -516,12 +517,12 @@ func ReplayState(s *Store, cfg *Config, snap *Snapshot) (*State, error) {
 	return st, nil
 }
 
-// LoadState returns the forum's current State for a read-only caller:
-// state.json when its Seq matches the last commit, otherwise a Replay of
+// loadState returns the forum's current State for a read-only caller:
+// state.json when its Seq matches the last commit, otherwise a replay of
 // the log. It never writes state.json (only the lock holder does). A
 // state.json that is missing or does not decode is a stale cache, not
 // corruption.
-func LoadState(s *Store, cfg *Config, snap *Snapshot) (*State, error) {
+func loadState(s *forumStore, cfg *Config, snap *Snapshot) (*State, error) {
 	commits, err := s.ReadCommits()
 	if err != nil {
 		return nil, fmt.Errorf("load state: %w", err)
@@ -533,7 +534,7 @@ func LoadState(s *Store, cfg *Config, snap *Snapshot) (*State, error) {
 	if cached, readErr := s.ReadState(); readErr == nil && cached.Seq == last {
 		return cached, nil
 	}
-	st, err := Replay(cfg, snap, commits)
+	st, err := replay(cfg, snap, commits)
 	if err != nil {
 		return nil, fmt.Errorf("load state: %w", err)
 	}

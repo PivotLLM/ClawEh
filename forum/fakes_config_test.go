@@ -15,10 +15,10 @@ import (
 	"testing"
 )
 
-// Test helpers of seam (a), prefixed cfgt so they cannot collide with the
-// helpers of the other seams in the same package.
+// Test helpers of the configuration tests, prefixed cfgt so they cannot collide with the
+// helpers of the other tests in the same package.
 
-// cfgtExampleJSON is the configuration example of spec §7 (Alice takes part
+// cfgtExampleJSON is the reference example configuration (Alice takes part
 // as herself, Bob as a clone, the chair and the editor are fresh).
 const cfgtExampleJSON = `{
   "version": 1, "name": "design-review",
@@ -63,10 +63,10 @@ const cfgtExampleJSON = `{
   "result_layers": ["report"]
 }`
 
-// cfgtExample decodes a fresh copy of the §7 example.
+// cfgtExample decodes a fresh copy of the example configuration.
 func cfgtExample(t *testing.T) *Config {
 	t.Helper()
-	cfg, err := Decode([]byte(cfgtExampleJSON))
+	cfg, err := decodeConfig([]byte(cfgtExampleJSON))
 	if err != nil {
 		t.Fatalf("decode example: %v", err)
 	}
@@ -117,7 +117,7 @@ type cfgtAgents struct {
 
 var errCfgtHost = errors.New("host unavailable")
 
-// cfgtNewAgents builds the fake for the §7 example with the launcher
+// cfgtNewAgents builds the fake for the example configuration with the launcher
 // "launcher": Alice and Bob exist and are allowed; every agent has the
 // models "default" and "large".
 func cfgtNewAgents() *cfgtAgents {
@@ -181,7 +181,7 @@ func (a *cfgtAgents) Touch(context.Context, string, string) error {
 	return errors.New("preflight must not touch agents")
 }
 
-// cfgtEnv is a PreflightEnv over agents with the real schema adapter.
-func cfgtEnv(agents Agents) PreflightEnv {
-	return PreflightEnv{Launcher: "launcher", Agents: agents, Schemas: JSONSchemaValidator{}}
+// cfgtEnv is a preflightEnv over agents with the real schema adapter.
+func cfgtEnv(agents Agents) preflightEnv {
+	return preflightEnv{Launcher: "launcher", Agents: agents}
 }

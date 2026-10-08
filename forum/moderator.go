@@ -15,14 +15,13 @@ import (
 	"strings"
 )
 
-// Seam (d): moderation (rev 5 §6, rev 3 §6). The moderator is a
+// Moderation. The moderator is a
 // participant invoked in a controller role after a round; its decision is
 // JSON held to the layer's effective schema (Snapshot.ModeratorSchemas).
 
 // moderatorDue reports whether the moderator is consulted after round:
 // round >= m.AfterRound and (round - m.AfterRound) % m.EveryRounds == 0.
-// The caller also requires round < max_rounds (rev 3 §6 "while below
-// max_rounds").
+// The caller also requires round < max_rounds (DESIGN.md §7.2).
 func moderatorDue(m *Moderator, round int) bool {
 	if m == nil || round < m.AfterRound || m.EveryRounds <= 0 {
 		return false
@@ -34,14 +33,14 @@ func moderatorDue(m *Moderator, round int) bool {
 // decision, or the reason the forum or layer must stop, or nil and "" when
 // a pause or cancel interrupted it. It is the attempt loop of a turn
 // (perform: attempt numbering, limits, request/reply records and
-// reservation under ModeratorTurnID(round) with TurnKind TurnModerator,
+// reservation under moderatorTurnID(round) with TurnKind TurnModerator,
 // resend of an uncertain attempt, adoption of a saved accepted reply);
 // only the message (composeModeratorMessage) and the validation
 // (parseDecision against c.decisionSchemas[layer.ID]) differ. A decision
 // already committed for this round is returned at once, so guidance is
 // never duplicated. Exhausting the attempts returns EndModeratorFailed
-// (§5 "moderator failure stops the run as failed").
-func (c *Controller) runModerator(ctx context.Context, layer Layer, round int) (*Decision, EndReason, error) {
+// (a moderator failure ends the run failed).
+func (c *forumController) runModerator(ctx context.Context, layer Layer, round int) (*Decision, EndReason, error) {
 	if d := c.committedDecision(layer.ID, round); d != nil {
 		return d, "", nil
 	}
@@ -51,7 +50,7 @@ func (c *Controller) runModerator(ctx context.Context, layer Layer, round int) (
 	}
 	schema := c.decisionSchemas[layer.ID]
 	res, err := c.perform(ctx, work{
-		layer: layer, round: round, turn: ModeratorTurnID(round), kind: TurnModerator, p: m,
+		layer: layer, round: round, turn: moderatorTurnID(round), kind: TurnModerator, p: m,
 		compose: func(cutoff int) (string, error) {
 			return c.composeModeratorMessage(layer, round, m, cutoff)
 		},
@@ -74,7 +73,7 @@ func (c *Controller) runModerator(ctx context.Context, layer Layer, round int) (
 }
 
 // committedDecision returns the decision committed after round, or nil.
-func (c *Controller) committedDecision(layerID string, round int) *Decision {
+func (c *forumController) committedDecision(layerID string, round int) *Decision {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ls := c.state.Layers[layerID]
@@ -91,8 +90,8 @@ func (c *Controller) committedDecision(layerID string, round int) *Decision {
 }
 
 // moderatorHeader is the first line of every moderator message.
-func (c *Controller) moderatorHeader(layer Layer, round int) string {
-	return fmt.Sprintf("Forum %q, layer %q, moderator check after round %d.", c.forumName(), layer.ID, round)
+func (c *forumController) moderatorHeader(layer Layer, round int) string {
+	return fmt.Sprintf("Forum %q, layer %q, moderator check after round %d.", c.snap.Label(), layer.ID, round)
 }
 
 // headingConversation and headingDecisions are the moderator's sections.
@@ -102,8 +101,8 @@ const (
 	headingDecision     = "## Your decision"
 )
 
-// composeModeratorMessage builds the moderator's message after round (rev
-// 3 §6): the brief on its first message in the forum; its instructions,
+// composeModeratorMessage builds the moderator's message after round: the
+// brief on its first message in the forum; its instructions,
 // its role, the layer's instructions and its routed inputs
 // (LayerInputs.Moderator) on its first check in the layer; the layer's
 // conversation since its last message (published or full outputs per
@@ -111,8 +110,8 @@ const (
 // effective schema verbatim (sent with every request). A single_shot
 // moderator gets everything every time, including its own previous
 // decisions in the layer; one that keeps its conversation is never sent
-// its own decisions again (§2.3).
-func (c *Controller) composeModeratorMessage(layer Layer, round int, m ParticipantRecord, cutoff int) (string, error) {
+// its own decisions again.
+func (c *forumController) composeModeratorMessage(layer Layer, round int, m ParticipantRecord, cutoff int) (string, error) {
 	briefed, introduced, through := c.contact(m.ID, layer.ID)
 	single := m.Mode == FreshModeSingleShot
 	full := single || !introduced
@@ -127,10 +126,10 @@ func (c *Controller) composeModeratorMessage(layer Layer, round int, m Participa
 		})
 		inputs, err := c.store.ReadLayerInputs(layer.ID)
 		if err != nil {
-			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, ModeratorTurnID(round), err)
+			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, moderatorTurnID(round), err)
 		}
 		// No anonymous route reaches a moderator: a layer that reads
-		// anonymously has none (ValidateStatic).
+		// anonymously has none (validateStatic).
 		c.writeInputs(&b, inputs.Moderator, nil, "")
 	}
 	after := through
@@ -165,7 +164,7 @@ func (c *Controller) composeModeratorMessage(layer Layer, round int, m Participa
 
 // writePreviousDecisions lists the moderator's committed decisions in the
 // layer before round (single_shot moderators only).
-func (c *Controller) writePreviousDecisions(b *strings.Builder, layerID string, round int) {
+func (c *forumController) writePreviousDecisions(b *strings.Builder, layerID string, round int) {
 	ls := c.layerState(layerID)
 	var prev []RoundDecision
 	for _, d := range ls.Decisions {
@@ -187,7 +186,7 @@ func (c *Controller) writePreviousDecisions(b *strings.Builder, layerID string, 
 }
 
 // names lists participants by name, comma-separated.
-func (c *Controller) names(ids []string) string {
+func (c *forumController) names(ids []string) string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		if name := c.participantName(id); name != id {
@@ -202,7 +201,7 @@ func (c *Controller) names(ids []string) string {
 // decisionContract describes the moderator's required reply: what each
 // decision does, `directed` when the layer allows it, `assessment` when a
 // schema is named, and the effective schema verbatim.
-func (c *Controller) decisionContract(layer Layer) string {
+func (c *forumController) decisionContract(layer Layer) string {
 	var b strings.Builder
 	b.WriteString("Decide how this layer continues and reply with exactly one JSON object and nothing else:\n")
 	b.WriteString("- \"decision\": \"CONTINUE\" (the next round runs; guidance null), \"GUIDE\" (the next round runs and your guidance is shown to every participant; guidance a nonempty string) or \"STOP\" (the layer ends now; guidance null).\n")
@@ -230,7 +229,7 @@ func (c *Controller) decisionContract(layer Layer) string {
 // a violation unless allowDirected, and each directed entry must name one
 // of the layer's participants with nonempty text. Issues make the attempt
 // invalid and are sent back as a repair.
-func parseDecision(text string, schema CompiledSchema, allowDirected bool, participants []string) (*Decision, []string) {
+func parseDecision(text string, schema *compiledSchema, allowDirected bool, participants []string) (*Decision, []string) {
 	value, err := decodeJSONValue([]byte(unfence(text)))
 	if err != nil {
 		return nil, []string{"the reply is not exactly one valid JSON value: " + strings.TrimPrefix(err.Error(), "decode JSON: ")}
@@ -303,14 +302,14 @@ func parseDecision(text string, schema CompiledSchema, allowDirected bool, parti
 // messages never reach it. Nothing is committed once a cancel was
 // requested. Neither GUIDE nor CONTINUE overrides hard limits; acting on
 // STOP is the caller's.
-func (c *Controller) applyDecision(layer Layer, round int, d *Decision) error {
-	commit := &Commit{Kind: CommitModerated, Layer: layer.ID, Round: round, Turn: ModeratorTurnID(round), Decision: d}
+func (c *forumController) applyDecision(layer Layer, round int, d *Decision) error {
+	commit := &Commit{Kind: CommitModerated, Layer: layer.ID, Round: round, Turn: moderatorTurnID(round), Decision: d}
 	if err := c.commitWhen(notCancelling, commit, nil); err != nil {
 		if errors.Is(err, errSkip) {
 			return nil
 		}
 		return err
 	}
-	c.host.Logger.Infof("forum %s: layer %s after round %d: %s", c.snap.ForumID, layer.ID, round, d.Decision)
+	c.host.Logger.Infof("%s: layer %s after round %d: %s", c.logName, layer.ID, round, d.Decision)
 	return c.publishTranscript(commit)
 }

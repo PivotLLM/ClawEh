@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestJSONSchemaValidatorCompile(t *testing.T) {
+func TestCompileSchema(t *testing.T) {
 	tests := []struct {
 		name    string
 		schema  string
@@ -33,7 +33,7 @@ func TestJSONSchemaValidatorCompile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sch, err := JSONSchemaValidator{}.Compile(cfgtRaw(tt.schema))
+			sch, err := compileSchema(cfgtRaw(tt.schema))
 			if tt.wantErr == "" {
 				if err != nil || sch == nil {
 					t.Fatalf("Compile: %v", err)
@@ -48,7 +48,7 @@ func TestJSONSchemaValidatorCompile(t *testing.T) {
 }
 
 func TestCompiledSchemaValidate(t *testing.T) {
-	sch, err := JSONSchemaValidator{}.Compile(cfgtRaw(`{
+	sch, err := compileSchema(cfgtRaw(`{
 		"type":"object","required":["agreements","disagreements"],"additionalProperties":false,
 		"properties":{
 			"agreements":{"type":"array","items":{"type":"string"}},

@@ -12,7 +12,7 @@ import (
 )
 
 func TestDecodeExample(t *testing.T) {
-	cfg, err := Decode([]byte(cfgtExampleJSON))
+	cfg, err := decodeConfig([]byte(cfgtExampleJSON))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestDecodeRejects(t *testing.T) {
 		return `{"version":1` + extra + `}`
 	}
 	// The last four decode as documents: the configuration comes back with
-	// the issues, so ValidateStatic's findings can be reported too.
+	// the issues, so validateStatic's findings can be reported too.
 	tests := []struct {
 		name string
 		in   string
@@ -84,7 +84,7 @@ func TestDecodeRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := Decode([]byte(tt.in))
+			cfg, err := decodeConfig([]byte(tt.in))
 			decodes := tt.path == "version" || strings.Contains(tt.name, "explicit")
 			if (cfg != nil) != decodes {
 				t.Fatalf("Decode returned configuration %v for invalid input, want one: %v", cfg != nil, decodes)
@@ -96,7 +96,7 @@ func TestDecodeRejects(t *testing.T) {
 
 func TestDecodeReportsEveryStructuralIssue(t *testing.T) {
 	in := `{"version":1,"bogus":1,"participants":{"alice":{"agent":"alice","x":1},"alice":{}},"name":"a","name":"b"}`
-	_, err := Decode([]byte(in))
+	_, err := decodeConfig([]byte(in))
 	ve, ok := errors.AsType[*ValidationError](err)
 	if !ok {
 		t.Fatalf("want *ValidationError, got %v", err)
@@ -151,7 +151,7 @@ func TestDecodeAccepts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := Decode([]byte(tt.in))
+			c, err := decodeConfig([]byte(tt.in))
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}

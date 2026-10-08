@@ -4,12 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
-// fakePrefix serves files from a map the way Store.ReadPrefix does.
+// fakePrefix serves files from a map the way forumStore.ReadPrefix does.
 func fakePrefix(files map[string]string) prefixReader {
 	return func(rel string, keep int) (string, int, error) {
 		s, ok := files[rel]
@@ -122,11 +123,11 @@ func TestResultsView_PartialAndUnreadable(t *testing.T) {
 	}
 }
 
-// Store.ReadPrefix keeps only the requested prefix but counts every
+// forumStore.ReadPrefix keeps only the requested prefix but counts every
 // character, and refuses a path outside the forum.
 func TestStoreReadPrefix(t *testing.T) {
 	base := t.TempDir()
-	forum, err := CreateStore(base, "11111111-1111-4111-8111-111111111111")
+	forum, err := createStore(base, "11111111-1111-4111-8111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,4 +167,46 @@ func TestResultsView_NoTranscriptAndOtherLayers(t *testing.T) {
 	if !a.Truncated || a.File != "forums/f1/runs/1/a.txt" || b.Text != "Bob's answer." {
 		t.Errorf("outputs: a truncated %v in %s, b %q", a.Truncated, a.File, b.Text)
 	}
+}
+
+// An output whose turn was resent after a restart names its attempt and
+// says why the earlier ones have no output; any other output has no note.
+func TestResultsView_ResentAfterRestart(t *testing.T) {
+	resent := outputAt("alice", "layers/report/a.txt", 1)
+	resent.Attempt, resent.Resent = 2, true
+	plain := outputAt("bob", "layers/report/b.txt", 1)
+	plain.Attempt = 1
+	view := newResultsView(resultWith(StatusCompleted, resent, plain), "forums/f1", false, fakePrefix(map[string]string{
+		"layers/report/a.txt": "A.", "layers/report/b.txt": "B.",
+	}))
+	a, b := view.Layers[0].Outputs[0], view.Layers[0].Outputs[1]
+	if a.Attempt != 2 || a.Note != resentNote {
+		t.Errorf("resent output = %+v", a)
+	}
+	if b.Attempt != 1 || b.Note != "" {
+		t.Errorf("plain output = %+v", b)
+	}
+}
+
+// The guide states the limits the code applies.
+func TestGuideStatesTheLimits(t *testing.T) {
+	g := strings.Join(strings.Fields(guide()), " ")
+	for _, want := range []string{
+		"at most " + groupDigits(MaxNameChars) + " characters",
+		"up to " + groupDigits(MaxResultInlineChars) + " characters",
+		groupDigits(MaxResultInlineTotalChars) + " characters for all outputs together",
+	} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide does not say %q", want)
+		}
+	}
+}
+
+// groupDigits writes n with a comma between thousands, as the guide does.
+func groupDigits(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

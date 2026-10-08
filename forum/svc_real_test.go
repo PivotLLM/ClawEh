@@ -30,7 +30,7 @@ func (m *svcReplier) Ask(_ context.Context, agentID, _ string, _ time.Duration) 
 func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	e := svcSetup(t)
 	messenger := &svcReplier{asks: map[string]int{}}
-	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 
 	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())
@@ -64,7 +64,7 @@ func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 
 func TestSvcRealControllerPausesAndCancels(t *testing.T) {
 	e := svcSetup(t)
-	svc := New(Host{Messenger: &svcReplier{asks: map[string]int{}}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	svc := New(Host{Messenger: &svcReplier{asks: map[string]int{}}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 
 	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())

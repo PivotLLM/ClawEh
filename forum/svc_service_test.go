@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,7 +62,7 @@ func TestSvcLaunchWritesTheForum(t *testing.T) {
 		t.Errorf("freshes = %+v", e.agents.freshes)
 	}
 
-	marker, ok := e.marker(id, CleanupAgents)
+	marker, ok := e.marker(id, cleanupAgents)
 	if !ok {
 		t.Fatal("no agents marker")
 	}
@@ -256,26 +257,11 @@ func TestSvcValidate(t *testing.T) {
 	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "participants.bob.model") {
 		t.Errorf("unknown model: %v", err)
 	}
-	noSchemas := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
-	withSchema := strings.Replace(svcSimpleJSON, `"limits"`, `"schemas": {"s": {"type": "object"}}, "limits"`, 1)
-	err = noSchemas.Validate(t.Context(), []byte(withSchema), e.opts())
-	if !errors.Is(err, ErrSchemasUnavailable) {
-		t.Errorf("schemas without a validator: %v", err)
-	}
-	// A moderated layer needs the validator for its decision schema, even
-	// without named schemas, so validation catches it before Open does.
-	err = noSchemas.Validate(t.Context(), []byte(svcConfigJSON), e.opts())
-	if !errors.Is(err, ErrSchemasUnavailable) || !strings.Contains(err.Error(), "moderated layers: talk") {
-		t.Errorf("moderated layer without a validator: %v", err)
-	}
-	if err := noSchemas.Validate(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
-		t.Errorf("no schemas and no moderator without a validator: %v", err)
-	}
 }
 
 func TestSvcHostLimits(t *testing.T) {
 	e := svcSetup(t)
-	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}},
+	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger},
 		WithHostLimits(Limits{MaxCalls: 5}))
 	t.Cleanup(func() { svcClose(t, capped) })
 	err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts())
@@ -298,7 +284,11 @@ func TestSvcModels(t *testing.T) {
 func TestSvcStatusAndList(t *testing.T) {
 	e := svcSetup(t)
 	first, _ := e.launch("")
-	time.Sleep(2 * time.Millisecond)
+	// The second launch must be later than the first for the list order.
+	firstAt := e.summary(first).LaunchedAt
+	for !time.Now().UTC().After(firstAt) {
+		runtime.Gosched()
+	}
 	second, _ := e.launch(svcSimpleJSON)
 
 	sum, err := e.svc.Status(t.Context(), e.scope, first, 0)
@@ -356,7 +346,7 @@ func TestSvcListSkipsUnreadableForums(t *testing.T) {
 	if err != nil || len(list) != 0 {
 		t.Errorf("List = %v, %v", list, err)
 	}
-	if !e.logger.has("forum " + id + ": status") {
+	if !e.logger.has("forum " + e.ref(id) + ": status") {
 		t.Error("the unreadable forum was not logged")
 	}
 }
@@ -665,13 +655,13 @@ func TestSvcResults(t *testing.T) {
 // omissions name what is missing, and an after_round round that is not
 // published stays hidden.
 func TestSvcResultOmissions(t *testing.T) {
-	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)))
+	cfg, err := decodeConfig([]byte(strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &Snapshot{ForumID: "f", Layers: []string{"talk"}, ResultLayers: []string{"talk"}}
 	out := func(pid string, round int) OutputRecord {
-		return OutputRecord{OutputID: pid + strconv.Itoa(round), LayerID: "talk", Round: round, ParticipantID: pid, Turn: TurnID(round, pid)}
+		return OutputRecord{OutputID: pid + strconv.Itoa(round), LayerID: "talk", Round: round, ParticipantID: pid, Turn: turnID(round, pid)}
 	}
 	ended := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	st := &State{
@@ -756,8 +746,8 @@ func TestSvcDelete(t *testing.T) {
 		if e.notifier.count() != 0 {
 			t.Error("deleting a paused forum sent a completion notice")
 		}
-		if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
-			t.Errorf("second delete: %v", err)
+		if err := e.svc.Delete(t.Context(), e.scope, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("second delete: %v, want ErrNotFound", err)
 		}
 	})
 	t.Run("terminal forum is deleted", func(t *testing.T) {
@@ -794,7 +784,7 @@ func TestSvcDelete(t *testing.T) {
 		if len(e.forumIDs()) != 1 {
 			t.Fatal("the forum was removed")
 		}
-		if m, _ := e.marker(id, CleanupAgents); m != `["`+stuck+`"]` {
+		if m, _ := e.marker(id, cleanupAgents); m != `["`+stuck+`"]` {
 			t.Errorf("agents marker = %s, want only %s (an ErrNotFound delete counts as done)", m, stuck)
 		}
 		e.agents.setDeleteErr(stuck, nil)
@@ -821,8 +811,8 @@ func TestSvcDelete(t *testing.T) {
 	})
 	t.Run("absent and malformed IDs", func(t *testing.T) {
 		e := svcSetup(t)
-		if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
-			t.Errorf("absent forum: %v", err)
+		if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+			t.Errorf("absent forum: %v, want ErrNotFound", err)
 		}
 		if err := e.svc.Delete(t.Context(), e.scope, "../../etc"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("malformed id: %v", err)
@@ -852,7 +842,7 @@ func TestSvcCompletionNotice(t *testing.T) {
 	if _, ok := e.marker(id, cleanupNotice); ok {
 		t.Error("notice marker left behind")
 	}
-	if _, ok := e.marker(id, CleanupAgents); ok {
+	if _, ok := e.marker(id, cleanupAgents); ok {
 		t.Error("agents marker left behind")
 	}
 	if len(e.agents.deletedIDs()) != 2 {
@@ -890,27 +880,75 @@ func TestSvcNoticeLaunchChatAfterRestart(t *testing.T) {
 	}
 }
 
-func TestSvcNotifyFailureIsLogged(t *testing.T) {
+// A notice that fails keeps its marker and is retried by the keep-alive
+// loop until it is delivered.
+func TestSvcNotifyFailureIsRetried(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.failures = 2
+	id, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	for try := 1; try <= 2; try++ {
+		svcEventually(t, fmt.Sprintf("failed try %d recorded", try), func() bool {
+			return e.noticeTries(id) == try && !e.notifying(id)
+		})
+		if _, ok := e.marker(id, cleanupNotice); !ok {
+			t.Fatalf("after failed try %d the notice is no longer pending", try)
+		}
+		e.svc.keepAliveTick(t.Context())
+	}
+	svcEventually(t, "notice delivered", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.noticeTries(id) == 0 && !e.notifying(id)
+	})
+	if n := e.notifier.count(); n != 3 {
+		t.Errorf("notifier called %d times, want 3", n)
+	}
+	// Delivered: a further tick sends nothing.
+	e.svc.keepAliveTick(t.Context())
+	if n := e.notifier.count(); n != 3 {
+		t.Errorf("notifier called %d times after delivery, want 3", n)
+	}
+}
+
+// A notice that keeps failing is given up after maxNoticeTries tries, and
+// its marker cleared, so it is not retried forever.
+func TestSvcNotifyGivenUp(t *testing.T) {
 	e := svcSetup(t)
 	e.notifier.err = errSvcHost
 	id, c := e.launch("")
 	c.finish <- StatusCompleted
 	e.settled(id, StatusCompleted)
-	svcEventually(t, "notify failure logged", func() bool { return e.logger.has("forum " + id + " run 1: notifying agent launcher") })
-	svcEventually(t, "notice marker cleared", func() bool {
-		_, ok := e.marker(id, cleanupNotice)
-		return !ok // a failed notice is not retried forever
+	for try := 1; try < maxNoticeTries; try++ {
+		svcEventually(t, fmt.Sprintf("failed try %d recorded", try), func() bool {
+			return e.noticeTries(id) == try && !e.notifying(id)
+		})
+		e.svc.keepAliveTick(t.Context())
+	}
+	svcEventually(t, "notice given up", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.noticeTries(id) == 0 && !e.notifying(id)
 	})
+	if n := e.notifier.count(); n != maxNoticeTries {
+		t.Errorf("notifier called %d times, want %d", n, maxNoticeTries)
+	}
+	e.svc.keepAliveTick(t.Context())
+	if n := e.notifier.count(); n != maxNoticeTries {
+		t.Errorf("notifier called %d times after giving up, want %d", n, maxNoticeTries)
+	}
 }
 
+// A result.json that cannot be written holds the notice back; the
+// keep-alive loop writes it and notifies once it can.
 func TestSvcNoNoticeWithoutResult(t *testing.T) {
 	e := svcSetup(t)
 	id, c := e.launch("")
 	// The controller commits the end but cannot write result.json.
-	if err := os.WriteFile(e.store(id).Path(fileResult), []byte("{}"), 0o600); err != nil {
+	resultPath := e.store(id).Path(fileResult)
+	if err := os.WriteFile(resultPath, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(e.store(id).Path(fileResult), 0); err != nil {
+	if err := os.Chmod(resultPath, 0); err != nil {
 		t.Fatal(err)
 	}
 	c.finish <- StatusCompleted
@@ -921,8 +959,22 @@ func TestSvcNoNoticeWithoutResult(t *testing.T) {
 	if _, ok := e.marker(id, cleanupNotice); !ok {
 		t.Error("the notice is no longer pending")
 	}
+	if e.noticeTries(id) != 1 {
+		t.Errorf("notice tries = %d, want 1", e.noticeTries(id))
+	}
 	if len(e.agents.deletedIDs()) != 2 {
 		t.Errorf("temporary agents not deleted: %v", e.agents.deletedIDs())
+	}
+	if err := os.Remove(resultPath); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.keepAliveTick(t.Context())
+	svcEventually(t, "notice delivered", func() bool {
+		_, pending := e.marker(id, cleanupNotice)
+		return !pending && e.notifier.count() == 1
+	})
+	if res, err := e.store(id).ReadResult(); err != nil || res.Status != StatusCompleted {
+		t.Errorf("result.json = %+v, %v", res, err)
 	}
 }
 
@@ -1149,9 +1201,9 @@ func TestSvcRecover(t *testing.T) {
 // svcUnstartedRun writes run n of forum id as a launch that died before
 // its snapshot leaves it: the run's forum.json, a source, an agents marker
 // naming "leftover" and the notice marker.
-func svcUnstartedRun(t *testing.T, e *svcEnv, id string, n int) *Store {
+func svcUnstartedRun(t *testing.T, e *svcEnv, id string, n int) *forumStore {
 	t.Helper()
-	f, err := OpenStore(e.scope.BaseDirectory, id)
+	f, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,7 +1294,7 @@ func TestSvcRunErrorLeavesForumInterrupted(t *testing.T) {
 		_, ok := e.svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("ERROR forum " + id + ": run 1 stopped") {
+	if !e.logger.has("ERROR forum " + e.ref(id) + " run 1: stopped") {
 		t.Error("the run error was not logged at Error")
 	}
 	if e.notifier.count() != 0 {
@@ -1347,7 +1399,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		return replier.Ask(ctx, agentID, msg, wait)
 	})
 	newSvc := func() *Service {
-		svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}, OnStuck: e.stuck.record})
+		svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, OnStuck: e.stuck.record})
 		t.Cleanup(func() { svcClose(t, svc) })
 		return svc
 	}
@@ -1360,7 +1412,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		_, ok := svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("INFO forum "+id+": run 1 stopped by the shutdown") || e.logger.has("ERROR forum "+id) {
+	if !e.logger.has("INFO forum "+e.ref(id)+" run 1: stopped by the shutdown") || e.logger.has("ERROR forum "+e.ref(id)) {
 		t.Error("the shutdown was not logged at Info only")
 	}
 	if calls := e.stuck.list(); len(calls) != 0 {
@@ -1398,26 +1450,29 @@ func (f svcMessengerFunc) Ask(ctx context.Context, agentID, message string, wait
 // retried by the keep-alive loop until they are gone.
 func TestSvcCleanupIsRetried(t *testing.T) {
 	e := svcSetup(t)
-	e.svc.keepAliveEvery = 10 * time.Millisecond
 	id, c := e.launch("")
 	created := e.agents.createdIDs()
 	e.agents.setDeleteErr(created[0], errSvcHost)
 	c.finish <- StatusCompleted
 	e.settled(id, StatusCompleted)
-	if _, ok := e.marker(id, CleanupAgents); !ok {
+	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion failed")
 	}
-	svcEventually(t, "retry logged", func() bool { return e.logger.has("retried every") })
+	if e.cleanupsPending() != 1 {
+		t.Fatal("the failed deletion is not queued for a retry")
+	}
+	e.svc.keepAliveTick(t.Context()) // still failing: kept
+	if _, ok := e.marker(id, cleanupAgents); !ok || e.cleanupsPending() != 1 {
+		t.Fatal("a failed retry dropped the deletion")
+	}
 	e.agents.setDeleteErr(created[0], nil)
-	svcEventually(t, "agents deleted", func() bool {
-		_, ok := e.marker(id, CleanupAgents)
-		return !ok && slices.Contains(e.agents.deletedIDs(), created[0])
-	})
-	svcEventually(t, "retry set emptied", func() bool {
-		e.svc.mu.Lock()
-		defer e.svc.mu.Unlock()
-		return len(e.svc.cleanups) == 0
-	})
+	e.svc.keepAliveTick(t.Context())
+	if _, ok := e.marker(id, cleanupAgents); ok || !slices.Contains(e.agents.deletedIDs(), created[0]) {
+		t.Error("the retry did not delete the agent")
+	}
+	if e.cleanupsPending() != 0 {
+		t.Error("the retry set is not empty")
+	}
 }
 
 // A temporary agent the host deletes when its turn ends is not a failure: it
@@ -1425,7 +1480,6 @@ func TestSvcCleanupIsRetried(t *testing.T) {
 // is retried, so a restart before the turn ends still deletes it.
 func TestSvcCleanupPendingTurn(t *testing.T) {
 	e := svcSetup(t)
-	e.svc.keepAliveEvery = 10 * time.Millisecond
 	id, c := e.launch("")
 	created := e.agents.createdIDs()
 	e.agents.setDeleteErr(created[0], fmt.Errorf("%w: busy", ErrDeletePending))
@@ -1435,21 +1489,21 @@ func TestSvcCleanupPendingTurn(t *testing.T) {
 	if !e.logger.has("are deleted when their turns end") || e.logger.has("retried every") {
 		t.Errorf("pending deletion logged as a failure: %v", e.logger.lines)
 	}
-	if _, ok := e.marker(id, CleanupAgents); !ok {
+	if _, ok := e.marker(id, cleanupAgents); !ok {
 		t.Fatal("the agents marker is gone although a deletion is pending")
 	}
-	time.Sleep(100 * time.Millisecond) // retries while the turn still runs keep it listed
-	e.svc.mu.Lock()
-	retried := len(e.svc.cleanups) == 1
-	e.svc.mu.Unlock()
-	if _, ok := e.marker(id, CleanupAgents); !ok || !retried {
-		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %v)", ok, retried)
+	// Retries while the turn still runs keep it listed.
+	for range 3 {
+		e.svc.keepAliveTick(t.Context())
+	}
+	if _, ok := e.marker(id, cleanupAgents); !ok || e.cleanupsPending() != 1 {
+		t.Fatalf("a pending deletion was dropped by a retry (marker %v, retried %d)", ok, e.cleanupsPending())
 	}
 	e.agents.setDeleteErr(created[0], nil) // the turn ended: the agent is gone
-	svcEventually(t, "marker cleared by the retry", func() bool {
-		_, ok := e.marker(id, CleanupAgents)
-		return !ok
-	})
+	e.svc.keepAliveTick(t.Context())
+	if _, ok := e.marker(id, cleanupAgents); ok || e.cleanupsPending() != 0 {
+		t.Error("the retry did not clear the marker")
+	}
 }
 
 // The temporary agents of a running forum are touched too.
@@ -1479,7 +1533,7 @@ func TestSvcStuckIsReportedOnce(t *testing.T) {
 		_, ok := e.svc.running(e.scope, id)
 		return !ok
 	})
-	if !e.logger.has("ERROR forum " + id + ": run 1 stopped") {
+	if !e.logger.has("ERROR forum " + e.ref(id) + " run 1: stopped") {
 		t.Error("not logged at Error naming the forum")
 	}
 	if err := e.svc.Resume(t.Context(), e.scope, id); err != nil {
@@ -1520,7 +1574,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.settled(id, StatusPaused)
-	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); err != nil {
+	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	e.svc.mu.Lock()
@@ -1530,7 +1584,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 		t.Errorf("%d control locks left", n)
 	}
 
-	// A damaged source fails Verify but not status or list.
+	// A damaged source fails verify but not status or list.
 	snap, err := e.store(id).ReadSnapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -1538,7 +1592,7 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 	if err = os.WriteFile(e.store(id).Path(snap.Sources["note"].File), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = Verify(e.store(id)); !errors.Is(err, ErrCorrupt) {
+	if _, _, err = verify(e.store(id)); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Verify: %v", err)
 	}
 	list, err := e.svc.List(t.Context(), e.scope)
@@ -1563,7 +1617,7 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 		}
 		return replier.Ask(ctx, agentID, msg, wait)
 	})
-	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 	cfg := strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)
 	id, err := svcLaunch(t, svc, cfg, e.opts())
@@ -1591,14 +1645,14 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 // outputs, so the work done is reachable: once it has ended every
 // committed output, while it runs only published ones.
 func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
-	cfg, err := Decode([]byte(strings.Replace(svcSimpleJSON, `"layers": [`, `"layers": [
+	cfg, err := decodeConfig([]byte(strings.Replace(svcSimpleJSON, `"layers": [`, `"layers": [
     {"id": "answer", "participants": ["alice", "bob"], "instructions": "Answer.",
      "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}},`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &Snapshot{ForumID: "f", Layers: []string{"answer", "talk"}, ResultLayers: []string{"talk"}}
-	answer := OutputRecord{OutputID: "a1", LayerID: "answer", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")}
+	answer := OutputRecord{OutputID: "a1", LayerID: "answer", Round: 1, ParticipantID: "alice", Turn: turnID(1, "alice")}
 	st := &State{
 		Status: StatusFailed, Reason: EndAttemptsExhausted,
 		Layers: map[string]*LayerState{"answer": {Started: true, Round: 1, Outputs: []OutputRecord{answer}}},
@@ -1613,7 +1667,7 @@ func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
 	}
 	st.Status = StatusCompleted
 	st.Layers["talk"] = &LayerState{Started: true, Ended: true, RoundsPublished: 1, Outputs: []OutputRecord{
-		{OutputID: "t1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: TurnID(1, "alice")},
+		{OutputID: "t1", LayerID: "talk", Round: 1, ParticipantID: "alice", Turn: turnID(1, "alice")},
 	}}
 	if res = buildResult(cfg, snap, st); len(res.OtherLayers) != 0 {
 		t.Errorf("a result with outputs lists other layers: %+v", res.OtherLayers)
@@ -1637,5 +1691,69 @@ func TestSvcValidateReportsEveryProblem(t *testing.T) {
 		if !paths[want] {
 			t.Errorf("no issue about %s in %v", want, ve.Issues)
 		}
+	}
+}
+
+// Close while Recover is starting runs never adds a goroutine to the
+// WaitGroup Close is waiting on (a data race and a possible panic), and no
+// run is left live once both have returned.
+func TestSvcCloseDuringRecover(t *testing.T) {
+	for range 20 {
+		e := svcSetup(t)
+		for range 4 {
+			e.launch("")
+		}
+		e.restart()
+		svc := e.svc
+		recovered := make(chan struct{})
+		go func() {
+			defer close(recovered)
+			// Whatever Recover reports (a run refused because the service
+			// closed), it must not race Close.
+			if err := svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope}); err != nil {
+				t.Logf("recover: %v", err)
+			}
+		}()
+		svcClose(t, svc)
+		<-recovered
+		svc.mu.Lock()
+		live := len(svc.runs)
+		svc.mu.Unlock()
+		if live != 0 {
+			t.Fatalf("%d runs live after Close and Recover returned", live)
+		}
+		if err := svc.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Once Close has been called, Recover starts nothing: no run and no
+// completion notice, so nothing outlives Close.
+func TestSvcRecoverAfterCloseStartsNothing(t *testing.T) {
+	e := svcSetup(t)
+	e.notifier.block = make(chan struct{})
+	ended, c := e.launch("")
+	c.finish <- StatusCompleted
+	e.settled(ended, StatusCompleted)
+	running, _ := e.launch("")
+	e.restart() // the blocked notice is cut by the shutdown and stays pending
+	close(e.notifier.block)
+	if _, ok := e.marker(ended, cleanupNotice); !ok {
+		t.Fatal("the notice is not pending after the restart")
+	}
+	before := e.notifier.count()
+	svcClose(t, e.svc)
+	if err := e.svc.Recover(t.Context(), []Scope{e.scope}); !errors.Is(err, errClosed) {
+		t.Errorf("Recover after Close = %v, want errClosed", err)
+	}
+	if _, ok := e.svc.running(e.scope, running); ok {
+		t.Error("Recover started a run after Close")
+	}
+	e.svc.mu.Lock()
+	notifying := len(e.svc.notifying)
+	e.svc.mu.Unlock()
+	if notifying != 0 || e.notifier.count() != before {
+		t.Errorf("Recover started a notice after Close (in flight %d, sent %d, before %d)", notifying, e.notifier.count(), before)
 	}
 }

@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Seam (d): one participant turn (spec §2.3, §5; rev 3 §8 attempt
-// reservation and recovery): composing the message, the attempt loop with
-// bounded repair, output validation and publication.
+// One participant turn: composing the message, the attempt loop with
+// bounded repair (attempt reservation and recovery, DESIGN.md §5.3),
+// output validation and publication.
 
 // work is one unit the attempt loop performs: a participant turn or a
 // moderator check.
@@ -53,20 +53,20 @@ type attemptResult struct {
 // or the reason the forum or layer must stop, or nil and "" when a pause
 // or cancel interrupted it. cutoff is the last commit seq the participant
 // may see. For a per_turn layer the committed output is also written to
-// the transcript here (published at commit, §5).
+// the transcript here (published at commit).
 //
 // Attempts are numbered from the attempts already reserved for this turn
-// ID (uncertain ones included, §8) up to limits.max_attempts_per_turn; see
+// ID (uncertain ones included) up to limits.max_attempts_per_turn; see
 // perform for adoption, resend and repair. Rejected content is never
 // published; every attempt stays on disk.
-func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
+func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
 	p, ok := c.parts.Participants[participantID]
 	if !ok {
 		return nil, "", fmt.Errorf("%w: participant %q is not in participants.json", ErrCorrupt, participantID)
 	}
 	schema := c.schemas[layer.Output.Schema]
 	res, err := c.perform(ctx, work{
-		layer: layer, round: round, turn: TurnID(round, participantID), kind: TurnParticipant, p: p,
+		layer: layer, round: round, turn: turnID(round, participantID), kind: TurnParticipant, p: p,
 		compose: func(cutoff int) (string, error) {
 			return c.composeTurnMessage(layer, round, p, cutoff)
 		},
@@ -97,8 +97,8 @@ func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, partic
 //  1. The latest reserved attempt decides the next step:
 //     - an accepted reply (no issues) without a committed result: the
 //     process died between reply and commit; it is adopted without
-//     calling again (rev 3 §8);
-//     - no reply (uncertain, §8) or an unsuccessful outcome (timeout,
+//     calling again;
+//     - no reply (uncertain) or an unsuccessful outcome (timeout,
 //     error, cancelled, empty): its message is resent unchanged as a new
 //     attempt;
 //     - a rejected reply: the next attempt is a repair (repairFor);
@@ -111,10 +111,10 @@ func (c *Controller) runTurn(ctx context.Context, layer Layer, round int, partic
 //
 // A Messenger error is EndHostError, or EndParticipantGone for a created
 // participant the host no longer has (hostFailure).
-func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptResult, error) {
+func (c *forumController) perform(ctx context.Context, w work, cutoff int) (attemptResult, error) {
 	prior := c.turnAttempts(w.layer.ID, w.turn)
 	if last := lastAttempt(prior); last != nil && last.Reply != nil && len(last.Reply.Issues) == 0 {
-		c.host.Logger.Infof("forum %s: %s/%s adopting saved reply of attempt %d", c.snap.ForumID, w.layer.ID, w.turn, last.Request.Attempt)
+		c.host.Logger.Infof("%s: %s/%s adopting saved reply of attempt %d", c.logName, w.layer.ID, w.turn, last.Request.Attempt)
 		return attemptResult{req: &last.Request, reply: last.Reply}, nil
 	}
 	for attempt := len(prior) + 1; attempt <= c.snap.Limits.MaxAttemptsPerTurn; attempt++ {
@@ -135,8 +135,8 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 			req.Message, req.ThroughSeq, req.Repair = c.repairFor(w, prior), last.Request.ThroughSeq, true
 		}
 		deadline, expired := c.awaitModel(ctx, w)
-		wait, reason, err := c.reserve(ctx, w.layer, req, deadline)
-		if err != nil || reason != "" || wait < 0 {
+		wait, reserved, reason, err := c.reserve(ctx, w.layer, req, deadline)
+		if err != nil || !reserved {
 			return attemptResult{reason: reason}, err
 		}
 		// A held turn never goes out without time to answer (the clock
@@ -157,13 +157,13 @@ func (c *Controller) perform(ctx context.Context, w work, cutoff int) (attemptRe
 		// A wait the run deadline cut is the deadline stopping the run, not
 		// an attempt the participant used up, even on its last attempt.
 		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(time.Now()) {
-			c.host.Logger.Warnf("forum %s: %s/%s attempt %d cut by the run deadline", c.snap.ForumID, w.layer.ID, w.turn, attempt)
+			c.host.Logger.Warnf("%s: %s/%s attempt %d cut by the run deadline", c.logName, w.layer.ID, w.turn, attempt)
 			return attemptResult{reason: EndDeadline}, nil
 		}
-		c.host.Logger.Warnf("forum %s: %s/%s attempt %d rejected: %s", c.snap.ForumID, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
+		c.host.Logger.Warnf("%s: %s/%s attempt %d rejected: %s", c.logName, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
 		prior = c.turnAttempts(w.layer.ID, w.turn)
 	}
-	c.host.Logger.Errorf("forum %s: %s/%s: no valid reply from %s in %d attempts", c.snap.ForumID, w.layer.ID, w.turn, w.p.ID, c.snap.Limits.MaxAttemptsPerTurn)
+	c.host.Logger.Errorf("%s: %s/%s: no valid reply from %s in %d attempts", c.logName, w.layer.ID, w.turn, w.p.ID, c.snap.Limits.MaxAttemptsPerTurn)
 	return attemptResult{reason: w.exhausted}, nil
 }
 
@@ -201,7 +201,7 @@ const minHeldWait = time.Second
 // timeout); the attempt then ends as a timeout without being sent. A model
 // back in cooldown after the delay is held again. A pause, cancel
 // or end of ctx ends the hold or the delay early; reserve then stops the turn.
-func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
+func (c *forumController) awaitModel(ctx context.Context, w work) (deadline time.Time, expired bool) {
 	if c.host.Cooldown == nil {
 		return time.Time{}, false
 	}
@@ -211,14 +211,13 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 	}
 	start := time.Now()
 	deadline = start.Add(c.wait(start))
-	ref := Ref(c.snap.Name, c.snap.ForumID)
-	c.host.Logger.Infof("forum %s: %s/%s: participant %s waits for model %s, in cooldown for %s",
-		ref, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
+	c.host.Logger.Infof("%s: %s/%s: participant %s waits for model %s, in cooldown for %s",
+		c.logName, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
 	for {
 		now := time.Now()
 		if !now.Before(deadline) {
-			c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
-				ref, w.layer.ID, w.turn, model, w.p.ID)
+			c.host.Logger.Infof("%s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
+				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
 		if !c.holdFor(ctx, min(left, deadline.Sub(now), cooldownPoll)) {
@@ -231,12 +230,12 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 		}
 		delay := releaseDelay()
 		if time.Until(deadline)-delay < minHeldWait {
-			c.host.Logger.Infof("forum %s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
-				ref, w.layer.ID, w.turn, model, w.p.ID)
+			c.host.Logger.Infof("%s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
+				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
-		c.host.Logger.Infof("forum %s: %s/%s: the cooldown has ended; sending participant %s's turn in %s",
-			ref, w.layer.ID, w.turn, w.p.ID, delay.Round(time.Millisecond))
+		c.host.Logger.Infof("%s: %s/%s: the cooldown has ended; sending participant %s's turn in %s",
+			c.logName, w.layer.ID, w.turn, w.p.ID, delay.Round(time.Millisecond))
 		if !c.holdFor(ctx, delay) {
 			return deadline, false
 		}
@@ -244,15 +243,15 @@ func (c *Controller) awaitModel(ctx context.Context, w work) (deadline time.Time
 		if nextLeft <= 0 {
 			return deadline, false
 		}
-		c.host.Logger.Infof("forum %s: %s/%s: model %s of participant %s is in cooldown again",
-			ref, w.layer.ID, w.turn, next, w.p.ID)
+		c.host.Logger.Infof("%s: %s/%s: model %s of participant %s is in cooldown again",
+			c.logName, w.layer.ID, w.turn, next, w.p.ID)
 		model, left = next, nextLeft
 	}
 }
 
 // holdFor waits d in steps of at most cooldownPoll, reporting false as soon
 // as ctx ends or a pause or cancel is requested.
-func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
+func (c *forumController) holdFor(ctx context.Context, d time.Duration) bool {
 	end := time.Now().Add(d)
 	for {
 		step := min(time.Until(end), cooldownPoll)
@@ -275,47 +274,48 @@ func (c *Controller) holdFor(ctx context.Context, d time.Duration) bool {
 }
 
 // reserve is the reservation step of one attempt: under dispatchMu it
-// refuses when a pause or cancel was requested (wait -1), stops at a limit
-// (checkLimits), writes request.json and commits CommitAttempt, which only
-// lands while the forum is running. It returns the Ask wait, which ends by
-// deadline when that is set (a turn held back by awaitModel).
-func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (time.Duration, EndReason, error) {
+// declines when a pause or cancel was requested, stops at a limit
+// (checkLimits, reason set), writes request.json and commits
+// CommitAttempt, which only lands while the forum is running. reserved
+// reports that the attempt was committed; wait is then the Ask wait, which
+// ends by deadline when that is set (a turn held back by awaitModel).
+func (c *forumController) reserve(ctx context.Context, layer Layer, req *AttemptRequest, deadline time.Time) (wait time.Duration, reserved bool, reason EndReason, err error) {
 	c.dispatchMu.Lock()
 	defer c.dispatchMu.Unlock()
 	if c.interrupted() {
-		return -1, "", nil
+		return 0, false, "", nil
 	}
-	if err := ctx.Err(); err != nil {
-		return -1, "", err
+	if err = ctx.Err(); err != nil {
+		return 0, false, "", err
 	}
 	now := time.Now()
 	if reason := c.checkLimits(layer, 1, now); reason != "" {
-		c.host.Logger.Warnf("forum %s: %s/%s not sent: %s", c.snap.ForumID, req.Layer, req.Turn, reason)
-		return -1, reason, nil
+		c.host.Logger.Warnf("%s: %s/%s not sent: %s", c.logName, req.Layer, req.Turn, reason)
+		return 0, false, reason, nil
 	}
-	wait := c.wait(now)
+	wait = c.wait(now)
 	if !deadline.IsZero() {
 		wait = max(min(wait, deadline.Sub(now)), 0)
 	}
 	req.SentAt = now.UTC()
 	req.WaitSeconds = int(wait / time.Second)
-	if err := c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
-		return -1, "", err
+	if err = c.durable("request", func() error { return c.store.WriteAttemptRequest(req) }); err != nil {
+		return 0, false, "", err
 	}
-	err := c.commitWhen(statusIs(StatusRunning), &Commit{
+	err = c.commitWhen(statusIs(StatusRunning), &Commit{
 		Kind: CommitAttempt, Layer: req.Layer, Round: req.Round, Turn: req.Turn, TurnKind: req.Kind,
 		Participant: req.Participant, Attempt: req.Attempt, ThroughSeq: req.ThroughSeq,
 	}, func() {
 		c.attempts[req.Layer] = append(c.attempts[req.Layer], AttemptRecord{Request: *req})
 	})
 	if errors.Is(err, errSkip) {
-		return -1, "", nil // paused or cancelled between the check and the commit
+		return 0, false, "", nil // paused or cancelled between the check and the commit
 	}
 	if err != nil {
-		return -1, "", err
+		return 0, false, "", err
 	}
-	c.host.Logger.Debugf("forum %s: %s/%s attempt %d sent to %s (wait %s)", c.snap.ForumID, req.Layer, req.Turn, req.Attempt, req.Participant, wait)
-	return wait, "", nil
+	c.host.Logger.Debugf("%s: %s/%s attempt %d sent to %s (wait %s)", c.logName, req.Layer, req.Turn, req.Attempt, req.Participant, wait)
+	return wait, true, "", nil
 }
 
 // dispatch performs the Ask of a reserved attempt and records its reply:
@@ -324,11 +324,11 @@ func (c *Controller) reserve(ctx context.Context, layer Layer, req *AttemptReque
 // request and its reservation on disk without a reply: after RequestCancel
 // it is an interruption (nil reply, no reason); when ctx ended or the host
 // is shutting down (ErrShuttingDown) it is returned as the error, leaving
-// the attempt uncertain (§8: resent at the next start) and the forum as it
+// the attempt uncertain (resent at the next start) and the forum as it
 // is; otherwise it is the hostFailure reason. A cancelled turn while ctx
 // has ended (the service is closing) is treated the same way: the
 // shutdown cancelled it, so no failed reply is recorded.
-func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
+func (c *forumController) dispatch(ctx context.Context, p ParticipantRecord, req *AttemptRequest, wait time.Duration, validate func(string) []string) (*AttemptReply, EndReason, error) {
 	reply, err := c.host.Messenger.Ask(WithAskInfo(ctx, AskInfo{ForumID: c.snap.ForumID, Origin: c.snap.Origin}), req.AgentID, req.Message, wait)
 	if err != nil {
 		switch {
@@ -337,13 +337,13 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 		case ctx.Err() != nil:
 			return nil, "", ctx.Err()
 		case errors.Is(err, ErrShuttingDown):
-			c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: the host is shutting down", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+			c.host.Logger.Infof("%s: %s/%s attempt %d left unanswered: the host is shutting down", c.logName, req.Layer, req.Turn, req.Attempt)
 			return nil, "", fmt.Errorf("ask %s (agent %s): %w", p.ID, p.AgentID, err)
 		}
 		return nil, c.hostFailure(ctx, p, err), nil
 	}
 	if reply.Outcome == OutcomeCancelled && ctx.Err() != nil && !c.cancel.Load() {
-		c.host.Logger.Infof("forum %s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.snap.ForumID, req.Layer, req.Turn, req.Attempt)
+		c.host.Logger.Infof("%s: %s/%s attempt %d left unanswered: cancelled by the shutdown", c.logName, req.Layer, req.Turn, req.Attempt)
 		return nil, "", ctx.Err()
 	}
 	rec, err := c.recordReply(req, reply, validate)
@@ -353,7 +353,7 @@ func (c *Controller) dispatch(ctx context.Context, p ParticipantRecord, req *Att
 // recordReply records the reply of a reserved attempt: reply.json with
 // Issues from validate when the outcome is OutcomeOK, the outcome
 // otherwise, and the attempts cache.
-func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func(string) []string) (*AttemptReply, error) {
+func (c *forumController) recordReply(req *AttemptRequest, reply Reply, validate func(string) []string) (*AttemptReply, error) {
 	rec := &AttemptReply{ReceivedAt: time.Now().UTC(), Outcome: reply.Outcome, Text: reply.Text}
 	if reply.Outcome.Successful() {
 		rec.Issues = validate(reply.Text)
@@ -379,8 +379,8 @@ func (c *Controller) recordReply(req *AttemptRequest, reply Reply, validate func
 // hostFailure maps a Messenger error to the run's end reason:
 // EndParticipantGone when the participant was Created and the host says
 // the agent does not exist, EndHostError otherwise.
-func (c *Controller) hostFailure(ctx context.Context, p ParticipantRecord, err error) EndReason {
-	c.host.Logger.Errorf("forum %s: ask %s (agent %s) failed: %v", c.snap.ForumID, p.ID, p.AgentID, err)
+func (c *forumController) hostFailure(ctx context.Context, p ParticipantRecord, err error) EndReason {
+	c.host.Logger.Errorf("%s: ask %s (agent %s) failed: %v", c.logName, p.ID, p.AgentID, err)
 	if p.Created {
 		if exists, existsErr := c.host.Agents.Exists(ctx, p.AgentID); existsErr == nil && !exists {
 			return EndParticipantGone
@@ -393,7 +393,7 @@ func (c *Controller) hostFailure(ctx context.Context, p ParticipantRecord, err e
 // attempt directory and commits CommitTurn. It returns the record and the
 // commit, or nil when a cancel was requested first (the reply stays on
 // disk for audit and is never published).
-func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *AttemptReply) (*OutputRecord, *Commit, error) {
+func (c *forumController) storeOutput(layer Layer, req *AttemptRequest, reply *AttemptReply) (*OutputRecord, *Commit, error) {
 	content, issues := validateOutput(layer.Output, reply.Text, c.schemas[layer.Output.Schema])
 	if len(issues) > 0 {
 		return nil, nil, fmt.Errorf("%w: accepted reply of %s/%s attempt %d no longer validates: %s",
@@ -406,6 +406,7 @@ func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *Attemp
 	out := &OutputRecord{
 		OutputID: outputID(c.snap.ForumID, layer.ID, req.Turn), LayerID: layer.ID, Round: req.Round,
 		ParticipantID: req.Participant, Format: layer.Output.Format, Turn: req.Turn, Attempt: req.Attempt,
+		Resent: c.resentAfterRestart(layer.ID, req.Turn, req.Attempt),
 	}
 	if err := c.durable("output", func() error { return c.store.WriteOutput(out, content, published) }); err != nil {
 		return nil, nil, err
@@ -417,7 +418,7 @@ func (c *Controller) storeOutput(layer Layer, req *AttemptRequest, reply *Attemp
 		}
 		return nil, nil, err
 	}
-	c.host.Logger.Debugf("forum %s: %s/%s committed (attempt %d)", c.snap.ForumID, layer.ID, req.Turn, req.Attempt)
+	c.host.Logger.Debugf("%s: %s/%s committed (attempt %d)", c.logName, layer.ID, req.Turn, req.Attempt)
 	return out, commit, nil
 }
 
@@ -432,8 +433,20 @@ func outputID(forumID, layerID, turn string) string {
 	return uuid.NewSHA1(ns, []byte(layerID+"/"+turn)).String()
 }
 
+// resentAfterRestart reports whether an attempt of the turn before attempt
+// has no reply: within one process every attempt gets one, so it was cut
+// by a restart and its message sent again.
+func (c *forumController) resentAfterRestart(layerID, turn string, attempt int) bool {
+	for _, a := range c.turnAttempts(layerID, turn) {
+		if a.Request.Attempt < attempt && a.Reply == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // turnAttempts returns the cached attempts of one turn ID, in order.
-func (c *Controller) turnAttempts(layerID, turn string) []AttemptRecord {
+func (c *forumController) turnAttempts(layerID, turn string) []AttemptRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []AttemptRecord
@@ -473,7 +486,7 @@ const (
 // whether it was ever sent anything, whether it was in this layer, and the
 // last commit its messages covered. It is derived from the CommitAttempt
 // entries, so it survives a restart.
-func (c *Controller) contact(participantID, layerID string) (briefed, introduced bool, through int) {
+func (c *forumController) contact(participantID, layerID string) (briefed, introduced bool, through int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.commits {
@@ -489,7 +502,7 @@ func (c *Controller) contact(participantID, layerID string) (briefed, introduced
 }
 
 // composeTurnMessage builds what the participant is sent for this turn
-// (§2.3). Peer and source content is quoted data, attributed:
+// . Peer and source content is quoted data, attributed:
 //
 //   - the brief, on the participant's first message in the forum;
 //   - its private instructions, the layer's instructions and its routed
@@ -504,9 +517,9 @@ func (c *Controller) contact(participantID, layerID string) (briefed, introduced
 // A FreshModeSingleShot participant remembers nothing, so it gets
 // everything every time: brief, instructions, layer instructions, routed
 // inputs and the layer's whole eligible conversation up to cutoff, its
-// own outputs included and marked as its own (§3.1). Directed messages
+// own outputs included and marked as its own. Directed messages
 // are delivered once, to every participant mode alike.
-func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRecord, cutoff int) (string, error) {
+func (c *forumController) composeTurnMessage(layer Layer, round int, p ParticipantRecord, cutoff int) (string, error) {
 	briefed, introduced, through := c.contact(p.ID, layer.ID)
 	single := p.Mode == FreshModeSingleShot
 	full := single || !introduced
@@ -519,7 +532,7 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 		c.writeIntro(&b, layer, p, nil)
 		inputs, err := c.store.ReadLayerInputs(layer.ID)
 		if err != nil {
-			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, TurnID(round, p.ID), err)
+			return "", fmt.Errorf("compose %s/%s: %w", layer.ID, turnID(round, p.ID), err)
 		}
 		c.writeInputs(&b, inputs.Participants[p.ID], layer.Inputs, p.ID)
 	}
@@ -559,20 +572,12 @@ func (c *Controller) composeTurnMessage(layer Layer, round int, p ParticipantRec
 // turnHeader is the first line of every participant message (repairs
 // included): which forum, layer and round it belongs to, since an
 // existing agent's conversation also carries other work.
-func (c *Controller) turnHeader(layer Layer, round int) string {
-	return fmt.Sprintf("Forum %q, layer %q, round %d.", c.forumName(), layer.ID, round)
-}
-
-// forumName is the configured name, or the forum ID.
-func (c *Controller) forumName() string {
-	if c.snap.Name != "" {
-		return c.snap.Name
-	}
-	return c.snap.ForumID
+func (c *forumController) turnHeader(layer Layer, round int) string {
+	return fmt.Sprintf("Forum %q, layer %q, round %d.", c.snap.Label(), layer.ID, round)
 }
 
 // writeBrief writes the brief section.
-func (c *Controller) writeBrief(b *strings.Builder) {
+func (c *forumController) writeBrief(b *strings.Builder) {
 	br := c.cfg.Brief
 	fmt.Fprintf(b, "\n%s\nPurpose: %s\nTask: %s\n", headingBrief, br.Purpose, br.Task)
 	writeList(b, "Success criteria:", br.SuccessCriteria)
@@ -593,7 +598,7 @@ func writeList(b *strings.Builder, title string, items []string) {
 // writeIntro writes the participant's private instructions (when set) and
 // the layer's instructions; preface, when set, comes first in the layer
 // section (the moderator's role).
-func (c *Controller) writeIntro(b *strings.Builder, layer Layer, p ParticipantRecord, preface []string) {
+func (c *forumController) writeIntro(b *strings.Builder, layer Layer, p ParticipantRecord, preface []string) {
 	if instr := c.cfg.Participants[p.ID].Instructions; instr != "" {
 		fmt.Fprintf(b, "\n%s\n%s\n", headingInstructions, instr)
 	}
@@ -608,7 +613,7 @@ func (c *Controller) writeIntro(b *strings.Builder, layer Layer, p ParticipantRe
 // the inputs the items came from and pid their recipient: an anonymous
 // route addressed to pid that gave it nothing (optional, with no other
 // author's output) is written as a line saying so.
-func (c *Controller) writeInputs(b *strings.Builder, items []InputItem, routes []Route, pid string) {
+func (c *forumController) writeInputs(b *strings.Builder, items []InputItem, routes []Route, pid string) {
 	var empty []string // producing layers of anonymous routes that gave nothing
 	for i, r := range routes {
 		if !r.Anonymous || (len(r.To) > 0 && !slices.Contains(r.To, pid)) {
@@ -651,7 +656,7 @@ const noOtherResponses = "No other responses are available."
 
 // writeEvents writes layer events under heading; self names the reader so
 // its own outputs (single_shot only) are marked as such.
-func (c *Controller) writeEvents(b *strings.Builder, heading string, events []forumEvent, self string) {
+func (c *forumController) writeEvents(b *strings.Builder, heading string, events []forumEvent, self string) {
 	fmt.Fprintf(b, "\n%s\n%s\n", heading, dataNote)
 	for _, ev := range events {
 		switch {
@@ -669,7 +674,7 @@ func (c *Controller) writeEvents(b *strings.Builder, heading string, events []fo
 
 // participantName is the participant's transcript name: participants.json,
 // then the configuration, then the ID.
-func (c *Controller) participantName(id string) string {
+func (c *forumController) participantName(id string) string {
 	if p, ok := c.parts.Participants[id]; ok && p.Name != "" {
 		return p.Name
 	}
@@ -698,7 +703,7 @@ type forumEvent struct {
 // true, the moderator's `conversation_view: full`) and moderator GUIDE
 // decisions. An after_round output is visible only once its round is
 // published, in the layer's participant order.
-func (c *Controller) layerEvents(layer Layer, afterSeq, throughSeq int, full bool) ([]forumEvent, error) {
+func (c *forumController) layerEvents(layer Layer, afterSeq, throughSeq int, full bool) ([]forumEvent, error) {
 	c.mu.Lock()
 	var events []forumEvent
 	pending := map[int][]OutputRecord{} // after_round outputs by round, until published
@@ -753,8 +758,8 @@ func (c *Controller) layerEvents(layer Layer, afterSeq, throughSeq int, full boo
 	return events, nil
 }
 
-// withoutAuthor drops the outputs authored by id (§2.3: never resend a
-// participant's own outputs).
+// withoutAuthor drops the outputs authored by id (a participant is never
+// sent its own outputs).
 func withoutAuthor(events []forumEvent, id string) []forumEvent {
 	out := events[:0:0]
 	for _, ev := range events {
@@ -770,8 +775,8 @@ func withoutAuthor(events []forumEvent, id string) []forumEvent {
 // participantID in CommitModerated entries of any layer with afterSeq <
 // Seq <= throughSeq, in order: those decided since its last message.
 // They are delivered once, inside its next turn of this forum, and never
-// written to the transcript (§6).
-func (c *Controller) pendingDirected(participantID string, afterSeq, throughSeq int) []string {
+// written to the transcript.
+func (c *forumController) pendingDirected(participantID string, afterSeq, throughSeq int) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []string
@@ -793,7 +798,7 @@ func (c *Controller) pendingDirected(participantID string, afterSeq, throughSeq 
 // with a named schema, the schema itself when withSchema is true (the
 // first turn in a layer, a single_shot turn and every repair) or its name
 // otherwise.
-func (c *Controller) outputContract(out Output, withSchema bool) string {
+func (c *forumController) outputContract(out Output, withSchema bool) string {
 	switch out.Format {
 	case FormatJSON:
 		s := "Reply with exactly one JSON value and nothing else."
@@ -845,10 +850,10 @@ func fence(info, content string) string {
 // JSON value (a fenced ```json block around it is accepted and the fence
 // removed); the value is re-encoded canonically and, when schema is
 // non-nil, validated, the SchemaViolationError messages being the issues.
-// When out.Share is set, every share pointer must resolve (rev 3 §4
-// "missing share paths fail output validation"). A non-empty issues list
+// When out.Share is set, every share pointer must resolve (a missing share
+// path fails the output's validation). A non-empty issues list
 // means the attempt is rejected and nothing is stored.
-func validateOutput(out Output, text string, schema CompiledSchema) (content []byte, issues []string) {
+func validateOutput(out Output, text string, schema *compiledSchema) (content []byte, issues []string) {
 	if strings.TrimSpace(text) == "" {
 		return nil, []string{"the reply is empty"}
 	}
@@ -870,7 +875,7 @@ func validateOutput(out Output, text string, schema CompiledSchema) (content []b
 		return nil, issues
 	}
 	if out.Share != nil {
-		if _, err := Project(content, *out.Share); err != nil {
+		if _, err := projectOutput(content, *out.Share); err != nil {
 			return nil, []string{"the reply lacks a shared member: " + strings.TrimPrefix(err.Error(), "projection: ")}
 		}
 	}
@@ -878,7 +883,7 @@ func validateOutput(out Output, text string, schema CompiledSchema) (content []b
 }
 
 // schemaIssues validates content against schema (nil: no check).
-func schemaIssues(schema CompiledSchema, content []byte) []string {
+func schemaIssues(schema *compiledSchema, content []byte) []string {
 	if schema == nil {
 		return nil
 	}
@@ -917,13 +922,13 @@ func unfence(text string) string {
 
 // publishedProjection returns the published form of an accepted output:
 // nil (meaning "same as the full output") unless the format is JSON and
-// out.Share is set, in which case Project(full, *out.Share) (an empty
+// out.Share is set, in which case projectOutput(full, *out.Share) (an empty
 // share list publishes {}).
 func publishedProjection(out Output, full []byte) ([]byte, error) {
 	if out.Format != FormatJSON || out.Share == nil {
 		return nil, nil
 	}
-	return Project(full, *out.Share)
+	return projectOutput(full, *out.Share)
 }
 
 // repairFor builds the follow-up sent after a rejected attempt. A
@@ -931,9 +936,8 @@ func publishedProjection(out Output, full []byte) ([]byte, error) {
 // contract only: it has the original request and its reply already. A
 // single_shot participant remembers nothing, so it gets the original
 // message again (the latest non-repair one), its rejected reply quoted,
-// and the issues (rev 3 §5 "repair attempts containing the invalid
-// response and errors").
-func (c *Controller) repairFor(w work, prior []AttemptRecord) string {
+// and the issues.
+func (c *forumController) repairFor(w work, prior []AttemptRecord) string {
 	last := lastAttempt(prior)
 	header := c.turnHeader(w.layer, w.round)
 	if w.kind == TurnModerator {

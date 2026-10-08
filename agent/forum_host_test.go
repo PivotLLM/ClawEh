@@ -90,7 +90,7 @@ func newForumRig(t *testing.T, cfg *config.Config, model providers.LLMProvider) 
 	host := NewForumHost()
 	svc := forum.New(forum.Host{
 		Messenger: host, Agents: host, Notifier: host, Logger: logger.NewLogger("forum"),
-		Schemas: forum.JSONSchemaValidator{}, OnStuck: host.OnStuck, Cooldown: host.Cooldown,
+		OnStuck: host.OnStuck, Cooldown: host.Cooldown,
 	})
 	toolsforum.SetService(svc)
 	msgBus := bus.NewMessageBus()

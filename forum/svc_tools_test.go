@@ -315,7 +315,7 @@ func TestSvcToolLaunch(t *testing.T) {
 	st.e.agents.mu.Lock()
 	st.e.agents.createErr["clone:bob"] = errSvcHost
 	st.e.agents.mu.Unlock()
-	st.internal("launch", map[string]any{"id": failing}, "Forum "+failing+" could not be launched because of an internal error.")
+	st.internal("launch", map[string]any{"id": failing}, "Forum "+st.e.ref(failing)+" could not be launched because of an internal error.")
 	if st.e.store(failing).RunNumber() != 0 {
 		t.Error("a failed launch left a run")
 	}
@@ -329,7 +329,7 @@ func TestSvcToolNew(t *testing.T) {
 	}
 	var sum Summary
 	if err := json.Unmarshal([]byte(st.ok("status", map[string]any{"id": id})), &sum); err != nil ||
-		sum.Status != StatusNew || sum.ForumID != id || sum.Name != id || sum.Runs != 0 {
+		sum.Status != StatusNew || sum.ForumID != id || sum.Name != "" || sum.Runs != 0 {
 		t.Errorf("status of a new forum = %+v (%v)", sum, err)
 	}
 	if !slices.Equal(st.e.forumIDs(), []string{id}) || len(st.e.agents.createdIDs()) != 0 {
@@ -544,9 +544,6 @@ func TestSvcToolOwnership(t *testing.T) {
 			for name, args := range calls {
 				res, err := bob[name].Handler(&toolspec.ToolCall{Ctx: t.Context(), Args: args, AgentID: "bob"})
 				want := "Forum " + id + " was not found."
-				if name == "delete" {
-					want = "Forum " + id + " is deleted." // deleting an absent ID succeeds
-				}
 				if err != nil || res == nil || res.ForLLM != want {
 					t.Errorf("%s by bob in his own scope = %+v, %v", name, res, err)
 				}
@@ -674,7 +671,7 @@ func TestSvcToolLockedForum(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Unlock()
-	if msg := st.refused("delete", map[string]any{"id": id}, "in use"); msg != fmt.Sprintf("Forum %s is in use by another process; try again later.", id) {
+	if msg := st.refused("delete", map[string]any{"id": id}, "in use"); msg != fmt.Sprintf("Forum %s is in use by another process; try again later.", st.e.ref(id)) {
 		t.Errorf("locked = %q", msg)
 	}
 }
@@ -706,7 +703,6 @@ func TestSvcToolError(t *testing.T) {
 			"Forum " + id + " was not deleted because its temporary agent " + agent + " could not be deleted; try again later.", errSvcHost.Error(),
 		},
 		{"closed", errClosed, id, "resume", "Forums cannot be started or changed while the service is shutting down.", ""},
-		{"schemas", fmt.Errorf("%w (the configuration names schemas: s)", ErrSchemasUnavailable), "", "launch", "JSON Schema validation is not available (the configuration names schemas: s).", ""},
 		{"one whole-document issue", argIssue("the config argument must be a JSON object"), "", "config_import", "The config argument must be a JSON object.", ""},
 		{"issues", &ValidationError{Issues: []Issue{{Path: "a", Message: "x"}, {Path: "b", Message: "y"}}}, "", "validate", "invalid configuration:\na: x\nb: y", ""},
 	}
@@ -866,7 +862,7 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 	for _, tpl := range templates {
 		t.Run(tpl.name, func(t *testing.T) {
 			raw, _ := templateConfig(tpl.name)
-			cfg, err := Decode([]byte(raw))
+			cfg, err := decodeConfig([]byte(raw))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -941,6 +937,16 @@ func TestSvcToolRefusalsAreMarked(t *testing.T) {
 	for _, err := range []error{ErrCorrupt, errSvcHost} {
 		if expectedFailure(err) {
 			t.Errorf("%v counts as a refusal", err)
+		}
+	}
+}
+
+// Every tool has a verb for its internal-failure message.
+func TestSvcToolVerbsComplete(t *testing.T) {
+	e := svcSetup(t)
+	for _, def := range Tools(e.svc, &svcToolHost{base: e.scope.BaseDirectory, workspace: e.workspace}) {
+		if toolVerbs[def.Name] == "" {
+			t.Errorf("tool %s has no verb in toolVerbs", def.Name)
 		}
 	}
 }

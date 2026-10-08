@@ -18,7 +18,7 @@ func TestValidID(t *testing.T) {
 		"alice": true, "Bob": true, "_x": true, "-x": true, "a1": true, "a_b-c": true,
 		"": false, "1a": false, "9": false, "a.b": false, "a b": false, "a/b": false, "é": false, "a:b": false,
 	} {
-		if got := ValidID(id); got != want {
+		if got := validID(id); got != want {
 			t.Errorf("ValidID(%q) = %v, want %v", id, got, want)
 		}
 	}
@@ -114,12 +114,12 @@ func TestConfigLayerAccessors(t *testing.T) {
 }
 
 func TestEffectiveModeratorSchemaErrors(t *testing.T) {
-	if _, err := EffectiveModeratorSchema(Layer{ID: "debate"}, nil); err == nil || !strings.Contains(err.Error(), `"debate"`) {
+	if _, err := effectiveModeratorSchema(Layer{ID: "debate"}, nil); err == nil || !strings.Contains(err.Error(), `"debate"`) {
 		t.Errorf("no moderator: %v", err)
 	}
 	layer := Layer{ID: "debate", Moderator: &Moderator{Participant: "chair", Schema: "notes"}}
 	for _, bad := range []string{`[]`, `"x"`, `true`, `null`, `{`} {
-		_, err := EffectiveModeratorSchema(layer, cfgtRaw(bad))
+		_, err := effectiveModeratorSchema(layer, cfgtRaw(bad))
 		if err == nil || !strings.Contains(err.Error(), `"notes" is not a JSON object`) {
 			t.Errorf("assessment %s: %v", bad, err)
 		}
@@ -128,7 +128,7 @@ func TestEffectiveModeratorSchemaErrors(t *testing.T) {
 
 func TestEffectiveModeratorSchemaShape(t *testing.T) {
 	layer := Layer{ID: "debate", Participants: []string{"alice", "bob"}, Moderator: &Moderator{Participant: "chair"}}
-	raw, err := EffectiveModeratorSchema(layer, nil)
+	raw, err := effectiveModeratorSchema(layer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestEffectiveModeratorSchemaShape(t *testing.T) {
 	if _, ok := doc.Properties["directed"]; ok {
 		t.Error("directed present without allow_directed")
 	}
-	again, err := EffectiveModeratorSchema(layer, nil)
+	again, err := effectiveModeratorSchema(layer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,11 +211,11 @@ func TestEffectiveModeratorSchemaValidates(t *testing.T) {
 			if tt.layer.Moderator.Schema != "" {
 				a = cfgtRaw(assessment)
 			}
-			raw, err := EffectiveModeratorSchema(tt.layer, a)
+			raw, err := effectiveModeratorSchema(tt.layer, a)
 			if err != nil {
 				t.Fatal(err)
 			}
-			sch, err := JSONSchemaValidator{}.Compile(raw)
+			sch, err := compileSchema(raw)
 			if err != nil {
 				t.Fatalf("effective schema does not compile: %v\n%s", err, raw)
 			}
@@ -234,14 +234,14 @@ func TestEffectiveModeratorSchemaValidates(t *testing.T) {
 
 func TestEffectiveModeratorSchemaKeepsAssessmentID(t *testing.T) {
 	layer := Layer{ID: "debate", Moderator: &Moderator{Participant: "chair", Schema: "notes"}}
-	raw, err := EffectiveModeratorSchema(layer, cfgtRaw(`{"$id":"forum:///notes.json","type":"object"}`))
+	raw, err := effectiveModeratorSchema(layer, cfgtRaw(`{"$id":"forum:///notes.json","type":"object"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), `"$id":"forum:///notes.json"`) || strings.Contains(string(raw), assessmentSchemaID) {
 		t.Errorf("the assessment's own $id must be kept: %s", raw)
 	}
-	if raw, err = EffectiveModeratorSchema(layer, cfgtRaw(`{"type":"object"}`)); err != nil {
+	if raw, err = effectiveModeratorSchema(layer, cfgtRaw(`{"type":"object"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), assessmentSchemaID) {

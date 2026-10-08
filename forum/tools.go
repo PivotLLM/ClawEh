@@ -22,7 +22,7 @@ import (
 	"github.com/PivotLLM/toolspec"
 )
 
-// Seam (e): the tool definitions (spec §9). Names are bare; the host's
+// The tool definitions. Names are bare; the host's
 // aggregator mounts them under the "forum" namespace (forum_models,
 // forum_launch, ...) and gates the whole suite on the calling agent's
 // `forum` permission. The wiring into ClawEh (a tools/forum provider that
@@ -58,8 +58,7 @@ type ToolHost interface {
 // operation itself is a Result with IsError and one plain sentence naming
 // the forum (when there is one): an unknown forum or run, a refused state
 // (a forum that is running, or has no run yet), a forum locked by another
-// process, an invalid configuration,
-// unavailable schemas, a damaged forum, temporary agents that could not be
+// process, an invalid configuration, a damaged forum, temporary agents that could not be
 // deleted, or an internal failure. Error chains and paths never reach the
 // agent; they are logged.
 //
@@ -262,14 +261,14 @@ func (t *toolSuite) configTemplate(call *toolspec.ToolCall) (*toolspec.Result, e
 	}
 	name, _, err := stringArg(call, "name")
 	if err != nil {
-		return t.fail(err, id, "config_template")
+		return t.fail(err, t.svc.ref(scope, id), "config_template")
 	}
 	config, ok := templateConfig(name)
 	if !ok {
 		return &toolspec.Result{ForLLM: fmt.Sprintf("There is no template %q; use %s.", name, templateNames()), IsError: true}, nil
 	}
 	if err := t.svc.SetConfig(call.Ctx, scope, id, []byte(config)); err != nil {
-		return t.fail(err, id, "config_template")
+		return t.fail(err, t.svc.ref(scope, id), "config_template")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", t.svc.ref(scope, id), name)}, nil
 }
@@ -288,7 +287,7 @@ func (t *toolSuite) configImport(call *toolspec.ToolCall) (*toolspec.Result, err
 		err = t.svc.SetConfig(call.Ctx, scope, id, raw)
 	}
 	if err != nil {
-		return t.fail(err, id, "config_import")
+		return t.fail(err, t.svc.ref(scope, id), "config_import")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", t.svc.ref(scope, id))}, nil
 }
@@ -307,7 +306,7 @@ func (t *toolSuite) configUpdate(call *toolspec.ToolCall) (*toolspec.Result, err
 		err = t.svc.UpdateConfig(call.Ctx, scope, id, patch)
 	}
 	if err != nil {
-		return t.fail(err, id, "config_update")
+		return t.fail(err, t.svc.ref(scope, id), "config_update")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", t.svc.ref(scope, id))}, nil
 }
@@ -323,7 +322,7 @@ func (t *toolSuite) configExport(call *toolspec.ToolCall) (*toolspec.Result, err
 	}
 	config, err := t.svc.ExportConfig(call.Ctx, scope, id)
 	if err != nil {
-		return t.fail(err, id, "config_export")
+		return t.fail(err, t.svc.ref(scope, id), "config_export")
 	}
 	return &toolspec.Result{ForLLM: string(config)}, nil
 }
@@ -338,7 +337,7 @@ func (t *toolSuite) validate(call *toolspec.ToolCall) (*toolspec.Result, error) 
 		return t.fail(err, "", "validate")
 	}
 	if err := t.svc.ValidateConfig(call.Ctx, id, t.launchOptions(call, scope)); err != nil {
-		return t.fail(err, id, "validate")
+		return t.fail(err, t.svc.ref(scope, id), "validate")
 	}
 	return &toolspec.Result{ForLLM: "The configuration is valid."}, nil
 }
@@ -354,7 +353,7 @@ func (t *toolSuite) launch(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	run, err := t.svc.Launch(call.Ctx, id, t.launchOptions(call, scope))
 	if err != nil {
-		return t.fail(err, id, "launch")
+		return t.fail(err, t.svc.ref(scope, id), "launch")
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched (run %d). You will be notified when it finishes; end your turn instead of checking status.", t.svc.ref(scope, id), run)}, nil
 }
@@ -370,7 +369,7 @@ func (t *toolSuite) status(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	run, err := runArg(call)
 	if err != nil {
-		return t.fail(err, id, "status")
+		return t.fail(err, t.svc.ref(scope, id), "status")
 	}
 	if !present || id == "" {
 		if run != 0 {
@@ -384,7 +383,7 @@ func (t *toolSuite) status(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	sum, err := t.svc.Status(call.Ctx, scope, id, run)
 	if err != nil {
-		return t.fail(err, id, "status")
+		return t.fail(err, t.svc.ref(scope, id), "status")
 	}
 	return jsonResult(sum)
 }
@@ -419,7 +418,7 @@ func (t *toolSuite) control(call *toolspec.ToolCall, tool string, op func(*Servi
 	}
 	ref := t.svc.ref(scope, id)
 	if err := op(t.svc, call.Ctx, scope, id); err != nil {
-		return t.fail(err, id, tool)
+		return t.fail(err, ref, tool)
 	}
 	return &toolspec.Result{ForLLM: fmt.Sprintf(done, ref)}, nil
 }
@@ -435,15 +434,15 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	run, err := runArg(call)
 	if err != nil {
-		return t.fail(err, id, "results")
+		return t.fail(err, t.svc.ref(scope, id), "results")
 	}
 	res, err := t.svc.Results(call.Ctx, scope, id, run)
 	if err != nil {
-		return t.fail(err, id, "results")
+		return t.fail(err, t.svc.ref(scope, id), "results")
 	}
 	store, err := t.svc.open(scope, id)
 	if err != nil {
-		return t.fail(err, id, "results")
+		return t.fail(err, t.svc.ref(scope, id), "results")
 	}
 	// Paths are relative to the agent's workspace, whose forums/ folder holds
 	// the base directory.
@@ -596,21 +595,23 @@ func (r refused) Unwrap() error { return r.error }
 func (refused) Refusal() bool   { return true }
 
 // toolVerbs is the past participle of each tool's operation, for the
-// internal-failure message.
+// internal-failure message. Every tool has one (a test keeps them in step).
 var toolVerbs = map[string]string{
-	"new": "created", "config_template": "changed", "config_import": "changed",
+	"readme": "read", "models": "listed", "new": "created", "config_template": "changed", "config_import": "changed",
 	"config_update": "changed", "config_export": "exported",
 	"validate": "validated", "launch": "launched", "status": "read", "results": "read",
 	"pause": "paused", "resume": "resumed", "cancel": "cancelled", "delete": "deleted",
 }
 
 // fail renders a failed operation of tool for the agent as a Result with
-// IsError and one plain sentence naming the forum id (when there is one).
+// IsError and one plain sentence naming the forum by ref (Service.ref: its
+// Ref, or its ID when its configuration cannot be read; empty when the
+// call names no forum).
 // Error chains and paths are never shown: a damaged forum and an internal
 // failure are logged at Error with the detail and reported in a fixed
 // sentence.
-func (t *toolSuite) fail(err error, id, tool string) (*toolspec.Result, error) {
-	msg := t.message(err, id, tool)
+func (t *toolSuite) fail(err error, ref, tool string) (*toolspec.Result, error) {
+	msg := t.message(err, ref, tool)
 	if expectedFailure(err) {
 		// A refusal the agent can act on: logged by the host as a warning,
 		// not as an error (refused).
@@ -635,17 +636,17 @@ func expectedFailure(err error) bool {
 		return true
 	}
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrLocked) || errors.Is(err, ErrInvalidState) ||
-		errors.Is(err, ErrSchemasUnavailable) || errors.Is(err, errClosed)
+		errors.Is(err, errClosed)
 }
 
 // message is fail's sentence.
-func (t *toolSuite) message(err error, id, tool string) string {
+func (t *toolSuite) message(err error, ref, tool string) string {
 	ve, isValidation := errors.AsType[*ValidationError](err)
 	left, agentsLeft := errors.AsType[*agentsLeftError](err)
 	state, isState := errors.AsType[*stateError](err)
 	subject := "The forum"
-	if id != "" {
-		subject = "Forum " + id
+	if ref != "" {
+		subject = "Forum " + ref
 	}
 	switch {
 	case isValidation && len(ve.Issues) == 1 && ve.Issues[0].Path == "":
@@ -666,17 +667,15 @@ func (t *toolSuite) message(err error, id, tool string) string {
 	case errors.Is(err, ErrLocked):
 		return subject + " is in use by another process; try again later."
 	case errors.Is(err, ErrCorrupt):
-		t.svc.host.Logger.Errorf("forum tool %s (forum %s): %v", tool, id, err)
+		t.svc.host.Logger.Errorf("forum tool %s (forum %s): %v", tool, ref, err)
 		return subject + " is damaged and cannot be used."
-	case errors.Is(err, ErrSchemasUnavailable):
-		return sentence(err.Error())
 	case errors.Is(err, errClosed):
 		return "Forums cannot be started or changed while the service is shutting down."
 	case errors.Is(err, ErrInvalidState):
-		t.svc.host.Logger.Warnf("forum tool %s (forum %s): %v", tool, id, err)
+		t.svc.host.Logger.Warnf("forum tool %s (forum %s): %v", tool, ref, err)
 		return fmt.Sprintf("%s cannot be %s in its current state.", subject, toolVerbs[tool])
 	}
-	t.svc.host.Logger.Errorf("forum tool %s (forum %s): %v", tool, id, err)
+	t.svc.host.Logger.Errorf("forum tool %s (forum %s): %v", tool, ref, err)
 	return fmt.Sprintf("%s could not be %s because of an internal error.", subject, toolVerbs[tool])
 }
 

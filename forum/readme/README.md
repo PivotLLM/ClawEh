@@ -94,7 +94,8 @@ again. That is a new run; earlier runs stay readable with `run`.
 6. `forum_status` with the ID shows the latest run; `forum_pause`,
    `forum_resume` and `forum_cancel` control it.
 7. When you are notified that the run has ended, `forum_results` with the
-   ID.
+   ID. Each output names its `attempt`; one whose turn was resent after a
+   restart says so in `note`, and its earlier attempts have no output.
 8. To run it again, change the configuration (only while it is not running)
    and `forum_launch` again: run 2 starts from the beginning, and run 1 keeps
    its files. `forum_status` and `forum_results` take `run` to look at an
@@ -103,8 +104,8 @@ again. That is a new run; earlier runs stay readable with `run`.
 9. `forum_delete` removes the forum and all its runs, unless it is running.
 
 `name` in the configuration is optional (one line, at most 100
-characters); status, results and notices then
-name the forum "<name> (<id>)" instead of the ID alone.
+characters); replies and notices then name the forum "<name> (<id>)"
+instead of the ID alone.
 
 A source `file` is read as your file tools read that path (your
 workspace, or a mount such as `maestro/`).

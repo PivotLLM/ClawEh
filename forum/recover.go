@@ -6,35 +6,30 @@
 package forum
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"slices"
-	"strings"
 )
 
-// Seam (d): opening a forum for execution (spec §8 restart). Open is the
-// only constructor of Controller, used both right after Launch and on
+// Opening a forum for execution. openForum is the
+// only constructor of forumController, used both right after Launch and on
 // resume, so restart recovery is the ordinary start path.
 
-// Open loads a forum from its store and returns a controller positioned
+// openForum loads a forum from its store and returns a controller positioned
 // at the first unfinished action. The store must be locked by the caller.
 // Steps:
 //
 //  0. Remove the temporary entries a crashed writer left in the run
 //     (SweepRun).
-//  1. Verify the directory (Verify), rebuild State from the commit log
-//     (ReplayState, never the state.json cache), read the log and every layer's attempts (Store.ListAttempts).
-//  2. Compile the configured schemas (compileSchemas); a configuration
-//     naming a schema with a nil validator is ErrSchemasUnavailable.
+//  1. Verify the directory (verify), rebuild State from the commit log
+//     (replayState, never the state.json cache), read the log and every layer's attempts (forumStore.ListAttempts).
+//  2. Compile the configured schemas (compileSchemas).
 //  3. Read participants.json. For every participant with Created true,
 //     check Agents.Exists; a missing one is recorded so that Run ends the
-//     forum failed with EndParticipantGone instead of recreating it (§8).
+//     forum failed with EndParticipantGone instead of recreating it.
 //     For an existing participant a missing agent is EndHostError at its
-//     first dispatch, not at Open.
-//  4. Build the Router over the store's ReadFile.
+//     first dispatch, not at openForum.
+//  4. Build the router over the store's ReadFile.
 //  5. Regenerate transcript.md from the log (renderTranscript) when it
 //     differs, in place, so a crash between a publication commit and its
 //     append (or during an earlier regeneration) leaves no gap, duplicate
@@ -42,15 +37,15 @@ import (
 //
 // A terminal forum opens too (Run returns its status at once); the service
 // uses that to finish cleanup after a restart.
-func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
+func openForum(ctx context.Context, s *forumStore, host Host) (*forumController, error) {
 	if err := s.SweepRun(); err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
-	cfg, snap, err := Verify(s)
+	cfg, snap, err := verify(s)
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
-	st, err := ReplayState(s, cfg, snap)
+	st, err := replayState(s, cfg, snap)
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
@@ -64,7 +59,7 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 			return nil, fmt.Errorf("open forum: %w", err)
 		}
 	}
-	schemas, decisionSchemas, err := compileSchemas(cfg, snap, host.Schemas)
+	schemas, decisionSchemas, err := compileSchemas(cfg, snap)
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
@@ -76,7 +71,10 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
 	}
-	c := &Controller{
+	ref := storeRef(s)
+	c := &forumController{
+		ref:             ref,
+		logName:         fmt.Sprintf("forum %s run %d", ref, snap.Run),
 		store:           s,
 		cfg:             cfg,
 		snap:            snap,
@@ -84,7 +82,7 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 		host:            host,
 		schemas:         schemas,
 		decisionSchemas: decisionSchemas,
-		router:          NewRouter(cfg, snap, s.ReadFile),
+		router:          newRouter(cfg, snap, s.ReadFile),
 		state:           st,
 		commits:         commits,
 		attempts:        attempts,
@@ -98,23 +96,16 @@ func Open(ctx context.Context, s *Store, host Host) (*Controller, error) {
 
 // compileSchemas compiles every entry of cfg.Schemas (named) and every
 // effective moderator schema in snap.ModeratorSchemas (decision, keyed by
-// layer ID). It returns empty maps when there are none, and
-// ErrSchemasUnavailable when there are some and validator is nil.
-func compileSchemas(cfg *Config, snap *Snapshot, validator SchemaValidator) (named, decision map[string]CompiledSchema, err error) {
-	named, decision = map[string]CompiledSchema{}, map[string]CompiledSchema{}
-	if len(cfg.Schemas) == 0 && len(snap.ModeratorSchemas) == 0 {
-		return named, decision, nil
-	}
-	if validator == nil {
-		return nil, nil, ErrSchemasUnavailable
-	}
+// layer ID). It returns empty maps when there are none.
+func compileSchemas(cfg *Config, snap *Snapshot) (named, decision map[string]*compiledSchema, err error) {
+	named, decision = map[string]*compiledSchema{}, map[string]*compiledSchema{}
 	for name, raw := range cfg.Schemas {
-		if named[name], err = validator.Compile(raw); err != nil {
+		if named[name], err = compileSchema(raw); err != nil {
 			return nil, nil, fmt.Errorf("compile schema %q: %w", name, err)
 		}
 	}
 	for layerID, raw := range snap.ModeratorSchemas {
-		if decision[layerID], err = validator.Compile(raw); err != nil {
+		if decision[layerID], err = compileSchema(raw); err != nil {
 			return nil, nil, fmt.Errorf("compile moderator schema of layer %q: %w", layerID, err)
 		}
 	}
@@ -123,10 +114,10 @@ func compileSchemas(cfg *Config, snap *Snapshot, validator SchemaValidator) (nam
 
 // checkCreated returns the IDs of the participants the forum created
 // (Created true) whose agent no longer exists, sorted. The error is for an
-// Agents.Exists failure only. Open records the result in Controller.gone;
+// Agents.Exists failure only. openForum records the result in forumController.gone;
 // a non-empty list makes Run end the forum failed with EndParticipantGone
-// (§8), so the failure is reported through the ordinary path rather than
-// as an error at Open.
+// , so the failure is reported through the ordinary path rather than
+// as an error at openForum.
 func checkCreated(ctx context.Context, agents Agents, parts *Participants) ([]string, error) {
 	var gone []string
 	for id, p := range parts.Participants {
@@ -143,157 +134,4 @@ func checkCreated(ctx context.Context, agents Agents, parts *Participants) ([]st
 	}
 	slices.Sort(gone)
 	return gone, nil
-}
-
-// transcript.md is derived: renderTranscript produces the whole file from
-// the commit log and the published files, publishTranscript appends one
-// publication live, and Open rewrites the file from the log when it
-// differs. Only public material is rendered: published projections, and
-// the decision, reason and guidance of moderator decisions.
-
-// renderTranscript renders the transcript: a heading naming the forum and
-// the run, then the entry of every publication commit in the in-memory
-// log. It returns the text and the seq of the last publication rendered.
-func (c *Controller) renderTranscript() (string, int, error) {
-	c.mu.Lock()
-	commits := slices.Clone(c.commits)
-	c.mu.Unlock()
-	var (
-		b    strings.Builder
-		last int
-	)
-	fmt.Fprintf(&b, "# %s · run %d\n\n", c.snap.Label(), c.snap.Run)
-	for i := range commits {
-		entry, err := c.transcriptEntry(&commits[i])
-		if err != nil {
-			return "", 0, err
-		}
-		if entry != "" {
-			b.WriteString(entry)
-			last = commits[i].Seq
-		}
-	}
-	return b.String(), last, nil
-}
-
-// regenerateTranscript makes transcript.md equal renderTranscript,
-// rewriting it in place (Store.ReplaceTranscript) only when it differs,
-// and positions the live appends after the last rendered publication.
-func (c *Controller) regenerateTranscript() error {
-	want, last, err := c.renderTranscript()
-	if err != nil {
-		return err
-	}
-	have, err := c.store.ReadFile(fileTranscript)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		have = nil
-	case err != nil:
-		return err
-	}
-	if !bytes.Equal(have, []byte(want)) && (want != "" || have != nil) {
-		c.host.Logger.Infof("forum %s: rebuilding %s from the commit log", c.snap.ForumID, fileTranscript)
-		if err := c.durable("transcript", func() error { return c.store.ReplaceTranscript([]byte(want)) }); err != nil {
-			return fmt.Errorf("rebuild transcript: %w", err)
-		}
-	}
-	c.tmu.Lock()
-	c.transcriptSeq = last
-	c.tmu.Unlock()
-	return nil
-}
-
-// publishTranscript appends the entry of one publication commit (a
-// per_turn CommitTurn, a CommitRoundPublished, a CommitModerated) to
-// transcript.md, once: a commit at or before the last one written is
-// skipped.
-func (c *Controller) publishTranscript(commit *Commit) error {
-	c.tmu.Lock()
-	defer c.tmu.Unlock()
-	if commit.Seq <= c.transcriptSeq {
-		return nil
-	}
-	entry, err := c.transcriptEntry(commit)
-	if err != nil || entry == "" {
-		return err
-	}
-	if err := c.durable("transcript", func() error { return c.store.AppendTranscript(entry) }); err != nil {
-		return err
-	}
-	c.transcriptSeq = commit.Seq
-	return nil
-}
-
-// transcriptEntry renders the public entry of one commit, or "" for a
-// commit that publishes nothing.
-func (c *Controller) transcriptEntry(commit *Commit) (string, error) {
-	layer, ok := c.cfg.Layer(commit.Layer)
-	if !ok {
-		return "", nil
-	}
-	switch commit.Kind {
-	case CommitTurn:
-		if layer.Delivery != DeliveryPerTurn || commit.Output == nil {
-			return "", nil
-		}
-		return c.outputEntry(layer, commit.Output)
-	case CommitRoundPublished:
-		ls := c.layerState(layer.ID)
-		var round []OutputRecord
-		for _, o := range ls.Outputs {
-			if o.Round == commit.Round {
-				round = append(round, o)
-			}
-		}
-		var b strings.Builder
-		for _, o := range orderOutputs(layer, round) {
-			entry, err := c.outputEntry(layer, &o)
-			if err != nil {
-				return "", err
-			}
-			b.WriteString(entry)
-		}
-		return b.String(), nil
-	case CommitModerated:
-		if commit.Decision == nil || layer.Moderator == nil {
-			return "", nil
-		}
-		return c.decisionEntry(layer, commit.Round, commit.Decision), nil
-	case CommitLaunched, CommitLayerStarted, CommitAttempt, CommitLayerEnded, CommitPauseRequested,
-		CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
-	}
-	return "", nil
-}
-
-// outputEntry renders one published output: a heading with the layer,
-// round and author's name (with the author's "Response X" label when some
-// route reads the layer anonymously, so the transcript maps the letters
-// the reviews use), then the published projection in a code fence of its
-// format, so its own headings never mix with the transcript's.
-func (c *Controller) outputEntry(layer Layer, out *OutputRecord) (string, error) {
-	data, err := c.store.ReadFile(out.PublishedFile)
-	if err != nil {
-		return "", fmt.Errorf("transcript: read output %s: %w", out.OutputID, err)
-	}
-	author := c.participantName(out.ParticipantID)
-	if c.router.readAnonymously(layer.ID) {
-		author += " (" + responseLabel(slices.Index(layer.Participants, out.ParticipantID)) + ")"
-	}
-	body := fence(fenceInfo(out.Format), strings.TrimRight(string(data), "\n"))
-	return fmt.Sprintf("### %s · round %d · %s\n\n%s\n\n", layer.ID, out.Round, author, body), nil
-}
-
-// decisionEntry renders the public part of a decision: the decision, the
-// reason and, for GUIDE, the guidance. Never the assessment or directed
-// messages.
-func (c *Controller) decisionEntry(layer Layer, round int, d *Decision) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "### %s · after round %d · moderator %s: %s\n\n", layer.ID, round, c.participantName(layer.Moderator.Participant), d.Decision)
-	if reason := strings.TrimSpace(d.Reason); reason != "" {
-		fmt.Fprintf(&b, "Reason: %s\n\n", reason)
-	}
-	if d.Decision == DecisionGuide && d.Guidance != nil {
-		fmt.Fprintf(&b, "Guidance: %s\n\n", strings.TrimSpace(*d.Guidance))
-	}
-	return b.String()
 }

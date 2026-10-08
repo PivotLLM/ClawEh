@@ -14,18 +14,18 @@ import (
 	"strings"
 )
 
-// Seam (c): JSON Pointer (RFC 6901) support for `share` and `paths` (rev 3
-// §4 projection rules). The standard library has no pointer implementation
+// JSON Pointer (RFC 6901) support for `share` and `paths` (DESIGN.md §7.6:
+// projection rules). The standard library has no pointer implementation
 // and no dependency is added for one.
 
 // errArrayTraversal is returned when a pointer token is applied to an
 // array: projections select object members only.
 var errArrayTraversal = errors.New("array traversal is not allowed")
 
-// ValidPointer reports whether p is a syntactically valid JSON Pointer:
+// validPointer reports whether p is a syntactically valid JSON Pointer:
 // empty (the whole document) or a sequence of "/"-prefixed tokens in which
 // "~" appears only as "~0" or "~1".
-func ValidPointer(p string) bool {
+func validPointer(p string) bool {
 	if p == "" {
 		return true
 	}
@@ -47,7 +47,7 @@ func ValidPointer(p string) bool {
 // pointerTokens splits a valid pointer into its unescaped reference
 // tokens. The empty pointer has no tokens.
 func pointerTokens(p string) ([]string, error) {
-	if !ValidPointer(p) {
+	if !validPointer(p) {
 		return nil, fmt.Errorf("invalid JSON pointer %q", p)
 	}
 	if p == "" {
@@ -74,16 +74,16 @@ func tokensPrefix(a, b []string) bool {
 	return true
 }
 
-// CheckProjection validates a `share` or `paths` allowlist statically (rev
-// 3 §4): every pointer is valid and nonempty (the root cannot be a
+// checkProjection validates a `share` or `paths` allowlist statically
+// (DESIGN.md §7.6): every pointer is valid and nonempty (the root cannot be a
 // projection member), and no pointer is a prefix of another (overlap). It
 // returns one message per offending pointer; an empty list is valid. Used
-// by ValidateStatic. Array traversal cannot be told from an object member
-// named by digits until a document is present, so Project checks it.
+// by validateStatic. Array traversal cannot be told from an object member
+// named by digits until a document is present, so projectOutput checks it.
 //
 // Overlap is token-wise: "/a" overlaps "/a/b" (and a repeated "/a") but
 // not "/ab". The later pointer of an overlapping pair is the one reported.
-func CheckProjection(pointers []string) []string {
+func checkProjection(pointers []string) []string {
 	var msgs []string
 	valid := make([][]string, 0, len(pointers))
 	validPtr := make([]string, 0, len(pointers))
@@ -114,11 +114,11 @@ func CheckProjection(pointers []string) []string {
 	return msgs
 }
 
-// Resolve returns the value p points to within doc (a value produced by
+// resolvePointer returns the value p points to within doc (a value produced by
 // encoding/json into any). found is false when the path does not exist;
 // err reports an invalid pointer or a token applied to an array (array
 // traversal is not allowed in projections).
-func Resolve(doc any, p string) (value any, found bool, err error) {
+func resolvePointer(doc any, p string) (value any, found bool, err error) {
 	toks, err := pointerTokens(p)
 	if err != nil {
 		return nil, false, err
@@ -168,17 +168,17 @@ func encodeJSONValue(v any) ([]byte, error) {
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
-// Project builds the projection of the JSON document doc: a fresh object
+// projectOutput builds the projection of the JSON document doc: a fresh object
 // holding only the object members the pointers select, with the enclosing
 // object structure kept (a pointer "/a/b" yields {"a":{"b":...}}); a
 // selected member may contain whole arrays or objects. An empty pointer
 // list yields {}. A pointer that resolves to nothing, or that traverses
-// an array, is an error (rev 3 §4: "missing share paths fail output
-// validation", "invalid/missing paths fail"). The pointers must also pass
-// CheckProjection. The result is compact encoding/json output with sorted
+// an array, is an error: a missing `share` path fails the output's
+// validation, a missing `paths` path fails the route. The pointers must also pass
+// checkProjection. The result is compact encoding/json output with sorted
 // keys and no HTML escaping.
-func Project(doc []byte, pointers []string) ([]byte, error) {
-	if msgs := CheckProjection(pointers); len(msgs) > 0 {
+func projectOutput(doc []byte, pointers []string) ([]byte, error) {
+	if msgs := checkProjection(pointers); len(msgs) > 0 {
 		return nil, fmt.Errorf("projection: %s", strings.Join(msgs, "; "))
 	}
 	root, err := decodeJSONValue(doc)
@@ -191,7 +191,7 @@ func Project(doc []byte, pointers []string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("projection: %w", err)
 		}
-		value, found, err := Resolve(root, p)
+		value, found, err := resolvePointer(root, p)
 		if err != nil {
 			return nil, fmt.Errorf("projection: %w", err)
 		}

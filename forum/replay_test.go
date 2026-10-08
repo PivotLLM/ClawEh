@@ -19,14 +19,14 @@ import (
 )
 
 // Helpers in this file are prefixed rp so they cannot collide with other
-// seams' test helpers in the same package.
+// tests' helpers in the same package.
 
 // rpRun drives a store the way the controller does: append a commit,
 // fold it into the in-memory State with replayApply, rewrite state.json.
 // states[k-1] is the State after commit k.
 type rpRun struct {
 	t       *testing.T
-	s       *Store
+	s       *forumStore
 	cfg     *Config
 	snap    *Snapshot
 	st      *State
@@ -129,7 +129,7 @@ func (r *rpRun) attempt(layer string, round int, turn string, kind TurnKind, pid
 func (r *rpRun) turn(layer string, round int, pid string, rejected int) string {
 	r.t.Helper()
 	l, _ := r.cfg.Layer(layer)
-	turn := TurnID(round, pid)
+	turn := turnID(round, pid)
 	for n := 1; n <= rejected; n++ {
 		bad := "PRIVATE-REJECTED " + turn
 		r.private = append(r.private, bad)
@@ -163,7 +163,7 @@ func (r *rpRun) turn(layer string, round int, pid string, rejected int) string {
 // decision whose assessment and directed message are private.
 func (r *rpRun) moderate(layer string, round int) {
 	r.t.Helper()
-	turn := ModeratorTurnID(round)
+	turn := moderatorTurnID(round)
 	guidance := "consider the cost"
 	assessment, directed := "PRIVATE-ASSESSMENT", "PRIVATE-DIRECTED to bob"
 	r.private = append(r.private, assessment, directed)
@@ -221,7 +221,7 @@ func TestReplayFullRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := Replay(r.cfg, r.snap, commits)
+	st, err := replay(r.cfg, r.snap, commits)
 	if err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestReplayFullRun(t *testing.T) {
 	}
 }
 
-// Replay is deterministic: the same log gives the same State, and every
+// replay is deterministic: the same log gives the same State, and every
 // prefix of the log gives the State the controller had at that point.
 func TestReplayDeterministicPrefixes(t *testing.T) {
 	r := rpFullRun(t)
@@ -266,8 +266,8 @@ func TestReplayDeterministicPrefixes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for k := 0; k <= len(commits); k++ {
-		a, errA := Replay(r.cfg, r.snap, commits[:k])
-		b, errB := Replay(r.cfg, r.snap, commits[:k])
+		a, errA := replay(r.cfg, r.snap, commits[:k])
+		b, errB := replay(r.cfg, r.snap, commits[:k])
 		if errA != nil || errB != nil {
 			t.Fatalf("Replay(%d): %v, %v", k, errA, errB)
 		}
@@ -305,7 +305,7 @@ func TestReplayStatusTransitions(t *testing.T) {
 			for i, k := range tt.kinds {
 				commits[i] = Commit{Seq: i + 1, Kind: k}
 			}
-			st, err := Replay(cfg, snap, commits)
+			st, err := replay(cfg, snap, commits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -314,7 +314,7 @@ func TestReplayStatusTransitions(t *testing.T) {
 			}
 		})
 	}
-	st, err := Replay(cfg, snap, []Commit{
+	st, err := replay(cfg, snap, []Commit{
 		{Seq: 1, Kind: CommitLaunched},
 		{Seq: 2, Kind: CommitCancelRequested},
 		{Seq: 3, Kind: CommitEnded, Status: StatusCancelled, Reason: EndCancelled},
@@ -322,7 +322,7 @@ func TestReplayStatusTransitions(t *testing.T) {
 	if err != nil || st.Status != StatusCancelled || st.Reason != EndCancelled {
 		t.Errorf("ended: %+v, %v", st, err)
 	}
-	if _, err := Replay(nil, snap, nil); err == nil {
+	if _, err := replay(nil, snap, nil); err == nil {
 		t.Error("Replay without a configuration succeeded")
 	}
 }
@@ -371,7 +371,7 @@ func TestReplayRejectsImpossibleLogs(t *testing.T) {
 					tt.log[i].Seq = i + 1
 				}
 			}
-			if _, err := Replay(cfg, snap, tt.log); !errors.Is(err, ErrCorrupt) {
+			if _, err := replay(cfg, snap, tt.log); !errors.Is(err, ErrCorrupt) {
 				t.Errorf("Replay: %v, want ErrCorrupt", err)
 			}
 		})
@@ -386,30 +386,30 @@ func TestReplayPerTurnRounds(t *testing.T) {
 	log := make([]Commit, 0, 4)
 	log = append(log, Commit{Seq: 1, Kind: CommitLaunched}, Commit{Seq: 2, Kind: CommitLayerStarted, Layer: "summary"})
 	for _, pid := range []string{"bob", "alice"} {
-		turn := TurnID(1, pid)
+		turn := turnID(1, pid)
 		log = append(log, Commit{
 			Seq: len(log) + 1, Kind: CommitAttempt, Layer: "summary", Round: 1, Turn: turn,
 			TurnKind: TurnParticipant, Participant: pid, Attempt: 1,
 		})
 	}
 	for _, pid := range []string{"bob", "alice"} {
-		turn := TurnID(1, pid)
+		turn := turnID(1, pid)
 		log = append(log, Commit{
 			Seq: len(log) + 1, Kind: CommitTurn, Layer: "summary", Round: 1, Turn: turn,
 			Output: &OutputRecord{LayerID: "summary", Round: 1, ParticipantID: pid, Turn: turn, Attempt: 1},
 		})
 	}
-	st, err := Replay(cfg, snap, log[:5])
+	st, err := replay(cfg, snap, log[:5])
 	if err != nil || st.Layers["summary"].RoundsPublished != 0 {
 		t.Fatalf("after one turn: %+v, %v", st, err)
 	}
-	st, err = Replay(cfg, snap, log)
+	st, err = replay(cfg, snap, log)
 	if err != nil || st.Layers["summary"].RoundsPublished != 1 {
 		t.Fatalf("after both turns: %+v, %v", st.Layers["summary"], err)
 	}
 }
 
-// LoadState uses state.json only when it matches the log, and otherwise
+// loadState uses state.json only when it matches the log, and otherwise
 // replays; it never writes state.json (read-only callers do not hold the
 // lock).
 func TestLoadStateCache(t *testing.T) {
@@ -422,7 +422,7 @@ func TestLoadStateCache(t *testing.T) {
 	if err := r.s.WriteState(&cached); err != nil {
 		t.Fatal(err)
 	}
-	st, err := LoadState(r.s, r.cfg, r.snap)
+	st, err := loadState(r.s, r.cfg, r.snap)
 	if err != nil || st.Reason != "from-cache" {
 		t.Fatalf("current cache not used: %v, %v", st.Reason, err)
 	}
@@ -436,7 +436,7 @@ func TestLoadStateCache(t *testing.T) {
 			if err := damage(); err != nil {
 				t.Fatal(err)
 			}
-			st, err := LoadState(r.s, r.cfg, r.snap)
+			st, err := loadState(r.s, r.cfg, r.snap)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -444,7 +444,7 @@ func TestLoadStateCache(t *testing.T) {
 				t.Errorf("LoadState:\n got %s\nwant %s", got, want)
 			}
 			before, beforeErr := os.ReadFile(r.s.Path(fileState))
-			if _, err := LoadState(r.s, r.cfg, r.snap); err != nil {
+			if _, err := loadState(r.s, r.cfg, r.snap); err != nil {
 				t.Fatal(err)
 			}
 			after, afterErr := os.ReadFile(r.s.Path(fileState))
@@ -457,12 +457,12 @@ func TestLoadStateCache(t *testing.T) {
 	if err := os.Remove(r.s.Path(commitRel(2))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadState(r.s, r.cfg, r.snap); !errors.Is(err, ErrCorrupt) {
+	if _, err := loadState(r.s, r.cfg, r.snap); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("LoadState over a log with a gap: %v, want ErrCorrupt", err)
 	}
 }
 
-// ReplayState (the controller's path at Open) never trusts state.json: it
+// replayState (the controller's path at openForum) never trusts state.json: it
 // replays the log even when the cache claims to be current, rewrites
 // state.json with the result, and refuses to run without the lock.
 func TestReplayStateIgnoresTheCache(t *testing.T) {
@@ -474,7 +474,7 @@ func TestReplayStateIgnoresTheCache(t *testing.T) {
 	if err := r.s.WriteState(&forged); err != nil {
 		t.Fatal(err)
 	}
-	st, err := ReplayState(r.s, r.cfg, r.snap)
+	st, err := replayState(r.s, r.cfg, r.snap)
 	if err != nil {
 		t.Fatalf("ReplayState: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestReplayStateIgnoresTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReplayState(unlocked, r.cfg, r.snap); !errors.Is(err, ErrInvalidState) {
+	if _, err := replayState(unlocked, r.cfg, r.snap); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("ReplayState without the lock: %v, want ErrInvalidState", err)
 	}
 	if err := unlocked.WriteState(st); !errors.Is(err, ErrInvalidState) {
@@ -501,8 +501,8 @@ func TestReplayStateIgnoresTheCache(t *testing.T) {
 // A crash can happen after any commit and before its state.json is
 // rewritten, leaving whatever artifacts the next step had written. For
 // every commit boundary k: cut the log after k, leave state.json at k-1
-// and a temporary file in commits/, and check LoadState recovers exactly
-// the State the controller had after commit k, and Verify accepts the
+// and a temporary file in commits/, and check loadState recovers exactly
+// the State the controller had after commit k, and verify accepts the
 // directory.
 func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 	r := rpFullRun(t)
@@ -520,7 +520,7 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 		} else if err := os.WriteFile(r.s.Path(fileState), []byte(r.states[k-2]), filePerm); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), tmpPrefix+"crash"), []byte(`{"seq":`), filePerm); err != nil {
+		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), TempPrefix+"crash"), []byte(`{"seq":`), filePerm); err != nil {
 			t.Fatal(err)
 		}
 
@@ -528,11 +528,11 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("k=%d: OpenStore: %v", k, err)
 		}
-		cfg, snap, err := Verify(s)
+		cfg, snap, err := verify(s)
 		if err != nil {
 			t.Fatalf("k=%d: Verify: %v", k, err)
 		}
-		st, err := LoadState(s, cfg, snap)
+		st, err := loadState(s, cfg, snap)
 		if err != nil {
 			t.Fatalf("k=%d: LoadState: %v", k, err)
 		}
@@ -556,7 +556,7 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 
 func TestVerifyAcceptsAFullRun(t *testing.T) {
 	r := rpFullRun(t)
-	cfg, snap, err := Verify(r.s)
+	cfg, snap, err := verify(r.s)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestVerifyAcceptsAFullRun(t *testing.T) {
 	}
 }
 
-// Verify fails on every tampered or missing committed artifact, and never
+// verify fails on every tampered or missing committed artifact, and never
 // repairs or regenerates it.
 func TestVerifyDetectsDamage(t *testing.T) {
 	committedOutput := func(r *rpRun, layer string, published bool) string {
@@ -576,7 +576,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 		return o.ContentFile
 	}
 	firstRequest := func(r *rpRun) string {
-		return attemptRel("debate", TurnID(1, "alice"), 1) + "/" + fileRequest
+		return attemptRel("debate", turnID(1, "alice"), 1) + "/" + fileRequest
 	}
 	tests := []struct {
 		name   string
@@ -616,7 +616,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 				}
 			}
 			before, beforeErr := os.ReadFile(target)
-			if _, _, err := Verify(r.s); !errors.Is(err, ErrCorrupt) {
+			if _, _, err := verify(r.s); !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("Verify: %v, want ErrCorrupt", err)
 			}
 			after, afterErr := os.ReadFile(target)
@@ -627,7 +627,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 	}
 
 	// A committed artifact replaced by a symbolic link to identical content
-	// is still damage: Verify follows no link, inside the root or out.
+	// is still damage: verify follows no link, inside the root or out.
 	for _, published := range []bool{false, true} {
 		t.Run(fmt.Sprintf("symlinked artifact published=%v", published), func(t *testing.T) {
 			r := rpFullRun(t)
@@ -647,7 +647,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 			if err := os.Symlink(outside, target); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := Verify(r.s); !errors.Is(err, ErrCorrupt) {
+			if _, _, err := verify(r.s); !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("Verify: %v, want ErrCorrupt", err)
 			}
 		})
@@ -664,13 +664,13 @@ func TestVerifyDetectsDamage(t *testing.T) {
 		if err := os.WriteFile(r.s.Path(fileSnapshot), data, filePerm); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := Verify(r.s); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "names forum") {
+		if _, _, err := verify(r.s); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "names forum") {
 			t.Fatalf("Verify: %v, want ErrCorrupt naming the forum", err)
 		}
 	})
 }
 
-// Verify fails on an undecodable configuration even when its digest
+// verify fails on an undecodable configuration even when its digest
 // matches (the configuration was accepted once, so this is corruption).
 func TestVerifyUndecodableConfig(t *testing.T) {
 	s := stNewStore(t)
@@ -681,7 +681,7 @@ func TestVerifyUndecodableConfig(t *testing.T) {
 	if err := s.WriteSnapshot(&Snapshot{ForumID: s.ID(), Run: s.RunNumber(), ConfigDigest: digest(raw)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Verify(s); !errors.Is(err, ErrCorrupt) {
+	if _, _, err := verify(s); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Verify: %v, want ErrCorrupt", err)
 	}
 }

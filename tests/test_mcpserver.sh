@@ -940,9 +940,8 @@ else
     # main, the session token's agent. Every tool is probed: readme returns the
     # guide, a template, and refuses an unknown template; models and status
     # are hermetic successes on an agent with no forums; validate and launch
-    # refuse a call without an ID and an unknown forum; pause, resume, cancel
-    # and results refuse an unknown forum; delete of an absent forum succeeds
-    # (deleting is idempotent). A forum is then set up hermetically: new,
+    # refuse a call without an ID and an unknown forum; pause, resume, cancel,
+    # results and delete refuse an unknown forum. A forum is then set up hermetically: new,
     # template, update, export, validate (refused: the template's models are
     # placeholders and the test config has no models), import, export again,
     # launch (refused: invalid), status (new), results (refused: no run),
@@ -969,8 +968,8 @@ else
             "forum_cancel" "{\"id\":\"$FORUM_ID\"}" "was not found"
         run_test_err_msg_auth "4g.8 forum_results refuses an unknown forum" \
             "forum_results" "{\"id\":\"$FORUM_ID\"}" "was not found"
-        run_test_ok_auth "4g.9 forum_delete of an absent forum succeeds" \
-            "forum_delete" "{\"id\":\"$FORUM_ID\"}" "is deleted"
+        run_test_err_msg_auth "4g.9 forum_delete refuses an unknown forum" \
+            "forum_delete" "{\"id\":\"$FORUM_ID\"}" "was not found"
         run_test_ok_auth "4g.10 forum_readme returns the guide and the templates" \
             "forum_readme" '{}' "## Templates"
         run_test_ok_auth "4g.11 forum_readme returns a template" \

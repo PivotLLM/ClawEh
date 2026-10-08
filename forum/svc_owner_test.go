@@ -42,7 +42,7 @@ func TestSvcForumOfAnotherLauncherRefused(t *testing.T) {
 func TestSvcDeleteNamesTheLauncher(t *testing.T) {
 	e := svcSetup(t)
 	messenger := &svcReplier{asks: map[string]int{}}
-	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger, Schemas: JSONSchemaValidator{}})
+	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 	if _, err := svcLaunch(t, svc, svcSimpleJSON, e.opts()); err != nil {
 		t.Fatalf("launch: %v", err)

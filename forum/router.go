@@ -14,23 +14,23 @@ import (
 	"slices"
 )
 
-// Seam (c): the router (rev 3 §4, which rev 5 inherits). It turns a
+// The router (DESIGN.md §2). It turns a
 // layer's routes into the LayerInputs each participant and the moderator
 // receive from sources and earlier layers. It knows nothing about turns
 // within the layer: peer events inside a layer are the controller's
 // visibility logic (turn.go).
 
-// Router resolves routes against the forum's sources and committed outputs.
-type Router struct {
+// router resolves routes against the forum's sources and committed outputs.
+type router struct {
 	cfg  *Config
 	snap *Snapshot
-	// read returns a root-relative file (Store.ReadFile).
+	// read returns a root-relative file (forumStore.ReadFile).
 	read func(rel string) ([]byte, error)
 }
 
-// NewRouter builds a router over one forum's configuration and snapshot.
-func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error)) *Router {
-	return &Router{cfg: cfg, snap: snap, read: read}
+// newRouter builds a router over one forum's configuration and snapshot.
+func newRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error)) *router {
+	return &router{cfg: cfg, snap: snap, read: read}
 }
 
 // Resolve builds LayerInputs for layer from the outputs of earlier layers
@@ -47,7 +47,7 @@ func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error
 //     and then by the producing layer's participant order (orderOutputs),
 //     reduced by select (last_per_participant keeps the newest record of
 //     each author), filtered by authors, read as the published projection
-//     or the full output per view, then narrowed by paths (Project); a
+//     or the full output per view, then narrowed by paths (projectOutput); a
 //     projection error fails the route even when it is optional;
 //   - the recipients are `to`, else every participant of the layer; the
 //     records are dealt (distribute): all gives every recipient the whole
@@ -69,12 +69,12 @@ func NewRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error
 //
 // Moderator routes are resolved the same way with the moderator as the
 // only recipient. They take no `to`, and may use view full without it:
-// the moderator is their one explicit recipient (ValidateStatic applies
+// the moderator is their one explicit recipient (validateStatic applies
 // the same rule). An optional moderator route that selects nothing is not
 // listed in Missing,
 // whose indexes refer to the layer's inputs. Each recipient's list is then
 // deduplicated (dedupe), keeping route order and then record order.
-func (r *Router) Resolve(layer Layer, produced map[string][]OutputRecord) (*LayerInputs, error) {
+func (r *router) Resolve(layer Layer, produced map[string][]OutputRecord) (*LayerInputs, error) {
 	rng := layerRand(r.snap.Seed, layer.ID)
 	out := &LayerInputs{LayerID: layer.ID, Participants: map[string][]InputItem{}}
 	for i, route := range layer.Inputs {
@@ -147,7 +147,7 @@ func routeError(layerID, what string, index int, route Route, err error) error {
 // layer input's `to`; a moderator input's one recipient is the moderator,
 // so moderator marks a moderator input, which may use view full), and
 // recipients that belong to the consuming layer (or are its moderator).
-func (r *Router) checkRoute(layer Layer, route Route, recipients []string, moderator bool) error {
+func (r *router) checkRoute(layer Layer, route Route, recipients []string, moderator bool) error {
 	if route.View == ViewFull && len(route.To) == 0 && !moderator {
 		return errors.New("view full requires explicit to recipients")
 	}
@@ -167,7 +167,7 @@ func (r *Router) checkRoute(layer Layer, route Route, recipients []string, moder
 // optional route with nothing to give returns an empty list and no error;
 // a non-optional one with nothing to give is an error. A projection error
 // is an error even for an optional route.
-func (r *Router) routeItems(consumer Layer, route Route, index int, produced map[string][]OutputRecord) ([]InputItem, error) {
+func (r *router) routeItems(consumer Layer, route Route, index int, produced map[string][]OutputRecord) ([]InputItem, error) {
 	kind, id, err := route.Producer()
 	if err != nil {
 		return nil, err
@@ -205,7 +205,7 @@ func (r *Router) routeItems(consumer Layer, route Route, index int, produced map
 
 // precedes reports whether layer a comes before layer b in the
 // configuration.
-func (r *Router) precedes(a, b string) bool {
+func (r *router) precedes(a, b string) bool {
 	ia := slices.IndexFunc(r.cfg.Layers, func(l Layer) bool { return l.ID == a })
 	ib := slices.IndexFunc(r.cfg.Layers, func(l Layer) bool { return l.ID == b })
 	return ia >= 0 && ib >= 0 && ia < ib
@@ -213,7 +213,7 @@ func (r *Router) precedes(a, b string) bool {
 
 // sourceItem builds the single record of a source route from the
 // materialised source file, narrowed by paths for a json source.
-func (r *Router) sourceItem(route Route, index int, sourceID string) ([]InputItem, error) {
+func (r *router) sourceItem(route Route, index int, sourceID string) ([]InputItem, error) {
 	if route.Distribute == DistributeSameParticipant {
 		return nil, errors.New("distribute same_participant is valid for layer routes only")
 	}
@@ -247,13 +247,13 @@ func narrow(f Format, content []byte, paths []string) ([]byte, error) {
 	if f != FormatJSON {
 		return nil, fmt.Errorf("paths apply to json content only, not %s", f)
 	}
-	return Project(content, paths)
+	return projectOutput(content, paths)
 }
 
 // outputItems builds the records of a layer route from the producing
 // layer's ordered outputs: select, authors, view and paths applied in that
 // order.
-func (r *Router) outputItems(route Route, index int, producer Layer, outs []OutputRecord) ([]InputItem, error) {
+func (r *router) outputItems(route Route, index int, producer Layer, outs []OutputRecord) ([]InputItem, error) {
 	switch route.Select {
 	case "", SelectAll:
 	case SelectLastPerParticipant:
@@ -308,7 +308,7 @@ func (r *Router) outputItems(route Route, index int, producer Layer, outs []Outp
 
 // readAnonymously reports whether any route of the configuration, a layer
 // input or a moderator input, reads layerID anonymously.
-func (r *Router) readAnonymously(layerID string) bool {
+func (r *router) readAnonymously(layerID string) bool {
 	reads := func(routes []Route) bool {
 		return slices.ContainsFunc(routes, func(rt Route) bool {
 			kind, id, err := rt.Producer()
@@ -352,7 +352,7 @@ func withoutOwn(route Route, dealt map[string][]InputItem, recipients []string) 
 
 // participantName is the participant's transcript name: its configured
 // name, else its ID.
-func (r *Router) participantName(id string) string {
+func (r *router) participantName(id string) string {
 	if p, ok := r.cfg.Participants[id]; ok && p.Name != "" {
 		return p.Name
 	}

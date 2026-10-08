@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// ctlExampleReply scripts the §7 example: findings JSON in review, text
+// ctlExampleReply scripts the example configuration: findings JSON in review, text
 // in debate, GUIDE then STOP from the chair, a Markdown report.
 func ctlExampleReply(f *ctlForum, cl ctlCall) Reply {
 	switch {
@@ -35,7 +35,7 @@ func ctlExampleReply(f *ctlForum, cl ctlCall) Reply {
 	return f.reply(cl)
 }
 
-// The spec §7 example end to end: Alice as herself, Bob as a clone, the
+// The example configuration end to end: Alice as herself, Bob as a clone, the
 // chair and the editor fresh.
 func TestCtlSpecExample(t *testing.T) {
 	f := ctlLaunchRaw(t, []byte(cfgtExampleJSON))
@@ -119,7 +119,7 @@ func TestCtlPauseDrainsAndResumes(t *testing.T) {
 	close(release)
 	ctlWant(t, "run status", <-done, StatusPaused)
 	ctlWant(t, "status on disk", f.state().Status, StatusPaused)
-	if c.committedOutput("talk", TurnID(2, "alice")) == nil {
+	if c.committedOutput("talk", turnID(2, "alice")) == nil {
 		t.Fatal("the in-flight turn was not committed")
 	}
 	ctlWant(t, "bob round 2 before resume", len(f.msg.find("bob", "talk", 2, false)), 0)
@@ -207,7 +207,7 @@ func TestCtlCancelInFlight(t *testing.T) {
 	ctlWant(t, "kept outputs", len(res.Layers[0].Outputs), 3)
 	att := f.attempts("talk")
 	last := att[len(att)-1]
-	if last.Request.Turn != TurnID(2, "bob") || last.Reply != nil {
+	if last.Request.Turn != turnID(2, "bob") || last.Reply != nil {
 		t.Fatalf("cancelled attempt: %+v", last)
 	}
 	if err := c.RequestCancel(); !errors.Is(err, ErrInvalidState) {
@@ -239,7 +239,7 @@ func TestCtlCancelPaused(t *testing.T) {
 	ctlWant(t, "calls", len(f.msg.all()), 0)
 	for name, req := range map[string]func() error{"cancel": c.RequestCancel, "pause": c.RequestPause} {
 		reqErr := req()
-		if !errors.Is(reqErr, errRunEnded) || !errors.Is(reqErr, ErrInvalidState) || !strings.Contains(reqErr.Error(), "forum "+f.s.ID()) {
+		if !errors.Is(reqErr, errRunEnded) || !errors.Is(reqErr, ErrInvalidState) || !strings.Contains(reqErr.Error(), "forum ctl test ("+f.s.ID()+")") {
 			t.Errorf("%s after Run returned: %v, want a refusal naming the forum", name, reqErr)
 		}
 	}
@@ -377,12 +377,12 @@ func TestCtlRestartUncertainCountsTheOriginal(t *testing.T) {
 	ctlWant(t, "state calls", f.state().Calls, 1)
 }
 
-// ctlCrashConfig is the §7 example with every controller path switched
+// ctlCrashConfig is the example configuration with every controller path switched
 // on: a directed message and an assessment, a JSON repair, a moderator
 // that guides then stops.
 func ctlCrashConfig(t *testing.T) []byte {
 	t.Helper()
-	cfg, err := Decode([]byte(cfgtExampleJSON))
+	cfg, err := decodeConfig([]byte(cfgtExampleJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func TestCtlSingleShotModerator(t *testing.T) {
 		ctlMark("alice", "debate", 1), ctlMark("bob", "debate", 2))
 }
 
-// Open rebuilds a transcript that a crash left with a gap, a duplicate or
+// openForum rebuilds a transcript that a crash left with a gap, a duplicate or
 // a torn entry, from the commit log, without touching a correct one.
 func TestCtlOpenRebuildsTranscript(t *testing.T) {
 	layer := ctlLayer("debate", DeliveryPerTurn, 2, FormatText)
@@ -633,7 +633,7 @@ func TestCtlCorruptEndsFailed(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	// The saved accepted reply no longer validates (an empty text).
-	rel := attemptRel("talk", TurnID(1, "alice"), 1) + "/" + fileReply
+	rel := attemptRel("talk", turnID(1, "alice"), 1) + "/" + fileReply
 	var reply map[string]any
 	data, err := f.s.ReadFile(rel)
 	if err != nil {
@@ -658,7 +658,7 @@ func TestCtlCorruptEndsFailed(t *testing.T) {
 	ctlWant(t, "reason", f.result().Reason, EndCorrupt)
 	found := false
 	for _, line := range f.log.lines {
-		found = found || (strings.HasPrefix(line, "ERROR forum "+f.s.ID()+": its records are corrupt") && strings.Contains(line, "no longer validates"))
+		found = found || (strings.HasPrefix(line, "ERROR forum ctl test ("+f.s.ID()+") run 1: its records are corrupt") && strings.Contains(line, "no longer validates"))
 	}
 	if !found {
 		t.Errorf("the corruption was not logged at Error: %q", f.log.lines)

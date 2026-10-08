@@ -35,7 +35,7 @@ func TestValidPointer(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ValidPointer(tc.p); got != tc.want {
+			if got := validPointer(tc.p); got != tc.want {
 				t.Errorf("ValidPointer(%q) = %v, want %v", tc.p, got, tc.want)
 			}
 		})
@@ -95,7 +95,7 @@ func TestCheckProjection(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CheckProjection(tc.pointers)
+			got := checkProjection(tc.pointers)
 			if len(got) != len(tc.wantBad) {
 				t.Fatalf("CheckProjection(%q) = %q, want %d messages", tc.pointers, got, len(tc.wantBad))
 			}
@@ -147,7 +147,7 @@ func TestResolve(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v, found, rerr := Resolve(doc, tc.p)
+			v, found, rerr := resolvePointer(doc, tc.p)
 			if (rerr != nil) != tc.wantErr {
 				t.Fatalf("Resolve(%q) err = %v, wantErr %v", tc.p, rerr, tc.wantErr)
 			}
@@ -163,7 +163,7 @@ func TestResolve(t *testing.T) {
 		})
 	}
 
-	whole, found, err := Resolve(doc, "")
+	whole, found, err := resolvePointer(doc, "")
 	if err != nil || !found || !reflect.DeepEqual(whole, doc) {
 		t.Errorf("Resolve(doc, \"\") = %v, %v, %v; want the whole document", whole, found, err)
 	}
@@ -229,7 +229,7 @@ func TestProject(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Project([]byte(tc.doc), tc.pointers)
+			got, err := projectOutput([]byte(tc.doc), tc.pointers)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("Project err = %v, want it to contain %q", err, tc.wantErr)

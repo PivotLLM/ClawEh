@@ -36,7 +36,7 @@ func routerNewFixture(t *testing.T) *routerFixture {
 	disabled := false
 	f := &routerFixture{
 		cfg: &Config{
-			Version: ConfigVersion,
+			Version: configVersion,
 			Participants: map[string]Participant{
 				"alice":  {Agent: "alice", Name: "Alice"},
 				"bob":    {Clone: "bob"},
@@ -71,7 +71,7 @@ func routerNewFixture(t *testing.T) *routerFixture {
 // "private":"p-<author>"} and the published one drops "private".
 func (f *routerFixture) routerAddOutput(layerID string, round int, author string) OutputRecord {
 	layer, _ := f.cfg.Layer(layerID)
-	turn := TurnID(round, author)
+	turn := turnID(round, author)
 	dir := fmt.Sprintf("layers/%s/calls/%s/1/", layerID, turn)
 	rec := OutputRecord{
 		OutputID:      layerID + "-" + turn,
@@ -112,7 +112,7 @@ func (f *routerFixture) routerRead(rel string) ([]byte, error) {
 }
 
 func (f *routerFixture) routerResolve(layer Layer) (*LayerInputs, error) {
-	return NewRouter(f.cfg, f.snap, f.routerRead).Resolve(layer, f.produced)
+	return newRouter(f.cfg, f.snap, f.routerRead).Resolve(layer, f.produced)
 }
 
 // routerIDs lists each item as "<source or output id>" for compact
@@ -654,7 +654,7 @@ func TestRouterDedupePerRecipient(t *testing.T) {
 
 func TestRouterSpecExamples(t *testing.T) {
 	t.Run("one-to-one", func(t *testing.T) {
-		// rev 3 §4: filter authors, select last_per_participant, name one to.
+		// Filter authors, select last_per_participant, name one to.
 		f := routerNewFixture(t)
 		f.routerStandardOutputs()
 		layer := f.routerConsumer("use", []string{"alice", "bob"},
@@ -686,7 +686,7 @@ func TestRouterSpecExamples(t *testing.T) {
 		}
 	})
 	t.Run("specification example: report layer", func(t *testing.T) {
-		// §7: report takes source:report, layer:review and an optional
+		// The example: report takes source:report, layer:review and an optional
 		// layer:debate; with debate disabled the optional route is missing.
 		f := routerNewFixture(t)
 		f.routerStandardOutputs()
@@ -733,7 +733,7 @@ func TestRouterModerator(t *testing.T) {
 		}
 	})
 	// The moderator is a moderator input's one explicit recipient, so view
-	// full needs no `to` there (ValidateStatic agrees); the moderator sees
+	// full needs no `to` there (validateStatic agrees); the moderator sees
 	// the private members a published view drops.
 	t.Run("view full without to reaches the moderator", func(t *testing.T) {
 		f := routerNewFixture(t)

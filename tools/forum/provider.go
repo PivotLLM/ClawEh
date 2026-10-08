@@ -29,10 +29,6 @@ import (
 // tool-name prefix.
 const Suite = "forum"
 
-// BaseDirName is the directory under an agent's workspace that holds its
-// forums.
-const BaseDirName = "forums"
-
 // service is the process's one forum service (SetService).
 var service atomic.Pointer[forumpkg.Service]
 
@@ -103,10 +99,11 @@ type toolHost struct {
 
 var _ forumpkg.ToolHost = (*toolHost)(nil)
 
-// Scope refuses every call from inside a forum turn (a forum participant
-// created by a forum, or a turn at the maximum sub-agent depth, where every
-// forum ask runs) with forum.ErrForumTurn, and an agent without the switch;
-// otherwise it is the agent and its <workspace>/forums.
+// Scope refuses a call by a temporary agent a forum created with
+// forum.ErrForumTurn, a call from a turn at the maximum sub-agent depth
+// (where every forum ask runs) with forum.ErrForumDepth, and a call by an
+// agent without the `forum` switch; otherwise it is the agent and its
+// <workspace>/forums.
 func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 	if h.purpose == tools.TempPurposeForum {
 		return forumpkg.Scope{}, fmt.Errorf("agent %s is a forum participant: %w", h.agentID, forumpkg.ErrForumTurn)
@@ -119,7 +116,7 @@ func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 	if !h.cfg.AgentSuiteEnabled(h.agentID, Suite) {
 		return forumpkg.Scope{}, fmt.Errorf("forum tools are not enabled for agent %s", h.agentID)
 	}
-	base, err := filepath.Abs(filepath.Join(h.workspace, BaseDirName))
+	base, err := filepath.Abs(filepath.Join(h.workspace, forumpkg.BaseDirName))
 	if err != nil {
 		return forumpkg.Scope{}, fmt.Errorf("forum directory of agent %s: %w", h.agentID, err)
 	}

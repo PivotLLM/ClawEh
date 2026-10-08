@@ -22,8 +22,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Test helpers of seam (e), prefixed svc so they cannot collide with the
-// helpers of the other seams in the same package.
+// Test helpers of the service tests, prefixed svc so they cannot collide with the
+// helpers of the other tests in the same package.
 
 // svcConfigJSON has an existing participant (alice), a clone with a model
 // override (bob), a fresh moderator (editor), a file, an inline text and an
@@ -197,11 +197,14 @@ func (a *svcAgents) setDeleteErr(id string, err error) {
 }
 
 // svcNotifier records completion notices and, at each one, checks the
-// order §9 requires: result.json is on disk and the forum's temporary
+// order completion requires: result.json is on disk and the forum's temporary
 // agents are already deleted (no agents marker left).
 type svcNotifier struct {
 	base string
 	err  error
+	// failures, when positive, fails that many notices with errSvcHost
+	// before err applies.
+	failures int
 	// block, when set, holds every notice until it is closed or ctx ends.
 	block chan struct{}
 
@@ -228,8 +231,12 @@ func (n *svcNotifier) ForumFinished(ctx context.Context, origin Origin, chat Cha
 	if _, err := os.Stat(filepath.Join(n.base, res.ForumID, dirRuns, strconv.Itoa(res.Run), fileResult)); err != nil {
 		n.violations = append(n.violations, "notice before result.json: "+err.Error())
 	}
-	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, CleanupAgents))); err == nil {
+	if _, err := os.Stat(filepath.Join(n.base, dirCleanup, fmt.Sprintf("%s.%d.%s", res.ForumID, res.Run, cleanupAgents))); err == nil {
 		n.violations = append(n.violations, "notice before the temporary agents were deleted")
+	}
+	if n.failures > 0 {
+		n.failures--
+		return errSvcHost
 	}
 	return n.err
 }
@@ -301,12 +308,12 @@ func (svcMessenger) Ask(context.Context, string, string, time.Duration) (Reply, 
 }
 
 // svcCtrl is a fake controller over a real store. It commits through the
-// store and derives its state with LoadState, so what it leaves on disk is
+// store and derives its state with loadState, so what it leaves on disk is
 // what the real controller would. Run waits until the test finishes it
 // (finish), a pause or cancel is requested, or the service closes; a
 // cancel request dominates a pause request.
 type svcCtrl struct {
-	store *Store
+	store *forumStore
 	cfg   *Config
 	snap  *Snapshot
 	parts *Participants
@@ -339,7 +346,6 @@ type svcCtrl struct {
 func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
 	c.exited.Store(false)
 	c.runs.Add(1)
-	c.startedOnce.Do(func() { close(c.started) })
 	st, err := c.run(ctx)
 	if c.beforeReturn != nil {
 		c.beforeReturn(c)
@@ -349,7 +355,11 @@ func (c *svcCtrl) Run(ctx context.Context) (Status, error) {
 }
 
 func (c *svcCtrl) run(ctx context.Context) (Status, error) {
-	switch st := c.State().Status; st {
+	st := c.State().Status
+	// Started once the state it acts on is read, so a commit the test makes
+	// after get returns is never mistaken for the state Run started from.
+	c.startedOnce.Do(func() { close(c.started) })
+	switch st {
 	case StatusCompleted, StatusIncomplete, StatusFailed, StatusCancelled:
 		return st, nil
 	case StatusPausing:
@@ -402,7 +412,7 @@ func (c *svcCtrl) commit(commit *Commit) error {
 	if _, err := nextAppend(c.store, commit); err != nil {
 		return err
 	}
-	st, err := ReplayState(c.store, c.cfg, c.snap) // as the real controller, the lock holder writes state.json
+	st, err := replayState(c.store, c.cfg, c.snap) // as the real controller, the lock holder writes state.json
 	if err != nil {
 		return err
 	}
@@ -474,7 +484,7 @@ type svcCtrls struct {
 	noResult   bool
 }
 
-func (r *svcCtrls) open(_ context.Context, s *Store, _ Host) (controller, error) {
+func (r *svcCtrls) open(_ context.Context, s *forumStore, _ Host) (controller, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.opens++
@@ -608,7 +618,6 @@ func (e *svcEnv) newService() *Service {
 		Agents:    e.agents,
 		Notifier:  e.notifier,
 		Logger:    e.logger,
-		Schemas:   JSONSchemaValidator{},
 		OnStuck:   e.stuck.record,
 	})
 	svc.openCtrl = e.ctrls.open
@@ -696,6 +705,42 @@ func (e *svcEnv) running(id string) {
 	})
 }
 
+// cleanupsPending is how many runs wait for a temporary-agent deletion
+// retry.
+func (e *svcEnv) cleanupsPending() int {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	return len(e.svc.cleanups)
+}
+
+// summary is the status of a forum's latest run.
+func (e *svcEnv) summary(id string) *Summary {
+	e.t.Helper()
+	sum, err := e.svc.Status(e.t.Context(), e.scope, id, 0)
+	if err != nil {
+		e.t.Fatalf("status %s: %v", id, err)
+	}
+	return sum
+}
+
+// noticeTries is how many tries of run 1's completion notice have failed
+// in this process and wait for a retry (0 when none is pending).
+func (e *svcEnv) noticeTries(id string) int {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	if nr := e.svc.notices[runKey{id: id, run: 1}]; nr != nil {
+		return nr.tries
+	}
+	return 0
+}
+
+// notifying reports whether run 1's completion notice is being delivered.
+func (e *svcEnv) notifying(id string) bool {
+	e.svc.mu.Lock()
+	defer e.svc.mu.Unlock()
+	return e.svc.notifying[runKey{id: id, run: 1}]
+}
+
 // keptAlive reports whether the service keeps the forum's agents alive.
 func (e *svcEnv) keptAlive(id string) bool {
 	e.svc.mu.Lock()
@@ -706,9 +751,9 @@ func (e *svcEnv) keptAlive(id string) bool {
 
 // store opens the store of a forum's latest run directly (the forum's
 // handle when it has no run).
-func (e *svcEnv) store(id string) *Store {
+func (e *svcEnv) store(id string) *forumStore {
 	e.t.Helper()
-	s, err := OpenStore(e.scope.BaseDirectory, id)
+	s, err := openStore(e.scope.BaseDirectory, id)
 	if err != nil {
 		e.t.Fatalf("open store %s: %v", id, err)
 	}
@@ -761,7 +806,7 @@ func (e *svcEnv) markerRun(id string, n int, name string) (string, bool) {
 // forumIDs lists the forums on disk.
 func (e *svcEnv) forumIDs() []string {
 	e.t.Helper()
-	ids, err := ListForums(e.scope.BaseDirectory)
+	ids, err := listForums(e.scope.BaseDirectory)
 	if err != nil {
 		e.t.Fatal(err)
 	}
