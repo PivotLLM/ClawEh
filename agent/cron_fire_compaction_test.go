@@ -13,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -93,9 +94,9 @@ func TestCronFire_SurvivesAgeCompactionOnArrival(t *testing.T) {
 		}
 		seeded[i].Seq = seq
 	}
-	store, ok := agent.Sessions.(*privateSessionStore)
+	store, ok := agent.Sessions.(*session.SQLiteStore)
 	if !ok {
-		t.Fatalf("agent session store is %T, want *privateSessionStore", agent.Sessions)
+		t.Fatalf("agent session store is %T, want *session.SQLiteStore", agent.Sessions)
 	}
 	if err := store.SetHistoryWithSeqs(sessionKey, seeded); err != nil {
 		t.Fatalf("backdate session: %v", err)

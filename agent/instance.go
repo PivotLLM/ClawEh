@@ -8,14 +8,12 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
-	"github.com/PivotLLM/ctxengine/memory"
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/internal/perms"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -475,47 +473,11 @@ func initSessionStore(dir string) (session.SessionStore, error) {
 	if err := refuseUnmigratedSessions(dir); err != nil {
 		return nil, err
 	}
-	// Created here, private, before the engine would create it with 0755.
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create session directory %s: %w", dir, err)
-	}
 	store, err := session.NewSQLiteStore(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
-	return &privateSessionStore{SQLiteStore: store, dir: dir}, nil
-}
-
-// ensurePrivateArchive is ensureArchiveIn for the sessions directory of the
-// state directory stateDir. The engine's own archive handle opens the same
-// file, outside the session store, so the context manager calls it too.
-func ensurePrivateArchive(stateDir, sessionKey string) {
-	if stateDir == "" {
-		return
-	}
-	ensureArchiveIn(filepath.Join(stateDir, "sessions"), sessionKey)
-}
-
-// ensureArchiveIn creates the session's archive database in dir as an empty
-// 0600 file when it does not exist yet, so it and its -wal/-shm side files
-// are private from the first write (SQLite would create them 0644). An
-// existing file is left alone (startup tightens loose modes). Best-effort: a
-// failure is logged, and the engine still opens the database.
-func ensureArchiveIn(dir, sessionKey string) {
-	if dir == "" || sessionKey == "" {
-		return
-	}
-	path := memory.ArchivePath(dir, sessionKey)
-	if _, err := os.Lstat(path); err == nil {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		logger.WarnCF("agent", "Failed to create the session directory", map[string]any{"path": dir, "error": err.Error()})
-		return
-	}
-	if err := perms.EnsurePrivateFile(path); err != nil {
-		logger.WarnCF("agent", "Failed to create the session archive privately", map[string]any{"path": path, "error": err.Error()})
-	}
+	return store, nil
 }
 
 // refuseUnmigratedSessions fails when dir still holds a JSONL-layout session

@@ -149,35 +149,6 @@ func EnsurePrivateFile(path string) error {
 	return nil
 }
 
-// EnsurePrivateDir creates path (and any missing parents) 0700 when it does
-// not exist and clears group/other bits on it when it does, so a store opened
-// inside it next is private from the start. A symbolic link is refused. On
-// Windows it does nothing.
-func EnsurePrivateDir(path string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Errorf("perms: create %s: %w", path, err)
-	}
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("perms: %s: %w", path, err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("perms: %s is a symbolic link", path)
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("perms: %s is not a directory", path)
-	}
-	if mode := fi.Mode().Perm(); mode&groupOther != 0 {
-		if err := os.Chmod(path, mode&^groupOther); err != nil {
-			return fmt.Errorf("perms: %s: %w", path, err)
-		}
-	}
-	return nil
-}
-
 // tightenOpen clears group/other bits on the open regular file f, acting on
 // the descriptor so no path is resolved again.
 func tightenOpen(f *os.File) error {

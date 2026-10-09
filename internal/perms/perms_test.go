@@ -253,48 +253,6 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 	}
 }
 
-func TestEnsurePrivateDir(t *testing.T) {
-	root := t.TempDir()
-
-	fresh := filepath.Join(root, "a", "cogmem")
-	if err := EnsurePrivateDir(fresh); err != nil {
-		t.Fatalf("EnsurePrivateDir(new): %v", err)
-	}
-	if got := mode(t, fresh); got != 0o700 {
-		t.Errorf("new dir mode = %04o, want 0700", got)
-	}
-
-	loose := filepath.Join(root, "loose")
-	if err := os.Mkdir(loose, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(loose, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsurePrivateDir(loose); err != nil {
-		t.Fatalf("EnsurePrivateDir(loose): %v", err)
-	}
-	if got := mode(t, loose); got != 0o700 {
-		t.Errorf("loose dir mode = %04o, want 0700", got)
-	}
-
-	link := filepath.Join(root, "link")
-	if err := os.Symlink(loose, link); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsurePrivateDir(link); err == nil {
-		t.Error("EnsurePrivateDir accepted a symbolic link")
-	}
-
-	file := filepath.Join(root, "file")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsurePrivateDir(file); err == nil {
-		t.Error("EnsurePrivateDir accepted a regular file")
-	}
-}
-
 func TestCheckCleanInstall(t *testing.T) {
 	dir, config := fixture(t)
 	if err := Enforce(dir, config, nil); err != nil {

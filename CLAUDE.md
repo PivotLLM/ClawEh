@@ -103,7 +103,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   back on save; unknown keys are warned at load (`config/unknown_keys.go`).
 - **Startup guards:** `internal/perms.Enforce` runs before the config loads — `CLAW_HOME`
   and every folder under it become 0700, secrets/DBs 0600, and a group/other-readable `config.json` aborts startup
-  with the `chmod 600` to run. Everything ClawEh creates under `CLAW_HOME` is 0700/0600.
+  with the `chmod 600` to run. Everything ClawEh creates under `CLAW_HOME` is 0700/0600;
+  ctxengine and cogmem create the session archives and memory stores (with their -wal/-shm)
+  owner-only themselves, so ClawEh has no pre-step for them.
 - **Audit log:** `internal/audit` (`<CLAW_HOME>/internal/audit.db`) records tool calls, config
   writes and logins; every turn carries a `turn_id` on its log lines. See `docs/audit.md`.
 - **Fail fast:** if the HTTP listener, the MCP host server or the agent loop dies after
