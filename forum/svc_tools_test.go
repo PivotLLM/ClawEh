@@ -879,7 +879,7 @@ func TestReadmeTemplatesValidate(t *testing.T) {
 			id := st.newForum("")
 			st.ok("config_template", map[string]any{"id": id, "name": tpl.name})
 			msg := st.refused("validate", map[string]any{"id": id}, "participants.")
-			if got, want := strings.Count(msg, "is still a placeholder; replace it."), len(templatePlaceholder.FindAllString(raw, -1)); got != want {
+			if got, want := strings.Count(msg, "is still a placeholder; replace it"), len(templatePlaceholder.FindAllString(raw, -1)); got != want {
 				t.Errorf("validation reports %d placeholders, the template has %d:\n%s", got, want, msg)
 			}
 			fill := map[string]any{}

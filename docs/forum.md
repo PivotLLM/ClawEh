@@ -191,7 +191,7 @@ Text in the form `<...>` is always a placeholder to replace and never real
 content: validation refuses any value, anywhere in the configuration except
 `schemas`, that is entirely `<...>` (after trimming spaces), naming its path,
 such as
-`sources.question.inline: is still a placeholder; replace it.`. Text that
+`sources.question.inline: is still a placeholder; replace it`. Text that
 only contains angle brackets, such as `Is a<b?`, is unaffected. The guide and
 templates are embedded in the binary (`forum/readme/`).
 

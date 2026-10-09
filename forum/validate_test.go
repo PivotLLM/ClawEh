@@ -140,15 +140,15 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"anonymous in a per_turn layer", func(c *Config) {
 			c.Layers[2].Inputs[1].Anonymous = true
 			c.Layers[2].Delivery = DeliveryPerTurn
-		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously", "after_round with one round and no moderator"}},
+		}, "layers[2].inputs[1].anonymous", []string{"layer report reads review anonymously", "after_round with one round and no moderator"}},
 		{"anonymous in a multi-round layer", func(c *Config) {
 			c.Layers[2].Inputs[1].Anonymous = true
 			c.Layers[2].MaxRounds = 2
-		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously"}},
+		}, "layers[2].inputs[1].anonymous", []string{"layer report reads review anonymously"}},
 		{"anonymous in a moderated layer", func(c *Config) {
 			c.Layers[2].Inputs[1].Anonymous = true
 			c.Layers[2].Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}
-		}, "layers[2].inputs[1].anonymous", []string{"Layer report reads review anonymously"}},
+		}, "layers[2].inputs[1].anonymous", []string{"layer report reads review anonymously"}},
 		{"anonymous and by name", func(c *Config) {
 			c.Layers[2].Inputs[1].Anonymous = true
 			c.Layers[2].Inputs = append(c.Layers[2].Inputs, Route{From: "layer:review", Optional: true})
@@ -450,7 +450,7 @@ func TestValidateStaticPlaceholders(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cfgtExample(t)
 			tt.mutate(cfg)
-			cfgtWantIssue(t, validateStatic(cfg), tt.path, "is still a placeholder; replace it.")
+			cfgtWantIssue(t, validateStatic(cfg), tt.path, "is still a placeholder; replace it")
 		})
 	}
 
