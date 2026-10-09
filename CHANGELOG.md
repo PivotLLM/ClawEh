@@ -1246,6 +1246,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Devices pairing at the same moment no longer fail with "pairing store
+  error".** Two first-time connects could collide in the pairing database and
+  one was refused (UNAVAILABLE, close 1011) until it retried. They now wait
+  for each other, and a pairing store failure is logged with its cause.
+
 - **Saving the configuration no longer leaves session databases open.** The
   agents a save replaces are closed once they are idle.
 

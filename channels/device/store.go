@@ -133,11 +133,19 @@ const (
 // opened under load ran with busy_timeout=0, failing a contended write at
 // once with SQLITE_BUSY. The driver applies busy_timeout before the rest.
 //
+// _txlock=immediate makes every transaction (BeginTx) take the write lock
+// when it begins, waiting for it under busy_timeout. Every transaction here
+// writes, and most read first: a deferred one starts as a reader, and when
+// another connection commits between its read and its first write, SQLite
+// fails the upgrade at once with SQLITE_BUSY, which busy_timeout does not
+// cover (waiting cannot help a stale snapshot). Concurrent first-time
+// pairings hit exactly that in CreatePending.
+//
 // journal_mode is deliberately NOT here. It is a property of the file, not the
 // connection, so it needs setting once — and converting a fresh file to WAL is
 // the racy step ensureWAL exists for. Re-running it on every pooled connection
 // would put that race back on every open.
-const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
+const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 
 func OpenStore(ctx context.Context, path string) (*Store, error) {
 	// Pairing tokens live in here: make the file private before SQLite

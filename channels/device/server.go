@@ -532,7 +532,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	// Pairing decision.
 	paired, ok, err := s.store.GetPaired(ctx, p.Device.ID)
 	if err != nil {
-		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
+		return nil, storeFail(req.ID, "read paired device", p.Device.ID, err)
 	}
 	pairedAndMatches := ok && paired.PublicKey == p.Device.PublicKey
 
@@ -544,12 +544,16 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 			ClientMode: p.Client.Mode, Role: role, Scopes: p.Scopes, RemoteIP: remoteHost(r),
 		})
 		if perr != nil {
-			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
+			return nil, storeFail(req.ID, "create pending pairing", p.Device.ID, perr)
 		}
 		if s.opts.AutoApprove {
 			if dev, _, aerr := s.store.Approve(ctx, reqID, []string{role}, p.Scopes); aerr == nil {
 				paired = dev
 				pairedAndMatches = true
+			} else {
+				logger.WarnCF("device", "Auto-approve failed; pairing stays pending", map[string]any{
+					"deviceId": p.Device.ID, "requestId": reqID, "error": aerr.Error(),
+				})
 			}
 		}
 		if !pairedAndMatches {
@@ -570,6 +574,15 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		tokens = append(tokens, t.DeviceToken)
 	}
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes, tokens: tokens}, nil
+}
+
+// storeFail logs a pairing store failure during a handshake with its cause
+// and returns the UNAVAILABLE refusal the client gets (close 1011).
+func storeFail(reqID, op, deviceID string, err error) *handshakeFail {
+	logger.ErrorCF("device", "Pairing store error", map[string]any{
+		"op": op, "deviceId": deviceID, "error": err.Error(),
+	})
+	return &handshakeFail{id: reqID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
 }
 
 // presentedDeviceTokens returns the device tokens the connect request carried
