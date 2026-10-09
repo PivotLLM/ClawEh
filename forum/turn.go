@@ -56,7 +56,8 @@ type attemptResult struct {
 // the transcript here (published at commit).
 //
 // Attempts are numbered from the attempts already reserved for this turn
-// ID (uncertain ones included) up to limits.max_attempts_per_turn; see
+// ID up to limits.max_attempts_per_turn; an attempt a restart cut before
+// its reply is resent under its own number, so it uses up none. See
 // perform for adoption, resend and repair. Rejected content is never
 // published; every attempt stays on disk.
 func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
@@ -98,9 +99,11 @@ func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, p
 //     - an accepted reply (no issues) without a committed result: the
 //     process died between reply and commit; it is adopted without
 //     calling again;
-//     - no reply (uncertain) or an unsuccessful outcome (timeout,
-//     error, cancelled, empty): its message is resent unchanged as a new
-//     attempt;
+//     - no reply (uncertain: a restart cut it): its message is resent
+//     unchanged as the same attempt (AttemptRequest.Resent), so a
+//     restart uses up no attempt;
+//     - an unsuccessful outcome (timeout, error, cancelled, empty): its
+//     message is resent unchanged as the next attempt;
 //     - a rejected reply: the next attempt is a repair (repairFor);
 //     - none: the first message (w.compose).
 //  2. reserve checks the limits and the pause/cancel flags, writes
@@ -117,9 +120,9 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 		c.host.Logger.Infof("%s: %s/%s adopting saved reply of attempt %d", c.logName, w.layer.ID, w.turn, last.Request.Attempt)
 		return attemptResult{req: &last.Request, reply: last.Reply}, nil
 	}
-	for attempt := len(prior) + 1; attempt <= c.snap.Limits.MaxAttemptsPerTurn; attempt++ {
+	for {
 		req := &AttemptRequest{
-			Layer: w.layer.ID, Round: w.round, Turn: w.turn, Attempt: attempt, Kind: w.kind,
+			Layer: w.layer.ID, Round: w.round, Turn: w.turn, Attempt: 1, Kind: w.kind,
 			Participant: w.p.ID, AgentID: w.p.AgentID,
 		}
 		switch last := lastAttempt(prior); {
@@ -129,10 +132,21 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 				return attemptResult{}, err
 			}
 			req.Message, req.ThroughSeq = message, cutoff
-		case last.Reply == nil || !last.Reply.Outcome.Successful():
+		case last.Reply == nil:
+			req.Attempt, req.Resent = last.Request.Attempt, true
+			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
+		case !last.Reply.Outcome.Successful():
+			req.Attempt = last.Request.Attempt + 1
 			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
 		default:
+			req.Attempt = last.Request.Attempt + 1
 			req.Message, req.ThroughSeq, req.Repair = c.repairFor(w, prior), last.Request.ThroughSeq, true
+		}
+		if req.Attempt > c.snap.Limits.MaxAttemptsPerTurn {
+			break
+		}
+		if req.Resent {
+			c.host.Logger.Infof("%s: %s/%s attempt %d resent: a restart cut it before its reply", c.logName, w.layer.ID, w.turn, req.Attempt)
 		}
 		deadline, expired := c.awaitModel(ctx, w)
 		wait, reserved, reason, err := c.reserve(ctx, w.layer, req, deadline)
@@ -157,13 +171,13 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 		// A wait the run deadline cut is the deadline stopping the run, not
 		// an attempt the participant used up, even on its last attempt.
 		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(time.Now()) {
-			c.host.Logger.Warnf("%s: %s/%s attempt %d cut by the run deadline", c.logName, w.layer.ID, w.turn, attempt)
+			c.host.Logger.Warnf("%s: %s/%s attempt %d cut by the run deadline", c.logName, w.layer.ID, w.turn, req.Attempt)
 			return attemptResult{reason: EndDeadline}, nil
 		}
-		c.host.Logger.Warnf("%s: %s/%s attempt %d rejected: %s", c.logName, w.layer.ID, w.turn, attempt, strings.Join(reply.Issues, "; "))
+		c.host.Logger.Warnf("%s: %s/%s attempt %d rejected: %s", c.logName, w.layer.ID, w.turn, req.Attempt, strings.Join(reply.Issues, "; "))
 		prior = c.turnAttempts(w.layer.ID, w.turn)
 	}
-	c.host.Logger.Errorf("%s: %s/%s: no valid reply from %s in %d attempts", c.logName, w.layer.ID, w.turn, w.p.ID, c.snap.Limits.MaxAttemptsPerTurn)
+	c.host.Logger.Errorf("%s: %s/%s: no valid reply from %s in %d attempts", c.logName, w.layer.ID, w.turn, w.p.ID, len(prior))
 	return attemptResult{reason: w.exhausted}, nil
 }
 
@@ -306,7 +320,7 @@ func (c *forumController) reserve(ctx context.Context, layer Layer, req *Attempt
 		Kind: CommitAttempt, Layer: req.Layer, Round: req.Round, Turn: req.Turn, TurnKind: req.Kind,
 		Participant: req.Participant, Attempt: req.Attempt, ThroughSeq: req.ThroughSeq,
 	}, func() {
-		c.attempts[req.Layer] = append(c.attempts[req.Layer], AttemptRecord{Request: *req})
+		c.cacheAttempt(*req)
 	})
 	if errors.Is(err, errSkip) {
 		return 0, false, "", nil // paused or cancelled between the check and the commit
@@ -406,7 +420,7 @@ func (c *forumController) storeOutput(layer Layer, req *AttemptRequest, reply *A
 	out := &OutputRecord{
 		OutputID: outputID(c.snap.ForumID, layer.ID, req.Turn), LayerID: layer.ID, Round: req.Round,
 		ParticipantID: req.Participant, Format: layer.Output.Format, Turn: req.Turn, Attempt: req.Attempt,
-		Resent: c.resentAfterRestart(layer.ID, req.Turn, req.Attempt),
+		Resent: req.Resent,
 	}
 	if err := c.durable("output", func() error { return c.store.WriteOutput(out, content, published) }); err != nil {
 		return nil, nil, err
@@ -433,16 +447,20 @@ func outputID(forumID, layerID, turn string) string {
 	return uuid.NewSHA1(ns, []byte(layerID+"/"+turn)).String()
 }
 
-// resentAfterRestart reports whether an attempt of the turn before attempt
-// has no reply: within one process every attempt gets one, so it was cut
-// by a restart and its message sent again.
-func (c *forumController) resentAfterRestart(layerID, turn string, attempt int) bool {
-	for _, a := range c.turnAttempts(layerID, turn) {
-		if a.Request.Attempt < attempt && a.Reply == nil {
-			return true
+// cacheAttempt records a reserved attempt in the attempts cache: a resend
+// replaces the cut attempt it sends again, any other is appended. The
+// caller holds c.mu.
+func (c *forumController) cacheAttempt(req AttemptRequest) {
+	list := c.attempts[req.Layer]
+	if req.Resent {
+		for i := range list {
+			if list[i].Request.Turn == req.Turn && list[i].Request.Attempt == req.Attempt {
+				list[i] = AttemptRecord{Request: req}
+				return
+			}
 		}
 	}
-	return false
+	c.attempts[req.Layer] = append(list, AttemptRecord{Request: req})
 }
 
 // turnAttempts returns the cached attempts of one turn ID, in order.

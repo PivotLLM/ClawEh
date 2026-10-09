@@ -169,8 +169,8 @@ func TestResultsView_NoTranscriptAndOtherLayers(t *testing.T) {
 	}
 }
 
-// An output whose turn was resent after a restart names its attempt and
-// says why the earlier ones have no output; any other output has no note.
+// An output whose attempt was resent after a restart names its attempt and
+// says so; any other output has no note.
 func TestResultsView_ResentAfterRestart(t *testing.T) {
 	resent := outputAt("alice", "layers/report/a.txt", 1)
 	resent.Attempt, resent.Resent = 2, true

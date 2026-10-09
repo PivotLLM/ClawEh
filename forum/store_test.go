@@ -649,6 +649,45 @@ func TestStoreOrphanAttemptRecovery(t *testing.T) {
 	}
 }
 
+// A reserved attempt is written again only as the resend (Resent) of the
+// turn's newest attempt while it has no reply; its request.json is
+// rewritten and it is reserved again.
+func TestStoreResendAttempt(t *testing.T) {
+	s := stNewStore(t)
+	stLaunch(t, s, stConfig())
+	turn := turnID(1, "alice")
+	stReserve(t, s, "debate", 1, turn, TurnParticipant, "alice", 1, 1, "first")
+	resend := &AttemptRequest{Layer: "debate", Round: 1, Turn: turn, Attempt: 1, Kind: TurnParticipant, Participant: "alice", ThroughSeq: 1, Message: "first"}
+
+	if err := s.WriteAttemptRequest(resend); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("rewrite without Resent: %v, want ErrExist", err)
+	}
+	resend.Resent = true
+	if err := s.WriteAttemptRequest(resend); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if _, err := nextAppend(s, &Commit{
+		Kind: CommitAttempt, Layer: "debate", Round: 1, Turn: turn, TurnKind: TurnParticipant,
+		Participant: "alice", Attempt: 1, ThroughSeq: 1,
+	}); err != nil {
+		t.Fatalf("reserve the resend: %v", err)
+	}
+	got, err := stReopen(s).ListAttempts("debate")
+	if err != nil || len(got) != 1 || !got[0].Request.Resent || got[0].Reply != nil {
+		t.Fatalf("after resend: %+v, %v", got, err)
+	}
+
+	stReply(t, s, "debate", turn, 1, "x", []string{"bad"})
+	if err := s.WriteAttemptRequest(resend); !errors.Is(err, os.ErrExist) {
+		t.Errorf("resend of an answered attempt: %v, want ErrExist", err)
+	}
+	stReserve(t, s, "debate", 1, turn, TurnParticipant, "alice", 2, 1, "second")
+	earlier := *resend
+	if err := s.WriteAttemptRequest(&earlier); !errors.Is(err, os.ErrExist) {
+		t.Errorf("resend of an earlier attempt: %v, want ErrExist", err)
+	}
+}
+
 func TestStoreListAttemptsCorrupt(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -841,6 +880,11 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Two attempts of one turn: only the newest may be reserved again (a
+	// resend after a restart).
+	alice2 := turnID(2, "alice")
+	stReserve(t, s, "debate", 2, alice2, TurnParticipant, "alice", 1, 1, "m")
+	stReserve(t, s, "debate", 2, alice2, TurnParticipant, "alice", 2, 1, "m")
 	valid, err := s.ReadCommits()
 	if err != nil {
 		t.Fatal(err)
@@ -865,7 +909,7 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 		{"layer commit without layer", Commit{Kind: CommitLayerStarted}, "names no layer", false},
 		{"layer not configured", attempt("../x", 1, turn, TurnParticipant, "alice", 2), "not in the configuration", false},
 		{"attempt without request", attempt("debate", 1, bob, TurnParticipant, "bob", 1), "has no request", true},
-		{"attempt reserved twice", attempt("debate", 1, moderatorTurnID(1), TurnModerator, "mod", 1), "exists", false},
+		{"earlier attempt reserved again", attempt("debate", 2, alice2, TurnParticipant, "alice", 1), "exists", false},
 		{"attempt for a committed turn", attempt("debate", 1, turn, TurnParticipant, "alice", 2), "already has a committed output", false},
 		{"attempt not positive", attempt("debate", 1, bob, TurnParticipant, "bob", 0), "not positive", false},
 		{"attempt turn of another participant", attempt("debate", 1, bob, TurnParticipant, "alice", 3), `is not "r001-alice"`, false},

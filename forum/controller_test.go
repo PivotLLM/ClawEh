@@ -634,9 +634,8 @@ func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
 	att := f.attempts("talk")
-	ctlWant(t, "bob round 2 attempts", len(att), 4+1) // the uncertain attempt was resent and counted
-	// The output says it was resent, so its empty first attempt does not
-	// read as missing output; status counts it.
+	ctlWant(t, "attempts", len(att), 4) // the cut attempt was resent as itself
+	// The output says it was resent after the restart; status counts it.
 	st2 := f.state()
 	resent := 0
 	for _, o := range st2.Layers["talk"].Outputs {
@@ -646,7 +645,7 @@ func TestCtlShutdownLeavesForumResumable(t *testing.T) {
 		}
 		if o.Resent {
 			resent++
-			ctlWant(t, "resent output's attempt", o.Attempt, 2)
+			ctlWant(t, "resent output's attempt", o.Attempt, 1)
 		}
 	}
 	ctlWant(t, "resent outputs", resent, 1)
