@@ -420,7 +420,7 @@ func (c *forumController) storeOutput(layer Layer, req *AttemptRequest, reply *A
 	out := &OutputRecord{
 		OutputID: outputID(c.snap.ForumID, layer.ID, req.Turn), LayerID: layer.ID, Round: req.Round,
 		ParticipantID: req.Participant, Format: layer.Output.Format, Turn: req.Turn, Attempt: req.Attempt,
-		Resent: req.Resent,
+		Resent: c.turnResent(layer.ID, req.Turn),
 	}
 	if err := c.durable("output", func() error { return c.store.WriteOutput(out, content, published) }); err != nil {
 		return nil, nil, err
@@ -445,6 +445,12 @@ func outputID(forumID, layerID, turn string) string {
 		ns = uuid.NameSpaceOID
 	}
 	return uuid.NewSHA1(ns, []byte(layerID+"/"+turn)).String()
+}
+
+// turnResent reports whether a restart cut any attempt of the turn and it
+// was sent again (AttemptRequest.Resent).
+func (c *forumController) turnResent(layerID, turn string) bool {
+	return slices.ContainsFunc(c.turnAttempts(layerID, turn), func(a AttemptRecord) bool { return a.Request.Resent })
 }
 
 // cacheAttempt records a reserved attempt in the attempts cache: a resend

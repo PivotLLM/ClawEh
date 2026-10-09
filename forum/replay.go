@@ -29,7 +29,8 @@ import (
 //   - the commit log has no gaps (ReadCommits);
 //   - every layer with a CommitLayerStarted has an inputs.json that
 //     decodes;
-//   - every CommitAttempt has its request.json;
+//   - every CommitAttempt has its request.json, marked Resent when it
+//     reserves an attempt again;
 //   - every OutputRecord in a CommitTurn names an existing ContentFile
 //     whose SHA-256 equals its Digest, and an existing PublishedFile whose
 //     SHA-256 equals its PublishedDigest.
@@ -109,16 +110,25 @@ func verify(s *forumStore) (*Config, *Snapshot, error) {
 	if err != nil {
 		return nil, nil, err // already ErrCorrupt
 	}
+	seen := map[attemptKey]bool{}
 	for i := range commits {
-		if err := verifyCommit(s, &commits[i]); err != nil {
+		c := &commits[i]
+		repeat := false
+		if c.Kind == CommitAttempt {
+			k := attemptKey{c.Layer, c.Turn, c.Attempt}
+			repeat, seen[k] = seen[k], true
+		}
+		if err := verifyCommit(s, c, repeat); err != nil {
 			return nil, nil, corrupt("commit %d (%s): %v", commits[i].Seq, commits[i].Kind, err)
 		}
 	}
 	return cfg, snap, nil
 }
 
-// verifyCommit checks the artifacts one commit references.
-func verifyCommit(s *forumStore, c *Commit) error {
+// verifyCommit checks the artifacts one commit references. repeat marks a
+// CommitAttempt naming an attempt an earlier commit reserved: its
+// request.json must say it was resent.
+func verifyCommit(s *forumStore, c *Commit, repeat bool) error {
 	switch c.Kind {
 	case CommitLayerStarted:
 		_, err := s.ReadLayerInputs(c.Layer)
@@ -127,6 +137,9 @@ func verifyCommit(s *forumStore, c *Commit) error {
 		rel := attemptRel(c.Layer, c.Turn, c.Attempt)
 		if rel == "" {
 			return errors.New("malformed attempt")
+		}
+		if repeat {
+			return s.checkResend(rel)
 		}
 		return s.statRegular(path.Join(rel, fileRequest))
 	case CommitTurn:
@@ -275,8 +288,14 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		// An attempt is reserved again only when a restart cut it before
 		// its reply and it is resent (AttemptRequest.Resent): it must be the
 		// turn's newest attempt.
-		if ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] && c.Attempt != ix.latest[tk] {
-			return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
+		if first, ok := ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}]; ok {
+			if c.Attempt != ix.latest[tk] {
+				return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
+			}
+			if c.Round != first.round || c.ThroughSeq != first.through {
+				return fmt.Errorf("attempt %s/%s/%d reserved again with round %d and through_seq %d, not %d and %d",
+					c.Layer, c.Turn, c.Attempt, c.Round, c.ThroughSeq, first.round, first.through)
+			}
 		}
 		if ix.outputs[tk] {
 			return fmt.Errorf("attempt for %s/%s, which already has a committed output", c.Layer, c.Turn)
@@ -292,7 +311,7 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		if err := checkWorkID(layer, TurnParticipant, c.Round, o.ParticipantID, c.Turn); err != nil {
 			return err
 		}
-		if !ix.attempts[attemptKey{c.Layer, c.Turn, o.Attempt}] {
+		if !ix.reserved(c.Layer, c.Turn, o.Attempt) {
 			return fmt.Errorf("turn %s/%s: attempt %d is not reserved", c.Layer, c.Turn, o.Attempt)
 		}
 		if ix.outputs[tk] {

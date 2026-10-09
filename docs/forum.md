@@ -232,7 +232,7 @@ turn that was in progress is sent again as the same attempt (an existing
 agent may see that message twice). A restart never uses up an attempt
 (`max_attempts_per_turn`), though the resend counts as a call
 (`max_calls`). `forum_results` then gives that output's `attempt` with
-the note "resent after a restart",
+the note "its turn was resent after a restart",
 `forum_status` counts such outputs in every layer (`resent_after_restart`),
 and the completion notice gives the same count ("2 outputs came from turns
 resent after a restart."). A launch

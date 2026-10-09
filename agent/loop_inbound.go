@@ -933,9 +933,12 @@ func (al *AgentLoop) processSystemMessage(
 	}
 
 	// The chat the turn answers: ChatID in the channel MetaOriginChannel names.
+	// Every system message names it; one that does not is a bug in its sender.
 	originChannel, originChatID := inboundMetadata(msg, bus.MetaOriginChannel), msg.ChatID
 	if originChannel == "" {
-		originChannel = "cli"
+		logger.WarnCF("agent", "System message dropped: it names no origin channel",
+			map[string]any{"sender_id": msg.SenderID, "chat_id": msg.ChatID})
+		return "", nil
 	}
 	logger.InfoCF("agent", "Processing system message",
 		map[string]any{

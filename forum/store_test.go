@@ -676,8 +676,33 @@ func TestStoreResendAttempt(t *testing.T) {
 	if err != nil || len(got) != 1 || !got[0].Request.Resent || got[0].Reply != nil {
 		t.Fatalf("after resend: %+v, %v", got, err)
 	}
+	if _, _, err = verify(s); err != nil {
+		t.Fatalf("verify after a resend: %v", err)
+	}
 
 	stReply(t, s, "debate", turn, 1, "x", []string{"bad"})
+	if _, err = nextAppend(s, &Commit{
+		Kind: CommitAttempt, Layer: "debate", Round: 1, Turn: turn, TurnKind: TurnParticipant,
+		Participant: "alice", Attempt: 1, ThroughSeq: 1,
+	}); err == nil || !strings.Contains(err.Error(), "it has a reply") {
+		t.Errorf("reserving an answered attempt again: %v, want refused", err)
+	}
+
+	// A repeated reservation whose request is not marked resent is corrupt.
+	rel := attemptRel("debate", turn, 1) + "/" + fileRequest
+	data, err := os.ReadFile(s.Path(rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Path(rel), []byte(strings.Replace(string(data), `"resent": true,`, "", 1)), filePerm); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verify(stReopen(s)); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "without being resent") {
+		t.Errorf("verify of an unmarked repeat: %v, want ErrCorrupt", err)
+	}
+	if err := os.WriteFile(s.Path(rel), data, filePerm); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.WriteAttemptRequest(resend); !errors.Is(err, os.ErrExist) {
 		t.Errorf("resend of an answered attempt: %v, want ErrExist", err)
 	}
@@ -895,6 +920,10 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 	attempt := func(layer string, round int, turn string, kind TurnKind, pid string, n int) Commit {
 		return Commit{Kind: CommitAttempt, Layer: layer, Round: round, Turn: turn, TurnKind: kind, Participant: pid, Attempt: n}
 	}
+	withThrough := func(c Commit, through int) Commit {
+		c.ThroughSeq = through
+		return c
+	}
 	cont := &Decision{Decision: DecisionContinue}
 	tests := []struct {
 		name string
@@ -910,6 +939,8 @@ func TestStoreAppendCommitInvariants(t *testing.T) {
 		{"layer not configured", attempt("../x", 1, turn, TurnParticipant, "alice", 2), "not in the configuration", false},
 		{"attempt without request", attempt("debate", 1, bob, TurnParticipant, "bob", 1), "has no request", true},
 		{"earlier attempt reserved again", attempt("debate", 2, alice2, TurnParticipant, "alice", 1), "exists", false},
+		{"attempt reserved twice", withThrough(attempt("debate", 2, alice2, TurnParticipant, "alice", 2), 1), "exists", true},
+		{"resend with another through_seq", withThrough(attempt("debate", 2, alice2, TurnParticipant, "alice", 2), 2), "reserved again with round 2 and through_seq 2, not 2 and 1", false},
 		{"attempt for a committed turn", attempt("debate", 1, turn, TurnParticipant, "alice", 2), "already has a committed output", false},
 		{"attempt not positive", attempt("debate", 1, bob, TurnParticipant, "bob", 0), "not positive", false},
 		{"attempt turn of another participant", attempt("debate", 1, bob, TurnParticipant, "alice", 3), `is not "r001-alice"`, false},

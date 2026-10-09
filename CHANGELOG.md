@@ -421,8 +421,8 @@ observe does not need an entry.
   16,000 characters for all outputs together (later outputs are listed without
   text), and the transcript's path once the transcript exists; when the result
   layers have no output it lists the other layers'. Each output names its
-  attempt; one whose attempt was sent again after a restart carries the note
-  "resent after a restart", and
+  attempt; one whose turn was sent again after a restart carries the note
+  "its turn was resent after a restart", and
   `forum_status` counts them (`resent_after_restart`). The transcript quotes each
   output in a code block and, for a layer read anonymously, shows the letter
   next to the author. When a run stops waiting for a participant (the call
