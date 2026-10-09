@@ -355,9 +355,10 @@ func TestCtlRestartAdoptsSavedReply(t *testing.T) {
 	ctlWant(t, "alice attempts", len(f.attempts("talk")), 2)
 }
 
-// Restart: an uncertain attempt counts toward max_attempts_per_turn; with
-// one attempt allowed, it cannot be resent and the run fails.
-func TestCtlRestartUncertainCountsTheOriginal(t *testing.T) {
+// Restart: an attempt the shutdown cut uses up none. With one attempt
+// allowed, it is resent as the same attempt and the run completes; the
+// cut send still counts as a call, and the output is marked resent.
+func TestCtlRestartResendsTheSameAttempt(t *testing.T) {
 	cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
 	cfg.Limits.MaxAttemptsPerTurn = 1
 	f := ctlLaunch(t, cfg)
@@ -371,10 +372,17 @@ func TestCtlRestartUncertainCountsTheOriginal(t *testing.T) {
 	}
 	f.msg.hook = nil
 	_, st := f.run()
-	ctlWant(t, "status", st, StatusFailed)
-	ctlWant(t, "reason", f.result().Reason, EndAttemptsExhausted)
-	ctlWant(t, "calls", len(f.msg.all()), 1)
-	ctlWant(t, "state calls", f.state().Calls, 1)
+	ctlWant(t, "status", st, StatusCompleted)
+	ctlWant(t, "alice calls", len(f.msg.find("alice", "talk", 1, false)), 2)
+	ctlWant(t, "state calls", f.state().Calls, 2+1) // alice twice, bob once
+	att := f.attempts("talk")
+	if len(att) != 2 || att[0].Request.Attempt != 1 || !att[0].Request.Resent || att[0].Reply == nil {
+		t.Fatalf("attempts = %+v, want alice's attempt 1 resent and answered", att)
+	}
+	outs := f.state().Layers["talk"].Outputs
+	if len(outs) != 2 || outs[0].Attempt != 1 || !outs[0].Resent || outs[1].Resent {
+		t.Errorf("outputs = %+v, want alice's attempt 1 marked resent", outs)
+	}
 }
 
 // ctlCrashConfig is the example configuration with every controller path switched
@@ -618,8 +626,10 @@ func TestCtlCancelledByShutdownIsNotAFailedAttempt(t *testing.T) {
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
 	att = f.attempts("talk")
-	if len(att) < 3 || att[1].Reply == nil || att[1].Reply.Outcome != OutcomeCancelled {
-		t.Errorf("attempts = %+v, want the second recorded as cancelled", att)
+	// The resend is still attempt 1 (the shutdown used up none); its
+	// cancelled outcome is recorded and attempt 2 answers.
+	if len(att) != 3 || !att[0].Request.Resent || att[0].Reply == nil || att[0].Reply.Outcome != OutcomeCancelled {
+		t.Errorf("attempts = %+v, want the resent attempt 1 recorded as cancelled", att)
 	}
 }
 

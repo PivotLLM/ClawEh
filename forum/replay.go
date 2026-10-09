@@ -272,7 +272,10 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		if err := checkWorkID(layer, c.TurnKind, c.Round, c.Participant, c.Turn); err != nil {
 			return err
 		}
-		if ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] {
+		// An attempt is reserved again only when a restart cut it before
+		// its reply and it is resent (AttemptRequest.Resent): it must be the
+		// turn's newest attempt.
+		if ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] && c.Attempt != ix.latest[tk] {
 			return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
 		}
 		if ix.outputs[tk] {
@@ -308,7 +311,7 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		if want := moderatorTurnID(c.Round); c.Turn != want {
 			return fmt.Errorf("moderation turn %q is not %q", c.Turn, want)
 		}
-		if !ix.reserved[tk] {
+		if ix.latest[tk] == 0 {
 			return fmt.Errorf("moderation %s/%s has no reserved attempt", c.Layer, c.Turn)
 		}
 		if ix.outputs[tk] {

@@ -164,11 +164,14 @@ leaves only a temporary entry (`TempPrefix`) the next `Lock` sweeps.
    then `CommitAttempt`, then `Messenger.Ask`, then `reply.json`. On resume
    the latest attempt of an unfinished turn is: adopted if it has an
    accepted reply (crash between reply and output commit); resent
-   unchanged if it has no reply; followed by a repair if its reply was
-   rejected. Restart resets no limit. An output whose turn was resent
-   after a restart is marked (`OutputRecord.Resent`), and `forum_results`
-   and `forum_status` say so, so an earlier attempt without output does
-   not read as missing work.
+   unchanged as the same attempt if it has no reply (`AttemptRequest.Resent`:
+   request.json is rewritten and the attempt reserved again, the one case
+   where a `CommitAttempt` repeats an attempt number, and only the turn's
+   newest); followed by a repair if its reply was rejected. A restart uses
+   up no attempt (`max_attempts_per_turn`); the resend is a call like any
+   other (`max_calls`, layer budgets), and no limit is reset. An output
+   whose attempt was resent after a restart is marked
+   (`OutputRecord.Resent`), and `forum_results` and `forum_status` say so.
 4. **The controller always starts from disk.** `openForum` is the only
    constructor; `Launch` writes the run's files, then opens. There is no
    in-memory-only state between dispatches.

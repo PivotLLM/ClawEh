@@ -421,8 +421,8 @@ observe does not need an entry.
   16,000 characters for all outputs together (later outputs are listed without
   text), and the transcript's path once the transcript exists; when the result
   layers have no output it lists the other layers'. Each output names its
-  attempt; one whose turn was sent again after a restart carries the note
-  "resent after a restart; the earlier attempts have no output", and
+  attempt; one whose attempt was sent again after a restart carries the note
+  "resent after a restart", and
   `forum_status` counts them (`resent_after_restart`). The transcript quotes each
   output in a code block and, for a layer read anonymously, shows the letter
   next to the author. When a run stops waiting for a participant (the call
@@ -451,7 +451,9 @@ observe does not need an entry.
   up to five times per start of the service, then given up with a warning in
   the log. The notice also says how many outputs came from turns resent after
   a restart, the count `forum_status` gives. Runs survive a
-  restart and resume where they stopped. A run that stops on an error raises the "Forum
+  restart and resume where they stopped; a turn the restart cut is sent again
+  as the same attempt, so a restart never uses up a participant's attempts
+  (`max_attempts_per_turn`), though the resend counts toward `max_calls`. A run that stops on an error raises the "Forum
   run stopped" alert. The nightly backup and `claw backup` include each
   agent's `forums/` (without lock files or temporary files of a write in
   progress), and `claw restore` puts them back.

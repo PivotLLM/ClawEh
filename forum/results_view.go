@@ -62,8 +62,8 @@ type OutputView struct {
 	Format Format `json:"format"`
 	Size   int    `json:"size"`
 	// Attempt is the attempt of the turn that produced the output; File is
-	// in its directory. Note says why earlier attempts have no output when
-	// the turn was resent after a restart.
+	// in its directory. Note says when a restart cut that attempt and it
+	// was sent again.
 	Attempt       int    `json:"attempt"`
 	Note          string `json:"note,omitempty"`
 	File          string `json:"file,omitempty"`
@@ -73,8 +73,8 @@ type OutputView struct {
 	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
-// resentNote marks an output whose turn was resent after a restart.
-const resentNote = "resent after a restart; the earlier attempts have no output"
+// resentNote marks an output whose attempt was resent after a restart.
+const resentNote = "resent after a restart"
 
 // truncatedNote follows an output cut at its inline limit.
 func truncatedNote(path string) string {

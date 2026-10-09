@@ -268,6 +268,10 @@ type AttemptRequest struct {
 	// Repair is true when the message carries the previous attempt's
 	// validation errors instead of fresh content.
 	Repair bool `json:"repair,omitempty"`
+	// Resent is true when a restart cut this attempt before its reply and
+	// the message was sent again as the same attempt (request.json is
+	// rewritten with the new SentAt); the cut send uses up no attempt.
+	Resent bool `json:"resent,omitempty"`
 	// ThroughSeq is the last commit whose public events (peer outputs,
 	// guidance, directed messages) the message includes; the participant's
 	// next message starts after it.
@@ -313,9 +317,8 @@ type OutputRecord struct {
 	PublishedDigest string `json:"published_digest"`
 	Turn            string `json:"turn"`
 	Attempt         int    `json:"attempt"`
-	// Resent is true when an earlier attempt of the turn got no reply
-	// because the host restarted, and its message was sent again: the
-	// earlier attempt's directory holds no output.
+	// Resent is true when a restart cut the attempt that produced the
+	// output and its message was sent again (AttemptRequest.Resent).
 	Resent bool `json:"resent,omitempty"`
 }
 

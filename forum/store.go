@@ -132,8 +132,8 @@ type turnKey struct {
 }
 
 // commitIndex is what the commit log says about work IDs: the last
-// sequence number, the reserved attempts, the turns with a reservation and
-// those with a committed output, and each layer's last published round. The
+// sequence number, the reserved attempts, each turn's newest reserved
+// attempt and the turns with a committed output, and each layer's last published round. The
 // store keeps one for its own checks (loaded lazily and dropped, loaded
 // false, whenever a commit write fails, so the next use re-reads the log
 // from disk); replay builds one as it folds, and both pass it to
@@ -142,7 +142,7 @@ type commitIndex struct {
 	loaded    bool
 	last      int
 	attempts  map[attemptKey]bool
-	reserved  map[turnKey]bool
+	latest    map[turnKey]int
 	outputs   map[turnKey]bool
 	published map[string]int
 }
@@ -151,7 +151,7 @@ type commitIndex struct {
 func newCommitIndex() *commitIndex {
 	return &commitIndex{
 		attempts:  map[attemptKey]bool{},
-		reserved:  map[turnKey]bool{},
+		latest:    map[turnKey]int{},
 		outputs:   map[turnKey]bool{},
 		published: map[string]int{},
 	}
@@ -988,12 +988,14 @@ func attemptRel(layerID, turn string, attempt int) string {
 // and renamed into place, so an attempt directory always holds its
 // request.
 //
-// It fails if that attempt is already reserved (a CommitAttempt names it):
-// attempt numbers are allocated by the controller from the reserved
-// attempts, and a collision means two controllers. An attempt directory
-// that exists without a reservation is the orphan of a crash between this
-// write and its CommitAttempt; the message was never sent, so it is
-// replaced.
+// An attempt already reserved (a CommitAttempt names it) is written again
+// only as a resend (req.Resent) of the turn's newest attempt while it has
+// no reply: a restart cut it, and request.json is rewritten in place.
+// Otherwise a reserved attempt fails: attempt numbers are allocated by the
+// controller from the reserved attempts, and a collision means two
+// controllers. An attempt directory that exists without a reservation is
+// the orphan of a crash between this write and its CommitAttempt; the
+// message was never sent, so it is replaced.
 func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 	rel := attemptRel(req.Layer, req.Turn, req.Attempt)
 	if rel == "" {
@@ -1009,7 +1011,7 @@ func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 		return loadErr
 	}
 	if s.idx.attempts[attemptKey{req.Layer, req.Turn, req.Attempt}] {
-		return fmt.Errorf("write attempt request %s: %w", rel, os.ErrExist)
+		return s.rewriteAttemptRequestLocked(req, rel, data)
 	}
 	err = s.inRoot(func(r *os.Root) error {
 		turnDir := path.Dir(rel)
@@ -1033,6 +1035,24 @@ func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 		return syncDirAt(r, turnDir)
 	})
 	if err != nil {
+		return fmt.Errorf("write attempt request: %w", err)
+	}
+	return nil
+}
+
+// rewriteAttemptRequestLocked rewrites the request.json of a reserved
+// attempt being resent (see WriteAttemptRequest). s.mu is held.
+func (s *forumStore) rewriteAttemptRequestLocked(req *AttemptRequest, rel string, data []byte) error {
+	if !req.Resent || req.Attempt != s.idx.latest[turnKey{req.Layer, req.Turn}] {
+		return fmt.Errorf("write attempt request %s: %w", rel, os.ErrExist)
+	}
+	switch err := s.statRegular(path.Join(rel, fileReply)); {
+	case err == nil:
+		return fmt.Errorf("write attempt request %s: %w: the attempt has a reply", rel, os.ErrExist)
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("write attempt request %s: %w", rel, err)
+	}
+	if err := s.writeRel(path.Join(rel, fileRequest), data, false); err != nil {
 		return fmt.Errorf("write attempt request: %w", err)
 	}
 	return nil
@@ -1425,7 +1445,7 @@ func (x *commitIndex) add(c *Commit) {
 	switch c.Kind {
 	case CommitAttempt:
 		x.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] = true
-		x.reserved[turnKey{c.Layer, c.Turn}] = true
+		x.latest[turnKey{c.Layer, c.Turn}] = max(x.latest[turnKey{c.Layer, c.Turn}], c.Attempt)
 	case CommitTurn, CommitModerated:
 		x.outputs[turnKey{c.Layer, c.Turn}] = true
 	case CommitRoundPublished:
