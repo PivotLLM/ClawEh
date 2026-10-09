@@ -549,11 +549,12 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 			Channel:  "system",
 			SenderID: "async:agent_spawn",
 			Internal: true,
-			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
+			ChatID:   chatID,
 			Content:  content,
+			Metadata: map[string]string{bus.MetaOriginChannel: channel},
 		}
 		if ownerAgentID != "" {
-			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: ownerAgentID}
+			msg.Metadata[metadataKeyPreresolvedAgentID] = ownerAgentID
 			msg.SessionKey = routing.BuildAgentMainSessionKey(ownerAgentID)
 		}
 		msg.Metadata = bus.SetSpawnDepth(msg.Metadata, spawnDepth)

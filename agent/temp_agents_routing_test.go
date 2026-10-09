@@ -81,9 +81,9 @@ func TestMessageForDeletedTempAgentIsDropped(t *testing.T) {
 				Metadata: map[string]string{metaSessionReset: "true", metadataKeyPreresolvedAgentID: id},
 			},
 			"async result": {
-				Channel: "system", ChatID: "telegram:1", SenderID: "async:web_fetch", Content: "late result",
+				Channel: "system", ChatID: "1", SenderID: "async:web_fetch", Content: "late result",
 				SessionKey: routing.BuildAgentMainSessionKey(id),
-				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: id},
+				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: id, bus.MetaOriginChannel: "telegram"},
 			},
 		} {
 			if _, err := al.processMessage(context.Background(), msg); !errors.Is(err, errAgentGone) {

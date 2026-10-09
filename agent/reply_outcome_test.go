@@ -412,13 +412,53 @@ func TestProcessSystemMessage_NoOutcome(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 	al := mustNewAgentLoop(t, newTestConfig(t), msgBus, &mockProvider{}, nil)
 	if _, err := al.processSystemMessage(context.Background(), bus.InboundMessage{
-		Channel: "system", SenderID: "async:agent_spawn", ChatID: "telegram:chat-1", Content: "Result:\nfine",
+		Channel: "system", SenderID: "async:agent_spawn", ChatID: "chat-1", Content: "Result:\nfine",
+		Metadata: map[string]string{bus.MetaOriginChannel: "telegram"},
 	}, nil); err != nil {
 		t.Fatalf("processSystemMessage: %v", err)
 	}
 	out := nextOutbound(t, msgBus)
 	if out.Channel != "telegram" || out.ChatID != "chat-1" || out.Outcome != "" {
 		t.Fatalf("reply = %+v, want a reply to telegram:chat-1 with no outcome", out)
+	}
+}
+
+// TestRunTurn_SystemMessageOneReply: a system message's turn sends its reply
+// to the chat it answers, ChatID on the origin channel, once; nothing goes to
+// the internal system channel.
+func TestRunTurn_SystemMessageOneReply(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+
+	msgBus := bus.NewMessageBus()
+	al := mustNewAgentLoop(t, newTestConfig(t), msgBus, &fixedProvider{resp: &providers.LLMResponse{Content: "done"}}, nil)
+	al.runTurn(context.Background(), context.Background(), bus.InboundMessage{
+		Channel: "system", SenderID: "forum", ChatID: "webui:c-1", Content: "Forum run 1 finished: completed.",
+		Metadata: map[string]string{bus.MetaOriginChannel: "webui"}, Internal: true,
+	})
+	out := nextOutbound(t, msgBus)
+	if out.Channel != "webui" || out.ChatID != "webui:c-1" || out.Content != "done" {
+		t.Fatalf("reply = %+v, want \"done\" to webui chat webui:c-1", out)
+	}
+	noOutbound(t, msgBus)
+}
+
+// takeBatch merges system messages only for the same chat: the same chat ID
+// on two channels is two chats.
+func TestTakeBatch_SystemOrigins(t *testing.T) {
+	result := func(channel, content string) bus.InboundMessage {
+		return bus.InboundMessage{
+			Channel: "system", ChatID: "42", Content: content,
+			Metadata: map[string]string{bus.MetaOriginChannel: channel},
+		}
+	}
+	pending := []bus.InboundMessage{result("telegram", "a"), result("discord", "b"), result("telegram", "c")}
+	first, _ := takeBatch(&pending, false)
+	if !strings.Contains(first.Content, "a") || !strings.Contains(first.Content, "c") || strings.Contains(first.Content, "b") {
+		t.Errorf("merged = %q, want a and c only", first.Content)
+	}
+	if len(pending) != 1 || pending[0].Content != "b" {
+		t.Errorf("left = %+v, want the discord result", pending)
 	}
 }
 

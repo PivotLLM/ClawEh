@@ -33,8 +33,9 @@ func TestProcessSystemMessage_CapsAsyncResult(t *testing.T) {
 	_, err := al.processSystemMessage(context.Background(), bus.InboundMessage{
 		Channel:  "system",
 		SenderID: "async:agent_spawn",
-		ChatID:   "telegram:chat-1",
+		ChatID:   "chat-1",
 		Content:  big,
+		Metadata: map[string]string{bus.MetaOriginChannel: "telegram"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("processSystemMessage: %v", err)

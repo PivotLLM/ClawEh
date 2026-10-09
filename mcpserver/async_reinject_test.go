@@ -38,8 +38,8 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 		if m.Channel != "system" {
 			t.Errorf("channel = %q, want system", m.Channel)
 		}
-		if m.ChatID != "slack:C9" {
-			t.Errorf("chat_id = %q, want slack:C9", m.ChatID)
+		if m.ChatID != "C9" || m.Metadata[bus.MetaOriginChannel] != "slack" {
+			t.Errorf("chat = %q on %q, want C9 on slack", m.ChatID, m.Metadata[bus.MetaOriginChannel])
 		}
 		if m.Content == "" || m.SenderID != "async:agent_spawn" {
 			t.Errorf("unexpected message: %+v", m)

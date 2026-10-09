@@ -416,12 +416,13 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat
 			meta[metadataKeyFallbackChannel], meta[metadataKeyFallbackChatID] = defChannel, defChatID
 		}
 	}
+	meta[bus.MetaOriginChannel] = channel
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
 		SenderID:   forumNoticeSender,
-		ChatID:     channel + ":" + chatID,
+		ChatID:     chatID,
 		Content:    forumNoticeText(result),
 		SessionKey: routing.BuildAgentMainSessionKey(origin.AgentID),
 		Metadata:   meta,

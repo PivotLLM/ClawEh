@@ -82,10 +82,11 @@ func TestAgentIsolation_ResolveSystemMessageTargetValidation(t *testing.T) {
 	msg := bus.InboundMessage{
 		Channel:    "system",
 		SenderID:   "async:test",
-		ChatID:     "cli:direct",
+		ChatID:     "direct",
 		Content:    "test content",
 		SessionKey: "agent:alice:main",
 		Metadata: map[string]string{
+			bus.MetaOriginChannel:         "cli",
 			metadataKeyPreresolvedAgentID: "bob",
 		},
 	}
@@ -138,8 +139,8 @@ func TestAgentIsolation_TaskPointerCallbackCarriesOwnerAgent(t *testing.T) {
 	if msg.SessionKey != "agent:bob:main" {
 		t.Fatalf("expected sessionKey agent:bob:main, got %q", msg.SessionKey)
 	}
-	if msg.ChatID != "slack:C123" {
-		t.Fatalf("expected chatID slack:C123, got %q", msg.ChatID)
+	if msg.ChatID != "C123" || msg.Metadata[bus.MetaOriginChannel] != "slack" {
+		t.Fatalf("chat = %q on %q, want C123 on slack", msg.ChatID, msg.Metadata[bus.MetaOriginChannel])
 	}
 	if msg.Metadata[bus.MetaSpawnDepth] != "2" {
 		t.Fatalf("spawn_depth = %q, want the spawning turn's 2", msg.Metadata[bus.MetaSpawnDepth])

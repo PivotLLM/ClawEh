@@ -80,6 +80,10 @@ const (
 	// runs at. It only ever raises the depth: a sender sets it to the
 	// configured maximum to stop the receiving agent from spawning.
 	MetaSpawnDepth = "spawn_depth"
+	// MetaOriginChannel is, on a "system" message (a tool or sub-agent
+	// result, a notice), the channel of the chat its turn answers; ChatID is
+	// that chat's ID.
+	MetaOriginChannel = "origin_channel"
 )
 
 // SetSpawnDepth records depth under MetaSpawnDepth in meta (allocated when

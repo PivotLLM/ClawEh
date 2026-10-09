@@ -1399,11 +1399,13 @@ func (al *AgentLoop) runLLMIteration(
 						Channel:    "system",
 						SenderID:   "async:" + tc.Name,
 						Internal:   true,
-						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
+						ChatID:     opts.ChatID,
 						Content:    content,
 						SessionKey: resultSessionKey,
 						// The re-entered turn runs at this turn's depth, never lower.
-						Metadata: bus.SetSpawnDepth(map[string]string{metadataKeyPreresolvedAgentID: resultAgentID}, turnDepth),
+						Metadata: bus.SetSpawnDepth(map[string]string{
+							metadataKeyPreresolvedAgentID: resultAgentID, bus.MetaOriginChannel: opts.Channel,
+						}, turnDepth),
 					}); err != nil {
 						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
 							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})
