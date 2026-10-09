@@ -187,6 +187,56 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 	}
 }
 
+// The notice is posted once per turn per model change: a model in cooldown
+// on every step of a turn (its "retry in" time different each time), or one
+// that first failed and is then skipped, is announced once; a different
+// change still is.
+func TestFallbackNotifier_OncePerModelChange(t *testing.T) {
+	tl := newTestAgentLoop(t)
+	notifier := tl.al.fallbackNotifier(context.Background(), processOptions{Channel: "test", ChatID: "chat"})
+	collected := make(chan bus.OutboundMessage, 16)
+	go func() {
+		for {
+			msg, ok := tl.msgBus.SubscribeOutbound(t.Context())
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	luna := providers.FallbackCandidate{Model: "luna", Alias: "Luna"}
+	haikuFailed := providers.FallbackAttempt{
+		Model: "haiku", Alias: "Haiku", Reason: providers.FailoverFormat,
+		Error: &providers.FailoverError{Reason: providers.FailoverFormat, Status: 404},
+	}
+	notifier([]providers.FallbackAttempt{haikuFailed}, luna)
+	for _, left := range []time.Duration{59 * time.Second, 41 * time.Second, 17 * time.Second, 3 * time.Second} {
+		notifier([]providers.FallbackAttempt{{Model: "haiku", Alias: "Haiku", Skipped: true, Reason: providers.FailoverFormat, Remaining: left}}, luna)
+	}
+	notifier([]providers.FallbackAttempt{haikuFailed, {Model: "luna", Alias: "Luna", Reason: providers.FailoverRateLimit}},
+		providers.FallbackCandidate{Model: "scout", Alias: "Scout"})
+
+	var got []string
+	deadline := time.After(2 * time.Second)
+	for len(got) < 2 {
+		select {
+		case m := <-collected:
+			got = append(got, m.Content)
+		case <-deadline:
+			t.Fatalf("timed out; got %q, want 2 notices", got)
+		}
+	}
+	select {
+	case m := <-collected:
+		t.Fatalf("notice repeated for the same model change: %q (earlier %q)", m.Content, got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if !strings.Contains(got[0], "Trying Luna") || !strings.Contains(got[1], "Trying Scout") {
+		t.Errorf("notices = %q", got)
+	}
+}
+
 // A single cooldown-skipped candidate names the CAUSE and the retry time (using
 // its alias), so the skip is neither silent nor uninformative.
 func TestFormatFallbackNotice_Skip(t *testing.T) {

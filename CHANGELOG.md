@@ -1246,6 +1246,10 @@ observe does not need an entry.
 
 ### Fixed
 
+- **The "model unavailable, using …" notice is posted once per turn.** A model
+  in cooldown repeated it on every step of a turn, because its "retry in" time
+  changed each time. The chat now hears of each change of model once per turn.
+
 - **Devices pairing at the same moment no longer fail with "pairing store
   error".** Two first-time connects could collide in the pairing database and
   one was refused (UNAVAILABLE, close 1011) until it retried. They now wait

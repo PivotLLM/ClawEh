@@ -80,17 +80,20 @@ func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) 
 	if opts.Channel == "" || opts.Channel == "system" || opts.ChatID == "" {
 		return nil
 	}
-	// De-duplicate identical notices across the turn: a primary that fails over the
-	// same way on every tool iteration (e.g. a model that 400s each call) would
-	// otherwise repeat its heads-up per iteration. One notifier spans the turn (see
-	// runLLMIteration), so this memory suppresses the repeats.
+	// The user is told once per turn per model change: the models passed over
+	// and the one used instead. A primary that fails over on every tool
+	// iteration (a model that 400s each call, or one in cooldown, whose
+	// "retry in" time changes each step) would otherwise repeat its heads-up
+	// per iteration. One notifier spans the turn (see runLLMIteration), so this
+	// memory suppresses the repeats; a different change is still announced.
 	seen := make(map[string]bool)
 	return func(passed []providers.FallbackAttempt, next providers.FallbackCandidate) {
 		notice := formatFallbackNotice(passed, next)
-		if notice == "" || seen[notice] {
+		change := modelChange(passed, next)
+		if notice == "" || seen[change] {
 			return
 		}
-		seen[notice] = true
+		seen[change] = true
 		pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
@@ -102,6 +105,16 @@ func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) 
 				map[string]any{"channel": opts.Channel, "error": err.Error()})
 		}
 	}
+}
+
+// modelChange identifies a fallback by the models it passed over and the one
+// it uses instead, ignoring why and for how long, for fallbackNotifier.
+func modelChange(passed []providers.FallbackAttempt, next providers.FallbackCandidate) string {
+	names := make([]string, 0, len(passed)+1)
+	for _, a := range passed {
+		names = append(names, attemptName(a))
+	}
+	return strings.Join(append(names, candidateName(next)), "\x00")
 }
 
 // formatFallbackNotice builds the mid-chain heads-up for the candidates the
