@@ -170,8 +170,9 @@ leaves only a temporary entry (`TempPrefix`) the next `Lock` sweeps.
    newest); followed by a repair if its reply was rejected. A restart uses
    up no attempt (`max_attempts_per_turn`); the resend is a call like any
    other (`max_calls`, layer budgets), and no limit is reset. An output
-   whose attempt was resent after a restart is marked
-   (`OutputRecord.Resent`), and `forum_results` and `forum_status` say so.
+   whose turn had an attempt resent after a restart is marked
+   (`OutputRecord.Resent`); `forum_results`, `forum_status` and the
+   completion notice count the same outputs.
 4. **The controller always starts from disk.** `openForum` is the only
    constructor; `Launch` writes the run's files, then opens. There is no
    in-memory-only state between dispatches.

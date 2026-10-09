@@ -125,6 +125,12 @@ type attemptKey struct {
 	attempt int
 }
 
+// reservation is what an attempt's first CommitAttempt fixed: a resend
+// reserves the attempt again only with the same round and ThroughSeq.
+type reservation struct {
+	round, through int
+}
+
 // turnKey identifies one turn (work) ID within a layer.
 type turnKey struct {
 	layer string
@@ -141,7 +147,7 @@ type turnKey struct {
 type commitIndex struct {
 	loaded    bool
 	last      int
-	attempts  map[attemptKey]bool
+	attempts  map[attemptKey]reservation
 	latest    map[turnKey]int
 	outputs   map[turnKey]bool
 	published map[string]int
@@ -150,7 +156,7 @@ type commitIndex struct {
 // newCommitIndex is the index of an empty log.
 func newCommitIndex() *commitIndex {
 	return &commitIndex{
-		attempts:  map[attemptKey]bool{},
+		attempts:  map[attemptKey]reservation{},
 		latest:    map[turnKey]int{},
 		outputs:   map[turnKey]bool{},
 		published: map[string]int{},
@@ -1010,7 +1016,7 @@ func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 	if loadErr := s.loadIndexLocked(); loadErr != nil {
 		return loadErr
 	}
-	if s.idx.attempts[attemptKey{req.Layer, req.Turn, req.Attempt}] {
+	if s.idx.reserved(req.Layer, req.Turn, req.Attempt) {
 		return s.rewriteAttemptRequestLocked(req, rel, data)
 	}
 	err = s.inRoot(func(r *os.Root) error {
@@ -1318,6 +1324,27 @@ func (s *forumStore) checkCommitLocked(c *Commit) error {
 		if err := s.statRegular(path.Join(rel, fileRequest)); err != nil {
 			return fmt.Errorf("append commit: attempt %s has no request: %w", rel, err)
 		}
+		if s.idx.reserved(c.Layer, c.Turn, c.Attempt) {
+			if err := s.checkResend(rel); err != nil {
+				return fmt.Errorf("append commit: %w", err)
+			}
+			if err := s.statRegular(path.Join(rel, fileReply)); err == nil {
+				return fmt.Errorf("append commit: attempt %s: %w: it has a reply", rel, os.ErrExist)
+			}
+		}
+	}
+	return nil
+}
+
+// checkResend checks that the reserved attempt at rel, reserved again, is a
+// resend: its request.json is marked Resent.
+func (s *forumStore) checkResend(rel string) error {
+	var req AttemptRequest
+	if err := s.readJSON(path.Join(rel, fileRequest), &req); err != nil {
+		return err
+	}
+	if !req.Resent {
+		return fmt.Errorf("attempt %s: %w: reserved again without being resent", rel, os.ErrExist)
 	}
 	return nil
 }
@@ -1436,7 +1463,13 @@ func (s *forumStore) attemptReservedLocked(layerID, turn string, attempt int) (b
 	if err := s.loadIndexLocked(); err != nil {
 		return false, err
 	}
-	return s.idx.attempts[attemptKey{layerID, turn, attempt}], nil
+	return s.idx.reserved(layerID, turn, attempt), nil
+}
+
+// reserved reports whether a CommitAttempt names the attempt.
+func (x *commitIndex) reserved(layerID, turn string, attempt int) bool {
+	_, ok := x.attempts[attemptKey{layerID, turn, attempt}]
+	return ok
 }
 
 // add records one commit in the index.
@@ -1444,7 +1477,10 @@ func (x *commitIndex) add(c *Commit) {
 	x.last = c.Seq
 	switch c.Kind {
 	case CommitAttempt:
-		x.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}] = true
+		k := attemptKey{c.Layer, c.Turn, c.Attempt}
+		if _, ok := x.attempts[k]; !ok {
+			x.attempts[k] = reservation{round: c.Round, through: c.ThroughSeq}
+		}
 		x.latest[turnKey{c.Layer, c.Turn}] = max(x.latest[turnKey{c.Layer, c.Turn}], c.Attempt)
 	case CommitTurn, CommitModerated:
 		x.outputs[turnKey{c.Layer, c.Turn}] = true

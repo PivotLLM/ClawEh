@@ -317,8 +317,8 @@ type OutputRecord struct {
 	PublishedDigest string `json:"published_digest"`
 	Turn            string `json:"turn"`
 	Attempt         int    `json:"attempt"`
-	// Resent is true when a restart cut the attempt that produced the
-	// output and its message was sent again (AttemptRequest.Resent).
+	// Resent is true when a restart cut an attempt of the output's turn and
+	// its message was sent again (AttemptRequest.Resent).
 	Resent bool `json:"resent,omitempty"`
 }
 

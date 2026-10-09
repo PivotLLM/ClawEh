@@ -631,6 +631,13 @@ func TestCtlCancelledByShutdownIsNotAFailedAttempt(t *testing.T) {
 	if len(att) != 3 || !att[0].Request.Resent || att[0].Reply == nil || att[0].Reply.Outcome != OutcomeCancelled {
 		t.Errorf("attempts = %+v, want the resent attempt 1 recorded as cancelled", att)
 	}
+	// Attempt 2 produced the output, but its turn was resent: it is marked,
+	// so results, status and the notice count it.
+	for _, o := range f.state().Layers["talk"].Outputs {
+		if want := o.ParticipantID == "alice"; o.Resent != want || (want && o.Attempt != 2) {
+			t.Errorf("%s output: attempt %d resent %v, want alice's attempt 2 marked resent", o.ParticipantID, o.Attempt, o.Resent)
+		}
+	}
 }
 
 // A run that meets ErrCorrupt ends the forum failed with EndCorrupt and
