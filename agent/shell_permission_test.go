@@ -149,7 +149,7 @@ func TestShell_EveryChannel(t *testing.T) {
 				msg.SessionKey = "agent:" + a.id + ":main"
 			case "system":
 				msg.Channel, msg.SenderID = "system", "async:agent_spawn"
-				msg.ChatID = "telegram:chat-" + a.id
+				msg.Metadata[bus.MetaOriginChannel] = "telegram"
 			default:
 				msg.Channel = kind
 			}

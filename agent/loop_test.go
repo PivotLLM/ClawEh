@@ -1748,12 +1748,13 @@ func TestActiveModelIndex_Persists(t *testing.T) {
 func TestProcessSystemMessage_InternalChannel(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	// ChatID format is "originChannel:originChatID".
+	// The origin chat is ChatID on the channel bus.MetaOriginChannel names.
 	// "cli" is an internal channel so no response should be sent.
 	msg := bus.InboundMessage{
 		Channel:  "system",
 		SenderID: "async:some_tool",
-		ChatID:   "cli:some-id",
+		ChatID:   "some-id",
+		Metadata: map[string]string{bus.MetaOriginChannel: "cli"},
 		Content:  "Task 'label' completed.\n\nResult:\ntool output",
 	}
 

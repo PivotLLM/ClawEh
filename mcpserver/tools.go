@@ -569,10 +569,12 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		Channel:    "system",
 		SenderID:   "async:" + toolName,
 		Internal:   true,
-		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
+		ChatID:     rec.chatID,
 		Content:    content,
 		SessionKey: targetSession,
-		Metadata:   bus.SetSpawnDepth(map[string]string{"preresolved_agent_id": targetAgent}, spawnDepth),
+		Metadata: bus.SetSpawnDepth(map[string]string{
+			"preresolved_agent_id": targetAgent, bus.MetaOriginChannel: rec.channel,
+		}, spawnDepth),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})

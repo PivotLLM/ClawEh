@@ -159,6 +159,14 @@ func (al *AgentLoop) takeCancelResult(key string) (running bool, skipped int) {
 	return running, skipped
 }
 
+// queuedChat is the chat a queued message belongs to, for takeBatch: its
+// channel and chat ID, and for a system message the channel its chat ID
+// belongs to (bus.MetaOriginChannel), so results for two chats with the same
+// ID on different channels are never merged.
+func queuedChat(m bus.InboundMessage) string {
+	return m.Channel + ":" + inboundMetadata(m, bus.MetaOriginChannel) + ":" + m.ChatID
+}
+
 // takeBatch removes the next turn's messages from pending and returns them
 // merged: the oldest message plus every later message from the same
 // channel:chat, up to the next command in that chat. Messages from other chats
@@ -173,12 +181,12 @@ func takeBatch(pending *[]bus.InboundMessage, eachAlone bool) (bus.InboundMessag
 		return bus.InboundMessage{}, false
 	}
 	first := queue[0]
-	chat := first.Channel + ":" + first.ChatID
+	chat := queuedChat(first)
 	batch := []bus.InboundMessage{first}
 	rest := make([]bus.InboundMessage, 0, len(queue)-1)
 	stop := eachAlone || runsAlone(first)
 	for _, m := range queue[1:] {
-		if !stop && m.Channel+":"+m.ChatID == chat {
+		if !stop && queuedChat(m) == chat {
 			if !runsAlone(m) {
 				batch = append(batch, m)
 				continue
@@ -494,6 +502,12 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			// they are told it is no longer needed rather than left unsure.
 			al.humanAnswerUnused(ctx, msg)
 		}
+		return
+	}
+
+	// A system message's turn sent its reply to the chat it answers itself
+	// (processSystemMessage); the system channel reaches no chat.
+	if msg.Channel == "system" {
 		return
 	}
 
@@ -918,14 +932,10 @@ func (al *AgentLoop) processSystemMessage(
 		)
 	}
 
-	// Parse origin channel from chat_id (format: "channel:chat_id")
-	var originChannel, originChatID string
-	if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
-		originChannel = msg.ChatID[:idx]
-		originChatID = msg.ChatID[idx+1:]
-	} else {
+	// The chat the turn answers: ChatID in the channel MetaOriginChannel names.
+	originChannel, originChatID := inboundMetadata(msg, bus.MetaOriginChannel), msg.ChatID
+	if originChannel == "" {
 		originChannel = "cli"
-		originChatID = msg.ChatID
 	}
 	logger.InfoCF("agent", "Processing system message",
 		map[string]any{
