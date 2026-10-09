@@ -424,7 +424,7 @@ func TestPreflightLauncherWithAnonymousInput(t *testing.T) {
 		path string
 		want string
 	}{
-		{Participant{Clone: "launcher"}, "participants.bob.clone", "A clone of launcher can read the forum's files, so it can't take part in an anonymous review"},
+		{Participant{Clone: "launcher"}, "participants.bob.clone", "a clone of launcher can read the forum's files, so it can't take part in an anonymous review"},
 		{Participant{Agent: "launcher"}, "participants.bob.agent", "launcher can read the forum's files, so it can't take part in an anonymous review"},
 	} {
 		for _, anonymous := range []bool{false, true} {

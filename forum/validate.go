@@ -28,6 +28,10 @@ import (
 // Issue is one validation finding. Path is a dotted JSON path into the
 // configuration ("layers[2].inputs[0].to", "participants.alice.model");
 // Message says what is wrong and, where there is one, the accepted value.
+// It continues the path ("<path>: <message>"), so it starts in lower case
+// (unless it starts with a name or ID) and has no closing full stop; a
+// message shown on its own is made a sentence where it is rendered.
+// TestIssueMessageStyle holds every message in the package to this.
 type Issue struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
@@ -281,7 +285,7 @@ func (v *staticValidator) placeholderWalk(path string, node any) {
 	switch n := node.(type) {
 	case string:
 		if isPlaceholder(n) {
-			v.addf(path, "is still a placeholder; replace it.")
+			v.addf(path, "is still a placeholder; replace it")
 		}
 	case []any:
 		for i, e := range n {
@@ -555,7 +559,7 @@ func (v *staticValidator) layer(i int, l Layer) {
 // and every recipient must have someone else's output to read.
 func (v *staticValidator) anonymous(path string, l Layer, r Route, recipients []string, producer Layer) {
 	if l.Delivery != DeliveryAfterRound || l.MaxRounds != 1 || l.Moderator != nil {
-		v.addf(path, "Layer %s reads %s anonymously, so it must be after_round with one round and no moderator", l.ID, producer.ID)
+		v.addf(path, "layer %s reads %s anonymously, so it must be after_round with one round and no moderator", l.ID, producer.ID)
 	}
 	authors := producer.Participants
 	if len(r.Authors) > 0 {
@@ -977,7 +981,7 @@ func (p *preflight) launcherClones() {
 		case part.Agent == p.env.Launcher:
 			p.addf("participants."+id+".agent", "%s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
 		case part.Clone == p.env.Launcher:
-			p.addf("participants."+id+".clone", "A clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
+			p.addf("participants."+id+".clone", "a clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
 		}
 	}
 }
