@@ -227,8 +227,22 @@ func (e *SchemaViolationError) Error() string {
 	return "schema violation: " + strings.Join(e.Messages, "; ")
 }
 
-// Host bundles the host-provided dependencies the service needs. OnStuck
-// and Cooldown may be nil; the others are required.
+// Clock is the time source a run's holds, call timeouts and run deadline
+// are measured on. Its methods are the time package's, so a clock with the
+// same method set (a fake in tests) satisfies it.
+type Clock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+}
+
+// systemClock is the Clock of the time package.
+type systemClock struct{}
+
+func (systemClock) Now() time.Time                         { return time.Now() }
+func (systemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// Host bundles the host-provided dependencies the service needs. OnStuck,
+// Cooldown and Clock may be nil; the others are required.
 type Host struct {
 	Messenger Messenger
 	Agents    Agents
@@ -253,4 +267,7 @@ type Host struct {
 	// turn's attempts; the hold counts against the call timeout. It must
 	// not block.
 	Cooldown func(agentID string) (model string, remaining time.Duration)
+	// Clock, when set, replaces the system clock for the runs' holds, call
+	// timeouts and run deadline (tests).
+	Clock Clock
 }

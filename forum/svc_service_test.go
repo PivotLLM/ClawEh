@@ -1741,38 +1741,48 @@ func TestSvcValidateReportsEveryProblem(t *testing.T) {
 // WaitGroup Close is waiting on (a data race and a possible panic), and no
 // run is left live once both have returned.
 func TestSvcCloseDuringRecover(t *testing.T) {
-	for range 20 {
-		e := svcSetup(t)
-		for range 4 {
-			e.launch("")
+	t.Parallel()
+	for i := range 20 {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel() // independent services; the launches are bound by fsync
+			svcCloseDuringRecover(t)
+		})
+	}
+}
+
+// svcCloseDuringRecover is one round of TestSvcCloseDuringRecover.
+func svcCloseDuringRecover(t *testing.T) {
+	t.Helper()
+	e := svcSetup(t)
+	for range 4 {
+		e.launch("")
+	}
+	e.restart()
+	svc := e.svc
+	recovered := make(chan struct{})
+	go func() {
+		defer close(recovered)
+		// Whatever Recover reports (a run refused because the service
+		// closed), it must not race Close.
+		if err := svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope}); err != nil {
+			t.Logf("recover: %v", err)
 		}
-		e.restart()
-		svc := e.svc
-		recovered := make(chan struct{})
-		go func() {
-			defer close(recovered)
-			// Whatever Recover reports (a run refused because the service
-			// closed), it must not race Close.
-			if err := svc.Recover(context.WithoutCancel(t.Context()), []Scope{e.scope}); err != nil {
-				t.Logf("recover: %v", err)
-			}
-		}()
-		svcClose(t, svc)
-		<-recovered
-		svc.mu.Lock()
-		live := 0
-		for _, f := range svc.forums {
-			if f.active != nil {
-				live++
-			}
+	}()
+	svcClose(t, svc)
+	<-recovered
+	svc.mu.Lock()
+	live := 0
+	for _, f := range svc.forums {
+		if f.active != nil {
+			live++
 		}
-		svc.mu.Unlock()
-		if live != 0 {
-			t.Fatalf("%d runs live after Close and Recover returned", live)
-		}
-		if err := svc.Close(t.Context()); err != nil {
-			t.Fatal(err)
-		}
+	}
+	svc.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("%d runs live after Close and Recover returned", live)
+	}
+	if err := svc.Close(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 

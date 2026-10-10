@@ -87,6 +87,12 @@ func openForum(ctx context.Context, s *forumStore, host Host) (*forumController,
 		commits:         commits,
 		attempts:        attempts,
 		gone:            gone,
+		clock:           host.Clock,
+		cooldownPoll:    defaultCooldownPoll,
+		releaseDelay:    randomReleaseDelay,
+	}
+	if c.clock == nil {
+		c.clock = systemClock{}
 	}
 	if err := c.regenerateTranscript(); err != nil {
 		return nil, fmt.Errorf("open forum: %w", err)
