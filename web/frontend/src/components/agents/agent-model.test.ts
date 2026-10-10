@@ -8,6 +8,7 @@ import {
   maestroPayload,
   cliBypassWarnings,
   fusionAccessView,
+  internalToolsSummary,
   mcpAccessEntries,
   mcpAccessView,
   parseAgentsConfig,
@@ -15,6 +16,7 @@ import {
   shellDenied,
   toggleAccessEntry,
   withShellAllowed,
+  withShellSwitch,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -429,6 +431,65 @@ describe("agentsPayload", () => {
     const aliceOn = save(cfg, "alice", true)
     expect(aliceOn.alice.tools).toEqual(["file_read", "shell_exec"])
     expect(aliceOn.alice).toMatchObject(unedited("alice"))
+  })
+
+  // An agent without a tools list has the install's default tools, one with
+  // an empty list has none; skills likewise (every skill / none). Loading and
+  // saving keep the difference.
+  it("keeps an absent tools or skills list apart from an empty one", () => {
+    const cfg = parseAgentsConfig({
+      agents: {
+        list: [{ id: "alice" }, { id: "bob", tools: [], skills: [] }],
+      },
+    })
+    const [alice, bob] = cfg.list ?? []
+    expect(alice.tools).toBeUndefined()
+    expect(alice.skills).toBeUndefined()
+    expect(bob.tools).toEqual([])
+    expect(bob.skills).toEqual([])
+    const out = (
+      agentsPayload(cfg) as { agents: { list: Record<string, unknown>[] } }
+    ).agents.list
+    expect(out[0]).not.toHaveProperty("tools")
+    expect(out[0]).not.toHaveProperty("skills")
+    expect(out[1].tools).toEqual([])
+    expect(out[1].skills).toEqual([])
+  })
+
+  it("Allow shell commands on an agent with the default tools keeps them", () => {
+    const defaults = ["file_read", "msg_send"]
+    expect(withShellSwitch(undefined, defaults, true)).toEqual([
+      "file_read",
+      "msg_send",
+      "shell_exec",
+    ])
+    // Off there changes nothing: the defaults never include shell_exec.
+    expect(withShellSwitch(undefined, defaults, false)).toBeUndefined()
+    // An explicit list is edited as before.
+    expect(withShellSwitch([], defaults, true)).toEqual(["shell_exec"])
+    expect(
+      withShellSwitch(["file_read", "shell_exec"], defaults, false),
+    ).toEqual(["file_read"])
+  })
+
+  it("internalToolsSummary tells the default tools from none", () => {
+    const defaults = ["file_read", "msg_send"]
+    expect(internalToolsSummary(undefined, defaults)).toEqual({
+      text: "default — 2 granted",
+      none: false,
+    })
+    expect(internalToolsSummary([], defaults)).toEqual({
+      text: "none — no tool access",
+      none: true,
+    })
+    expect(internalToolsSummary(["shell_exec"], defaults)).toEqual({
+      text: "none — no tool access",
+      none: true,
+    })
+    expect(internalToolsSummary(["*"], defaults)).toEqual({
+      text: "all granted",
+      none: false,
+    })
   })
 
   it("shellAllowed and withShellAllowed match the entry case-insensitively", () => {

@@ -19,8 +19,10 @@ import {
 // enforced that but care.
 export interface AgentEdits {
   models: string[]
-  skills: string[]
-  tools: string[]
+  /** undefined = every skill (no skills key); [] = none. */
+  skills: string[] | undefined
+  /** undefined = the install's default tools (no tools key); [] = none. */
+  tools: string[] | undefined
   message: { mins: number; count: number }
   temperature: number | undefined
   eventRetentionDays: number | undefined
@@ -39,8 +41,8 @@ export interface AgentEdits {
 export function editsFromAgent(a: AgentEntry): AgentEdits {
   return {
     models: a.models ?? [],
-    skills: a.skills ?? [],
-    tools: a.tools ?? [],
+    skills: a.skills,
+    tools: a.tools,
     message: {
       mins: a.message?.window_minutes ?? 0,
       count: a.message?.window_count ?? 2,

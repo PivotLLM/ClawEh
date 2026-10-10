@@ -1,17 +1,21 @@
 import { type SkillInfo } from "@/components/agents/agent-model"
 
 export interface SkillsSelectProps {
-  selected: string[]
+  /** undefined = every skill (no skills list); [] = none. */
+  selected: string[] | undefined
   availableSkills: SkillInfo[]
   onChange: (skills: string[]) => void
 }
 
 export function SkillsSelect({
-  selected,
+  selected: value,
   availableSkills,
   onChange,
 }: SkillsSelectProps) {
-  const isAllSelected = selected.length === 0
+  // Without a skills list the agent has every skill: all are shown active,
+  // and the first change writes the list out explicitly.
+  const allByDefault = value === undefined
+  const selected = value ?? availableSkills.map((s) => s.name)
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
@@ -48,9 +52,11 @@ export function SkillsSelect({
       </div>
       {availableSkills.length > 0 && (
         <p className="text-muted-foreground text-xs">
-          {isAllSelected
-            ? "No skills selected (agent has no skill access)"
-            : `${selected.length} skill${selected.length === 1 ? "" : "s"} selected`}
+          {allByDefault
+            ? "All skills (default)"
+            : selected.length === 0
+              ? "No skills selected (agent has no skill access)"
+              : `${selected.length} skill${selected.length === 1 ? "" : "s"} selected`}
         </p>
       )}
     </div>

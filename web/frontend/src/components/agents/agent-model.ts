@@ -16,7 +16,9 @@ export interface AgentEntry {
   enabled?: boolean
   default?: boolean
   models?: string[]
+  /** undefined (key absent) = every skill; [] = none. */
   skills?: string[]
+  /** undefined (key absent) = the install's default tools; [] = none. */
   tools?: string[]
   message?: MessageConfig | null
   temperature?: number
@@ -255,6 +257,45 @@ export function withShellAllowed(tools: string[], allowed: boolean): string[] {
   return allowed ? [...rest, SHELL_TOOL] : rest
 }
 
+// withShellSwitch applies the "Allow shell commands" switch to an agent's
+// tools. An agent without a tools list has the install's default tools
+// (defaults); switching shell on writes them out with shell_exec added, so
+// the agent keeps them. Switching it off there changes nothing: the defaults
+// never include shell_exec.
+export function withShellSwitch(
+  tools: string[] | undefined,
+  defaults: string[],
+  allowed: boolean,
+): string[] | undefined {
+  if (tools === undefined && !allowed) return undefined
+  return withShellAllowed(tools ?? defaults, allowed)
+}
+
+// internalToolsSummary is the "Internal tools (…)" label of an agent's tools,
+// leaving out shell_exec, which has its own switch. none is true when the
+// agent has no internal tools at all.
+export function internalToolsSummary(
+  tools: string[] | undefined,
+  defaults: string[],
+): { text: string; none: boolean } {
+  const list = withShellAllowed(tools ?? defaults, false)
+  const granted =
+    list.length === 0
+      ? "none — no tool access"
+      : `${list.includes("*") ? "all" : list.length} granted`
+  return {
+    text: tools === undefined ? `default — ${granted}` : granted,
+    none: list.length === 0,
+  }
+}
+
+// optionalList reads a list whose absence means something else than an empty
+// list (tools, skills): undefined when the key is absent or null.
+function optionalList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.map(asString).filter(Boolean)
+}
+
 // settingsCardClass groups a set of agent settings into one bordered card.
 export const settingsCardClass =
   "border-border/60 bg-card rounded-xl border p-4 space-y-5"
@@ -271,14 +312,13 @@ export function parseAgent(value: unknown): AgentEntry {
     enabled: enabledRaw === false ? false : true,
     default: r.default === true,
     models: asArray(r.models).map(asString).filter(Boolean),
-    skills: asArray(r.skills).map(asString).filter(Boolean),
+    skills: optionalList(r.skills),
     // Drop any stale mcp_* entries from the per-tool allowlist: MCP access now
     // lives in mcp_tools, so saving an edited agent cleanly migrates it off the
     // old all-or-nothing wildcard.
-    tools: asArray(r.tools)
-      .map(asString)
-      .filter(Boolean)
-      .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
+    tools: optionalList(r.tools)?.filter(
+      (tName) => !tName.toLowerCase().startsWith("mcp_"),
+    ),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
     message:
@@ -541,8 +581,10 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     ...(a.name ? { name: a.name } : {}),
     ...(a.default ? { default: true } : {}),
     ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
-    ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
-    tools: a.tools ?? [],
+    // Absent and [] differ for skills and tools (every skill / the default
+    // tools against none), so an empty list is sent as [] and kept.
+    ...(a.skills !== undefined ? { skills: a.skills } : {}),
+    ...(a.tools !== undefined ? { tools: a.tools } : {}),
     message:
       a.message && a.message.window_minutes > 0
         ? {

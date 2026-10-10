@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -153,4 +154,109 @@ func TestLoadConfig_BuiltinListKeyPresence(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestStore_AgentToolsAndSkillsKeepEmpty: an agent's tools and skills tell an
+// absent key (the defaults: the install's default tools, every skill) from an
+// empty list (none). A save must keep that difference: an agent saved with no
+// tools must not come back with the default tools.
+func TestStore_AgentToolsAndSkillsKeepEmpty(t *testing.T) {
+	fields := []struct {
+		name string
+		set  func(a *AgentConfig, v []string)
+		get  func(a *AgentConfig) []string
+	}{
+		{"tools", func(a *AgentConfig, v []string) { a.Tools = v }, func(a *AgentConfig) []string { return a.Tools }},
+		{"skills", func(a *AgentConfig, v []string) { a.Skills = v }, func(a *AgentConfig) []string { return a.Skills }},
+	}
+	cases := []struct {
+		name    string
+		value   []string
+		wantRaw string // "" means the key is absent
+	}{
+		{name: "absent", value: nil, wantRaw: ""},
+		{name: "empty", value: []string{}, wantRaw: "[]"},
+		{name: "listed", value: []string{"file_read_lines"}, wantRaw: `["file_read_lines"]`},
+	}
+	for _, f := range fields {
+		for _, tc := range cases {
+			t.Run(f.name+"/"+tc.name, func(t *testing.T) {
+				s := newTestStore(t)
+				err := s.Update(func(c *Config) error {
+					c.Agents.List = []AgentConfig{{ID: "alice"}}
+					f.set(&c.Agents.List[0], tc.value)
+					return nil
+				})
+				if err != nil {
+					t.Fatalf("Update: %v", err)
+				}
+				raw, ok := rawAgentKey(t, s.Path(), f.name)
+				if tc.wantRaw == "" {
+					if ok {
+						t.Fatalf("%s on disk = %s, want absent", f.name, raw)
+					}
+				} else if !ok || raw != tc.wantRaw {
+					t.Fatalf("%s on disk = %q (present %v), want %s", f.name, raw, ok, tc.wantRaw)
+				}
+				for _, src := range []string{"store", "disk"} {
+					cfg, err := s.Current(), error(nil)
+					if src == "disk" {
+						cfg, err = LoadConfig(s.Path())
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					got := f.get(&cfg.Agents.List[0])
+					if (got == nil) != (tc.value == nil) || !slices.Equal(got, tc.value) {
+						t.Fatalf("%s from %s = %#v, want %#v", f.name, src, got, tc.value)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestAgentConfig_SavedWithNoToolsHasNone: the effect of the round trip on
+// what the agent may call.
+func TestAgentConfig_SavedWithNoToolsHasNone(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Update(func(c *Config) error {
+		c.Agents.List = []AgentConfig{{ID: "alice", Tools: []string{}}, {ID: "bob"}}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tool = "file_read_lines" // in the test defaults ("*")
+	if cfg.Agents.List[0].IsToolAllowed(tool) {
+		t.Fatalf("alice (saved with no tools) may call %s", tool)
+	}
+	if !cfg.Agents.List[1].IsToolAllowed(tool) {
+		t.Fatalf("bob (no tools key) may not call default tool %s", tool)
+	}
+}
+
+// rawAgentKey returns the raw JSON of key in the first agent of agents.list.
+func rawAgentKey(t *testing.T, file, key string) (string, bool) {
+	t.Helper()
+	list, ok := rawKey(t, file, []string{"agents", "list"})
+	if !ok {
+		t.Fatal("agents.list missing")
+	}
+	var agents []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(list), &agents); err != nil || len(agents) == 0 {
+		t.Fatalf("decode agents.list %s: %v", list, err)
+	}
+	v, ok := agents[0][key]
+	if !ok {
+		return "", false
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, v); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String(), true
 }

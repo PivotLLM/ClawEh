@@ -54,8 +54,8 @@ type AgentConfig struct {
 	Name        string           `json:"name,omitempty"`
 	Workspace   string           `json:"workspace,omitempty"`
 	Models      []string         `json:"models,omitempty"`
-	Skills      []string         `json:"skills,omitempty"`
-	Tools       []string         `json:"tools,omitempty"`
+	Skills      []string         `json:"skills,omitempty"` // nil: every skill; []: none (see MarshalJSON)
+	Tools       []string         `json:"tools,omitempty"`  // nil: the default tools; []: none (see MarshalJSON)
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
 	Message     *MessageConfig   `json:"message,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
@@ -176,6 +176,36 @@ type AgentConfig struct {
 	// "shell_exec" blocks that local tool and "google_calendar_event_delete"
 	// blocks that MCP tool under a broader "google" grant. Empty ⇒ no denials.
 	DenyTools []string `json:"deny_tools,omitempty"`
+}
+
+// MarshalJSON writes Skills and Tools as [] when they are empty but not nil,
+// and leaves them out when nil: the two mean "none" and "the defaults" (see
+// Skills), so omitempty alone would turn an agent saved with no tools into
+// one with the default tools.
+func (a AgentConfig) MarshalJSON() ([]byte, error) {
+	type Alias AgentConfig
+	// The fields before Skills are repeated so the keys keep their order.
+	aux := struct {
+		ID        string    `json:"id"`
+		Enabled   *bool     `json:"enabled,omitempty"`
+		Default   bool      `json:"default,omitempty"`
+		Name      string    `json:"name,omitempty"`
+		Workspace string    `json:"workspace,omitempty"`
+		Models    []string  `json:"models,omitempty"`
+		Skills    *[]string `json:"skills,omitempty"`
+		Tools     *[]string `json:"tools,omitempty"`
+		Alias
+	}{
+		ID: a.ID, Enabled: a.Enabled, Default: a.Default, Name: a.Name,
+		Workspace: a.Workspace, Models: a.Models, Alias: Alias(a),
+	}
+	if a.Skills != nil {
+		aux.Skills = &a.Skills
+	}
+	if a.Tools != nil {
+		aux.Tools = &a.Tools
+	}
+	return json.Marshal(aux)
 }
 
 // MountConfig mounts an external directory tree as a top-level name in an agent's

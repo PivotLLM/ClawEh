@@ -322,6 +322,18 @@ observe does not need an entry.
   client address without the port (behind a trusted proxy, the forwarded
   address), so the approval list shows who asked.
 
+- **An agent saved with no tools now has none.** Saving the configuration
+  (the WebUI, `PATCH /api/config`) dropped an empty `tools` list, and an agent
+  without a `tools` key gets the install's default tools, so an agent whose
+  tools were all deselected ran with the defaults while the Agents page showed
+  "none". `tools: []` is now written and kept. The same applied to `skills`:
+  `skills: []` (no skills) became every skill and is now kept. An agent
+  without a `tools` or `skills` key still gets the defaults (every skill), and
+  the Agents page now says so ("default — N granted", "All skills
+  (default)") instead of showing it as none. Turning on *Allow shell commands*
+  for such an agent writes its default tools with `shell_exec` added, so it
+  keeps them.
+
 ### Added
 
 - **Agents can message each other: the `agent_message` tool.**

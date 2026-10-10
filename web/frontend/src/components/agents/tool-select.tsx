@@ -8,12 +8,20 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 
 export interface ToolSelectProps {
-  selected: string[]
+  /** undefined = the install's default tools (catalog.default_tools). */
+  selected: string[] | undefined
   catalog: AgentToolCatalogResponse
-  onChange: (tools: string[]) => void
+  onChange: (tools: string[] | undefined) => void
 }
 
-export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
+export function ToolSelect({
+  selected: value,
+  catalog,
+  onChange,
+}: ToolSelectProps) {
+  // An agent without a tools list has the default tools: they are shown
+  // checked, and the first change writes them out explicitly.
+  const selected = value ?? catalog.default_tools
   // Only per-tool (native) tools are listed here — these are the tools always in
   // the agent's context. Suites (cogmem, maestro, fusion, forum) are
   // all-or-nothing and controlled by their own switches on the agent card, so
@@ -48,7 +56,10 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
     }
   }
 
-  const handleDefault = () => emit([...catalog.default_tools])
+  // Default goes back to no tools list (the install's default tools), unless
+  // shell is on: then the defaults are written out to keep shell_exec.
+  const handleDefault = () =>
+    onChange(shell ? withShellAllowed(catalog.default_tools, true) : undefined)
   const handleClear = () => emit([])
 
   const noneSelected = selected.length === 0

@@ -27,6 +27,7 @@ import {
   bindingViewsForAgent,
   cliBypassWarnings,
   fetchSkills,
+  internalToolsSummary,
   newAgentIdProblem,
   parseAgentBindings,
   parseAgentsConfig,
@@ -67,8 +68,9 @@ export function AgentsPage() {
   const [addingId, setAddingId] = useState("")
   const [addingName, setAddingName] = useState("")
   const [addingModels, setAddingModels] = useState<string[]>([])
-  const [addingSkills, setAddingSkills] = useState<string[]>([])
-  const [addingTools, setAddingTools] = useState<string[]>([])
+  // undefined: every skill / the default tools, as for a saved agent.
+  const [addingSkills, setAddingSkills] = useState<string[] | undefined>()
+  const [addingTools, setAddingTools] = useState<string[] | undefined>()
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   // Which agent the left rail has selected; only that agent's card is rendered.
@@ -133,6 +135,10 @@ export function AgentsPage() {
   const models = loaded?.models ?? EMPTY_MODELS
   const availableSkills = loaded?.availableSkills ?? EMPTY_SKILLS
   const availableTools = loaded?.availableTools ?? EMPTY_TOOLS
+  const addingSummary = internalToolsSummary(
+    addingTools,
+    availableTools.default_tools,
+  )
   const bindings = loaded?.bindings ?? EMPTY_BINDINGS
 
   // Seed the editable config when a fetch lands. Adjusted during render rather
@@ -153,7 +159,7 @@ export function AgentsPage() {
     list[index] = {
       ...list[index],
       models: edits.models.length > 0 ? edits.models : undefined,
-      skills: edits.skills.length > 0 ? edits.skills : undefined,
+      skills: edits.skills,
       tools: edits.tools,
       message:
         edits.message.mins > 0
@@ -319,7 +325,7 @@ export function AgentsPage() {
         id: newId,
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
         ...(addingModels.length > 0 ? { models: addingModels } : {}),
-        skills: addingSkills.length > 0 ? addingSkills : undefined,
+        skills: addingSkills,
         tools: addingTools,
       },
     ])
@@ -331,8 +337,8 @@ export function AgentsPage() {
       setAddingId("")
       setAddingName("")
       setAddingModels([])
-      setAddingSkills([])
-      setAddingTools([])
+      setAddingSkills(undefined)
+      setAddingTools(undefined)
       setShowAdd(false)
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
@@ -359,8 +365,8 @@ export function AgentsPage() {
     setAddingId("")
     setAddingName("")
     setAddingModels([])
-    setAddingSkills([])
-    setAddingTools([])
+    setAddingSkills(undefined)
+    setAddingTools(undefined)
     setAddingToolsExpanded(false)
   }
   const escapeCancelsAdd = (e: React.KeyboardEvent) => {
@@ -379,10 +385,7 @@ export function AgentsPage() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => {
-            setAddingTools([...availableTools.default_tools])
-            setShowAdd(true)
-          }}
+          onClick={() => setShowAdd(true)}
           disabled={showAdd}
         >
           <IconPlus className="size-4" />
@@ -588,13 +591,9 @@ export function AgentsPage() {
                               className={`text-muted-foreground size-3.5 opacity-60 transition-transform duration-200 ${addingToolsExpanded ? "rotate-90" : ""}`}
                             />
                             <span
-                              className={`text-sm font-semibold ${addingTools.length === 0 ? "text-amber-400" : "text-foreground"}`}
+                              className={`text-sm font-semibold ${addingSummary.none ? "text-amber-400" : "text-foreground"}`}
                             >
-                              Internal tools (
-                              {addingTools.length === 0
-                                ? "none — no tool access"
-                                : `${addingTools.includes("*") ? "all" : addingTools.length} granted`}
-                              )
+                              Internal tools ({addingSummary.text})
                             </span>
                           </button>
                           {addingToolsExpanded && (

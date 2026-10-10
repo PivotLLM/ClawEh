@@ -35,7 +35,7 @@ describe("editsFromAgent", () => {
   it("applies the documented defaults for an unconfigured agent", () => {
     expect(editsFromAgent(agent("a"))).toEqual({
       models: [],
-      skills: [],
+      skills: undefined,
       tools: [],
       message: { mins: 0, count: 2 },
       temperature: undefined,
@@ -51,6 +51,17 @@ describe("editsFromAgent", () => {
         allowParallel: true,
       },
     })
+  })
+
+  // No tools or skills list means the defaults, an empty list means none: the
+  // buffer keeps the difference so a save does not turn one into the other.
+  it("keeps an absent tools or skills list apart from an empty one", () => {
+    const absent = editsFromAgent({ id: "a" })
+    expect(absent.tools).toBeUndefined()
+    expect(absent.skills).toBeUndefined()
+    const empty = editsFromAgent({ id: "a", tools: [], skills: [] })
+    expect(empty.tools).toEqual([])
+    expect(empty.skills).toEqual([])
   })
 
   // share_common is on unless explicitly false — `undefined` must not read as

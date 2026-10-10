@@ -15,9 +15,10 @@ import {
   type SkillInfo,
   settingsCardClass,
   type CLIBypassWarning,
+  internalToolsSummary,
   shellAllowed,
   shellDenied,
-  withShellAllowed,
+  withShellSwitch,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
@@ -42,8 +43,10 @@ export interface AgentCardProps {
   name?: string
   enabled?: boolean
   selectedModels: string[]
-  skills: string[]
-  tools: string[]
+  /** undefined = every skill; [] = none. */
+  skills: string[] | undefined
+  /** undefined = the install's default tools; [] = none. */
+  tools: string[] | undefined
   availableSkills: SkillInfo[]
   availableTools: AgentToolCatalogResponse
   models: ModelInfo[]
@@ -79,8 +82,8 @@ export interface AgentCardProps {
   human?: boolean
   /** Human-agent rule notes for this agent (GET /api/agents/human). */
   humanNotes?: HumanAgentProblem[]
-  onSkillsChange: (skills: string[]) => void
-  onToolsChange: (tools: string[]) => void
+  onSkillsChange: (skills: string[] | undefined) => void
+  onToolsChange: (tools: string[] | undefined) => void
   onMessageChange?: (mins: number, count: number) => void
   onEventRetentionDaysChange?: (v: number | undefined) => void
   onRetiredRetentionDaysChange?: (v: number | undefined) => void
@@ -152,7 +155,8 @@ export function AgentCard({
 }: AgentCardProps) {
   const { t } = useTranslation()
   // The shell entry has its own box; the count is of the other tools.
-  const internalTools = withShellAllowed(tools, false)
+  const toolsSummary = internalToolsSummary(tools, availableTools.default_tools)
+  const shellOn = shellAllowed(tools ?? [])
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
@@ -312,13 +316,9 @@ export function AgentCard({
           {availableTools.tools.length > 0 && (
             <div className="space-y-1.5">
               <p
-                className={`text-xs font-semibold ${internalTools.length === 0 ? "text-amber-400" : "text-foreground"}`}
+                className={`text-xs font-semibold ${toolsSummary.none ? "text-amber-400" : "text-foreground"}`}
               >
-                Internal tools (
-                {internalTools.length === 0
-                  ? "none — no tool access"
-                  : `${internalTools.includes("*") ? "all" : internalTools.length} granted`}
-                )
+                Internal tools ({toolsSummary.text})
               </p>
               <p className="text-muted-foreground text-xs">
                 Native tools that stay in this agent&apos;s context on every
@@ -339,9 +339,11 @@ export function AgentCard({
                 {t("agents.allowShell")}
               </p>
               <Switch
-                checked={shellAllowed(tools)}
+                checked={shellOn}
                 onCheckedChange={(v) =>
-                  onToolsChange(withShellAllowed(tools, v))
+                  onToolsChange(
+                    withShellSwitch(tools, availableTools.default_tools, v),
+                  )
                 }
                 aria-label={t("agents.allowShell")}
               />
@@ -349,7 +351,7 @@ export function AgentCard({
             <p className="text-muted-foreground text-xs">
               {t("agents.allowShellHint")}
             </p>
-            {shellAllowed(tools) && shellDenied(denyTools) && (
+            {shellOn && shellDenied(denyTools) && (
               <p className="text-xs font-medium text-amber-400">
                 {t("agents.allowShellDenied")}
               </p>
