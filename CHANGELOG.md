@@ -37,9 +37,10 @@ observe does not need an entry.
   `allow_remote` left in `config.json` is ignored and logged as an unknown
   key, `CLAW_TOOLS_EXEC_ALLOW_REMOTE` is no longer read, and the WebUI setting
   is gone. Check Up's Shell access row lists the agents allowed shell commands
-  and those that reach one through `allow_agents`. A refused call now reads
-  "Alice is not allowed to run shell commands.", naming the agent; over MCP it
-  adds that this is a configured restriction not to be retried.
+  and those that reach one through `allow_agents`. An agent without
+  `shell_exec` does not have the tool at all: it is not offered to its model,
+  and a call to it (over MCP too) is refused like any other tool the agent
+  does not have.
 
 - **Idle connections to the device listener time out.** A plain HTTP
   keep-alive connection that sends nothing for 30 seconds is closed, and

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -179,24 +180,25 @@ func TestToolRegistry_Version_IncreasesOnRegister(t *testing.T) {
 	}
 }
 
-// TestToolRegistry_ShellRefusalOnlyWhenNotRegistered: an unregistered
-// shell_exec is refused naming the agent; one registered but hidden by
-// progressive discovery is permitted, so it is not refused as a permission
-// (it takes the ordinary not-found path in the loop and runs for the host).
-func TestToolRegistry_ShellRefusalOnlyWhenNotRegistered(t *testing.T) {
+// TestToolRegistry_ShellIsAnOrdinaryTool: an unregistered shell_exec gets the
+// same not-found result as any other unregistered tool; one registered but
+// hidden by progressive discovery is not found in the loop and runs for the
+// host, like any other hidden tool.
+func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
 	ctx := context.Background()
 	missing := NewToolRegistry()
-	missing.SetOwner("Bob")
-	if res := missing.Execute(ctx, config.ShellExecTool, nil); !res.IsError || res.ForLLM != "Bob is not allowed to run shell commands." || !IsExpectedRefusal(res.Err) {
-		t.Errorf("unregistered: %+v, want the refusal naming Bob", res)
+	for _, name := range []string{config.ShellExecTool, "file_write"} {
+		res := missing.Execute(ctx, name, nil)
+		if want := fmt.Sprintf("tool %q not found", name); !res.IsError || res.ForLLM != want {
+			t.Errorf("unregistered %s: %+v, want %q", name, res, want)
+		}
 	}
 
 	hidden := NewToolRegistry()
-	hidden.SetOwner("Alice")
 	hidden.RegisterHidden(&mockTool{name: config.ShellExecTool})
 	res := hidden.Execute(ctx, config.ShellExecTool, nil)
-	if !res.IsError || res.ForLLM == ShellNotAllowedMessage("Alice") {
-		t.Errorf("hidden in the loop: %+v, want not-found, not the permission refusal", res)
+	if want := fmt.Sprintf("tool %q not found", config.ShellExecTool); !res.IsError || res.ForLLM != want {
+		t.Errorf("hidden in the loop: %+v, want %q", res, want)
 	}
 	res = hidden.ExecuteForHost(ctx, config.ShellExecTool, nil, "", "", nil)
 	if res.IsError || res.ForLLM != "tool executed: "+config.ShellExecTool {

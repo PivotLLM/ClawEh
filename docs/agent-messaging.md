@@ -73,9 +73,8 @@ When Alice asks Bob:
 - A failed turn returns "Bob's turn failed: …", a turn stopped with `/cancel`
   "Bob's turn was cancelled before it replied.", and an empty one "Bob gave no
   reply.".
-- Bob's turn uses Bob's own tools: he can run `shell_exec` only if his tool
-  permissions include it, and otherwise gets "Bob is not allowed to run shell
-  commands.", whoever asked and wherever the exchange began.
+- Bob's turn uses Bob's own tools: he has `shell_exec` only if his tool
+  permissions include it, whoever asked and wherever the exchange began.
 - Restarting ClawEh abandons asks in progress; an asked turn is not replayed.
 
 ### Depth

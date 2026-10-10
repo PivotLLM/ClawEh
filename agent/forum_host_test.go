@@ -589,8 +589,8 @@ func TestForumHost_Cooldown(t *testing.T) {
 
 // TestForum_ShellFollowsTheParticipant: a forum turn runs with the
 // participant's own shell_exec permission, wherever the forum was launched
-// from: Bob, or a clone of Bob, runs it when Bob's tools allow it and is
-// refused, by name, when they do not.
+// from: Bob, or a clone of Bob, runs it when Bob's tools allow it and does
+// not have it when they do not.
 func TestForum_ShellFollowsTheParticipant(t *testing.T) {
 	cloneConfig := strings.Replace(forumLaunchConfig, `"bob": {"agent": "bob",`, `"bob": {"clone": "bob",`, 1)
 	if cloneConfig == forumLaunchConfig {
@@ -603,9 +603,9 @@ func TestForum_ShellFollowsTheParticipant(t *testing.T) {
 		want     string
 	}{
 		{"existing, allowed", forumLaunchConfig, []string{"*", "shell_exec"}, "forum-shell-ok"},
-		{"existing, not allowed", forumLaunchConfig, []string{"*"}, "Bob is not allowed to run shell commands."},
+		{"existing, not allowed", forumLaunchConfig, []string{"*"}, noShell},
 		{"clone, allowed", cloneConfig, []string{"*", "shell_exec"}, "forum-shell-ok"},
-		{"clone, not allowed", cloneConfig, []string{"*"}, "Bob is not allowed to run shell commands."},
+		{"clone, not allowed", cloneConfig, []string{"*"}, noShell},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
@@ -619,7 +619,7 @@ func TestForum_ShellFollowsTheParticipant(t *testing.T) {
 			model.mu.Lock()
 			defer model.mu.Unlock()
 			if len(model.toolSeen) != 1 || !strings.Contains(model.toolSeen[0], tc.want) ||
-				(strings.Contains(tc.want, "not allowed") && model.toolSeen[0] != tc.want) {
+				(tc.want == noShell && model.toolSeen[0] != tc.want) {
 				t.Errorf("Bob's shell_exec in the forum returned %q, want %q", model.toolSeen, tc.want)
 			}
 		})
@@ -643,8 +643,8 @@ func TestForum_FreshParticipantHasNoShell(t *testing.T) {
 	}
 	res := fresh.Tools.ExecuteWithContext(context.Background(), "shell_exec",
 		map[string]any{"command": "echo forum-shell-ok"}, "telegram", "chat-1", nil)
-	if !res.IsError || !strings.HasSuffix(res.ForLLM, "is not allowed to run shell commands.") {
-		t.Errorf("fresh agent's shell_exec = %+v, want a refusal", res)
+	if !res.IsError || res.ForLLM != noShell {
+		t.Errorf("fresh agent's shell_exec = %+v, want %q", res, noShell)
 	}
 }
 

@@ -13,19 +13,16 @@ import (
 )
 
 // TestDispatch_ShellFollowsTheTokensAgent: a shell_exec call over MCP runs
-// when the token's agent has shell_exec, and is refused with a sentence
-// naming the agent when it does not, for a session token and a service
-// token alike, followed by the configured-restriction notice (the caller is
-// a model). The channel the session last heard from plays no part.
+// when the token's agent has shell_exec, and is refused like any other tool
+// the agent does not have when it does not, for a session token and a
+// service token alike. The channel the session last heard from plays no part.
 func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
 	exec, err := shell.NewExecTool("", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	alice := newRegistryWith(exec)
-	alice.SetOwner("Alice")
 	bob := newRegistryWith() // Bob's tool permissions leave out shell_exec
-	bob.SetOwner("Bob")
 	resolve := resolverFor(map[string]*tools.ToolRegistry{"alice": alice, "bob": bob})
 
 	st := newSessionTokenStore()
@@ -38,9 +35,7 @@ func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
 	st.RegisterService(aliceSvc, "alice", "/ws")
 	st.RegisterService(bobSvc, "bob", "/ws")
 
-	const bobRefusal = "Bob is not allowed to run shell commands. " +
-		"This is a configured access restriction, not a bug or an outage. " +
-		"Do not retry this call, and do not attempt to work around it by other means."
+	bobRefusal := tools.NotEnabledMessage("shell_exec")
 	for _, tc := range []struct {
 		name, token, want string
 		wantErr           bool

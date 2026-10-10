@@ -264,7 +264,7 @@ func (al *AgentLoop) registerAgentTools(
 				switch {
 				case suite == "":
 					// Native: always visible, subject to the per-tool allowlist.
-					if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+					if agentCfg.IsToolAllowed(t.Name()) {
 						currentAgent.Tools.Register(t)
 					}
 				case agentCfg.IsToolDenied(t.Name()):

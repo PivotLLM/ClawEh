@@ -642,7 +642,7 @@ else
     print_section "4b. Remaining provider tools (graceful probes)"
 
     # shell_exec follows the token's agent: the session token's agent has it
-    # and runs it over MCP; Bob's tools leave it out and he is refused by name.
+    # and runs it over MCP; Bob's tools leave it out, so he does not have it.
     run_test_ok_auth "4b.1 shell_exec runs for an agent allowed it" \
         "shell_exec" '{"command":"echo mcp-shell-ok"}' "mcp-shell-ok"
 
@@ -650,11 +650,11 @@ else
     if [ -n "$NOSHELL_SERVICE_TOKEN" ]; then
         ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
             -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$NOSHELL_SERVICE_TOKEN")" 2>&1)
-        if echo "$ns" | grep -qF "Bob is not allowed to run shell commands. This is a configured access restriction" && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
-            echo "    ${GREEN}PASS${NC}: refused, naming Bob"
+        if echo "$ns" | grep -qF "Permission denied: the tool \"shell_exec\" is not enabled for this agent." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, not enabled for Bob"
             tier2_pass
         else
-            echo "    ${RED}FAIL${NC}: Bob's service token was not refused by name"
+            echo "    ${RED}FAIL${NC}: Bob's service token was not refused"
             echo "$ns" | head -5 | sed 's/^/      /'
             tier2_fail
         fi
@@ -668,11 +668,11 @@ else
         echo "  4b.1c shell_exec refused for an agent whose tools are \"*\" only (service token)"
         ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
             -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$UNGRANTED_SERVICE_TOKEN")" 2>&1)
-        if echo "$ns" | grep -qF "alice is not allowed to run shell commands. This is a configured access restriction" && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
-            echo "    ${GREEN}PASS${NC}: refused, naming alice"
+        if echo "$ns" | grep -qF "Permission denied: the tool \"shell_exec\" is not enabled for this agent." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, not enabled for alice"
             tier2_pass
         else
-            echo "    ${RED}FAIL${NC}: alice's service token was not refused by name"
+            echo "    ${RED}FAIL${NC}: alice's service token was not refused"
             echo "$ns" | head -5 | sed 's/^/      /'
             tier2_fail
         fi

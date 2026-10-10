@@ -446,7 +446,7 @@ func dispatchToolCall(
 	if !toolOK {
 		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
-		return notAllowedMessage(reg, toolName), true
+		return tools.NotEnabledMessage(toolName), true
 	}
 
 	if policy == nil {
@@ -455,7 +455,7 @@ func dispatchToolCall(
 	if !policy.IsAllowed(agentName, toolName) {
 		logger.WarnCF("mcpserver", "MCP tool denied",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
-		return notAllowedMessage(reg, toolName), true
+		return tools.NotEnabledMessage(toolName), true
 	}
 
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved
@@ -745,14 +745,4 @@ func stringSliceFromAny(v any) []string {
 
 func containsString(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
-}
-
-// notAllowedMessage is the refusal of a tool the token's agent may not use:
-// shell_exec names the agent and adds the configured-restriction notice (the
-// caller is a model), any other tool gets tools.NotEnabledMessage.
-func notAllowedMessage(reg *tools.ToolRegistry, toolName string) string {
-	if toolName == config.ShellExecTool {
-		return tools.ShellNotAllowedMCPMessage(reg.Owner())
-	}
-	return tools.NotEnabledMessage(toolName)
 }
