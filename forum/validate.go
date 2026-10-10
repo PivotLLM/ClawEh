@@ -6,14 +6,9 @@
 package forum
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -23,7 +18,9 @@ import (
 // Validation. validateStatic needs nothing but the configuration;
 // runPreflight additionally consults the host (agents, models, schemas, source
 // files). forum_validate runs both; forum_launch runs both and then uses the
-// resolvedConfig result.
+// resolvedConfig result. This file holds the issue types and the static
+// checks; preflight.go the host checks and anonymity.go the rules for
+// anonymous inputs, which span both.
 
 // Issue is one validation finding. Path is a dotted JSON path into the
 // configuration ("layers[2].inputs[0].to", "participants.alice.model");
@@ -154,89 +151,6 @@ func validateStatic(cfg *Config) error {
 		return &ValidationError{Issues: v.issues}
 	}
 	return nil
-}
-
-// preflightEnv is what runPreflight needs from the host.
-type preflightEnv struct {
-	// Launcher is the launching agent's ID.
-	Launcher string
-	Agents   Agents
-	// Ceilings are the install's maximums on Config.Limits and on each
-	// layer's max_calls; a zero field is no ceiling. A limit above its
-	// ceiling is reported as an issue naming the ceiling (it is never capped
-	// silently).
-	Ceilings Ceilings
-	// ResolveFile maps a source `file` reference to the absolute host path
-	// the launching agent's file tools would read for it (workspace,
-	// workspace folders and mounts), or fails with a message for the
-	// agent. nil is a host wiring error once a file source is present.
-	ResolveFile func(ref string) (absPath string, err error)
-	// ReadAllowed reports whether the launching agent may read an absolute
-	// path; a nil func allows nothing (every file source fails).
-	ReadAllowed func(absPath string) error
-}
-
-// resolvedConfig is what runPreflight establishes and Launch records in the snapshot.
-type resolvedConfig struct {
-	// Models maps a participant ID to the model it runs on for this forum:
-	// every fresh participant, plus clones with a `model` override. Resume
-	// never substitutes another model.
-	Models map[string]string
-	// Schemas are the compiled named schemas.
-	Schemas map[string]*compiledSchema
-	// ModeratorSchemas maps a layer ID to its effective decision schema
-	// (effectiveModeratorSchema), for every enabled layer with a moderator;
-	// Launch stores them in Snapshot.ModeratorSchemas.
-	ModeratorSchemas map[string]json.RawMessage
-	// SourceContents maps a file source's ID to the content runPreflight read
-	// (once, from the path it checked); Launch materialises exactly these
-	// bytes and never reopens the file by path.
-	SourceContents map[string][]byte
-}
-
-// runPreflight checks the configuration against the host without creating
-// anything. It requires a configuration that passed
-// validateStatic. It returns a *ValidationError listing every finding, or
-// the resolvedConfig result. Only participants used by enabled layers (as
-// participants or moderators) are checked. Checks:
-//
-//   - existing and clone participants: Agents.MayTarget(launcher, id) is
-//     true and Agents.Exists(id) is true;
-//   - a clone's `model` override is in Agents.Models(source);
-//   - a fresh participant's model is in Agents.Models(launcher);
-//   - neither the launcher nor a clone of it takes part in a forum with an
-//     anonymous input (it could read the forum's files and so the authors);
-//   - every named schema compiles, and every enabled layer's effective
-//     moderator schema (effectiveModeratorSchema) compiles too;
-//   - each file source resolves (ResolveFile) to a path ReadAllowed
-//     accepts (both the named path and, through any symbolic link, its
-//     target) and that exists as a regular file; it is read once, here,
-//     into resolvedConfig.SourceContents; a json file source's content parses
-//     as one JSON value;
-//   - each limit, and each layer's max_calls, is within Ceilings.
-func runPreflight(ctx context.Context, cfg *Config, env preflightEnv) (*resolvedConfig, error) {
-	if env.Agents == nil || env.Launcher == "" {
-		return nil, errors.New("preflight: launcher and Agents are required")
-	}
-	p := &preflight{cfg: cfg, env: env, models: map[string][]ModelInfo{}, res: &resolvedConfig{
-		Models:           map[string]string{},
-		Schemas:          map[string]*compiledSchema{},
-		ModeratorSchemas: map[string]json.RawMessage{},
-		SourceContents:   map[string][]byte{},
-	}}
-	if err := p.participants(ctx); err != nil {
-		return nil, err
-	}
-	p.launcherClones()
-	p.schemas()
-	if err := p.sources(); err != nil {
-		return nil, err
-	}
-	p.ceilings()
-	if len(p.issues) > 0 {
-		return nil, &ValidationError{Issues: p.issues}
-	}
-	return p.res, nil
 }
 
 // staticValidator accumulates the issues of validateStatic.
@@ -552,65 +466,6 @@ func (v *staticValidator) layer(i int, l Layer) {
 	}
 }
 
-// anonymous checks an anonymous read of producer by layer l (the
-// recipients are the route's): l must be after_round with one round and no
-// moderator, so its readers never see one another by name; no recipient
-// may see producer by name elsewhere (another route from it, its moderator,
-// or taking part in it while it is per_turn or runs more than one round);
-// and every recipient must have someone else's output to read.
-func (v *staticValidator) anonymous(path string, l Layer, r Route, recipients []string, producer Layer) {
-	if l.Delivery != DeliveryAfterRound || l.MaxRounds != 1 || l.Moderator != nil {
-		v.addf(path, "layer %s reads %s anonymously, so it must be after_round with one round and no moderator", l.ID, producer.ID)
-	}
-	authors := producer.Participants
-	if len(r.Authors) > 0 {
-		authors = slices.DeleteFunc(slices.Clone(authors), func(a string) bool { return !slices.Contains(r.Authors, a) })
-	}
-	for _, pid := range recipients {
-		who := v.participantName(pid)
-		if !slices.ContainsFunc(authors, func(a string) bool { return a != pid }) {
-			v.addf(path, "%s reads layer %s anonymously in layer %s but would only see its own responses", who, producer.ID, l.ID)
-		}
-		if slices.Contains(producer.Participants, pid) && (producer.Delivery == DeliveryPerTurn || producer.MaxRounds > 1) {
-			v.addf(path, "%s takes part in layer %s, which is per_turn or has more than one round, so it can't read that layer anonymously in layer %s", who, producer.ID, l.ID)
-		}
-		if producer.Moderator != nil && producer.Moderator.Participant == pid {
-			v.addf(path, "%s moderates layer %s, so it can't read that layer anonymously in layer %s", who, producer.ID, l.ID)
-		}
-		if named, ok := v.readsByName(producer.ID, pid); ok {
-			v.addf(path, "%s reads layer %s anonymously in layer %s and by name in layer %s", who, producer.ID, l.ID, named)
-		}
-	}
-}
-
-// readsByName returns a layer in which participant pid receives producer's
-// outputs through a route that is not anonymous, and whether there is one.
-func (v *staticValidator) readsByName(producer, pid string) (string, bool) {
-	reads := func(r Route, recipients []string) bool {
-		kind, id, err := r.Producer()
-		return err == nil && kind == RouteFromLayer && id == producer && !r.Anonymous && slices.Contains(recipients, pid)
-	}
-	for _, l := range v.cfg.Layers {
-		for _, r := range l.Inputs {
-			recipients := r.To
-			if len(recipients) == 0 {
-				recipients = l.Participants
-			}
-			if reads(r, recipients) {
-				return l.ID, true
-			}
-		}
-		if l.Moderator != nil {
-			for _, r := range l.Moderator.Inputs {
-				if reads(r, []string{l.Moderator.Participant}) {
-					return l.ID, true
-				}
-			}
-		}
-	}
-	return "", false
-}
-
 // participantName is a participant's configured name, else its ID.
 func (v *staticValidator) participantName(id string) string {
 	if p, ok := v.cfg.Participants[id]; ok && p.Name != "" {
@@ -668,6 +523,26 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 		v.addf(path+".from", "%v", err)
 		return
 	}
+	v.routeValues(path, r)
+	recipients := v.routeRecipients(path, l, r, moderator)
+	var (
+		known, producerJSON bool
+		share               *[]string
+	)
+	switch kind {
+	case RouteFromSource:
+		known, producerJSON = v.sourceRoute(path, id, r, recipients)
+	case RouteFromLayer:
+		known, producerJSON, share = v.layerRoute(path, li, l, id, r, recipients)
+	}
+	if len(r.Paths) > 0 && known {
+		v.routePaths(path, id, r, producerJSON, share)
+	}
+}
+
+// routeValues checks a route's enumerated members: select, view and
+// distribute.
+func (v *staticValidator) routeValues(path string, r Route) {
 	if r.Select != "" && !slices.Contains(selectValues, r.Select) {
 		v.addf(path+".select", "%q is not one of %s", r.Select, valueList(selectValues))
 	}
@@ -677,8 +552,11 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 	if r.Distribute != "" && !slices.Contains(distributeValues, r.Distribute) {
 		v.addf(path+".distribute", "%q is not one of %s", r.Distribute, valueList(distributeValues))
 	}
+}
 
-	// Recipients: the moderator alone, or `to`, or the layer's participants.
+// routeRecipients checks who a route goes to and returns them: the
+// moderator alone, or `to`, or the layer's participants.
+func (v *staticValidator) routeRecipients(path string, l Layer, r Route, moderator bool) []string {
 	recipients := l.Participants
 	if moderator {
 		recipients = []string{l.Moderator.Participant}
@@ -695,80 +573,90 @@ func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator
 	if r.View == ViewFull && !moderator && len(r.To) == 0 {
 		v.addf(path+".view", "view full requires the recipients to be named in to")
 	}
+	return recipients
+}
 
-	var producerJSON, known bool
-	var share *[]string
-	switch kind {
-	case RouteFromSource:
-		src, ok := v.cfg.Sources[id]
-		if !ok {
-			v.addf(path+".from", "source %q is not configured", id)
-		}
-		known, producerJSON = ok, src.Decode == FormatJSON
-		if r.Select != "" {
-			v.addf(path+".select", "select applies only to layer inputs (a source is one record)")
-		}
-		if len(r.Authors) > 0 {
-			v.addf(path+".authors", "authors applies only to layer inputs (a source has no author)")
-		}
-		if r.View != "" {
-			v.addf(path+".view", "view applies only to layer inputs")
-		}
-		if r.Distribute == DistributeSameParticipant {
-			v.addf(path+".distribute", "same_participant applies only to layer inputs (a source has no author)")
-		}
-		if r.Distribute == DistributeRandom && len(recipients) > 1 && !r.Optional {
-			v.addf(path+".distribute", "random deals source %q (one record) to %d recipients, so some get nothing; mark the input optional", id, len(recipients))
-		}
-		if r.Anonymous {
-			v.addf(path+".anonymous", "anonymous applies only to layer inputs (a source has no author)")
-		}
-	case RouteFromLayer:
-		pi, ok := v.layerIndex[id]
-		if !ok {
-			v.addf(path+".from", "layer %q is not configured", id)
-			break
-		}
-		if pi >= li {
-			v.addf(path+".from", "layer %q must come before layer %q (inputs refer backward only)", id, l.ID)
-			break
-		}
-		producer := v.cfg.Layers[pi]
-		known, producerJSON = true, producer.Output.Format == FormatJSON
-		if r.View != ViewFull {
-			share = producer.Output.Share
-		}
-		if !producer.IsEnabled() && !r.Optional && l.IsEnabled() {
-			v.addf(path+".from", "layer %q is disabled; enable it or mark the input optional", id)
-		}
-		v.authorRefs(path+".authors", r.Authors, producer)
-		if r.Anonymous && r.Distribute == DistributeSameParticipant {
-			v.addf(path+".anonymous", "anonymous leaves out each recipient's own outputs, so same_participant would give it nothing")
-		}
-		if r.Anonymous {
-			v.anonymous(path+".anonymous", l, r, recipients, producer)
-		}
-		if r.Distribute == DistributeSameParticipant {
-			for _, to := range recipients {
-				if !slices.Contains(producer.Participants, to) {
-					v.addf(path+".distribute", "same_participant: recipient %q is not a participant of layer %q", to, id)
-				}
+// sourceRoute checks a route from source id and reports whether the
+// source is configured and whether its content is JSON.
+func (v *staticValidator) sourceRoute(path, id string, r Route, recipients []string) (known, isJSON bool) {
+	src, ok := v.cfg.Sources[id]
+	if !ok {
+		v.addf(path+".from", "source %q is not configured", id)
+	}
+	if r.Select != "" {
+		v.addf(path+".select", "select applies only to layer inputs (a source is one record)")
+	}
+	if len(r.Authors) > 0 {
+		v.addf(path+".authors", "authors applies only to layer inputs (a source has no author)")
+	}
+	if r.View != "" {
+		v.addf(path+".view", "view applies only to layer inputs")
+	}
+	if r.Distribute == DistributeSameParticipant {
+		v.addf(path+".distribute", "same_participant applies only to layer inputs (a source has no author)")
+	}
+	if r.Distribute == DistributeRandom && len(recipients) > 1 && !r.Optional {
+		v.addf(path+".distribute", "random deals source %q (one record) to %d recipients, so some get nothing; mark the input optional", id, len(recipients))
+	}
+	if r.Anonymous {
+		v.addf(path+".anonymous", "anonymous applies only to layer inputs (a source has no author)")
+	}
+	return ok, src.Decode == FormatJSON
+}
+
+// layerRoute checks a route from layer id into layer l (at index li) and
+// reports whether the producer is a known earlier layer, whether its
+// output is JSON, and the part of it the route may see (its share, nil
+// for all of it).
+func (v *staticValidator) layerRoute(path string, li int, l Layer, id string, r Route, recipients []string) (known, isJSON bool, share *[]string) {
+	pi, ok := v.layerIndex[id]
+	if !ok {
+		v.addf(path+".from", "layer %q is not configured", id)
+		return false, false, nil
+	}
+	if pi >= li {
+		v.addf(path+".from", "layer %q must come before layer %q (inputs refer backward only)", id, l.ID)
+		return false, false, nil
+	}
+	producer := v.cfg.Layers[pi]
+	if r.View != ViewFull {
+		share = producer.Output.Share
+	}
+	if !producer.IsEnabled() && !r.Optional && l.IsEnabled() {
+		v.addf(path+".from", "layer %q is disabled; enable it or mark the input optional", id)
+	}
+	v.authorRefs(path+".authors", r.Authors, producer)
+	if r.Anonymous && r.Distribute == DistributeSameParticipant {
+		v.addf(path+".anonymous", "anonymous leaves out each recipient's own outputs, so same_participant would give it nothing")
+	}
+	if r.Anonymous {
+		v.anonymous(path+".anonymous", l, r, recipients, producer)
+	}
+	if r.Distribute == DistributeSameParticipant {
+		for _, to := range recipients {
+			if !slices.Contains(producer.Participants, to) {
+				v.addf(path+".distribute", "same_participant: recipient %q is not a participant of layer %q", to, id)
 			}
 		}
 	}
-	if len(r.Paths) > 0 && known {
-		if !producerJSON {
-			v.addf(path+".paths", "paths apply only to JSON content; %q is not JSON", r.From)
-		}
-		for _, msg := range checkProjection(r.Paths) {
-			v.addf(path+".paths", "%s", msg)
-		}
-		if share != nil {
-			for _, p := range r.Paths {
-				if !withinShare(p, *share) {
-					v.addf(path+".paths", "path %q is outside what layer %q publishes (share); use view full or widen share", p, id)
-				}
-			}
+	return true, producer.Output.Format == FormatJSON, share
+}
+
+// routePaths checks a route's paths against its producer: JSON content,
+// valid projections, and within what the producer publishes (share).
+func (v *staticValidator) routePaths(path, id string, r Route, producerJSON bool, share *[]string) {
+	if !producerJSON {
+		v.addf(path+".paths", "paths apply only to JSON content; %q is not JSON", r.From)
+	}
+	for _, msg := range checkProjection(r.Paths) {
+		v.addf(path+".paths", "%s", msg)
+	}
+	if share == nil {
+		return
+	}
+	for _, p := range r.Paths {
+		if !withinShare(p, *share) {
+			v.addf(path+".paths", "path %q is outside what layer %q publishes (share); use view full or widen share", p, id)
 		}
 	}
 }
@@ -896,347 +784,4 @@ func hasKey[V any](m map[string]V, k string) bool {
 // sortedKeys returns m's keys in order, so issues come out deterministically.
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
-}
-
-// preflight accumulates the issues and results of runPreflight.
-type preflight struct {
-	cfg    *Config
-	env    preflightEnv
-	issues []Issue
-	res    *resolvedConfig
-	// models caches Agents.Models per agent ID.
-	models map[string][]ModelInfo
-}
-
-func (p *preflight) addf(path, format string, args ...any) {
-	p.issues = append(p.issues, Issue{Path: path, Message: fmt.Sprintf(format, args...)})
-}
-
-// usedParticipants returns the IDs of participants that take part in an
-// enabled layer, as participants or moderators, sorted.
-func (p *preflight) usedParticipants() []string {
-	used := map[string]bool{}
-	for _, l := range p.cfg.EnabledLayers() {
-		for _, id := range l.Participants {
-			used[id] = true
-		}
-		if l.Moderator != nil {
-			used[l.Moderator.Participant] = true
-		}
-	}
-	return slices.Sorted(maps.Keys(used))
-}
-
-func (p *preflight) participants(ctx context.Context) error {
-	for _, id := range p.usedParticipants() {
-		part, ok := p.cfg.Participants[id]
-		if !ok {
-			continue // reported by validateStatic
-		}
-		path := "participants." + id
-		switch part.Form() {
-		case FormExisting:
-			if _, err := p.target(ctx, path+".agent", part.Agent); err != nil {
-				return err
-			}
-		case FormClone:
-			ok, err := p.target(ctx, path+".clone", part.Clone)
-			if err != nil {
-				return err
-			}
-			if ok && part.Model != "" {
-				found, names, err := p.hasModel(ctx, part.Clone, part.Model)
-				if err != nil {
-					return err
-				}
-				if found {
-					p.res.Models[id] = part.Model
-				} else {
-					p.addf(path+".model", "model %q is not one of agent %q's models (%s)", part.Model, part.Clone, names)
-				}
-			}
-		case FormFresh:
-			found, names, err := p.hasModel(ctx, p.env.Launcher, part.Model)
-			if err != nil {
-				return err
-			}
-			if found {
-				p.res.Models[id] = part.Model
-			} else {
-				p.addf(path+".model", "model %q is not one of the launching agent's models (%s)", part.Model, names)
-			}
-		}
-	}
-	return nil
-}
-
-// launcherClones refuses the launching agent, or a clone of it, in a forum
-// with an anonymous input: either acts as the launcher, whose file tools can
-// read the forum's directory and so every author's name.
-func (p *preflight) launcherClones() {
-	if !usesAnonymous(p.cfg) {
-		return
-	}
-	for _, id := range p.usedParticipants() {
-		switch part := p.cfg.Participants[id]; {
-		case part.Agent == p.env.Launcher:
-			p.addf("participants."+id+".agent", "%s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
-		case part.Clone == p.env.Launcher:
-			p.addf("participants."+id+".clone", "a clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
-		}
-	}
-}
-
-// usesAnonymous reports whether any input of an enabled layer, or of its
-// moderator, is anonymous.
-func usesAnonymous(cfg *Config) bool {
-	for _, l := range cfg.EnabledLayers() {
-		for _, r := range l.Inputs {
-			if r.Anonymous {
-				return true
-			}
-		}
-		if l.Moderator != nil {
-			for _, r := range l.Moderator.Inputs {
-				if r.Anonymous {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// target checks that the launcher may name agentID and that it exists.
-// Existence is not checked (nor revealed) for an agent the launcher may
-// not name.
-func (p *preflight) target(ctx context.Context, path, agentID string) (bool, error) {
-	allowed, err := p.env.Agents.MayTarget(ctx, p.env.Launcher, agentID)
-	if err != nil {
-		return false, fmt.Errorf("preflight: may %q target %q: %w", p.env.Launcher, agentID, err)
-	}
-	if !allowed {
-		p.addf(path, "the launching agent may not use agent %q (not in its allowed agents)", agentID)
-		return false, nil
-	}
-	exists, err := p.env.Agents.Exists(ctx, agentID)
-	if err != nil {
-		return false, fmt.Errorf("preflight: does agent %q exist: %w", agentID, err)
-	}
-	if !exists {
-		p.addf(path, "agent %q does not exist", agentID)
-		return false, nil
-	}
-	return true, nil
-}
-
-// hasModel reports whether model is in agentID's model list, and the list
-// of names for the message.
-func (p *preflight) hasModel(ctx context.Context, agentID, model string) (bool, string, error) {
-	list, ok := p.models[agentID]
-	if !ok {
-		var err error
-		if list, err = p.env.Agents.Models(ctx, agentID); err != nil {
-			return false, "", fmt.Errorf("preflight: models of agent %q: %w", agentID, err)
-		}
-		p.models[agentID] = list
-	}
-	names := make([]string, 0, len(list))
-	found := false
-	for _, m := range list {
-		names = append(names, m.Name)
-		found = found || m.Name == model
-	}
-	if len(names) == 0 {
-		return found, "none", nil
-	}
-	return found, strings.Join(names, ", "), nil
-}
-
-// schemas compiles every named schema and builds and compiles every
-// enabled layer's effective moderator schema.
-func (p *preflight) schemas() {
-	for _, id := range sortedKeys(p.cfg.Schemas) {
-		compiled, err := compileSchema(p.cfg.Schemas[id])
-		if err != nil {
-			p.addf("schemas."+id, "schema %q: %v", id, err)
-			continue
-		}
-		p.res.Schemas[id] = compiled
-	}
-	for i, l := range p.cfg.Layers {
-		if !l.IsEnabled() || l.Moderator == nil {
-			continue
-		}
-		var assessment json.RawMessage
-		if l.Moderator.Schema != "" {
-			if _, ok := p.res.Schemas[l.Moderator.Schema]; !ok {
-				continue // the named schema failed (reported above)
-			}
-			assessment = p.cfg.Schemas[l.Moderator.Schema]
-		}
-		path := layerPath(i) + ".moderator"
-		eff, err := effectiveModeratorSchema(l, assessment)
-		if err != nil {
-			p.addf(path, "%v", err)
-			continue
-		}
-		if _, err := compileSchema(eff); err != nil {
-			p.addf(path, "layer %q: the moderator's decision schema does not compile: %v", l.ID, err)
-			continue
-		}
-		p.res.ModeratorSchemas[l.ID] = eff
-	}
-}
-
-// sources checks every file source, reads it once into
-// resolvedConfig.SourceContents, and checks the content of json file sources.
-func (p *preflight) sources() error {
-	for _, id := range sortedKeys(p.cfg.Sources) {
-		src := p.cfg.Sources[id]
-		if src.File == "" {
-			continue
-		}
-		if p.env.ResolveFile == nil {
-			return fmt.Errorf("preflight: source %q: no file resolver", id)
-		}
-		path := "sources." + id + ".file"
-		abs, err := p.env.ResolveFile(src.File)
-		if err != nil {
-			p.addf(path, "source %q: %q cannot be used: %v", id, src.File, err)
-			continue
-		}
-		if !filepath.IsAbs(abs) {
-			return fmt.Errorf("preflight: source %q: the resolver returned %q, which is not absolute", id, abs)
-		}
-		data, err := p.readSource(abs)
-		if err != nil {
-			p.addf(path, "source %q: %q %v", id, src.File, err)
-			continue
-		}
-		if src.Decode == FormatJSON {
-			if err := checkDuplicateKeys(data); err != nil {
-				p.addf(path, "source %q: %q is not one valid JSON value: %v", id, src.File, issueText(err))
-				continue
-			}
-		}
-		p.res.SourceContents[id] = data
-	}
-	return nil
-}
-
-// readSource resolves abs (following symbolic links), checks that the
-// launching agent may read both the named path and its target, and reads
-// the target, which must be a regular file. The target is opened without
-// following a link (a link swapped in after the check fails) and its type
-// is checked on the open file, so what is returned is what was checked.
-func (p *preflight) readSource(abs string) ([]byte, error) {
-	target, err := p.readable(abs)
-	if err != nil {
-		return nil, err
-	}
-	f, err := openNoFollow(target) // the path passed ReadAllowed for the launching agent
-	if err != nil {
-		return nil, fmt.Errorf("cannot be read: %w", err)
-	}
-	data, err := readRegular(f)
-	if closeErr := f.Close(); err == nil && closeErr != nil {
-		err = fmt.Errorf("cannot be read: %w", closeErr)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-// readRegular reads all of f, which must be a regular file.
-func readRegular(f *os.File) ([]byte, error) {
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("cannot be read: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("is not a regular file")
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, fmt.Errorf("cannot be read: %w", err)
-	}
-	return data, nil
-}
-
-// readable resolves abs (following symbolic links) and checks that the
-// launching agent may read both the named path and its target and that the
-// target is a regular file. It returns the resolved path.
-func (p *preflight) readable(abs string) (string, error) {
-	if p.env.ReadAllowed == nil {
-		return "", errors.New("is not readable by the launching agent")
-	}
-	if err := p.env.ReadAllowed(abs); err != nil {
-		return "", fmt.Errorf("is not readable by the launching agent: %w", err)
-	}
-	target, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", errors.New("does not exist")
-		}
-		return "", fmt.Errorf("cannot be resolved: %w", err)
-	}
-	if target != abs {
-		if terr := p.env.ReadAllowed(target); terr != nil {
-			return "", fmt.Errorf("links to %q, which the launching agent may not read: %w", target, terr)
-		}
-	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return "", fmt.Errorf("cannot be read: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("is not a regular file")
-	}
-	return target, nil
-}
-
-// issueText renders a *ValidationError's issues on one line.
-func issueText(err error) string {
-	ve, ok := errors.AsType[*ValidationError](err)
-	if !ok {
-		return err.Error()
-	}
-	parts := make([]string, 0, len(ve.Issues))
-	for _, is := range ve.Issues {
-		if is.Path != "" {
-			parts = append(parts, is.Path+": "+is.Message)
-		} else {
-			parts = append(parts, is.Message)
-		}
-	}
-	return strings.Join(parts, "; ")
-}
-
-// ceilings rejects any limit, and any layer's max_calls, above the
-// install's maximum.
-func (p *preflight) ceilings() {
-	l, c := p.cfg.Limits, p.env.Ceilings
-	for _, f := range []struct {
-		name           string
-		value, ceiling int
-	}{
-		{"max_calls", l.MaxCalls, c.MaxCalls},
-		{"max_duration_seconds", l.MaxDurationSeconds, c.MaxDurationSeconds},
-		{"call_timeout_seconds", l.CallTimeoutSeconds, c.CallTimeoutSeconds},
-		{"max_parallel_calls", l.MaxParallelCalls, c.MaxParallelCalls},
-	} {
-		if f.ceiling > 0 && f.value > f.ceiling {
-			p.addf("limits."+f.name, "%d is more than this install allows (%d)", f.value, f.ceiling)
-		}
-	}
-	if c.MaxCalls <= 0 {
-		return
-	}
-	for i, layer := range p.cfg.Layers {
-		if layer.MaxCalls > c.MaxCalls {
-			p.addf(layerPath(i)+".max_calls", "layer %q: %d is more than this install allows (%d)", layer.ID, layer.MaxCalls, c.MaxCalls)
-		}
-	}
 }
