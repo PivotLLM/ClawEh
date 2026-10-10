@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/telegram"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -94,7 +95,8 @@ func TestTelegramDownAlert_NoToken(t *testing.T) {
 	rec := &recorder{}
 	ch.SetAlerter(rec)
 	ch.SetPlatform("telegram")
-	channels.SetConnAlertAfter(ch.BaseChannel, 50*time.Millisecond)
+	fc := clock.NewFake(time.Now())
+	channels.SetConnClock(ch.BaseChannel, fc)
 	if err := ch.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -105,14 +107,19 @@ func TestTelegramDownAlert_NoToken(t *testing.T) {
 	}
 	defer stop()
 
+	// The first failed connection starts the outage's alert timer; the
+	// alert is raised once the window has passed.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelWait()
+	if err := fc.BlockUntil(waitCtx, 1); err != nil {
+		t.Fatalf("the bot never reported a failed connection: %v", err)
+	}
+	fc.Advance(channels.ConnDownAlertAfter)
 	var down *alerter.Alert
-	for deadline := time.Now().Add(5 * time.Second); down == nil && time.Now().Before(deadline); {
-		for _, a := range rec.snapshot() {
-			if a.Title == "Telegram down" {
-				down = &a
-			}
+	for _, a := range rec.snapshot() {
+		if a.Title == "Telegram down" {
+			down = &a
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
 	if down == nil {
 		t.Fatalf("no Telegram down alert; alerts %+v", rec.snapshot())

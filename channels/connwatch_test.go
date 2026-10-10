@@ -8,24 +8,28 @@ import (
 	"time"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/internal/clock"
 )
 
-const testAlertAfter = 50 * time.Millisecond
+// The connection watch tests run on a fake clock: an outage's alert is due
+// exactly ConnDownAlertAfter after its first failure.
 
-func newWatchedChannel(t *testing.T) (*BaseChannel, *alertRecorder) {
+func newWatchedChannel(t *testing.T) (*BaseChannel, *alertRecorder, *clock.Fake) {
 	t.Helper()
 	rec := &alertRecorder{}
-	return newPlatformChannel(t, "test", newConnAggregator(), rec), rec
+	fc := clock.NewFake(time.Now())
+	return newPlatformChannel(t, "test", newConnAggregator(), rec, fc), rec, fc
 }
 
 // newPlatformChannel returns a running channel named name that reports its
-// outages to g and its alerts to rec.
-func newPlatformChannel(t *testing.T, name string, g *connAggregator, rec *alertRecorder) *BaseChannel {
+// outages to g and its alerts to rec, on the clock fc.
+func newPlatformChannel(t *testing.T, name string, g *connAggregator, rec *alertRecorder, fc *clock.Fake) *BaseChannel {
 	t.Helper()
 	bc := NewBaseChannel(name, nil, nil, nil)
 	bc.outages = g
 	bc.SetAlerter(rec)
-	bc.conn.alertAfter = testAlertAfter
+	bc.conn.clock = fc
 	bc.SetRunning(true)
 	return bc
 }
@@ -42,18 +46,26 @@ func recorded(rec *alertRecorder) int {
 	return len(rec.alerts)
 }
 
-// waitPastAlert sleeps long enough for an outage clock to have expired.
-func waitPastAlert() { time.Sleep(4 * testAlertAfter) }
+// waitPastAlert moves fc to the end of the alert window of an outage that
+// began now; the alert, if any, is raised before it returns.
+func waitPastAlert(fc *clock.Fake) { fc.Advance(ConnDownAlertAfter) }
 
 // A failure run that outlasts the window raises exactly one alert carrying
 // the latest error, however many failures follow.
 func TestConnWatch_ProlongedOutageAlertsOnce(t *testing.T) {
-	bc, rec := newWatchedChannel(t)
+	bc, rec, fc := newWatchedChannel(t)
 	bc.ReportConnFailure(errors.New("first"))
 	bc.ReportConnFailure(errors.New("latest"))
-	waitPastAlert()
+	fc.Advance(ConnDownAlertAfter - time.Nanosecond)
+	if n := recorded(rec); n != 0 {
+		t.Fatalf("alerted before the window ended: %d alerts", n)
+	}
+	fc.Advance(time.Nanosecond)
+	if n := recorded(rec); n != 1 {
+		t.Fatalf("no alert when the window ended: %d alerts", n)
+	}
 	bc.ReportConnFailure(errors.New("after alert"))
-	waitPastAlert()
+	waitPastAlert(fc)
 
 	if n := recorded(rec); n != 1 {
 		t.Fatalf("want 1 alert, got %d", n)
@@ -66,10 +78,10 @@ func TestConnWatch_ProlongedOutageAlertsOnce(t *testing.T) {
 
 // Recovery inside the window cancels the alert.
 func TestConnWatch_RecoveryBeforeWindowDoesNotAlert(t *testing.T) {
-	bc, rec := newWatchedChannel(t)
+	bc, rec, fc := newWatchedChannel(t)
 	bc.ReportConnFailure(errors.New("429"))
 	bc.ReportConnected()
-	waitPastAlert()
+	waitPastAlert(fc)
 	if n := recorded(rec); n != 0 {
 		t.Fatalf("recovered outage must not alert, got %d", n)
 	}
@@ -77,9 +89,9 @@ func TestConnWatch_RecoveryBeforeWindowDoesNotAlert(t *testing.T) {
 
 // A connection that never fails never alerts.
 func TestConnWatch_HealthyNeverAlerts(t *testing.T) {
-	bc, rec := newWatchedChannel(t)
+	bc, rec, fc := newWatchedChannel(t)
 	bc.ReportConnected()
-	waitPastAlert()
+	waitPastAlert(fc)
 	if n := recorded(rec); n != 0 {
 		t.Fatalf("healthy channel must not alert, got %d", n)
 	}
@@ -87,12 +99,12 @@ func TestConnWatch_HealthyNeverAlerts(t *testing.T) {
 
 // After recovery, a new outage gets its own alert.
 func TestConnWatch_NewOutageAfterRecoveryAlertsAgain(t *testing.T) {
-	bc, rec := newWatchedChannel(t)
+	bc, rec, fc := newWatchedChannel(t)
 	bc.ReportConnFailure(errors.New("one"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	bc.ReportConnected()
 	bc.ReportConnFailure(errors.New("two"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	alerts := snapshot(rec)
 	if len(alerts) != 3 || alerts[0].Title != "Test down" || alerts[1].Title != "Test up" || alerts[2].Title != "Test down" {
 		t.Fatalf("want down, up, down; got %+v", alerts)
@@ -102,17 +114,17 @@ func TestConnWatch_NewOutageAfterRecoveryAlertsAgain(t *testing.T) {
 // A channel stopped mid-outage is not retrying, so it does not alert, and a
 // later outage starts a fresh clock.
 func TestConnWatch_StoppedChannelDoesNotAlert(t *testing.T) {
-	bc, rec := newWatchedChannel(t)
+	bc, rec, fc := newWatchedChannel(t)
 	bc.ReportConnFailure(errors.New("down"))
 	bc.SetRunning(false)
-	waitPastAlert()
+	waitPastAlert(fc)
 	if n := recorded(rec); n != 0 {
 		t.Fatalf("stopped channel must not alert, got %d", n)
 	}
 
 	bc.SetRunning(true)
 	bc.ReportConnFailure(errors.New("down again"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	if n := recorded(rec); n != 1 {
 		t.Fatalf("restarted channel's new outage must alert, got %d", n)
 	}
@@ -121,15 +133,15 @@ func TestConnWatch_StoppedChannelDoesNotAlert(t *testing.T) {
 // Seven bots of one platform failing together raise one down alert, and one
 // up alert once the last of them reconnects.
 func TestConnWatch_PlatformOutageAlertsOnce(t *testing.T) {
-	g, rec := newConnAggregator(), &alertRecorder{}
+	g, rec, fc := newConnAggregator(), &alertRecorder{}, clock.NewFake(time.Now())
 	bots := make([]*BaseChannel, 0, 7)
 	for i := range 7 {
-		bots = append(bots, newPlatformChannel(t, fmt.Sprintf("telegram-bot%d", i), g, rec))
+		bots = append(bots, newPlatformChannel(t, fmt.Sprintf("telegram-bot%d", i), g, rec, fc))
 	}
 	for _, b := range bots {
 		b.ReportConnFailure(errors.New("dial tcp: i/o timeout"))
 	}
-	waitPastAlert()
+	waitPastAlert(fc)
 	for _, b := range bots {
 		b.ReportConnFailure(errors.New("still down"))
 	}
@@ -164,14 +176,14 @@ func TestConnWatch_PlatformOutageAlertsOnce(t *testing.T) {
 
 // Outages on two platforms raise one alert each.
 func TestConnWatch_TwoPlatformsAlertSeparately(t *testing.T) {
-	g, rec := newConnAggregator(), &alertRecorder{}
-	tg1 := newPlatformChannel(t, "telegram-a", g, rec)
-	tg2 := newPlatformChannel(t, "telegram-b", g, rec)
-	sl := newPlatformChannel(t, "slack", g, rec)
+	g, rec, fc := newConnAggregator(), &alertRecorder{}, clock.NewFake(time.Now())
+	tg1 := newPlatformChannel(t, "telegram-a", g, rec, fc)
+	tg2 := newPlatformChannel(t, "telegram-b", g, rec, fc)
+	sl := newPlatformChannel(t, "slack", g, rec, fc)
 	for _, c := range []*BaseChannel{tg1, tg2, sl} {
 		c.ReportConnFailure(errors.New("down"))
 	}
-	waitPastAlert()
+	waitPastAlert(fc)
 
 	alerts := snapshot(rec)
 	if len(alerts) != 2 {
@@ -192,12 +204,12 @@ func TestConnWatch_TwoPlatformsAlertSeparately(t *testing.T) {
 // A channel that stops mid-outage leaves the platform's outage: the others
 // reconnecting is enough for the up alert.
 func TestConnWatch_StoppedChannelLeavesPlatformOutage(t *testing.T) {
-	g, rec := newConnAggregator(), &alertRecorder{}
-	a := newPlatformChannel(t, "telegram-a", g, rec)
-	b := newPlatformChannel(t, "telegram-b", g, rec)
+	g, rec, fc := newConnAggregator(), &alertRecorder{}, clock.NewFake(time.Now())
+	a := newPlatformChannel(t, "telegram-a", g, rec, fc)
+	b := newPlatformChannel(t, "telegram-b", g, rec, fc)
 	a.ReportConnFailure(errors.New("down"))
 	b.ReportConnFailure(errors.New("down"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	if n := recorded(rec); n != 1 {
 		t.Fatalf("want 1 down alert, got %d", n)
 	}
@@ -216,10 +228,10 @@ func TestConnWatch_StoppedChannelLeavesPlatformOutage(t *testing.T) {
 // An outage whose channels all stop ends without an up alert, and the next
 // outage alerts afresh.
 func TestConnWatch_AllStoppedEndsOutageSilently(t *testing.T) {
-	g, rec := newConnAggregator(), &alertRecorder{}
-	a := newPlatformChannel(t, "telegram-a", g, rec)
+	g, rec, fc := newConnAggregator(), &alertRecorder{}, clock.NewFake(time.Now())
+	a := newPlatformChannel(t, "telegram-a", g, rec, fc)
 	a.ReportConnFailure(errors.New("down"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	a.SetRunning(false)
 	if n := recorded(rec); n != 1 {
 		t.Fatalf("want only the down alert, got %d", n)
@@ -227,7 +239,7 @@ func TestConnWatch_AllStoppedEndsOutageSilently(t *testing.T) {
 
 	a.SetRunning(true)
 	a.ReportConnFailure(errors.New("down again"))
-	waitPastAlert()
+	waitPastAlert(fc)
 	alerts := snapshot(rec)
 	if len(alerts) != 2 || alerts[1].Title != "Telegram down" {
 		t.Fatalf("want a fresh down alert, got %+v", alerts)

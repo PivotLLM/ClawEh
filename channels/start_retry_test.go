@@ -6,7 +6,6 @@ package channels
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,35 +28,11 @@ func (c *flakyStartChannel) Start(context.Context) error {
 	return nil
 }
 
-// noWait replaces startRetryAfter for the test: every wait completes at once
-// and the requested durations are recorded.
-func noWait(t *testing.T) func() []time.Duration {
-	t.Helper()
-	var mu sync.Mutex
-	var waits []time.Duration
-	prev := startRetryAfter
-	startRetryAfter = func(d time.Duration) <-chan time.Time {
-		mu.Lock()
-		waits = append(waits, d)
-		mu.Unlock()
-		ch := make(chan time.Time, 1)
-		ch <- time.Time{}
-		return ch
-	}
-	t.Cleanup(func() { startRetryAfter = prev })
-	return func() []time.Duration {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]time.Duration(nil), waits...)
-	}
-}
-
 // TestRetryChannelStart_KeepsRetryingPastAlert: the manager never gives up on a
 // channel that will not start. It alerts once on the StartRetryAlertAfter-th
 // failure, keeps retrying at the backoff ceiling, and registers the worker
 // when Start eventually succeeds.
 func TestRetryChannelStart_KeepsRetryingPastAlert(t *testing.T) {
-	waits := noWait(t)
 	m := newTestManager()
 	rec := &testalerts.Recorder{}
 	m.SetAlerter(rec)
@@ -88,7 +63,7 @@ func TestRetryChannelStart_KeepsRetryingPastAlert(t *testing.T) {
 		t.Fatalf("unexpected alert %+v", alerts[0])
 	}
 
-	ws := waits()
+	ws := waitsOf(m)
 	if len(ws) != failures+1 {
 		t.Fatalf("waits = %d, want %d", len(ws), failures+1)
 	}
@@ -117,7 +92,6 @@ func TestRetryChannelStart_KeepsRetryingPastAlert(t *testing.T) {
 // TestRetryChannelStart_StopsOnCancel: cancelling the dispatch context ends the
 // loop without an alert, however many times Start has failed.
 func TestRetryChannelStart_StopsOnCancel(t *testing.T) {
-	noWait(t)
 	m := newTestManager()
 
 	ctx, cancel := context.WithCancel(context.Background())

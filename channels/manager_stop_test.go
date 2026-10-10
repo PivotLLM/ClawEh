@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,46 +14,51 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 )
 
-// slowStopChannel is a mockChannel whose Stop sleeps for stopDelay before
-// returning. Used to detect whether StopAll runs Stop calls concurrently or
-// serially — see TestStopAll_RunsChannelStopsConcurrently.
+// slowStopChannel is a mockChannel whose Stop, when release is set, reports
+// on entered and returns only once release is closed. Used to detect
+// whether StopAll runs Stop calls concurrently or serially — see
+// TestStopAll_RunsChannelStopsConcurrently.
 type slowStopChannel struct {
 	mockChannel
-	stopDelay time.Duration
-	stopErr   error
-	stopped   atomic.Int32
+	entered chan<- struct{}
+	release <-chan struct{}
+	stopErr error
+	stopped atomic.Int32
 }
 
 func (s *slowStopChannel) Stop(ctx context.Context) error {
-	select {
-	case <-time.After(s.stopDelay):
-	case <-ctx.Done():
-		return ctx.Err()
+	if s.release != nil {
+		s.entered <- struct{}{}
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	s.stopped.Add(1)
 	return s.stopErr
 }
 
 // TestStopAll_RunsChannelStopsConcurrently exercises StopAll with three
-// channels whose Stop sleeps 200ms each. If StopAll ran them serially the
-// elapsed time would approach 600ms; running them concurrently keeps total
-// elapsed near 200ms. Bound is 500ms to stay well below the serial sum while
-// tolerating CI scheduling jitter.
-//
-// Reverting StopAll to a serial for-range loop over m.channels will push
-// elapsed past the 500ms bound and fail this test — that is the mutation
-// guard called out in investigation 7a5377d9 / option #2.
+// channels whose Stop blocks until all three have been entered. Run
+// serially, the first Stop would never return and the others never start;
+// run concurrently, all three are in Stop at once.
 func TestStopAll_RunsChannelStopsConcurrently(t *testing.T) {
 	const n = 3
-	const perStopDelay = 200 * time.Millisecond
+	entered := make(chan struct{}, n)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll) // a failed run leaves no Stop blocked
 
 	mgr := newTestManager()
 
 	channels := make([]*slowStopChannel, n)
 	for i := range n {
 		ch := &slowStopChannel{
-			sendFn:    func(_ context.Context, _ bus.OutboundMessage) error { return nil },
-			stopDelay: perStopDelay,
+			sendFn:  func(_ context.Context, _ bus.OutboundMessage) error { return nil },
+			entered: entered,
+			release: release,
 		}
 		channels[i] = ch
 		name := fmt.Sprintf("slow-%d", i)
@@ -72,16 +78,18 @@ func TestStopAll_RunsChannelStopsConcurrently(t *testing.T) {
 		go mgr.runMediaWorker(context.Background(), name, mgr.workers[name])
 	}
 
-	start := time.Now()
-	if err := mgr.StopAll(context.Background()); err != nil {
-		t.Fatalf("StopAll returned error: %v", err)
+	result := make(chan error, 1)
+	go func() { result <- mgr.StopAll(context.Background()) }()
+	for i := range n {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d channels were in Stop at once; StopAll stops them serially", i, n)
+		}
 	}
-	elapsed := time.Since(start)
-
-	// Concurrent stop should be close to perStopDelay. Serial stop would be
-	// near n*perStopDelay (600ms). Bound at 500ms gives plenty of headroom.
-	if elapsed >= 500*time.Millisecond {
-		t.Fatalf("StopAll elapsed = %v with %d channels each sleeping %v; expected concurrent (< 500ms). Serial would be ~%v.", elapsed, n, perStopDelay, n*perStopDelay)
+	releaseAll()
+	if err := <-result; err != nil {
+		t.Fatalf("StopAll returned error: %v", err)
 	}
 
 	// Sanity: every channel should have observed its Stop call. If one didn't,
@@ -103,9 +111,9 @@ func TestStopAll_CollectsAllChannelErrors(t *testing.T) {
 	errA := errors.New("a failed")
 	errB := errors.New("b failed")
 
-	chA := &slowStopChannel{stopDelay: 10 * time.Millisecond, stopErr: errA}
-	chB := &slowStopChannel{stopDelay: 10 * time.Millisecond, stopErr: errB}
-	chC := &slowStopChannel{stopDelay: 10 * time.Millisecond}
+	chA := &slowStopChannel{stopErr: errA}
+	chB := &slowStopChannel{stopErr: errB}
+	chC := &slowStopChannel{}
 
 	mgr.channels["a"] = chA
 	mgr.channels["b"] = chB

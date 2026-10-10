@@ -9,6 +9,7 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -16,13 +17,16 @@ import (
 // no outage in progress.
 type connWatch struct {
 	mu sync.Mutex
-	// alertAfter overrides ConnDownAlertAfter when non-zero (tests only).
-	alertAfter time.Duration
-	downSince  time.Time // zero while the connection works
-	lastErr    string
-	timer      *time.Timer
-	alerted    bool // the outage has outlasted the alert threshold
+	// clock times the outage; nil means clock.Real (tests set a fake).
+	clock     clock.Clock
+	downSince time.Time // zero while the connection works
+	lastErr   string
+	timer     clock.Timer
+	alerted   bool // the outage has outlasted the alert threshold
 }
+
+// clk is the watch's clock.
+func (w *connWatch) clk() clock.Clock { return clock.Or(w.clock) }
 
 func (w *connWatch) resetLocked() {
 	if w.timer != nil {
@@ -49,7 +53,7 @@ func (c *BaseChannel) ReportConnected() {
 	if w.alerted {
 		logger.InfoCF("channels", "Channel connection restored", map[string]any{
 			"channel":  c.name,
-			"down_for": time.Since(w.downSince).Round(time.Second).String(),
+			"down_for": w.clk().Since(w.downSince).Round(time.Second).String(),
 		})
 	}
 	w.resetLocked()
@@ -75,14 +79,11 @@ func (c *BaseChannel) ReportConnFailure(err error) {
 		c.outages.failure(c, w.downSince, w.lastErr)
 		return
 	}
-	after := w.alertAfter
-	if after <= 0 {
-		after = ConnDownAlertAfter
-	}
-	start := time.Now()
+	after := ConnDownAlertAfter
+	start := w.clk().Now()
 	w.downSince = start
 	c.outages.failure(c, start, w.lastErr)
-	w.timer = time.AfterFunc(after, func() { c.connDownExpired(start, after) })
+	w.timer = w.clk().AfterFunc(after, func() { c.connDownExpired(start, after) })
 }
 
 // ConnDownSince returns when the current connection outage began, or the zero
@@ -269,7 +270,7 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 	if p.recovered {
 		up = &alerter.Alert{
 			Title:       platformDisplayName(id) + " up",
-			Description: "back after " + shortDuration(time.Since(p.since)),
+			Description: "back after " + shortDuration(c.conn.clk().Since(p.since)),
 			EventID:     id + "-up",
 		}
 	}
