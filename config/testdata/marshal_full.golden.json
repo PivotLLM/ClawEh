@@ -1,0 +1,758 @@
+{
+  "session": {
+    "retention_days": 1
+  },
+  "providers": [
+    {
+      "name": "x",
+      "protocol": "x",
+      "base_url": "x",
+      "api_key": "x",
+      "proxy": "x",
+      "strict_compat": true,
+      "require_reasoning_content": true,
+      "no_parallel_tool_calls": true,
+      "response_format_json": true,
+      "command": "x",
+      "bypass_restrictions": true
+    }
+  ],
+  "models": [
+    {
+      "model_name": "x",
+      "model": "x",
+      "provider": "x",
+      "connect_mode": "x",
+      "workspace": "x",
+      "rpm": 1,
+      "max_tokens": 1,
+      "context_window": 1,
+      "max_tokens_field": "x",
+      "request_timeout": 1,
+      "thinking_level": "x",
+      "no_tools": true,
+      "vision": "x",
+      "extra_args": [
+        "x"
+      ],
+      "env": {
+        "x": "x"
+      },
+      "enabled": true,
+      "response_log_file": "x",
+      "reasoning_effort": "x",
+      "extra_body": {
+        "x": "x"
+      },
+      "drop_params": [
+        "x"
+      ],
+      "strict_alternation": true
+    }
+  ],
+  "agents": {
+    "list": [
+      {
+        "id": "x",
+        "enabled": true,
+        "default": true,
+        "name": "x",
+        "workspace": "x",
+        "models": [
+          "x"
+        ],
+        "skills": [
+          "x"
+        ],
+        "tools": [
+          "x"
+        ],
+        "subagents": {
+          "allow_agents": [
+            "x"
+          ],
+          "models": [
+            "x"
+          ]
+        },
+        "message": {
+          "window_minutes": 1,
+          "window_count": 1
+        },
+        "temperature": 1.5,
+        "global_cron": true,
+        "maestro": {
+          "enabled": true,
+          "max_concurrent": 1,
+          "rate_limit_requests": 1,
+          "rate_limit_period": 1,
+          "allow_parallel": true
+        },
+        "fusion": true,
+        "forum": true,
+        "cogmem": true,
+        "share_common": true,
+        "memory": {
+          "prompt": {
+            "top_k_domains": 1,
+            "max_chars": 1,
+            "min_confidence": 1.5,
+            "include_debug_trace": true,
+            "file_max_bytes": 1,
+            "file_total_max_bytes": 1
+          },
+          "consolidation": {
+            "every_n_messages": 1,
+            "idle_minutes": 1,
+            "nightly": true,
+            "nightly_at": "x",
+            "propose_domains": true,
+            "auto_promote": true,
+            "debug_dump": true,
+            "max_batch_messages": 1,
+            "max_input_tokens": 1,
+            "per_message_chars": 1,
+            "max_output_tokens": 1,
+            "max_runtime_seconds": 1
+          },
+          "retention": {
+            "event_days": 1,
+            "retired_days": 1
+          },
+          "export": {
+            "enabled": true
+          }
+        },
+        "summarization_models": [
+          "x"
+        ],
+        "compression": {
+          "trigger": {
+            "min_percent": 1,
+            "normal_percent": 1,
+            "safety_percent": 1,
+            "message_count": 1,
+            "days": 1
+          },
+          "retain": {
+            "token_percent": 1,
+            "max_tokens": 1,
+            "max_age_days": 1,
+            "min_messages": 1
+          },
+          "estimate": {
+            "chars_per_token": 1.5,
+            "token_safety_margin": 1.5
+          },
+          "target_percent": 1
+        },
+        "compress_min_percent": 1,
+        "compress_normal_percent": 1,
+        "compress_safety_percent": 1,
+        "compress_message_threshold": 1,
+        "compress_retain_token_percent": 1,
+        "compress_retain_min_messages": 1,
+        "compress_chars_per_token": 1.5,
+        "compress_token_safety_margin": 1.5,
+        "archive_message_count": 1,
+        "archive_days": 1,
+        "summary_max_count": 1,
+        "summary_retention_days": 1,
+        "event_retention_days": 1,
+        "retired_retention_days": 1,
+        "archive_content_max_bytes": 1,
+        "context_eviction": {
+          "enabled": true,
+          "protect_turns": 1,
+          "evict_turns": 1,
+          "budget_bytes": 1,
+          "notify_user": true,
+          "arg_bytes": 1
+        },
+        "mounts": [
+          {
+            "name": "x",
+            "path": "x",
+            "notify": true,
+            "writable": true
+          }
+        ],
+        "mcp_tools": [
+          "x"
+        ],
+        "deny_tools": [
+          "x"
+        ]
+      }
+    ],
+    "base_dir": "x",
+    "common_dir": "x",
+    "defaults": {
+      "restrict_to_workspace": true,
+      "stream_tool_activity": true,
+      "allow_read_outside_workspace": true,
+      "show_reasoning_as_content": true,
+      "workspace_write_subdir": "x",
+      "workspace_read_subdirs": [
+        "x"
+      ],
+      "models": [
+        "x"
+      ],
+      "image_model": "x",
+      "image_model_fallbacks": [
+        "x"
+      ],
+      "vision_model": "x",
+      "vision_model_fallbacks": [
+        "x"
+      ],
+      "request_timeout": 1,
+      "turn_timeout": 1,
+      "tool_timeout": 1,
+      "max_subagent_depth": 1,
+      "max_concurrent_turns": 1,
+      "daily_spend_alert_usd": 1.5,
+      "progress_interval": 1,
+      "max_tokens": 1,
+      "temperature": 1.5,
+      "max_tool_iterations": 1,
+      "context_window": 1,
+      "max_media_size": 1,
+      "compression": {
+        "trigger": {
+          "min_percent": 1,
+          "normal_percent": 1,
+          "safety_percent": 1,
+          "message_count": 1,
+          "days": 1
+        },
+        "retain": {
+          "token_percent": 1,
+          "max_tokens": 1,
+          "max_age_days": 1,
+          "min_messages": 1
+        },
+        "estimate": {
+          "chars_per_token": 1.5,
+          "token_safety_margin": 1.5
+        },
+        "target_percent": 1
+      },
+      "compress_min_percent": 1,
+      "compress_normal_percent": 1,
+      "compress_safety_percent": 1,
+      "compress_message_threshold": 1,
+      "compress_retain_token_percent": 1,
+      "compress_retain_min_messages": 1,
+      "compress_chars_per_token": 1.5,
+      "compress_token_safety_margin": 1.5,
+      "archive_message_count": 1,
+      "archive_days": 1,
+      "summary_max_count": 1,
+      "summary_retention_days": 1,
+      "archive_content_max_bytes": 1,
+      "default_tools": [
+        "x"
+      ],
+      "context_eviction": {
+        "enabled": true,
+        "protect_turns": 1,
+        "evict_turns": 1,
+        "budget_bytes": 1,
+        "notify_user": true,
+        "arg_bytes": 1
+      },
+      "memory": {
+        "prompt": {
+          "top_k_domains": 1,
+          "max_chars": 1,
+          "min_confidence": 1.5,
+          "include_debug_trace": true,
+          "file_max_bytes": 1,
+          "file_total_max_bytes": 1
+        },
+        "consolidation": {
+          "every_n_messages": 1,
+          "idle_minutes": 1,
+          "nightly": true,
+          "nightly_at": "x",
+          "propose_domains": true,
+          "auto_promote": true,
+          "debug_dump": true,
+          "max_batch_messages": 1,
+          "max_input_tokens": 1,
+          "per_message_chars": 1,
+          "max_output_tokens": 1,
+          "max_runtime_seconds": 1
+        },
+        "retention": {
+          "event_days": 1,
+          "retired_days": 1
+        },
+        "export": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agent_id": "x",
+      "agent_mentions": [
+        "x"
+      ],
+      "match": {
+        "channel": "x",
+        "account_id": "x",
+        "peer": {
+          "kind": "x",
+          "id": "x"
+        },
+        "guild_id": "x",
+        "team_id": "x"
+      },
+      "default": true,
+      "deliver_to": "x",
+      "deliver_peer_kind": "x"
+    }
+  ],
+  "agent_mentions": {
+    "triggers": [
+      "x"
+    ]
+  },
+  "channels": {
+    "telegram": [
+      {
+        "id": "x",
+        "enabled": true,
+        "token": "x",
+        "base_url": "x",
+        "proxy": "x",
+        "allow_from": [
+          "x"
+        ],
+        "group_trigger": {
+          "mention_only": true,
+          "prefixes": [
+            "x"
+          ]
+        },
+        "typing": {
+          "enabled": true
+        },
+        "placeholder": {
+          "enabled": true,
+          "text": "x"
+        },
+        "coalesce": {
+          "enabled": true,
+          "window_ms": 1,
+          "max_messages": 1,
+          "max_wait_ms": 1
+        },
+        "reasoning_channel_id": "x"
+      }
+    ],
+    "secmsg": [
+      {
+        "name": "x",
+        "enabled": true,
+        "address": "x",
+        "allow_from": [
+          "x"
+        ],
+        "group_trigger": {
+          "mention_only": true,
+          "prefixes": [
+            "x"
+          ]
+        },
+        "accounts": [
+          {
+            "account": "x",
+            "name": "x",
+            "allow_from": [
+              "x"
+            ],
+            "group_trigger": {
+              "mention_only": true,
+              "prefixes": [
+                "x"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "discord": {
+      "enabled": true,
+      "token": "x",
+      "proxy": "x",
+      "allow_from": [
+        "x"
+      ],
+      "mention_only": true,
+      "group_trigger": {
+        "mention_only": true,
+        "prefixes": [
+          "x"
+        ]
+      },
+      "typing": {
+        "enabled": true
+      },
+      "placeholder": {
+        "enabled": true,
+        "text": "x"
+      },
+      "reasoning_channel_id": "x"
+    },
+    "slack": {
+      "enabled": true,
+      "bot_token": "x",
+      "app_token": "x",
+      "allow_from": [
+        "x"
+      ],
+      "group_trigger": {
+        "mention_only": true,
+        "prefixes": [
+          "x"
+        ]
+      },
+      "typing": {
+        "enabled": true
+      },
+      "placeholder": {
+        "enabled": true,
+        "text": "x"
+      },
+      "reasoning_channel_id": "x"
+    },
+    "matrix": {
+      "enabled": true,
+      "homeserver": "x",
+      "user_id": "x",
+      "access_token": "x",
+      "device_id": "x",
+      "join_on_invite": true,
+      "message_format": "x",
+      "allow_from": [
+        "x"
+      ],
+      "group_trigger": {
+        "mention_only": true,
+        "prefixes": [
+          "x"
+        ]
+      },
+      "placeholder": {
+        "enabled": true,
+        "text": "x"
+      },
+      "reasoning_channel_id": "x"
+    },
+    "line": {
+      "enabled": true,
+      "channel_secret": "x",
+      "channel_access_token": "x",
+      "webhook_host": "x",
+      "webhook_port": 1,
+      "webhook_path": "x",
+      "allow_from": [
+        "x"
+      ],
+      "group_trigger": {
+        "mention_only": true,
+        "prefixes": [
+          "x"
+        ]
+      },
+      "typing": {
+        "enabled": true
+      },
+      "placeholder": {
+        "enabled": true,
+        "text": "x"
+      },
+      "reasoning_channel_id": "x"
+    },
+    "webui": {
+      "enabled": true,
+      "token": "x",
+      "ping_interval": 1,
+      "read_timeout": 1,
+      "write_timeout": 1,
+      "max_connections": 1,
+      "allow_from": [
+        "x"
+      ],
+      "placeholder": {
+        "enabled": true,
+        "text": "x"
+      }
+    },
+    "device": {
+      "enabled": true,
+      "token": "x",
+      "word_token": "x",
+      "host": "x",
+      "port": 1,
+      "allowed_cidrs": [
+        "x"
+      ],
+      "external_url": "x",
+      "auto_approve": true,
+      "tls": true,
+      "allow_origins": [
+        "x"
+      ],
+      "allow_from": [
+        "x"
+      ]
+    }
+  },
+  "summarization": {
+    "models": [
+      "x"
+    ],
+    "debug_capture": true
+  },
+  "gateway": {
+    "host": "x",
+    "port": 1,
+    "tls_port": 1,
+    "tls": {
+      "mode": "x",
+      "cert_file": "x",
+      "key_file": "x",
+      "extra_names": [
+        "x"
+      ]
+    },
+    "external_url": "x",
+    "allowed_cidrs": [
+      "x"
+    ],
+    "lockout_exempt": [
+      "x"
+    ],
+    "trusted_proxies": [
+      "x"
+    ]
+  },
+  "tools": {
+    "allow_read_paths": [
+      "x"
+    ],
+    "allow_write_paths": [
+      "x"
+    ],
+    "tool_overrides": {
+      "x": true
+    },
+    "web": {
+      "enabled": true,
+      "brave": {
+        "enabled": true,
+        "api_key": "x",
+        "api_keys": [
+          "x"
+        ],
+        "max_results": 1
+      },
+      "tavily": {
+        "enabled": true,
+        "api_key": "x",
+        "api_keys": [
+          "x"
+        ],
+        "base_url": "x",
+        "max_results": 1
+      },
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 1
+      },
+      "perplexity": {
+        "enabled": true,
+        "api_key": "x",
+        "api_keys": [
+          "x"
+        ],
+        "max_results": 1
+      },
+      "searxng": {
+        "enabled": true,
+        "base_url": "x",
+        "max_results": 1
+      },
+      "glm_search": {
+        "enabled": true,
+        "api_key": "x",
+        "base_url": "x",
+        "search_engine": "x",
+        "max_results": 1
+      },
+      "proxy": "x",
+      "fetch_limit_bytes": 1
+    },
+    "cron": {
+      "enabled": true,
+      "exec_timeout_minutes": 1
+    },
+    "exec": {
+      "enabled": true,
+      "enable_deny_patterns": true,
+      "custom_deny_patterns": [
+        "x"
+      ],
+      "custom_allow_patterns": [
+        "x"
+      ],
+      "timeout_seconds": 1
+    },
+    "skills": {
+      "local": {
+        "enabled": true
+      },
+      "registry": {
+        "enabled": true
+      },
+      "registries": {
+        "clawhub": {
+          "enabled": true,
+          "base_url": "x",
+          "auth_token": "x",
+          "search_path": "x",
+          "skills_path": "x",
+          "download_path": "x",
+          "timeout": 1,
+          "max_zip_size": 1,
+          "max_response_size": 1
+        }
+      },
+      "github": {
+        "token": "x",
+        "proxy": "x"
+      },
+      "max_concurrent_searches": 1,
+      "search_cache": {
+        "max_size": 1,
+        "ttl_seconds": 1
+      }
+    },
+    "media_cleanup": {
+      "enabled": true,
+      "max_age_minutes": 1,
+      "interval_minutes": 1
+    },
+    "mcp": {
+      "servers": {
+        "x": {
+          "enabled": true,
+          "command": "x",
+          "args": [
+            "x"
+          ],
+          "env": {
+            "x": "x"
+          },
+          "env_file": "x",
+          "type": "x",
+          "url": "x",
+          "headers": {
+            "x": "x"
+          },
+          "reveal_together": true
+        }
+      },
+      "reconnect_cooldown_seconds": 1,
+      "call_timeout_seconds": 1,
+      "liveness_probe_seconds": 1
+    },
+    "discovery": {
+      "enabled": true,
+      "always_shown_namespaces": [
+        "x"
+      ],
+      "ttl_max": 1,
+      "visible_budget": 1,
+      "max_search_results": 1
+    },
+    "read_file": {
+      "enabled": true,
+      "max_read_file_size": 1
+    },
+    "subagent": {
+      "enabled": true
+    }
+  },
+  "devices": {
+    "enabled": true,
+    "monitor_usb": true
+  },
+  "voice": {
+    "echo_transcription": true,
+    "stt": [
+      {
+        "provider": "x",
+        "enabled": true,
+        "api_key": "x",
+        "base_url": "x",
+        "model": "x"
+      }
+    ]
+  },
+  "logging": {
+    "file": true,
+    "console": true,
+    "level": "x",
+    "json": true,
+    "retention_days": 1,
+    "log_message_content": true,
+    "dump_refusals": true,
+    "dump_all": true,
+    "dump_failed_compressions": true
+  },
+  "security": {
+    "message_prefix": "x"
+  },
+  "mcp_host": {
+    "enabled": true,
+    "auto_enable": true,
+    "listen": "x",
+    "endpoint_path": "x",
+    "internal_tools": [
+      "x"
+    ],
+    "external_tools": [
+      "x"
+    ]
+  },
+  "cooldown": {
+    "billing_auth_minutes": 1,
+    "rate_limit_minutes": 1,
+    "bad_request_minutes": 1,
+    "client_error_minutes": 1,
+    "server_error_minutes": 1
+  },
+  "backup": {
+    "enabled": true,
+    "at": "x",
+    "retain_days": 1,
+    "dest": "x"
+  },
+  "forum": {
+    "limits": {
+      "max_calls": 1,
+      "max_duration_seconds": 1,
+      "call_timeout_seconds": 1,
+      "max_parallel_calls": 1
+    }
+  },
+  "default_config": true,
+  "config_reload_interval_seconds": 1
+}

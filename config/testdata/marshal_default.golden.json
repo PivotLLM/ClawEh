@@ -1,0 +1,724 @@
+{
+  "providers": [
+    {
+      "name": "Claude CLI",
+      "protocol": "claude-cli"
+    },
+    {
+      "name": "Codex CLI",
+      "protocol": "codex-cli"
+    },
+    {
+      "name": "Antigravity CLI",
+      "protocol": "antigravity-cli"
+    },
+    {
+      "name": "Cursor CLI",
+      "protocol": "cursor-cli"
+    },
+    {
+      "name": "OpenAI",
+      "protocol": "openai-chat",
+      "base_url": "https://api.openai.com/v1"
+    },
+    {
+      "name": "Anthropic",
+      "protocol": "anthropic",
+      "base_url": "https://api.anthropic.com/v1"
+    },
+    {
+      "name": "DeepSeek",
+      "protocol": "openai-chat",
+      "base_url": "https://api.deepseek.com/v1",
+      "require_reasoning_content": true
+    },
+    {
+      "name": "Google API",
+      "protocol": "openai-chat",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
+    {
+      "name": "Qwen",
+      "protocol": "openai-chat",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    },
+    {
+      "name": "Moonshot",
+      "protocol": "openai-chat",
+      "base_url": "https://api.moonshot.ai/v1"
+    },
+    {
+      "name": "Groq",
+      "protocol": "openai-chat",
+      "base_url": "https://api.groq.com/openai/v1",
+      "no_parallel_tool_calls": true
+    },
+    {
+      "name": "OpenRouter Chat",
+      "protocol": "openai-chat",
+      "base_url": "https://openrouter.ai/api/v1"
+    },
+    {
+      "name": "OpenRouter Responses",
+      "protocol": "openai-responses",
+      "base_url": "https://openrouter.ai/api/v1"
+    },
+    {
+      "name": "OpenRouter Strict",
+      "protocol": "openai-chat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "strict_compat": true
+    },
+    {
+      "name": "OpenRouter Chat DeepSeek",
+      "protocol": "openai-chat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "require_reasoning_content": true
+    },
+    {
+      "name": "NVIDIA",
+      "protocol": "openai-chat",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "strict_compat": true
+    },
+    {
+      "name": "Cerebras",
+      "protocol": "openai-chat",
+      "base_url": "https://api.cerebras.ai/v1"
+    },
+    {
+      "name": "Ollama",
+      "protocol": "openai-chat",
+      "base_url": "http://localhost:11434/v1"
+    },
+    {
+      "name": "Mistral",
+      "protocol": "openai-chat",
+      "base_url": "https://api.mistral.ai/v1"
+    },
+    {
+      "name": "Avian",
+      "protocol": "openai-chat",
+      "base_url": "https://api.avian.io/v1"
+    },
+    {
+      "name": "vLLM Local",
+      "protocol": "openai-chat",
+      "base_url": "http://localhost:8000/v1"
+    },
+    {
+      "name": "Bedrock Chat",
+      "protocol": "openai-chat",
+      "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1"
+    },
+    {
+      "name": "Bedrock Responses",
+      "protocol": "openai-responses",
+      "base_url": "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
+    },
+    {
+      "name": "Abliteration",
+      "protocol": "openai-chat",
+      "base_url": "https://api.abliteration.ai/v1"
+    },
+    {
+      "name": "xAI",
+      "protocol": "openai-chat",
+      "base_url": "https://api.x.ai/v1"
+    }
+  ],
+  "models": [
+    {
+      "model_name": "Claude CLI",
+      "model": "claude-cli",
+      "provider": "Claude CLI",
+      "request_timeout": 3600,
+      "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+      },
+      "enabled": false
+    },
+    {
+      "model_name": "Claude CLI Opus",
+      "model": "Opus",
+      "provider": "Claude CLI",
+      "request_timeout": 3600,
+      "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+      },
+      "enabled": false
+    },
+    {
+      "model_name": "Claude CLI Fable",
+      "model": "Fable",
+      "provider": "Claude CLI",
+      "context_window": 750000,
+      "request_timeout": 3600,
+      "vision": "tool_response",
+      "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+      },
+      "enabled": false
+    },
+    {
+      "model_name": "Codex CLI",
+      "model": "codex-cli",
+      "provider": "Codex CLI",
+      "request_timeout": 3600,
+      "enabled": false
+    },
+    {
+      "model_name": "Antigravity CLI",
+      "model": "antigravity-cli",
+      "provider": "Antigravity CLI",
+      "request_timeout": 3600,
+      "enabled": false
+    },
+    {
+      "model_name": "Cursor CLI",
+      "model": "cursor-cli",
+      "provider": "Cursor CLI",
+      "request_timeout": 3600,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenAI GPT 5.5",
+      "model": "gpt-5.5",
+      "provider": "OpenAI",
+      "enabled": false,
+      "drop_params": [
+        "temperature"
+      ]
+    },
+    {
+      "model_name": "Claude Sonnet 4.6",
+      "model": "claude-sonnet-4.6",
+      "provider": "Anthropic",
+      "enabled": false
+    },
+    {
+      "model_name": "DeepSeek Flash",
+      "model": "deepseek-flash",
+      "provider": "DeepSeek",
+      "context_window": 900000,
+      "enabled": false
+    },
+    {
+      "model_name": "Gemini 3.8 Flash",
+      "model": "gemini-3.8-flash",
+      "provider": "Google API",
+      "enabled": false
+    },
+    {
+      "model_name": "Qwen Plus",
+      "model": "qwen-plus",
+      "provider": "Qwen",
+      "enabled": false
+    },
+    {
+      "model_name": "Groq GPT OSS 120b",
+      "model": "openai/gpt-oss-120b",
+      "provider": "Groq",
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Auto",
+      "model": "openrouter/auto",
+      "provider": "OpenRouter Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "Llama 3",
+      "model": "llama3",
+      "provider": "Ollama",
+      "enabled": false
+    },
+    {
+      "model_name": "Mistral Small",
+      "model": "mistral-small-latest",
+      "provider": "Mistral",
+      "enabled": false
+    },
+    {
+      "model_name": "DeepSeek v3.2",
+      "model": "deepseek/deepseek-v3.2",
+      "provider": "Avian",
+      "enabled": false
+    },
+    {
+      "model_name": "Local Model",
+      "model": "custom-model",
+      "provider": "vLLM Local",
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock Opus 5.5",
+      "model": "anthropic.claude-opus-5-5",
+      "provider": "Bedrock Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock Sonnet 5.5",
+      "model": "anthropic.claude-sonnet-5-5",
+      "provider": "Bedrock Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock GPT 5.5",
+      "model": "openai.gpt-5.5",
+      "provider": "Bedrock Responses",
+      "enabled": false,
+      "drop_params": [
+        "temperature"
+      ]
+    },
+    {
+      "model_name": "Bedrock GPT 6 Astra",
+      "model": "openai.gpt-6-astra",
+      "provider": "Bedrock Responses",
+      "context_window": 250000,
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock DeepSeek 3",
+      "model": "deepseek.v3.2",
+      "provider": "Bedrock Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock Nova 2 Lite",
+      "model": "amazon.nova-2-lite-v1:0",
+      "provider": "Bedrock Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "Bedrock Gemma 3",
+      "model": "google.gemma-3-27b-it",
+      "provider": "Bedrock Chat",
+      "max_tokens": 5000,
+      "enabled": false,
+      "strict_alternation": true
+    },
+    {
+      "model_name": "Abliteration",
+      "model": "abliterated-model",
+      "provider": "Abliteration",
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Llama 4 Maverick",
+      "model": "meta-llama/llama-4-maverick",
+      "provider": "OpenRouter Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Llama 4 Scout",
+      "model": "meta-llama/llama-4-scout",
+      "provider": "OpenRouter Chat",
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Fable Latest",
+      "model": "anthropic/claude-fable-latest",
+      "provider": "OpenRouter Chat",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Kimi Latest",
+      "model": "moonshotai/kimi-latest",
+      "provider": "OpenRouter Chat",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter Gemini Flash Latest",
+      "model": "google/gemini-flash-latest",
+      "provider": "OpenRouter Chat",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter GPT Terra Latest",
+      "model": "openai/gpt-terra-latest",
+      "provider": "OpenRouter Responses",
+      "context_window": 750000,
+      "vision": "tool_response",
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter GPT 6 Astra",
+      "model": "openai/gpt-6-astra",
+      "provider": "OpenRouter Responses",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter GPT 6 Sol",
+      "model": "openai/gpt-6-sol",
+      "provider": "OpenRouter Responses",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter GPT 6 Luna",
+      "model": "openai/gpt-6-luna",
+      "provider": "OpenRouter Responses",
+      "context_window": 1000000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter GLM Latest",
+      "model": "z-ai/glm-latest",
+      "provider": "OpenRouter Responses",
+      "context_window": 750000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter DeepSeek Flash Latest",
+      "model": "~deepseek/deepseek-flash-latest",
+      "provider": "OpenRouter Chat DeepSeek",
+      "context_window": 500000,
+      "enabled": false
+    },
+    {
+      "model_name": "OpenRouter DeepSeek Pro Latest",
+      "model": "~deepseek/deepseek-pro-latest",
+      "provider": "OpenRouter Chat DeepSeek",
+      "context_window": 500000,
+      "enabled": false
+    },
+    {
+      "model_name": "Grok 4.7",
+      "model": "grok-4.7",
+      "provider": "xAI",
+      "context_window": 500000,
+      "vision": "tool_response",
+      "enabled": false
+    },
+    {
+      "model_name": "Grok 4.7 High",
+      "model": "grok-4.7",
+      "provider": "xAI",
+      "context_window": 500000,
+      "vision": "tool_response",
+      "enabled": false,
+      "reasoning_effort": "high"
+    },
+    {
+      "model_name": "Grok 4.7 Medium",
+      "model": "grok-4.7",
+      "provider": "xAI",
+      "context_window": 500000,
+      "vision": "tool_response",
+      "enabled": false,
+      "reasoning_effort": "medium"
+    },
+    {
+      "model_name": "Grok 4.7 None",
+      "model": "grok-4.7",
+      "provider": "xAI",
+      "context_window": 500000,
+      "thinking_level": "off",
+      "vision": "tool_response",
+      "enabled": false,
+      "reasoning_effort": "none"
+    },
+    {
+      "model_name": "OpenRouter GPT 5.5",
+      "model": "openai/gpt-5.5",
+      "provider": "OpenRouter Strict",
+      "enabled": false,
+      "drop_params": [
+        "temperature"
+      ]
+    }
+  ],
+  "agents": {
+    "list": [
+      {
+        "id": "claw",
+        "default": true,
+        "name": "Claw"
+      }
+    ],
+    "base_dir": "/claw-home/agents",
+    "defaults": {
+      "restrict_to_workspace": true,
+      "allow_read_outside_workspace": false,
+      "workspace_write_subdir": "files",
+      "workspace_read_subdirs": [
+        "files",
+        "skills"
+      ],
+      "models": [
+        "Claude CLI",
+        "Codex CLI"
+      ],
+      "request_timeout": 300,
+      "max_concurrent_turns": 8,
+      "max_tokens": 32768,
+      "max_tool_iterations": 50,
+      "context_window": 128000,
+      "archive_days": 365,
+      "summary_retention_days": 3650,
+      "memory": {
+        "prompt": {
+          "top_k_domains": 3,
+          "max_chars": 4000,
+          "min_confidence": 0.65,
+          "include_debug_trace": false,
+          "file_max_bytes": 262144,
+          "file_total_max_bytes": 524288
+        },
+        "consolidation": {
+          "every_n_messages": 50,
+          "idle_minutes": 60,
+          "nightly": true,
+          "nightly_at": "03:20",
+          "propose_domains": true,
+          "auto_promote": false,
+          "debug_dump": false,
+          "max_batch_messages": 200,
+          "max_input_tokens": 96000,
+          "per_message_chars": 12000,
+          "max_output_tokens": 8000,
+          "max_runtime_seconds": 120
+        },
+        "retention": {},
+        "export": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "agent_mentions": {},
+  "channels": {
+    "telegram": [
+      {
+        "id": "default",
+        "enabled": false,
+        "token": "",
+        "group_trigger": {},
+        "typing": {
+          "enabled": true
+        },
+        "placeholder": {
+          "enabled": true,
+          "text": "Thinking... 💭"
+        },
+        "coalesce": {
+          "window_ms": 1000
+        }
+      }
+    ],
+    "secmsg": null,
+    "discord": {
+      "enabled": false,
+      "token": "",
+      "proxy": "",
+      "allow_from": [],
+      "mention_only": false,
+      "group_trigger": {},
+      "typing": {},
+      "placeholder": {},
+      "reasoning_channel_id": ""
+    },
+    "slack": {
+      "enabled": false,
+      "bot_token": "",
+      "app_token": "",
+      "allow_from": [],
+      "group_trigger": {},
+      "typing": {},
+      "placeholder": {},
+      "reasoning_channel_id": ""
+    },
+    "matrix": {
+      "enabled": false,
+      "homeserver": "https://matrix.org",
+      "user_id": "",
+      "access_token": "",
+      "join_on_invite": true,
+      "allow_from": [],
+      "group_trigger": {
+        "mention_only": true
+      },
+      "placeholder": {
+        "enabled": true,
+        "text": "Thinking... 💭"
+      },
+      "reasoning_channel_id": ""
+    },
+    "line": {
+      "enabled": false,
+      "channel_secret": "",
+      "channel_access_token": "",
+      "webhook_host": "0.0.0.0",
+      "webhook_port": 18791,
+      "webhook_path": "/webhook/line",
+      "allow_from": [],
+      "group_trigger": {
+        "mention_only": true
+      },
+      "typing": {},
+      "placeholder": {},
+      "reasoning_channel_id": ""
+    },
+    "webui": {
+      "enabled": false,
+      "token": "",
+      "ping_interval": 30,
+      "read_timeout": 60,
+      "write_timeout": 10,
+      "max_connections": 100,
+      "allow_from": [],
+      "placeholder": {}
+    },
+    "device": {
+      "enabled": false,
+      "token": "",
+      "host": "127.0.0.1",
+      "port": 18791,
+      "tls": false,
+      "allow_from": []
+    }
+  },
+  "summarization": {},
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18790,
+    "tls": {}
+  },
+  "tools": {
+    "allow_read_paths": null,
+    "allow_write_paths": null,
+    "web": {
+      "enabled": true,
+      "brave": {
+        "enabled": false,
+        "api_key": "",
+        "api_keys": null,
+        "max_results": 5
+      },
+      "tavily": {
+        "enabled": false,
+        "api_key": "",
+        "api_keys": null,
+        "base_url": "",
+        "max_results": 5
+      },
+      "duckduckgo": {
+        "enabled": false,
+        "max_results": 5
+      },
+      "perplexity": {
+        "enabled": false,
+        "api_key": "",
+        "api_keys": null,
+        "max_results": 5
+      },
+      "searxng": {
+        "enabled": false,
+        "base_url": "",
+        "max_results": 5
+      },
+      "glm_search": {
+        "enabled": false,
+        "api_key": "",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/web_search",
+        "search_engine": "search_std",
+        "max_results": 5
+      },
+      "fetch_limit_bytes": 10485760
+    },
+    "cron": {
+      "enabled": true,
+      "exec_timeout_minutes": 5
+    },
+    "exec": {
+      "enabled": true,
+      "enable_deny_patterns": true,
+      "custom_deny_patterns": null,
+      "custom_allow_patterns": null,
+      "timeout_seconds": 60
+    },
+    "skills": {
+      "local": {
+        "enabled": true
+      },
+      "registry": {
+        "enabled": false
+      },
+      "registries": {
+        "clawhub": {
+          "enabled": false,
+          "base_url": "https://clawhub.ai",
+          "auth_token": "",
+          "search_path": "",
+          "skills_path": "",
+          "download_path": "",
+          "timeout": 0,
+          "max_zip_size": 0,
+          "max_response_size": 0
+        }
+      },
+      "github": {},
+      "max_concurrent_searches": 2,
+      "search_cache": {
+        "max_size": 50,
+        "ttl_seconds": 300
+      }
+    },
+    "media_cleanup": {
+      "enabled": true,
+      "max_age_minutes": 30,
+      "interval_minutes": 5
+    },
+    "mcp": {
+      "liveness_probe_seconds": 60
+    },
+    "discovery": {
+      "enabled": false,
+      "ttl_max": 50,
+      "visible_budget": 100,
+      "max_search_results": 10
+    },
+    "read_file": {
+      "enabled": true,
+      "max_read_file_size": 32768
+    },
+    "subagent": {
+      "enabled": true
+    }
+  },
+  "devices": {
+    "enabled": false,
+    "monitor_usb": true
+  },
+  "voice": {
+    "echo_transcription": false
+  },
+  "logging": {
+    "file": true,
+    "console": true,
+    "level": "info",
+    "json": false,
+    "retention_days": 30,
+    "log_message_content": false,
+    "dump_refusals": true,
+    "dump_all": false,
+    "dump_failed_compressions": false
+  },
+  "security": {},
+  "mcp_host": {
+    "enabled": false,
+    "auto_enable": true,
+    "listen": "127.0.0.1:5911",
+    "endpoint_path": "/mcp"
+  },
+  "cooldown": {},
+  "backup": {},
+  "default_config": true,
+  "config_reload_interval_seconds": 5
+}
