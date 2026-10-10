@@ -74,6 +74,9 @@ func messagingLoopWith(t *testing.T, cfg *config.Config, model providers.LLMProv
 	tools.RegisterProvider(tools.NamespacedProvider("agent", toolsagents.GlobalProvider))
 	msgBus := bus.NewMessageBus()
 	al := mustNewAgentLoop(t, cfg, msgBus, model, dispatcher)
+	// Asks and requests to people time out only when a test moves the
+	// clock, however slow the machine.
+	fakeClock(al)
 	for _, id := range al.GetRegistry().List() {
 		if a, ok := al.GetRegistry().Get(id); ok {
 			a.Provider = model
@@ -192,6 +195,7 @@ func TestAsk_ReturnsReplyAndOutcome(t *testing.T) {
 			if want := "[Message from Alice — Alice is waiting for your reply]\nping"; !strings.HasSuffix(seen, want) {
 				t.Fatalf("Bob was sent %q, want it to end with %q", seen, want)
 			}
+			al.activeRequests.Wait() // Bob's turn has ended
 			noOutbound(t, msgBus)
 		})
 	}
@@ -226,11 +230,13 @@ func TestAsk_TurnRunsTools(t *testing.T) {
 	if got := strings.Join(probe.chains[0], ","); got != "alice,bob" {
 		t.Fatalf("ask chain in Bob's turn = %q, want alice,bob", got)
 	}
+	al.activeRequests.Wait() // Bob's turn has ended
 	noOutbound(t, msgBus)
 }
 
-// asyncTool finishes in the background, then reports "background done".
-type asyncTool struct{}
+// asyncTool finishes in the background once release is closed, then reports
+// "background done".
+type asyncTool struct{ release <-chan struct{} }
 
 func (asyncTool) Name() string               { return "async_tool" }
 func (asyncTool) Description() string        { return "test background work" }
@@ -239,9 +245,9 @@ func (asyncTool) Execute(context.Context, map[string]any) *tools.ToolResult {
 	return tools.ErrorResult("async only")
 }
 
-func (asyncTool) ExecuteAsync(ctx context.Context, _ map[string]any, cb tools.AsyncCallback) *tools.ToolResult {
+func (a asyncTool) ExecuteAsync(ctx context.Context, _ map[string]any, cb tools.AsyncCallback) *tools.ToolResult {
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		<-a.release
 		cb(ctx, &tools.ToolResult{ForLLM: "background done"})
 	}()
 	return tools.AsyncResult("started")
@@ -269,7 +275,8 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 		return callThenText("async_tool", "{}")(ctx, messages)
 	})
 	al, msgBus := messagingLoop(t, cfg, model)
-	al.RegisterTool(asyncTool{})
+	release := make(chan struct{})
+	al.RegisterTool(asyncTool{release: release})
 	sti := &scopeSTI{}
 	sti.SetSource("agent:bob:main", "telegram", "chat-1")
 	al.SetSessionTokenIssuer(sti)
@@ -278,6 +285,7 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 	if err != nil || reply.Outcome != bus.OutcomeOK {
 		t.Fatalf("Ask = %+v, %v", reply, err)
 	}
+	close(release) // the background work ends once the ask is over
 	select {
 	case u := <-results:
 		if !strings.Contains(u, "background done") {
@@ -289,32 +297,18 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 	if <-pending {
 		t.Fatal("the background result's turn kept a recovery record")
 	}
+	al.activeRequests.Wait() // the result's turn has ended
 	bob, _ := al.GetRegistry().Get("bob")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		found := false
-		for _, m := range bob.Sessions.GetHistory("agent:bob:main") {
-			if strings.Contains(m.Content, "background done") {
-				found = true
-			}
+	found := false
+	for _, m := range bob.Sessions.GetHistory("agent:bob:main") {
+		if strings.Contains(m.Content, "background done") {
+			found = true
 		}
-		if found {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the background result is not in Bob's main conversation")
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	for {
-		out, ok := msgBus.SubscribeOutbound(ctx)
-		if !ok {
-			break
-		}
-		t.Fatalf("published: %+v", out)
+	if !found {
+		t.Fatal("the background result is not in Bob's main conversation")
 	}
+	noOutbound(t, msgBus)
 	for _, c := range sti.calls() {
 		if c.sessionKey == "agent:bob:main" && !constants.IsInternalChannel(c.channel) && (c.channel != "telegram" || c.chatID != "chat-1") {
 			t.Fatalf("the session source was moved to a chat: %+v", c)
@@ -334,6 +328,8 @@ func TestAsk_SlotLentWhileWaiting(t *testing.T) {
 	cfg := messagingConfig(t)
 	cfg.Agents.Defaults.MaxConcurrentTurns = 1
 	al, msgBus := messagingLoop(t, cfg, &recordingProvider{})
+	var slotWait <-chan struct{}
+	al.onWait, slotWait = waitSignals(waitTurnSlot)
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	ask := callThenText("agent_message", `{"agent":"bob","message":"hi","wait_seconds":10}`)
@@ -354,7 +350,7 @@ func TestAsk_SlotLentWhileWaiting(t *testing.T) {
 	forBob := inbound("c2", "m2", "plain")
 	forBob.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "bob"}
 	msgBus.PublishInbound(context.Background(), forBob) //nolint:errcheck // test
-	time.Sleep(100 * time.Millisecond)
+	awaitSignal(t, slotWait, "Bob's message to wait for the slot")
 	close(release)
 
 	got := map[string]string{}
@@ -408,13 +404,22 @@ func TestAsk_StaleAskNotRun(t *testing.T) {
 	msgBus.PublishInbound(context.Background(), busy) //nolint:errcheck // test
 	model.waitStarted(t)
 
-	reply, err := al.Ask(context.Background(), "Alice", "bob", "late", 100*time.Millisecond)
-	if err != nil || reply.Outcome != tools.OutcomeTimeout {
-		t.Fatalf("Ask = %+v, %v; want a timeout", reply, err)
+	asked := make(chan tools.AgentReply, 1)
+	go func() {
+		reply, err := al.Ask(context.Background(), "Alice", "bob", "late", 100*time.Millisecond)
+		if err != nil {
+			t.Errorf("Ask: %v", err)
+		}
+		asked <- reply
+	}()
+	// The busy turn's budget and the asker's timer.
+	advanceWhenWaiting(t, loopClock(t, al), 2, 100*time.Millisecond)
+	if reply := <-asked; reply.Outcome != tools.OutcomeTimeout {
+		t.Fatalf("Ask = %+v; want a timeout", reply)
 	}
 	close(model.gate)
 	nextOutbound(t, msgBus)
-	time.Sleep(200 * time.Millisecond)
+	al.activeRequests.Wait() // Bob's session has worked through the stale ask
 	if n := model.count(); n != 1 {
 		t.Fatalf("model calls = %d, want only the busy turn", n)
 	}
@@ -496,15 +501,16 @@ func TestAsk_Timeout(t *testing.T) {
 		model := newGatedRecorder()
 		al, msgBus := messagingLoop(t, messagingConfig(t), model)
 
-		reply, err := al.Ask(context.Background(), "Alice", "bob", "slow", 200*time.Millisecond)
-		if err != nil {
-			t.Fatalf("Ask: %v", err)
-		}
+		asked := askInBackground(context.Background(), al, "slow", 200*time.Millisecond)
+		model.waitStarted(t)
+		// Bob's turn budget and the asker's timer.
+		advanceWhenWaiting(t, loopClock(t, al), 2, 200*time.Millisecond)
+		reply := <-asked
 		if reply.Outcome != tools.OutcomeTimeout || reply.Text != "Bob did not reply within 1 second." {
 			t.Fatalf("reply = %+v, want the timeout outcome", reply)
 		}
-		model.waitStarted(t)
 		close(model.gate)
+		al.activeRequests.Wait() // Bob's turn has ended
 		noOutbound(t, msgBus)
 	})
 
@@ -515,13 +521,19 @@ func TestAsk_Timeout(t *testing.T) {
 		al, _ := messagingLoop(t, cfg, model)
 		defer close(model.gate)
 
-		start := time.Now()
-		reply, err := al.Ask(context.Background(), "Alice", "bob", "slow", time.Hour)
-		if err != nil {
-			t.Fatalf("Ask: %v", err)
+		fc := loopClock(t, al)
+		asked := askInBackground(context.Background(), al, "slow", time.Hour)
+		model.waitStarted(t)
+		// Bob's turn budget and the asker's timer.
+		advanceWhenWaiting(t, fc, 2, time.Second-time.Nanosecond)
+		select {
+		case reply := <-asked:
+			t.Fatalf("reply = %+v before the request_timeout", reply)
+		default:
 		}
-		if reply.Outcome != tools.OutcomeTimeout || time.Since(start) > 10*time.Second {
-			t.Fatalf("reply = %+v after %v, want a timeout after about 1s", reply, time.Since(start))
+		fc.Advance(time.Nanosecond)
+		if reply := <-asked; reply.Outcome != tools.OutcomeTimeout {
+			t.Fatalf("reply = %+v, want a timeout at the request_timeout", reply)
 		}
 	})
 }
@@ -806,6 +818,7 @@ func TestCommands_AskAndWhisper(t *testing.T) {
 					t.Fatalf("the asked agent was sent %q", got)
 				}
 			}
+			al.activeRequests.Wait() // an asked turn has ended
 			noOutbound(t, msgBus)
 		})
 	}
@@ -874,7 +887,7 @@ func TestAsk_CancelledBeforeStart(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
 	al := &AgentLoop{}
-	replies := al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute), false)
+	replies := al.asks.open("ask-1", "Alice", al.clk().Now().Add(time.Minute), false)
 	al.publishCancelledReplies(context.Background(), []bus.InboundMessage{{
 		Channel: constants.AgentMessageChannel, ChatID: "ask-1",
 		Metadata: map[string]string{bus.MetaReplyRequired: "1"},

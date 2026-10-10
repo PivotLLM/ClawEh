@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/msgtoken"
@@ -158,11 +159,22 @@ type AgentLoop struct {
 
 	// humans holds the requests waiting for a person's answer (human agents).
 	humans humanDesk
+	// clock times the turn budget, the asks and the requests to people
+	// (nil: the system clock); tests substitute a clock.Fake.
+	clock clock.Clock
+	// onWait, when set (tests only), is called as a turn starts to wait for
+	// a resource another holds: a concurrent-turn slot, or a person busy
+	// with another request.
+	onWait func(waitKind)
 	// dismisser clears a chat's indicators for a person's answer, which gets
 	// no reply of its own: the channel manager (SetChannelManager); tests
 	// substitute a fake.
 	dismisser inboundDismisser
 }
+
+// clk is the clock the turn budget, the asks and the requests to people are
+// timed on.
+func (al *AgentLoop) clk() clock.Clock { return clock.Or(al.clock) }
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
 // is an interrupted turn: no reply is sent and its pending-turn flag is kept,

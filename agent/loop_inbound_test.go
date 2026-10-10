@@ -199,6 +199,8 @@ func TestInbound_MaxConcurrentTurnsLimitsConcurrency(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			al, msgBus, p := newBlockingLoop(t, twoAgentConfig(t, tc.limit))
+			var slotWait <-chan struct{}
+			al.onWait, slotWait = waitSignals(waitTurnSlot)
 
 			go dispatch(al, bus.InboundMessage{Channel: "cha", ChatID: "x", SenderID: "u", Content: "first"})
 			p.waitStarted(t)
@@ -206,7 +208,7 @@ func TestInbound_MaxConcurrentTurnsLimitsConcurrency(t *testing.T) {
 			if tc.expectAt == 2 {
 				p.waitStarted(t)
 			} else {
-				time.Sleep(100 * time.Millisecond)
+				awaitSignal(t, slotWait, "the second turn to wait for the slot")
 			}
 			if n := p.callCount(); n != tc.expectAt {
 				t.Fatalf("calls started while first turn held = %d, want %d", n, tc.expectAt)

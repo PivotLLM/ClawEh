@@ -88,10 +88,14 @@ func TestTimeoutRetry_NotLoggedWhenBudgetSpent(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(logs))
 	cfg := newTestConfig(t)
 	cfg.Agents.Defaults.TurnTimeout = 1
-	al, msgBus, _ := newBlockingLoop(t, cfg)
+	al, msgBus, p := newBlockingLoop(t, cfg)
+	fc := fakeClock(al)
 
-	dispatch(al, inbound("c1", "id1", "hello"))
+	go dispatch(al, inbound("c1", "id1", "hello"))
+	p.waitStarted(t)
+	advanceWhenWaiting(t, fc, 1, time.Second) // the turn budget runs out
 	out := nextOutbound(t, msgBus)
+	al.activeRequests.Wait()
 	if !strings.Contains(out.Content, "ran past the 1s time limit") {
 		t.Fatalf("reply = %q, want the time-limit message", out.Content)
 	}

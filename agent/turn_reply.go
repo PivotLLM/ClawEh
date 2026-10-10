@@ -105,7 +105,7 @@ func (al *AgentLoop) turnContext(turnParent context.Context, msg bus.InboundMess
 	turnTimeout := al.GetConfig().Agents.Defaults.GetTurnTimeout()
 	// A request to a person may wait longer than a model turn would.
 	turnTimeout = al.humanTurnBudget(msg, turnTimeout)
-	turnCtx, turnCancel := context.WithTimeout(turnParent, turnTimeout)
+	turnCtx, turnCancel := al.clk().WithTimeout(turnParent, turnTimeout)
 	cancel := turnCancel
 	// An ask whose asker gives up on it (the forum's) ends the turn then,
 	// so its model call is aborted rather than finishing for no one. A

@@ -341,6 +341,14 @@ production instance directly; test against a dev instance.
   as a typed `/agent Alice`, still is). `subagents.allow_agents` is matched only by
   `SubagentsConfig.Allows` (nil-safe; runtime and Check Up); an agent is named to people
   and in logs only by `AgentConfig.DisplayName` / `AgentInstance.DisplayName` (name, else id).
+- **Clocks** (`internal/clock`): timing code that tests must control takes a
+  `clock.Clock` field or option and reads it through `clock.Or` (nil = `clock.Real`,
+  so production wiring names none); tests use `clock.Fake` (`Advance`, and
+  `BlockUntil(ctx, n)` to wait until code is waiting on it), never real sleeps for
+  correctness, and never package variables reassigned for timing. The forum, which
+  imports no ClawEh package, declares its own `forum.Clock` (`Host.Clock`) that both
+  satisfy. Used by the agent loop (asks, requests to people, turn budget), agentreg
+  (sweep), the config watcher and the channel manager (retry backoff, connection watch).
 - **Expected refusals**: a tool error wrapped by `tools.Refusal` (or any error with a
   `Refusal() bool` method, which packages that do not import `tools` use, such as the forum)
   is an expected refusal (`tools.IsExpectedRefusal`) and logs at WARN "Tool call refused",

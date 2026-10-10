@@ -96,11 +96,7 @@ func TestMessageForDeletedTempAgentIsDropped(t *testing.T) {
 	if len(history) != 1 || history[0].Content != "keep me" {
 		t.Fatalf("main's conversation changed: %+v", history)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if out, ok := tl.msgBus.SubscribeOutbound(ctx); ok {
-		t.Fatalf("a dropped message produced a reply: %+v", out)
-	}
+	noOutbound(t, tl.msgBus) // a dropped message produces no reply
 }
 
 // A sender that requires a reply from an agent that no longer exists gets one

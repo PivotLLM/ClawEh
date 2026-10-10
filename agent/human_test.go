@@ -118,7 +118,7 @@ func askBob(id, content string) bus.InboundMessage {
 // sendAsk registers ask id as core Ask does and dispatches askBob(id,
 // content) in the background; the returned channel gets the ask's reply.
 func sendAsk(al *AgentLoop, id, content string) <-chan tools.AgentReply {
-	replies := al.asks.open("ask-"+id, "Alice", time.Now().Add(time.Minute), false)
+	replies := al.asks.open("ask-"+id, "Alice", al.clk().Now().Add(time.Minute), false)
 	go dispatch(al, askBob(id, content))
 	return replies
 }
@@ -223,9 +223,12 @@ func TestHumanAgent_TimeoutIsEmpty(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, msgBus, model := newHumanLoop(t, 1)
+	fc := fakeClock(al)
 
 	replies := sendAsk(al, "r1", "Are you there?")
 	expectPosted(t, msgBus)
+	// Bob's turn budget and the person's one-second window.
+	advanceWhenWaiting(t, fc, 2, time.Second)
 	reply := expectAskReply(t, replies)
 	if reply.Text != "" || reply.Outcome != bus.OutcomeEmpty {
 		t.Fatalf("reply = %+v, want an empty reply to r1", reply)
@@ -234,7 +237,7 @@ func TestHumanAgent_TimeoutIsEmpty(t *testing.T) {
 
 	deliver(al, fromBob("b1", "Sorry, I was away."))
 	expectInBobChat(t, msgBus, timedOutReply)
-	time.Sleep(1100 * time.Millisecond)
+	fc.Advance(time.Second) // the late-answer window has passed
 	deliver(al, fromBob("b2", "Hello?"))
 	expectInBobChat(t, msgBus, nothingWaitingReply)
 	if n := model.count(); n != 0 {
@@ -263,11 +266,7 @@ func TestHumanAgent_UnsolicitedMessages(t *testing.T) {
 	// /clear runs, but no notice is posted to the person.
 	deliver(al, fromBob("b4", "/clear"))
 	nextOutbound(t, msgBus)
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	if msg, ok := msgBus.ConsumeInbound(ctx); ok {
-		t.Fatalf("/clear published %+v for a human agent", msg)
-	}
+	noInbound(t, msgBus) // /clear published nothing for a human agent
 	al.activeRequests.Wait()
 	if n := model.count(); n != 0 {
 		t.Fatalf("a model was called %d times", n)
@@ -320,7 +319,7 @@ func TestHumanAgent_ShutdownCancels(t *testing.T) {
 
 	ctx, stop := context.WithCancelCause(context.Background())
 	al.activeRequests.Add(1)
-	replies := al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute), false)
+	replies := al.asks.open("ask-r1", "Alice", al.clk().Now().Add(time.Minute), false)
 	go al.processSessionMessage(ctx, askBob("r1", "Still there?"))
 	expectPosted(t, msgBus)
 	stop(errShuttingDown)
@@ -389,12 +388,14 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, msgBus, _ := newHumanLoop(t, 60)
+	var personBusy <-chan struct{}
+	al.onWait, personBusy = waitSignals(waitPerson)
 	bob, _ := al.GetRegistry().Get("bob")
 	key := routing.BuildAgentMainSessionKey("bob")
 
 	results := make(chan string, 2)
 	for _, q := range []string{"first", "second"} {
-		al.asks.open("ask-"+q, "Alice", time.Now().Add(time.Minute), false)
+		al.asks.open("ask-"+q, "Alice", al.clk().Now().Add(time.Minute), false)
 		go func() {
 			out, err := al.runAgentLoop(context.Background(), bob, processOptions{
 				SessionKey: key, Channel: constants.AgentMessageChannel, ChatID: "ask-" + q, UserMessage: q, ReplyRequired: true,
@@ -406,6 +407,7 @@ func TestHumanAgent_OneRequestAtATime(t *testing.T) {
 		}()
 	}
 	first := expectPosted(t, msgBus)
+	awaitSignal(t, personBusy, "the second request to queue behind the first")
 	noOutbound(t, msgBus) // the second waits
 	deliver(al, fromBob("b1", "answer to "+first.Content))
 	second := expectPosted(t, msgBus)
@@ -434,20 +436,34 @@ func TestHumanAgent_TimeoutRunsFromPosting(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, msgBus, _ := newHumanLoop(t, 60)
+	fc := fakeClock(al)
+	var personBusy <-chan struct{}
+	al.onWait, personBusy = waitSignals(waitPerson)
 	desk := al.humans.slot("bob")
 	desk <- struct{}{} // another request holds the person
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := al.askHuman(context.Background(), "bob", "test", bobChat, "question", 300*time.Millisecond, nil)
+		_, err := al.askHuman(context.Background(), "bob", "test", bobChat, "question", time.Minute, nil)
 		done <- err
 	}()
-	time.Sleep(600 * time.Millisecond) // queued twice as long as its timeout
+	awaitSignal(t, personBusy, "the request to queue")
+	fc.Advance(2 * time.Minute) // queued twice as long as its timeout
 	<-desk
 	expectPosted(t, msgBus)
 	if !al.humans.waiting("bob") {
 		t.Fatal("the request expired before it was posted")
 	}
+	advanceWhenWaiting(t, fc, 1, time.Minute-time.Nanosecond) // the request's window (no turn here)
+	select {
+	case err := <-done:
+		t.Fatalf("the request ended before its own timeout: %v", err)
+	default:
+	}
+	if !al.humans.waiting("bob") {
+		t.Fatal("the request ended before its own timeout")
+	}
+	fc.Advance(time.Nanosecond)
 	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want its own timeout after posting", err)
 	}
@@ -515,7 +531,7 @@ func TestHumanAgent_RefusesNonHumanProvider(t *testing.T) {
 	other.Providers = []config.Provider{{Name: "People", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:1", APIKey: "k"}}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &countingProvider{}, providers.NewProviderDispatcher(other))
 	bob, _ := al.GetRegistry().Get("bob")
-	al.asks.open("ask-1", "Alice", time.Now().Add(time.Minute), false)
+	al.asks.open("ask-1", "Alice", al.clk().Now().Add(time.Minute), false)
 	_, err := al.runAgentLoop(context.Background(), bob, processOptions{
 		SessionKey: "agent:bob:main", Channel: constants.AgentMessageChannel, ChatID: "ask-1", UserMessage: "q", ReplyRequired: true,
 	})
@@ -638,11 +654,7 @@ func TestHumanAgent_ExternalMessagesRefused(t *testing.T) {
 	if err := al.HandleExternalMessage(context.Background(), "bob", "alarm"); !errors.Is(err, ErrHumanAgent) {
 		t.Fatalf("err = %v, want ErrHumanAgent", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if msg, ok := msgBus.ConsumeInbound(ctx); ok {
-		t.Fatalf("published %+v", msg)
-	}
+	noInbound(t, msgBus)
 }
 
 // fakeDismisser records the chats whose indicators were cleared.
@@ -682,8 +694,8 @@ func TestHumanAgent_AnswerDismissesIndicators(t *testing.T) {
 	if reply := expectAskReply(t, replies); reply.Text != "Yes." {
 		t.Fatalf("got %+v, want the answer as the ask's reply", reply)
 	}
-	noOutbound(t, msgBus)
 	al.activeRequests.Wait()
+	noOutbound(t, msgBus)
 }
 
 // Someone who writes to a human agent directly (a mention, a chat, a device)

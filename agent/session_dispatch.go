@@ -207,6 +207,15 @@ func (al *AgentLoop) acquireTurnSlot(ctx context.Context) bool {
 	if al.turnSem == nil {
 		return true
 	}
+	// The first select only notices the wait (AgentLoop.onWait).
+	select {
+	case al.turnSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	al.notifyWait(waitTurnSlot)
 	select {
 	case al.turnSem <- struct{}{}:
 		return true

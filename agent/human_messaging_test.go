@@ -92,8 +92,8 @@ func TestHumanAgent_AgentMessageAskIsAnswered(t *testing.T) {
 	if got := nextOutbound(t, msgBus); got.ChatID != "c2" || got.Content != "done: Looks good." || got.Outcome != bus.OutcomeOK {
 		t.Fatalf("Alice's reply = %+v, want Bob's answer carried into it", got)
 	}
-	noOutbound(t, msgBus)
 	al.activeRequests.Wait()
+	noOutbound(t, msgBus)
 	select {
 	case al.turnSem <- struct{}{}:
 		<-al.turnSem
@@ -107,9 +107,22 @@ func TestHumanAgent_AgentMessageAskIsAnswered(t *testing.T) {
 func TestHumanAgent_AskTimesOut(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 1), &countingProvider{})
+	fc := loopClock(t, al)
+	var personBusy <-chan struct{}
+	al.onWait, personBusy = waitSignals(waitPerson)
 
+	// The request is posted some time after the ask starts, as it always is:
+	// the person is busy for a moment first. Its window is then cut to what
+	// is left of the asker's second (Bob's request_timeout caps the ask).
+	desk := al.humans.slot("bob")
+	desk <- struct{}{}
 	result := askInBackground(context.Background(), al, "Are you there?", 30*time.Second)
+	awaitSignal(t, personBusy, "the request to queue")
+	fc.Advance(time.Millisecond)
+	<-desk
 	expectPosted(t, msgBus)
+	// The asker's timer, Bob's turn budget and the person's window.
+	advanceWhenWaiting(t, fc, 3, time.Second-time.Millisecond)
 	select {
 	case reply := <-result:
 		if reply.Outcome != tools.OutcomeTimeout || reply.Text != "Bob did not reply within 1 second." {
@@ -118,10 +131,7 @@ func TestHumanAgent_AskTimesOut(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the ask never returned")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for al.humans.waiting("bob") && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	al.activeRequests.Wait() // Bob's turn has ended its request
 	publishIn(t, msgBus, fromBob("b1", "Sorry, I was away."))
 	expectInBobChat(t, msgBus, timedOutReply)
 }
@@ -238,18 +248,19 @@ func TestHumanAgent_DepthAndChainPassThrough(t *testing.T) {
 func TestHumanAgent_WindowEndsWithTheAsker(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	al, msgBus := humanMessagingLoop(t, humanMessagingConfig(t, 600), &countingProvider{})
+	fc := loopClock(t, al)
 
-	start := time.Now()
 	result := askInBackground(context.Background(), al, "Quick question?", time.Second)
 	expectPosted(t, msgBus)
+	// The asker's timer, Bob's turn budget and the person's window, cut to
+	// the asker's second.
+	advanceWhenWaiting(t, fc, 3, time.Second)
 	if r := <-result; r.Outcome != tools.OutcomeTimeout {
 		t.Fatalf("reply = %+v, want a timeout", r)
 	}
-	for al.humans.waiting("bob") {
-		if time.Since(start) > 5*time.Second {
-			t.Fatal("the request outlasted its asker")
-		}
-		time.Sleep(10 * time.Millisecond)
+	al.activeRequests.Wait() // Bob's turn has ended its request
+	if al.humans.waiting("bob") {
+		t.Fatal("the request outlasted its asker")
 	}
 	publishIn(t, msgBus, fromBob("b1", "Here you go."))
 	expectInBobChat(t, msgBus, timedOutReply)
@@ -281,7 +292,7 @@ func TestHumanAgent_AnswerAfterAskerLeftIsAcknowledged(t *testing.T) {
 	cfg.Agents.Defaults.MaxConcurrentTurns = 1
 	al, msgBus, _ := newHumanLoopWith(t, cfg)
 
-	al.asks.open("ask-r1", "Alice", time.Now().Add(time.Minute), false)
+	al.asks.open("ask-r1", "Alice", al.clk().Now().Add(time.Minute), false)
 	// The turn runs with a slot, so after the answer it must take one back
 	// before it can hand the answer on: holding the slot holds it there.
 	slot := &turnSlot{al: al}

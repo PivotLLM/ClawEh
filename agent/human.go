@@ -168,24 +168,24 @@ func (d *humanDesk) answer(agentID string, msg bus.InboundMessage, a humanAnswer
 	return true
 }
 
-// markExpired records that agentID's request ended unanswered; reply is what
-// a late answer is told.
-func (d *humanDesk) markExpired(agentID, reply string) {
+// markExpired records that agentID's request ended unanswered at at; reply
+// is what a late answer is told.
+func (d *humanDesk) markExpired(agentID, reply string, at time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.expired == nil {
 		d.expired = make(map[string]expiry)
 	}
-	d.expired[agentID] = expiry{at: time.Now(), reply: reply}
+	d.expired[agentID] = expiry{at: at, reply: reply}
 }
 
 // recentlyExpired returns what a late answer is told when agentID's last
-// request ended unanswered within window.
-func (d *humanDesk) recentlyExpired(agentID string, window time.Duration) (string, bool) {
+// request ended unanswered within window before now.
+func (d *humanDesk) recentlyExpired(agentID string, window time.Duration, now time.Time) (string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	e, ok := d.expired[agentID]
-	if !ok || window <= 0 || time.Since(e.at) >= window {
+	if !ok || window <= 0 || now.Sub(e.at) >= window {
 		return "", false
 	}
 	return e.reply, true
@@ -233,19 +233,29 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	}
 
 	deskSlot := al.humans.slot(agentID)
+	// The first select only notices the wait (AgentLoop.onWait).
 	select {
 	case deskSlot <- struct{}{}:
 	case <-gone:
 		return "", errAskerStopped // never posted
 	case <-ctx.Done():
 		return "", ctx.Err()
+	default:
+		al.notifyWait(waitPerson)
+		select {
+		case deskSlot <- struct{}{}:
+		case <-gone:
+			return "", errAskerStopped // never posted
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
 	defer func() { <-deskSlot }()
 
 	// The person's window never outlasts the asker.
 	cappedByAsker := false
 	if ask != nil {
-		left := time.Until(ask.deadline)
+		left := al.clk().Until(ask.deadline)
 		if left <= 0 {
 			return "", errAskerStopped // never posted
 		}
@@ -285,7 +295,7 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
-		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		waitCtx, cancel = al.clk().WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	withdrawn := false
@@ -306,7 +316,7 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 	case <-gone:
 		// An asker that stopped at its deadline is the request timing out,
 		// not a withdrawal (both may be ready at once).
-		withdrawn = ask == nil || time.Now().Before(ask.deadline)
+		withdrawn = ask == nil || al.clk().Now().Before(ask.deadline)
 	}
 	// No answer can arrive once the request is cleared; one that arrived
 	// while the wait was ending is returned, not lost.
@@ -323,14 +333,14 @@ func (al *AgentLoop) askHuman(ctx context.Context, agentID, channel, chatID, req
 		if ask != nil {
 			from = ask.from
 		}
-		al.humans.markExpired(agentID, withdrawnReply)
+		al.humans.markExpired(agentID, withdrawnReply, al.clk().Now())
 		al.tellNoLongerNeeded(ctx, agentID, channel, chatID, from)
 		if withdrawn {
 			return "", errAskerStopped
 		}
 		return "", ctx.Err()
 	}
-	al.humans.markExpired(agentID, timedOutReply)
+	al.humans.markExpired(agentID, timedOutReply, al.clk().Now())
 	logger.InfoCF("agent", "No answer from the person before the request timed out",
 		turnFields(ctx, map[string]any{"agent_id": agentID, "timeout": timeout.String()}))
 	if cappedByAsker {
@@ -570,7 +580,7 @@ func (al *AgentLoop) handleHumanChat(ctx context.Context, msg bus.InboundMessage
 		return true
 	}
 	window := time.Duration(al.GetConfig().HumanRequestTimeout(hc.id)) * time.Second
-	if reply, ok := al.humans.recentlyExpired(hc.id, window); ok {
+	if reply, ok := al.humans.recentlyExpired(hc.id, window, al.clk().Now()); ok {
 		al.replyInHumanChat(ctx, msg, reply)
 	} else {
 		al.replyInHumanChat(ctx, msg, nothingWaitingReply)
