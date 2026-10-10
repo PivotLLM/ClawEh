@@ -28,7 +28,7 @@ supplies no validator.
 | --- | --- |
 | shared contract | `doc.go`, `host.go`, `errors.go`, `records.go` |
 | (a) configuration | `config.go`, `config_schema.go`, `decode.go`, `validate.go`, `schema_jsonschema.go`, `jsonpointer.go`, `mergepatch.go` |
-| (b) store and replay | `store.go`, `lock_unix.go`, `replay.go` |
+| (b) store and replay | `store.go`, `locking.go`, `lock_unix.go`, `runfiles.go`, `commits.go`, `cleanup.go`, `atomicfs.go`, `replay.go` |
 | (c) router | `router.go` (projections in `jsonpointer.go`) |
 | (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go`, `transcript.go` |
 | (e) service and tools | `service.go`, `tracking.go`, `launch.go`, `control.go`, `status.go`, `runner.go`, `terminal.go`, `keepalive.go`, `recovery.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
