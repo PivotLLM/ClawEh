@@ -165,6 +165,9 @@ type TelegramChannel struct {
 
 	registerFunc     func(context.Context, []commands.Definition) error
 	commandRegCancel context.CancelFunc
+	// commandRegDone is closed when the command registration goroutine has
+	// returned; Stop waits for it, so nothing of the channel runs after Stop.
+	commandRegDone chan struct{}
 }
 
 // newHTTPTransport returns the transport for the bot's API calls: net/http
@@ -356,6 +359,15 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 			case <-c.pollDone:
 			case <-time.After(pollExitTimeout):
 				logger.WarnCF("telegram", "Timed out waiting for long-poll goroutine to exit", map[string]any{
+					"timeout": pollExitTimeout.String(),
+				})
+			}
+		}
+		if c.commandRegDone != nil {
+			select {
+			case <-c.commandRegDone:
+			case <-time.After(pollExitTimeout):
+				logger.WarnCF("telegram", "Timed out waiting for command registration to stop", map[string]any{
 					"timeout": pollExitTimeout.String(),
 				})
 			}
