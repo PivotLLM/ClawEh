@@ -144,48 +144,9 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	if turnIDFrom(ctx) == "" {
 		ctx = withTurnID(ctx, newTurnID())
 	}
-	logFields := turnFields(ctx, map[string]any{
-		"channel":     msg.Channel,
-		"chat_id":     msg.ChatID,
-		"sender_id":   msg.SenderID,
-		"session_key": msg.SessionKey,
-	})
-	if logger.GetLogMessageContent() {
-		var logContent string
-		if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
-			logContent = msg.Content // Full content for errors
-		} else {
-			logContent = utils.Truncate(msg.Content, 80)
-		}
-		logFields["preview"] = logContent
-	}
-	logger.InfoCF(
-		"agent",
-		fmt.Sprintf("Processing message from %s:%s", msg.Channel, msg.SenderID),
-		logFields,
-	)
+	logInboundMessage(ctx, msg)
+	ctx, msg = al.prepareInbound(ctx, msg)
 
-	var hadAudio bool
-	// A request to a person is relayed as written: no transcription model
-	// sees a human agent's conversation.
-	if al.humanTarget(msg) == nil {
-		msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
-	}
-
-	// For audio messages the placeholder was deferred by the channel.
-	// Now that transcription (and optional feedback) is done, send it.
-	if hadAudio && al.channelManager != nil {
-		al.channelManager.SendPlaceholder(ctx, msg.Channel, msg.ChatID)
-	}
-
-	maxDepth := config.DefaultMaxSubagentDepth
-	if cfg := al.GetConfig(); cfg != nil {
-		maxDepth = cfg.Agents.Defaults.GetMaxSubagentDepth()
-	}
-	ctx = withInboundSpawnDepth(ctx, msg, maxDepth)
-	ctx = withInboundAskChain(ctx, msg)
-
-	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
 		return al.processSystemMessage(ctx, msg, outcome)
 	}
@@ -198,66 +159,25 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 		return "", routeErr
 	}
 
-	// Detect whether a mention caused routing to a specific agent so we can
-	// attribute the response. A mention is "honored" when the extracted agent
-	// name matches the resolved agent ID (i.e. routing was overridden by the mention).
+	// A mention is "honored" when the mentioned agent is the one routed to
+	// (routing was overridden by the mention); the reply is then attributed.
 	mentionedAgent := inboundMetadata(msg, "mentioned_agent")
 	mentionHonored := mentionedAgent != "" && strings.EqualFold(route.AgentID, mentionedAgent)
 
-	// Legacy: reset the shared sentInRound flag on the message tool. The concurrent
-	// dispatch path uses per-round context flags instead, so this is a no-op there.
-	messageTool, hasMsg := agent.Tools.Get("message")
-	if !hasMsg {
-		messageTool, hasMsg = agent.Tools.Get("msg_send")
-	}
-	if hasMsg {
-		tool := messageTool
-		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
-			resetter.ResetSentInRound()
-		}
-	}
+	resetMessageToolRound(agent)
 
-	// Resolve session key from route, while preserving explicit agent-scoped keys.
-	scopeKey := resolveScopeKey(route, msg.SessionKey)
-	sessionKey := scopeKey
-
+	sessionKey := resolveScopeKey(route, msg.SessionKey)
 	logger.InfoCF("agent", "Routed message",
 		turnFields(ctx, map[string]any{
 			"agent_id":      agent.ID,
-			"scope_key":     scopeKey,
+			"scope_key":     sessionKey,
 			"session_key":   sessionKey,
 			"matched_by":    route.MatchedBy,
 			"route_agent":   route.AgentID,
 			"route_channel": route.Channel,
 		}))
 
-	userContent := prependSenderLabel(msg.Content, msg.Sender)
-	// Drop received attachments into the agent's workspace so its file tools can read
-	// them (the model otherwise only sees an annotation it can't open).
-	// Not for a fresh temporary agent: it has no file tools to read them
-	// with, and its workspace stays empty. The media refs still reach the
-	// model with the message.
-	if !agent.Spec.Fresh {
-		userContent += al.materializeInboundMedia(msg, agent)
-	}
-
-	opts := processOptions{
-		SessionKey:      sessionKey,
-		Channel:         msg.Channel,
-		ChatID:          msg.ChatID,
-		UserMessage:     userContent,
-		Media:           msg.Media,
-		DefaultResponse: defaultResponse,
-		SendResponse:    false,
-		IsRetry:         msg.IsRetry,
-		ResetSession:    msg.Metadata[metaSessionReset] == "true",
-		SenderID:        msg.SenderID,
-		SenderName:      senderSource(msg.SenderID, msg.Sender),
-		IsGroup:         inboundMetadata(msg, "is_group") == "true",
-		OutcomeOut:      outcome,
-		MessageID:       msg.MessageID,
-		ReplyRequired:   msg.ReplyRequired(),
-	}
+	opts := al.inboundProcessOptions(msg, agent, sessionKey, outcome)
 
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
@@ -284,6 +204,104 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	}
 
 	return response, nil
+}
+
+// logInboundMessage logs the message being processed; its content only with
+// log_message_content.
+func logInboundMessage(ctx context.Context, msg bus.InboundMessage) {
+	logFields := turnFields(ctx, map[string]any{
+		"channel":     msg.Channel,
+		"chat_id":     msg.ChatID,
+		"sender_id":   msg.SenderID,
+		"session_key": msg.SessionKey,
+	})
+	if logger.GetLogMessageContent() {
+		var logContent string
+		if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
+			logContent = msg.Content // Full content for errors
+		} else {
+			logContent = utils.Truncate(msg.Content, 80)
+		}
+		logFields["preview"] = logContent
+	}
+	logger.InfoCF(
+		"agent",
+		fmt.Sprintf("Processing message from %s:%s", msg.Channel, msg.SenderID),
+		logFields,
+	)
+}
+
+// prepareInbound transcribes the message's audio and applies the sub-agent
+// depth and ask chain it carries to ctx.
+func (al *AgentLoop) prepareInbound(ctx context.Context, msg bus.InboundMessage) (context.Context, bus.InboundMessage) {
+	var hadAudio bool
+	// A request to a person is relayed as written: no transcription model
+	// sees a human agent's conversation.
+	if al.humanTarget(msg) == nil {
+		msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
+	}
+
+	// For audio messages the placeholder was deferred by the channel.
+	// Now that transcription (and optional feedback) is done, send it.
+	if hadAudio && al.channelManager != nil {
+		al.channelManager.SendPlaceholder(ctx, msg.Channel, msg.ChatID)
+	}
+
+	maxDepth := config.DefaultMaxSubagentDepth
+	if cfg := al.GetConfig(); cfg != nil {
+		maxDepth = cfg.Agents.Defaults.GetMaxSubagentDepth()
+	}
+	ctx = withInboundSpawnDepth(ctx, msg, maxDepth)
+	ctx = withInboundAskChain(ctx, msg)
+	return ctx, msg
+}
+
+// resetMessageToolRound resets the shared sentInRound flag on the agent's
+// message tool. The concurrent dispatch path uses per-round context flags
+// instead, so this is a no-op there.
+func resetMessageToolRound(agent *AgentInstance) {
+	messageTool, hasMsg := agent.Tools.Get("message")
+	if !hasMsg {
+		messageTool, hasMsg = agent.Tools.Get("msg_send")
+	}
+	if !hasMsg {
+		return
+	}
+	if resetter, ok := messageTool.(interface{ ResetSentInRound() }); ok {
+		resetter.ResetSentInRound()
+	}
+}
+
+// inboundProcessOptions are the turn options for an inbound message routed
+// to agent in sessionKey.
+func (al *AgentLoop) inboundProcessOptions(msg bus.InboundMessage, agent *AgentInstance, sessionKey string, outcome *string) processOptions {
+	userContent := prependSenderLabel(msg.Content, msg.Sender)
+	// Received attachments are dropped into the agent's workspace so its file
+	// tools can read them (the model otherwise only sees an annotation it
+	// cannot open). Not for a fresh temporary agent: it has no file tools to
+	// read them with, and its workspace stays empty. The media refs still
+	// reach the model with the message.
+	if !agent.Spec.Fresh {
+		userContent += al.materializeInboundMedia(msg, agent)
+	}
+
+	return processOptions{
+		SessionKey:      sessionKey,
+		Channel:         msg.Channel,
+		ChatID:          msg.ChatID,
+		UserMessage:     userContent,
+		Media:           msg.Media,
+		DefaultResponse: defaultResponse,
+		SendResponse:    false,
+		IsRetry:         msg.IsRetry,
+		ResetSession:    msg.Metadata[metaSessionReset] == "true",
+		SenderID:        msg.SenderID,
+		SenderName:      senderSource(msg.SenderID, msg.Sender),
+		IsGroup:         inboundMetadata(msg, "is_group") == "true",
+		OutcomeOut:      outcome,
+		MessageID:       msg.MessageID,
+		ReplyRequired:   msg.ReplyRequired(),
+	}
 }
 
 // runMeteredTurn runs the turn with usage accounting and folds its cost into
