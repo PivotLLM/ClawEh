@@ -121,6 +121,9 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if err := resolved.Forum.Limits.Validate(); err != nil {
 		return &ValidationError{Err: err}
 	}
+	if errs := resolved.AgentIDErrors(); len(errs) > 0 {
+		return &ValidationError{Err: errors.Join(errs...)}
+	}
 	if err := SaveConfig(s.path, resolved); err != nil {
 		return err
 	}

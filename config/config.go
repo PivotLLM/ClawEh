@@ -1023,8 +1023,8 @@ type SessionConfig struct {
 }
 
 // DefaultBinding returns the agent's binding marked Default, or false if none.
-// Agent ids are matched case-insensitively: binding agent_ids are author-cased
-// (e.g. "Alice") while a session-derived caller id is lowercased ("alice").
+// The caller's agentID is matched case-insensitively (binding agent_ids are
+// in normal form, validateAgentIDs).
 func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Bindings {
@@ -2739,6 +2739,11 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if err := cfg.Forum.Limits.Validate(); err != nil {
 		return nil, err
+	}
+	// Agent ids are never rewritten: one not in normal form stops the start
+	// (and a live reload keeps the running config) until the operator fixes it.
+	if errs := cfg.AgentIDErrors(); len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	// Migrate legacy channel config fields to new unified structures

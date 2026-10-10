@@ -478,7 +478,7 @@ func (al *AgentLoop) humanChatOwner(msg bus.InboundMessage) (humanChat, bool) {
 		if !found || !sameChat(msg, channel, chatID) {
 			continue
 		}
-		hc := humanChat{id: routing.NormalizeAgentID(ac.ID), label: ac.DisplayName()}
+		hc := humanChat{id: ac.ID, label: ac.DisplayName()}
 		if inst, ok := registry.GetConfigured(hc.id); ok && inst.HumanModel != "" {
 			hc.agent = inst
 		}

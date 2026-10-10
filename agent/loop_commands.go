@@ -396,7 +396,7 @@ func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []s
 	seen := make(map[string]struct{})
 	var out []string
 	for _, b := range bindings {
-		if routing.NormalizeAgentID(b.AgentID) != target {
+		if b.AgentID != target {
 			continue
 		}
 		ch := strings.TrimSpace(b.Match.Channel)

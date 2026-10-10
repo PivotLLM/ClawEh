@@ -91,7 +91,7 @@ func TestMaestroConfig_MarshalOmitsAbsentBlock(t *testing.T) {
 
 func TestConfig_AgentMaestroLookups(t *testing.T) {
 	c := &Config{Agents: AgentsConfig{List: []AgentConfig{
-		{ID: "Alice", Maestro: &MaestroConfig{Enabled: true, MaxConcurrent: 7}},
+		{ID: "alice", Maestro: &MaestroConfig{Enabled: true, MaxConcurrent: 7}},
 		{ID: "bob"},
 	}}}
 	if !c.AgentHasMaestro("alice") || c.AgentHasMaestro("bob") || c.AgentHasMaestro("nobody") {

@@ -255,7 +255,7 @@ func danglingRefConfigJSON(marker string) string {
 		"models": [{"model_name": "good", "model": "gpt-4o", "provider": "p", "enabled": true}],
 		"agents": {
 			"defaults": {"models": []},
-			"list": [{"id": "Alice", "name": "Alice", "default": true, "models": ["DeepSeek 4 Pro", "good"]}]
+			"list": [{"id": "alice", "name": "Alice", "default": true, "models": ["DeepSeek 4 Pro", "good"]}]
 		},
 		"_marker": "` + marker + `"
 	}`
@@ -315,7 +315,7 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const wantEvent = "model-ref:agents.list[Alice].models"
+	const wantEvent = "model-ref:agents.list[alice].models"
 	got := rec.Alerts()
 	if len(got) != 1 {
 		t.Fatalf("alerts = %+v, want exactly one", got)
@@ -414,7 +414,7 @@ func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
 func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	rec := testalerts.Install(t)
 	m := &modelRefAlerts{}
-	alice := config.DanglingModelReference{Site: "agents.list[Alice].models", Alias: "DeepSeek 4 Pro", Agent: "Alice"}
+	alice := config.DanglingModelReference{Site: "agents.list[alice].models", Alias: "DeepSeek 4 Pro", Agent: "Alice"}
 	defaults := config.DanglingModelReference{Site: "agents.defaults.image_model", Alias: "gone"}
 	skipped := func(refs ...config.DanglingModelReference) modelRefPrune { return modelRefPrune{skipped: refs} }
 
@@ -430,7 +430,7 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	m.report(rec, modelRefPrune{}) // fixed
 	m.report(rec, skipped(alice))
 	got := rec.Alerts()
-	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[Alice].models" {
+	if len(got) != 3 || got[2].EventID != "model-ref:agents.list[alice].models" {
 		t.Fatalf("after fix and reappearance: %+v, want a third alert for Alice", got)
 	}
 	want := `Alice lists model "DeepSeek 4 Pro", which is missing or unusable; it was skipped and the next model in the list is used. Pick a model for Alice on the Agents page to clear this.`

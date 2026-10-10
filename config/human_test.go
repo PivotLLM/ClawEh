@@ -307,20 +307,6 @@ func TestHumanProblems_DisabledAgentKeepsItsChat(t *testing.T) {
 	}
 }
 
-// Agent ids are matched to bindings the way DefaultBinding does (trimmed), and
-// a human agent whose only binding is not its default has no chat yet.
-func TestHumanProblems_AgentIDMatching(t *testing.T) {
-	cfg := humanTestConfig()
-	cfg.Agents.List[1].ID = " bob "
-	if got := cfg.HumanProblems(); len(got) != 0 {
-		t.Fatalf("problems = %+v for an id with spaces", got)
-	}
-	cfg.Bindings[1].Default = false
-	if got := problemKinds(cfg.HumanProblems()); !slices.Equal(got, []HumanProblemKind{HumanNoChat}) {
-		t.Fatalf("kinds = %v, want no chat", got)
-	}
-}
-
 // An existing problem is recognised by what it is, not its wording: renaming
 // the agent does not make it new, so the save is not refused.
 func TestStoreUpdate_RenameKeepsExistingProblem(t *testing.T) {

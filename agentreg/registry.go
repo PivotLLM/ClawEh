@@ -392,7 +392,7 @@ func buildConfigEntries[T Instance](cfg *config.Config, build BuildFunc[T], now 
 func configSpec(cfg *config.Config, ac *config.AgentConfig) Spec {
 	ws := ConfigWorkspace(ac, cfg.BaseDir())
 	return Spec{
-		ID:        routing.NormalizeAgentID(ac.ID),
+		ID:        ac.ID,
 		Config:    ac,
 		Origin:    OriginConfig,
 		Workspace: ws,

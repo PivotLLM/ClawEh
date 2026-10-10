@@ -595,3 +595,42 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
 export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
   return { agents: { list: (cfg.list ?? []).map(agentPayload) } }
 }
+
+// Agent ids must already be in the form config.NormalizeAgentID gives
+// (config/agent_id.go); the server refuses any other with the same sentence.
+const AGENT_ID_MAX = 64
+const AGENT_ID_VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/
+const AGENT_ID_INVALID_CHARS = /[^a-z0-9_-]+/
+
+// normalizeAgentId mirrors config.NormalizeAgentID.
+export function normalizeAgentId(id: string): string {
+  const trimmed = id.trim()
+  if (trimmed === "") return "main"
+  const lower = trimmed.toLowerCase()
+  if (AGENT_ID_VALID.test(lower)) return lower
+  let result = lower
+    .replace(new RegExp(AGENT_ID_INVALID_CHARS.source, "g"), "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+  if (result.length > AGENT_ID_MAX) result = result.slice(0, AGENT_ID_MAX)
+  return result === "" ? "main" : result
+}
+
+// agentIdProblem returns why id cannot be an agent id, or null when it can.
+export function agentIdProblem(id: string): string | null {
+  const trimmed = id.trim()
+  if (trimmed === "") return 'An agent has no id; give it one, such as "alice".'
+  const norm = normalizeAgentId(id)
+  if (norm === id) return null
+  const lower = trimmed.toLowerCase()
+  const validChars = !AGENT_ID_INVALID_CHARS.test(lower)
+  let problem = "may use only lower-case letters, digits, - and _"
+  if (lower.length > AGENT_ID_MAX && validChars) {
+    problem = `is longer than ${AGENT_ID_MAX} characters`
+  } else if (lower.startsWith("-") && validChars) {
+    problem = "must start with a letter or digit"
+  }
+  const msg = `Agent id ${JSON.stringify(id)} ${problem}`
+  if (norm === "main" && lower !== "main") return `${msg}.`
+  return `${msg}; use ${JSON.stringify(norm)}.`
+}

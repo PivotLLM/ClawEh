@@ -40,17 +40,3 @@ func TestSessionChannelsForAgent_FiltersByAgentID(t *testing.T) {
 		t.Errorf("sessionChannelsForAgent(ghost) = %v, want empty", got)
 	}
 }
-
-// TestSessionChannelsForAgent_NormalizesAgentID confirms that the comparison
-// uses the routing package's normaliser, so case/whitespace differences
-// between binding.AgentID and the live agent.ID don't cause false negatives
-// (which would silently widen the leak window).
-func TestSessionChannelsForAgent_NormalizesAgentID(t *testing.T) {
-	bindings := []config.AgentBinding{
-		{AgentID: "  BOB ", Match: config.BindingMatch{Channel: "slack"}},
-	}
-	got := sessionChannelsForAgent(bindings, "bob")
-	if len(got) != 1 || got[0] != "slack" {
-		t.Errorf("normalised match failed: got %v, want [slack]", got)
-	}
-}
