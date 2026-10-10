@@ -48,8 +48,8 @@ func TestForumLimitsValidate(t *testing.T) {
 		t.Fatal("negative limits accepted")
 	}
 	for _, want := range []string{
-		"forum.limits.max_calls: must be 0 (the default) or more, got -1",
-		"forum.limits.max_parallel_calls: must be 0 (the default) or more, got -3",
+		"The forum maximum for max_calls must be 0 (the default) or more.",
+		"The forum maximum for max_parallel_calls must be 0 (the default) or more.",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
@@ -76,7 +76,7 @@ func TestLoadConfig_ForumLimits(t *testing.T) {
 	}
 
 	write(`{"forum":{"limits":{"max_duration_seconds":-5}}}`)
-	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "forum.limits.max_duration_seconds") {
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "The forum maximum for max_duration_seconds") {
 		t.Errorf("LoadConfig with a negative limit = %v", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestStore_ForumLimits(t *testing.T) {
 		return nil
 	})
 	var ve *ValidationError
-	if !errors.As(err, &ve) || !strings.Contains(err.Error(), "forum.limits.call_timeout_seconds") {
+	if !errors.As(err, &ve) || err.Error() != "The forum maximum for call_timeout_seconds must be 0 (the default) or more." {
 		t.Errorf("Update with a negative limit = %v, want a ValidationError", err)
 	}
 	if got := s.Current().Forum.Limits.CallTimeoutSeconds; got != 0 {

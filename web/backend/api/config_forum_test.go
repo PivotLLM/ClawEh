@@ -61,7 +61,7 @@ func TestHandlePatchConfig_ForumLimitsRoundTrip(t *testing.T) {
 	}
 
 	rec = patchMaestroConfig(t, configPath, `{"forum":{"limits":{"max_parallel_calls":-1}}}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "forum.limits.max_parallel_calls") {
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "The forum maximum for max_parallel_calls must be 0 (the default) or more.") {
 		t.Errorf("negative limit: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 }

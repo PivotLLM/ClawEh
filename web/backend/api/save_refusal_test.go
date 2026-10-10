@@ -119,6 +119,27 @@ func TestPatchConfig_StoreRefusalsAreJSON(t *testing.T) {
 			patch: `{"mcp_host":{"listen":"0.0.0.0:5911"}}`,
 			want:  []string{`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`},
 		},
+		{
+			name:  "forum limits",
+			patch: `{"forum":{"limits":{"max_calls":-1}}}`,
+			want:  []string{"The forum maximum for max_calls must be 0 (the default) or more."},
+		},
+		{
+			// validateConfig's findings and the store's come back together.
+			name: "every refusal at once",
+			patch: `{"channels":{"discord":{"enabled":true,"token":""}},` +
+				`"gateway":{"port":70000},"mcp_host":{"listen":"0.0.0.0:5911"},` +
+				`"forum":{"limits":{"max_calls":-1}},` +
+				`"agents":{"list":[{"id":"main","name":"Main","default":true,"models":["Ghost"]},{"id":"Bob"}]}}`,
+			want: []string{
+				"channels.discord.token is required when discord channel is enabled",
+				`agents.list[main].models: model "Ghost" does not exist`,
+				"gateway.port 70000 is out of valid range (1-65535)",
+				`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`,
+				"The forum maximum for max_calls must be 0 (the default) or more.",
+				`Agent id "Bob" may use only lower-case letters, digits, - and _; use "bob".`,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configPath := setupTestEnv(t)

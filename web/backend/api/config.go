@@ -116,38 +116,35 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
-// saveValidatedConfig runs mutate on the live config under the store lock,
-// rejects the result with a validation_error response when validateConfig
-// finds fault, and saves it otherwise. It reports whether the save happened;
-// on false a response has been written.
+// saveValidatedConfig runs mutate on the live config under the store lock
+// and saves the result. validateConfig's findings are handed to the store as
+// a *config.ValidationError, which adds its own refusals (listeners, agent
+// ids, models, ...), so one validation_error response lists every problem.
+// It reports whether the save happened; on false a response has been
+// written.
 func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mutate func(*config.Config)) bool {
-	var errs []string
 	err := h.updateConfig(r, func(c *config.Config) error {
 		before := c.Gateway.Listeners()
 		mutate(c)
-		errs = validateConfig(c)
+		errs := validateConfig(c)
 		if msg := validateCertificateChange(before, c.Gateway.Listeners()); msg != "" {
 			errs = append(errs, msg)
 		}
-		if len(errs) > 0 {
-			return errValidation
+		if len(errs) == 0 {
+			return nil
 		}
-		return nil
+		refusals := make([]error, len(errs))
+		for i, msg := range errs {
+			refusals[i] = errors.New(msg)
+		}
+		return &config.ValidationError{Err: errors.Join(refusals...)}
 	})
-	switch {
-	case errors.Is(err, errValidation):
-		writeValidationErrors(w, errs)
-		return false
-	case err != nil:
+	if err != nil {
 		writeUpdateError(w, err)
 		return false
 	}
 	return true
 }
-
-// errValidation marks an updateConfig callback that stopped on validateConfig
-// findings, which the caller reports in the validation_error shape.
-var errValidation = errors.New("config validation failed")
 
 // handlePatchConfig partially updates the system configuration using JSON Merge Patch (RFC 7396).
 // Only the fields present in the request body will be updated; all other fields remain unchanged.

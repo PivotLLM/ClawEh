@@ -816,7 +816,10 @@ observe does not need an entry.
   JSON `{"status": "validation_error", "errors": [...]}`, one sentence per
   refusal, instead of plain text "Validation error: …".** The rules are a
   model that does not exist, the human-agent rules, a reserved mount name, an
-  agent id, a listener setting and the forum limits. This covers
+  agent id, a listener setting, the forum limits and the checks the WebUI
+  makes before saving (a missing channel token, an invalid CIDR, ...); a
+  refused save lists every problem at once, and a `config.json` that does not
+  load names every problem too. This covers
   `PUT`/`PATCH /api/config` and every other endpoint that saves the
   configuration (models, providers, CLIs, tools, voice, devices, WebUI setup).
   A failure found while applying the change keeps its status code (404, 409,

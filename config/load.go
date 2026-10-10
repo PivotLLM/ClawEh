@@ -109,18 +109,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Listener settings are checked at load: the gateway must not start on a
-	// half-configured certificate or an off-box MCP host, and the config
-	// watcher turns this into a "Config file invalid" alert on a live gateway.
-	if err := cfg.validateListeners(); err != nil {
-		return nil, err
-	}
-	if err := cfg.Forum.Limits.Validate(); err != nil {
-		return nil, err
-	}
-	// Agent ids are never rewritten: one not in normal form stops the start
-	// (and a live reload keeps the running config) until the operator fixes it.
-	if errs := cfg.AgentIDErrors(); len(errs) > 0 {
+	if errs := cfg.loadProblems(); len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
 
@@ -143,6 +132,23 @@ func LoadConfig(path string) (*Config, error) {
 	// calls PruneInvalid() at startup to drop invalid entries with a WARN and run
 	// on the survivors; the WebUI save path validates strictly before persisting.
 	return cfg, nil
+}
+
+// loadProblems returns every reason LoadConfig refuses c, which Store.Update
+// refuses on save too. Listener settings: the gateway must not start on a
+// half-configured certificate or an off-box MCP host, and the config watcher
+// turns a refusal into a "Config file invalid" alert on a live gateway. The
+// forum limits. Agent ids, which are never rewritten: one not in normal form
+// stops the start (and a live reload keeps the running config) until the
+// operator fixes it.
+func (c *Config) loadProblems() []error {
+	var errs []error
+	for _, err := range []error{c.validateListeners(), c.Forum.Limits.Validate()} {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return append(errs, c.AgentIDErrors()...)
 }
 
 // warnLegacyCompressModel logs a one-line warning when the loaded config still

@@ -25,8 +25,9 @@ type Store struct {
 
 // ValidationError is returned by Update when the mutated config would be
 // refused by LoadConfig, or would add a reference to a model that does not
-// exist. Callers use errors.As to report it as a client
-// error rather than a failure to save.
+// exist, joining every refusal. An Update callback may return one for
+// refusals of its own; Update adds its own to them. Callers use errors.As to
+// report it as a client error rather than a failure to save.
 type ValidationError struct {
 	Err error
 }
@@ -102,11 +103,18 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if err != nil {
 		return fmt.Errorf("copy config: %w", err)
 	}
+	// A *ValidationError from fn is a refusal like the store's own: the
+	// store's checks still run, so the caller learns every problem at once.
+	var refusals []error
 	if err = fn(next); err != nil {
 		if errors.Is(err, ErrUnchanged) {
 			return nil
 		}
-		return err
+		verr, ok := errors.AsType[*ValidationError](err)
+		if !ok {
+			return err
+		}
+		refusals = append(refusals, verr.Err)
 	}
 	// fn may have replaced the whole struct (PUT /api/config does); the
 	// runtime-only fields belong to this process, not to the request.
@@ -118,31 +126,21 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// A reference to a model that does not exist is refused only when this
 	// update introduces it: one already in the file (left by an older release)
 	// must not block an unrelated save, including the one that fixes it.
-	if errs := newDanglingModelReferences(s.cur, next); len(errs) > 0 {
-		return &ValidationError{Err: errors.Join(errs...)}
-	}
+	refusals = append(refusals, newDanglingModelReferences(s.cur, next)...)
 	// The human-agent rules (human.go) are enforced the same way: only a
 	// problem this update introduces is refused.
-	if errs := newHumanProblems(s.cur, next); len(errs) > 0 {
-		return &ValidationError{Err: errors.Join(errs...)}
-	}
+	refusals = append(refusals, newHumanProblems(s.cur, next)...)
 	// So is a mount named after a workspace folder (mount_names.go).
-	if errs := newReservedMounts(s.cur, next); len(errs) > 0 {
-		return &ValidationError{Err: errors.Join(errs...)}
-	}
+	refusals = append(refusals, newReservedMounts(s.cur, next)...)
 
 	resolved, err := resolveConfigSecrets(next)
 	if err != nil {
-		return &ValidationError{Err: err}
+		refusals = append(refusals, err)
+	} else {
+		refusals = append(refusals, resolved.loadProblems()...)
 	}
-	if err := resolved.validateListeners(); err != nil {
-		return &ValidationError{Err: err}
-	}
-	if err := resolved.Forum.Limits.Validate(); err != nil {
-		return &ValidationError{Err: err}
-	}
-	if errs := resolved.AgentIDErrors(); len(errs) > 0 {
-		return &ValidationError{Err: errors.Join(errs...)}
+	if len(refusals) > 0 {
+		return &ValidationError{Err: errors.Join(refusals...)}
 	}
 	if err := SaveConfig(s.path, resolved); err != nil {
 		return err

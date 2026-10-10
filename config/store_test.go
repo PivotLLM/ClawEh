@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -378,5 +379,55 @@ func TestStore_EmptiedDefaultModelsStayEmpty(t *testing.T) {
 	}
 	if got := fromDisk.Agents.Defaults.Models; len(got) != 0 {
 		t.Fatalf("agents.defaults.models after reload = %q, want empty", got)
+	}
+}
+
+// Update reports every refusal together: those its callback raised as a
+// ValidationError, the model, human and mount rules, the listener settings
+// (all of them, not the first), the forum limits and the agent ids.
+func TestStoreUpdate_ReportsEveryRefusal(t *testing.T) {
+	s := newTestStore(t)
+	err := s.Update(func(c *Config) error {
+		c.Agents.List[0].Models = []string{"Ghost"}
+		c.Agents.List = append(c.Agents.List, AgentConfig{ID: "Bob"})
+		c.Gateway.Port = 70000
+		c.MCPHost.Listen = "0.0.0.0:5911"
+		c.Forum.Limits.MaxCalls = -1
+		return &ValidationError{Err: errors.New("The caller refused this.")}
+	})
+	verr, ok := errors.AsType[*ValidationError](err)
+	if !ok {
+		t.Fatalf("Update = %v, want a ValidationError", err)
+	}
+	want := []string{
+		"The caller refused this.",
+		`agents.list[main].models: model "Ghost" does not exist`,
+		"gateway.port 70000 is out of valid range (1-65535)",
+		`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`,
+		"The forum maximum for max_calls must be 0 (the default) or more.",
+		`Agent id "Bob" may use only lower-case letters, digits, - and _; use "bob".`,
+	}
+	if got := verr.Messages(); !slices.Equal(got, want) {
+		t.Fatalf("Messages() =\n%q\nwant\n%q", got, want)
+	}
+	if s.Current().Gateway.Port == 70000 {
+		t.Error("a refused update became current")
+	}
+}
+
+// validateListeners names every listener setting at fault, not the first.
+func TestValidateListeners_JoinsEveryFailure(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Gateway.Port = -1
+	cfg.Gateway.TLSPort = 70000
+	cfg.MCPHost.Listen = "0.0.0.0:5911"
+	got := errorMessages(cfg.validateListeners())
+	want := []string{
+		"gateway.port -1 is out of valid range (1-65535)",
+		"gateway.tls_port 70000 is out of valid range (1-65535)",
+		`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("validateListeners =\n%q\nwant\n%q", got, want)
 	}
 }

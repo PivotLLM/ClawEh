@@ -3,10 +3,7 @@
 
 package config
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 // ForumConfig holds the install-wide forum settings.
 type ForumConfig struct {
@@ -61,7 +58,7 @@ func (l ForumLimitsConfig) Validate() error {
 		{"max_parallel_calls", l.MaxParallelCalls},
 	} {
 		if f.value < 0 {
-			errs = append(errs, fmt.Errorf("forum.limits.%s: must be 0 (the default) or more, got %d", f.name, f.value))
+			errs = append(errs, errors.New("The forum maximum for "+f.name+" must be 0 (the default) or more."))
 		}
 	}
 	return errors.Join(errs...)

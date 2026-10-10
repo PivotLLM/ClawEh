@@ -96,7 +96,8 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   check (421) → cross-origin protection → security headers → login → body limit → mux.
 - **One configuration:** `config.Store` (`config/store.go`) is the in-memory config the
   WebUI API reads (`h.currentConfig()`) and writes (`h.updateConfig(fn)`: lock → clone →
-  mutate → resolve secret refs → validate listeners → atomic save → swap); ClawEh
+  mutate → resolve secret refs → validate, every refusal together, incl. a
+  `*config.ValidationError` the callback returned → atomic save → swap); ClawEh
   derives its pruned running copy from it at boot and on every reload (`store.Reload()`).
   Handlers must not call `config.LoadConfig` themselves. Secret fields may hold
   `env:NAME` / `file:/path` references (`config/secrets.go`), resolved at load and written

@@ -154,29 +154,34 @@ func (g GatewayConfig) EffectiveTLSPort() int {
 	return g.TLSPort
 }
 
-// Validate rejects listener settings the gateway would refuse to start on.
+// Validate rejects listener settings the gateway would refuse to start on,
+// joining every failure.
 func (g GatewayConfig) Validate() error {
-	if err := g.TLS.Validate(); err != nil {
-		return err
+	var errs []error
+	add := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if _, err := CompileLockoutExempt(g.LockoutExempt); err != nil {
-		return err
-	}
-	if _, err := CompileTrustedProxies(g.TrustedProxies); err != nil {
-		return err
-	}
+	add(g.TLS.Validate())
+	_, err := CompileLockoutExempt(g.LockoutExempt)
+	add(err)
+	_, err = CompileTrustedProxies(g.TrustedProxies)
+	add(err)
+	portsInRange := true
 	for _, p := range []struct {
 		key  string
 		port int
 	}{{"gateway.port", g.Port}, {"gateway.tls_port", g.TLSPort}} {
 		if p.port < 0 || p.port > 65535 {
-			return fmt.Errorf("%s %d is out of valid range (1-65535)", p.key, p.port)
+			add(fmt.Errorf("%s %d is out of valid range (1-65535)", p.key, p.port))
+			portsInRange = false
 		}
 	}
-	if g.HTTPSEnabled() && g.EffectiveTLSPort() == g.EffectivePort() {
-		return fmt.Errorf("gateway.tls_port %d must differ from gateway.port", g.EffectiveTLSPort())
+	if portsInRange && g.HTTPSEnabled() && g.EffectiveTLSPort() == g.EffectivePort() {
+		add(fmt.Errorf("gateway.tls_port %d must differ from gateway.port", g.EffectiveTLSPort()))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ValidateMCPHostListen rejects an MCP host listen address that is not
@@ -200,18 +205,14 @@ func ValidateMCPHostListen(listen string) error {
 
 // validateListeners is the load-time check for every setting a listener is
 // bound from: the gateway refuses to start on a failure here rather than
-// coming up half-configured.
+// coming up half-configured. It joins every failure.
 func (c *Config) validateListeners() error {
-	if err := c.Gateway.Validate(); err != nil {
-		return err
-	}
-	if err := c.Channels.Device.validateTLS(c.Gateway); err != nil {
-		return err
-	}
-	if err := c.Channels.Device.ValidateExposure(); err != nil {
-		return err
-	}
-	return ValidateMCPHostListen(c.MCPHost.Listen)
+	return errors.Join(
+		c.Gateway.Validate(),
+		c.Channels.Device.validateTLS(c.Gateway),
+		c.Channels.Device.ValidateExposure(),
+		ValidateMCPHostListen(c.MCPHost.Listen),
+	)
 }
 
 // AllowAnyAddress is the Gateway.AllowedCIDRs entry meaning "any client
