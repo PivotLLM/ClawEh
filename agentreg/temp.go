@@ -226,7 +226,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, o createOptions, inTurn boo
 		return "", nil, fmt.Errorf("agentreg: build %s: %w", spec.Label(), err)
 	}
 
-	e := &entry[T]{inst: inst, spec: spec, meta: newMeta(r.now(), o.ttl)}
+	e := &entry[T]{inst: inst, spec: spec, meta: newMeta(r.clock.Now(), o.ttl)}
 	if inTurn {
 		e.meta.busy.Add(1)
 	}
@@ -498,14 +498,14 @@ func (r *Registry[T]) Sweep(now time.Time) int {
 
 // RunSweeper sweeps every interval until stop is closed.
 func (r *Registry[T]) RunSweeper(stop <-chan struct{}, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+	ticker := r.clock.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
 			return
-		case <-ticker.C:
-			r.Sweep(r.now())
+		case <-ticker.C():
+			r.Sweep(r.clock.Now())
 		}
 	}
 }

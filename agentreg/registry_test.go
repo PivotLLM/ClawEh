@@ -18,6 +18,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 )
 
 // fakeInst is a registry instance that records its spec and how often it was
@@ -385,22 +386,16 @@ func TestDeleteWhenIdle(t *testing.T) {
 	if _, ok := r.Get(busy); !ok {
 		t.Fatal("an agent in a turn was deleted")
 	}
-	end1()
-	time.Sleep(50 * time.Millisecond)
+	end1() // another turn still runs, so nothing is scheduled
 	if _, ok := r.Get(busy); !ok {
 		t.Fatal("deleted while another turn was running")
 	}
+	stateDir := mustGet(t, r, busy).spec.StateDir
 	end2()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, ok := r.Get(busy); !ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("not deleted after its last turn ended")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	// The deletion runs on a goroutine of its own; it is complete once the
+	// agent's directory is gone (it leaves the map first).
+	waitFor(t, func() bool { _, ok := r.Get(busy); return !ok && !dirExists(stateDir) },
+		"the deletion after its last turn ended")
 
 	if err := r.DeleteWhenIdle("alice"); !errors.Is(err, ErrNotTemp) {
 		t.Errorf("DeleteWhenIdle of a config agent = %v, want ErrNotTemp", err)
@@ -663,11 +658,10 @@ func TestReload_DisposeKeepsEntryWhenNotReleased(t *testing.T) {
 }
 
 func TestSweep_DeletesIdleSkipsBusy(t *testing.T) {
-	now := time.Now()
-	clock := func() time.Time { return now }
+	fc := clock.NewFake(time.Now())
 	h := newFakeHost()
 	hooks := h.hooks()
-	hooks.Now = clock
+	hooks.Clock = fc
 	r, err := New(testConfig(t), hooks)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -677,11 +671,11 @@ func TestSweep_DeletesIdleSkipsBusy(t *testing.T) {
 	recent := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
 	end, _ := r.BeginTurn(busy, mustGet(t, r, busy))
 
-	now = now.Add(50 * time.Minute)
+	fc.Advance(50 * time.Minute)
 	endRecent, _ := r.BeginTurn(recent, mustGet(t, r, recent))
 	endRecent() // used 50 minutes in
 
-	if n := r.Sweep(now.Add(20 * time.Minute)); n != 1 {
+	if n := r.Sweep(fc.Now().Add(20 * time.Minute)); n != 1 {
 		t.Fatalf("Sweep deleted %d, want only the idle agent", n)
 	}
 	if _, ok := r.Get(idle); ok {
@@ -822,4 +816,44 @@ func TestOwner_SurvivesReloadAndRestart(t *testing.T) {
 	check(t, r, "after reload")
 
 	check(t, mustNew(t, cfg, newFakeHost()), "after restart")
+}
+
+// RunSweeper sweeps on each tick of its interval, at the clock's time, and
+// returns once stop is closed.
+func TestRunSweeper_SweepsOnEachTick(t *testing.T) {
+	fc := clock.NewFake(time.Now())
+	h := newFakeHost()
+	hooks := h.hooks()
+	hooks.Clock = fc
+	r, err := New(testConfig(t), hooks)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	id := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		r.RunSweeper(stop, time.Minute)
+		close(done)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := fc.BlockUntil(ctx, 1); err != nil {
+		t.Fatalf("the sweeper never waited for its ticker: %v", err)
+	}
+
+	fc.Advance(59 * time.Minute) // ticks 59 times, all within the TTL
+	if _, ok := r.Get(id); !ok {
+		t.Fatal("swept before its TTL")
+	}
+	fc.Advance(2 * time.Minute)
+	waitFor(t, func() bool { _, ok := r.Get(id); return !ok }, "the sweep after the TTL")
+
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunSweeper did not return once stop was closed")
+	}
 }

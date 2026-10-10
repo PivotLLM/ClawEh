@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 )
 
 // A temporary agent's purpose and a clone's model override are kept on
@@ -60,20 +61,20 @@ func TestCloneModel_CloneOnly(t *testing.T) {
 // Touch keeps an idle temporary agent past its TTL and refuses unknown and
 // config agents.
 func TestTouch(t *testing.T) {
-	now := time.Now()
+	fc := clock.NewFake(time.Now())
 	h := newFakeHost()
 	hooks := h.hooks()
-	hooks.Now = func() time.Time { return now }
+	hooks.Clock = fc
 	r, err := New(testConfig(t), hooks)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
-	now = now.Add(50 * time.Minute)
+	fc.Advance(50 * time.Minute)
 	if err := r.Touch(id); err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
-	if n := r.Sweep(now.Add(20 * time.Minute)); n != 0 {
+	if n := r.Sweep(fc.Now().Add(20 * time.Minute)); n != 0 {
 		t.Fatalf("Sweep deleted %d agents; the touched agent is within its TTL", n)
 	}
 	if err := r.Touch("no-such-agent"); !errors.Is(err, ErrNotFound) {
