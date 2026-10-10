@@ -17,11 +17,12 @@
 //
 //   - host.go, errors.go, records.go: what the host provides, the
 //     sentinel errors, and the on-disk record types every part shares.
-//   - config.go, config_schema.go, decode.go, validate.go,
-//     schema_jsonschema.go, jsonpointer.go, mergepatch.go: the
-//     configuration contract and its JSON Schema, strict decoding,
-//     validation and preflight, JSON Schema compilation, `share`/`paths`
-//     projections, and the merge patch of forum_config_update.
+//   - config.go, config_schema.go, decode.go, validate.go, preflight.go,
+//     anonymity.go, schema_jsonschema.go, jsonpointer.go, mergepatch.go:
+//     the configuration contract and its JSON Schema, strict decoding,
+//     static validation, preflight, the anonymity rules, JSON Schema
+//     compilation, `share`/`paths` projections, and the merge patch of
+//     forum_config_update.
 //   - store.go, locking.go, lock_unix.go, runfiles.go, commits.go,
 //     cleanup.go, atomicfs.go, replay.go: the store (one directory per
 //     forum, one per run: handles and layout), its lock, its records, the
