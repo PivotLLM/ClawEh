@@ -5,8 +5,8 @@ package config
 
 import "testing"
 
-// Allows matches allow_agents entries as the runtime does: normalized ids
-// and "*"; a nil config or list allows nothing.
+// Allows matches allow_agents entries (normal form, validateAgentIDs) against
+// the normalized id, and "*"; a nil config or list allows nothing.
 func TestSubagentsConfigAllows(t *testing.T) {
 	var none *SubagentsConfig
 	if none.Allows("bob") {
@@ -22,8 +22,8 @@ func TestSubagentsConfigAllows(t *testing.T) {
 	}{
 		{[]string{"bob"}, "bob", true},
 		{[]string{"*"}, "alice", true},
-		{[]string{" Bob "}, "bob", true},
-		{[]string{"Bob.Smith"}, "bob-smith", true},
+		{[]string{"bob"}, " Bob ", true},
+		{[]string{"bob-smith"}, "Bob.Smith", true},
 		{[]string{"bob"}, "alice", false},
 	} {
 		if got := (&SubagentsConfig{AllowAgents: tc.allow}).Allows(tc.id); got != tc.want {

@@ -79,12 +79,6 @@ func (c *Config) HumanRequestTimeout(agentID string) int {
 	return c.Agents.Defaults.RequestTimeout
 }
 
-// sameAgentID matches a binding's agent id to an agent id the way
-// DefaultBinding does: case-insensitively, the agent id trimmed.
-func sameAgentID(bindingAgentID, agentID string) bool {
-	return strings.EqualFold(bindingAgentID, strings.TrimSpace(agentID))
-}
-
 // HumanProblemKind says which rule a human-agent problem breaks.
 type HumanProblemKind int
 
@@ -215,7 +209,7 @@ func (c *Config) HumanProblems() []HumanProblem {
 func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, bool) {
 	own := 0
 	for i := range c.Bindings {
-		if sameAgentID(c.Bindings[i].AgentID, ac.ID) {
+		if c.Bindings[i].AgentID == ac.ID {
 			own++
 		}
 	}
@@ -241,7 +235,7 @@ func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, b
 func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bool) {
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		if sameAgentID(b.AgentID, agentID) || b.Match.Channel != channel {
+		if b.AgentID == agentID || b.Match.Channel != channel {
 			continue
 		}
 		if (b.Match.Peer != nil && b.Match.Peer.ID == chatID) || b.DeliverTo == chatID {

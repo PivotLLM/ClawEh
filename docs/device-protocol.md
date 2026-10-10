@@ -267,7 +267,7 @@ A client picks **which agent** handles a turn; the turn always joins that agent'
 conversation.
 
 - **`agents.list`** returns every registered agent as `{id, name}` plus `defaultId`/`mainKey`.
-  Agent ids are lowercased (`Bob` → `bob`). When an agent has no configured name we fall
+  Agent ids are lower case (config refuses any other). When an agent has no configured name we fall
   back to its id as the name — operator clients **hide entries without a label**, so a
   name-less agent would otherwise never appear in the picker.
 - The client encodes the selected agent as the **2nd segment of the session key**:

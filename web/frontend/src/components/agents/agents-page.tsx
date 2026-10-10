@@ -16,10 +16,12 @@ import {
 import { listCLIs } from "@/api/system"
 import { type ModelInfo, getModels } from "@/api/models"
 import { AgentCard } from "@/components/agents/agent-card"
+import { AgentIdField } from "@/components/agents/agent-id-field"
 import {
   type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
+  agentIdProblem,
   agentsPayload,
   applyMaestroEdits,
   asString,
@@ -301,7 +303,12 @@ export function AgentsPage() {
       toast.error("Agent ID is required")
       return
     }
-    const newId = addingId.trim()
+    const idProblem = agentIdProblem(addingId)
+    if (idProblem) {
+      toast.error(idProblem)
+      return
+    }
+    const newId = addingId
     const list = sortAgentList([
       ...(agentsCfg.list ?? []),
       {
@@ -532,18 +539,10 @@ export function AgentsPage() {
                   <div className="border-border/60 bg-card space-y-3 rounded-xl border p-4">
                     <span className="text-sm font-semibold">New Agent</span>
                     <div className="space-y-2">
-                      <Input
+                      <AgentIdField
                         value={addingId}
-                        onChange={(e) => setAddingId(e.target.value)}
+                        onChange={setAddingId}
                         onKeyDown={escapeCancelsAdd}
-                        placeholder="Agent ID (e.g. alice)"
-                        aria-label="Agent ID"
-                        // Deliberate: the form only exists because the user
-                        // just activated Add Agent, so focus belongs in its
-                        // first field; without it a keyboard user is left on
-                        // the page body and has to Tab back to find the form.
-                        // oxlint-disable-next-line no-autofocus
-                        autoFocus
                       />
                       <Input
                         value={addingName}

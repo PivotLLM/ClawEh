@@ -78,7 +78,7 @@ func resolveAgent(arg string) (cfg *config.Config, agentID string, err error) {
 	}
 	want := routing.NormalizeAgentID(arg)
 	for i := range cfg.Agents.List {
-		if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == want {
+		if cfg.Agents.List[i].ID == want {
 			return cfg, want, nil
 		}
 	}

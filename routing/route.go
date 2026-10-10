@@ -68,7 +68,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 					agentID = input.MentionedAgent
 					break
 				}
-				if strings.ToLower(m) == input.MentionedAgent {
+				if m == input.MentionedAgent {
 					agentID = m
 					break
 				}
@@ -229,7 +229,7 @@ func (r *RouteResolver) pickAgentID(agentID string) string {
 		return normalized
 	}
 	for _, a := range agents {
-		if NormalizeAgentID(a.ID) == normalized {
+		if a.ID == normalized {
 			return normalized
 		}
 	}
@@ -244,19 +244,16 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 	// A human agent (one representing a person) is never the default: an
 	// unaddressed message must not be posted to a person.
 	for _, a := range agents {
-		if a.Default && !r.cfg.IsHumanAgent(a.ID) {
-			id := strings.TrimSpace(a.ID)
-			if id != "" {
-				return NormalizeAgentID(id)
-			}
+		if a.Default && !r.cfg.IsHumanAgent(a.ID) && a.ID != "" {
+			return a.ID
 		}
 	}
 	for _, a := range agents {
 		if r.cfg.IsHumanAgent(a.ID) {
 			continue
 		}
-		if id := strings.TrimSpace(a.ID); id != "" {
-			return NormalizeAgentID(id)
+		if a.ID != "" {
+			return a.ID
 		}
 		break
 	}
@@ -284,7 +281,7 @@ func (r *RouteResolver) Reaches(input RouteInput, agentID string) bool {
 			return true
 		}
 		for _, m := range b.AgentMentions {
-			if m == "*" || NormalizeAgentID(m) == target {
+			if m == "*" || m == target {
 				return true
 			}
 		}

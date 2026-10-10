@@ -442,8 +442,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 		t.Errorf("bypass on: shell row does not name the CLI bypass setting: %v", r)
 	}
 
-	// Ids match as the runtime matches them (config.NormalizeAgentID).
-	for _, allow := range [][]string{{"bob"}, {"*"}, {" Bob "}} {
+	for _, allow := range [][]string{{"bob"}, {"*"}} {
 		cfg.Agents.List[0].Subagents = &config.SubagentsConfig{AllowAgents: allow}
 		r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
 		if !strings.Contains(r[2], "also via allow_agents: Alice;") {

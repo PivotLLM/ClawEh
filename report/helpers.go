@@ -155,8 +155,8 @@ func resolveWorkspace(cfg *config.Config, a *config.AgentConfig) string {
 	}
 	id := "default"
 	if a != nil {
-		if nid := routing.NormalizeAgentID(a.ID); nid != "" && nid != routing.DefaultAgentID {
-			id = nid
+		if a.ID != "" && a.ID != routing.DefaultAgentID {
+			id = a.ID
 		}
 	}
 	return filepath.Join(cfg.BaseDir(), id)
@@ -224,12 +224,12 @@ func defaultAgentID(cfg *config.Config) string {
 		return routing.DefaultAgentID
 	}
 	for _, a := range agents {
-		if a.Default && strings.TrimSpace(a.ID) != "" {
-			return routing.NormalizeAgentID(a.ID)
+		if a.Default && a.ID != "" {
+			return a.ID
 		}
 	}
-	if id := strings.TrimSpace(agents[0].ID); id != "" {
-		return routing.NormalizeAgentID(id)
+	if id := agents[0].ID; id != "" {
+		return id
 	}
 	return routing.DefaultAgentID
 }

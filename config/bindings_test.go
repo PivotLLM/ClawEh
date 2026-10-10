@@ -82,24 +82,23 @@ func TestValidateBindings_DeliverToSatisfiesDefault(t *testing.T) {
 	}
 }
 
-// TestCronTargetCaseInsensitive guards the real-world bug: binding agent_ids are
-// author-cased ("Bob") but the cron caller id is lowercased from the session
-// key ("bob"). They must still match.
+// TestCronTargetCaseInsensitive: the caller's agent id is matched
+// case-insensitively against the (normal-form) config ids.
 func TestCronTargetCaseInsensitive(t *testing.T) {
 	c := &Config{
 		Bindings: []AgentBinding{
 			{
-				AgentID: "Bob", Default: true,
+				AgentID: "bob", Default: true,
 				Match: BindingMatch{Channel: "slack", Peer: &PeerMatch{Kind: "channel", ID: "C0AMNPSSQRK"}},
 			},
 		},
-		Agents: AgentsConfig{List: []AgentConfig{{ID: "Bob", GlobalCron: true}}},
+		Agents: AgentsConfig{List: []AgentConfig{{ID: "bob", GlobalCron: true}}},
 	}
-	if _, _, _, ok := c.CronTarget("bob"); !ok {
-		t.Error("CronTarget should match a 'Bob' binding for caller 'bob'")
+	if _, _, _, ok := c.CronTarget("Bob"); !ok {
+		t.Error("CronTarget should match a 'bob' binding for caller 'Bob'")
 	}
-	if !c.AgentHasGlobalCron("bob") {
-		t.Error("AgentHasGlobalCron should match 'Bob' for caller 'bob'")
+	if !c.AgentHasGlobalCron("Bob") {
+		t.Error("AgentHasGlobalCron should match 'bob' for caller 'Bob'")
 	}
 }
 

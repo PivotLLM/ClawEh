@@ -244,6 +244,13 @@ func validateConfig(cfg *config.Config) []string {
 		logger.WarnCF("config", "reference to disabled model", map[string]any{"detail": w})
 	}
 
+	// Agent ids and references to them must be in normal form; Store.Update
+	// refuses the same, but this reports each in the validation_error shape
+	// the WebUI shows.
+	for _, err := range cfg.AgentIDErrors() {
+		errs = append(errs, err.Error())
+	}
+
 	// Validate agent bindings (default-channel constraints)
 	if err := cfg.ValidateBindings(); err != nil {
 		errs = append(errs, err.Error())

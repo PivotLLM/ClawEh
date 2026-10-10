@@ -9,7 +9,7 @@ import (
 // slice and scalar is set.
 type modelRef struct {
 	where  string    // human label, e.g. `agents.list[alice].models`
-	agent  string    // agent ID for a per-agent site, empty otherwise
+	agent  string    // the agent's DisplayName for a per-agent site, empty otherwise
 	slice  *[]string // set for list sites
 	scalar *string   // set for scalar sites
 	own    bool      // the agent's own model list (agents.list[x].models)
@@ -18,7 +18,7 @@ type modelRef struct {
 
 // DanglingModelReference is one reference to a model that does not exist: the
 // labelled site it lives at, the alias it names and, for a per-agent site, the
-// agent's ID.
+// agent's DisplayName (what the alert names it by).
 type DanglingModelReference struct {
 	Site  string
 	Alias string
@@ -40,11 +40,11 @@ func (c *Config) modelRefSites() []modelRef {
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		sites = append(sites,
-			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.ID, slice: &a.Models, own: true},
-			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.ID, slice: &a.SummarizationModels, role: "a summarization model"},
+			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.DisplayName(), slice: &a.Models, own: true},
+			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.DisplayName(), slice: &a.SummarizationModels, role: "a summarization model"},
 		)
 		if a.Subagents != nil {
-			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.ID, slice: &a.Subagents.Models, role: "a sub-agent model"})
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.DisplayName(), slice: &a.Subagents.Models, role: "a sub-agent model"})
 		}
 	}
 	return sites

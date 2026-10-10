@@ -144,7 +144,7 @@ func NewAgentInstance(
 	workspace := agentreg.ConfigWorkspace(agentCfg, cfg.BaseDir())
 	spec := agentreg.Spec{Origin: agentreg.OriginConfig, Workspace: workspace, StateDir: workspace}
 	if agentCfg != nil {
-		spec.ID = routing.NormalizeAgentID(agentCfg.ID)
+		spec.ID = agentCfg.ID
 		spec.Config = agentCfg
 	}
 	return newAgentInstance(spec, defaults, cfg, provider)
@@ -263,7 +263,7 @@ func newAgentInstance(
 	var skillsFilter []string
 
 	if agentCfg != nil {
-		agentID = routing.NormalizeAgentID(agentCfg.ID)
+		agentID = agentCfg.ID
 		agentName = agentCfg.Name
 		subagents = agentCfg.Subagents
 		skillsFilter = agentCfg.Skills

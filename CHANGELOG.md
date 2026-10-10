@@ -811,6 +811,23 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING: agent ids must be lower case and use only letters, digits, -
+  and _.** This applies to `agents.list[].id` and to every place that names an
+  agent: `bindings[].agent_id`, `bindings[].agent_mentions` and
+  `subagents.allow_agents` (`"*"` is still allowed). ClawEh used to rewrite
+  such an id silently at run time; it now refuses it. A `config.json` with
+  another id does not start (a live edit is not applied and raises "Config
+  file invalid"), and the WebUI and API refuse to save one, naming the id and
+  the fix: `Agent id "Alice.Smith" may use only lower-case letters, digits, -
+  and _; use "alice-smith".` To migrate, change the id to the form the message
+  suggests in `agents.list` and everywhere it is named (bindings,
+  `agent_mentions`, other agents' `allow_agents`). That form is the one ClawEh
+  already used at run time, so the agent keeps its folder under `agents/`
+  (with its conversation and memory), its scheduled jobs and its devices. If
+  you choose a different id instead, rename the agent's folder
+  `agents/<suggested id>` to the new id first (an agent with its own
+  `workspace` setting keeps that folder either way).
+
 - **Recalled memory is labelled as injected.** Memory that cogmem adds to a turn
   now starts with "## Injected cogmem domain: <name> (<id>) — <reason>", so the
   model can tell recalled memory from the conversation.
@@ -1257,6 +1274,10 @@ observe does not need an entry.
   agent's message token (`POST /api/message/{token}`).
 
 ### Fixed
+
+- **The "Agent references a missing model" alert names the agent by its
+  name.** It used the agent id, so an agent named "Alice" with id "alice" was
+  called "alice".
 
 - **The "model unavailable, using …" notice is posted once per turn.** A model
   in cooldown repeated it on every step of a turn, because its "retry in" time

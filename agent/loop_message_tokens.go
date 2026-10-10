@@ -11,7 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/msgtoken"
-	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // ValidateMessageToken resolves an external-message token to its owning agent. It
@@ -180,7 +179,7 @@ func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[strin
 		// Find the matching AgentConfig for callback settings.
 		var agentCfg *config.AgentConfig
 		for i := range cfg.Agents.List {
-			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
+			if cfg.Agents.List[i].ID == agentID {
 				agentCfg = &cfg.Agents.List[i]
 				break
 			}
