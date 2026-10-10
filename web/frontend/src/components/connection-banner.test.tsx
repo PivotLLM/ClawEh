@@ -1,4 +1,5 @@
 import { act, render, screen } from "@testing-library/react"
+import { useLayoutEffect } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { setGatewayReachable } from "@/store/connection"
@@ -25,5 +26,21 @@ describe("ConnectionBanner", () => {
 
     act(() => setGatewayReachable(true))
     expect(screen.queryByTestId("connection-banner")).toBe(null)
+  })
+
+  it("shows when the gateway is lost between its first render and its subscription", () => {
+    // A layout effect runs after the banner renders but before its passive
+    // subscription effect, where jotai 3 dropped its unconditional re-render.
+    function LoseGatewayOnMount() {
+      useLayoutEffect(() => setGatewayReachable(false), [])
+      return null
+    }
+    render(
+      <>
+        <ConnectionBanner />
+        <LoseGatewayOnMount />
+      </>,
+    )
+    expect(screen.getByTestId("connection-banner")).toBeTruthy()
   })
 })
