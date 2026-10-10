@@ -602,7 +602,8 @@ export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
 // The agent id rule, identical to config/agent_id.go (both are checked against
 // config/testdata/agent_id_cases.json): 1 to 64 characters of lower-case a-z,
 // 0-9, '-' and '_', starting with a letter or digit. The server refuses any
-// other id with the same sentence agentIdProblem gives.
+// other id with the same sentence agentIdProblem gives, quoting the id as
+// quoteAgentId does.
 const AGENT_ID_MAX = 64
 const AGENT_ID_VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const AGENT_ID_INVALID_CHARS = /[^a-z0-9_-]+/
@@ -632,6 +633,32 @@ export function normalizeAgentId(id: string, fallback = "main"): string {
   return result === "" ? fallback : result
 }
 
+// QUOTE_AS_CODE is what quoteAgentId writes as a code: control and format
+// characters and separators (Unicode Cc, Cf, Z), as config.quoteAgentID.
+const QUOTE_AS_CODE = /^[\p{Cc}\p{Cf}\p{Z}]$/u
+
+// quoteAgentId is config.quoteAgentID: '"' and '\' are escaped with a
+// backslash, tab, newline and carriage return are \t, \n and \r, every other
+// Cc, Cf or Z character but the ASCII space is \u and four lower-case hex
+// digits (\U and eight above U+FFFF), and the rest stands as itself.
+export function quoteAgentId(s: string): string {
+  let out = '"'
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (ch === '"' || ch === "\\") out += `\\${ch}`
+    else if (ch === "\t") out += "\\t"
+    else if (ch === "\n") out += "\\n"
+    else if (ch === "\r") out += "\\r"
+    else if (ch !== " " && QUOTE_AS_CODE.test(ch)) {
+      out +=
+        cp > 0xffff
+          ? `\\U${cp.toString(16).padStart(8, "0")}`
+          : `\\u${cp.toString(16).padStart(4, "0")}`
+    } else out += ch
+  }
+  return `${out}"`
+}
+
 // agentIdProblem returns why id cannot be an agent id, or null when it can.
 export function agentIdProblem(id: string): string | null {
   if (isValidAgentId(id)) return null
@@ -646,7 +673,22 @@ export function agentIdProblem(id: string): string | null {
   } else if ((lower[0] === "-" || lower[0] === "_") && validChars) {
     problem = "must start with a letter or digit"
   }
-  const msg = `Agent id ${JSON.stringify(id)} ${problem}`
+  const msg = `Agent id ${quoteAgentId(id)} ${problem}`
   if (norm === "main" && lower !== "main") return `${msg}.`
-  return `${msg}; use ${JSON.stringify(norm)}.`
+  return `${msg}; use ${quoteAgentId(norm)}.`
+}
+
+// newAgentIdProblem returns why id cannot be the id of a new agent, or null
+// when it can: the agentIdProblem sentence, or the one the server gives for
+// an id another agent already has (config.duplicateAgentIDError).
+export function newAgentIdProblem(
+  id: string,
+  existingIds: readonly string[],
+): string | null {
+  const problem = agentIdProblem(id)
+  if (problem) return problem
+  if (existingIds.includes(id)) {
+    return `Agent id ${quoteAgentId(id)} is used twice; give each agent its own id.`
+  }
+  return null
 }

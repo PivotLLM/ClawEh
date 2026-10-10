@@ -5,9 +5,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // defaultAgentID is the id an empty or unusable agent id normalizes to
@@ -28,7 +30,8 @@ var agentIDInvalidCharsRe = regexp.MustCompile(`[^a-z0-9_-]+`)
 // NormalizeAgentID turns any input into an id that satisfies it and returns a
 // valid id unchanged. The WebUI implements the identical rule
 // (web/frontend/src/components/agents/agent-model.ts), and both are checked
-// against testdata/agent_id_cases.json.
+// against testdata/agent_id_cases.json, and both quote an id in a refusal
+// the same way (quoteAgentID, quoteAgentId).
 
 // ValidAgentID reports whether id satisfies the agent id rule.
 func ValidAgentID(id string) bool {
@@ -96,6 +99,42 @@ func (s *SubagentsConfig) Allows(agentID string) bool {
 	return false
 }
 
+// quoteAgentID quotes s for a refusal sentence. It is the WebUI's
+// quoteAgentId, rune for rune, so the two give the same sentence: '"' and '\'
+// are escaped with a backslash, tab, newline and carriage return are \t, \n
+// and \r, and every other character that is a control or format character
+// or a separator other than the ASCII space (Unicode Cc, Cf, Z) is \u
+// followed by four lower-case hex digits, or \U and eight above U+FFFF.
+// Everything else stands as itself. (strconv.Quote is not used: its rule
+// follows Go's printable-character table, which the WebUI cannot reproduce.)
+func quoteAgentID(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r != ' ' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Z):
+			if r > 0xFFFF {
+				fmt.Fprintf(&b, `\U%08x`, r)
+			} else {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // agentIDError says why id, an agent id or a reference to one, does not
 // satisfy the agent id rule (ValidAgentID), or returns nil when it does. where names the
 // place a reference was found (" in bindings"); it is empty for
@@ -109,9 +148,9 @@ func agentIDError(id, where string) error {
 	trimmed := strings.Trim(id, asciiSpace)
 	if trimmed == "" {
 		if where == "" {
-			return errors.New("An agent has no id; give it one, such as " + strconv.Quote("alice") + ".")
+			return errors.New("An agent has no id; give it one, such as " + quoteAgentID("alice") + ".")
 		}
-		return errors.New("An agent id" + where + " is empty; name the agent, such as " + strconv.Quote("alice") + ".")
+		return errors.New("An agent id" + where + " is empty; name the agent, such as " + quoteAgentID("alice") + ".")
 	}
 	norm := NormalizeAgentID(id)
 	lower := asciiLower(trimmed)
@@ -124,19 +163,26 @@ func agentIDError(id, where string) error {
 	default:
 		problem = "may use only lower-case letters, digits, - and _"
 	}
-	msg := "Agent id " + strconv.Quote(id) + where + " " + problem
+	msg := "Agent id " + quoteAgentID(id) + where + " " + problem
 	if norm == defaultAgentID && lower != defaultAgentID {
 		// Nothing of the id survives normalization; "main" would be a guess.
 		return errors.New(msg + ".")
 	}
-	return errors.New(msg + "; use " + strconv.Quote(norm) + ".")
+	return errors.New(msg + "; use " + quoteAgentID(norm) + ".")
+}
+
+// duplicateAgentIDError is the refusal of an agents.list[].id that more than
+// one agent has.
+func duplicateAgentIDError(id string) error {
+	return errors.New("Agent id " + quoteAgentID(id) + " is used twice; give each agent its own id.")
 }
 
 // AgentIDErrors returns one error for each agent id, or reference to one, that
 // does not satisfy the agent id rule (ValidAgentID): agents.list[].id,
 // bindings[].agent_id and agent_mentions, and subagents.allow_agents ("*"
-// allowed). A binding with no agent_id routes to the default agent and is
-// allowed. LoadConfig and Store.Update refuse a config with any.
+// allowed), and one for each valid agents.list[].id more than one agent has.
+// A binding with no agent_id routes to the default agent and is allowed.
+// LoadConfig and Store.Update refuse a config with any.
 func (c *Config) AgentIDErrors() []error {
 	var errs []error
 	add := func(err error) {
@@ -144,9 +190,16 @@ func (c *Config) AgentIDErrors() []error {
 			errs = append(errs, err)
 		}
 	}
+	seen := make(map[string]int, len(c.Agents.List))
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		add(agentIDError(a.ID, ""))
+		if ValidAgentID(a.ID) {
+			seen[a.ID]++
+			if seen[a.ID] == 2 {
+				add(duplicateAgentIDError(a.ID))
+			}
+		}
 		if a.Subagents == nil {
 			continue
 		}

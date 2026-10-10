@@ -21,12 +21,12 @@ import {
   type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
-  agentIdProblem,
   agentsPayload,
   applyMaestroEdits,
   asString,
   bindingViewsForAgent,
   fetchSkills,
+  newAgentIdProblem,
   parseAgentBindings,
   parseAgentsConfig,
   sortAgentList,
@@ -298,12 +298,14 @@ export function AgentsPage() {
     }
   }
 
+  const existingAgentIds = (agentsCfg.list ?? []).map((a) => a.id)
+
   const handleAddAgent = async () => {
     if (!addingId.trim()) {
       toast.error("Agent ID is required")
       return
     }
-    const idProblem = agentIdProblem(addingId)
+    const idProblem = newAgentIdProblem(addingId, existingAgentIds)
     if (idProblem) {
       toast.error(idProblem)
       return
@@ -541,6 +543,7 @@ export function AgentsPage() {
                     <div className="space-y-2">
                       <AgentIdField
                         value={addingId}
+                        existingIds={existingAgentIds}
                         onChange={setAddingId}
                         onKeyDown={escapeCancelsAdd}
                       />

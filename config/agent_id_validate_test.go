@@ -160,3 +160,46 @@ func TestStoreUpdate_RefusesAgentIDNotInNormalForm(t *testing.T) {
 		t.Fatalf("valid id refused: %v", err)
 	}
 }
+
+// Two agents with one id are refused at load and on save, once per id
+// however often it is repeated; different ids are fine.
+func TestAgentIDUsedTwice(t *testing.T) {
+	const want = `Agent id "alice" is used twice; give each agent its own id.`
+	for _, tc := range []struct {
+		name string
+		ids  []string
+		want string
+	}{
+		{"twice", []string{"alice", "alice"}, want},
+		{"three times", []string{"alice", "bob", "alice", "alice"}, want},
+		{"different", []string{"alice", "bob"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var agents []string
+			for _, id := range tc.ids {
+				agents = append(agents, `{"id": `+quoteJSON(id)+`}`)
+			}
+			_, err := LoadConfig(writeConfigFile(t, `{"agents": {"list": [`+strings.Join(agents, ", ")+`]}}`))
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("LoadConfig = %v, want no error", err)
+			case tc.want != "" && (err == nil || err.Error() != tc.want):
+				t.Fatalf("LoadConfig = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	p := writeConfigFile(t, agentListJSON("alice"))
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Update(func(c *Config) error {
+		c.Agents.List = append(c.Agents.List, AgentConfig{ID: "alice"})
+		return nil
+	})
+	var verr *ValidationError
+	if !errors.As(err, &verr) || err.Error() != want {
+		t.Fatalf("Update = %v, want ValidationError %q", err, want)
+	}
+}

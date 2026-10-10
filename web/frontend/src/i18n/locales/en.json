@@ -1,5 +1,7 @@
 {
   "agents": {
+    "idLabel": "Agent ID",
+    "idPlaceholder": "Agent ID (e.g. alice)",
     "summarizationModels": "Memory models (optional)",
     "summarizationModelsAdd": "Add memory model…",
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",

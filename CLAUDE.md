@@ -333,11 +333,12 @@ production instance directly; test against a dev instance.
   normalization goes through it (`routing.NormalizeAgentID` delegates). The
   WebUI's copy (`isValidAgentId`/`normalizeAgentId`/`agentIdProblem` in
   `agent-model.ts`, used by the setup wizard's `uniqueAgentId`) is identical; both
-  are checked against `config/testdata/agent_id_cases.json`. Agent ids in config
-  must already be valid: `config.AgentIDErrors` checks
+  are checked against `config/testdata/agent_id_cases.json`, and both quote an id
+  in a refusal by one rule (`quoteAgentID` / `quoteAgentId`). Agent ids in config
+  must already be valid and `agents.list[].id` unique: `config.AgentIDErrors` checks
   `agents.list[].id`, `bindings[].agent_id`/`agent_mentions` and `allow_agents`, and
-  `LoadConfig` and `Store.Update` (and the WebUI's `validateConfig`) refuse any other,
-  so config-side ids are compared as is, never normalized again (runtime input, such
+  `LoadConfig` and `Store.Update` refuse any other (the Agents page refuses a new id
+  already in use with the server's sentence), so config-side ids are compared as is, never normalized again (runtime input, such
   as a typed `/agent Alice`, still is). `subagents.allow_agents` is matched only by
   `SubagentsConfig.Allows` (nil-safe; runtime and Check Up); an agent is named to people
   and in logs only by `AgentConfig.DisplayName` / `AgentInstance.DisplayName` (name, else id).

@@ -825,24 +825,45 @@ observe does not need an entry.
   that parsed the old text must read the `errors` list.
 
 - **BREAKING: agent ids must be 1 to 64 characters of lower-case letters,
-  digits, - and _, starting with a letter or digit.** This applies to `agents.list[].id` and to every place that names an
-  agent: `bindings[].agent_id`, `bindings[].agent_mentions` and
+  digits, - and _, starting with a letter or digit, and no two agents may
+  share one.** This applies to `agents.list[].id` and to every place that
+  names an agent: `bindings[].agent_id`, `bindings[].agent_mentions` and
   `subagents.allow_agents` (`"*"` is still allowed). ClawEh used to rewrite
   such an id silently at run time; it now refuses it. A `config.json` with
   another id does not start (a live edit is not applied and raises "Config
   file invalid"), and the WebUI and API refuse to save one, naming the id and
   the fix: `Agent id "Alice.Smith" may use only lower-case letters, digits, -
-  and _; use "alice-smith".` To migrate, change the id to the form the message
-  suggests in `agents.list` and everywhere it is named (bindings,
-  `agent_mentions`, other agents' `allow_agents`). That form is the one ClawEh
-  already used at run time, so the agent keeps its folder under `agents/`
-  (with its conversation and memory), its scheduled jobs and its devices. The
-  exception is an id that starts with `_` (such as `_alice`, now `alice`) or
-  that ended in `_` or `-` after characters ClawEh replaced: its folder was
-  named after the old form, so rename `agents/<old id>` to the suggested id.
-  If you choose a different id instead, rename the agent's folder
-  `agents/<suggested id>` to the new id first (an agent with its own
-  `workspace` setting keeps that folder either way).
+  and _; use "alice-smith".` Two agents with the same id (only the later one
+  ran, in the folder both shared) are refused the same way: `Agent id "alice"
+  is used twice; give each agent its own id.` To migrate, change the id to the
+  form the message suggests in `agents.list` and everywhere it is named
+  (bindings, `agent_mentions`, other agents' `allow_agents`).
+
+  For most ids that form is the one ClawEh already used at run time, and the
+  agent keeps everything. It differs when the id starts with `_` (`_alice`
+  ran as `_alice`, now `alice`), when it ended in `_` or `-` after characters
+  ClawEh replaced or after the cut to 64 characters (`alice_!` ran as
+  `alice_`, now `alice`), or when it holds a non-ASCII letter whose lower case
+  is an ASCII one, such as `İ` or the Kelvin sign (`İnci` ran as `inci`, now
+  `nci`). Everything kept under the id it ran under stays with it, so for
+  such an agent (`<old id>` is the id it ran under):
+  - rename the folder `agents/<old id>` to `agents/<new id>`; its memory and
+    files move with it (an agent with its own `workspace` setting keeps that
+    folder and needs no rename);
+  - its conversation does not carry over: it is the file
+    `sessions/agent_<old id>_main.archive.db` in that folder, which records
+    the key `agent:<old id>:main` inside it, so the agent starts a new
+    conversation and the old file is no longer read;
+  - re-assign each device that used it on the Devices page (until then the
+    device talks to the default agent, and the page marks the assignment);
+  - its scheduled jobs are skipped until their `agentId` in
+    `cron/jobs.json` names the new id, or the agent schedules them again;
+  - issue its message tokens again on the Agents page and its service tokens
+    again with `claw token`;
+  - sign in again to the Fusion services that keep a sign-in per agent.
+
+  Choosing an id other than the suggested one needs the same steps for any
+  agent.
 
 - **Recalled memory is labelled as injected.** Memory that cogmem adds to a turn
   now starts with "## Injected cogmem domain: <name> (<id>) — <reason>", so the

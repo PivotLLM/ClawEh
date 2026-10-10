@@ -1,14 +1,40 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { useState } from "react"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import cases from "../../../../../config/testdata/agent_id_cases.json"
 import { AgentIdField } from "./agent-id-field"
-import { agentIdProblem, isValidAgentId, normalizeAgentId } from "./agent-model"
+import {
+  agentIdProblem,
+  isValidAgentId,
+  newAgentIdProblem,
+  normalizeAgentId,
+} from "./agent-model"
+
+// t resolves keys against the English strings, so the tests read what an
+// operator sees.
+vi.mock("react-i18next", async () => {
+  const en = (await import("@/i18n/locales/en.json")).default as Record<
+    string,
+    unknown
+  >
+  const t = (key: string) => {
+    const value = key
+      .split(".")
+      .reduce<unknown>(
+        (o, k) => (o as Record<string, unknown> | undefined)?.[k],
+        en,
+      )
+    return typeof value === "string" ? value : key
+  }
+  return { useTranslation: () => ({ t }) }
+})
 
 function Harness({ initial = "" }: { initial?: string }) {
   const [value, setValue] = useState(initial)
-  return <AgentIdField value={value} onChange={setValue} />
+  return (
+    <AgentIdField value={value} existingIds={["bob"]} onChange={setValue} />
+  )
 }
 
 describe("agentIdProblem", () => {
@@ -58,7 +84,30 @@ describe("agent id rule (shared cases)", () => {
   })
 })
 
+describe("newAgentIdProblem", () => {
+  it("refuses an id another agent has, as the server does", () => {
+    expect(newAgentIdProblem("alice", ["alice", "bob"])).toBe(
+      'Agent id "alice" is used twice; give each agent its own id.',
+    )
+    expect(newAgentIdProblem("carol", ["alice", "bob"])).toBeNull()
+    expect(newAgentIdProblem("Alice", ["alice"])).toBe(agentIdProblem("Alice"))
+  })
+})
+
 describe("AgentIdField", () => {
+  it("shows the refusal for an id already in use", () => {
+    render(<Harness />)
+    fireEvent.change(screen.getByLabelText("Agent ID"), {
+      target: { value: "bob" },
+    })
+    expect(
+      screen.getByText(
+        'Agent id "bob" is used twice; give each agent its own id.',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByPlaceholderText("Agent ID (e.g. alice)")).toBeTruthy()
+  })
+
   it("shows the refusal while the id is not in normal form", () => {
     render(<Harness />)
     const input = screen.getByLabelText("Agent ID")
