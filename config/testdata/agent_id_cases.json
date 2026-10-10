@@ -102,6 +102,34 @@
     "problem": "Agent id \"alice smith\" may use only letters, digits, - and _; use \"alice-smith\"."
   },
   {
+    "input": "alice smith",
+    "normalized": "alice-smith",
+    "valid": false,
+    "problem": "Agent id \"alice smith\" may use only letters, digits, - and _; use \"alice-smith-2\".",
+    "taken": [
+      "Alice-Smith"
+    ]
+  },
+  {
+    "input": "alice smith",
+    "normalized": "alice-smith",
+    "valid": false,
+    "problem": "Agent id \"alice smith\" may use only letters, digits, - and _; use \"alice-smith-3\".",
+    "taken": [
+      "alice-smith",
+      "ALICE-SMITH-2"
+    ]
+  },
+  {
+    "input": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ",
+    "normalized": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "valid": false,
+    "problem": "Agent id \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \" may use only letters, digits, - and _; use \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-2\".",
+    "taken": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ]
+  },
+  {
     "input": "  Bob.Smith  ",
     "normalized": "bob-smith",
     "valid": false,

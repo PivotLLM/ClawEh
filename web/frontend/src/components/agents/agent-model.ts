@@ -718,12 +718,33 @@ export function quoteAgentId(s: string): string {
   return `${out}"`
 }
 
+// freeAgentId mirrors config.freeAgentID: id, or when another agent has it,
+// id with "-2", "-3", ... appended (shortened to keep 64 characters) until it
+// is free.
+export function freeAgentId(id: string, taken: readonly string[]): string {
+  const isTaken = (c: string) => taken.some((t) => sameAgentId(t, c))
+  if (!isTaken(id)) return id
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`
+    let base = id
+    if (base.length + suffix.length > AGENT_ID_MAX) {
+      base = base.slice(0, AGENT_ID_MAX - suffix.length).replace(/[-_]+$/, "")
+    }
+    if (!isTaken(base + suffix)) return base + suffix
+  }
+}
+
 // agentIdProblem returns why id cannot be an agent id, or null when it can.
-export function agentIdProblem(id: string): string | null {
+// taken are the ids other agents have: the suggested id is none of them.
+export function agentIdProblem(
+  id: string,
+  taken: readonly string[] = [],
+): string | null {
   if (isValidAgentId(id)) return null
   const trimmed = id.replace(ASCII_SPACE_EDGES, "")
   if (trimmed === "") return 'An agent has no id; give it one, such as "alice".'
-  const suggestion = repairAgentId(id)
+  const repaired = repairAgentId(id)
+  const suggestion = repaired === "" ? "" : freeAgentId(repaired, taken)
   const validChars = !AGENT_ID_INVALID_CHARS.test(trimmed)
   let problem = "may use only letters, digits, - and _"
   if (trimmed.length > AGENT_ID_MAX && validChars) {
@@ -744,7 +765,7 @@ export function newAgentIdProblem(
   id: string,
   existingIds: readonly string[],
 ): string | null {
-  const problem = agentIdProblem(id)
+  const problem = agentIdProblem(id, existingIds)
   if (problem) return problem
   const other = existingIds.find((e) => sameAgentId(e, id))
   if (other === undefined) return null

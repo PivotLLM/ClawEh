@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,9 @@ type agentIDCase struct {
 	Normalized string  `json:"normalized"`
 	Valid      bool    `json:"valid"`
 	Problem    *string `json:"problem"`
+	// Taken lists the ids other agents already have; the suggested id in
+	// Problem must be none of them.
+	Taken []string `json:"taken,omitempty"`
 }
 
 func loadAgentIDCases(t *testing.T) []agentIDCase {
@@ -46,7 +50,10 @@ func TestAgentIDSharedCases(t *testing.T) {
 		if got := NormalizeAgentID(tc.Input); got != tc.Normalized {
 			t.Errorf("NormalizeAgentID(%q) = %q, want %q", tc.Input, got, tc.Normalized)
 		}
-		err := agentIDError(tc.Input, "")
+		taken := func(id string) bool {
+			return slices.ContainsFunc(tc.Taken, func(o string) bool { return SameAgentID(o, id) })
+		}
+		err := agentIDError(tc.Input, "", taken)
 		switch {
 		case tc.Problem == nil && err != nil:
 			t.Errorf("agentIDError(%q) = %v, want nil", tc.Input, err)
@@ -73,7 +80,7 @@ func checkAgentIDRule(t *testing.T, x string) {
 	if ValidAgentID(x) && n != strings.ToLower(x) {
 		t.Errorf("valid id %q normalized to %q", x, n)
 	}
-	if ValidAgentID(x) != (agentIDError(x, "") == nil) {
+	if ValidAgentID(x) != (agentIDError(x, "", nil) == nil) {
 		t.Errorf("ValidAgentID(%q) = %v disagrees with agentIDError", x, ValidAgentID(x))
 	}
 }
@@ -104,4 +111,23 @@ func FuzzAgentIDRule(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		checkAgentIDRule(t, s)
 	})
+}
+
+// The refusal of an invalid agents.list id suggests an id no other agent has;
+// a reference (bindings) is suggested as is, since it should name an agent.
+func TestAgentIDErrors_SuggestionIsFree(t *testing.T) {
+	c := &Config{}
+	c.Agents.List = []AgentConfig{{ID: "Alice-Smith"}, {ID: "alice smith"}}
+	c.Bindings = []AgentBinding{{AgentID: "alice smith"}}
+	var got []string
+	for _, err := range c.AgentIDErrors() {
+		got = append(got, err.Error())
+	}
+	want := []string{
+		`Agent id "alice smith" may use only letters, digits, - and _; use "alice-smith-2".`,
+		`Agent id "alice smith" in bindings may use only letters, digits, - and _; use "alice-smith".`,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("AgentIDErrors =\n%q\nwant\n%q", got, want)
+	}
 }

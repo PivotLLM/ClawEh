@@ -1334,6 +1334,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **The id suggested for an invalid agent id is one no other agent has.**
+  When the repaired id was already taken (`"alice smith"` while
+  `Alice-Smith` exists), following the suggestion led to a second refusal.
+  The suggestion now adds `-2`, `-3`, … until it is free, in the refusal at
+  load and save and on the Agents page alike.
+
 - **`claw token revoke` works for an agent no longer in the config.** It
   refused with "no agent … in config", so the token of a removed agent stayed
   in the store and worked again if an agent with that id came back. It now

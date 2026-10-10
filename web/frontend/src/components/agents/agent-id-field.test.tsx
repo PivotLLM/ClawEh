@@ -88,10 +88,12 @@ describe("agentIdProblem", () => {
 // The table config/agent_id_rule_test.go checks the Go rule against, so the
 // two copies cannot drift.
 describe("agent id rule (shared cases)", () => {
-  it.each(cases)("$input", ({ input, normalized, valid, problem }) => {
+  it.each(cases)("$input", (c) => {
+    const { input, normalized, valid, problem } = c
+    const taken = "taken" in c ? c.taken : []
     expect(isValidAgentId(input)).toBe(valid)
     expect(normalizeAgentId(input)).toBe(normalized)
-    expect(agentIdProblem(input)).toBe(problem)
+    expect(agentIdProblem(input, taken)).toBe(problem)
   })
 })
 
@@ -106,6 +108,12 @@ describe("newAgentIdProblem", () => {
     )
     expect(newAgentIdProblem("Alice.B", ["alice"])).toBe(
       agentIdProblem("Alice.B"),
+    )
+  })
+
+  it("suggests an id no agent has yet", () => {
+    expect(newAgentIdProblem("bob smith", ["Bob-Smith"])).toBe(
+      'Agent id "bob smith" may use only letters, digits, - and _; use "bob-smith-2".',
     )
   })
 })

@@ -156,8 +156,12 @@ func quoteAgentID(s string) string {
 // agentIDError says why id, an agent id or a reference to one, does not
 // satisfy the agent id rule (ValidAgentID), or returns nil when it does. where names the
 // place a reference was found (" in bindings"); it is empty for
-// agents.list[].id. ClawEh never rewrites an id: the operator fixes it.
-func agentIDError(id, where string) error {
+// agents.list[].id. taken, when not nil, reports an id another agent already
+// has: the suggested id is then one no other agent has (freeAgentID), so
+// following it does not lead to a second refusal. It is nil for references,
+// whose suggestion should name an existing agent. ClawEh never rewrites an
+// id: the operator fixes it.
+func agentIDError(id, where string, taken func(string) bool) error {
 	// The messages are sentences an operator reads (WebUI, startup), built by
 	// concatenation like the other config refusals (mount_names.go).
 	if ValidAgentID(id) {
@@ -171,6 +175,9 @@ func agentIDError(id, where string) error {
 		return errors.New("An agent id" + where + " is empty; name the agent, such as " + quoteAgentID("alice") + ".")
 	}
 	suggestion := repairAgentID(id)
+	if suggestion != "" && taken != nil {
+		suggestion = freeAgentID(suggestion, taken)
+	}
 	var problem string
 	switch {
 	case len(trimmed) > maxAgentIDLength && !agentIDInvalidCharsRe.MatchString(trimmed):
@@ -186,6 +193,38 @@ func agentIDError(id, where string) error {
 		return errors.New(msg + ".")
 	}
 	return errors.New(msg + "; use " + quoteAgentID(suggestion) + ".")
+}
+
+// freeAgentID is id, or when taken reports it as another agent's, id with
+// "-2", "-3", ... appended (id shortened to keep 64 characters) until it is
+// free. The WebUI's copy is freeAgentId.
+func freeAgentID(id string, taken func(string) bool) string {
+	if !taken(id) {
+		return id
+	}
+	for n := 2; ; n++ {
+		suffix := "-" + strconv.Itoa(n)
+		base := id
+		if len(base)+len(suffix) > maxAgentIDLength {
+			base = strings.TrimRight(base[:maxAgentIDLength-len(suffix)], "-_")
+		}
+		if candidate := base + suffix; !taken(candidate) {
+			return candidate
+		}
+	}
+}
+
+// otherAgentHas returns the taken function of agentIDError for
+// agents.list[skip]: whether any other agent's id names the same agent.
+func otherAgentHas(list []AgentConfig, skip int) func(string) bool {
+	return func(id string) bool {
+		for i := range list {
+			if i != skip && SameAgentID(list[i].ID, id) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // duplicateAgentIDError is the refusal of agents.list[].ids that name one
@@ -226,7 +265,7 @@ func (c *Config) AgentIDErrors() []error {
 	var order []string
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
-		add(agentIDError(a.ID, ""))
+		add(agentIDError(a.ID, "", otherAgentHas(c.Agents.List, i)))
 		if ValidAgentID(a.ID) {
 			key := NormalizeAgentID(a.ID)
 			u := uses[key]
@@ -245,18 +284,18 @@ func (c *Config) AgentIDErrors() []error {
 		}
 		for _, ref := range a.Subagents.AllowAgents {
 			if ref != "*" {
-				add(agentIDError(ref, " in "+a.DisplayName()+"'s subagents.allow_agents"))
+				add(agentIDError(ref, " in "+a.DisplayName()+"'s subagents.allow_agents", nil))
 			}
 		}
 	}
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
 		if b.AgentID != "" {
-			add(agentIDError(b.AgentID, " in bindings"))
+			add(agentIDError(b.AgentID, " in bindings", nil))
 		}
 		for _, ref := range b.AgentMentions {
 			if ref != "*" {
-				add(agentIDError(ref, " in bindings agent_mentions"))
+				add(agentIDError(ref, " in bindings agent_mentions", nil))
 			}
 		}
 	}
