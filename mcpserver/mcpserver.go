@@ -35,6 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tenebris-tech/alerter"
 
@@ -299,12 +300,13 @@ func New(opts ...Option) (*MCPServer, error) {
 
 	resolver := m.registryFor
 
-	newSrv := func() *server.MCPServer {
+	newSrv := func(hooks *server.Hooks) *server.MCPServer {
 		// Protocol handshake: bare semver, not app.Version(). A client may
 		// compare serverInfo.version, so it must not carry a build suffix.
 		return server.NewMCPServer(app.Name(), app.SemVer(),
 			server.WithToolCapabilities(true),
 			server.WithRecovery(),
+			server.WithHooks(hooks),
 		)
 	}
 
@@ -319,12 +321,18 @@ func New(opts ...Option) (*MCPServer, error) {
 	}
 
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
-	internalSrv := newSrv()
+	internalSrv := newSrv(&server.Hooks{})
 	internal := newEndpointCatalogue(internalSrv, internalAuthMode, m.internalAllow, deps)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
-	bearerSrv := newSrv()
+	bearerHooks := &server.Hooks{}
+	bearerSrv := newSrv(bearerHooks)
 	bearer := newEndpointCatalogue(bearerSrv, bearerAuthMode, m.externalAllow, deps)
+	// The bearer token names the caller, so tools/list offers only what that
+	// agent may call.
+	bearerHooks.AddAfterListTools(func(ctx context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		bearer.listForCaller(ctx, result)
+	})
 
 	m.endpoints = []*endpointCatalogue{internal, bearer}
 	for _, ep := range m.endpoints {

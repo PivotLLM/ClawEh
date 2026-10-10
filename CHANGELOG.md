@@ -1334,6 +1334,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **MCP `/mcp`: `tools/list` offers only the tools the token's agent may
+  call.** It listed every agent's tools, and calling one the agent was not
+  allowed answered "not enabled for this agent". A service or session token
+  now sees its agent's own tools only. `/internal`, where the token is a
+  parameter of each call, still lists every tool and checks at the call.
+
 - **`msg_send` and `msg_send_file` without a chat to send to log a warning,
   not an error.** A call with no target chat (a service-token MCP call) or
   inside an asked turn is refused as before, but logs "Tool call refused" at

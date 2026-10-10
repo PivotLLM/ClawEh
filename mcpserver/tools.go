@@ -148,6 +148,9 @@ type endpointCatalogue struct {
 	// published maps external name -> registered tool. Written only by refresh,
 	// which the owner serializes (MCPServer.catalogueMu).
 	published map[string]publishedTool
+	// internalNames maps external name -> internal name, as published; it is
+	// replaced (never changed) by refresh and read by listForCaller.
+	internalNames atomic.Pointer[map[string]string]
 }
 
 func newEndpointCatalogue(srv *server.MCPServer, mode authMode, allow []string, deps dispatchDeps) *endpointCatalogue {
@@ -166,10 +169,11 @@ func newEndpointCatalogue(srv *server.MCPServer, mode authMode, allow []string, 
 //   - the call is dispatched to that agent's tool registry;
 //   - the result is scrubbed of any leaked tokens before return.
 //
-// Tool enumeration via tools/list is intentionally global — the catalogue
-// is built from the union of every per-agent registry (deduped by name).
-// tools/list never inspects the session_token. Per-agent restrictions are
-// enforced at tools/call via the supplied acl.Policy.
+// The catalogue is built from the union of every per-agent registry (deduped
+// by name). On /internal tools/list is that union: the session_token is a
+// parameter of each call, so a list has no caller. On /mcp the bearer token
+// names the agent and tools/list is narrowed to what it may call
+// (listForCaller). Per-agent restrictions are enforced at tools/call.
 //
 // It is the one-shot form of an endpoint catalogue's refresh, kept for the
 // tests; the server itself keeps the catalogue so RefreshCatalogue can diff.
@@ -292,7 +296,60 @@ func (ep *endpointCatalogue) refresh(agentRegistries map[string]*tools.ToolRegis
 		ep.srv.AddTools(add...)
 	}
 	ep.published = want
+	names := make(map[string]string, len(want))
+	for pubName, entry := range want {
+		names[pubName] = entry.internal
+	}
+	ep.internalNames.Store(&names)
 	return len(add), len(del)
+}
+
+// agentMayCall reports whether a tools/call of the tool (internal name) by
+// the agent reaches the tool: it is in the agent's registry and the ACL
+// policy allows it. dispatchToolCall refuses a call that fails either check,
+// and listForCaller leaves such a tool out of tools/list.
+func agentMayCall(reg *tools.ToolRegistry, policy acl.Policy, agentID, toolName string) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.GetForHost(toolName); !ok {
+		return false
+	}
+	return policy.IsAllowed(agentID, toolName)
+}
+
+// listForCaller narrows a tools/list result on the bearer endpoint to the
+// tools the token's agent may call (agentMayCall), so the client is not
+// offered tools every call to which is refused. /internal cannot do this: its
+// token is a parameter of each call, so its tools/list stays the union.
+// Installed as an after-list hook rather than a mcp-go tool filter, which
+// would also refuse calls itself, before dispatch logs and answers them.
+func (ep *endpointCatalogue) listForCaller(ctx context.Context, result *mcp.ListToolsResult) {
+	if result == nil {
+		return
+	}
+	var agentID string
+	var reg *tools.ToolRegistry
+	if ep.deps.sessionTokens != nil {
+		if rec, ok := ep.deps.sessionTokens.Resolve(bearerTokenFromContext(ctx)); ok {
+			agentID = rec.agentID
+			if ep.deps.resolver != nil {
+				reg, _ = ep.deps.resolver(agentID)
+			}
+		}
+	}
+	policy := ep.deps.policy
+	var names map[string]string
+	if p := ep.internalNames.Load(); p != nil {
+		names = *p
+	}
+	kept := result.Tools[:0]
+	for _, tl := range result.Tools {
+		if internal, ok := names[tl.Name]; ok && agentMayCall(reg, policy, agentID, internal) {
+			kept = append(kept, tl)
+		}
+	}
+	result.Tools = kept
 }
 
 // handler builds the tools/call handler for the tool registered under the given

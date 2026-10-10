@@ -46,6 +46,10 @@ is transport-agnostic), so **the same token works on both**.
   comprehensive `probe` suite practical.
 - A missing/invalid bearer is rejected at the HTTP layer with a proper **`401`**
   (not a tool-result error), matching standard MCP client expectations.
+- `tools/list` lists only the tools the token's agent may call (its own tools,
+  under its allowlists), the same check a call goes through. On `/internal` the
+  token is a parameter of each call, so `tools/list` there is the union of every
+  agent's tools and the check happens at the call.
 
 This becomes the default, documented endpoint — what external integrators point
 at.

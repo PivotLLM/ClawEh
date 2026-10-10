@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -58,8 +59,8 @@ func listedToolNames(t *testing.T, srv *MCPServer, params map[string]any) []stri
 }
 
 // TestToolsList_ReturnsFullCatalogueRegardlessOfToken pins the contract
-// that tool enumeration is global: tools/list returns the same union
-// catalogue with no token, an unknown token, or a valid token in params.
+// that tool enumeration on /internal is global: tools/list returns the same
+// union catalogue with no token, an unknown token, or a valid token in params.
 func TestToolsList_ReturnsFullCatalogueRegardlessOfToken(t *testing.T) {
 	aliceRF := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("a")}
 	aliceWF := &mockTool{name: "write_file", params: map[string]any{}, result: tools.NewToolResult("a")}
@@ -141,4 +142,74 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// listedOnBearer sends tools/list to the /mcp endpoint with the bearer token
+// in the context, as bearerContextFunc puts it there.
+func listedOnBearer(t *testing.T, srv *MCPServer, bearer string) []string {
+	t.Helper()
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	ctx := withBearerToken(context.Background(), bearer)
+	raw, err := json.Marshal(srv.endpoints[1].srv.HandleMessage(ctx, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("decode: %v\nbody: %s", err, raw)
+	}
+	names := []string{}
+	for _, tl := range parsed.Result.Tools {
+		names = append(names, tl.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestToolsList_BearerListsOnlyTheAgentsTools: on /mcp the bearer token names
+// the agent, so tools/list offers only the tools a call with that token
+// reaches (its registry, under the ACL policy); /internal keeps the union.
+func TestToolsList_BearerListsOnlyTheAgentsTools(t *testing.T) {
+	aliceRF := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("a")}
+	aliceWF := &mockTool{name: "write_file", params: map[string]any{}, result: tools.NewToolResult("a")}
+	bobRF := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("b")}
+	bobLD := &mockTool{name: "list_dir", params: map[string]any{}, result: tools.NewToolResult("b")}
+	srv, err := New(
+		WithAgentRegistries(map[string]*tools.ToolRegistry{
+			"alice": newRegistryWith(aliceRF, aliceWF),
+			"bob":   newRegistryWith(bobRF, bobLD),
+		}),
+		WithAllowlist([]string{"*"}),
+		WithACLPolicy(acl.PolicyFunc(func(agent, tool string) bool {
+			return !(agent == "bob" && tool == "read_file")
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SessionTokens().RegisterService("alice-token", "alice", t.TempDir())
+	srv.SessionTokens().RegisterService("bob-token", "bob", t.TempDir())
+
+	cases := []struct {
+		bearer string
+		want   []string
+	}{
+		{"alice-token", []string{"read_file", "write_file"}},
+		{"bob-token", []string{"list_dir"}}, // read_file is denied by the policy
+		{"unknown", []string{}},
+	}
+	for _, tc := range cases {
+		if got := listedOnBearer(t, srv, tc.bearer); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("/mcp tools/list with %s = %v, want %v", tc.bearer, got, tc.want)
+		}
+	}
+	if got := listedToolNames(t, srv, map[string]any{}); strings.Join(got, ",") != "list_dir,read_file,write_file" {
+		t.Errorf("/internal tools/list = %v, want the union", got)
+	}
 }
