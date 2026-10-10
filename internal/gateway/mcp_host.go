@@ -41,46 +41,15 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		return nil
 	}
 
-	agentRegistries := make(map[string]*tools.ToolRegistry)
-	agentWorkspaces := make(map[string]string)
-	for _, agentID := range agentLoop.GetRegistry().List() {
-		a, ok := agentLoop.GetRegistry().Get(agentID)
-		if !ok || a.Tools == nil {
-			continue
-		}
-		agentRegistries[agentID] = a.Tools
-		agentWorkspaces[agentID] = a.Workspace
-	}
-
-	if services.SessionTokens == nil {
-		services.SessionTokens = mcpserver.NewSessionTokenStore()
-		// A sub-agent clone's late async results go to its source agent.
-		services.SessionTokens.SetHomeResolver(func(agentID string) string {
-			reg := agentLoop.GetRegistry()
-			if !reg.IsTemp(agentID) {
-				return ""
-			}
-			return reg.HomeID(agentID)
-		})
-		agentLoop.SetSessionTokenIssuer(services.SessionTokens)
-	}
+	agentRegistries, agentWorkspaces := configAgentTools(agentLoop)
+	ensureSessionTokenStore(services, agentLoop)
 
 	srv, err := mcpserver.New(
 		mcpserver.WithSessionTokenStore(services.SessionTokens),
 		mcpserver.WithAgentRegistries(agentRegistries),
 		// A sub-agent clone on a CLI provider calls its tools back through the
 		// host under its own id; clones are created after the host starts.
-		mcpserver.WithAgentLookup(func(agentID string) (*tools.ToolRegistry, bool) {
-			reg := agentLoop.GetRegistry()
-			if !reg.IsTemp(agentID) {
-				return nil, false
-			}
-			a, ok := reg.Get(agentID)
-			if !ok || a.Tools == nil {
-				return nil, false
-			}
-			return a.Tools, true
-		}),
+		mcpserver.WithAgentLookup(tempAgentTools(agentLoop)),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
@@ -103,19 +72,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 	// refresh, so a renamed tool reaches external clients without a restart.
 	agentLoop.SetMCPHost(srv)
 
-	if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
-		defaultAgentID := agentLoop.GetRegistry().DefaultID()
-		if defaultAgentID == "" {
-			logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
-		} else {
-			if da, ok := agentLoop.GetRegistry().Get(defaultAgentID); ok && da != nil {
-				archiveDir := da.SessionsDir()
-				srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
-				logger.InfoCF("mcpserver", "Test session token registered",
-					map[string]any{"agent": defaultAgentID})
-			}
-		}
-	}
+	registerTestSessionToken(agentLoop, srv)
 
 	// Load persisted long-lived service tokens (claw token CLI) into the store.
 	// Runs at boot and on every config reload (this function rebuilds the server);
@@ -130,6 +87,74 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		})
 
 	return nil
+}
+
+// configAgentTools returns the tool registry and workspace of every config
+// agent, by id.
+func configAgentTools(agentLoop *agent.AgentLoop) (map[string]*tools.ToolRegistry, map[string]string) {
+	agentRegistries := make(map[string]*tools.ToolRegistry)
+	agentWorkspaces := make(map[string]string)
+	for _, agentID := range agentLoop.GetRegistry().List() {
+		a, ok := agentLoop.GetRegistry().Get(agentID)
+		if !ok || a.Tools == nil {
+			continue
+		}
+		agentRegistries[agentID] = a.Tools
+		agentWorkspaces[agentID] = a.Workspace
+	}
+	return agentRegistries, agentWorkspaces
+}
+
+// ensureSessionTokenStore creates the process-wide session-token store on
+// first use and hands it to the agent loop.
+func ensureSessionTokenStore(services *gatewayServices, agentLoop *agent.AgentLoop) {
+	if services.SessionTokens != nil {
+		return
+	}
+	services.SessionTokens = mcpserver.NewSessionTokenStore()
+	// A sub-agent clone's late async results go to its source agent.
+	services.SessionTokens.SetHomeResolver(func(agentID string) string {
+		reg := agentLoop.GetRegistry()
+		if !reg.IsTemp(agentID) {
+			return ""
+		}
+		return reg.HomeID(agentID)
+	})
+	agentLoop.SetSessionTokenIssuer(services.SessionTokens)
+}
+
+// tempAgentTools looks up a temporary agent's tool registry by id.
+func tempAgentTools(agentLoop *agent.AgentLoop) func(agentID string) (*tools.ToolRegistry, bool) {
+	return func(agentID string) (*tools.ToolRegistry, bool) {
+		reg := agentLoop.GetRegistry()
+		if !reg.IsTemp(agentID) {
+			return nil, false
+		}
+		a, ok := reg.Get(agentID)
+		if !ok || a.Tools == nil {
+			return nil, false
+		}
+		return a.Tools, true
+	}
+}
+
+// registerTestSessionToken registers CLAW_MCP_TEST_TOKEN, when set, as a
+// session token of the default agent (for the integration tests).
+func registerTestSessionToken(agentLoop *agent.AgentLoop, srv *mcpserver.MCPServer) {
+	testTok := os.Getenv("CLAW_MCP_TEST_TOKEN")
+	if testTok == "" {
+		return
+	}
+	defaultAgentID := agentLoop.GetRegistry().DefaultID()
+	if defaultAgentID == "" {
+		logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
+		return
+	}
+	if da, ok := agentLoop.GetRegistry().Get(defaultAgentID); ok && da != nil {
+		srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", da.SessionsDir())
+		logger.InfoCF("mcpserver", "Test session token registered",
+			map[string]any{"agent": defaultAgentID})
+	}
 }
 
 // syncServiceTokensFromDisk loads the persisted per-agent service tokens and
