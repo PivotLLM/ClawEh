@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -197,8 +198,9 @@ type Hooks[T Instance] struct {
 	Build    BuildFunc[T]
 	Retire   RetireFunc[T]
 	Inserted InsertedFunc[T]
-	// Now is the clock; nil means time.Now. Tests set it.
-	Now func() time.Time
+	// Clock is the time source for idle times and the sweeper; nil means
+	// clock.Real. Tests set a fake.
+	Clock clock.Clock
 	// Owner marks the process that owns the data directory (the one holding
 	// claw.lock: the gateway). Only the owner restores the saved temporary
 	// agents, removes unsaved directories under internal/temp and writes
@@ -263,7 +265,7 @@ type Registry[T Instance] struct {
 
 	retire    RetireFunc[T]
 	inserted  InsertedFunc[T]
-	now       func() time.Time
+	clock     clock.Clock
 	statePath string // <CLAW_HOME>/internal/temp_agents.json; "" = not persisted
 
 	// rootMu guards tempRoot. The owner's root is <CLAW_HOME>/internal/temp.
@@ -314,16 +316,12 @@ func New[T Instance](cfg *config.Config, hooks Hooks[T]) (*Registry[T], error) {
 	if hooks.Build == nil {
 		return nil, errors.New("agentreg: Build hook is required")
 	}
-	now := hooks.Now
-	if now == nil {
-		now = time.Now
-	}
 	r := &Registry[T]{
 		cfg:      cfg,
 		build:    hooks.Build,
 		retire:   hooks.Retire,
 		inserted: hooks.Inserted,
-		now:      now,
+		clock:    clock.Or(hooks.Clock),
 		resolver: routing.NewRouteResolver(cfg),
 	}
 	if hooks.Owner {
@@ -333,7 +331,7 @@ func New[T Instance](cfg *config.Config, hooks Hooks[T]) (*Registry[T], error) {
 		// first use.
 		r.privateRoot = true
 	}
-	entries, order, defaultID, err := buildConfigEntries(cfg, hooks.Build, now())
+	entries, order, defaultID, err := buildConfigEntries(cfg, hooks.Build, r.clock.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +528,7 @@ func (r *Registry[T]) Touch(id string) error {
 	r.mu.RLock()
 	e, ok := r.entries[routing.NormalizeAgentID(id)]
 	if ok && e.spec.Origin == OriginTemp {
-		e.meta.touch(r.now())
+		e.meta.touch(r.clock.Now())
 	}
 	r.mu.RUnlock()
 	switch {
@@ -557,7 +555,7 @@ func (r *Registry[T]) BeginTurn(id string, inst T) (end func(), current bool) {
 	ok = ok && any(e.inst) == any(inst)
 	if ok {
 		e.meta.busy.Add(1)
-		e.meta.touch(r.now())
+		e.meta.touch(r.clock.Now())
 	}
 	r.mu.RUnlock()
 	if !ok {
@@ -571,7 +569,7 @@ func (r *Registry[T]) endTurn(e *entry[T]) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			e.meta.touch(r.now())
+			e.meta.touch(r.clock.Now())
 			idle := e.meta.busy.Add(-1) == 0
 			if persisted(e.spec) {
 				r.persist()
@@ -646,7 +644,7 @@ func (r *Registry[T]) Reload(ctx context.Context, cfg *config.Config, build Buil
 	r.reloadMu.Lock()
 	defer r.reloadMu.Unlock()
 
-	now := r.now()
+	now := r.clock.Now()
 	entries, order, defaultID, err := buildConfigEntries(cfg, build, now)
 	if err != nil {
 		return err
@@ -970,6 +968,6 @@ func (r *Registry[T]) closeAndRemove(e *entry[T], reason string) {
 	}
 	logger.InfoCF("agent", "Deleted temporary agent", map[string]any{
 		"agent_id": e.spec.ID, "agent": e.spec.Label(), "reason": reason,
-		"age": r.now().Sub(e.meta.created).Round(time.Second).String(),
+		"age": r.clock.Now().Sub(e.meta.created).Round(time.Second).String(),
 	})
 }
