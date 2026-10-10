@@ -328,7 +328,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 // exit, each wait bounded by pollExitTimeout and by ctx. It returns ctx's
 // error when ctx ended before they did.
 func (c *TelegramChannel) Stop(ctx context.Context) error {
-	var err error
+	var stopErr error
 	c.stopOnce.Do(func() {
 		logger.InfoC("telegram", "Stopping Telegram bot...")
 		c.SetRunning(false)
@@ -359,13 +359,13 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 		// into a 409 "terminated by other getUpdates request" against an
 		// in-flight HTTP poll on Telegram's side.
 		if c.pollDone != nil {
-			err = waitStopped(ctx, c.pollDone, "Timed out waiting for long-poll goroutine to exit")
+			stopErr = waitStopped(ctx, c.pollDone, "Timed out waiting for long-poll goroutine to exit")
 		}
-		if c.commandRegDone != nil && err == nil {
-			err = waitStopped(ctx, c.commandRegDone, "Timed out waiting for command registration to stop")
+		if c.commandRegDone != nil && stopErr == nil {
+			stopErr = waitStopped(ctx, c.commandRegDone, "Timed out waiting for command registration to stop")
 		}
 	})
-	return err
+	return stopErr
 }
 
 // waitStopped waits for done, at most pollExitTimeout (logging timeoutMsg
