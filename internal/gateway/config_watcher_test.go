@@ -70,7 +70,7 @@ func startWatcher(t *testing.T, store *config.Store, a alerter.Alerter) *watcher
 	h := &watcherHarness{fc: clock.NewFake(time.Now()), polled: make(chan struct{})}
 	h.w = newConfigWatcher(store, testPollInterval, testDebounce, false, a, &modelRefAlerts{})
 	h.w.clock = h.fc
-	h.w.polled = func() { h.polled <- struct{}{} }
+	h.w.polled = h.polled
 	h.ch = h.w.out
 	h.w.start()
 	t.Cleanup(h.w.close)
@@ -450,5 +450,63 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	wantSite := `agents.defaults.image_model named model "gone", which no longer exists; it was removed from agents.defaults.image_model. Nothing else to do — choose an existing model there if you want one.`
 	if got[4].Description != wantSite {
 		t.Fatalf("removed site description = %q, want %q", got[4].Description, wantSite)
+	}
+}
+
+// A test that stops reading the polled hook cannot hold up close: the
+// watcher gives up the send when it is stopped.
+func TestConfigWatcher_UnreadPolledHookDoesNotHangClose(t *testing.T) {
+	store, _ := seedStore(t)
+	fc := clock.NewFake(time.Now())
+	w := newConfigWatcher(store, testPollInterval, testDebounce, false, alerter.Nop{}, &modelRefAlerts{})
+	w.clock = fc
+	w.polled = make(chan struct{}) // never read
+	w.start()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := fc.BlockUntil(ctx, 1); err != nil {
+		t.Fatalf("the watcher never started: %v", err)
+	}
+	fc.Advance(testPollInterval)
+	closed := make(chan struct{})
+	go func() { w.close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("close hung on the unread polled hook")
+	}
+}
+
+// The service-token file watcher polls on the clock it is given, reports a
+// change at the next poll, and its stop returns once its goroutine is done.
+func TestFileChangeWatcher_OnTheClock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fc := clock.NewFake(time.Now())
+	changes, stop := setupFileChangeWatcher(fc, path, time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := fc.BlockUntil(ctx, 1); err != nil { // its ticker: the baseline is taken
+		t.Fatalf("the watcher never started: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"a":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changes:
+		t.Fatal("reported a change before the clock moved")
+	default:
+	}
+	fc.Advance(time.Minute)
+	select {
+	case <-changes:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the change was not reported after a poll")
+	}
+	stop()
+	if n := fc.Waiters(); n != 0 {
+		t.Fatalf("waiters = %d after stop: its goroutine was still running", n)
 	}
 }

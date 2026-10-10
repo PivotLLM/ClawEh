@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -114,7 +115,7 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 
 		isTimeoutError, isContextError := classifyLLMError(err, d.provider, t.model)
 		if isTimeoutError && retry < llmMaxRetries {
-			if waitErr := waitToRetry(ctx, err, retry); waitErr != nil {
+			if waitErr := waitToRetry(ctx, t.al.clk(), err, retry); waitErr != nil {
 				return nil, waitErr
 			}
 			continue
@@ -128,10 +129,10 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 	return nil, t.dispatchFailed(ctx, err)
 }
 
-// waitToRetry waits out the backoff before retrying a timed-out dispatch. It
-// returns the context's error when the turn's budget ran out first; such a
-// turn is not retried, so no retry is logged.
-func waitToRetry(ctx context.Context, err error, retry int) error {
+// waitToRetry waits out the backoff, on clk, before retrying a timed-out
+// dispatch. It returns the context's error when the turn's budget ran out
+// first; such a turn is not retried, so no retry is logged.
+func waitToRetry(ctx context.Context, clk clock.Clock, err error, retry int) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -141,10 +142,12 @@ func waitToRetry(ctx context.Context, err error, retry int) error {
 		"retry":   retry,
 		"backoff": backoff.String(),
 	})
+	timer := clk.NewTimer(backoff)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(backoff):
+	case <-timer.C():
 		return nil
 	}
 }

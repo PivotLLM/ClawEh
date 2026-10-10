@@ -12,20 +12,23 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// setupFileChangeWatcher polls a single file and emits on the returned channel
-// whenever its mtime or size changes. Intended for small, atomically-written
-// state files (no debounce). The first observed state is the baseline.
-func setupFileChangeWatcher(path string, interval time.Duration) (<-chan struct{}, func()) {
+// setupFileChangeWatcher polls a single file every interval on clk and emits
+// on the returned channel whenever its mtime or size changes. Intended for
+// small, atomically-written state files (no debounce). The first observed
+// state is the baseline. The returned stop function returns once the
+// polling goroutine has exited.
+func setupFileChangeWatcher(clk clock.Clock, path string, interval time.Duration) (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	stop := make(chan struct{})
-	go func() {
+	var wg sync.WaitGroup
+	wg.Go(func() {
 		lastMod := getFileModTime(path)
 		lastSize := getFileSize(path)
-		ticker := time.NewTicker(interval)
+		ticker := clk.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-ticker.C():
 				m, s := getFileModTime(path), getFileSize(path)
 				if m.After(lastMod) || s != lastSize {
 					lastMod, lastSize = m, s
@@ -38,8 +41,11 @@ func setupFileChangeWatcher(path string, interval time.Duration) (<-chan struct{
 				return
 			}
 		}
-	}()
-	return ch, func() { close(stop) }
+	})
+	return ch, func() {
+		close(stop)
+		wg.Wait()
+	}
 }
 
 // setupConfigWatcherPolling sets up a simple polling-based watcher on the
@@ -114,8 +120,9 @@ type configWatcher struct {
 	pending       bool
 	quietDeadline time.Time
 
-	// polled, when set (tests), is called after every poll.
-	polled func()
+	// polled, when set (tests), is sent on after every poll; a send that
+	// is not taken never holds up close.
+	polled chan<- struct{}
 }
 
 // configMark is a markApplied request.
@@ -135,7 +142,11 @@ func (w *configWatcher) run() {
 		case <-ticker.C():
 			w.poll()
 			if w.polled != nil {
-				w.polled()
+				select {
+				case w.polled <- struct{}{}:
+				case <-w.stop:
+					return
+				}
 			}
 		case m := <-w.marks:
 			w.applyMark(m)

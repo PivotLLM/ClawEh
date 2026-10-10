@@ -46,14 +46,14 @@ type retentionReport struct {
 // only, like the backup scheduler: the loop outlives config reloads.
 func (al *AgentLoop) StartRetention() {
 	go func() {
-		ticker := time.NewTicker(time.Minute)
+		ticker := al.clk().NewTicker(time.Minute)
 		defer ticker.Stop()
 		lastRunDay := "" // YYYYMMDD of the last run; guards once-per-day
 		for {
 			select {
 			case <-al.evictStop:
 				return
-			case now := <-ticker.C:
+			case now := <-ticker.C():
 				if now.Hour() != retentionHour || now.Minute() != retentionMinute {
 					continue
 				}

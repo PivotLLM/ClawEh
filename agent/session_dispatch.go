@@ -88,14 +88,14 @@ func (al *AgentLoop) pruneIdleSessions(now time.Time, ttl time.Duration) int {
 // pruneSessions runs until evictStop is closed, dropping idle session state
 // every evictInterval.
 func (al *AgentLoop) pruneSessions() {
-	ticker := time.NewTicker(al.evictInterval)
+	ticker := al.clk().NewTicker(al.evictInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-al.evictStop:
 			return
-		case <-ticker.C:
-			al.pruneIdleSessions(time.Now(), sessionIdleTTL)
+		case <-ticker.C():
+			al.pruneIdleSessions(al.clk().Now(), sessionIdleTTL)
 		}
 	}
 }

@@ -159,12 +159,16 @@ type AgentLoop struct {
 
 	// humans holds the requests waiting for a person's answer (human agents).
 	humans humanDesk
-	// clock times the turn budget, the asks and the requests to people
-	// (nil: the system clock); tests substitute a clock.Fake.
+	// clock is what the loop's timing runs on: the turn budget, the asks,
+	// the requests to people, retry backoffs, the session pruners, the
+	// temporary-agent sweep (through registryClock) and the wait for a
+	// replaced provider (nil: the system clock). Tests substitute a
+	// clock.Fake; it is set before the loop runs anything and never after.
 	clock clock.Clock
 	// onWait, when set (tests only), is called as a turn starts to wait for
 	// a resource another holds: a concurrent-turn slot, or a person busy
-	// with another request.
+	// with another request. Like clock it is set before the loop runs
+	// anything and never after, so turns read it without a lock.
 	onWait func(waitKind)
 	// dismisser clears a chat's indicators for a person's answer, which gets
 	// no reply of its own: the channel manager (SetChannelManager); tests
@@ -172,9 +176,33 @@ type AgentLoop struct {
 	dismisser inboundDismisser
 }
 
-// clk is the clock the turn budget, the asks and the requests to people are
-// timed on.
+// clk is the clock the loop's timing runs on (AgentLoop.clock).
 func (al *AgentLoop) clk() clock.Clock { return clock.Or(al.clock) }
+
+// registryClock is the loop's clock as the agent registry's: each call goes
+// to the clock the loop has at that moment, so a test that puts a fake on
+// the loop after building it also moves the registry's idle times and sweep.
+type registryClock struct{ al *AgentLoop }
+
+func (c registryClock) Now() time.Time                         { return c.al.clk().Now() }
+func (c registryClock) Since(t time.Time) time.Duration        { return c.al.clk().Since(t) }
+func (c registryClock) Until(t time.Time) time.Duration        { return c.al.clk().Until(t) }
+func (c registryClock) Sleep(d time.Duration)                  { c.al.clk().Sleep(d) }
+func (c registryClock) After(d time.Duration) <-chan time.Time { return c.al.clk().After(d) }
+func (c registryClock) NewTimer(d time.Duration) clock.Timer   { return c.al.clk().NewTimer(d) }
+func (c registryClock) NewTicker(d time.Duration) clock.Ticker { return c.al.clk().NewTicker(d) }
+
+func (c registryClock) AfterFunc(d time.Duration, f func()) clock.Timer {
+	return c.al.clk().AfterFunc(d, f)
+}
+
+func (c registryClock) WithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return c.al.clk().WithTimeout(parent, d)
+}
+
+func (c registryClock) WithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return c.al.clk().WithDeadline(parent, deadline)
+}
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
 // is an interrupted turn: no reply is sent and its pending-turn flag is kept,
@@ -331,6 +359,7 @@ func NewAgentLoop(
 		Build:    al.agentBuilder(provider, dispatcher, fallbackChain),
 		Retire:   al.retireAgent,
 		Inserted: al.agentInserted,
+		Clock:    registryClock{al},
 		Owner:    lo.ownsDataDir,
 	})
 	if err != nil {
@@ -377,7 +406,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	// Delete temporary agents idle past their TTL (and any the configuration
 	// can no longer build). One pass now catches those that expired while the
 	// process was down.
-	al.registry.Sweep(time.Now())
+	al.registry.Sweep(al.clk().Now())
 	al.sweepWG.Go(func() { al.registry.RunSweeper(al.evictStop, agentreg.SweepInterval) })
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose

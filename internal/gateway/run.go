@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/internal/layout"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -193,7 +194,7 @@ func startGatewayRun(
 	// Watch the service-token state file so `claw token` changes activate live
 	// (writes are atomic, so no debounce is needed).
 	var stopSvcWatch func()
-	run.serviceTokenChanges, stopSvcWatch = setupFileChangeWatcher(servicetoken.Path(cfg.DataDir()), reloadInterval)
+	run.serviceTokenChanges, stopSvcWatch = setupFileChangeWatcher(clock.Real, servicetoken.Path(cfg.DataDir()), reloadInterval)
 	return run, func() {
 		stopSvcWatch()
 		stopWatch()
