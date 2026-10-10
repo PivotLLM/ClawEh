@@ -49,6 +49,9 @@ type AgentLoop struct {
 	mu              sync.RWMutex
 	// Track active requests for safe provider cleanup
 	activeRequests sync.WaitGroup
+	// modelCalls counts the model calls in flight per provider, for
+	// closeReplacedProvider.
+	modelCalls providerCalls
 	dispatcher     *providers.ProviderDispatcher
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
@@ -717,27 +720,37 @@ func (al *AgentLoop) replaceMessageManagers(registry *AgentRegistry, cfg *config
 	}
 }
 
+// providerCloseWait bounds how long closeReplacedProvider waits for the
+// calls still in flight on the replaced provider.
+const providerCloseWait = 30 * time.Second
+
 // closeReplacedProvider closes the provider the reload replaced, once the
-// requests in flight on it have finished (at most 30 seconds, or until ctx
-// ends). It runs after the swap, so readers are never blocked by it.
+// model calls in flight on it have finished (at most providerCloseWait on
+// the loop's clock, or until ctx ends). It runs after the swap, so readers
+// are never blocked by it, and it leaves nothing running behind it.
 func (al *AgentLoop) closeReplacedProvider(ctx context.Context, oldProvider providers.LLMProvider) {
 	stateful, ok := oldProvider.(providers.StatefulProvider)
 	if !ok {
 		return
 	}
-	waitDone := make(chan struct{})
-	go func() {
-		al.activeRequests.Wait()
-		close(waitDone)
-	}()
+	timer := al.clk().NewTimer(providerCloseWait)
+	defer timer.Stop()
 	select {
-	case <-waitDone:
-	case <-time.After(30 * time.Second):
+	case <-al.modelCalls.idle(oldProvider):
+	case <-timer.C():
 		logger.WarnCF("agent", "Timeout waiting for in-flight requests during provider close; forcing close", nil)
 	case <-ctx.Done():
 		logger.WarnCF("agent", "Context canceled waiting for in-flight requests; forcing close", nil)
 	}
 	stateful.Close()
+}
+
+// fallbackChain returns the current fallback chain (thread-safe); a reload
+// replaces it.
+func (al *AgentLoop) fallbackChain() *providers.FallbackChain {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return al.fallback
 }
 
 // cooldownTracker returns the shared cooldown tracker (thread-safe). Compaction

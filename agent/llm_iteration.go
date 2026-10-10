@@ -303,11 +303,11 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 // the session asked for it, and logs the response.
 func (t *llmTurn) recordResponse(ctx context.Context, response *providers.LLMResponse) {
 	al := t.al
-	if al.dumpsDir != "" {
+	if cfg := al.GetConfig(); al.dumpsDir != "" && cfg != nil {
 		isRefusal := response.FinishReason == "refusal"
-		if isRefusal && al.cfg.Logging.DumpRefusals {
+		if isRefusal && cfg.Logging.DumpRefusals {
 			al.dumpRefusal(t.agent, t.messages, response, t.opts, t.model, t.iteration)
-		} else if al.cfg.Logging.DumpAll {
+		} else if cfg.Logging.DumpAll {
 			al.dumpAll(t.agent, t.messages, response, t.opts, t.model, t.iteration)
 		}
 	}
@@ -355,8 +355,8 @@ func (t *llmTurn) directAnswer(response *providers.LLMResponse) bool {
 	// model degenerating into reasoning-only output must not leak its raw
 	// chain-of-thought to the user, so empty content takes the graceful
 	// empty-response path instead.
-	if t.finalContent == "" && reasoningText != "" &&
-		t.al.cfg != nil && t.al.cfg.Agents.Defaults.ShowReasoningAsContent {
+	if cfg := t.al.GetConfig(); t.finalContent == "" && reasoningText != "" &&
+		cfg != nil && cfg.Agents.Defaults.ShowReasoningAsContent {
 		t.finalContent = reasoningText
 	}
 	t.lastNormal = response.Normal

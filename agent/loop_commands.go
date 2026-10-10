@@ -377,21 +377,23 @@ func (al *AgentLoop) retriggerLastMessage(ctx context.Context, agent *AgentInsta
 // addCooldownHooks lets commands list and clear model cooldowns.
 func (al *AgentLoop) addCooldownHooks(rt *commands.Runtime) {
 	rt.ResetCooldown = func() {
-		if al.fallback != nil {
-			al.fallback.Reset()
+		if fallback := al.fallbackChain(); fallback != nil {
+			fallback.Reset()
 		}
 	}
 	rt.ClearCooldown = func(provider, model string) bool {
-		if al.fallback == nil {
+		fallback := al.fallbackChain()
+		if fallback == nil {
 			return false
 		}
-		return al.fallback.Clear(provider, model)
+		return fallback.Clear(provider, model)
 	}
 	rt.ListCooldowns = func() []commands.CooldownEntry {
-		if al.fallback == nil {
+		fallback := al.fallbackChain()
+		if fallback == nil {
 			return nil
 		}
-		snap := al.fallback.CooldownSnapshot()
+		snap := fallback.CooldownSnapshot()
 		out := make([]commands.CooldownEntry, 0, len(snap))
 		for _, s := range snap {
 			out = append(out, commands.CooldownEntry{

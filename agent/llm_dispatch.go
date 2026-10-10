@@ -240,12 +240,16 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	al := t.al
 	al.activeRequests.Add(1)
 	defer al.activeRequests.Done()
+	// Counted on the agent instance's provider: the one a reload replaces
+	// and closes once its calls are done.
+	defer al.modelCalls.begin(t.agent.Provider)()
 
 	hasTools := len(d.defs) > 0
-	if len(t.candidates) == 0 || al.fallback == nil {
+	fallback := al.fallbackChain()
+	if len(t.candidates) == 0 || fallback == nil {
 		return d.runProvider.Chat(ctx, al.messagesForModel(t.messages, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
 	}
-	fbResult, err := al.fallback.ExecuteWithNotify(
+	fbResult, err := fallback.ExecuteWithNotify(
 		ctx,
 		t.candidates,
 		func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
