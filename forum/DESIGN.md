@@ -31,7 +31,7 @@ supplies no validator.
 | (b) store and replay | `store.go`, `lock_unix.go`, `replay.go` |
 | (c) router | `router.go` (projections in `jsonpointer.go`) |
 | (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go`, `transcript.go` |
-| (e) service and tools | `service.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
+| (e) service and tools | `service.go`, `service_launch.go`, `service_control.go`, `service_status.go`, `service_run.go`, `service_terminal.go`, `service_keepalive.go`, `service_recover.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
 
 - `records.go` is the wire format between the parts (every on-disk type,
   plus `State`, `Result`, `Summary`): (b) writes it, (d) fills it and (e)
