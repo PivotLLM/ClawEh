@@ -8,6 +8,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -58,7 +59,15 @@ func setupFileChangeWatcher(path string, interval time.Duration) (<-chan struct{
 // change to the file still reloads. It returns once the watcher has done so.
 // The queue is drained safely because the caller is the queue's only reader.
 func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) (chan *config.Config, func(), func(configFileState)) {
-	w := &configWatcher{
+	w := newConfigWatcher(store, interval, debounce, debug, a, refAlerts)
+	w.start()
+	return w.out, w.close, w.markApplied
+}
+
+// newConfigWatcher returns a watcher on the system clock; start runs it.
+func newConfigWatcher(store *config.Store, interval, debounce time.Duration, debug bool, a alerter.Alerter, refAlerts *modelRefAlerts) *configWatcher {
+	return &configWatcher{
+		clock:     clock.Real,
 		store:     store,
 		path:      store.Path(),
 		interval:  interval,
@@ -70,14 +79,18 @@ func setupConfigWatcherPolling(store *config.Store, interval, debounce time.Dura
 		marks:     make(chan configMark),
 		stop:      make(chan struct{}),
 	}
+}
+
+// start runs the watcher's goroutine.
+func (w *configWatcher) start() {
 	w.wg.Go(w.run)
-	return w.out, w.close, w.markApplied
 }
 
 // configWatcher polls the config file and hands each settled, valid change
 // to the reload consumer. Everything but its channels is owned by the run
 // goroutine.
 type configWatcher struct {
+	clock     clock.Clock
 	store     *config.Store
 	path      string
 	interval  time.Duration
@@ -100,6 +113,9 @@ type configWatcher struct {
 	// reloading, so a burst of edits collapses into one reload.
 	pending       bool
 	quietDeadline time.Time
+
+	// polled, when set (tests), is called after every poll.
+	polled func()
 }
 
 // configMark is a markApplied request.
@@ -112,12 +128,15 @@ type configMark struct {
 func (w *configWatcher) run() {
 	w.applied = configFileStateOf(w.path)
 	w.observed = w.applied
-	ticker := time.NewTicker(w.interval)
+	ticker := w.clock.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-ticker.C():
 			w.poll()
+			if w.polled != nil {
+				w.polled()
+			}
 		case m := <-w.marks:
 			w.applyMark(m)
 		case <-w.stop:
@@ -135,7 +154,7 @@ func (w *configWatcher) poll() {
 	// timer: the user is still editing.
 	if current.modTime.After(w.observed.modTime) || current.size != w.observed.size {
 		w.observed = current
-		w.quietDeadline = time.Now().Add(w.debounce)
+		w.quietDeadline = w.clock.Now().Add(w.debounce)
 		w.pending = true
 		if w.debug {
 			logger.Debugf("🔍 Config file change detected; debouncing %s", w.debounce)
@@ -143,7 +162,7 @@ func (w *configWatcher) poll() {
 		return
 	}
 
-	if !w.pending || time.Now().Before(w.quietDeadline) {
+	if !w.pending || w.clock.Now().Before(w.quietDeadline) {
 		return
 	}
 	w.pending = false
@@ -200,7 +219,7 @@ func (w *configWatcher) tryReload(current configFileState) {
 		logger.Info("✓ Config file validated and loaded")
 	default:
 		w.pending = true
-		w.quietDeadline = time.Now() // retry on the next poll tick
+		w.quietDeadline = w.clock.Now() // retry on the next poll tick
 		logger.Warn("⚠ Previous config reload still in progress, will retry")
 	}
 }

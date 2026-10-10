@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
@@ -43,49 +45,122 @@ func writeConfig(t *testing.T, path, extra string) {
 	}
 }
 
+// The watcher tests run it on a fake clock: a tick polls the file once and
+// returns when that poll is done, so every step is exact.
+const (
+	testPollInterval = time.Second
+	testDebounce     = 5 * time.Second
+	// debounceTicks is how many polls after the last change the reload
+	// happens: the first poll at or after the quiet deadline.
+	debounceTicks = int(testDebounce / testPollInterval)
+)
+
+// watcherHarness drives a configWatcher on a fake clock.
+type watcherHarness struct {
+	w      *configWatcher
+	fc     *clock.Fake
+	polled chan struct{}
+	ch     <-chan *config.Config
+}
+
+// startWatcher runs a watcher on store's file and returns once it has taken
+// the file as its baseline.
+func startWatcher(t *testing.T, store *config.Store, a alerter.Alerter) *watcherHarness {
+	t.Helper()
+	h := &watcherHarness{fc: clock.NewFake(time.Now()), polled: make(chan struct{})}
+	h.w = newConfigWatcher(store, testPollInterval, testDebounce, false, a, &modelRefAlerts{})
+	h.w.clock = h.fc
+	h.w.polled = func() { h.polled <- struct{}{} }
+	h.ch = h.w.out
+	h.w.start()
+	t.Cleanup(h.w.close)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.fc.BlockUntil(ctx, 1); err != nil { // its ticker: the baseline is taken
+		t.Fatalf("the watcher never started: %v", err)
+	}
+	return h
+}
+
+// tick moves the clock one poll interval on and waits for that poll.
+func (h *watcherHarness) tick(t *testing.T) {
+	t.Helper()
+	h.fc.Advance(testPollInterval)
+	select {
+	case <-h.polled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the watcher did not poll")
+	}
+}
+
+// ticks is n ticks.
+func (h *watcherHarness) ticks(t *testing.T, n int) {
+	t.Helper()
+	for range n {
+		h.tick(t)
+	}
+}
+
+// noReload fails the test when a reload is queued.
+func (h *watcherHarness) noReload(t *testing.T, why string) {
+	t.Helper()
+	if len(h.ch) != 0 {
+		t.Fatal(why)
+	}
+}
+
+// settle polls until a change written now has been reloaded, failing when
+// it is reloaded early or not at all: the reload comes exactly debounceTicks
+// polls after the poll that saw it.
+func (h *watcherHarness) settle(t *testing.T) *config.Config {
+	t.Helper()
+	h.tick(t) // sees the change
+	for range debounceTicks {
+		h.noReload(t, "reloaded before the file had been quiet for the debounce")
+		h.tick(t)
+	}
+	select {
+	case cfg := <-h.ch:
+		return cfg
+	default:
+		t.Fatal("expected a reload once the file had been quiet for the debounce; got none")
+		return nil
+	}
+}
+
 // TestConfigWatcher_DebouncesBurstIntoSingleReload verifies that a burst of
 // writes within the debounce window collapses into exactly one reload, and that
 // each write resets the quiet timer (no reload until the file goes quiet).
 func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 	store, path := seedStore(t)
+	h := startWatcher(t, store, alerter.Nop{})
 
-	// The burst outlasts the debounce window, so a reload during it would mean
-	// a write did not reset the timer; each gap is a tenth of the window, so a
-	// scheduling delay would have to be ten times the gap to fire one early.
-	interval := 10 * time.Millisecond
-	debounce := 400 * time.Millisecond
-	gap := debounce / 10
-	ch, stop, _ := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
-	defer stop()
-
-	start := time.Now()
-	for i := 0; time.Since(start) < debounce+5*gap; i++ {
+	// A write before every poll for twice the debounce: each one resets the
+	// quiet timer, so nothing may be reloaded during the burst.
+	for i := range 2 * debounceTicks {
 		// A different length every time, so the change is seen even where the
 		// file system's modification times are coarse.
 		writeConfig(t, path, strings.Repeat("x", i+1))
-		time.Sleep(gap)
+		h.tick(t)
+		h.noReload(t, "reload fired during the burst; debounce did not reset the timer")
 	}
 
-	// Nothing should have been delivered yet (the timer kept resetting).
+	// The last write was seen; exactly debounceTicks quiet polls later the
+	// one reload arrives.
+	for range debounceTicks - 1 {
+		h.tick(t)
+		h.noReload(t, "reloaded before the file had been quiet for the debounce")
+	}
+	h.tick(t)
 	select {
-	case <-ch:
-		t.Fatal("reload fired during the burst; debounce did not reset the timer")
+	case <-h.ch:
 	default:
-	}
-
-	// After quiescence (> debounce), exactly one reload should arrive.
-	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
 		t.Fatal("expected one reload after the file went quiet; got none")
 	}
 
 	// And no second reload for the same settled state.
-	select {
-	case <-ch:
-		t.Fatal("unexpected second reload for an unchanged file")
-	case <-time.After(debounce + 100*time.Millisecond):
-	}
+	h.ticks(t, 2*debounceTicks)
+	h.noReload(t, "unexpected second reload for an unchanged file")
 }
 
 // TestConfigWatcher_MarkAppliedSuppressesReload verifies that after a change is
@@ -94,67 +169,43 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 // double-reload that was tearing down an active chat after the setup wizard.
 func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 	store, path := seedStore(t)
-
-	interval := 10 * time.Millisecond
-	debounce := 80 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
-	defer stop()
+	h := startWatcher(t, store, alerter.Nop{})
 
 	// Simulate a force-reload: the config changes and the out-of-band path
 	// applies it, then tells the watcher via markApplied().
 	writeConfig(t, path, "force-applied")
-	markApplied(configFileStateOf(path))
+	h.w.markApplied(configFileStateOf(path))
 
 	// The watcher must not deliver a reload for the already-applied change.
-	select {
-	case <-ch:
-		t.Fatal("watcher fired a redundant reload after markApplied()")
-	case <-time.After(debounce + 200*time.Millisecond):
-	}
+	h.ticks(t, 2*debounceTicks)
+	h.noReload(t, "watcher fired a redundant reload after markApplied()")
 
 	// A genuinely new change after markApplied still triggers a reload.
 	writeConfig(t, path, "later-edit")
-	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
-		t.Fatal("a new change after markApplied should still reload")
-	}
+	h.settle(t)
 }
 
 // TestConfigWatcher_MarkAppliedDropsQueuedReload: a forced reload can take
 // longer than the watcher's debounce, so the watcher may already have queued
 // a reload for the same change by the time markApplied is called. That reload
-// is dropped; it would apply the change a second time.
+// is dropped; it would apply the same change a second time.
 func TestConfigWatcher_MarkAppliedDropsQueuedReload(t *testing.T) {
 	store, path := seedStore(t)
-
-	interval := 10 * time.Millisecond
-	debounce := 50 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
-	defer stop()
-	// markApplied returns once the watcher has taken the seed file as its
-	// baseline, so the write below is a change it sees.
-	markApplied(configFileStateOf(path))
+	h := startWatcher(t, store, alerter.Nop{})
 
 	writeConfig(t, path, "force-applied")
 	applied := configFileStateOf(path) // what the forced reload reads
-	waitUntil(t, "the watcher to queue a reload", func() bool { return len(ch) == 1 })
-	markApplied(applied)
-	if len(ch) != 0 {
-		t.Fatal("the reload queued for the applied change is still queued after markApplied")
+	h.ticks(t, debounceTicks+1)
+	if len(h.ch) != 1 {
+		t.Fatal("the watcher did not queue a reload for the change")
 	}
-	select {
-	case <-ch:
-		t.Fatal("watcher fired a redundant reload after markApplied()")
-	case <-time.After(debounce + 200*time.Millisecond):
-	}
+	h.w.markApplied(applied)
+	h.noReload(t, "the reload queued for the applied change is still queued after markApplied")
+	h.ticks(t, 2*debounceTicks)
+	h.noReload(t, "watcher fired a redundant reload after markApplied()")
 
 	writeConfig(t, path, "later-edit")
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatal("a new change after markApplied should still reload")
-	}
+	h.settle(t)
 }
 
 // TestConfigWatcher_MarkAppliedKeepsLaterChange: a change written after the
@@ -162,38 +213,21 @@ func TestConfigWatcher_MarkAppliedDropsQueuedReload(t *testing.T) {
 // is still reloaded even though markApplied dropped the queued reload.
 func TestConfigWatcher_MarkAppliedKeepsLaterChange(t *testing.T) {
 	store, path := seedStore(t)
-
-	interval := 10 * time.Millisecond
-	debounce := 50 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
-	defer stop()
-	markApplied(configFileStateOf(path))
+	h := startWatcher(t, store, alerter.Nop{})
 
 	writeConfig(t, path, "force-applied")
 	applied := configFileStateOf(path)
 	writeConfig(t, path, "written while the forced reload ran, longer")
-	waitUntil(t, "the watcher to queue a reload", func() bool { return len(ch) == 1 })
-	markApplied(applied)
-
-	select {
-	case got := <-ch:
-		if got == nil {
-			t.Fatal("nil config reloaded")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the change written after the forced reload read the file was not reloaded")
+	h.ticks(t, debounceTicks+1)
+	if len(h.ch) != 1 {
+		t.Fatal("the watcher did not queue a reload for the change")
 	}
-}
+	h.w.markApplied(applied)
 
-// waitUntil polls cond until it holds, failing the test after ten seconds.
-func waitUntil(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
+	// The queued reload was dropped, but the file differs from what was
+	// marked applied, so it is seen as a change and reloaded.
+	if got := h.settle(t); got == nil {
+		t.Fatal("nil config reloaded")
 	}
 }
 
@@ -204,44 +238,34 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 // enabling an agent's tool suite silently required a restart.
 func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 	store, path := seedStore(t)
-
-	interval := 10 * time.Millisecond
-	debounce := 60 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, alerter.Nop{}, &modelRefAlerts{})
-	defer stop()
-
-	// The watcher takes the seed file as its baseline before the first real
-	// change, so A is reliably detected as new (markApplied returns once it has).
-	markApplied(configFileStateOf(path))
+	h := startWatcher(t, store, alerter.Nop{})
 
 	// First change A is delivered into the cap-1 buffer; we intentionally do NOT
-	// read it yet, simulating a consumer still busy with a prior reload. Poll until
-	// A is actually buffered so the next write is guaranteed to find a full buffer.
+	// read it yet, simulating a consumer still busy with a prior reload.
 	writeConfig(t, path, "A")
-	deadline := time.Now().Add(3 * time.Second)
-	for len(ch) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("first reload (A) was never delivered to the buffer")
-		}
-		time.Sleep(interval)
+	h.ticks(t, debounceTicks+1)
+	if len(h.ch) != 1 {
+		t.Fatal("first reload (A) was never delivered to the buffer")
 	}
 
-	// Second change B lands while the buffer is full → the send is dropped. With
-	// the fix the watcher keeps retrying instead of advancing the applied marker.
+	// Second change B settles while the buffer is full, so its send is
+	// dropped; the watcher keeps retrying on every poll instead of advancing
+	// the applied marker.
 	writeConfig(t, path, "BB")
-	time.Sleep(5 * debounce) // let the debounce elapse and the dropped send retry
+	h.ticks(t, 3*debounceTicks)
 
 	// Drain A (consumer catches up).
 	select {
-	case <-ch:
-	case <-time.After(time.Second):
+	case <-h.ch:
+	default:
 		t.Fatal("expected the first reload (A) to be buffered")
 	}
 
-	// B must still be delivered — not lost.
+	// B must still be delivered, at the next poll: not lost.
+	h.tick(t)
 	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
+	case <-h.ch:
+	default:
 		t.Fatal("change B was lost: watcher advanced past it without delivering")
 	}
 }
@@ -261,18 +285,6 @@ func danglingRefConfigJSON(marker string) string {
 	}`
 }
 
-// waitReload returns the next reloaded config, failing the test if none comes.
-func waitReload(t *testing.T, ch <-chan *config.Config) *config.Config {
-	t.Helper()
-	select {
-	case cfg := <-ch:
-		return cfg
-	case <-time.After(3 * time.Second):
-		t.Fatal("expected a reload; got none")
-		return nil
-	}
-}
-
 // aliceRemovedDesc is the alert description for Alice's removed reference.
 const aliceRemovedDesc = `Alice listed model "DeepSeek 4 Pro", which no longer exists; it was removed from Alice's model list and the next model in the list is now used. Nothing else to do — check Alice's models on the Agents page if you want a different one.`
 
@@ -286,16 +298,12 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	rec := testalerts.Install(t)
 	store, path := seedStore(t)
 
-	interval := 10 * time.Millisecond
-	debounce := 50 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
-	defer stop()
-	markApplied(configFileStateOf(path)) // the seed file is the watcher's baseline
+	h := startWatcher(t, store, rec)
 
 	if err := os.WriteFile(path, []byte(danglingRefConfigJSON("first")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := waitReload(t, ch)
+	cfg := h.settle(t)
 
 	if got := cfg.Agents.List[0].Models; !slices.Equal(got, []string{"good"}) {
 		t.Fatalf("runtime agent models = %q, want [good] (dangling entry removed, next model first)", got)
@@ -331,11 +339,8 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	}
 
 	// The watcher's own rewrite is not a change to apply.
-	select {
-	case <-ch:
-		t.Fatal("the watcher reloaded its own rewrite of the file")
-	case <-time.After(debounce + 300*time.Millisecond):
-	}
+	h.ticks(t, 2*debounceTicks)
+	h.noReload(t, "the watcher reloaded its own rewrite of the file")
 	if n := len(rec.Alerts()); n != 1 {
 		t.Fatalf("alerts after the rewrite settled = %d, want still 1", n)
 	}
@@ -356,7 +361,7 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg = waitReload(t, ch)
+	cfg = h.settle(t)
 	if !slices.Equal(cfg.Agents.List[0].Models, []string{"good"}) {
 		t.Fatalf("second reload models = %q, want [good]", cfg.Agents.List[0].Models)
 	}
@@ -372,7 +377,7 @@ func TestConfigWatcher_DanglingModelReferenceIsRemovedFromFile(t *testing.T) {
 	if err = os.WriteFile(path, []byte(danglingRefConfigJSON("third")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	waitReload(t, ch)
+	h.settle(t)
 	if n := len(rec.Alerts()); n != 2 {
 		t.Fatalf("alerts after the reference came back = %d, want 2", n)
 	}
@@ -385,22 +390,15 @@ func TestConfigWatcher_InvalidBindingStillRejected(t *testing.T) {
 	rec := testalerts.Install(t)
 	store, path := seedStore(t)
 
-	interval := 10 * time.Millisecond
-	debounce := 50 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(store, interval, debounce, false, rec, &modelRefAlerts{})
-	defer stop()
-	markApplied(configFileStateOf(path)) // the seed file is the watcher's baseline
+	h := startWatcher(t, store, rec)
 
 	body := `{"models":[],"agents":{"defaults":{"models":[]}},
 		"bindings":[{"agent_id":"main","default":true,"match":{"channel":""}}]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-ch:
-		t.Fatal("a config with an invalid default binding was applied")
-	case <-time.After(debounce + 300*time.Millisecond):
-	}
+	h.ticks(t, 2*debounceTicks)
+	h.noReload(t, "a config with an invalid default binding was applied")
 	got := rec.Alerts()
 	if len(got) != 1 || got[0].EventID != "config" || got[0].Title != "Config file invalid" {
 		t.Fatalf("alerts = %+v, want one Config file invalid alert", got)
