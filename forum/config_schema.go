@@ -73,7 +73,7 @@ var (
 		"Participant.clone":         {desc: "A temporary copy of this agent, deleted when the forum ends; must be in your allowed agents"},
 		"Participant.model":         {desc: "Without agent or clone: a fresh temporary agent with no tools on this model (forum_models lists them). With clone: optional override, one of that agent's models. Not allowed with agent"},
 		"Participant.system_prompt": {desc: "Fresh form only: the participant's whole system prompt"},
-		"Participant.mode":          {desc: "Fresh form only: memory (default) keeps its conversation with a new memory, context keeps its conversation without memory, single_shot sees only the current message", enum: enumOf(freshModeValues)},
+		"Participant.mode":          {desc: "Fresh form only: memory (default) keeps its conversation with a new memory, no_memory keeps its conversation without memory, single_shot sees only the current message", enum: enumOf(freshModeValues)},
 		"Participant.instructions":  {desc: "Private instructions for this participant only"},
 		"Participant.name":          {desc: "Name shown in the transcript; the participant ID when omitted"},
 

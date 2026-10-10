@@ -40,7 +40,7 @@ const svcConfigJSON = `{
   "participants": {
     "alice":  {"agent": "alice"},
     "bob":    {"clone": "bob", "model": "large", "name": "Bob"},
-    "editor": {"model": "default", "system_prompt": "Be brief.", "mode": "context"},
+    "editor": {"model": "default", "system_prompt": "Be brief.", "mode": "no_memory"},
     "spare":  {"model": "default"}
   },
   "limits": {"max_calls": 20, "max_duration_seconds": 600,

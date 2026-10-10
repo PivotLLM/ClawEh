@@ -36,7 +36,7 @@ cleaned up, whether the switch is on or off.
 |---|---|---|
 | An existing agent | `"agent": "bob"` | Bob himself: his conversation, memory and tools. Forum turns join his one conversation. |
 | A clone | `"clone": "bob"` | A temporary copy of Bob: his prompt, tools and models, a copy of his memory, a fresh conversation. Deleted when the forum ends. |
-| A fresh agent | `"model": "<name>"` | A temporary agent with no tools and no workspace files, on one of the launching agent's models (`forum_models` lists them). Optional `system_prompt` and `mode` (`memory`, `context`, `single_shot`). Deleted when the forum ends. |
+| A fresh agent | `"model": "<name>"` | A temporary agent with no tools and no workspace files, on one of the launching agent's models (`forum_models` lists them). Optional `system_prompt` and `mode` (`memory`, `no_memory`, `single_shot`). Deleted when the forum ends. |
 
 Alice can name Bob (as himself or as a clone) only when Bob is in her
 `subagents.allow_agents`. A human agent (see `human-agents.md`) can take part

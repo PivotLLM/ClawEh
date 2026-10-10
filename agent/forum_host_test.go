@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
@@ -46,7 +47,7 @@ const forumLaunchConfig = `{
   "brief": {"purpose": "Exercise the forum wiring.", "task": "Give one view."},
   "participants": {
     "bob": {"agent": "bob", "instructions": "Speak as yourself."},
-    "fresh": {"model": "alpha", "system_prompt": "` + freshPrompt + `", "mode": "context"}
+    "fresh": {"model": "alpha", "system_prompt": "` + freshPrompt + `", "mode": "no_memory"}
   },
   "limits": {"max_calls": 10, "max_duration_seconds": 600,
     "call_timeout_seconds": 60, "max_attempts_per_turn": 2, "max_parallel_calls": 1},
@@ -383,7 +384,7 @@ func forumSlowConfig(deadlineSeconds int) string {
   "version": 1, "name": "slow",
   "brief": {"purpose": "Exercise the forum wiring.", "task": "Give one view."},
   "participants": {
-    "fresh": {"model": "alpha", "system_prompt": "` + freshPrompt + `", "mode": "context"}
+    "fresh": {"model": "alpha", "system_prompt": "` + freshPrompt + `", "mode": "no_memory"}
   },
   "limits": {"max_calls": 10, "max_duration_seconds": ` + strconv.Itoa(deadlineSeconds) + `,
     "call_timeout_seconds": 60, "max_attempts_per_turn": 1, "max_parallel_calls": 1},
@@ -518,6 +519,41 @@ func TestForumHost_Agents(t *testing.T) {
 	}
 	if _, err := h.CreateClone(ctx, forum.CloneSpec{Source: "alice", Owner: "bob"}); err == nil {
 		t.Error("bob cloned alice without allow_agents")
+	}
+}
+
+// TestForumHost_FreshModes: each forum fresh mode creates a temporary agent
+// with the registry mode of the same name (forum cannot import agentreg).
+func TestForumHost_FreshModes(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	r := newForumRig(t, forumConfig(t, true, false), &forumModel{})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		mode forum.FreshMode
+		want agentreg.Mode
+	}{
+		{"", agentreg.ModeMemory},
+		{forum.FreshModeMemory, agentreg.ModeMemory},
+		{forum.FreshModeNoMemory, agentreg.ModeNoMemory},
+		{forum.FreshModeSingleShot, agentreg.ModeSingleShot},
+	} {
+		id, err := r.host.CreateFresh(ctx, forum.FreshSpec{Model: "alpha", Mode: tc.mode, Owner: "alice"})
+		if err != nil {
+			t.Fatalf("CreateFresh(%q): %v", tc.mode, err)
+		}
+		a, ok := r.al.GetRegistry().Get(id)
+		if !ok || a.Spec.Mode != tc.want {
+			t.Errorf("CreateFresh(%q): registry mode = %q, want %q", tc.mode, a.Spec.Mode, tc.want)
+		}
+		if tc.mode != "" && string(tc.mode) != string(tc.want) {
+			t.Errorf("forum mode %q differs from registry mode %q", tc.mode, tc.want)
+		}
+		if err := r.host.Delete(ctx, "alice", id); err != nil {
+			t.Errorf("Delete(%s): %v", id, err)
+		}
+	}
+	if _, err := r.host.CreateFresh(ctx, forum.FreshSpec{Model: "alpha", Mode: "context", Owner: "alice"}); err == nil {
+		t.Error(`CreateFresh accepted mode "context"`)
 	}
 }
 

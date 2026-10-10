@@ -20,7 +20,7 @@ Each entry of `participants` takes one of three forms:
   a fresh conversation), deleted when the forum ends.
 - `{"model": "<name>"}`: a fresh temporary agent with no tools, on one of
   your models (`forum_models` lists them). Optional `system_prompt` and
-  `mode` (`memory`, `context`, `single_shot`).
+  `mode` (`memory`, `no_memory`, `single_shot`).
 
 Any entry may add private `instructions` and a display `name`. You can name
 an agent (as itself or as a clone) only if it is in your allowed agents.

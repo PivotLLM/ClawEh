@@ -352,7 +352,7 @@ func (h *ForumHost) CreateFresh(_ context.Context, spec forum.FreshSpec) (string
 	}
 	switch spec.Mode {
 	case "", forum.FreshModeMemory:
-	case forum.FreshModeContext:
+	case forum.FreshModeNoMemory:
 		o.NoMemory = true
 	case forum.FreshModeSingleShot:
 		o.SingleShot = true

@@ -60,7 +60,7 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"no form", func(c *Config) { c.Participants["alice"] = Participant{Instructions: "x"} }, "participants.alice", []string{"exactly one of agent, clone or model"}},
 		{"system_prompt on agent", func(c *Config) { c.Participants["alice"] = Participant{Agent: "alice", SystemPrompt: "x"} }, "participants.alice.system_prompt", []string{"fresh"}},
 		{"system_prompt on clone", func(c *Config) { c.Participants["bob"] = Participant{Clone: "bob", SystemPrompt: "x"} }, "participants.bob.system_prompt", []string{"fresh"}},
-		{"mode on clone", func(c *Config) { c.Participants["bob"] = Participant{Clone: "bob", Mode: FreshModeContext} }, "participants.bob.mode", []string{"fresh"}},
+		{"mode on clone", func(c *Config) { c.Participants["bob"] = Participant{Clone: "bob", Mode: FreshModeNoMemory} }, "participants.bob.mode", []string{"fresh"}},
 		{"unknown mode", func(c *Config) { c.Participants["chair"] = Participant{Model: "default", Mode: "forever"} }, "participants.chair.mode", []string{`"forever"`, "single_shot"}},
 		{"participant IDs differing in case", func(c *Config) { c.Participants["Alice"] = Participant{Model: "default"} }, "participants.alice", []string{`"Alice"`, `"alice"`, "letter case"}},
 		{"one real agent twice", func(c *Config) { c.Participants["editor"] = Participant{Agent: "alice"} }, "participants.editor.agent", []string{`"alice"`, `"editor"`, "one seat"}},
@@ -248,7 +248,7 @@ func TestValidateStaticAccepts(t *testing.T) {
 	}{
 		{"fresh modes", func(c *Config) {
 			c.Participants["chair"] = Participant{Model: "default", Mode: FreshModeSingleShot, SystemPrompt: "You chair."}
-			c.Participants["editor"] = Participant{Model: "default", Mode: FreshModeContext}
+			c.Participants["editor"] = Participant{Model: "default", Mode: FreshModeNoMemory}
 		}},
 		{"clone with a model and a name", func(c *Config) {
 			c.Participants["bob"] = Participant{Clone: "bob", Model: "large", Name: "Bob (clone)"}

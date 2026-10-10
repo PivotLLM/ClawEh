@@ -51,13 +51,13 @@ func TestSvcLaunchWritesTheForum(t *testing.T) {
 		t.Errorf("bob = %+v", bob)
 	}
 	editor := parts.Participants["editor"]
-	if editor.Form != FormFresh || !editor.Created || editor.Model != "default" || editor.Mode != FreshModeContext {
+	if editor.Form != FormFresh || !editor.Created || editor.Model != "default" || editor.Mode != FreshModeNoMemory {
 		t.Errorf("editor = %+v", editor)
 	}
 	if len(e.agents.clones) != 1 || e.agents.clones[0] != (CloneSpec{Source: "bob", Model: "large", Owner: "launcher"}) {
 		t.Errorf("clones = %+v", e.agents.clones)
 	}
-	wantFresh := FreshSpec{Model: "default", SystemPrompt: "Be brief.", Mode: FreshModeContext, Owner: "launcher"}
+	wantFresh := FreshSpec{Model: "default", SystemPrompt: "Be brief.", Mode: FreshModeNoMemory, Owner: "launcher"}
 	if len(e.agents.freshes) != 1 || e.agents.freshes[0] != wantFresh {
 		t.Errorf("freshes = %+v", e.agents.freshes)
 	}

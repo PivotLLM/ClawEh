@@ -339,7 +339,7 @@ type DirectedMessage struct {
 var (
 	formatValues           = []Format{FormatText, FormatMarkdown, FormatJSON}
 	deliveryValues         = []Delivery{DeliveryAfterRound, DeliveryPerTurn}
-	freshModeValues        = []FreshMode{FreshModeMemory, FreshModeContext, FreshModeSingleShot}
+	freshModeValues        = []FreshMode{FreshModeMemory, FreshModeNoMemory, FreshModeSingleShot}
 	selectValues           = []Select{SelectAll, SelectLastPerParticipant}
 	viewValues             = []View{ViewPublished, ViewFull}
 	distributeValues       = []Distribute{DistributeAll, DistributeSameParticipant, DistributeRandom}

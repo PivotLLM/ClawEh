@@ -97,7 +97,7 @@ type FreshMode string
 // Fresh participant modes.
 const (
 	FreshModeMemory     FreshMode = "memory"      // default: keeps its conversation, new empty cognitive memory
-	FreshModeContext    FreshMode = "context"     // keeps its conversation, no memory
+	FreshModeNoMemory   FreshMode = "no_memory"   // keeps its conversation, no memory
 	FreshModeSingleShot FreshMode = "single_shot" // no memory, blank context on every message
 )
 
