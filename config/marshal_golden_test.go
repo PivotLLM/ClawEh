@@ -36,8 +36,8 @@ func TestConfigMarshalGolden(t *testing.T) {
 			}
 			path := filepath.Join("testdata", tc.golden)
 			if os.Getenv("UPDATE_GOLDEN") == "1" {
-				if err := os.WriteFile(path, got, 0o644); err != nil {
-					t.Fatalf("write golden: %v", err)
+				if werr := os.WriteFile(path, got, 0o644); werr != nil {
+					t.Fatalf("write golden: %v", werr)
 				}
 				return
 			}
@@ -52,7 +52,7 @@ func TestConfigMarshalGolden(t *testing.T) {
 	}
 }
 
-var rawMessageType = reflect.TypeOf(json.RawMessage(nil))
+var rawMessageType = reflect.TypeFor[json.RawMessage]()
 
 // fillValue sets every exported, settable field below v to a non-zero value.
 // A type already being filled on the current path is left zero, which stops
@@ -106,5 +106,8 @@ func fillValue(v reflect.Value, seen map[reflect.Type]int) {
 				fillValue(v.Field(i), seen)
 			}
 		}
+	default:
+		// Arrays, channels, funcs and complex numbers do not occur in the
+		// config; they stay zero.
 	}
 }
