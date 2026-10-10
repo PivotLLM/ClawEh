@@ -170,24 +170,10 @@ func newAgentInstance(
 	workspace := spec.Workspace
 	stateDir := spec.StateDir
 
-	humanModel, human := cfg.HumanModelOf(agentCfg)
-	if human {
-		// A person's conversation is never given to a model, so a human agent
-		// has no cognitive memory to observe into or consolidate.
-		c := *agentCfg
-		off := false
-		c.Cogmem = &off
-		agentCfg = &c
-	}
+	humanModel, agentCfg := humanAgentConfig(cfg, agentCfg)
 
-	if spec.Fresh {
-		// A fresh temporary agent's prompt is entirely its creator's: its
-		// workspace is never seeded with prompt files or skills.
-		if err := os.MkdirAll(workspace, 0o700); err != nil {
-			return nil, fmt.Errorf("create workspace %s: %w", workspace, err)
-		}
-	} else {
-		agentws.Populate(workspace)
+	if err := prepareWorkspace(spec); err != nil {
+		return nil, err
 	}
 
 	models := resolveAgentModels(agentCfg, defaults)
@@ -198,19 +184,124 @@ func newAgentInstance(
 		fallbacks = models[1:]
 	}
 
-	restrict := defaults.RestrictToWorkspace
-	_ = restrict // restrict is available to providers via cfg and defaults
+	migrateCognitiveMemory(spec, agentCfg)
+	sessions, err := initSessionStore(filepath.Join(stateDir, sessionsDirName))
+	if err != nil {
+		return nil, err
+	}
 
-	toolsRegistry := tools.NewToolRegistry()
+	agentID := routing.DefaultAgentID
+	agentName := ""
+	var subagents *config.SubagentsConfig
+	var skillsFilter []string
+	if agentCfg != nil {
+		agentID = agentCfg.ID
+		agentName = agentCfg.Name
+		subagents = agentCfg.Subagents
+		skillsFilter = agentCfg.Skills
+	}
+	if spec.Fresh {
+		skillsFilter = []string{} // no skills: the prompt is the creator's
+	}
+	limits := resolveRunLimits(defaults, agentCfg, cfg, model)
 
-	sessionsDir := filepath.Join(stateDir, sessionsDirName)
+	candidates := resolveAgentCandidates(cfg, models, agentID)
 
-	// Bring this agent's cognitive memory to the current layout and schema now,
-	// rather than leaving it to be upgraded whenever it next happens to be
-	// opened. Lazy migration spreads a schema change across hours of ordinary
-	// use with no point an operator can call it done, and leaves a store
-	// belonging to an agent nobody talks to that day on the old schema
-	// indefinitely.
+	// Config is never nil after construction: a nil config is equivalent to
+	// an empty allowlist (deny all tools), so callers need not guard on nil.
+	if agentCfg == nil {
+		agentCfg = &config.AgentConfig{Tools: []string{}}
+	}
+	if spec.ID == "" {
+		spec.ID, spec.Config = agentID, agentCfg
+	}
+
+	// The tool registry starts empty. Tools are registered exactly once, after
+	// construction by AgentLoop.agentBuilder (and again on config reload), so
+	// the full runtime deps (session closures, the sub-agent spawner, the
+	// per-agent message tool) are present.
+	return &AgentInstance{
+		ID:             agentID,
+		Name:           agentName,
+		Model:          model,
+		Fallbacks:      fallbacks,
+		Workspace:      workspace,
+		StateDir:       stateDir,
+		Spec:           spec,
+		MaxIterations:  limits.maxIterations,
+		MaxTokens:      limits.maxTokens,
+		Temperature:    limits.temperature,
+		ThinkingLevel:  limits.thinkingLevel,
+		NoTools:        limits.noTools,
+		ContextWindow:  limits.contextWindow,
+		CompressOpts:   agentCompressOptions(agentCfg, defaults),
+		Provider:       provider,
+		Sessions:       sessions,
+		ContextBuilder: newAgentContextBuilder(spec, agentCfg, cfg),
+		Tools:          tools.NewToolRegistry(),
+		Subagents:      subagents,
+		SkillsFilter:   skillsFilter,
+		Candidates:     candidates,
+		Config:         agentCfg,
+		HumanModel:     humanModel,
+	}, nil
+}
+
+// humanAgentConfig returns the human model of a human agent and the config
+// it runs with. A person's conversation is never given to a model, so a
+// human agent has no cognitive memory to observe into or consolidate.
+func humanAgentConfig(cfg *config.Config, agentCfg *config.AgentConfig) (string, *config.AgentConfig) {
+	humanModel, human := cfg.HumanModelOf(agentCfg)
+	if !human {
+		return humanModel, agentCfg
+	}
+	c := *agentCfg
+	off := false
+	c.Cogmem = &off
+	return humanModel, &c
+}
+
+// resolveAgentCandidates resolves the agent's models into its fallback
+// chain; an empty chain is logged as an error.
+func resolveAgentCandidates(cfg *config.Config, models []string, agentID string) []providers.FallbackCandidate {
+	candidates := providers.ResolveCandidatesWithLookup(providers.ModelConfig{Models: models}, "", modelListLookup(cfg))
+	if len(candidates) == 0 {
+		var primary string
+		var fallbacks []string
+		if len(models) > 0 {
+			primary, fallbacks = models[0], models[1:]
+		}
+		logger.ErrorCF("agent", "agent fallback chain is empty after resolving aliases",
+			map[string]any{
+				"agent_id":  agentID,
+				"primary":   primary,
+				"fallbacks": fallbacks,
+			})
+	}
+	return candidates
+}
+
+// prepareWorkspace makes the agent's workspace ready: seeded with the prompt
+// files and skills, except for a fresh temporary agent, whose prompt is
+// entirely its creator's and whose workspace is only created.
+func prepareWorkspace(spec agentreg.Spec) error {
+	if !spec.Fresh {
+		agentws.Populate(spec.Workspace)
+		return nil
+	}
+	if err := os.MkdirAll(spec.Workspace, 0o700); err != nil {
+		return fmt.Errorf("create workspace %s: %w", spec.Workspace, err)
+	}
+	return nil
+}
+
+// migrateCognitiveMemory brings the agent's cognitive memory to the current
+// layout and schema now, rather than whenever it next happens to be opened.
+// Lazy migration spreads a schema change across hours of ordinary use with
+// no point an operator can call it done, and leaves the store of an agent
+// nobody talks to that day on the old schema indefinitely. A fresh agent
+// without memory never gets a memory directory.
+func migrateCognitiveMemory(spec agentreg.Spec, agentCfg *config.AgentConfig) {
 	migrateID := routing.DefaultAgentID
 	if agentCfg != nil && agentCfg.ID != "" {
 		migrateID = agentCfg.ID
@@ -219,24 +310,15 @@ func newAgentInstance(
 		migrateID = spec.Label()
 	}
 	if !spec.Fresh || agentCfg.CognitiveMemoryEnabled() {
-		// A fresh agent without memory never gets a memory directory.
-		cogmemhost.Migrate(migrateID, stateDir)
+		cogmemhost.Migrate(migrateID, spec.StateDir)
 	}
+}
 
-	sessions, err := initSessionStore(sessionsDir)
-	if err != nil {
-		return nil, err
-	}
-
-	// The registry starts empty. Tools are registered exactly once — after
-	// construction by AgentLoop.agentBuilder, and again on config reload —
-	// so the full runtime deps (session closures, the sub-agent spawner, and the
-	// per-agent message tool) are present. Registering here too would double-build
-	// every tool and overwrite it, so we intentionally don't.
-
-	// Progressive discovery is a single global switch; AgentLoop also sets it during
-	// tool registration (and DiscoveryActive), so this just seeds the context rule.
-	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
+// newAgentContextBuilder builds the agent's system prompt builder.
+// Progressive discovery is a single global switch; AgentLoop also sets it
+// during tool registration, so this only seeds the context rule.
+func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cfg *config.Config) *ContextBuilder {
+	contextBuilder := NewContextBuilder(spec.Workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
 	switch {
 	case spec.Fresh:
 		// The whole system prompt is the creator's (or the default): no
@@ -257,139 +339,112 @@ func newAgentInstance(
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
 	if agentCfg != nil {
-		if mounts := agentCfg.EffectiveMounts(workspace); len(mounts) > 0 {
+		if mounts := agentCfg.EffectiveMounts(spec.Workspace); len(mounts) > 0 {
 			contextBuilder = contextBuilder.WithMounts(mounts)
 		}
 		contextBuilder = contextBuilder.WithMaestro(agentCfg.MaestroEnabled())
 	}
+	return contextBuilder
+}
 
-	agentID := routing.DefaultAgentID
-	agentName := ""
-	var subagents *config.SubagentsConfig
-	var skillsFilter []string
+// runLimits are the per-request limits an agent runs with.
+type runLimits struct {
+	maxIterations int
+	maxTokens     int
+	temperature   float64
+	contextWindow int
+	thinkingLevel ThinkingLevel
+	noTools       bool
+}
 
-	if agentCfg != nil {
-		agentID = agentCfg.ID
-		agentName = agentCfg.Name
-		subagents = agentCfg.Subagents
-		skillsFilter = agentCfg.Skills
+// resolveRunLimits resolves the agent's limits: the model's settings over
+// the agent's over the defaults, with built-in fallbacks (20 iterations,
+// 8192 tokens, a 128000-token context window).
+func resolveRunLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConfig, cfg *config.Config, model string) runLimits {
+	l := runLimits{
+		maxIterations: defaults.MaxToolIterations,
+		maxTokens:     defaults.MaxTokens,
+		temperature:   global.DefaultTemperature,
+		contextWindow: defaults.ContextWindow,
 	}
-
-	if spec.Fresh {
-		skillsFilter = []string{} // no skills: the prompt is the creator's
+	if l.maxIterations == 0 {
+		l.maxIterations = 20
 	}
-
-	maxIter := defaults.MaxToolIterations
-	if maxIter == 0 {
-		maxIter = 20
+	if l.maxTokens == 0 {
+		l.maxTokens = 8192
 	}
-
-	maxTokens := defaults.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 8192
-	}
-
-	temperature := global.DefaultTemperature
 	if defaults.Temperature != nil {
-		temperature = *defaults.Temperature
+		l.temperature = *defaults.Temperature
 	}
 	if agentCfg != nil && agentCfg.Temperature != nil {
-		temperature = *agentCfg.Temperature
+		l.temperature = *agentCfg.Temperature
 	}
-
-	// Resolve the effective context window: prefer model-level override, fall back to
-	// agent defaults, then a safe fallback of 128000.
-	contextWindow := defaults.ContextWindow
-	if contextWindow == 0 {
-		contextWindow = 128000
+	if l.contextWindow == 0 {
+		l.contextWindow = 128000
 	}
 
 	var thinkingLevelStr string
-	var noTools bool
 	if mc, err := cfg.GetModelConfig(model); err == nil {
 		thinkingLevelStr = mc.ThinkingLevel
-		noTools = mc.NoTools
+		l.noTools = mc.NoTools
 		if mc.ContextWindow > 0 {
-			contextWindow = mc.ContextWindow
+			l.contextWindow = mc.ContextWindow
 		}
 		if mc.MaxTokens > 0 {
-			maxTokens = mc.MaxTokens
+			l.maxTokens = mc.MaxTokens
 		}
 	}
-	thinkingLevel := parseThinkingLevel(thinkingLevelStr)
+	l.thinkingLevel = parseThinkingLevel(thinkingLevelStr)
+	return l
+}
 
-	// Helper: resolve per-agent pointer or defaults int value.
-	// For percent fields: 0 = not configured (use llmcontext default).
-	// For count fields: 0 = explicitly disabled (valid to pass).
-	resolveIntOpt := resolveAgentIntOpt
+// agentCompressOptions are the context engine options for the agent: the
+// compaction policy (the defaults block overlaid by the per-agent block,
+// only the fields the merged config sets), the archive and summary limits,
+// and the per-turn eviction policy (built-in defaults, overlaid by the
+// defaults block, overlaid by the per-agent block, field by field).
+func agentCompressOptions(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) []ctxengine.Option {
+	compressOpts := compressionOptions(agentCfg.EffectiveCompression(defaults.Compression))
 
-	var compressOpts []ctxengine.Option
-
-	// Compaction policy: defaults block overlaid by the per-agent block, then
-	// mapped to llmcontext options. Only fields the merged config actually sets
-	// produce an option, so anything left unset keeps the llmcontext default.
-	compressOpts = append(compressOpts,
-		compressionOptions(agentCfg.EffectiveCompression(defaults.Compression))...)
-
-	if v, ok := resolveIntOpt(func() *int {
+	// For count fields 0 means explicitly disabled, which is valid to pass.
+	agentInt := func(get func(*config.AgentConfig) *int) *int {
 		if agentCfg != nil {
-			return agentCfg.ArchiveMessageCount
+			return get(agentCfg)
 		}
 		return nil
-	}(), defaults.ArchiveMessageCount); ok {
-		compressOpts = append(compressOpts, ctxengine.WithArchiveMessageCount(v))
 	}
-	if v, ok := resolveIntOpt(func() *int {
-		if agentCfg != nil {
-			return agentCfg.ArchiveDays
+	for _, o := range []struct {
+		agent    *int
+		defaults int
+		option   func(int) ctxengine.Option
+	}{
+		{agentInt(func(c *config.AgentConfig) *int { return c.ArchiveMessageCount }), defaults.ArchiveMessageCount, ctxengine.WithArchiveMessageCount},
+		{agentInt(func(c *config.AgentConfig) *int { return c.ArchiveDays }), defaults.ArchiveDays, ctxengine.WithArchiveDays},
+		{agentInt(func(c *config.AgentConfig) *int { return c.SummaryMaxCount }), defaults.SummaryMaxCount, ctxengine.WithSummaryMaxCount},
+		{agentInt(func(c *config.AgentConfig) *int { return c.SummaryRetentionDays }), defaults.SummaryRetentionDays, ctxengine.WithSummaryRetentionDays},
+		{agentInt(func(c *config.AgentConfig) *int { return c.ArchiveContentMaxBytes }), defaults.ArchiveContentMaxBytes, ctxengine.WithArchiveContentMaxBytes},
+	} {
+		if v, ok := resolveAgentIntOpt(o.agent, o.defaults); ok {
+			compressOpts = append(compressOpts, o.option(v))
 		}
-		return nil
-	}(), defaults.ArchiveDays); ok {
-		compressOpts = append(compressOpts, ctxengine.WithArchiveDays(v))
-	}
-	if v, ok := resolveIntOpt(func() *int {
-		if agentCfg != nil {
-			return agentCfg.SummaryMaxCount
-		}
-		return nil
-	}(), defaults.SummaryMaxCount); ok {
-		compressOpts = append(compressOpts, ctxengine.WithSummaryMaxCount(v))
-	}
-	if v, ok := resolveIntOpt(func() *int {
-		if agentCfg != nil {
-			return agentCfg.SummaryRetentionDays
-		}
-		return nil
-	}(), defaults.SummaryRetentionDays); ok {
-		compressOpts = append(compressOpts, ctxengine.WithSummaryRetentionDays(v))
-	}
-	if v, ok := resolveIntOpt(func() *int {
-		if agentCfg != nil {
-			return agentCfg.ArchiveContentMaxBytes
-		}
-		return nil
-	}(), defaults.ArchiveContentMaxBytes); ok {
-		compressOpts = append(compressOpts, ctxengine.WithArchiveContentMaxBytes(v))
 	}
 
-	// Resolve the per-turn eviction policy: built-in defaults, overlaid by the
-	// defaults config block, overlaid by the per-agent block (field by field).
 	evPolicy := ctxengine.DefaultEvictionPolicy()
 	applyEvictionConfig(&evPolicy, defaults.ContextEviction)
 	if agentCfg != nil {
 		applyEvictionConfig(&evPolicy, agentCfg.ContextEviction)
 	}
-	compressOpts = append(compressOpts, ctxengine.WithEvictionPolicy(evPolicy))
+	return append(compressOpts, ctxengine.WithEvictionPolicy(evPolicy))
+}
 
-	// Resolve fallback candidates
-	modelCfg := providers.ModelConfig{Models: models}
-	resolveFromModelList := func(raw string) (alias, model, provider string, ok bool) {
+// modelListLookup resolves a model reference for the fallback chain: by
+// model_name alias first, then by raw model id among the enabled models.
+func modelListLookup(cfg *config.Config) func(raw string) (alias, model, provider string, ok bool) {
+	return func(raw string) (alias, model, provider string, ok bool) {
 		raw = strings.TrimSpace(raw)
 		if raw == "" || cfg == nil {
 			return "", "", "", false
 		}
-
-		// Match by model_name alias first, then by raw model id.
 		if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
 			return mc.ModelName, mc.Model, mc.Provider, true
 		}
@@ -401,56 +456,8 @@ func newAgentInstance(
 				return cfg.Models[i].ModelName, cfg.Models[i].Model, cfg.Models[i].Provider, true
 			}
 		}
-
 		return "", "", "", false
 	}
-
-	candidates := providers.ResolveCandidatesWithLookup(modelCfg, "", resolveFromModelList)
-	if len(candidates) == 0 {
-		logger.ErrorCF("agent", "agent fallback chain is empty after resolving aliases",
-			map[string]any{
-				"agent_id":  agentID,
-				"primary":   model,
-				"fallbacks": fallbacks,
-			})
-	}
-
-	// Normalize agentCfg to non-nil so Config is never nil after construction.
-	// A nil config is equivalent to an empty allowlist (deny all tools).
-	// IsToolAllowed() is already nil-safe, but callers should not need to guard on nil.
-	if agentCfg == nil {
-		agentCfg = &config.AgentConfig{Tools: []string{}}
-	}
-
-	if spec.ID == "" {
-		spec.ID, spec.Config = agentID, agentCfg
-	}
-
-	return &AgentInstance{
-		ID:             agentID,
-		Name:           agentName,
-		Model:          model,
-		Fallbacks:      fallbacks,
-		Workspace:      workspace,
-		StateDir:       stateDir,
-		Spec:           spec,
-		MaxIterations:  maxIter,
-		MaxTokens:      maxTokens,
-		Temperature:    temperature,
-		ThinkingLevel:  thinkingLevel,
-		NoTools:        noTools,
-		ContextWindow:  contextWindow,
-		CompressOpts:   compressOpts,
-		Provider:       provider,
-		Sessions:       sessions,
-		ContextBuilder: contextBuilder,
-		Tools:          toolsRegistry,
-		Subagents:      subagents,
-		SkillsFilter:   skillsFilter,
-		Candidates:     candidates,
-		Config:         agentCfg,
-		HumanModel:     humanModel,
-	}, nil
 }
 
 // resolveAgentModels resolves the ordered model list for an agent: the agent's

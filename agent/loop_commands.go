@@ -72,6 +72,9 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
+// buildCommandsRuntime is the Runtime the commands of msg run with: what
+// every command may use, and the hooks bound to agent and its session when
+// there is an agent.
 func (al *AgentLoop) buildCommandsRuntime(
 	ctx context.Context, agent *AgentInstance, opts *processOptions, msg bus.InboundMessage,
 ) *commands.Runtime {
@@ -97,17 +100,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			if agent == nil || opts == nil {
 				return 0, time.Time{}, time.Time{}
 			}
-			path := archiveDBPath(agent.StateDir, opts.SessionKey)
-			store, err := memory.OpenReadOnly(path)
-			if err != nil {
-				return 0, time.Time{}, time.Time{}
-			}
-			defer utils.CloseQuietly(store)
-			count, first, last, statsErr := store.Stats()
-			if statsErr != nil {
-				logger.WarnCF("agent", "Failed to read archive stats", map[string]any{"path": path, "error": statsErr.Error()})
-			}
-			return count, first, last
+			return archiveStats(archiveDBPath(agent.StateDir, opts.SessionKey))
 		},
 		GetMemoryStatus: func() string {
 			if agent == nil || opts == nil {
@@ -143,246 +136,299 @@ func (al *AgentLoop) buildCommandsRuntime(
 	if agent != nil {
 		rt.AgentName = agent.DisplayName()
 		rt.GetContextWindow = func() int { return agent.ContextWindow }
-		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
-			// Resolve the model that is actually active for THIS session (the
-			// /model selection), not just the agent's first candidate, so /status
-			// and /show model reflect the current choice.
-			active := agent.Model
-			if len(agent.Candidates) > 0 {
-				idx := 0
-				if opts != nil {
-					idx = al.getActiveModelIndex(agent, opts.SessionKey)
-				}
-				if idx >= 0 && idx < len(agent.Candidates) {
-					if a := agent.Candidates[idx].Alias; a != "" {
-						active = a
-					} else if m := agent.Candidates[idx].Model; m != "" {
-						active = m
-					}
-				}
-			}
-			// Resolve the configured model so the provider name, wire protocol,
-			// and base URL come from the model's named provider.
-			name = active
-			if mc, err := cfg.GetModelConfig(active); err == nil && mc != nil {
-				if mc.ModelName != "" {
-					name = mc.ModelName
-				} else if mc.Model != "" {
-					name = mc.Model
-				}
-				if prov, perr := cfg.GetProvider(mc.Provider); perr == nil && prov != nil {
-					provider = prov.Name
-					protocol = prov.Protocol
-					apiBase = prov.BaseURL
-				}
-			}
-			return name, provider, protocol, apiBase
-		}
-		rt.GetAgentModels = func() ([]commands.ModelEntry, int) {
-			entries := make([]commands.ModelEntry, 0, len(agent.Candidates))
-			for _, c := range agent.Candidates {
-				name := c.Alias
-				if name == "" {
-					name = c.Model
-				}
-				entries = append(entries, commands.ModelEntry{Name: name, Provider: c.Provider})
-			}
-			active := 0
-			if opts != nil {
-				active = al.getActiveModelIndex(agent, opts.SessionKey)
-			}
-			return entries, active
-		}
-		rt.SetActiveModel = func(idx int) (string, error) {
-			if opts == nil {
-				return "", errors.New("process options not available")
-			}
-			if err := al.setActiveModelIndex(agent, opts.SessionKey, idx); err != nil {
-				return "", err
-			}
-			name := agent.Candidates[idx].Alias
-			if name == "" {
-				name = agent.Candidates[idx].Model
-			}
-			return name, nil
-		}
-
-		rt.GetExposeReasoning = func() bool {
-			if opts == nil {
-				return false
-			}
-			return al.getExposeReasoning(agent, opts.SessionKey)
-		}
-		rt.SetExposeReasoning = func(on bool) {
-			if opts == nil {
-				return
-			}
-			al.setExposeReasoning(agent, opts.SessionKey, on)
-		}
-
-		rt.GetShowToolActivity = func() bool {
-			if opts == nil {
-				return false
-			}
-			return al.getShowToolActivity(agent, opts.SessionKey)
-		}
-		rt.SetShowToolActivity = func(on bool) {
-			if opts == nil {
-				return
-			}
-			al.setShowToolActivity(agent, opts.SessionKey, on)
-		}
-
-		rt.ClearHistory = func() error { //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
-			if opts == nil {
-				return errors.New("process options not available")
-			}
-			if agent.Sessions == nil {
-				return errors.New("sessions not initialized for agent")
-			}
-			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
-			defer releaseCM()
-			if err := cm.Reset(context.Background()); err != nil {
-				logger.WarnCF("agent", "clear: Reset failed", map[string]any{
-					"session_key": opts.SessionKey,
-					"error":       err.Error(),
-				})
-				return err
-			}
-			// Issue a fresh session token; the LLM receives it in the next
-			// dispatch's system prompt.
-			al.reissueSessionToken(agent, opts.SessionKey)
-			// Notify the agent that its context was cleared, so it can re-orient
-			// (the same notice an agent-initiated clear delivers, minus a handoff).
-			// The reset already happened above, so no reset metadata is set.
-			notice := bus.InboundMessage{
-				Channel:    msg.Channel,
-				ChatID:     msg.ChatID,
-				SenderID:   "system",
-				SessionKey: opts.SessionKey,
-				Content:    wrapClearNotice(""),
-				Peer:       msg.Peer,
-				Internal:   true,
-				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
-			}
-			if agent.HumanModel != "" {
-				return nil // a person gets no notice: it would be posted to them
-			}
-			go func() {
-				pubCtx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-				defer cancel()
-				if err := al.bus.PublishInbound(pubCtx, notice); err != nil {
-					logger.WarnCF("agent", "clear: failed to publish clear notice", map[string]any{
-						"session_key": opts.SessionKey, "error": err.Error(),
-					})
-				}
-			}()
-			return nil
-		}
-		rt.CompactHistory = func(ctx context.Context) (string, error) {
-			if opts == nil {
-				return "", errors.New("process options not available")
-			}
-			cm, releaseCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
-			defer releaseCM()
-			err := cm.Compact(ctx)
-			report := ""
-			if r := cm.LastCompactionReport(); r != nil {
-				report = r.String()
-			}
-			return report, err
-		}
-		rt.ResetCooldown = func() {
-			if al.fallback != nil {
-				al.fallback.Reset()
-			}
-		}
-		rt.ClearCooldown = func(provider, model string) bool {
-			if al.fallback == nil {
-				return false
-			}
-			return al.fallback.Clear(provider, model)
-		}
-		rt.ListCooldowns = func() []commands.CooldownEntry {
-			if al.fallback == nil {
-				return nil
-			}
-			snap := al.fallback.CooldownSnapshot()
-			out := make([]commands.CooldownEntry, 0, len(snap))
-			for _, s := range snap {
-				out = append(out, commands.CooldownEntry{
-					Provider: s.Provider,
-					Model:    s.Model,
-					Reason:   string(s.Reason),
-					Since:    s.Since,
-					Until:    s.Until,
-				})
-			}
-			return out
-		}
-		// Token-quota hooks scope to THIS agent by closing over its normalized id
-		// (the same id the named-token store and message API key on).
-		quotaAgentID := routing.NormalizeAgentID(agent.ID)
-		rt.ListTokenQuota = func() []commands.TokenQuotaEntry {
-			snap := al.MessageTokenQuota(quotaAgentID)
-			out := make([]commands.TokenQuotaEntry, 0, len(snap))
-			for _, q := range snap {
-				out = append(out, commands.TokenQuotaEntry{
-					Name:           q.Name,
-					RatePerMin:     q.RatePerMin,
-					BlockMinutes:   q.BlockMinutes,
-					HitsInWindow:   q.HitsInWindow,
-					Blocked:        q.Blocked,
-					BlockRemaining: q.BlockRemaining,
-				})
-			}
-			return out
-		}
-		rt.ResetTokenQuota = func(name string) int {
-			return al.ResetMessageTokenBlocks(quotaAgentID, name)
-		}
-		if opts != nil {
-			sessionKey := opts.SessionKey
-			rt.CancelPending = func() (bool, int) {
-				return al.takeCancelResult(sessionKey)
-			}
-		}
-		rt.RetriggerLastMessage = func(ctx context.Context) error {
-			if agent == nil || agent.Sessions == nil || opts == nil {
-				return errors.New("session not available")
-			}
-			history := agent.Sessions.GetHistory(opts.SessionKey)
-			lastUserMsg := ""
-			for _, h := range slices.Backward(history) {
-				if h.Role == "user" && h.Content != "" {
-					lastUserMsg = h.Content
-					break
-				}
-			}
-			if lastUserMsg == "" {
-				return errors.New("no previous message to retry")
-			}
-			retrigger := bus.InboundMessage{
-				Channel:  msg.Channel,
-				ChatID:   msg.ChatID,
-				SenderID: msg.SenderID,
-				Content:  lastUserMsg,
-				Peer:     msg.Peer,
-				IsRetry:  true,
-				Internal: true,
-			}
-			go func() {
-				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
-				defer cancel()
-				if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {
-					logger.WarnCF("agent", "Failed to retrigger message after /retry",
-						map[string]any{"error": err.Error()})
-				}
-			}()
-			return nil
-		}
+		al.addModelHooks(rt, cfg, agent, opts)
+		al.addSessionToggleHooks(rt, agent, opts)
+		al.addHistoryHooks(rt, agent, opts, msg) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
+		al.addCooldownHooks(rt)
+		al.addTokenQuotaHooks(rt, agent)
 	}
 	return rt
+}
+
+// archiveStats reads the message count and time span of the session archive
+// at path; zero when it cannot be opened.
+func archiveStats(path string) (int, time.Time, time.Time) {
+	store, err := memory.OpenReadOnly(path)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}
+	}
+	defer utils.CloseQuietly(store)
+	count, first, last, statsErr := store.Stats()
+	if statsErr != nil {
+		logger.WarnCF("agent", "Failed to read archive stats", map[string]any{"path": path, "error": statsErr.Error()})
+	}
+	return count, first, last
+}
+
+// addModelHooks lets commands show and switch the session's model.
+func (al *AgentLoop) addModelHooks(rt *commands.Runtime, cfg *config.Config, agent *AgentInstance, opts *processOptions) {
+	rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
+		return al.activeModelInfo(cfg, agent, opts)
+	}
+	rt.GetAgentModels = func() ([]commands.ModelEntry, int) {
+		entries := make([]commands.ModelEntry, 0, len(agent.Candidates))
+		for _, c := range agent.Candidates {
+			name := c.Alias
+			if name == "" {
+				name = c.Model
+			}
+			entries = append(entries, commands.ModelEntry{Name: name, Provider: c.Provider})
+		}
+		active := 0
+		if opts != nil {
+			active = al.getActiveModelIndex(agent, opts.SessionKey)
+		}
+		return entries, active
+	}
+	rt.SetActiveModel = func(idx int) (string, error) {
+		if opts == nil {
+			return "", errors.New("process options not available")
+		}
+		if err := al.setActiveModelIndex(agent, opts.SessionKey, idx); err != nil {
+			return "", err
+		}
+		name := agent.Candidates[idx].Alias
+		if name == "" {
+			name = agent.Candidates[idx].Model
+		}
+		return name, nil
+	}
+}
+
+// activeModelInfo describes the model active for this session (the /model
+// selection, not just the agent's first candidate, so /status and /show
+// model reflect the current choice). The provider name, wire protocol and
+// base URL come from the model's named provider.
+func (al *AgentLoop) activeModelInfo(cfg *config.Config, agent *AgentInstance, opts *processOptions) (name, provider, protocol, apiBase string) {
+	active := agent.Model
+	if len(agent.Candidates) > 0 {
+		idx := 0
+		if opts != nil {
+			idx = al.getActiveModelIndex(agent, opts.SessionKey)
+		}
+		if idx >= 0 && idx < len(agent.Candidates) {
+			if a := agent.Candidates[idx].Alias; a != "" {
+				active = a
+			} else if m := agent.Candidates[idx].Model; m != "" {
+				active = m
+			}
+		}
+	}
+	name = active
+	if mc, err := cfg.GetModelConfig(active); err == nil && mc != nil {
+		if mc.ModelName != "" {
+			name = mc.ModelName
+		} else if mc.Model != "" {
+			name = mc.Model
+		}
+		if prov, perr := cfg.GetProvider(mc.Provider); perr == nil && prov != nil {
+			provider = prov.Name
+			protocol = prov.Protocol
+			apiBase = prov.BaseURL
+		}
+	}
+	return name, provider, protocol, apiBase
+}
+
+// addSessionToggleHooks lets commands read and set the session's
+// /reasoning and /tools switches.
+func (al *AgentLoop) addSessionToggleHooks(rt *commands.Runtime, agent *AgentInstance, opts *processOptions) {
+	rt.GetExposeReasoning = func() bool {
+		if opts == nil {
+			return false
+		}
+		return al.getExposeReasoning(agent, opts.SessionKey)
+	}
+	rt.SetExposeReasoning = func(on bool) {
+		if opts == nil {
+			return
+		}
+		al.setExposeReasoning(agent, opts.SessionKey, on)
+	}
+	rt.GetShowToolActivity = func() bool {
+		if opts == nil {
+			return false
+		}
+		return al.getShowToolActivity(agent, opts.SessionKey)
+	}
+	rt.SetShowToolActivity = func(on bool) {
+		if opts == nil {
+			return
+		}
+		al.setShowToolActivity(agent, opts.SessionKey, on)
+	}
+}
+
+// addHistoryHooks lets commands clear, compact and retry the session's
+// conversation and learn what /cancel did.
+func (al *AgentLoop) addHistoryHooks(rt *commands.Runtime, agent *AgentInstance, opts *processOptions, msg bus.InboundMessage) {
+	rt.ClearHistory = func() error {
+		return al.clearHistory(agent, opts, msg)
+	}
+	rt.CompactHistory = func(ctx context.Context) (string, error) {
+		if opts == nil {
+			return "", errors.New("process options not available")
+		}
+		cm, releaseCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
+		defer releaseCM()
+		err := cm.Compact(ctx)
+		report := ""
+		if r := cm.LastCompactionReport(); r != nil {
+			report = r.String()
+		}
+		return report, err
+	}
+	if opts != nil {
+		sessionKey := opts.SessionKey
+		rt.CancelPending = func() (bool, int) {
+			return al.takeCancelResult(sessionKey)
+		}
+	}
+	rt.RetriggerLastMessage = func(ctx context.Context) error {
+		return al.retriggerLastMessage(ctx, agent, opts, msg)
+	}
+}
+
+// clearHistory runs /clear: the session is reset, its token reissued, and
+// the agent told its context was cleared so it can re-orient.
+func (al *AgentLoop) clearHistory(agent *AgentInstance, opts *processOptions, msg bus.InboundMessage) error {
+	if opts == nil {
+		return errors.New("process options not available")
+	}
+	if agent.Sessions == nil {
+		return errors.New("sessions not initialized for agent")
+	}
+	cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseCM()
+	if err := cm.Reset(context.Background()); err != nil {
+		logger.WarnCF("agent", "clear: Reset failed", map[string]any{
+			"session_key": opts.SessionKey,
+			"error":       err.Error(),
+		})
+		return err
+	}
+	// The model receives the fresh session token in the next dispatch's
+	// system prompt.
+	al.reissueSessionToken(agent, opts.SessionKey)
+	// The same notice an agent-initiated clear delivers, minus a handoff. The
+	// reset already happened above, so no reset metadata is set.
+	notice := bus.InboundMessage{
+		Channel:    msg.Channel,
+		ChatID:     msg.ChatID,
+		SenderID:   "system",
+		SessionKey: opts.SessionKey,
+		Content:    wrapClearNotice(""),
+		Peer:       msg.Peer,
+		Internal:   true,
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
+	}
+	if agent.HumanModel != "" {
+		return nil // a person gets no notice: it would be posted to them
+	}
+	go func() {
+		pubCtx, cancel := context.WithTimeout(context.Background(), publishTimeout)
+		defer cancel()
+		if err := al.bus.PublishInbound(pubCtx, notice); err != nil {
+			logger.WarnCF("agent", "clear: failed to publish clear notice", map[string]any{
+				"session_key": opts.SessionKey, "error": err.Error(),
+			})
+		}
+	}()
+	return nil
+}
+
+// retriggerLastMessage runs /retry: the session's last user message is
+// published again as a retry.
+func (al *AgentLoop) retriggerLastMessage(ctx context.Context, agent *AgentInstance, opts *processOptions, msg bus.InboundMessage) error {
+	if agent == nil || agent.Sessions == nil || opts == nil {
+		return errors.New("session not available")
+	}
+	history := agent.Sessions.GetHistory(opts.SessionKey)
+	lastUserMsg := ""
+	for _, h := range slices.Backward(history) {
+		if h.Role == "user" && h.Content != "" {
+			lastUserMsg = h.Content
+			break
+		}
+	}
+	if lastUserMsg == "" {
+		return errors.New("no previous message to retry")
+	}
+	retrigger := bus.InboundMessage{
+		Channel:  msg.Channel,
+		ChatID:   msg.ChatID,
+		SenderID: msg.SenderID,
+		Content:  lastUserMsg,
+		Peer:     msg.Peer,
+		IsRetry:  true,
+		Internal: true,
+	}
+	go func() {
+		pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
+		defer cancel()
+		if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {
+			logger.WarnCF("agent", "Failed to retrigger message after /retry",
+				map[string]any{"error": err.Error()})
+		}
+	}()
+	return nil
+}
+
+// addCooldownHooks lets commands list and clear model cooldowns.
+func (al *AgentLoop) addCooldownHooks(rt *commands.Runtime) {
+	rt.ResetCooldown = func() {
+		if al.fallback != nil {
+			al.fallback.Reset()
+		}
+	}
+	rt.ClearCooldown = func(provider, model string) bool {
+		if al.fallback == nil {
+			return false
+		}
+		return al.fallback.Clear(provider, model)
+	}
+	rt.ListCooldowns = func() []commands.CooldownEntry {
+		if al.fallback == nil {
+			return nil
+		}
+		snap := al.fallback.CooldownSnapshot()
+		out := make([]commands.CooldownEntry, 0, len(snap))
+		for _, s := range snap {
+			out = append(out, commands.CooldownEntry{
+				Provider: s.Provider,
+				Model:    s.Model,
+				Reason:   string(s.Reason),
+				Since:    s.Since,
+				Until:    s.Until,
+			})
+		}
+		return out
+	}
+}
+
+// addTokenQuotaHooks lets commands show and reset the agent's message-token
+// quotas. They are scoped to THIS agent by its normalized id (the id the
+// named-token store and message API key on).
+func (al *AgentLoop) addTokenQuotaHooks(rt *commands.Runtime, agent *AgentInstance) {
+	quotaAgentID := routing.NormalizeAgentID(agent.ID)
+	rt.ListTokenQuota = func() []commands.TokenQuotaEntry {
+		snap := al.MessageTokenQuota(quotaAgentID)
+		out := make([]commands.TokenQuotaEntry, 0, len(snap))
+		for _, q := range snap {
+			out = append(out, commands.TokenQuotaEntry{
+				Name:           q.Name,
+				RatePerMin:     q.RatePerMin,
+				BlockMinutes:   q.BlockMinutes,
+				HitsInWindow:   q.HitsInWindow,
+				Blocked:        q.Blocked,
+				BlockRemaining: q.BlockRemaining,
+			})
+		}
+		return out
+	}
+	rt.ResetTokenQuota = func(name string) int {
+		return al.ResetMessageTokenBlocks(quotaAgentID, name)
+	}
 }
 
 // sessionChannelsForAgent returns the distinct channel names that route to
