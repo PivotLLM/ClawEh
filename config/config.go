@@ -250,8 +250,8 @@ func (c *Config) AgentSessionDirs() []string {
 			add(ExpandHome(ws))
 			continue
 		}
-		id := strings.ToLower(strings.TrimSpace(ac.ID))
-		if id == "" || id == "main" {
+		id := NormalizeAgentID(ac.ID)
+		if id == defaultAgentID {
 			id = "default"
 		}
 		add(filepath.Join(base, id))

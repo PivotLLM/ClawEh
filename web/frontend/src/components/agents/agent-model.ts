@@ -343,7 +343,7 @@ export function bindingViewsForAgent(
 ): AgentBindingView[] {
   const views: AgentBindingView[] = []
   raw.forEach((b, index) => {
-    if (asString(b.agent_id) !== agentID) return
+    if (!sameAgentId(asString(b.agent_id), agentID)) return
     const match = asRecord(b.match)
     const peer = asRecord(match.peer)
     const channel = asString(match.channel)
@@ -600,13 +600,15 @@ export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
 }
 
 // The agent id rule, identical to config/agent_id.go (both are checked against
-// config/testdata/agent_id_cases.json): 1 to 64 characters of lower-case a-z,
-// 0-9, '-' and '_', starting with a letter or digit. The server refuses any
-// other id with the same sentence agentIdProblem gives, quoting the id as
+// config/testdata/agent_id_cases.json): 1 to 64 characters of ASCII letters
+// (either case), 0-9, '-' and '_', starting with a letter or digit. Ids are
+// case-insensitive: an agent's identity is its id in lower case
+// (normalizeAgentId), and sameAgentId compares identities. The server refuses
+// any other id with the same sentence agentIdProblem gives, quoting the id as
 // quoteAgentId does.
 const AGENT_ID_MAX = 64
-const AGENT_ID_VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/
-const AGENT_ID_INVALID_CHARS = /[^a-z0-9_-]+/
+const AGENT_ID_VALID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+const AGENT_ID_INVALID_CHARS = /[^A-Za-z0-9_-]+/
 const ASCII_SPACE_EDGES = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g
 
 // asciiLower lower-cases A-Z only, as config's asciiLower does.
@@ -619,18 +621,33 @@ export function isValidAgentId(id: string): boolean {
   return AGENT_ID_VALID.test(id)
 }
 
-// normalizeAgentId mirrors config.NormalizeAgentID: it turns any input into a
-// valid id, or fallback (config's is "main") when nothing usable is left.
-export function normalizeAgentId(id: string, fallback = "main"): string {
-  const lower = asciiLower(id)
-  if (isValidAgentId(lower)) return lower
-  let result = lower
+// repairAgentId mirrors config.repairAgentID: the valid id suggested for id,
+// keeping its case, or "" when nothing usable is left.
+export function repairAgentId(id: string): string {
+  let result = id
     .replace(new RegExp(AGENT_ID_INVALID_CHARS.source, "g"), "-")
     .replace(/^[-_]+|[-_]+$/g, "")
   if (result.length > AGENT_ID_MAX) {
     result = result.slice(0, AGENT_ID_MAX).replace(/[-_]+$/, "")
   }
-  return result === "" ? fallback : result
+  return result
+}
+
+// normalizeAgentId mirrors config.NormalizeAgentID: an agent's identity, any
+// input turned into a valid id in lower case, or fallback (config's is
+// "main") when nothing usable is left.
+export function normalizeAgentId(id: string, fallback = "main"): string {
+  if (isValidAgentId(id)) return asciiLower(id)
+  const repaired = repairAgentId(id)
+  return repaired === "" ? fallback : asciiLower(repaired)
+}
+
+// sameAgentId mirrors config.SameAgentID: a and b name the same agent ("Bob"
+// and "bob" do).
+export function sameAgentId(a: string, b: string): boolean {
+  if (a.replace(ASCII_SPACE_EDGES, "") === "") return false
+  if (b.replace(ASCII_SPACE_EDGES, "") === "") return false
+  return normalizeAgentId(a) === normalizeAgentId(b)
 }
 
 // QUOTE_AS_CODE is what quoteAgentId writes as a code: control and format
@@ -664,31 +681,33 @@ export function agentIdProblem(id: string): string | null {
   if (isValidAgentId(id)) return null
   const trimmed = id.replace(ASCII_SPACE_EDGES, "")
   if (trimmed === "") return 'An agent has no id; give it one, such as "alice".'
-  const norm = normalizeAgentId(id)
-  const lower = asciiLower(trimmed)
-  const validChars = !AGENT_ID_INVALID_CHARS.test(lower)
-  let problem = "may use only lower-case letters, digits, - and _"
-  if (lower.length > AGENT_ID_MAX && validChars) {
+  const suggestion = repairAgentId(id)
+  const validChars = !AGENT_ID_INVALID_CHARS.test(trimmed)
+  let problem = "may use only letters, digits, - and _"
+  if (trimmed.length > AGENT_ID_MAX && validChars) {
     problem = `is longer than ${AGENT_ID_MAX} characters`
-  } else if ((lower[0] === "-" || lower[0] === "_") && validChars) {
+  } else if ((trimmed[0] === "-" || trimmed[0] === "_") && validChars) {
     problem = "must start with a letter or digit"
   }
   const msg = `Agent id ${quoteAgentId(id)} ${problem}`
-  if (norm === "main" && lower !== "main") return `${msg}.`
-  return `${msg}; use ${quoteAgentId(norm)}.`
+  if (suggestion === "") return `${msg}.`
+  return `${msg}; use ${quoteAgentId(suggestion)}.`
 }
 
 // newAgentIdProblem returns why id cannot be the id of a new agent, or null
 // when it can: the agentIdProblem sentence, or the one the server gives for
-// an id another agent already has (config.duplicateAgentIDError).
+// an id that names an agent already there, ignoring case
+// (config.duplicateAgentIDError).
 export function newAgentIdProblem(
   id: string,
   existingIds: readonly string[],
 ): string | null {
   const problem = agentIdProblem(id)
   if (problem) return problem
-  if (existingIds.includes(id)) {
+  const other = existingIds.find((e) => sameAgentId(e, id))
+  if (other === undefined) return null
+  if (other === id) {
     return `Agent id ${quoteAgentId(id)} is used twice; give each agent its own id.`
   }
-  return null
+  return `Agent ids ${quoteAgentId(other)} and ${quoteAgentId(id)} name the same agent; give each agent its own id.`
 }

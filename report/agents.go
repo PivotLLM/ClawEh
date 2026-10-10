@@ -252,7 +252,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	}
 	settings := pairs("Settings",
 		row("Enabled", yesNo(a.IsEnabled())),
-		row("Routing default", yesNo(strings.EqualFold(a.ID, defaultAgentID(cfg)))),
+		row("Routing default", yesNo(config.SameAgentID(a.ID, defaultAgentID(cfg)))),
 		row("Workspace", resolveWorkspace(cfg, a)),
 		row("Models", strings.TrimSpace(joinLines(models, none)+"\n"+strings.TrimSpace(modelsNote))),
 		row("Summarization models", joinOr(a.SummarizationModels, "(global chain)")),

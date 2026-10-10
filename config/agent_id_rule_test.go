@@ -56,8 +56,8 @@ func TestAgentIDSharedCases(t *testing.T) {
 	}
 }
 
-// checkAgentIDRule fails t unless NormalizeAgentID(x) is valid and stable,
-// and a valid x normalizes to itself.
+// checkAgentIDRule fails t unless NormalizeAgentID(x) is a valid id in lower
+// case and stable, and a valid x normalizes to its lower-case form.
 func checkAgentIDRule(t *testing.T, x string) {
 	t.Helper()
 	n := NormalizeAgentID(x)
@@ -67,7 +67,10 @@ func checkAgentIDRule(t *testing.T, x string) {
 	if again := NormalizeAgentID(n); again != n {
 		t.Errorf("NormalizeAgentID(%q) = %q, not idempotent (%q)", x, n, again)
 	}
-	if ValidAgentID(x) && n != x {
+	if n != strings.ToLower(n) {
+		t.Errorf("NormalizeAgentID(%q) = %q, not lower case", x, n)
+	}
+	if ValidAgentID(x) && n != strings.ToLower(x) {
 		t.Errorf("valid id %q normalized to %q", x, n)
 	}
 	if ValidAgentID(x) != (agentIDError(x, "") == nil) {

@@ -5,16 +5,16 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
-  HUMAN_AGENTS_QUERY_KEY,
   type AgentToolCatalogResponse,
+  HUMAN_AGENTS_QUERY_KEY,
   getAgentTools,
   getAppConfig,
   getHumanAgents,
   getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
-import { listCLIs } from "@/api/system"
 import { type ModelInfo, getModels } from "@/api/models"
+import { listCLIs } from "@/api/system"
 import { AgentCard } from "@/components/agents/agent-card"
 import { AgentIdField } from "@/components/agents/agent-id-field"
 import {
@@ -25,12 +25,13 @@ import {
   applyMaestroEdits,
   asString,
   bindingViewsForAgent,
+  cliBypassWarnings,
   fetchSkills,
   newAgentIdProblem,
   parseAgentBindings,
   parseAgentsConfig,
+  sameAgentId,
   sortAgentList,
-  cliBypassWarnings,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -80,13 +81,14 @@ export function AgentsPage() {
   } = useQuery({
     queryKey: ["agents-page"],
     queryFn: async () => {
-      const [appConfig, modelsData, skillsData, toolsData, clis] = await Promise.all([
-        getAppConfig(),
-        getModels(),
-        fetchSkills(),
-        getAgentTools(),
-        listCLIs(),
-      ])
+      const [appConfig, modelsData, skillsData, toolsData, clis] =
+        await Promise.all([
+          getAppConfig(),
+          getModels(),
+          fetchSkills(),
+          getAgentTools(),
+          listCLIs(),
+        ])
       return {
         agentsCfg: parseAgentsConfig(appConfig),
         bindings: parseAgentBindings(appConfig),
@@ -273,7 +275,7 @@ export function AgentsPage() {
     deliverTo?: string,
   ) => {
     const next = bindings.map((b, i) => {
-      if (asString(b.agent_id) !== agentID) return b
+      if (!sameAgentId(asString(b.agent_id), agentID)) return b
       if (i !== targetIndex) return { ...b, default: false }
       const updated: Record<string, unknown> = { ...b, default: true }
       if (deliverTo !== undefined) updated.deliver_to = deliverTo
@@ -465,13 +467,13 @@ export function AgentsPage() {
                         loaded?.rawProviders,
                         loaded?.clis ?? [],
                       )}
-                      human={(humanInfo?.human_agents ?? []).some(
-                        (id) => id.toLowerCase() === agent.id.toLowerCase(),
+                      human={(humanInfo?.human_agents ?? []).some((id) =>
+                        sameAgentId(id, agent.id),
                       )}
                       humanNotes={(humanInfo?.problems ?? []).filter(
                         (p) =>
                           p.kind !== "setting" &&
-                          (p.agent ?? "").toLowerCase() === agent.id.toLowerCase(),
+                          sameAgentId(p.agent ?? "", agent.id),
                       )}
                       skills={e.skills}
                       tools={e.tools}
@@ -517,10 +519,7 @@ export function AgentsPage() {
                       onCogmemChange={() => handleToggleCogmem(i)}
                       mounts={e.mounts}
                       ignoredMounts={(ignoredMounts ?? [])
-                        .filter(
-                          (m) =>
-                            m.agent.toLowerCase() === agent.id.toLowerCase(),
-                        )
+                        .filter((m) => sameAgentId(m.agent, agent.id))
                         .map((m) => m.mount)}
                       onMountsChange={(ms) => edit(i, { mounts: ms })}
                       mcpTools={e.mcpTools}

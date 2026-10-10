@@ -209,7 +209,7 @@ func (c *Config) HumanProblems() []HumanProblem {
 func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, bool) {
 	own := 0
 	for i := range c.Bindings {
-		if c.Bindings[i].AgentID == ac.ID {
+		if SameAgentID(c.Bindings[i].AgentID, ac.ID) {
 			own++
 		}
 	}
@@ -235,7 +235,7 @@ func (c *Config) humanChatProblem(ac *AgentConfig, name string) (HumanProblem, b
 func (c *Config) chatBoundElsewhere(agentID, channel, chatID string) (string, bool) {
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		if b.AgentID == agentID || b.Match.Channel != channel {
+		if SameAgentID(b.AgentID, agentID) || b.Match.Channel != channel {
 			continue
 		}
 		if (b.Match.Peer != nil && b.Match.Peer.ID == chatID) || b.DeliverTo == chatID {

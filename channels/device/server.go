@@ -1025,7 +1025,7 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 // (case-insensitive) and returns the canonical id + display name, or "" if none.
 func resolveDeviceAgent(agents []DeviceAgentInfo, arg string) (id, name string) {
 	for _, a := range agents {
-		if strings.EqualFold(a.ID, arg) || strings.EqualFold(a.Name, arg) {
+		if config.SameAgentID(a.ID, arg) || strings.EqualFold(a.Name, arg) {
 			return a.ID, agentDisplayName(a)
 		}
 	}

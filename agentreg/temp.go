@@ -534,8 +534,8 @@ func ConfigWorkspace(ac *config.AgentConfig, baseDir string) string {
 	}
 	id := "default"
 	if ac != nil {
-		if ac.ID != "" && ac.ID != routing.DefaultAgentID {
-			id = ac.ID
+		if nid := routing.NormalizeAgentID(ac.ID); nid != routing.DefaultAgentID {
+			id = nid
 		}
 	}
 	return filepath.Join(baseDir, id)

@@ -111,8 +111,8 @@ func TestPatchConfig_StoreRefusalsAreJSON(t *testing.T) {
 		},
 		{
 			name:  "agent id",
-			patch: `{"agents":{"list":[{"id":"main","name":"Main","default":true,"subagents":{"allow_agents":["Alice"]}}]}}`,
-			want:  []string{`Agent id "Alice" in Main's subagents.allow_agents may use only lower-case letters, digits, - and _; use "alice".`},
+			patch: `{"agents":{"list":[{"id":"main","name":"Main","default":true,"subagents":{"allow_agents":["Alice Smith"]}}]}}`,
+			want:  []string{`Agent id "Alice Smith" in Main's subagents.allow_agents may use only letters, digits, - and _; use "Alice-Smith".`},
 		},
 		{
 			name:  "listener",
@@ -130,14 +130,14 @@ func TestPatchConfig_StoreRefusalsAreJSON(t *testing.T) {
 			patch: `{"channels":{"discord":{"enabled":true,"token":""}},` +
 				`"gateway":{"port":70000},"mcp_host":{"listen":"0.0.0.0:5911"},` +
 				`"forum":{"limits":{"max_calls":-1}},` +
-				`"agents":{"list":[{"id":"main","name":"Main","default":true,"models":["Ghost"]},{"id":"Bob"}]}}`,
+				`"agents":{"list":[{"id":"main","name":"Main","default":true,"models":["Ghost"]},{"id":"Bob.B"}]}}`,
 			want: []string{
 				"channels.discord.token is required when discord channel is enabled",
 				`agents.list[main].models: model "Ghost" does not exist`,
 				"gateway.port 70000 is out of valid range (1-65535)",
 				`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`,
 				"The forum maximum for max_calls must be 0 (the default) or more.",
-				`Agent id "Bob" may use only lower-case letters, digits, - and _; use "bob".`,
+				`Agent id "Bob.B" may use only letters, digits, - and _; use "Bob-B".`,
 			},
 		},
 	} {

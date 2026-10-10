@@ -45,8 +45,8 @@ describe("a refused configuration save", () => {
     ],
     [
       "agent id",
-      'Agent id "Alice" in bindings may use only lower-case letters, digits, - and _; use "alice".',
-      'Agent id "Alice" in bindings may use only lower-case letters, digits, - and _; use "alice".',
+      'Agent id "Alice Smith" in bindings may use only letters, digits, - and _; use "Alice-Smith".',
+      'Agent id "Alice Smith" in bindings may use only letters, digits, - and _; use "Alice-Smith".',
     ],
   ])("shows the %s sentence", async (_kind, sent, shown) => {
     refusal(sent)

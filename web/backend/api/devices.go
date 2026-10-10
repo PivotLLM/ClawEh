@@ -435,7 +435,7 @@ func configuredAgents(cfg *config.Config) []agentOption {
 	out := make([]agentOption, 0, len(cfg.Agents.List))
 	for i := range cfg.Agents.List {
 		ac := &cfg.Agents.List[i]
-		id := ac.ID
+		id := routing.NormalizeAgentID(ac.ID)
 		name := ac.Name
 		if name == "" {
 			name = id
@@ -455,7 +455,7 @@ func configuredAgents(cfg *config.Config) []agentOption {
 func assignedAgentState(cfg *config.Config, ref string) (name, state string) {
 	var ac *config.AgentConfig
 	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == ref {
+		if config.SameAgentID(cfg.Agents.List[i].ID, ref) {
 			ac = &cfg.Agents.List[i]
 			break
 		}
@@ -467,7 +467,7 @@ func assignedAgentState(cfg *config.Config, ref string) (name, state string) {
 		return ac.DisplayName(), "disabled"
 	}
 	for _, p := range cfg.HumanProblems() {
-		if p.SetsAgentAside() && p.Agent == ref {
+		if p.SetsAgentAside() && config.SameAgentID(p.Agent, ref) {
 			return ac.DisplayName(), "set_aside"
 		}
 	}

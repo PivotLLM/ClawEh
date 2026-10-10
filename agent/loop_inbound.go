@@ -162,7 +162,7 @@ func (al *AgentLoop) processMessageOutcome(ctx context.Context, msg bus.InboundM
 	// A mention is "honored" when the mentioned agent is the one routed to
 	// (routing was overridden by the mention); the reply is then attributed.
 	mentionedAgent := inboundMetadata(msg, "mentioned_agent")
-	mentionHonored := mentionedAgent != "" && strings.EqualFold(route.AgentID, mentionedAgent)
+	mentionHonored := mentionedAgent != "" && config.SameAgentID(route.AgentID, mentionedAgent)
 
 	resetMessageToolRound(agent)
 

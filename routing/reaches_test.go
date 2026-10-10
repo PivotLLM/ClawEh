@@ -46,3 +46,31 @@ func TestReaches(t *testing.T) {
 		})
 	}
 }
+
+// Agent ids are case-insensitive: an agent listed as "Bob" is the one a
+// binding, a mention or a Reaches target names in any case, and routes to its
+// lower-case identity.
+func TestRouting_CaseInsensitiveAgentIDs(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "Main", Default: true}, {ID: "Alice"}, {ID: "Bob"}}
+	bindings := []config.AgentBinding{
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "telegram", AccountID: "*"}},
+		{AgentID: "MAIN", AgentMentions: []string{"bob"}, Match: config.BindingMatch{Channel: "slack", AccountID: "*"}},
+	}
+	r := NewRouteResolver(testConfig(agents, bindings))
+
+	route := r.ResolveRoute(RouteInput{Channel: "telegram", Peer: &RoutePeer{Kind: "direct", ID: "u1"}})
+	if route.AgentID != "alice" || route.SessionKey != "agent:alice:main" {
+		t.Errorf("telegram route = %q %q, want alice", route.AgentID, route.SessionKey)
+	}
+	route = r.ResolveRoute(RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "direct", ID: "u1"}, MentionedAgent: "Bob"})
+	if route.AgentID != "bob" {
+		t.Errorf("mention of Bob routed to %q, want bob", route.AgentID)
+	}
+	route = r.ResolveRoute(RouteInput{Channel: "discord"})
+	if route.AgentID != "main" {
+		t.Errorf("default route = %q, want main", route.AgentID)
+	}
+	if !r.Reaches(RouteInput{Channel: "slack"}, "BOB") {
+		t.Error("slack does not reach BOB through agent_mentions [bob]")
+	}
+}

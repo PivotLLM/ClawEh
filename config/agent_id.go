@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -23,15 +24,17 @@ const maxAgentIDLength = 64
 // ASCII only so the WebUI (agent-model.ts) trims exactly the same characters.
 const asciiSpace = " \t\n\v\f\r"
 
-var agentIDInvalidCharsRe = regexp.MustCompile(`[^a-z0-9_-]+`)
+var agentIDInvalidCharsRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
-// The agent id rule. An agent id is 1 to 64 characters of lower-case a-z,
-// 0-9, '-' and '_', and starts with a letter or digit. ValidAgentID checks it;
-// NormalizeAgentID turns any input into an id that satisfies it and returns a
-// valid id unchanged. The WebUI implements the identical rule
-// (web/frontend/src/components/agents/agent-model.ts), and both are checked
-// against testdata/agent_id_cases.json, and both quote an id in a refusal
-// the same way (quoteAgentID, quoteAgentId).
+// The agent id rule. An agent id is 1 to 64 characters of ASCII letters
+// (either case), 0-9, '-' and '_', and starts with a letter or digit.
+// ValidAgentID checks it. Ids are case-insensitive: an agent's identity is
+// its id in lower case, NormalizeAgentID, which is what the runtime uses for
+// folders, sessions, jobs, devices and tokens, and what SameAgentID compares.
+// The config keeps an id as the operator wrote it. The WebUI implements the
+// identical rule (web/frontend/src/components/agents/agent-model.ts), and
+// both are checked against testdata/agent_id_cases.json, and both quote an id
+// in a refusal the same way (quoteAgentID, quoteAgentId).
 
 // ValidAgentID reports whether id satisfies the agent id rule.
 func ValidAgentID(id string) bool {
@@ -41,7 +44,7 @@ func ValidAgentID(id string) bool {
 	for i := 0; i < len(id); i++ {
 		c := id[i]
 		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
 		case (c == '-' || c == '_') && i > 0:
 		default:
 			return false
@@ -50,23 +53,39 @@ func ValidAgentID(id string) bool {
 	return true
 }
 
-// NormalizeAgentID turns any input into a valid agent id: ASCII letters are
-// lower-cased, every run of other characters outside a-z, 0-9, '-' and '_'
-// becomes one '-', leading and trailing '-' and '_' are removed, and the
-// result is cut to 64 characters without a trailing '-' or '_'. Input that
-// leaves nothing normalizes to "main". A valid id is returned unchanged. This
-// is the rule the runtime routes by (routing.NormalizeAgentID delegates here).
+// NormalizeAgentID is an agent's identity: any input turned into a valid id
+// in lower case. ASCII letters are lower-cased and the rest repaired as
+// repairAgentID does; input that leaves nothing normalizes to "main". A valid
+// id normalizes to its lower-case form. This is the rule the runtime routes
+// by (routing.NormalizeAgentID delegates here).
 func NormalizeAgentID(id string) string {
-	lower := asciiLower(id)
-	if ValidAgentID(lower) {
-		return lower
+	if ValidAgentID(id) {
+		return asciiLower(id)
 	}
-	result := strings.Trim(agentIDInvalidCharsRe.ReplaceAllString(lower, "-"), "-_")
+	if repaired := repairAgentID(id); repaired != "" {
+		return asciiLower(repaired)
+	}
+	return defaultAgentID
+}
+
+// SameAgentID reports whether a and b name the same agent: neither is blank
+// and their identities (NormalizeAgentID) are equal, so "Bob" and "bob" are
+// the same agent. Every comparison of agent ids goes through it.
+func SameAgentID(a, b string) bool {
+	if strings.Trim(a, asciiSpace) == "" || strings.Trim(b, asciiSpace) == "" {
+		return false
+	}
+	return NormalizeAgentID(a) == NormalizeAgentID(b)
+}
+
+// repairAgentID is the valid id suggested for id, keeping its case: every run
+// of characters outside letters, digits, '-' and '_' becomes one '-', leading
+// and trailing '-' and '_' are removed, and the result is cut to 64
+// characters without a trailing '-' or '_'. It is "" when nothing is left.
+func repairAgentID(id string) string {
+	result := strings.Trim(agentIDInvalidCharsRe.ReplaceAllString(id, "-"), "-_")
 	if len(result) > maxAgentIDLength {
 		result = strings.TrimRight(result[:maxAgentIDLength], "-_")
-	}
-	if result == "" {
-		return defaultAgentID
 	}
 	return result
 }
@@ -84,15 +103,14 @@ func asciiLower(s string) string {
 }
 
 // Allows reports whether subagents.allow_agents lets its agent start or ask
-// agentID: the list names it (entries are in normal form, validateAgentIDs)
-// or holds "*". A nil receiver or list allows nothing.
+// agentID: the list names the same agent (SameAgentID) or holds "*". A nil
+// receiver or list allows nothing.
 func (s *SubagentsConfig) Allows(agentID string) bool {
 	if s == nil {
 		return false
 	}
-	target := NormalizeAgentID(agentID)
 	for _, allowed := range s.AllowAgents {
-		if allowed == "*" || allowed == target {
+		if allowed == "*" || SameAgentID(allowed, agentID) {
 			return true
 		}
 	}
@@ -152,35 +170,44 @@ func agentIDError(id, where string) error {
 		}
 		return errors.New("An agent id" + where + " is empty; name the agent, such as " + quoteAgentID("alice") + ".")
 	}
-	norm := NormalizeAgentID(id)
-	lower := asciiLower(trimmed)
+	suggestion := repairAgentID(id)
 	var problem string
 	switch {
-	case len(lower) > maxAgentIDLength && !agentIDInvalidCharsRe.MatchString(lower):
+	case len(trimmed) > maxAgentIDLength && !agentIDInvalidCharsRe.MatchString(trimmed):
 		problem = "is longer than " + strconv.Itoa(maxAgentIDLength) + " characters"
-	case (lower[0] == '-' || lower[0] == '_') && !agentIDInvalidCharsRe.MatchString(lower):
+	case (trimmed[0] == '-' || trimmed[0] == '_') && !agentIDInvalidCharsRe.MatchString(trimmed):
 		problem = "must start with a letter or digit"
 	default:
-		problem = "may use only lower-case letters, digits, - and _"
+		problem = "may use only letters, digits, - and _"
 	}
 	msg := "Agent id " + quoteAgentID(id) + where + " " + problem
-	if norm == defaultAgentID && lower != defaultAgentID {
-		// Nothing of the id survives normalization; "main" would be a guess.
+	if suggestion == "" {
+		// Nothing of the id survives; any suggestion would be a guess.
 		return errors.New(msg + ".")
 	}
-	return errors.New(msg + "; use " + quoteAgentID(norm) + ".")
+	return errors.New(msg + "; use " + quoteAgentID(suggestion) + ".")
 }
 
-// duplicateAgentIDError is the refusal of an agents.list[].id that more than
-// one agent has.
-func duplicateAgentIDError(id string) error {
-	return errors.New("Agent id " + quoteAgentID(id) + " is used twice; give each agent its own id.")
+// duplicateAgentIDError is the refusal of agents.list[].ids that name one
+// agent: spellings holds each different way they were written, in order.
+func duplicateAgentIDError(spellings []string) error {
+	if len(spellings) == 1 {
+		return errors.New("Agent id " + quoteAgentID(spellings[0]) + " is used twice; give each agent its own id.")
+	}
+	quoted := make([]string, len(spellings))
+	for i, s := range spellings {
+		quoted[i] = quoteAgentID(s)
+	}
+	last := len(quoted) - 1
+	return errors.New("Agent ids " + strings.Join(quoted[:last], ", ") + " and " + quoted[last] +
+		" name the same agent; give each agent its own id.")
 }
 
 // AgentIDErrors returns one error for each agent id, or reference to one, that
 // does not satisfy the agent id rule (ValidAgentID): agents.list[].id,
 // bindings[].agent_id and agent_mentions, and subagents.allow_agents ("*"
-// allowed), and one for each valid agents.list[].id more than one agent has.
+// allowed), and one for each agent that more than one agents.list[].id names
+// (ids are compared ignoring case, SameAgentID).
 // A binding with no agent_id routes to the default agent and is allowed.
 // LoadConfig and Store.Update refuse a config with any.
 func (c *Config) AgentIDErrors() []error {
@@ -190,14 +217,27 @@ func (c *Config) AgentIDErrors() []error {
 			errs = append(errs, err)
 		}
 	}
-	seen := make(map[string]int, len(c.Agents.List))
+	// Ids are compared by identity, so "Bob" and "bob" are one agent.
+	type use struct {
+		count     int
+		spellings []string
+	}
+	uses := make(map[string]*use, len(c.Agents.List))
+	var order []string
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		add(agentIDError(a.ID, ""))
 		if ValidAgentID(a.ID) {
-			seen[a.ID]++
-			if seen[a.ID] == 2 {
-				add(duplicateAgentIDError(a.ID))
+			key := NormalizeAgentID(a.ID)
+			u := uses[key]
+			if u == nil {
+				u = &use{}
+				uses[key] = u
+				order = append(order, key)
+			}
+			u.count++
+			if !slices.Contains(u.spellings, a.ID) {
+				u.spellings = append(u.spellings, a.ID)
 			}
 		}
 		if a.Subagents == nil {
@@ -218,6 +258,11 @@ func (c *Config) AgentIDErrors() []error {
 			if ref != "*" {
 				add(agentIDError(ref, " in bindings agent_mentions"))
 			}
+		}
+	}
+	for _, key := range order {
+		if u := uses[key]; u.count > 1 {
+			add(duplicateAgentIDError(u.spellings))
 		}
 	}
 	return errs

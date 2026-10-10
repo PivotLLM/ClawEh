@@ -9,6 +9,7 @@ import {
   isValidAgentId,
   newAgentIdProblem,
   normalizeAgentId,
+  sameAgentId,
 } from "./agent-model"
 
 // t resolves keys against the English strings, so the tests read what an
@@ -38,8 +39,17 @@ function Harness({ initial = "" }: { initial?: string }) {
 }
 
 describe("agentIdProblem", () => {
-  it("accepts ids already in normal form", () => {
-    for (const id of ["alice", "bob-2", "a_b", "main", "b".repeat(64)]) {
+  it("accepts valid ids in either case", () => {
+    for (const id of [
+      "alice",
+      "Bob",
+      "bOB",
+      "bob-2",
+      "a_b",
+      "main",
+      "MAIN",
+      "b".repeat(64),
+    ]) {
       expect(agentIdProblem(id)).toBeNull()
     }
   })
@@ -47,10 +57,10 @@ describe("agentIdProblem", () => {
   it("gives the sentence the server gives", () => {
     const long = "a".repeat(65)
     expect(agentIdProblem("Alice.Smith")).toBe(
-      'Agent id "Alice.Smith" may use only lower-case letters, digits, - and _; use "alice-smith".',
+      'Agent id "Alice.Smith" may use only letters, digits, - and _; use "Alice-Smith".',
     )
     expect(agentIdProblem(" alice")).toBe(
-      'Agent id " alice" may use only lower-case letters, digits, - and _; use "alice".',
+      'Agent id " alice" may use only letters, digits, - and _; use "alice".',
     )
     expect(agentIdProblem("-alice")).toBe(
       'Agent id "-alice" must start with a letter or digit; use "alice".',
@@ -59,7 +69,7 @@ describe("agentIdProblem", () => {
       `Agent id "${long}" is longer than 64 characters; use "${"a".repeat(64)}".`,
     )
     expect(agentIdProblem("!!!")).toBe(
-      'Agent id "!!!" may use only lower-case letters, digits, - and _.',
+      'Agent id "!!!" may use only letters, digits, - and _.',
     )
     expect(agentIdProblem("")).toBe(
       'An agent has no id; give it one, such as "alice".',
@@ -68,6 +78,7 @@ describe("agentIdProblem", () => {
 
   it("normalizes as config.NormalizeAgentID does", () => {
     expect(normalizeAgentId("  Bob.Smith  ")).toBe("bob-smith")
+    expect(normalizeAgentId("Bob")).toBe("bob")
     expect(normalizeAgentId("")).toBe("main")
     expect(normalizeAgentId("_x")).toBe("x")
     expect(normalizeAgentId("", "agent")).toBe("agent")
@@ -90,7 +101,21 @@ describe("newAgentIdProblem", () => {
       'Agent id "alice" is used twice; give each agent its own id.',
     )
     expect(newAgentIdProblem("carol", ["alice", "bob"])).toBeNull()
-    expect(newAgentIdProblem("Alice", ["alice"])).toBe(agentIdProblem("Alice"))
+    expect(newAgentIdProblem("Alice", ["alice"])).toBe(
+      'Agent ids "alice" and "Alice" name the same agent; give each agent its own id.',
+    )
+    expect(newAgentIdProblem("Alice.B", ["alice"])).toBe(
+      agentIdProblem("Alice.B"),
+    )
+  })
+})
+
+describe("sameAgentId", () => {
+  it("compares ids ignoring case", () => {
+    expect(sameAgentId("Bob", "bob")).toBe(true)
+    expect(sameAgentId("bOB", "BOB")).toBe(true)
+    expect(sameAgentId("bob", "alice")).toBe(false)
+    expect(sameAgentId("", "main")).toBe(false)
   })
 })
 
@@ -108,20 +133,32 @@ describe("AgentIdField", () => {
     expect(screen.getByPlaceholderText("Agent ID (e.g. alice)")).toBeTruthy()
   })
 
-  it("shows the refusal while the id is not in normal form", () => {
+  it("shows the refusal for an id in use in another case", () => {
+    render(<Harness />)
+    fireEvent.change(screen.getByLabelText("Agent ID"), {
+      target: { value: "BOB" },
+    })
+    expect(
+      screen.getByText(
+        'Agent ids "bob" and "BOB" name the same agent; give each agent its own id.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it("shows the refusal while the id is invalid", () => {
     render(<Harness />)
     const input = screen.getByLabelText("Agent ID")
     expect(screen.queryByText(/Agent id/)).toBeNull()
 
-    fireEvent.change(input, { target: { value: "Alice" } })
+    fireEvent.change(input, { target: { value: "Alice Smith" } })
     expect(
       screen.getByText(
-        'Agent id "Alice" may use only lower-case letters, digits, - and _; use "alice".',
+        'Agent id "Alice Smith" may use only letters, digits, - and _; use "Alice-Smith".',
       ),
     ).toBeTruthy()
     expect(input.getAttribute("aria-invalid")).toBe("true")
 
-    fireEvent.change(input, { target: { value: "alice" } })
+    fireEvent.change(input, { target: { value: "Alice" } })
     expect(screen.queryByText(/Agent id/)).toBeNull()
     expect(input.getAttribute("aria-invalid")).toBe("false")
   })

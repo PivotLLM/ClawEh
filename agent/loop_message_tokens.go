@@ -179,7 +179,7 @@ func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[strin
 		// Find the matching AgentConfig for callback settings.
 		var agentCfg *config.AgentConfig
 		for i := range cfg.Agents.List {
-			if cfg.Agents.List[i].ID == agentID {
+			if config.SameAgentID(cfg.Agents.List[i].ID, agentID) {
 				agentCfg = &cfg.Agents.List[i]
 				break
 			}

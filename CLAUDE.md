@@ -327,20 +327,26 @@ production instance directly; test against a dev instance.
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
   The agent id rule is defined once in `config/agent_id.go`: 1–64 characters of
-  lower-case a–z, 0–9, `-` and `_`, starting with a letter or digit
-  (`config.ValidAgentID`); `config.NormalizeAgentID` turns any input into a valid
-  id (ASCII lower-case, invalid runs → `-`, leading/trailing `-`/`_` trimmed, cut
-  to 64, empty → `main`) and returns a valid id unchanged; every runtime
-  normalization goes through it (`routing.NormalizeAgentID` delegates). The
-  WebUI's copy (`isValidAgentId`/`normalizeAgentId`/`agentIdProblem` in
-  `agent-model.ts`, used by the setup wizard's `uniqueAgentId`) is identical; both
-  are checked against `config/testdata/agent_id_cases.json`, and both quote an id
-  in a refusal by one rule (`quoteAgentID` / `quoteAgentId`). Agent ids in config
-  must already be valid and `agents.list[].id` unique: `config.AgentIDErrors` checks
+  ASCII letters (either case), 0–9, `-` and `_`, starting with a letter or digit
+  (`config.ValidAgentID`). Ids are **case-insensitive**: an agent's identity is
+  `config.NormalizeAgentID` (any input → a valid id in lower case: invalid runs →
+  `-`, leading/trailing `-`/`_` trimmed, cut to 64, empty → `main`; a valid id →
+  its lower case), which is what the runtime uses for registry ids, folders,
+  sessions (`agent:<id>:main`), cron `agentId`, devices and tokens
+  (`routing.NormalizeAgentID` delegates). Config keeps an id as the operator wrote
+  it (`Bob`), and every comparison of agent ids goes through `config.SameAgentID`
+  (identities equal; blank names nothing): never `==` on a config id or
+  `strings.EqualFold`. The WebUI's copy (`isValidAgentId`/`normalizeAgentId`/
+  `sameAgentId`/`repairAgentId`/`agentIdProblem` in `agent-model.ts`; the setup
+  wizard's `uniqueAgentId` keeps the name's case) is identical; both are checked
+  against `config/testdata/agent_id_cases.json`, and both quote an id in a refusal
+  by one rule (`quoteAgentID` / `quoteAgentId`). A refusal suggests the repaired id
+  in the operator's case (`repairAgentID`). `config.AgentIDErrors` checks
   `agents.list[].id`, `bindings[].agent_id`/`agent_mentions` and `allow_agents`, and
-  `LoadConfig` and `Store.Update` refuse any other (the Agents page refuses a new id
-  already in use with the server's sentence), so config-side ids are compared as is, never normalized again (runtime input, such
-  as a typed `/agent Alice`, still is). `subagents.allow_agents` is matched only by
+  refuses two `agents.list[].id`s with one identity ("Agent ids "Bob" and "bob"
+  name the same agent…"); `LoadConfig` and `Store.Update` refuse any of these (the
+  Agents page refuses a new id already in use, in any case, with the server's
+  sentence). `subagents.allow_agents` is matched only by
   `SubagentsConfig.Allows` (nil-safe; runtime and Check Up); an agent is named to people
   and in logs only by `AgentConfig.DisplayName` / `AgentInstance.DisplayName` (name, else id).
 - **Clocks** (`internal/clock`): timing code that tests must control takes a

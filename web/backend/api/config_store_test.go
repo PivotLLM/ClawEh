@@ -341,9 +341,9 @@ func TestHandler_ReadsLiveConfigNotFile(t *testing.T) {
 	}
 }
 
-// An agent id not in normal form is refused with 400 and the sentence that
+// An invalid agent id is refused with 400 and the sentence that
 // names it; the WebUI shows that sentence.
-func TestPatchConfig_RefusesAgentIDNotInNormalForm(t *testing.T) {
+func TestPatchConfig_RefusesInvalidAgentID(t *testing.T) {
 	_, _, mux := refFixture(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPatch, "/api/config",
@@ -353,7 +353,7 @@ func TestPatchConfig_RefusesAgentIDNotInNormalForm(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH /api/config = %d: %s", rec.Code, rec.Body.String())
 	}
-	want := `Agent id \"Alice.Smith\" may use only lower-case letters, digits, - and _; use \"alice-smith\".`
+	want := `Agent id \"Alice.Smith\" may use only letters, digits, - and _; use \"Alice-Smith\".`
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("body = %s, want it to contain %s", rec.Body.String(), want)
 	}

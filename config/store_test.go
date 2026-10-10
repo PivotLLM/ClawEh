@@ -389,7 +389,7 @@ func TestStoreUpdate_ReportsEveryRefusal(t *testing.T) {
 	s := newTestStore(t)
 	err := s.Update(func(c *Config) error {
 		c.Agents.List[0].Models = []string{"Ghost"}
-		c.Agents.List = append(c.Agents.List, AgentConfig{ID: "Bob"})
+		c.Agents.List = append(c.Agents.List, AgentConfig{ID: "Bob.B"})
 		c.Gateway.Port = 70000
 		c.MCPHost.Listen = "0.0.0.0:5911"
 		c.Forum.Limits.MaxCalls = -1
@@ -405,7 +405,7 @@ func TestStoreUpdate_ReportsEveryRefusal(t *testing.T) {
 		"gateway.port 70000 is out of valid range (1-65535)",
 		`mcp_host.listen "0.0.0.0:5911": the MCP host is plain HTTP and must listen on a loopback address (127.0.0.1 or ::1)`,
 		"The forum maximum for max_calls must be 0 (the default) or more.",
-		`Agent id "Bob" may use only lower-case letters, digits, - and _; use "bob".`,
+		`Agent id "Bob.B" may use only letters, digits, - and _; use "Bob-B".`,
 	}
 	if got := verr.Messages(); !slices.Equal(got, want) {
 		t.Fatalf("Messages() =\n%q\nwant\n%q", got, want)

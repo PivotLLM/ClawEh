@@ -138,7 +138,7 @@ func LoadConfig(path string) (*Config, error) {
 // refuses on save too. Listener settings: the gateway must not start on a
 // half-configured certificate or an off-box MCP host, and the config watcher
 // turns a refusal into a "Config file invalid" alert on a live gateway. The
-// forum limits. Agent ids, which are never rewritten: one not in normal form
+// forum limits. Agent ids, which are never rewritten: an invalid one
 // stops the start (and a live reload keeps the running config) until the
 // operator fixes it.
 func (c *Config) loadProblems() []error {

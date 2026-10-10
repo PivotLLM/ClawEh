@@ -203,14 +203,14 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 func (t *CronTool) resolveTargetAgent(args map[string]any, callerID string) (string, *tools.ToolResult) {
 	target := callerID
 	if a, ok := args["agent"].(string); ok {
-		if a = strings.TrimSpace(a); a != "" && !strings.EqualFold(a, callerID) {
+		if a = strings.TrimSpace(a); a != "" && !config.SameAgentID(a, callerID) {
 			cfg := t.config()
 			if cfg == nil || !cfg.AgentHasGlobalCron(callerID) {
 				return "", tools.ErrorResult("not authorized to schedule or manage another agent's cron jobs (requires global_cron)")
 			}
-			// Normalize to the lowercased form used for session-derived agent ids,
-			// so the target agent can later see/manage the job by its own id.
-			target = strings.ToLower(a)
+			// Jobs carry the agent's identity, so the target agent can later
+			// see/manage the job by its own id.
+			target = routing.NormalizeAgentID(a)
 		}
 	}
 	if target == "" {

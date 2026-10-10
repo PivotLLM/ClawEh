@@ -68,7 +68,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 					agentID = input.MentionedAgent
 					break
 				}
-				if m == input.MentionedAgent {
+				if config.SameAgentID(m, input.MentionedAgent) {
 					agentID = m
 					break
 				}
@@ -221,7 +221,7 @@ func (r *RouteResolver) findChannelWildcardMatch(bindings []config.AgentBinding)
 func (r *RouteResolver) pickAgentID(agentID string) string {
 	trimmed := strings.TrimSpace(agentID)
 	if trimmed == "" {
-		return NormalizeAgentID(r.resolveDefaultAgentID())
+		return r.resolveDefaultAgentID()
 	}
 	normalized := NormalizeAgentID(trimmed)
 	agents := r.cfg.Agents.List
@@ -229,11 +229,11 @@ func (r *RouteResolver) pickAgentID(agentID string) string {
 		return normalized
 	}
 	for _, a := range agents {
-		if a.ID == normalized {
+		if config.SameAgentID(a.ID, normalized) {
 			return normalized
 		}
 	}
-	return NormalizeAgentID(r.resolveDefaultAgentID())
+	return r.resolveDefaultAgentID()
 }
 
 func (r *RouteResolver) resolveDefaultAgentID() string {
@@ -245,7 +245,7 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 	// unaddressed message must not be posted to a person.
 	for _, a := range agents {
 		if a.Default && !r.cfg.IsHumanAgent(a.ID) && a.ID != "" {
-			return a.ID
+			return NormalizeAgentID(a.ID)
 		}
 	}
 	for _, a := range agents {
@@ -253,7 +253,7 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 			continue
 		}
 		if a.ID != "" {
-			return a.ID
+			return NormalizeAgentID(a.ID)
 		}
 		break
 	}
@@ -281,7 +281,7 @@ func (r *RouteResolver) Reaches(input RouteInput, agentID string) bool {
 			return true
 		}
 		for _, m := range b.AgentMentions {
-			if m == "*" || m == target {
+			if m == "*" || config.SameAgentID(m, target) {
 				return true
 			}
 		}

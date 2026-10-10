@@ -88,7 +88,7 @@ func toMessageTokenView(t msgtoken.NamedToken) messageTokenView {
 // in the config's agent list.
 func agentExists(cfg *config.Config, agentID string) bool {
 	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == agentID {
+		if config.SameAgentID(cfg.Agents.List[i].ID, agentID) {
 			return true
 		}
 	}

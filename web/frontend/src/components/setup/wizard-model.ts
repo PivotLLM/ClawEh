@@ -1,4 +1,4 @@
-import { normalizeAgentId } from "@/components/agents/agent-model"
+import { repairAgentId, sameAgentId } from "@/components/agents/agent-model"
 
 // Providers worth surfacing first in the picker — the rest follow alphabetically.
 export const COMMON_PROVIDERS = [
@@ -26,13 +26,17 @@ export const CLI_DEFAULT = "__cli_default__"
 export type TestState = "idle" | "testing" | "ok" | "warn" | "fail"
 
 // uniqueAgentId turns an agent display name into an agent id by the agent id
-// rule (normalizeAgentId; "agent" when the name leaves nothing usable), with
-// "-2", "-3", ... appended when taken, the base shortened to keep the id
-// within the 64-character limit.
-export function uniqueAgentId(name: string, taken: Set<string>): string {
-  const base = normalizeAgentId(name, "agent")
+// rule, keeping the name's case as the server's suggestion does
+// (repairAgentId; "agent" when the name leaves nothing usable), with "-2",
+// "-3", ... appended while it names an agent in taken (ignoring case,
+// sameAgentId), the base shortened to keep the id within the 64-character
+// limit.
+export function uniqueAgentId(name: string, taken: Iterable<string>): string {
+  const base = repairAgentId(name) || "agent"
+  const ids = [...taken]
+  const isTaken = (id: string) => ids.some((t) => sameAgentId(t, id))
   let id = base
-  for (let n = 2; taken.has(id); n++) {
+  for (let n = 2; isTaken(id); n++) {
     const suffix = `-${n}`
     id = base.slice(0, 64 - suffix.length).replace(/[-_]+$/, "") + suffix
   }

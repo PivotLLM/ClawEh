@@ -550,13 +550,11 @@ type SessionConfig struct {
 }
 
 // DefaultBinding returns the agent's binding marked Default, or false if none.
-// The caller's agentID is matched case-insensitively (binding agent_ids are
-// in normal form, validateAgentIDs).
+// Agent ids are compared by identity (SameAgentID).
 func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		if b.Default && strings.EqualFold(b.AgentID, id) {
+		if b.Default && SameAgentID(b.AgentID, agentID) {
 			return b, true
 		}
 	}
@@ -566,9 +564,8 @@ func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
 // AgentHasGlobalCron reports whether the agent may schedule/manage cron jobs for
 // other agents.
 func (c *Config) AgentHasGlobalCron(agentID string) bool {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			return c.Agents.List[i].GlobalCron
 		}
 	}
@@ -577,9 +574,8 @@ func (c *Config) AgentHasGlobalCron(agentID string) bool {
 
 // AgentHasMaestro reports whether the agent has the Maestro tool suite enabled.
 func (c *Config) AgentHasMaestro(agentID string) bool {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			return c.Agents.List[i].MaestroEnabled()
 		}
 	}
@@ -589,9 +585,8 @@ func (c *Config) AgentHasMaestro(agentID string) bool {
 // AgentMaestro returns the agent's Maestro block, or nil when the agent is
 // unknown or has no block.
 func (c *Config) AgentMaestro(agentID string) *MaestroConfig {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			return c.Agents.List[i].Maestro
 		}
 	}
@@ -600,9 +595,8 @@ func (c *Config) AgentMaestro(agentID string) *MaestroConfig {
 
 // AgentByID returns the agent's config, or nil when unknown.
 func (c *Config) AgentByID(agentID string) *AgentConfig {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			return &c.Agents.List[i]
 		}
 	}
@@ -638,9 +632,8 @@ func (a *AgentConfig) DisplayName() string {
 
 // AgentHasFusion reports whether the agent has the Fusion tool suite enabled.
 func (c *Config) AgentHasFusion(agentID string) bool {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			return c.Agents.List[i].Fusion
 		}
 	}
@@ -652,9 +645,8 @@ func (c *Config) AgentHasFusion(agentID string) bool {
 // than the per-tool allowlist. cogmem defaults ON; maestro, fusion and forum
 // default OFF.
 func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
-	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if strings.EqualFold(c.Agents.List[i].ID, id) {
+		if SameAgentID(c.Agents.List[i].ID, agentID) {
 			a := &c.Agents.List[i]
 			switch suite {
 			case "maestro":
@@ -720,8 +712,12 @@ func (c *Config) ValidateBindings() error {
 		if !b.Default {
 			continue
 		}
-		defaults[b.AgentID]++
-		if defaults[b.AgentID] > 1 {
+		key := b.AgentID // "" is the default agent
+		if key != "" {
+			key = NormalizeAgentID(key)
+		}
+		defaults[key]++
+		if defaults[key] > 1 {
 			return fmt.Errorf("agent %q has more than one default binding", b.AgentID)
 		}
 		if !channelSupportsDefaultDelivery(b.Match.Channel) {

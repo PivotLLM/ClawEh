@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -154,7 +153,7 @@ func (h *toolHost) ReadAllowed(agentID, absPath string) error {
 
 // same refuses a question about any agent but the one the host is for.
 func (h *toolHost) same(agentID string) error {
-	if !strings.EqualFold(strings.TrimSpace(agentID), h.agentID) {
+	if !config.SameAgentID(agentID, h.agentID) {
 		return fmt.Errorf("agent %s is not agent %s", agentID, h.agentID)
 	}
 	return nil
