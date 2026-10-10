@@ -83,3 +83,86 @@ func TestFakeContextEndedParentOrPastDeadline(t *testing.T) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", past.Err())
 	}
 }
+
+// context.Cause is context.DeadlineExceeded once the fake deadline passes,
+// for the context and for one derived from it, and stays so when the parent
+// is cancelled later with a cause of its own; a cancel or a parent's cause
+// that came first is reported as such.
+func TestFakeContextCause(t *testing.T) {
+	f := NewFake(epoch)
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	defer cancelParent(nil)
+	ctx, cancel := f.WithTimeout(parent, time.Second)
+	defer cancel()
+	child, cancelChild := context.WithCancel(ctx)
+	defer cancelChild()
+	if cause := context.Cause(ctx); cause != nil {
+		t.Fatalf("cause before the deadline = %v", cause)
+	}
+	f.Advance(time.Second)
+	<-child.Done()
+	cancelParent(errors.New("too late"))
+	for name, c := range map[string]context.Context{"ctx": ctx, "child": child} {
+		if cause := context.Cause(c); !errors.Is(cause, context.DeadlineExceeded) {
+			t.Errorf("%s cause = %v, want context.DeadlineExceeded", name, cause)
+		}
+	}
+
+	cancelled, stop := f.WithTimeout(context.Background(), time.Hour)
+	stop()
+	if cause := context.Cause(cancelled); !errors.Is(cause, context.Canceled) {
+		t.Errorf("cancelled cause = %v, want context.Canceled", cause)
+	}
+
+	why := errors.New("why")
+	p, cancelP := context.WithCancelCause(context.Background())
+	byParent, stopByParent := f.WithTimeout(p, time.Hour)
+	defer stopByParent()
+	cancelP(why)
+	<-byParent.Done()
+	if cause := context.Cause(byParent); !errors.Is(cause, why) {
+		t.Errorf("cause after the parent ended = %v, want the parent's", cause)
+	}
+}
+
+// A deadline the clock has reached ends the context before WithDeadline
+// returns, as context.WithDeadline does.
+func TestFakeContextPastDeadlineEndsAtOnce(t *testing.T) {
+	f := NewFake(epoch)
+	for _, d := range []time.Time{epoch, epoch.Add(-time.Second)} {
+		ctx, cancel := f.WithDeadline(context.Background(), d)
+		if err := ctx.Err(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("deadline %v: err = %v right after WithDeadline, want context.DeadlineExceeded", d, err)
+		}
+		if cause := context.Cause(ctx); !errors.Is(cause, context.DeadlineExceeded) {
+			t.Errorf("deadline %v: cause = %v", d, cause)
+		}
+		cancel()
+	}
+	if f.Waiters() != 0 {
+		t.Fatalf("waiters = %d, want none for an ended context", f.Waiters())
+	}
+}
+
+// Deadline reports the parent's deadline when it is earlier, and the parent
+// ending at it ends the context.
+func TestFakeContextEarlierParentDeadline(t *testing.T) {
+	f := NewFake(epoch)
+	parent, cancelParent := f.WithTimeout(context.Background(), time.Second)
+	defer cancelParent()
+	ctx, cancel := f.WithTimeout(parent, time.Hour)
+	defer cancel()
+	if d, ok := ctx.Deadline(); !ok || !d.Equal(epoch.Add(time.Second)) {
+		t.Fatalf("deadline = %v, %v; want the parent's %v", d, ok, epoch.Add(time.Second))
+	}
+	later, cancelLater := f.WithTimeout(parent, time.Millisecond)
+	defer cancelLater()
+	if d, _ := later.Deadline(); !d.Equal(epoch.Add(time.Millisecond)) {
+		t.Fatalf("own earlier deadline = %v, want %v", d, epoch.Add(time.Millisecond))
+	}
+	f.Advance(time.Second)
+	<-ctx.Done()
+	if err := ctx.Err(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
