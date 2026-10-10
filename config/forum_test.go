@@ -4,6 +4,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -116,5 +118,24 @@ func TestStore_ForumLimits(t *testing.T) {
 	}
 	if got := s.Current().Forum.Limits.CallTimeoutSeconds; got != 0 {
 		t.Errorf("a refused update was applied: call_timeout_seconds = %d", got)
+	}
+}
+
+// testdata/forum_limit_defaults.json holds the defaults of forum.limits; the
+// WebUI's FORUM_LIMIT_DEFAULTS (form-model.test.ts) is checked against the
+// same file, so the System page shows the defaults the server applies.
+func TestForumLimitDefaultsFixture(t *testing.T) {
+	b, err := os.ReadFile("testdata/forum_limit_defaults.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture ForumLimitsConfig
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&fixture); err != nil {
+		t.Fatal(err)
+	}
+	if want := (ForumLimitsConfig{}).Effective(); fixture != want {
+		t.Fatalf("forum_limit_defaults.json = %+v, want %+v", fixture, want)
 	}
 }

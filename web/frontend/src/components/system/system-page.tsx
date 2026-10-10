@@ -28,7 +28,8 @@ type SaveStatus = "saving" | "saved" | "error" | null
 // SystemPage is everything about the running system that is not a listener:
 // agent defaults, context management, runtime, logging, backup, forum
 // maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
-// device gateway) are on the Network page. Fields autosave on a debounce, as a JSON merge patch.
+// device gateway) are on the Network page. Fields autosave on a debounce, as
+// a JSON merge patch.
 export function SystemPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -381,22 +382,22 @@ export function SystemPage() {
             limits: nullableInts({
               max_calls: parseOptionalIntField(
                 form.forumMaxCalls,
-                "Max calls per forum",
+                t("pages.config.forum_max_calls"),
                 { min: 0 },
               ),
               max_duration_seconds: parseOptionalIntField(
                 form.forumMaxDurationSeconds,
-                "Max run time (seconds)",
+                t("pages.config.forum_max_duration_seconds"),
                 { min: 0 },
               ),
               call_timeout_seconds: parseOptionalIntField(
                 form.forumCallTimeoutSeconds,
-                "Call timeout (seconds)",
+                t("pages.config.forum_call_timeout_seconds"),
                 { min: 0 },
               ),
               max_parallel_calls: parseOptionalIntField(
                 form.forumMaxParallelCalls,
-                "Max parallel calls",
+                t("pages.config.forum_max_parallel_calls"),
                 { min: 0 },
               ),
             }),

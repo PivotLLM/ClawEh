@@ -223,9 +223,12 @@ describe("SystemPage forum maximums", () => {
     renderPage()
     const maxCalls = await screen.findByTestId("forum-max_calls")
     fireEvent.change(maxCalls, { target: { value: "-1" } })
-    await screen.findByText("Max calls per forum must be >= 0.", undefined, {
-      timeout: 3000,
-    })
+    // The label is the field's en.json entry (t returns the key here).
+    await screen.findByText(
+      "pages.config.forum_max_calls must be >= 0.",
+      undefined,
+      { timeout: 3000 },
+    )
     expect(patched).not.toHaveBeenCalled()
   })
 })

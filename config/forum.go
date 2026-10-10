@@ -21,7 +21,9 @@ type ForumLimitsConfig struct {
 	MaxParallelCalls   int `json:"max_parallel_calls,omitempty"`
 }
 
-// The defaults of forum.limits.
+// The defaults of forum.limits. The WebUI shows them from its own copy
+// (FORUM_LIMIT_DEFAULTS); both are checked against
+// testdata/forum_limit_defaults.json.
 const (
 	DefaultForumMaxCalls           = 200
 	DefaultForumMaxDurationSeconds = 7200

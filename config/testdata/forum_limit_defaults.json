@@ -1,0 +1,6 @@
+{
+  "max_calls": 200,
+  "max_duration_seconds": 7200,
+  "call_timeout_seconds": 1800,
+  "max_parallel_calls": 8
+}

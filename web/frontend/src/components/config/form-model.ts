@@ -58,7 +58,8 @@ export interface CoreConfigForm {
 }
 
 // FORUM_LIMIT_DEFAULTS mirrors config.DefaultForum* in the backend: the value
-// each forum.limits field has when it is left out or set to 0.
+// each forum.limits field has when it is left out or set to 0. Both are
+// checked against config/testdata/forum_limit_defaults.json.
 export const FORUM_LIMIT_DEFAULTS = {
   max_calls: 200,
   max_duration_seconds: 7200,
