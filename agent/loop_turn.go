@@ -438,7 +438,7 @@ func (al *AgentLoop) handleReasoning(
 	// Use a short timeout so the goroutine does not block indefinitely when
 	// the outbound bus is full.  Reasoning output is best-effort; dropping it
 	// is acceptable to avoid goroutine accumulation.
-	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
 	defer pubCancel()
 
 	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
@@ -1213,7 +1213,7 @@ func (al *AgentLoop) runLLMIteration(
 		// enabled. Off by default so the user sees only the final answer, not the
 		// model's "let me also check…" play-by-play.
 		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
-			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
+			pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
 			if pubErr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
 				ChatID:  opts.ChatID,
@@ -1298,7 +1298,7 @@ func (al *AgentLoop) runLLMIteration(
 			// tool call, published in dispatch order before the tool runs.
 			if showToolActivity {
 				if line := toolCallBreadcrumb(tc); line != "" {
-					bcCtx, bcCancel := context.WithTimeout(ctx, 5*time.Second)
+					bcCtx, bcCancel := context.WithTimeout(ctx, publishTimeout)
 					if err := al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
@@ -1357,7 +1357,7 @@ func (al *AgentLoop) runLLMIteration(
 					// mirroring the synchronous tool execution path.
 					// An asked turn has no chat: its user-facing output is dropped.
 					if !result.Silent && result.ForUser != "" && opts.Channel != constants.AgentMessageChannel {
-						outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
+						outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), publishTimeout)
 						defer outCancel()
 						logger.InfoCF("agent", "Async tool completed, delivering to user",
 							map[string]any{
@@ -1393,7 +1393,7 @@ func (al *AgentLoop) runLLMIteration(
 							"channel":     opts.Channel,
 						})
 
-					pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
+					pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), publishTimeout)
 					defer pubCancel()
 					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",

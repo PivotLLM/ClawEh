@@ -94,7 +94,7 @@ func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) 
 			return
 		}
 		seen[change] = true
-		pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 			Channel: opts.Channel,

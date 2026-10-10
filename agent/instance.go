@@ -107,6 +107,15 @@ func (a *AgentInstance) DisplayName() string {
 	return (&config.AgentConfig{ID: a.ID, Name: a.Name}).DisplayName()
 }
 
+// sessionsDirName is the directory under an agent's state directory that
+// holds its conversation archives.
+const sessionsDirName = "sessions"
+
+// SessionsDir is the directory holding the agent's conversation archives.
+func (a *AgentInstance) SessionsDir() string {
+	return filepath.Join(a.StateDir, sessionsDirName)
+}
+
 // toolless reports whether the agent gets no tools at all: a fresh temporary
 // agent, or a human agent (which runs no model to call them).
 func (a *AgentInstance) toolless() bool { return a.Spec.Fresh || a.HumanModel != "" }
@@ -194,7 +203,7 @@ func newAgentInstance(
 
 	toolsRegistry := tools.NewToolRegistry()
 
-	sessionsDir := filepath.Join(stateDir, "sessions")
+	sessionsDir := filepath.Join(stateDir, sessionsDirName)
 
 	// Bring this agent's cognitive memory to the current layout and schema now,
 	// rather than leaving it to be upgraded whenever it next happens to be

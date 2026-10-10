@@ -269,7 +269,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				return nil // a person gets no notice: it would be posted to them
 			}
 			go func() {
-				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				pubCtx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 				defer cancel()
 				if err := al.bus.PublishInbound(pubCtx, notice); err != nil {
 					logger.WarnCF("agent", "clear: failed to publish clear notice", map[string]any{
@@ -372,7 +372,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 				Internal: true,
 			}
 			go func() {
-				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 				defer cancel()
 				if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {
 					logger.WarnCF("agent", "Failed to retrigger message after /retry",
@@ -416,7 +416,7 @@ func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []s
 // archiveDBPath returns the on-disk path of the SQLite archive for a session
 // of the agent whose state directory is stateDir.
 func archiveDBPath(stateDir, sessionKey string) string {
-	return memory.ArchivePath(filepath.Join(stateDir, "sessions"), sessionKey)
+	return memory.ArchivePath(filepath.Join(stateDir, sessionsDirName), sessionKey)
 }
 
 func mapCommandError(result commands.ExecuteResult) string {

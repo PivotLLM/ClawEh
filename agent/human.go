@@ -350,7 +350,7 @@ func noLongerNeeded(from string) string {
 // tellNoLongerNeeded posts noLongerNeeded(from) to the person's chat, even
 // when ctx has ended.
 func (al *AgentLoop) tellNoLongerNeeded(ctx context.Context, agentID, channel, chatID, from string) {
-	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 	defer cancel()
 	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: noLongerNeeded(from)}); err != nil {
 		logger.WarnCF("agent", "Failed to tell the person a request is no longer needed",

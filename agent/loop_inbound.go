@@ -414,7 +414,7 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 			return
 		}
 		if replyRequired {
-			pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 			defer cancel()
 			if perr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: msg.Channel, ChatID: msg.ChatID, OriginalMessageID: msg.MessageID,
@@ -608,7 +608,7 @@ func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body st
 
 	// Publish on a fresh bounded context (not the request context) so a client
 	// that hangs up right after POSTing does not abort delivery — matching cron.
-	pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 	defer pubCancel()
 	return al.bus.PublishInbound(pubCtx, msg)
 }
@@ -1042,7 +1042,7 @@ func (al *AgentLoop) systemReplyFallback(ctx context.Context, msg bus.InboundMes
 		}
 		// OnDelivery must not block: the fallback is published on its own.
 		go func() {
-			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 			defer cancel()
 			if perr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{Channel: fbChannel, ChatID: fbChatID, Content: reply}); perr != nil {
 				fields["publish_error"] = perr.Error()

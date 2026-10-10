@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -497,7 +496,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 
 	// The archive directory is the sessions directory within the agent's state
 	// directory, derived the same way initSessionStore does.
-	archiveDir := filepath.Join(agent.StateDir, "sessions")
+	archiveDir := agent.SessionsDir()
 	// A fresh temporary agent keeps no engine archive: it has no session tools
 	// to read one with, so the engine must not point it at one either (the
 	// archive note in the system message names those tools). Its conversation

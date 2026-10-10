@@ -460,7 +460,7 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 		Metadata:  meta,
 		Internal:  true,
 	}
-	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 	err := al.bus.PublishInbound(pubCtx, msg)
 	cancel()
 	if err != nil {
@@ -679,7 +679,7 @@ func (al *AgentLoop) commandAsk(ctx context.Context, msg bus.InboundMessage, ref
 				map[string]any{"agent_id": target.ID, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error()})
 		}
 		content := commandAskReply(target.DisplayName(), reply, err)
-		pubCtx, cancel := context.WithTimeout(askCtx, 5*time.Second)
+		pubCtx, cancel := context.WithTimeout(askCtx, publishTimeout)
 		defer cancel()
 		if pubErr := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 			Channel:           msg.Channel,
