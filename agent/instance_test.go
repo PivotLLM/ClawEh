@@ -151,3 +151,21 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 		})
 	}
 }
+
+// The routing-default agent (a nil config) has no cognitive memory, so its
+// prompt carries no memory guidance; a config agent that leaves cogmem unset
+// has memory and is told how to use it.
+func TestNewAgentInstance_MemoryGuidanceFollowsTheGivenConfig(t *testing.T) {
+	cfg := &config.Config{Agents: config.AgentsConfig{
+		BaseDir:  t.TempDir(),
+		Defaults: config.AgentDefaults{Models: []string{"test-model"}},
+	}}
+	provider := &mockProvider{}
+	if g := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider).ContextBuilder.memoryGuidance; g != "" {
+		t.Errorf("nil config: memory guidance %q, want none", g)
+	}
+	alice := &config.AgentConfig{ID: "alice"}
+	if g := mustNewAgentInstance(t, alice, &cfg.Agents.Defaults, cfg, provider).ContextBuilder.memoryGuidance; g == "" {
+		t.Error("alice (cogmem unset): no memory guidance")
+	}
+}

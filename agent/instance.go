@@ -204,6 +204,11 @@ func newAgentInstance(
 		skillsFilter = []string{} // no skills: the prompt is the creator's
 	}
 	limits := resolveRunLimits(defaults, agentCfg, cfg, model)
+	// Built from the agent's config as given, before a nil config becomes the
+	// empty one below: a nil config has no cognitive memory, so no memory
+	// guidance, while an empty one has it by default.
+	contextBuilder := newAgentContextBuilder(spec, agentCfg, cfg)
+	compressOpts := agentCompressOptions(agentCfg, defaults)
 
 	candidates := resolveAgentCandidates(cfg, models, agentID)
 
@@ -234,10 +239,10 @@ func newAgentInstance(
 		ThinkingLevel:  limits.thinkingLevel,
 		NoTools:        limits.noTools,
 		ContextWindow:  limits.contextWindow,
-		CompressOpts:   agentCompressOptions(agentCfg, defaults),
+		CompressOpts:   compressOpts,
 		Provider:       provider,
 		Sessions:       sessions,
-		ContextBuilder: newAgentContextBuilder(spec, agentCfg, cfg),
+		ContextBuilder: contextBuilder,
 		Tools:          tools.NewToolRegistry(),
 		Subagents:      subagents,
 		SkillsFilter:   skillsFilter,
