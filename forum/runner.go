@@ -16,13 +16,12 @@ import (
 
 // start runs ctrl in a goroutine whose context is the service's own,
 // cancelled by Close, not the launching call's. The run is its forum's
-// active run (forumEntry.active)
-// until it has stopped and its follow-up is done: for a terminal status,
-// completeTerminal; for a pause, registration for keep-alive; for an error,
-// the log line and, unless the host is shutting down, Host.OnStuck. The
-// lock is released and the run stops being the forum's active one in one
-// step, so a
-// caller that no longer sees the run can take the lock.
+// active run (forumEntry.active) until it has stopped and its follow-up is
+// done: for a terminal status, completeTerminal; for a pause, registration
+// for keep-alive; for an error, the log line and, unless the host is
+// shutting down, Host.OnStuck. The lock is released and the run stops being
+// the forum's active one in one step, so a caller that no longer sees the
+// run can take the lock.
 func (s *Service) start(store *forumStore, ctrl controller) error {
 	id := store.ID()
 	s.mu.Lock()
@@ -112,10 +111,9 @@ func drive(ctx context.Context, ctrl controller) (Status, error) {
 }
 
 // runFailed logs a run that stopped on an error and leaves it as it is on
-// disk (it resumes with forum_resume or at the next start). A host
-// shutdown is expected and logged at Info; anything else is logged at
-// Error naming the forum and the run and reported once through
-// Host.OnStuck.
+// disk (it resumes with forum_resume or at the next start). A host shutdown
+// is expected and logged at Info; anything else is logged at Error naming
+// the forum and the run and reported once through Host.OnStuck.
 func (s *Service) runFailed(store *forumStore, snap *Snapshot, err error) {
 	id, ref := snap.ForumID, storeRef(store)
 	name := fmt.Sprintf("forum %s run %d", ref, snap.Run)

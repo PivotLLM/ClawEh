@@ -31,7 +31,7 @@
 //     into State.
 //   - router.go: resolving a layer's routes into the inputs each
 //     participant receives.
-//   - controller.go, turn.go, moderator.go, recover.go, transcript.go:
+//   - controller.go, turn.go, moderator.go, open.go, transcript.go:
 //     executing layers, composing messages, validating and repairing
 //     output, moderation, pause/resume/cancel, opening a run (also after a
 //     restart) and the transcript.
@@ -42,7 +42,7 @@
 //     and run; launch; pause, resume, cancel and delete; status and
 //     results; the run goroutine; terminal work and the completion notice;
 //     the keep-alive and retry loop; restart recovery, which opens runs
-//     through recover.go's openForum), forums and their runs, the tool
+//     through open.go's openForum), forums and their runs, the tool
 //     definitions, the forum_results view, and the guide and templates
 //     (readme/).
 //

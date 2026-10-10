@@ -69,9 +69,9 @@ func (s *Service) keepAliveTick(ctx context.Context) {
 }
 
 // retryCleanups retries the temporary-agent deletion of every run with a
-// pending cleanup (runEntry.cleanup). A run whose forum is gone, or whose deletion succeeds, leaves
-// the set; one whose forum is running or locked by another process is
-// tried again at the next tick.
+// pending cleanup (runEntry.cleanup). A run whose forum is gone, or whose
+// deletion succeeds, leaves the set; one whose forum is running or locked
+// by another process is tried again at the next tick.
 func (s *Service) retryCleanups(ctx context.Context) {
 	pending := s.pendingRuns(func(r *runEntry) (Scope, bool) {
 		if r.cleanup == nil {

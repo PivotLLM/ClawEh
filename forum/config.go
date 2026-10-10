@@ -14,7 +14,9 @@ import (
 
 // The configuration contract (DESIGN.md §2): the types an agent's forum.json
 // decodes into. The JSON tags are the configuration's field names.
-// Decoding is in decode.go, validation in validate.go.
+// Decoding is in decode.go; validation is in validate.go (static checks),
+// preflight.go (checks against the host) and anonymity.go (the anonymity
+// rules).
 
 // configVersion is the only format version this package accepts.
 const configVersion = 1

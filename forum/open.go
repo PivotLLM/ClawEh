@@ -11,9 +11,9 @@ import (
 	"slices"
 )
 
-// Opening a forum for execution. openForum is the
-// only constructor of forumController, used both right after Launch and on
-// resume, so restart recovery is the ordinary start path.
+// Opening a run for execution. openForum is the only constructor of
+// forumController, used both right after Launch and on resume, so restart
+// recovery is the ordinary start path.
 
 // openForum loads a forum from its store and returns a controller positioned
 // at the first unfinished action. The store must be locked by the caller.
@@ -22,7 +22,8 @@ import (
 //  0. Remove the temporary entries a crashed writer left in the run
 //     (SweepRun).
 //  1. Verify the directory (verify), rebuild State from the commit log
-//     (replayState, never the state.json cache), read the log and every layer's attempts (forumStore.ListAttempts).
+//     (replayState, never the state.json cache), and read the log and
+//     every layer's attempts (forumStore.ListAttempts).
 //  2. Compile the configured schemas (compileSchemas).
 //  3. Read participants.json. For every participant with Created true,
 //     check Agents.Exists; a missing one is recorded so that Run ends the
@@ -120,10 +121,10 @@ func compileSchemas(cfg *Config, snap *Snapshot) (named, decision map[string]*co
 
 // checkCreated returns the IDs of the participants the forum created
 // (Created true) whose agent no longer exists, sorted. The error is for an
-// Agents.Exists failure only. openForum records the result in forumController.gone;
-// a non-empty list makes Run end the forum failed with EndParticipantGone
-// , so the failure is reported through the ordinary path rather than
-// as an error at openForum.
+// Agents.Exists failure only. openForum records the result in
+// forumController.gone; a non-empty list makes Run end the forum failed with
+// EndParticipantGone, so the failure is reported through the ordinary path
+// rather than as an error at openForum.
 func checkCreated(ctx context.Context, agents Agents, parts *Participants) ([]string, error) {
 	var gone []string
 	for id, p := range parts.Participants {

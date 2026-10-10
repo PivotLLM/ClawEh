@@ -15,11 +15,10 @@ import (
 	"time"
 )
 
-// The controller. A forumController
-// executes one forum from its on-disk state. It is built only by openForum
-// (recover.go), whether the forum was launched a moment ago or is being
-// resumed after a restart: there is one code path, driven by what the
-// store already holds.
+// The controller. A forumController executes one forum from its on-disk
+// state. It is built only by openForum (open.go), whether the forum was
+// launched a moment ago or is being resumed after a restart: there is one
+// code path, driven by what the store already holds.
 //
 // Run is idempotent over the store. It walks the enabled layers in
 // snapshot order, skips every layer, round and turn that already has a

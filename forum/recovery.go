@@ -18,10 +18,11 @@ import (
 // Recover is called once at startup with every agent's scope, so the
 // forums interrupted by a restart continue (DESIGN.md §7.18). Per scope it
 // first removes roots staged for deletion (listStaged, removeStaged), then
-// applies recoverOne to every forum in listForums. Errors are logged per forum and do not stop the scan; a
-// forum that cannot be reopened (other than one locked by another
-// process) is also reported through Host.OnStuck. The returned error is
-// the first one, for the caller's log line.
+// applies recoverOne to every forum in listForums. Errors are logged per
+// forum and do not stop the scan; a forum that cannot be reopened (other
+// than one locked by another process) is also reported through
+// Host.OnStuck. The returned error is the first one, for the caller's log
+// line.
 func (s *Service) Recover(ctx context.Context, scopes []Scope) error {
 	var first error
 	note := func(err error) {

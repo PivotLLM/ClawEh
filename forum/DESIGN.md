@@ -30,7 +30,7 @@ supplies no validator.
 | (a) configuration | `config.go`, `config_schema.go`, `decode.go`, `validate.go`, `preflight.go`, `anonymity.go`, `schema_jsonschema.go`, `jsonpointer.go`, `mergepatch.go` |
 | (b) store and replay | `store.go`, `locking.go`, `lock_unix.go`, `runfiles.go`, `commits.go`, `cleanup.go`, `atomicfs.go`, `replay.go` |
 | (c) router | `router.go` (projections in `jsonpointer.go`) |
-| (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go`, `transcript.go` |
+| (d) controller | `controller.go`, `turn.go`, `moderator.go`, `open.go`, `transcript.go` |
 | (e) service and tools | `service.go`, `tracking.go`, `launch.go`, `control.go`, `status.go`, `runner.go`, `terminal.go`, `keepalive.go`, `recovery.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
 
 - `records.go` is the wire format between the parts (every on-disk type,
