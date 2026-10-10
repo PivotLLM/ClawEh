@@ -18,7 +18,7 @@ import (
 // every running controller, the per-forum locks, temporary-agent cleanup
 // and the completion notice. The tools in tools.go are thin wrappers over
 // it. This file holds the Service, its per-forum state and the helpers
-// every operation shares; the operations are in service_*.go by concern.
+// every operation shares; the operations are in the files named for them (launch.go, control.go, …) by concern.
 //
 // Host wiring (what ClawEh calls, in order):
 //
@@ -101,64 +101,16 @@ type Service struct {
 	ctx  context.Context
 	stop context.CancelFunc
 
+	// mu guards closed and forums, every record in it, and the WaitGroup's
+	// additions (goLocked).
 	mu     sync.Mutex
 	closed bool
-	runs   map[string]*run
-	// paused holds the stores of paused forums whose temporary agents
-	// keepAlive touches (running forums' agents are touched through runs).
-	paused map[string]*forumStore
-	// cleanups holds the runs whose temporary agents could not all be
-	// deleted at their terminal state; keepAlive retries them.
-	cleanups map[runKey]Scope
-	// controls serialises the control operations (pause, resume, cancel,
-	// delete) of one forum ID; an entry lives while an operation holds or
-	// waits for it.
-	controls map[string]*controlLock
-	// stuck lists the runs Host.OnStuck was called for in this process,
-	// so it is called once; a run that later stops cleanly clears it.
-	stuck map[runKey]bool
-	// notifying lists the runs whose completion notice is being
-	// delivered, so a notice is never sent twice concurrently.
-	notifying map[runKey]bool
-	// launchChats holds the chat each run was launched from, as the
-	// launching tool call reported it. It is kept in memory only: the
-	// origin recorded in snapshot.json lives in the launcher's workspace
-	// and is not trusted, so a run whose launch this process did not see
-	// (one resumed after a restart) has no entry.
-	launchChats map[runKey]Chat
-	// notices holds the runs whose completion notice (or the result.json it
-	// waits for) failed; keepAlive retries them (noticeFailed).
-	notices   map[runKey]*noticeRetry
+	// forums holds the in-memory state of every forum ID that has any
+	// (tracking.go): one record per forum, so dropping a forum's
+	// state is dropping its record.
+	forums    map[string]*forumEntry
 	keepAlive sync.Once
 	wg        sync.WaitGroup
-}
-
-// runKey names one run of one forum.
-type runKey struct {
-	id  string
-	run int
-}
-
-// keyOf is the runKey of a run's store.
-func keyOf(store *forumStore) runKey { return runKey{id: store.ID(), run: store.RunNumber()} }
-
-// controlLock is one forum ID's control mutex with the number of
-// operations holding or waiting for it.
-type controlLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-// run is one active controller with its run's store and the forum's lock.
-// At most one run of a forum is active. It stays in
-// Service.runs until the run goroutine has finished the forum's terminal
-// work or registered its pause and released the lock; done is closed after
-// that.
-type run struct {
-	store  *forumStore
-	ctrl   controller
-	cancel context.CancelFunc
-	done   chan struct{}
 }
 
 // Option configures a Service.
@@ -195,14 +147,7 @@ func New(host Host, opts ...Option) *Service {
 		keepAliveEvery: keepAliveInterval,
 		ctx:            ctx,
 		stop:           stop,
-		runs:           map[string]*run{},
-		paused:         map[string]*forumStore{},
-		cleanups:       map[runKey]Scope{},
-		controls:       map[string]*controlLock{},
-		stuck:          map[runKey]bool{},
-		notifying:      map[runKey]bool{},
-		launchChats:    map[runKey]Chat{},
-		notices:        map[runKey]*noticeRetry{},
+		forums:         map[string]*forumEntry{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -292,11 +237,11 @@ func (s *Service) open(scope Scope, id string) (*forumStore, error) {
 func (s *Service) running(scope Scope, id string) (*run, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.runs[id]
-	if !ok || filepath.Clean(r.store.base) != filepath.Clean(scope.BaseDirectory) {
+	f := s.forums[id]
+	if f == nil || f.active == nil || filepath.Clean(f.active.store.base) != filepath.Clean(scope.BaseDirectory) {
 		return nil, false
 	}
-	return r, true
+	return f.active, true
 }
 
 // live returns the live run of a forum, or nil when there is none. A run
@@ -324,36 +269,6 @@ func waitDone(ctx context.Context, r *run) error {
 	}
 }
 
-// control locks the control operations of one forum ID and returns the
-// unlock function. The entry is removed once no operation holds or waits
-// for it, so the map never outgrows the operations in progress.
-func (s *Service) control(id string) func() {
-	s.mu.Lock()
-	cl, ok := s.controls[id]
-	if !ok {
-		cl = &controlLock{}
-		s.controls[id] = cl
-	}
-	cl.refs++
-	s.mu.Unlock()
-	cl.mu.Lock()
-	return func() {
-		cl.mu.Unlock()
-		s.mu.Lock()
-		if cl.refs--; cl.refs == 0 {
-			delete(s.controls, id)
-		}
-		s.mu.Unlock()
-	}
-}
-
-// forgetNotice drops a run from the notice retries.
-func (s *Service) forgetNotice(key runKey) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.notices, key)
-}
-
 // logForum names a forum in a log line: "forum <ref>", the forum named as
 // messages name it (storeRef).
 func logForum(store *forumStore) string {
@@ -363,83 +278,4 @@ func logForum(store *forumStore) string {
 // logRun names a run in a log line: "forum <ref> run <n>".
 func logRun(store *forumStore) string {
 	return fmt.Sprintf("%s run %d", logForum(store), store.RunNumber())
-}
-
-// registerPaused adds a paused forum to the keep-alive set and starts the
-// keep-alive loop if needed.
-func (s *Service) registerPaused(store *forumStore) {
-	s.mu.Lock()
-	s.paused[store.ID()] = store
-	s.mu.Unlock()
-	s.ensureKeepAlive()
-}
-
-// forgetPaused drops a forum from the keep-alive set.
-func (s *Service) forgetPaused(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.paused, id)
-}
-
-// registerCleanup records a run whose temporary agents are still to
-// delete, for the keep-alive loop to retry.
-func (s *Service) registerCleanup(scope Scope, store *forumStore) {
-	s.mu.Lock()
-	s.cleanups[keyOf(store)] = scope
-	s.mu.Unlock()
-	s.ensureKeepAlive()
-}
-
-// forgetCleanup drops a run from the cleanup retries.
-func (s *Service) forgetCleanup(key runKey) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.cleanups, key)
-}
-
-// forgetRuns drops every run of a deleted forum from the cleanup and
-// notice retries and forgets their launching chats.
-func (s *Service) forgetRuns(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key := range s.cleanups {
-		if key.id == id {
-			delete(s.cleanups, key)
-		}
-	}
-	for key := range s.notices {
-		if key.id == id {
-			delete(s.notices, key)
-		}
-	}
-	for key := range s.launchChats {
-		if key.id == id {
-			delete(s.launchChats, key)
-		}
-	}
-}
-
-// setLaunchChat records the chat run key was launched from.
-func (s *Service) setLaunchChat(key runKey, chat Chat) {
-	if chat == (Chat{}) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.launchChats[key] = chat
-}
-
-// launchChat returns the chat run key was launched from, or the zero Chat
-// when this process did not see the launch.
-func (s *Service) launchChat(key runKey) Chat {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.launchChats[key]
-}
-
-// takeLaunchChat forgets the chat run key was launched from.
-func (s *Service) takeLaunchChat(key runKey) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.launchChats, key)
 }

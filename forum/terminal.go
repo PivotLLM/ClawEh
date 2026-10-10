@@ -71,15 +71,11 @@ func (s *Service) notify(store *forumStore, origin Origin, res *Result) {
 	key := keyOf(store)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.notifying[key] {
+	if s.runStateLocked(key).notifying {
 		return
 	}
 	started := s.goLocked(func() {
-		defer func() {
-			s.mu.Lock()
-			delete(s.notifying, key)
-			s.mu.Unlock()
-		}()
+		defer s.withRun(key, func(r *runEntry) { r.notifying = false })
 		if err := s.host.Notifier.ForumFinished(s.ctx, origin, s.launchChat(key), res); err != nil {
 			if s.ctx.Err() != nil {
 				s.host.Logger.Infof("%s: notifying agent %s was cut by the shutdown; it is notified at the next start", logRun(store), origin.AgentID)
@@ -96,7 +92,7 @@ func (s *Service) notify(store *forumStore, origin Origin, res *Result) {
 		}
 	})
 	if started {
-		s.notifying[key] = true
+		s.withRunLocked(key, func(r *runEntry) { r.notifying = true })
 	} // else closed: nothing is sent; the marker stays for the next start
 }
 
@@ -106,7 +102,8 @@ func (s *Service) notify(store *forumStore, origin Origin, res *Result) {
 const maxNoticeTries = 5
 
 // noticeRetry is a run whose completion notice failed, for the keep-alive
-// loop to retry.
+// loop to retry; the zero value is none. It is a value, so a copy of a
+// runEntry (runState) shares nothing with the record.
 type noticeRetry struct {
 	scope Scope
 	tries int
@@ -119,18 +116,17 @@ type noticeRetry struct {
 // cleared, so no later start tries it again.
 func (s *Service) noticeFailed(store *forumStore, err error) {
 	key := keyOf(store)
-	s.mu.Lock()
-	nr := s.notices[key]
-	if nr == nil {
-		nr = &noticeRetry{scope: Scope{AgentID: store.owner, BaseDirectory: store.base}}
-		s.notices[key] = nr
-	}
-	nr.tries++
-	tries := nr.tries
-	if tries >= maxNoticeTries {
-		delete(s.notices, key)
-	}
-	s.mu.Unlock()
+	var tries int
+	s.withRun(key, func(r *runEntry) {
+		if r.notice.tries == 0 {
+			r.notice.scope = Scope{AgentID: store.owner, BaseDirectory: store.base}
+		}
+		r.notice.tries++
+		tries = r.notice.tries
+		if tries >= maxNoticeTries {
+			r.notice = noticeRetry{}
+		}
+	})
 	if tries < maxNoticeTries {
 		s.host.Logger.Warnf("%s: completion notice: %v (try %d of %d; retried every %s)", logRun(store), err, tries, maxNoticeTries, s.keepAliveEvery)
 		s.ensureKeepAlive()
@@ -143,20 +139,18 @@ func (s *Service) noticeFailed(store *forumStore, err error) {
 	}
 }
 
-// retryNotices retries the completion notice of every run in s.notices
-// that is not being delivered now: the run is opened and locked, and
-// completeTerminal writes result.json if it is still missing and notifies
+// retryNotices retries the completion notice of every run with a failed
+// notice (runEntry.notice) that is not being delivered now: the run is
+// opened and locked, and completeTerminal writes result.json if it is still missing and notifies
 // if the notice is still pending. A run whose forum is gone leaves the
 // set; one whose forum is running or locked is tried at the next tick.
 func (s *Service) retryNotices(ctx context.Context) {
-	s.mu.Lock()
-	pending := make(map[runKey]Scope, len(s.notices))
-	for key, nr := range s.notices {
-		if !s.notifying[key] {
-			pending[key] = nr.scope
+	pending := s.pendingRuns(func(r *runEntry) (Scope, bool) {
+		if r.notice.tries == 0 || r.notifying {
+			return Scope{}, false
 		}
-	}
-	s.mu.Unlock()
+		return r.notice.scope, true
+	})
 	for _, key := range sortedRunKeys(pending) {
 		if _, ok := s.running(pending[key], key.id); ok {
 			continue

@@ -1579,6 +1579,30 @@ func TestSvcBlockingNotifierDoesNotHoldTheForum(t *testing.T) {
 	svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
 }
 
+// Deleting a forum drops everything the service kept about it: its
+// keep-alive registration and its runs' launching chats.
+func TestSvcDeleteDropsForumRecord(t *testing.T) {
+	e := svcSetup(t)
+	id, _ := e.launch("")
+	if err := e.svc.Pause(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.settled(id, StatusPaused)
+	e.svc.setLaunchChat(runKey{id: id, run: 1}, Chat{Channel: "telegram", ChatID: "1"})
+	if !e.keptAlive(id) {
+		t.Fatal("the paused forum is not kept alive")
+	}
+	if err := e.svc.Delete(t.Context(), e.scope, id); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.mu.Lock()
+	f, kept := e.svc.forums[id]
+	e.svc.mu.Unlock()
+	if kept {
+		t.Errorf("the deleted forum's record is kept: %+v", f)
+	}
+}
+
 // Control locks are dropped once no operation uses them, and status and
 // list read forums without verifying every digest.
 func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
@@ -1588,14 +1612,19 @@ func TestSvcControlsPrunedAndListIsLight(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.settled(id, StatusPaused)
-	if err := e.svc.Delete(t.Context(), e.scope, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+	unknown := uuid.NewString()
+	if err := e.svc.Delete(t.Context(), e.scope, unknown); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	e.svc.mu.Lock()
-	n := len(e.svc.controls)
+	n := 0
+	for _, f := range e.svc.forums {
+		n += f.controlRefs
+	}
+	_, kept := e.svc.forums[unknown]
 	e.svc.mu.Unlock()
-	if n != 0 {
-		t.Errorf("%d control locks left", n)
+	if n != 0 || kept {
+		t.Errorf("%d control locks left (record of the unknown forum kept: %v)", n, kept)
 	}
 
 	// A damaged source fails verify but not status or list.
@@ -1731,7 +1760,12 @@ func TestSvcCloseDuringRecover(t *testing.T) {
 		svcClose(t, svc)
 		<-recovered
 		svc.mu.Lock()
-		live := len(svc.runs)
+		live := 0
+		for _, f := range svc.forums {
+			if f.active != nil {
+				live++
+			}
+		}
 		svc.mu.Unlock()
 		if live != 0 {
 			t.Fatalf("%d runs live after Close and Recover returned", live)
@@ -1764,9 +1798,7 @@ func TestSvcRecoverAfterCloseStartsNothing(t *testing.T) {
 	if _, ok := e.svc.running(e.scope, running); ok {
 		t.Error("Recover started a run after Close")
 	}
-	e.svc.mu.Lock()
-	notifying := len(e.svc.notifying)
-	e.svc.mu.Unlock()
+	notifying := len(e.svc.pendingRuns(func(r *runEntry) (Scope, bool) { return Scope{}, r.notifying }))
 	if notifying != 0 || e.notifier.count() != before {
 		t.Errorf("Recover started a notice after Close (in flight %d, sent %d, before %d)", notifying, e.notifier.count(), before)
 	}

@@ -31,15 +31,16 @@
 //     executing layers, composing messages, validating and repairing
 //     output, moderation, pause/resume/cancel, opening a run (also after a
 //     restart) and the transcript.
-//   - service.go (the Service, its per-forum state and locks),
-//     service_launch.go, service_control.go, service_status.go,
-//     service_run.go, service_terminal.go, service_keepalive.go,
-//     service_recover.go, forums.go, tools.go, results_view.go, readme.go:
-//     the lifecycle service (launch; pause, resume, cancel, delete; status
-//     and results; the run goroutine; terminal work and the completion
-//     notice; the keep-alive and retry loop; restart recovery), forums and
-//     their runs, the tool definitions, the forum_results view, and the
-//     guide and templates (readme/).
+//   - service.go, tracking.go, launch.go, control.go, status.go,
+//     runner.go, terminal.go, keepalive.go, recovery.go, forums.go,
+//     tools.go, results_view.go, readme.go: the lifecycle service (the
+//     Service and its shared helpers; its one in-memory record per forum
+//     and run; launch; pause, resume, cancel and delete; status and
+//     results; the run goroutine; terminal work and the completion notice;
+//     the keep-alive and retry loop; restart recovery, which opens runs
+//     through recover.go's openForum), forums and their runs, the tool
+//     definitions, the forum_results view, and the guide and templates
+//     (readme/).
 //
 // Invariants every part relies on (DESIGN.md §5):
 //
