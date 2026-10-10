@@ -31,7 +31,7 @@ func svcFinish(t *testing.T, e *svcEnv, id string, notices int) {
 // svcRelaunch launches the forum again and returns the run number.
 func svcRelaunch(t *testing.T, e *svcEnv, id string) int {
 	t.Helper()
-	n, err := e.svc.Launch(t.Context(), id, e.opts())
+	n, err := e.svc.Launch(t.Context(), e.scope, id, e.opts())
 	if err != nil {
 		t.Fatalf("launch again: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSvcConfigEditOnlyWhenNotRunning(t *testing.T) {
 	if err = edit(); err != nil {
 		t.Fatalf("update a new forum: %v", err)
 	}
-	if _, err = e.svc.Launch(t.Context(), id, e.opts()); err != nil {
+	if _, err = e.svc.Launch(t.Context(), e.scope, id, e.opts()); err != nil {
 		t.Fatal(err)
 	}
 	e.running(id)
@@ -318,7 +318,7 @@ func TestSvcFailedSupersedeKeepsThePausedRun(t *testing.T) {
 	e.ctrls.mu.Lock()
 	e.ctrls.openErrRun = map[int]error{1: errSvcHost}
 	e.ctrls.mu.Unlock()
-	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, errSvcHost) {
+	if _, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); !errors.Is(err, errSvcHost) {
 		t.Fatalf("launch = %v, want the failure opening run 1", err)
 	}
 	if !e.keptAlive(id) {
@@ -389,7 +389,7 @@ func TestSvcNextRunSkipsALeftMarker(t *testing.T) {
 	if err = setAgentsMarker(f.Run(1), []string{"left-by-run-1"}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := e.svc.Launch(t.Context(), id, e.opts())
+	n, err := e.svc.Launch(t.Context(), e.scope, id, e.opts())
 	if err != nil || n != 2 {
 		t.Fatalf("launch = run %d, %v; want run 2", n, err)
 	}
@@ -406,11 +406,11 @@ func TestSvcLaunchRefusedWhileRunning(t *testing.T) {
 	e := svcSetup(t)
 	id, _ := e.launch(svcSimpleJSON)
 	e.running(id)
-	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+e.ref(id)+" is running; pause or cancel it first" {
+	if _, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); !errors.Is(err, ErrInvalidState) || err.Error() != "forum "+e.ref(id)+" is running; pause or cancel it first" {
 		t.Errorf("launch while running = %v", err)
 	}
 	e.restart()
-	if _, err := e.svc.Launch(t.Context(), id, e.opts()); !errors.Is(err, ErrInvalidState) {
+	if _, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("launch while interrupted = %v", err)
 	}
 	if latest, err := latestRun(e.store(id)); err != nil || latest != 1 {
@@ -570,7 +570,7 @@ func svcAllocateRun2(t *testing.T, e *svcEnv, id string) {
 	}
 	opts := e.opts()
 	opts.Origin.AgentID = e.scope.AgentID
-	cfg, resolved, err := e.svc.check(t.Context(), raw, opts)
+	cfg, resolved, err := e.svc.check(t.Context(), e.scope, raw, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,8 @@ func svcAllocateRun2(t *testing.T, e *svcEnv, id string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.allocate(t.Context(), run2, raw, cfg, resolved, opts); err != nil {
+	plan := &launchPlan{scope: e.scope, origin: opts.Origin, raw: raw, cfg: cfg, resolved: resolved}
+	if err := e.svc.allocate(t.Context(), run2, plan); err != nil {
 		t.Fatal(err)
 	}
 	f.Unlock()
@@ -596,7 +597,7 @@ func TestSvcBookChapterPerRun(t *testing.T) {
 	if err := e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"sources": {"doc": {"file": "chapter2.md"}}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.ValidateConfig(t.Context(), id, e.opts()); err != nil {
+	if err := e.svc.ValidateConfig(t.Context(), e.scope, id, e.opts()); err != nil {
 		t.Fatal(err)
 	}
 	svcRelaunch(t, e, id)

@@ -48,11 +48,11 @@ type Scope struct {
 	BaseDirectory string
 }
 
-// LaunchOptions is what a launch needs besides the configuration bytes.
+// LaunchOptions is what validating and launching need besides the caller's
+// Scope and the forum (or configuration bytes).
 type LaunchOptions struct {
-	Scope Scope
 	// Origin is where the completion notice goes. An empty AgentID is
-	// filled with Scope.AgentID.
+	// filled with the Scope's AgentID.
 	Origin Origin
 	// ResolveFile maps a source `file` reference to the absolute path the
 	// launching agent's file tools would read (preflightEnv.ResolveFile).

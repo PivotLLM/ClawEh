@@ -33,7 +33,7 @@ func TestSvcRealControllerRunsToCompletion(t *testing.T) {
 	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 
-	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())
+	id, err := svcLaunch(t, svc, e.scope, svcSimpleJSON, e.opts())
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSvcRealControllerPausesAndCancels(t *testing.T) {
 	svc := New(Host{Messenger: &svcReplier{asks: map[string]int{}}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 
-	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())
+	id, err := svcLaunch(t, svc, e.scope, svcSimpleJSON, e.opts())
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}

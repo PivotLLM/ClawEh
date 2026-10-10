@@ -644,7 +644,6 @@ func svcClose(t *testing.T, svc *Service) {
 
 func (e *svcEnv) opts() LaunchOptions {
 	return LaunchOptions{
-		Scope:  e.scope,
 		Origin: Origin{Channel: "test", ChatID: "chat-1"},
 		ResolveFile: func(ref string) (string, error) {
 			if filepath.IsAbs(ref) {
@@ -668,7 +667,7 @@ func (e *svcEnv) launch(cfg string) (string, *svcCtrl) {
 	if cfg == "" {
 		cfg = svcConfigJSON
 	}
-	id, err := svcLaunch(e.t, e.svc, cfg, e.opts())
+	id, err := svcLaunch(e.t, e.svc, e.scope, cfg, e.opts())
 	if err != nil {
 		e.t.Fatalf("launch: %v", err)
 	}
@@ -816,17 +815,17 @@ func svcEventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// svcLaunch creates a forum holding cfg in opts.Scope and launches it. It
+// svcLaunch creates a forum holding cfg in scope and launches it. It
 // returns the forum's ID whether or not the launch succeeded.
-func svcLaunch(t *testing.T, svc *Service, cfg string, opts LaunchOptions) (string, error) {
+func svcLaunch(t *testing.T, svc *Service, scope Scope, cfg string, opts LaunchOptions) (string, error) {
 	t.Helper()
-	id, err := svc.NewForum(t.Context(), opts.Scope)
+	id, err := svc.NewForum(t.Context(), scope)
 	if err != nil {
 		t.Fatalf("new forum: %v", err)
 	}
-	if err = svc.SetConfig(t.Context(), opts.Scope, id, []byte(cfg)); err != nil {
+	if err = svc.SetConfig(t.Context(), scope, id, []byte(cfg)); err != nil {
 		t.Fatalf("set the forum's configuration: %v", err)
 	}
-	_, err = svc.Launch(t.Context(), id, opts)
+	_, err = svc.Launch(t.Context(), scope, id, opts)
 	return id, err
 }

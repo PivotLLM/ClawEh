@@ -138,8 +138,8 @@ func (s *Service) ExportConfig(_ context.Context, scope Scope, id string) ([]byt
 
 // ValidateConfig validates a forum's current configuration (Validate)
 // without creating anything.
-func (s *Service) ValidateConfig(ctx context.Context, id string, opts LaunchOptions) error {
-	store, err := s.open(opts.Scope, id)
+func (s *Service) ValidateConfig(ctx context.Context, scope Scope, id string, opts LaunchOptions) error {
+	store, err := s.open(scope, id)
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func (s *Service) ValidateConfig(ctx context.Context, id string, opts LaunchOpti
 	if err != nil {
 		return err
 	}
-	return s.Validate(ctx, raw, opts)
+	return s.Validate(ctx, scope, raw, opts)
 }
 
 // errBusy refuses an operation that needs a forum whose latest run is not

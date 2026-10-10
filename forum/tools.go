@@ -12,9 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -250,112 +248,106 @@ func (t *toolSuite) newForum(call *toolspec.ToolCall) (*toolspec.Result, error) 
 	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s created.", id)}, nil
 }
 
-func (t *toolSuite) configTemplate(call *toolspec.ToolCall) (*toolspec.Result, error) {
+// forumCall is one call of a tool that names a forum by its id argument:
+// the caller's scope, the forum ID, and the forum's Ref as it was before
+// the operation (Service.ref), which names it in a failure and in a
+// confirmation of an operation that may delete it.
+type forumCall struct {
+	scope Scope
+	id    string
+	ref   string
+}
+
+// forumOp runs op for a tool that names a forum: it resolves the caller's
+// Scope (a refusal is scopeFailure's) and the required id (a bad one is a
+// failure naming no forum), and renders op's error with fail.
+func (t *toolSuite) forumOp(call *toolspec.ToolCall, tool string, op func(fc forumCall) (*toolspec.Result, error)) (*toolspec.Result, error) {
 	scope, err := t.host.Scope(call)
 	if err != nil {
 		return scopeFailure(err)
 	}
 	id, err := requiredID(call)
 	if err != nil {
-		return t.fail(err, "", "config_template")
+		return t.fail(err, "", tool)
 	}
-	name, _, err := stringArg(call, "name")
+	fc := forumCall{scope: scope, id: id, ref: t.svc.ref(scope, id)}
+	res, err := op(fc)
 	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "config_template")
+		return t.fail(err, fc.ref, tool)
 	}
-	config, ok := templateConfig(name)
-	if !ok {
-		return &toolspec.Result{ForLLM: fmt.Sprintf("There is no template %q; use %s.", name, templateNames()), IsError: true}, nil
-	}
-	if err := t.svc.SetConfig(call.Ctx, scope, id, []byte(config)); err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "config_template")
-	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", t.svc.ref(scope, id), name)}, nil
+	return res, nil
+}
+
+func (t *toolSuite) configTemplate(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	return t.forumOp(call, "config_template", func(fc forumCall) (*toolspec.Result, error) {
+		name, _, err := stringArg(call, "name")
+		if err != nil {
+			return nil, err
+		}
+		config, ok := templateConfig(name)
+		if !ok {
+			return &toolspec.Result{ForLLM: fmt.Sprintf("There is no template %q; use %s.", name, templateNames()), IsError: true}, nil
+		}
+		if err := t.svc.SetConfig(call.Ctx, fc.scope, fc.id, []byte(config)); err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the %s template's configuration.", t.svc.ref(fc.scope, fc.id), name)}, nil
+	})
 }
 
 func (t *toolSuite) configImport(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "config_import")
-	}
-	raw, err := objectArg(call, "config")
-	if err == nil {
-		err = t.svc.SetConfig(call.Ctx, scope, id, raw)
-	}
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "config_import")
-	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", t.svc.ref(scope, id))}, nil
+	return t.forumOp(call, "config_import", func(fc forumCall) (*toolspec.Result, error) {
+		raw, err := objectArg(call, "config")
+		if err != nil {
+			return nil, err
+		}
+		if err := t.svc.SetConfig(call.Ctx, fc.scope, fc.id, raw); err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s now has the imported configuration.", t.svc.ref(fc.scope, fc.id))}, nil
+	})
 }
 
 func (t *toolSuite) configUpdate(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "config_update")
-	}
-	patch, err := objectArg(call, "changes")
-	if err == nil {
-		err = t.svc.UpdateConfig(call.Ctx, scope, id, patch)
-	}
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "config_update")
-	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", t.svc.ref(scope, id))}, nil
+	return t.forumOp(call, "config_update", func(fc forumCall) (*toolspec.Result, error) {
+		patch, err := objectArg(call, "changes")
+		if err != nil {
+			return nil, err
+		}
+		if err := t.svc.UpdateConfig(call.Ctx, fc.scope, fc.id, patch); err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: fmt.Sprintf("The configuration of forum %s is updated.", t.svc.ref(fc.scope, fc.id))}, nil
+	})
 }
 
 func (t *toolSuite) configExport(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "config_export")
-	}
-	config, err := t.svc.ExportConfig(call.Ctx, scope, id)
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "config_export")
-	}
-	return &toolspec.Result{ForLLM: string(config)}, nil
+	return t.forumOp(call, "config_export", func(fc forumCall) (*toolspec.Result, error) {
+		config, err := t.svc.ExportConfig(call.Ctx, fc.scope, fc.id)
+		if err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: string(config)}, nil
+	})
 }
 
 func (t *toolSuite) validate(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "validate")
-	}
-	if err := t.svc.ValidateConfig(call.Ctx, id, t.launchOptions(call, scope)); err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "validate")
-	}
-	return &toolspec.Result{ForLLM: "The configuration is valid."}, nil
+	return t.forumOp(call, "validate", func(fc forumCall) (*toolspec.Result, error) {
+		if err := t.svc.ValidateConfig(call.Ctx, fc.scope, fc.id, t.launchOptions(call, fc.scope)); err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: "The configuration is valid."}, nil
+	})
 }
 
 func (t *toolSuite) launch(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "launch")
-	}
-	run, err := t.svc.Launch(call.Ctx, id, t.launchOptions(call, scope))
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "launch")
-	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched (run %d). You will be notified when it finishes; end your turn instead of checking status.", t.svc.ref(scope, id), run)}, nil
+	return t.forumOp(call, "launch", func(fc forumCall) (*toolspec.Result, error) {
+		run, err := t.svc.Launch(call.Ctx, fc.scope, fc.id, t.launchOptions(call, fc.scope))
+		if err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: fmt.Sprintf("Forum %s launched (run %d). You will be notified when it finishes; end your turn instead of checking status.", t.svc.ref(fc.scope, fc.id), run)}, nil
+	})
 }
 
 func (t *toolSuite) status(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -405,58 +397,36 @@ func (t *toolSuite) delete(call *toolspec.ToolCall) (*toolspec.Result, error) {
 }
 
 // control runs one of the ID-only lifecycle operations (named by tool)
-// and confirms it with done (a format taking the forum's Ref, read before
-// the operation, which may delete it).
+// and confirms it with done, a format taking the forum's Ref as it was
+// before the operation, which may delete it.
 func (t *toolSuite) control(call *toolspec.ToolCall, tool string, op func(*Service, context.Context, Scope, string) error, done string) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", tool)
-	}
-	ref := t.svc.ref(scope, id)
-	if err := op(t.svc, call.Ctx, scope, id); err != nil {
-		return t.fail(err, ref, tool)
-	}
-	return &toolspec.Result{ForLLM: fmt.Sprintf(done, ref)}, nil
+	return t.forumOp(call, tool, func(fc forumCall) (*toolspec.Result, error) {
+		if err := op(t.svc, call.Ctx, fc.scope, fc.id); err != nil {
+			return nil, err
+		}
+		return &toolspec.Result{ForLLM: fmt.Sprintf(done, fc.ref)}, nil
+	})
 }
 
 func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
-	scope, err := t.host.Scope(call)
-	if err != nil {
-		return scopeFailure(err)
-	}
-	id, err := requiredID(call)
-	if err != nil {
-		return t.fail(err, "", "results")
-	}
-	run, err := runArg(call)
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "results")
-	}
-	res, err := t.svc.Results(call.Ctx, scope, id, run)
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "results")
-	}
-	store, err := t.svc.open(scope, id)
-	if err != nil {
-		return t.fail(err, t.svc.ref(scope, id), "results")
-	}
-	// Paths are relative to the agent's workspace, whose forums/ folder holds
-	// the base directory.
-	prefix := filepath.Join(filepath.Base(scope.BaseDirectory), id, dirRuns, strconv.Itoa(res.Run))
-	rs := store.Run(res.Run)
-	return jsonResult(newResultsView(res, prefix, rs.has(res.Transcript), rs.ReadPrefix))
+	return t.forumOp(call, "results", func(fc forumCall) (*toolspec.Result, error) {
+		run, err := runArg(call)
+		if err != nil {
+			return nil, err
+		}
+		view, err := t.svc.ResultsView(call.Ctx, fc.scope, fc.id, run)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(view)
+	})
 }
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
-// Scope from the host, Origin from the call's agent, channel, chat and
-// session, and ResolveFile and ReadAllowed bound to the agent.
+// Origin from the call's agent, channel, chat and session, and
+// ResolveFile and ReadAllowed bound to the agent.
 func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) LaunchOptions {
 	return LaunchOptions{
-		Scope: scope,
 		Origin: Origin{
 			AgentID: scope.AgentID, Channel: call.Channel, ChatID: call.ChatID, Session: call.Session,
 		},

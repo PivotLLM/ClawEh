@@ -29,14 +29,14 @@ func (s *Service) Models(ctx context.Context, agentID string) ([]ModelInfo, erro
 // Validate runs decodeConfig, validateStatic and runPreflight on raw without
 // creating anything (forum_validate). It returns nil, or a
 // *ValidationError listing every finding.
-func (s *Service) Validate(ctx context.Context, raw []byte, opts LaunchOptions) error {
-	_, _, err := s.check(ctx, raw, opts)
+func (s *Service) Validate(ctx context.Context, scope Scope, raw []byte, opts LaunchOptions) error {
+	_, _, err := s.check(ctx, scope, raw, opts)
 	return err
 }
 
 // check is the shared validation path of Validate and Launch: decodeConfig,
 // validateStatic, runPreflight with the service's host limits.
-func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*Config, *resolvedConfig, error) {
+func (s *Service) check(ctx context.Context, scope Scope, raw []byte, opts LaunchOptions) (*Config, *resolvedConfig, error) {
 	cfg, err := decodeConfig(raw)
 	if cfg == nil {
 		return nil, nil, err
@@ -56,7 +56,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 		return nil, nil, &ValidationError{Issues: issues}
 	}
 	resolved, err := runPreflight(ctx, cfg, preflightEnv{
-		Launcher:    opts.Scope.AgentID,
+		Launcher:    scope.AgentID,
 		Agents:      s.host.Agents,
 		Ceilings:    s.Ceilings(),
 		ResolveFile: opts.ResolveFile,
@@ -92,37 +92,37 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 // failing after step 6 (nothing has been dispatched yet), deletes the
 // agents created so far and removes the run (revertRun), leaving the forum
 // as it was, and the error is returned.
-func (s *Service) Launch(ctx context.Context, id string, opts LaunchOptions) (int, error) {
+func (s *Service) Launch(ctx context.Context, scope Scope, id string, opts LaunchOptions) (int, error) {
 	if s.isClosed() {
 		return 0, errClosed
 	}
 	defer s.control(id)()
-	r, err := s.live(ctx, opts.Scope, id)
+	r, err := s.live(ctx, scope, id)
 	if err != nil {
 		return 0, err
 	}
 	if r != nil {
-		return 0, errBusy(s.ref(opts.Scope, id), r.ctrl.State().Status)
+		return 0, errBusy(s.ref(scope, id), r.ctrl.State().Status)
 	}
-	store, err := s.open(opts.Scope, id)
+	store, err := s.open(scope, id)
 	if err != nil {
 		return 0, err
 	}
 	if err = store.Lock(); err != nil {
 		return 0, err
 	}
-	n, err := s.launchLocked(ctx, store, opts)
+	n, err := s.launchLocked(ctx, store, scope, opts)
 	if err != nil {
 		store.Unlock()
 		return 0, err
 	}
-	s.host.Logger.Infof("%s: launched by agent %s", logRun(store.Run(n)), opts.Scope.AgentID)
+	s.host.Logger.Infof("%s: launched by agent %s", logRun(store.Run(n)), scope.AgentID)
 	return n, nil
 }
 
 // launchLocked is Launch once the forum is locked. On success the started
 // run holds the lock; on failure the caller releases it.
-func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts LaunchOptions) (int, error) {
+func (s *Service) launchLocked(ctx context.Context, store *forumStore, scope Scope, opts LaunchOptions) (int, error) {
 	started, err := s.undoUnstarted(ctx, store)
 	if err != nil {
 		return 0, err
@@ -150,7 +150,7 @@ func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts Laun
 	if err != nil {
 		return 0, err
 	}
-	cfg, resolved, err := s.check(ctx, current, opts)
+	cfg, resolved, err := s.check(ctx, scope, current, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -158,8 +158,9 @@ func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts Laun
 	if err != nil {
 		return 0, err
 	}
-	if opts.Origin.AgentID == "" {
-		opts.Origin.AgentID = opts.Scope.AgentID
+	plan := &launchPlan{scope: scope, origin: opts.Origin, raw: raw, cfg: cfg, resolved: resolved}
+	if plan.origin.AgentID == "" {
+		plan.origin.AgentID = scope.AgentID
 	}
 	n, err := nextRun(store, started)
 	if err != nil {
@@ -169,7 +170,7 @@ func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts Laun
 	if err != nil {
 		return 0, err
 	}
-	if err = s.allocate(ctx, run, raw, cfg, resolved, opts); err != nil {
+	if err = s.allocate(ctx, run, plan); err != nil {
 		return 0, errors.Join(err, s.revertRun(ctx, run))
 	}
 	ctrl, err := s.openCtrl(ctx, run, s.host)
@@ -189,7 +190,7 @@ func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts Laun
 	// Recorded before the run starts, so even a run that ends at once
 	// finds it.
 	key := keyOf(run)
-	s.setLaunchChat(key, Chat{Channel: opts.Origin.Channel, ChatID: opts.Origin.ChatID})
+	s.setLaunchChat(key, Chat{Channel: plan.origin.Channel, ChatID: plan.origin.ChatID})
 	if err = s.start(run, ctrl); err != nil { //nolint:contextcheck // the run outlives the launching call; its context is the service's
 		s.takeLaunchChat(key)
 		return 0, errors.Join(err, s.revertRun(ctx, run))
@@ -197,16 +198,27 @@ func (s *Service) launchLocked(ctx context.Context, store *forumStore, opts Laun
 	return n, nil
 }
 
+// launchPlan is what a launch writes into its new run: the checked
+// configuration (raw, formatted, and decoded) with its preflight result,
+// and who launched it from where.
+type launchPlan struct {
+	scope    Scope
+	origin   Origin
+	raw      []byte
+	cfg      *Config
+	resolved *resolvedConfig
+}
+
 // allocate performs Launch steps 3 to 6 in the run's directory.
-func (s *Service) allocate(ctx context.Context, store *forumStore, raw []byte, cfg *Config, resolved *resolvedConfig, opts LaunchOptions) error {
-	if err := store.WriteConfig(raw); err != nil {
+func (s *Service) allocate(ctx context.Context, store *forumStore, plan *launchPlan) error {
+	if err := store.WriteConfig(plan.raw); err != nil {
 		return err
 	}
-	sources, err := materialiseSources(store, cfg, resolved)
+	sources, err := materialiseSources(store, plan.cfg, plan.resolved)
 	if err != nil {
 		return err
 	}
-	parts, err := s.createParticipants(ctx, store, cfg, resolved, opts.Scope.AgentID)
+	parts, err := s.createParticipants(ctx, store, plan.cfg, plan.resolved, plan.scope.AgentID)
 	if err != nil {
 		return err
 	}
@@ -216,36 +228,46 @@ func (s *Service) allocate(ctx context.Context, store *forumStore, raw []byte, c
 	if err = store.SetCleanup(cleanupNotice, []byte("pending\n")); err != nil {
 		return err
 	}
-	seed, err := launchSeed(cfg)
+	snap, err := newSnapshot(store, plan, sources)
 	if err != nil {
 		return err
+	}
+	if err = store.WriteSnapshot(snap); err != nil {
+		return err
+	}
+	return store.AppendCommit(1, &Commit{Kind: CommitLaunched})
+}
+
+// newSnapshot is the snapshot.json of a run being launched from plan, with
+// the sources materialised for it.
+func newSnapshot(store *forumStore, plan *launchPlan, sources map[string]SourceRecord) (*Snapshot, error) {
+	cfg := plan.cfg
+	seed, err := launchSeed(cfg)
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	layers := make([]string, 0, len(cfg.Layers))
 	for _, l := range cfg.EnabledLayers() {
 		layers = append(layers, l.ID)
 	}
-	snap := &Snapshot{
+	return &Snapshot{
 		ForumID:          store.ID(),
 		Run:              store.RunNumber(),
 		Name:             cfg.Name,
 		LaunchedAt:       now,
-		BaseDirectory:    opts.Scope.BaseDirectory,
+		BaseDirectory:    plan.scope.BaseDirectory,
 		Deadline:         now.Add(time.Duration(cfg.Limits.MaxDurationSeconds) * time.Second),
-		Origin:           opts.Origin,
-		ConfigDigest:     digest(raw),
+		Origin:           plan.origin,
+		ConfigDigest:     digest(plan.raw),
 		Seed:             seed,
 		Limits:           cfg.Limits,
 		Layers:           layers,
 		ResultLayers:     cfg.EffectiveResultLayers(),
-		Models:           resolved.Models,
-		ModeratorSchemas: resolved.ModeratorSchemas,
+		Models:           plan.resolved.Models,
+		ModeratorSchemas: plan.resolved.ModeratorSchemas,
 		Sources:          sources,
-	}
-	if err = store.WriteSnapshot(snap); err != nil {
-		return err
-	}
-	return store.AppendCommit(1, &Commit{Kind: CommitLaunched})
+	}, nil
 }
 
 // materialiseSources copies every source into sources/: a file source

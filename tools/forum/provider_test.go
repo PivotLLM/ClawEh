@@ -230,8 +230,8 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	    "inputs": [{"from": "source:brief"}, {"from": "source:chapter"}, {"from": "source:notes"}],
 	    "delivery": "after_round", "max_rounds": 1, "output": {"format": "text"}}]}`
 	svc := forumpkg.New(forumpkg.Host{Messenger: modelsHost{}, Agents: modelsHost{}, Notifier: modelsHost{}, Logger: modelsHost{}})
-	err := svc.Validate(context.Background(), []byte(raw), forumpkg.LaunchOptions{
-		Scope:       forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumfs.BaseDirName)},
+	scope := forumpkg.Scope{AgentID: "alice", BaseDirectory: filepath.Join(ws, forumfs.BaseDirName)}
+	err := svc.Validate(context.Background(), scope, []byte(raw), forumpkg.LaunchOptions{
 		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
 		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
 	})

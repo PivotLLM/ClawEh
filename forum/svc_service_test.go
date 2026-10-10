@@ -197,7 +197,7 @@ func TestSvcLaunchFailuresLeaveTheForum(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(e)
 			}
-			id, err := svcLaunch(t, e.svc, tt.cfg, e.opts())
+			id, err := svcLaunch(t, e.svc, e.scope, tt.cfg, e.opts())
 			if err == nil || !tt.wantErr(err) {
 				t.Fatalf("Launch = %v", err)
 			}
@@ -233,7 +233,7 @@ func TestSvcLaunchFailuresLeaveTheForum(t *testing.T) {
 			}
 			clear(e.agents.createErr)
 			e.ctrls.openErr = nil
-			if n, err := e.svc.Launch(t.Context(), id, e.opts()); err != nil || n != 1 {
+			if n, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); err != nil || n != 1 {
 				t.Fatalf("launch once the failure is gone = run %d, %v; want run 1", n, err)
 			}
 			e.ctrls.get(t, id)
@@ -246,14 +246,14 @@ func TestSvcLaunchFailuresLeaveTheForum(t *testing.T) {
 
 func TestSvcValidate(t *testing.T) {
 	e := svcSetup(t)
-	if err := e.svc.Validate(t.Context(), []byte(svcConfigJSON), e.opts()); err != nil {
+	if err := e.svc.Validate(t.Context(), e.scope, []byte(svcConfigJSON), e.opts()); err != nil {
 		t.Fatalf("valid configuration: %v", err)
 	}
 	if len(e.agents.createdIDs()) != 0 || len(e.forumIDs()) != 0 {
 		t.Error("Validate created something")
 	}
 	bad := strings.Replace(svcConfigJSON, `"model": "large"`, `"model": "huge"`, 1)
-	err := e.svc.Validate(t.Context(), []byte(bad), e.opts())
+	err := e.svc.Validate(t.Context(), e.scope, []byte(bad), e.opts())
 	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "participants.bob.model") {
 		t.Errorf("unknown model: %v", err)
 	}
@@ -266,17 +266,17 @@ func TestSvcCeilings(t *testing.T) {
 	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger},
 		WithCeilings(func() Ceilings { return Ceilings{MaxCalls: int(current.Load())} }))
 	t.Cleanup(func() { svcClose(t, capped) })
-	err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts())
+	err := capped.Validate(t.Context(), e.scope, []byte(svcSimpleJSON), e.opts())
 	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "limits.max_calls: 10 is more than this install allows (5)") {
 		t.Errorf("Validate above the ceiling = %v", err)
 	}
-	if id, err := svcLaunch(t, capped, svcSimpleJSON, e.opts()); err == nil || e.store(id).RunNumber() != 0 {
+	if id, err := svcLaunch(t, capped, e.scope, svcSimpleJSON, e.opts()); err == nil || e.store(id).RunNumber() != 0 {
 		t.Errorf("Launch above the ceiling = %v", err)
 	}
 	// The ceiling is read at every check: raising it to the configured
 	// value admits the same configuration.
 	current.Store(10)
-	if err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
+	if err := capped.Validate(t.Context(), e.scope, []byte(svcSimpleJSON), e.opts()); err != nil {
 		t.Errorf("Validate at the ceiling = %v", err)
 	}
 	if got := capped.Ceilings(); got.MaxCalls != 10 {
@@ -504,7 +504,7 @@ func TestSvcEditAndLaunchWhilePausing(t *testing.T) {
 	want := "forum svc-test (" + id + ") is still pausing; try again once it is paused"
 	for name, op := range map[string]func() error{
 		"update": func() error { return e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"name": "x"}`)) },
-		"launch": func() error { _, err := e.svc.Launch(t.Context(), id, e.opts()); return err },
+		"launch": func() error { _, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); return err },
 	} {
 		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != want {
 			t.Errorf("%s while pausing = %v, want %q", name, err, want)
@@ -526,7 +526,7 @@ func TestSvcEditLaunchDeleteWhileCancelling(t *testing.T) {
 	want := "forum svc-test (" + id + ") is being cancelled"
 	for name, op := range map[string]func() error{
 		"update": func() error { return e.svc.UpdateConfig(t.Context(), e.scope, id, []byte(`{"name": "x"}`)) },
-		"launch": func() error { _, err := e.svc.Launch(t.Context(), id, e.opts()); return err },
+		"launch": func() error { _, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); return err },
 		"delete": func() error { return e.svc.Delete(t.Context(), e.scope, id) },
 	} {
 		if err := op(); !errors.Is(err, ErrInvalidState) || err.Error() != want {
@@ -1108,7 +1108,7 @@ func TestSvcRecover(t *testing.T) {
 		if _, ok := e.marker(abandoned, cleanupNotice); ok {
 			t.Error("the abandoned launch's notice marker is still there")
 		}
-		if n, err := e.svc.Launch(t.Context(), abandoned, e.opts()); err != nil || n != 1 {
+		if n, err := e.svc.Launch(t.Context(), e.scope, abandoned, e.opts()); err != nil || n != 1 {
 			t.Errorf("launching again = run %d, %v; want run 1", n, err)
 		}
 	})
@@ -1133,7 +1133,7 @@ func TestSvcRecover(t *testing.T) {
 		if e.notifier.count() != 1 {
 			t.Errorf("%d notices, want the first run's only", e.notifier.count())
 		}
-		if n, err := e.svc.Launch(t.Context(), id, e.opts()); err != nil || n != 2 {
+		if n, err := e.svc.Launch(t.Context(), e.scope, id, e.opts()); err != nil || n != 2 {
 			t.Errorf("launching again = run %d, %v; want run 2", n, err)
 		}
 	})
@@ -1283,7 +1283,7 @@ func TestSvcCloseLeavesStateAndRefusesWork(t *testing.T) {
 	if e.status(id) != StatusRunning {
 		t.Errorf("status after close = %s, want running", e.status(id))
 	}
-	if _, err := svcLaunch(t, e.svc, svcConfigJSON, e.opts()); !errors.Is(err, errClosed) {
+	if _, err := svcLaunch(t, e.svc, e.scope, svcConfigJSON, e.opts()); !errors.Is(err, errClosed) {
 		t.Errorf("launch after close: %v", err)
 	}
 	if err := e.svc.Resume(t.Context(), e.scope, id); !errors.Is(err, errClosed) {
@@ -1418,7 +1418,7 @@ func TestSvcShutdownIsNotStuck(t *testing.T) {
 		return svc
 	}
 	svc := newSvc()
-	id, err := svcLaunch(t, svc, svcSimpleJSON, e.opts())
+	id, err := svcLaunch(t, svc, e.scope, svcSimpleJSON, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1663,7 +1663,7 @@ func TestSvcResultsHidePartialRound(t *testing.T) {
 	svc := New(Host{Messenger: messenger, Agents: e.agents, Notifier: e.notifier, Logger: e.logger})
 	t.Cleanup(func() { svcClose(t, svc) })
 	cfg := strings.Replace(svcSimpleJSON, `"max_rounds": 1`, `"max_rounds": 2`, 1)
-	id, err := svcLaunch(t, svc, cfg, e.opts())
+	id, err := svcLaunch(t, svc, e.scope, cfg, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1721,7 +1721,7 @@ func TestSvcResultListsOtherLayersWhenTheResultIsEmpty(t *testing.T) {
 // the version and each missing part, not only the first.
 func TestSvcValidateReportsEveryProblem(t *testing.T) {
 	e := svcSetup(t)
-	err := e.svc.Validate(t.Context(), []byte(`{}`), e.opts())
+	err := e.svc.Validate(t.Context(), e.scope, []byte(`{}`), e.opts())
 	ve, ok := errors.AsType[*ValidationError](err)
 	if !ok {
 		t.Fatalf("Validate({}) = %v", err)
