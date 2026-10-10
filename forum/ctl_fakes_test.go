@@ -17,10 +17,18 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/internal/clock"
 )
 
 // Test helpers of the controller tests, prefixed ctl so they cannot collide with the
 // helpers of the other tests in the same package.
+
+// The shared clocks satisfy the forum's Clock, so the host can hand one in.
+var (
+	_ Clock = clock.Real
+	_ Clock = (*clock.Fake)(nil)
+)
 
 // ctlCall is one Ask the fake messenger received, with the header of the
 // controller's message parsed.
@@ -145,6 +153,13 @@ type ctlForum struct {
 	agents *ctlAgents
 	log    *ctlLogger
 	host   Host
+	// clock is the run's clock (Host.Clock): it starts at the launch and
+	// moves only when the test moves it (advance, driveClock).
+	clock *clock.Fake
+	// poll and release, when set, replace the controller's cooldown poll
+	// and release delay.
+	poll    time.Duration
+	release func() time.Duration
 }
 
 // ctlConfig is a small forum: Alice as herself, Bob and a chair as fresh
@@ -180,7 +195,7 @@ type ctlOption func(*ctlForum)
 
 // ctlDeadline sets the snapshot deadline relative to now.
 func ctlDeadline(d time.Duration) ctlOption {
-	return func(f *ctlForum) { f.snap.Deadline = time.Now().Add(d) }
+	return func(f *ctlForum) { f.snap.Deadline = f.clock.Now().UTC().Add(d) }
 }
 
 // ctlLaunch writes everything Launch writes for cfg (forum.json, sources,
@@ -276,7 +291,7 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 		seed = *cfg.Seed
 	}
 	now := time.Now().UTC()
-	f := &ctlForum{t: t, s: s, cfg: cfg, agents: &ctlAgents{gone: map[string]bool{}}, log: &ctlLogger{}}
+	f := &ctlForum{t: t, s: s, cfg: cfg, agents: &ctlAgents{gone: map[string]bool{}}, log: &ctlLogger{}, clock: clock.NewFake(now)}
 	f.snap = &Snapshot{
 		ForumID: s.ID(), Run: s.RunNumber(), Name: cfg.Name, LaunchedAt: now, BaseDirectory: s.base,
 		Deadline: now.Add(time.Duration(cfg.Limits.MaxDurationSeconds) * time.Second), ConfigDigest: digest(raw),
@@ -294,8 +309,27 @@ func ctlLaunchRaw(t *testing.T, raw []byte, opts ...ctlOption) *ctlForum {
 	}
 	f.msg = &ctlMessenger{agents: agents}
 	f.msg.respond = func(cl ctlCall) (Reply, error) { return f.reply(cl), nil }
-	f.host = Host{Messenger: f.msg, Agents: f.agents, Notifier: nil, Logger: f.log}
+	f.host = Host{Messenger: f.msg, Agents: f.agents, Notifier: nil, Logger: f.log, Clock: f.clock}
 	return f
+}
+
+// driveClock moves the forum's clock on by step each time something waits
+// on it, until the test ends, so holds and delays pass without the test
+// sleeping; the fake time a run took is a function of its waits alone.
+func (f *ctlForum) driveClock(step time.Duration) {
+	f.t.Helper()
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	f.t.Cleanup(func() {
+		stop()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		for f.clock.BlockUntil(ctx, 1) == nil {
+			f.clock.Advance(step)
+		}
+	}()
 }
 
 // ctlMark is the default reply text of a participant turn: unique per
@@ -325,6 +359,12 @@ func (f *ctlForum) open() *forumController {
 	c, err := openForum(context.Background(), f.s, f.host)
 	if err != nil {
 		f.t.Fatalf("Open: %v", err)
+	}
+	if f.poll > 0 {
+		c.cooldownPoll = f.poll
+	}
+	if f.release != nil {
+		c.releaseDelay = f.release
 	}
 	return c
 }

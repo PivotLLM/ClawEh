@@ -262,15 +262,10 @@ func TestCtlUnsuccessfulOutcomeResends(t *testing.T) {
 	}
 }
 
-// ctlCooldown makes alice's models in cooldown until until (forever when
-// until is zero), shortens the hold's polling and removes the release
-// delay for the test.
-func ctlCooldown(t *testing.T, f *ctlForum, until time.Time) {
-	t.Helper()
-	poll := cooldownPoll
-	cooldownPoll = 10 * time.Millisecond
-	t.Cleanup(func() { cooldownPoll = poll })
-	ctlReleaseDelay(t, func() time.Duration { return 0 })
+// ctlCooldown makes alice's models in cooldown until until on the forum's
+// clock (forever when until is zero) and removes the release delay.
+func ctlCooldown(f *ctlForum, until time.Time) {
+	f.release = func() time.Duration { return 0 }
 	f.host.Cooldown = func(agentID string) (string, time.Duration) {
 		if agentID != "alice" {
 			return "", 0
@@ -278,7 +273,7 @@ func ctlCooldown(t *testing.T, f *ctlForum, until time.Time) {
 		if until.IsZero() {
 			return "slow-model", time.Hour
 		}
-		return "slow-model", time.Until(until)
+		return "slow-model", until.Sub(f.clock.Now())
 	}
 }
 
@@ -288,23 +283,21 @@ func ctlCooldown(t *testing.T, f *ctlForum, until time.Time) {
 // left of the call timeout.
 func TestCtlCooldownHoldsTheTurn(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}}))
-	until := time.Now().Add(150 * time.Millisecond)
-	ctlCooldown(t, f, until)
+	start := f.clock.Now()
+	until := start.Add(150 * time.Millisecond)
+	ctlCooldown(f, until)
+	f.driveClock(50 * time.Millisecond)
 	var sentAt time.Time
 	f.msg.respond = func(cl ctlCall) (Reply, error) {
-		sentAt = time.Now()
+		sentAt = f.clock.Now()
 		return f.reply(cl), nil
 	}
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
 	calls := f.msg.all()
 	ctlWant(t, "calls", len(calls), 1)
-	if sentAt.Before(until) {
-		t.Errorf("the turn was sent %v before the cooldown ended", until.Sub(sentAt))
-	}
-	if limit := 60 * time.Second; calls[0].Wait >= limit || calls[0].Wait < limit-10*time.Second {
-		t.Errorf("wait = %v, want what is left of the 60s call timeout", calls[0].Wait)
-	}
+	ctlWant(t, "sent at", sentAt, until)
+	ctlWant(t, "wait", calls[0].Wait, 60*time.Second-150*time.Millisecond)
 	ctlWant(t, "attempts", len(f.attempts("one")), 1)
 	f.log.mu.Lock()
 	logged := strings.Join(f.log.lines, "\n")
@@ -318,15 +311,14 @@ func TestCtlCooldownLongerThanTheCallTimeout(t *testing.T) {
 	cfg := ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}})
 	cfg.Limits.CallTimeoutSeconds, cfg.Limits.MaxAttemptsPerTurn = 1, 1
 	f := ctlLaunch(t, cfg)
-	ctlCooldown(t, f, time.Time{})
-	start := time.Now()
+	ctlCooldown(f, time.Time{})
+	f.driveClock(250 * time.Millisecond)
+	start := f.clock.Now()
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusFailed)
 	ctlWant(t, "reason", f.result().Reason, EndAttemptsExhausted)
 	ctlWant(t, "calls", len(f.msg.all()), 0)
-	if took := time.Since(start); took < time.Second {
-		t.Errorf("the run ended after %v, before the 1s call timeout", took)
-	}
+	ctlWant(t, "held for", f.clock.Since(start), time.Second)
 	att := f.attempts("one")
 	ctlWant(t, "attempts", len(att), 1)
 	ctlWant(t, "outcome", att[0].Reply.Outcome, OutcomeTimeout)
@@ -339,9 +331,8 @@ func TestCtlCooldownEndingAtTheCallTimeout(t *testing.T) {
 	cfg := ctlConfig(Layer{ID: "one", Participants: []string{"alice"}, Instructions: "LAYER-one", Delivery: DeliveryAfterRound, MaxRounds: 1, Output: Output{Format: FormatText}})
 	cfg.Limits.CallTimeoutSeconds = 1
 	f := ctlLaunch(t, cfg)
-	poll := cooldownPoll
-	cooldownPoll = 5 * time.Second // the one poll is cut to the call timeout
-	t.Cleanup(func() { cooldownPoll = poll })
+	f.poll = 5 * time.Second // the one poll is cut to the call timeout
+	f.driveClock(time.Second)
 	var mu sync.Mutex
 	checks := 0
 	f.host.Cooldown = func(agentID string) (string, time.Duration) {
@@ -353,13 +344,13 @@ func TestCtlCooldownEndingAtTheCallTimeout(t *testing.T) {
 		}
 		return "", 0
 	}
+	start := f.clock.Now()
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
+	ctlWant(t, "held for", f.clock.Since(start), time.Second)
 	calls := f.msg.all()
 	ctlWant(t, "calls", len(calls), 1)
-	if calls[0].Wait <= 0 {
-		t.Errorf("the ask was sent with wait %v", calls[0].Wait)
-	}
+	ctlWant(t, "wait", calls[0].Wait, time.Second)
 	att := f.attempts("one")
 	ctlWant(t, "attempts", len(att), 2)
 	ctlWant(t, "first outcome", att[0].Reply.Outcome, OutcomeTimeout)
@@ -370,7 +361,9 @@ func TestCtlCooldownEndingAtTheCallTimeout(t *testing.T) {
 // ends call_limit and the next runs), the deadline (incomplete), the round
 // limit (round_limit).
 func TestCtlLimits(t *testing.T) {
+	t.Parallel()
 	t.Run("forum max_calls", func(t *testing.T) {
+		t.Parallel()
 		cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 3, FormatText))
 		cfg.Limits.MaxCalls = 3
 		f := ctlLaunch(t, cfg)
@@ -383,6 +376,7 @@ func TestCtlLimits(t *testing.T) {
 		ctlContains(t, "omissions", strings.Join(res.Omissions, "\n"), "round 2: no output from bob", "did not end")
 	})
 	t.Run("layer max_calls", func(t *testing.T) {
+		t.Parallel()
 		l1 := ctlLayer("first", DeliveryAfterRound, 3, FormatText)
 		l1.MaxCalls = 3
 		l2 := ctlLayer("second", DeliveryAfterRound, 1, FormatText)
@@ -405,6 +399,7 @@ func TestCtlLimits(t *testing.T) {
 		ctlLacks(t, "transcript", f.transcript(), ctlMark("alice", "first", 2))
 	})
 	t.Run("deadline", func(t *testing.T) {
+		t.Parallel()
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)), ctlDeadline(-time.Second))
 		_, st := f.run()
 		ctlWant(t, "status", st, StatusIncomplete)
@@ -415,13 +410,17 @@ func TestCtlLimits(t *testing.T) {
 	// or not it was the turn's last allowed attempt.
 	for _, attempts := range []int{1, 2} {
 		t.Run("deadline cuts attempt with "+strconv.Itoa(attempts)+" allowed", func(t *testing.T) {
+			t.Parallel()
 			l := ctlLayer("talk", DeliveryPerTurn, 1, FormatText)
 			l.Participants = []string{"alice"}
 			cfg := ctlConfig(l)
 			cfg.Limits.MaxAttemptsPerTurn = attempts
 			f := ctlLaunch(t, cfg, ctlDeadline(300*time.Millisecond))
 			f.msg.respond = func(cl ctlCall) (Reply, error) {
-				time.Sleep(cl.Wait) // the host's wait elapses with the deadline
+				if cl.Wait != 300*time.Millisecond {
+					t.Errorf("wait = %v, want the 300ms left to the deadline", cl.Wait)
+				}
+				f.clock.Advance(cl.Wait) // the host's wait elapses with the deadline
 				return Reply{Outcome: OutcomeTimeout}, nil
 			}
 			_, st := f.run()
@@ -431,16 +430,16 @@ func TestCtlLimits(t *testing.T) {
 		})
 	}
 	t.Run("wait bounded by the deadline", func(t *testing.T) {
+		t.Parallel()
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)), ctlDeadline(5*time.Second))
 		_, st := f.run()
 		ctlWant(t, "status", st, StatusCompleted)
 		for _, cl := range f.msg.all() {
-			if cl.Wait <= 0 || cl.Wait > 5*time.Second {
-				t.Fatalf("wait %s not bounded by the deadline", cl.Wait)
-			}
+			ctlWant(t, "wait", cl.Wait, 5*time.Second)
 		}
 	})
 	t.Run("call timeout", func(t *testing.T) {
+		t.Parallel()
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText)))
 		f.run()
 		for _, cl := range f.msg.all() {
@@ -449,6 +448,7 @@ func TestCtlLimits(t *testing.T) {
 		ctlWant(t, "recorded wait", f.attempts("talk")[0].Request.WaitSeconds, 60)
 	})
 	t.Run("max_rounds", func(t *testing.T) {
+		t.Parallel()
 		f := ctlLaunch(t, ctlConfig(ctlLayer("talk", DeliveryAfterRound, 2, FormatText)))
 		_, st := f.run()
 		ctlWant(t, "status", st, StatusCompleted)

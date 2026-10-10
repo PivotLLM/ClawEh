@@ -275,8 +275,10 @@ func TestCtlRequestRefusalsNameTheForum(t *testing.T) {
 // replays to the controller's state, a requested cancel always wins, and
 // a paused forum resumes to the end.
 func TestCtlPauseCancelRaces(t *testing.T) {
+	t.Parallel()
 	for i := range 12 {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
 			layer := ctlLayer("talk", DeliveryAfterRound, 3, FormatText)
 			layer.Moderator = &Moderator{Participant: "chair", AfterRound: 1, EveryRounds: 1}
 			f := ctlLaunch(t, ctlConfig(layer))
@@ -494,6 +496,7 @@ func TestCtlCrashBeforeTheFirstResendIsReserved(t *testing.T) {
 // run completes, with Alice's output marked resent; any output whose turn
 // a crash also cut is marked too, and the count matches the marks.
 func TestCtlCrashAtEveryBoundaryOfTheSecondResend(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) *ctlForum {
 		t.Helper()
 		cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
@@ -539,6 +542,7 @@ func TestCtlCrashAtEveryBoundaryOfTheSecondResend(t *testing.T) {
 	check(t, ref)
 	for n := 1; n <= len(events); n++ {
 		t.Run(fmt.Sprintf("%02d-%s", n, events[n-1]), func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			c := f.open()
 			var k atomic.Int32
@@ -624,6 +628,7 @@ func ctlCrashOutcome(t *testing.T, f *ctlForum) string {
 // transcript and result write): the resumed run reaches the same result
 // and transcript, publishes every output once, and its state replays.
 func TestCtlCrashAtEveryBoundary(t *testing.T) {
+	t.Parallel()
 	ref := ctlCrashForum(t)
 	var events []string
 	var mu sync.Mutex
@@ -651,6 +656,7 @@ func TestCtlCrashAtEveryBoundary(t *testing.T) {
 	}
 	for n := 1; n <= len(events); n++ {
 		t.Run(fmt.Sprintf("%03d-%s", n, events[n-1]), func(t *testing.T) {
+			t.Parallel() // each subtest has a forum of its own; the runs are bound by fsync
 			f := ctlCrashForum(t)
 			c := f.open()
 			var k atomic.Int32

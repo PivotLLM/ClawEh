@@ -183,7 +183,7 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 		}
 		// A wait the run deadline cut is the deadline stopping the run, not
 		// an attempt the participant used up, even on its last attempt.
-		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(time.Now()) {
+		if reply.Outcome == OutcomeTimeout && c.deadlinePassed(c.clock.Now()) {
 			c.host.Logger.Warnf("%s: %s/%s attempt %d cut by the run deadline", c.logName, w.layer.ID, w.turn, req.Attempt)
 			return attemptResult{reason: EndDeadline}, nil
 		}
@@ -194,9 +194,10 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 	return attemptResult{reason: w.exhausted}, nil
 }
 
-// cooldownPoll is how often a turn held back by a cooldown (awaitModel)
-// looks again: the model may come back early, or the forum be paused.
-var cooldownPoll = time.Second
+// defaultCooldownPoll is how often a turn held back by a cooldown
+// (awaitModel) looks again: the model may come back early, or the forum be
+// paused.
+const defaultCooldownPoll = time.Second
 
 // releaseDelayMin and releaseDelayMax bound the random delay a turn held
 // back by a cooldown waits once the cooldown ends, so the turns it held do
@@ -206,9 +207,9 @@ const (
 	releaseDelayMax = 5 * time.Second
 )
 
-// releaseDelay draws a held turn's release delay, uniformly in
-// [releaseDelayMin, releaseDelayMax]; a variable so tests can fix it.
-var releaseDelay = func() time.Duration {
+// randomReleaseDelay draws a held turn's release delay, uniformly in
+// [releaseDelayMin, releaseDelayMax].
+func randomReleaseDelay() time.Duration {
 	return releaseDelayMin + rand.N(releaseDelayMax-releaseDelayMin+1) //nolint:gosec // G404: load spreading, not security
 }
 
@@ -236,18 +237,18 @@ func (c *forumController) awaitModel(ctx context.Context, w work) (deadline time
 	if left <= 0 {
 		return time.Time{}, false
 	}
-	start := time.Now()
+	start := c.clock.Now()
 	deadline = start.Add(c.wait(start))
 	c.host.Logger.Infof("%s: %s/%s: participant %s waits for model %s, in cooldown for %s",
 		c.logName, w.layer.ID, w.turn, w.p.ID, model, left.Round(time.Second))
 	for {
-		now := time.Now()
+		now := c.clock.Now()
 		if !now.Before(deadline) {
 			c.host.Logger.Infof("%s: %s/%s: model %s of participant %s is still in cooldown; the attempt times out",
 				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
 		}
-		if !c.holdFor(ctx, min(left, deadline.Sub(now), cooldownPoll)) {
+		if !c.holdFor(ctx, min(left, deadline.Sub(now), c.cooldownPoll)) {
 			return deadline, false
 		}
 		next, nextLeft := c.host.Cooldown(w.p.AgentID)
@@ -255,8 +256,8 @@ func (c *forumController) awaitModel(ctx context.Context, w work) (deadline time
 			model, left = next, nextLeft
 			continue
 		}
-		delay := releaseDelay()
-		if time.Until(deadline)-delay < minHeldWait {
+		delay := c.releaseDelay()
+		if deadline.Sub(c.clock.Now())-delay < minHeldWait {
 			c.host.Logger.Infof("%s: %s/%s: the cooldown of model %s has ended with no time left for participant %s; the attempt times out",
 				c.logName, w.layer.ID, w.turn, model, w.p.ID)
 			return deadline, true
@@ -276,25 +277,23 @@ func (c *forumController) awaitModel(ctx context.Context, w work) (deadline time
 	}
 }
 
-// holdFor waits d in steps of at most cooldownPoll, reporting false as soon
-// as ctx ends or a pause or cancel is requested.
+// holdFor waits d in steps of at most c.cooldownPoll, reporting false as
+// soon as ctx ends or a pause or cancel is requested.
 func (c *forumController) holdFor(ctx context.Context, d time.Duration) bool {
-	end := time.Now().Add(d)
+	end := c.clock.Now().Add(d)
 	for {
-		step := min(time.Until(end), cooldownPoll)
+		step := min(end.Sub(c.clock.Now()), c.cooldownPoll)
 		if step > 0 {
-			pause := time.NewTimer(step)
 			select {
 			case <-ctx.Done():
-				pause.Stop()
 				return false
-			case <-pause.C:
+			case <-c.clock.After(step):
 			}
 		}
 		if c.interrupted() {
 			return false
 		}
-		if !time.Now().Before(end) {
+		if !c.clock.Now().Before(end) {
 			return true
 		}
 	}
@@ -315,7 +314,7 @@ func (c *forumController) reserve(ctx context.Context, layer Layer, req *Attempt
 	if err = ctx.Err(); err != nil {
 		return 0, false, "", err
 	}
-	now := time.Now()
+	now := c.clock.Now()
 	if reason := c.checkLimits(layer, 1, now); reason != "" {
 		c.host.Logger.Warnf("%s: %s/%s not sent: %s", c.logName, req.Layer, req.Turn, reason)
 		return 0, false, reason, nil

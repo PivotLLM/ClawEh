@@ -570,6 +570,7 @@ func TestVerifyAcceptsAFullRun(t *testing.T) {
 // verify fails on every tampered or missing committed artifact, and never
 // repairs or regenerates it.
 func TestVerifyDetectsDamage(t *testing.T) {
+	t.Parallel()
 	committedOutput := func(r *rpRun, layer string, published bool) string {
 		o := r.st.Layers[layer].Outputs[0]
 		if published {
@@ -601,6 +602,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel() // each subtest damages a run of its own
 			r := rpFullRun(t)
 			target := r.s.Path(tt.target(r))
 			if tt.remove {
@@ -632,6 +634,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 	// is still damage: verify follows no link, inside the root or out.
 	for _, published := range []bool{false, true} {
 		t.Run(fmt.Sprintf("symlinked artifact published=%v", published), func(t *testing.T) {
+			t.Parallel()
 			r := rpFullRun(t)
 			rel := committedOutput(r, "debate", published)
 			target := r.s.Path(rel)

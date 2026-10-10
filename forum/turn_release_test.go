@@ -13,20 +13,12 @@ import (
 	"time"
 )
 
-// ctlReleaseDelay replaces releaseDelay for the test.
-func ctlReleaseDelay(t *testing.T, fn func() time.Duration) {
-	t.Helper()
-	prev := releaseDelay
-	releaseDelay = fn
-	t.Cleanup(func() { releaseDelay = prev })
-}
-
 // The release delay is drawn in [releaseDelayMin, releaseDelayMax] and is
 // not a constant.
 func TestReleaseDelayRange(t *testing.T) {
 	seen := map[time.Duration]bool{}
 	for range 1000 {
-		d := releaseDelay()
+		d := randomReleaseDelay()
 		if d < releaseDelayMin || d > releaseDelayMax {
 			t.Fatalf("release delay %v outside [%v, %v]", d, releaseDelayMin, releaseDelayMax)
 		}
@@ -34,6 +26,21 @@ func TestReleaseDelayRange(t *testing.T) {
 	}
 	if len(seen) < 2 {
 		t.Errorf("release delay is constant: %v", seen)
+	}
+}
+
+// A controller uses the system clock, the one-second poll and the random
+// release delay unless the host or a test sets them.
+func TestControllerTimingDefaults(t *testing.T) {
+	f := ctlLaunch(t, ctlConfig(ctlReleaseLayer()))
+	f.host.Clock = nil
+	c := f.open()
+	if _, ok := c.clock.(systemClock); !ok {
+		t.Errorf("clock = %T, want the system clock", c.clock)
+	}
+	ctlWant(t, "poll", c.cooldownPoll, time.Second)
+	if d := c.releaseDelay(); d < releaseDelayMin || d > releaseDelayMax {
+		t.Errorf("release delay %v outside [%v, %v]", d, releaseDelayMin, releaseDelayMax)
 	}
 }
 
@@ -45,14 +52,15 @@ func ctlReleaseLayer() Layer {
 // sent, within its call timeout.
 func TestCtlReleaseDelayAfterHold(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlReleaseLayer()))
-	until := time.Now().Add(100 * time.Millisecond)
-	ctlCooldown(t, f, until)
+	until := f.clock.Now().Add(100 * time.Millisecond)
+	ctlCooldown(f, until)
 	const delay = 300 * time.Millisecond
 	var draws atomic.Int32
-	ctlReleaseDelay(t, func() time.Duration { draws.Add(1); return delay })
+	f.release = func() time.Duration { draws.Add(1); return delay }
+	f.driveClock(100 * time.Millisecond)
 	var sentAt time.Time
 	f.msg.respond = func(cl ctlCall) (Reply, error) {
-		sentAt = time.Now()
+		sentAt = f.clock.Now()
 		return f.reply(cl), nil
 	}
 	_, st := f.run()
@@ -60,12 +68,8 @@ func TestCtlReleaseDelayAfterHold(t *testing.T) {
 	calls := f.msg.all()
 	ctlWant(t, "calls", len(calls), 1)
 	ctlWant(t, "draws", draws.Load(), int32(1))
-	if early := until.Add(delay).Sub(sentAt); early > 0 {
-		t.Errorf("the turn was sent %v before the release delay ended", early)
-	}
-	if limit := 60 * time.Second; calls[0].Wait >= limit-delay || calls[0].Wait < limit-10*time.Second {
-		t.Errorf("wait = %v, want what is left of the 60s call timeout after the hold and the delay", calls[0].Wait)
-	}
+	ctlWant(t, "sent at", sentAt, until.Add(delay))
+	ctlWant(t, "wait", calls[0].Wait, 60*time.Second-100*time.Millisecond-delay)
 }
 
 // A turn that was not held is sent without a release delay.
@@ -73,24 +77,24 @@ func TestCtlNoReleaseDelayWithoutHold(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlReleaseLayer()))
 	f.host.Cooldown = func(string) (string, time.Duration) { return "", 0 }
 	var draws atomic.Int32
-	ctlReleaseDelay(t, func() time.Duration { draws.Add(1); return time.Hour })
+	f.release = func() time.Duration { draws.Add(1); return time.Hour }
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
 	ctlWant(t, "calls", len(f.msg.all()), 1)
 	ctlWant(t, "draws", draws.Load(), int32(0))
 }
 
-// A cancel during the release delay ends it at once, without the turn being
-// sent.
+// A cancel during the release delay ends it at its next poll, long before
+// the delay, without the turn being sent.
 func TestCtlReleaseDelayInterruptedByCancel(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlReleaseLayer()))
-	ctlCooldown(t, f, time.Now().Add(50*time.Millisecond))
+	ctlCooldown(f, f.clock.Now().Add(50*time.Millisecond))
 	delaying := make(chan struct{})
 	var once sync.Once
-	ctlReleaseDelay(t, func() time.Duration {
+	f.release = func() time.Duration {
 		once.Do(func() { close(delaying) })
 		return 30 * time.Second
-	})
+	}
 	c := f.open()
 	done := make(chan Status)
 	go func() {
@@ -100,15 +104,23 @@ func TestCtlReleaseDelayInterruptedByCancel(t *testing.T) {
 		}
 		done <- st
 	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := f.clock.BlockUntil(ctx, 1); err != nil { // the hold
+		t.Fatalf("the turn was never held: %v", err)
+	}
+	f.clock.Advance(50 * time.Millisecond)
 	<-delaying
-	start := time.Now()
+	if err := f.clock.BlockUntil(ctx, 1); err != nil { // the delay's first poll
+		t.Fatalf("the release delay never waited: %v", err)
+	}
+	start := f.clock.Now()
 	if err := c.RequestCancel(); err != nil {
 		t.Fatal(err)
 	}
+	f.clock.Advance(c.cooldownPoll)
 	ctlWant(t, "status", <-done, StatusCancelled)
-	if took := time.Since(start); took > 5*time.Second {
-		t.Errorf("the cancel took %v to end the release delay", took)
-	}
+	ctlWant(t, "delay waited", f.clock.Since(start), time.Second)
 	ctlWant(t, "calls", len(f.msg.all()), 0)
 }
 
@@ -119,20 +131,17 @@ func TestCtlReleaseDelayLeavingNoTime(t *testing.T) {
 	cfg := ctlConfig(ctlReleaseLayer())
 	cfg.Limits.CallTimeoutSeconds = 2
 	f := ctlLaunch(t, cfg)
-	ctlCooldown(t, f, time.Now().Add(100*time.Millisecond))
+	start := f.clock.Now()
+	ctlCooldown(f, start.Add(100*time.Millisecond))
 	var draws atomic.Int32
-	ctlReleaseDelay(t, func() time.Duration { draws.Add(1); return 1500 * time.Millisecond })
-	start := time.Now()
+	f.release = func() time.Duration { draws.Add(1); return 1500 * time.Millisecond }
+	f.driveClock(100 * time.Millisecond)
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
-	if took := time.Since(start); took >= 1500*time.Millisecond {
-		t.Errorf("the run took %v: the release delay was waited", took)
-	}
+	ctlWant(t, "held for", f.clock.Since(start), 100*time.Millisecond) // the delay was not waited
 	calls := f.msg.all()
 	ctlWant(t, "calls", len(calls), 1)
-	if calls[0].Wait <= 0 {
-		t.Errorf("the ask was sent with wait %v", calls[0].Wait)
-	}
+	ctlWant(t, "wait", calls[0].Wait, 2*time.Second)
 	ctlWant(t, "draws", draws.Load(), int32(1))
 	att := f.attempts("one")
 	ctlWant(t, "attempts", len(att), 2)
@@ -144,7 +153,6 @@ func TestCtlReleaseDelayLeavingNoTime(t *testing.T) {
 // it is sent after the next release, on one attempt.
 func TestCtlReleaseDelayCooldownAgain(t *testing.T) {
 	f := ctlLaunch(t, ctlConfig(ctlReleaseLayer()))
-	ctlCooldown(t, f, time.Time{})
 	var mu sync.Mutex
 	checks := 0
 	f.host.Cooldown = func(agentID string) (string, time.Duration) {
@@ -162,10 +170,19 @@ func TestCtlReleaseDelayCooldownAgain(t *testing.T) {
 		return "", 0
 	}
 	var draws atomic.Int32
-	ctlReleaseDelay(t, func() time.Duration { draws.Add(1); return 50 * time.Millisecond })
+	f.release = func() time.Duration { draws.Add(1); return 50 * time.Millisecond }
+	f.driveClock(10 * time.Millisecond)
+	start := f.clock.Now()
+	var sentAt time.Time
+	f.msg.respond = func(cl ctlCall) (Reply, error) {
+		sentAt = f.clock.Now()
+		return f.reply(cl), nil
+	}
 	_, st := f.run()
 	ctlWant(t, "status", st, StatusCompleted)
 	ctlWant(t, "calls", len(f.msg.all()), 1)
 	ctlWant(t, "draws", draws.Load(), int32(2))
 	ctlWant(t, "attempts", len(f.attempts("one")), 1)
+	// Two holds of 20ms, each followed by a 50ms release delay.
+	ctlWant(t, "sent after", sentAt.Sub(start), 140*time.Millisecond)
 }

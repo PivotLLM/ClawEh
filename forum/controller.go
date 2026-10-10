@@ -80,6 +80,14 @@ type forumController struct {
 	cancel       atomic.Bool
 	cancelActive context.CancelFunc
 
+	// clock measures holds, call timeouts and the run deadline
+	// (Host.Clock, else the system clock). cooldownPoll is how often a
+	// held turn looks again and releaseDelay draws its release delay
+	// (awaitModel); tests shorten or fix them.
+	clock        Clock
+	cooldownPoll time.Duration
+	releaseDelay func() time.Duration
+
 	// tmu guards transcriptSeq: the last publication commit already in
 	// transcript.md.
 	tmu           sync.Mutex
