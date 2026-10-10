@@ -87,214 +87,237 @@ func (al *AgentLoop) registerAgentTools(
 	fallbackChain *providers.FallbackChain,
 	cfg *config.Config,
 ) {
-	{
-		agentID := currentAgent.toolIdentity()
-		agentCfg := currentAgent.Config
+	agentID := currentAgent.toolIdentity()
+	currentAgentID := currentAgent.ID
+	var messageTool tools.Tool
+	if cfg.Tools.IsToolEnabled("msg_send") {
+		messageTool = al.newMessageTool()
+	}
+	candidateResolver := al.spawnCandidates
+	spawnAllowlist := func(callerID, targetID string) bool {
+		return canSpawnSubagent(al.GetRegistry(), currentAgentID, targetID)
+	}
+	spawner := al.newSpawner(currentAgent, agentID, cfg, candidateResolver, spawnAllowlist)
 
-		// Build message tool for this agent instance.
-		var messageTool tools.Tool
-		if cfg.Tools.IsToolEnabled("msg_send") {
-			mt := toolsmsg.NewMessageTool()
-			mt.SetSendCallback(func(ctx context.Context, channel, chatID, content string) error {
-				// One bound for queueing the message and learning its
-				// delivery: a channel reports an offline, unknown or
-				// stopped recipient at once (never retried); a slower
-				// outcome is reported as queued.
-				pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
-				defer pubCancel()
-				msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content}
-				// Internal channels never reach the channel manager, which
-				// reports deliveries.
-				internal := constants.IsInternalChannel(channel)
-				delivered := make(chan error, 1)
-				if !internal {
-					msg.OnDelivery = func(err error) {
-						select {
-						case delivered <- err:
-						default:
-						}
-					}
-				}
-				if err := al.bus.PublishOutbound(pubCtx, msg); err != nil {
-					return err
-				}
-				if internal {
-					return toolsmsg.ErrQueued
-				}
+	deps := tools.ToolDeps{
+		Cfg:               cfg,
+		AgentCfg:          currentAgent.Config,
+		AgentID:           agentID,
+		Workspace:         currentAgent.Workspace,
+		StateDir:          currentAgent.StateDir,
+		EphemeralMemory:   currentAgent.Spec.Ephemeral,
+		TempAgent:         currentAgent.IsTemp(),
+		TempPurpose:       currentAgent.Spec.Purpose,
+		Provider:          provider,
+		Dispatcher:        dispatcher,
+		Fallback:          fallbackChain,
+		Candidates:        currentAgent.Candidates,
+		SpawnAllowlist:    spawnAllowlist,
+		Agents:            newAgentServices(al, currentAgentID),
+		Messenger:         al,
+		CandidateResolver: candidateResolver,
+		Spawn:             spawner,
+		CompactFn:         al.compactFn(currentAgent),
+		SessionInfoFn:     al.sessionInfoFn(currentAgent),
+		ClearFn:           al.clearFn(currentAgent),
+		MessageTool:       messageTool,
+	}
+
+	// Progressive discovery is a single global switch (default off). When on,
+	// native tools and the cogmem suite stay always-on; the fusion/maestro suites
+	// (and MCP tools, in loop_mcp) are hidden behind search_tools.
+	discovery := cfg.Tools.Discovery.Enabled
+	currentAgent.DiscoveryActive = discovery
+	currentAgent.AlwaysShownNamespaces = discoveryPins(cfg, currentAgent.Config)
+	if currentAgent.ContextBuilder != nil {
+		currentAgent.ContextBuilder.WithToolDiscovery(discovery)
+	}
+	al.registerProviderTools(currentAgent, cfg, deps, discovery)
+	if discovery {
+		al.registerDiscoveryMetaTools(currentAgent, cfg)
+	}
+}
+
+// newMessageTool builds the msg_send tool. Its send waits one publishTimeout
+// for queueing the message and learning its delivery: a channel reports an
+// offline, unknown or stopped recipient at once (never retried); a slower
+// outcome is reported as queued.
+func (al *AgentLoop) newMessageTool() tools.Tool {
+	mt := toolsmsg.NewMessageTool()
+	mt.SetSendCallback(func(ctx context.Context, channel, chatID, content string) error {
+		pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
+		defer pubCancel()
+		msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content}
+		// Internal channels never reach the channel manager, which
+		// reports deliveries.
+		internal := constants.IsInternalChannel(channel)
+		delivered := make(chan error, 1)
+		if !internal {
+			msg.OnDelivery = func(err error) {
 				select {
-				case err := <-delivered:
-					return err
-				case <-pubCtx.Done():
-					return toolsmsg.ErrQueued
-				}
-			})
-			messageTool = mt
-		}
-
-		// Build candidate resolver for spawn. The registry is looked up at call
-		// time: this runs while the registry is still being built.
-		candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
-			target, ok := al.GetRegistry().Get(targetAgentID)
-			if !ok {
-				return nil, false
-			}
-			if len(target.Candidates) == 0 {
-				return nil, false
-			}
-			return target.Candidates, true
-		}
-
-		// Build compact closure. Returns the compaction report and the resulting
-		// rendered summary alongside the error.
-		compactFn := func(ctx context.Context, sessionKey string) (string, string, error) {
-			ctx = providers.WithAgentID(ctx, currentAgent.ID)
-			cm, release := al.getContextManager(currentAgent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
-			defer release()
-			err := cm.Compact(ctx)
-			report := ""
-			if r := cm.LastCompactionReport(); r != nil {
-				report = r.String()
-			}
-			return report, cm.RenderedSummary(), err
-		}
-
-		// Build clear closure for session_clear: rate-limited; publishes a
-		// reset-tagged self-handoff inbound that resets the session and restarts
-		// the turn at a clean boundary (never wipes history mid-turn).
-		clearFn := func(ctx context.Context, sessionKey, message string) error {
-			if !al.allowSelfClear(sessionKey) {
-				return errors.New("session_clear is rate-limited; wait a few seconds before clearing again")
-			}
-			meta := map[string]string{
-				metaSessionReset:              "true",
-				metadataKeyPreresolvedAgentID: currentAgent.ID,
-			}
-			inbound := bus.InboundMessage{
-				Channel:    tools.ToolChannel(ctx),
-				ChatID:     tools.ToolChatID(ctx),
-				SenderID:   "system",
-				Internal:   true,
-				SessionKey: sessionKey,
-				Content:    wrapClearNotice(message),
-				Metadata:   meta,
-			}
-			if inbound.ChatID != "" && inbound.ChatID != "direct" {
-				inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
-			}
-			pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
-			defer cancel()
-			return al.bus.PublishInbound(pubCtx, inbound)
-		}
-
-		// Build session info closure.
-		infoFn := func(ctx context.Context, sessionKey string) (*tools.SessionInfo, error) {
-			return buildSessionInfo(al, currentAgent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
-		}
-
-		// Determine spawn allowlist.
-		currentAgentID := currentAgent.ID
-		spawnAllowlist := func(callerID, targetID string) bool {
-			return canSpawnSubagent(al.GetRegistry(), currentAgentID, targetID)
-		}
-
-		// Robust sub-agent launcher, injected via Deps.Spawn so the internal spawn
-		// tool and any external/MCP tool launch workers through the same path.
-		// A clone's tasks are its source's: same tasks directory, same owner, so a
-		// background task it starts reports to the source's main conversation,
-		// like every other late result of a clone (see asyncResultTarget).
-		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
-			Workspace:         currentAgent.Workspace,
-			Live:              al.taskLive,
-			SelfCandidates:    currentAgent.Candidates,
-			CallerAgentID:     agentID,
-			CandidateResolver: candidateResolver,
-			RunFull:           al.runSubagentTask,
-			Alerter:           al.Alerter(),
-		})
-		currentAgent.spawnMgr = spawnMgr
-		spawner := toolsagents.NewSpawner(spawnMgr)
-		spawner.SetMaxDepth(cfg.Agents.Defaults.GetMaxSubagentDepth())
-		spawner.SetAllowlistChecker(func(targetID string) bool {
-			return spawnAllowlist(currentAgentID, targetID)
-		})
-
-		deps := tools.ToolDeps{
-			Cfg:               cfg,
-			AgentCfg:          agentCfg,
-			AgentID:           agentID,
-			Workspace:         currentAgent.Workspace,
-			StateDir:          currentAgent.StateDir,
-			EphemeralMemory:   currentAgent.Spec.Ephemeral,
-			TempAgent:         currentAgent.IsTemp(),
-			TempPurpose:       currentAgent.Spec.Purpose,
-			Provider:          provider,
-			Dispatcher:        dispatcher,
-			Fallback:          fallbackChain,
-			Candidates:        currentAgent.Candidates,
-			SpawnAllowlist:    spawnAllowlist,
-			Agents:            newAgentServices(al, currentAgentID),
-			Messenger:         al,
-			CandidateResolver: candidateResolver,
-			Spawn:             spawner,
-			CompactFn:         compactFn,
-			SessionInfoFn:     infoFn,
-			ClearFn:           clearFn,
-			MessageTool:       messageTool,
-		}
-
-		// Progressive discovery is a single global switch (default off). When on,
-		// native tools and the cogmem suite stay always-on; the fusion/maestro suites
-		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
-		discovery := cfg.Tools.Discovery.Enabled
-		currentAgent.DiscoveryActive = discovery
-		currentAgent.AlwaysShownNamespaces = discoveryPins(cfg, agentCfg)
-		if currentAgent.ContextBuilder != nil {
-			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
-		}
-
-		for _, p := range tools.GetProviders() {
-			if ok, _ := p.Available(cfg); !ok {
-				continue
-			}
-			suite := ""
-			if sp, ok := p.(tools.SuiteProvider); ok {
-				suite = sp.Suite()
-			}
-			for _, t := range p.Build(deps) {
-				switch {
-				case suite == "":
-					// Native: always visible, subject to the per-tool allowlist.
-					if agentCfg.IsToolAllowed(t.Name()) {
-						currentAgent.Tools.Register(t)
-					}
-				case agentCfg.IsToolDenied(t.Name()):
-					// Suite tools skip the allow list (gated as a unit by their
-					// toggle) but never the agent's deny list. Mirrors the
-					// execution-time check in tools.ToolRegistry.ExecuteWithContext.
-					logger.DebugCF("agent", "Skipping suite tool registration: denied by agent deny_tools",
-						map[string]any{"agent_id": agentID, "tool": t.Name(), "suite": suite})
-				case suite == suiteCogmem:
-					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
-				case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
-					// fusion/maestro behind discovery; carry any reveal-together group
-					// (e.g. a fusion service) so the whole set unlocks in one search.
-					// A namespace pinned via always_shown_namespaces skips this and
-					// falls through to RegisterSuite (always visible to the model).
-					if g, ok := t.(tools.DiscoveryGrouped); ok {
-						group, revealTogether := g.DiscoveryGroup()
-						currentAgent.Tools.RegisterSuiteHiddenGroup(t, group, revealTogether)
-					} else {
-						currentAgent.Tools.RegisterSuiteHidden(t)
-					}
+				case delivered <- err:
 				default:
-					// Non-discovery suites, plus discovery-pinned always-shown suites.
-					currentAgent.Tools.RegisterSuite(t)
 				}
 			}
 		}
+		if err := al.bus.PublishOutbound(pubCtx, msg); err != nil {
+			return err
+		}
+		if internal {
+			return toolsmsg.ErrQueued
+		}
+		select {
+		case err := <-delivered:
+			return err
+		case <-pubCtx.Done():
+			return toolsmsg.ErrQueued
+		}
+	})
+	return mt
+}
 
-		if discovery {
-			al.registerDiscoveryMetaTools(currentAgent, cfg)
+// spawnCandidates is the spawn tool's candidate resolver: the model
+// candidates of the target agent. The registry is looked up at call time,
+// because tools are registered while the registry is still being built.
+func (al *AgentLoop) spawnCandidates(targetAgentID string) ([]providers.FallbackCandidate, bool) {
+	target, ok := al.GetRegistry().Get(targetAgentID)
+	if !ok {
+		return nil, false
+	}
+	if len(target.Candidates) == 0 {
+		return nil, false
+	}
+	return target.Candidates, true
+}
+
+// newSpawner builds the agent's sub-agent launcher, shared by the internal
+// spawn tool and any external/MCP tool through Deps.Spawn. A clone's tasks
+// are its source's (same tasks directory, same owner, agentID), so a
+// background task it starts reports to the source's main conversation, like
+// every other late result of a clone (see asyncResultTarget).
+func (al *AgentLoop) newSpawner(
+	currentAgent *AgentInstance,
+	agentID string,
+	cfg *config.Config,
+	candidateResolver func(string) ([]providers.FallbackCandidate, bool),
+	spawnAllowlist func(callerID, targetID string) bool,
+) *toolsagents.Spawner {
+	spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
+		Workspace:         currentAgent.Workspace,
+		Live:              al.taskLive,
+		SelfCandidates:    currentAgent.Candidates,
+		CallerAgentID:     agentID,
+		CandidateResolver: candidateResolver,
+		RunFull:           al.runSubagentTask,
+		Alerter:           al.Alerter(),
+	})
+	currentAgent.spawnMgr = spawnMgr
+	spawner := toolsagents.NewSpawner(spawnMgr)
+	spawner.SetMaxDepth(cfg.Agents.Defaults.GetMaxSubagentDepth())
+	currentAgentID := currentAgent.ID
+	spawner.SetAllowlistChecker(func(targetID string) bool {
+		return spawnAllowlist(currentAgentID, targetID)
+	})
+	return spawner
+}
+
+// compactFn is session_compact's closure for agent: it returns the
+// compaction report and the resulting rendered summary alongside the error.
+func (al *AgentLoop) compactFn(agent *AgentInstance) func(ctx context.Context, sessionKey string) (string, string, error) {
+	return func(ctx context.Context, sessionKey string) (string, string, error) {
+		ctx = providers.WithAgentID(ctx, agent.ID)
+		cm, release := al.getContextManager(agent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
+		defer release()
+		err := cm.Compact(ctx)
+		report := ""
+		if r := cm.LastCompactionReport(); r != nil {
+			report = r.String()
+		}
+		return report, cm.RenderedSummary(), err
+	}
+}
+
+// clearFn is session_clear's closure for agent. It is rate-limited and
+// publishes a reset-tagged self-handoff inbound that resets the session and
+// restarts the turn at a clean boundary: history is never wiped mid-turn.
+func (al *AgentLoop) clearFn(agent *AgentInstance) func(ctx context.Context, sessionKey, message string) error {
+	return func(ctx context.Context, sessionKey, message string) error {
+		if !al.allowSelfClear(sessionKey) {
+			return errors.New("session_clear is rate-limited; wait a few seconds before clearing again")
+		}
+		meta := map[string]string{
+			metaSessionReset:              "true",
+			metadataKeyPreresolvedAgentID: agent.ID,
+		}
+		inbound := bus.InboundMessage{
+			Channel:    tools.ToolChannel(ctx),
+			ChatID:     tools.ToolChatID(ctx),
+			SenderID:   "system",
+			Internal:   true,
+			SessionKey: sessionKey,
+			Content:    wrapClearNotice(message),
+			Metadata:   meta,
+		}
+		if inbound.ChatID != "" && inbound.ChatID != "direct" {
+			inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
+		}
+		pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
+		defer cancel()
+		return al.bus.PublishInbound(pubCtx, inbound)
+	}
+}
+
+// sessionInfoFn is session_info's closure for agent.
+func (al *AgentLoop) sessionInfoFn(agent *AgentInstance) func(ctx context.Context, sessionKey string) (*tools.SessionInfo, error) {
+	return func(ctx context.Context, sessionKey string) (*tools.SessionInfo, error) {
+		return buildSessionInfo(al, agent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
+	}
+}
+
+// registerProviderTools registers on agent every tool the available
+// providers build from deps: a native tool subject to the agent's allowlist,
+// a suite tool gated by its suite's switch (never by the allowlist, always by
+// the deny list), and hidden behind discovery unless pinned.
+func (al *AgentLoop) registerProviderTools(currentAgent *AgentInstance, cfg *config.Config, deps tools.ToolDeps, discovery bool) {
+	agentCfg := currentAgent.Config
+	for _, p := range tools.GetProviders() {
+		if ok, _ := p.Available(cfg); !ok {
+			continue
+		}
+		suite := ""
+		if sp, ok := p.(tools.SuiteProvider); ok {
+			suite = sp.Suite()
+		}
+		for _, t := range p.Build(deps) {
+			switch {
+			case suite == "":
+				// Native: always visible, subject to the per-tool allowlist.
+				if agentCfg.IsToolAllowed(t.Name()) {
+					currentAgent.Tools.Register(t)
+				}
+			case agentCfg.IsToolDenied(t.Name()):
+				// Suite tools skip the allow list (gated as a unit by their
+				// toggle) but never the agent's deny list. Mirrors the
+				// execution-time check in tools.ToolRegistry.ExecuteWithContext.
+				logger.DebugCF("agent", "Skipping suite tool registration: denied by agent deny_tools",
+					map[string]any{"agent_id": deps.AgentID, "tool": t.Name(), "suite": suite})
+			case suite == suiteCogmem:
+				currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
+			case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
+				// fusion/maestro behind discovery; carry any reveal-together group
+				// (e.g. a fusion service) so the whole set unlocks in one search.
+				// A namespace pinned via always_shown_namespaces skips this and
+				// falls through to RegisterSuite (always visible to the model).
+				if g, ok := t.(tools.DiscoveryGrouped); ok {
+					group, revealTogether := g.DiscoveryGroup()
+					currentAgent.Tools.RegisterSuiteHiddenGroup(t, group, revealTogether)
+				} else {
+					currentAgent.Tools.RegisterSuiteHidden(t)
+				}
+			default:
+				// Non-discovery suites, plus discovery-pinned always-shown suites.
+				currentAgent.Tools.RegisterSuite(t)
+			}
 		}
 	}
 }
