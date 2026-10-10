@@ -32,7 +32,7 @@ func (p scheduleProvider) Describe() []tools.ToolDescriptor {
 }
 
 func (p scheduleProvider) Build(deps tools.ToolDeps) []tools.Tool {
-	// The cron tool is created externally (in gateway/helpers.go) due to its
+	// The cron tool is created externally (in gateway/services.go) due to its
 	// dependency on CronService and AgentLoop, then registered via
 	// agentLoop.RegisterTool(). This provider intentionally returns nil —
 	// the gateway wiring handles cron tool construction and registration.
