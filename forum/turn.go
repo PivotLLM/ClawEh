@@ -129,6 +129,7 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 			Layer: w.layer.ID, Round: w.round, Turn: w.turn, Attempt: 1, Kind: w.kind,
 			Participant: w.p.ID, AgentID: w.p.AgentID,
 		}
+		recut := false // the newest attempt's resend was cut by a restart too
 		switch last := lastAttempt(prior); {
 		case last == nil:
 			message, err := w.compose(cutoff)
@@ -140,8 +141,7 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 			req.Attempt, req.Resent = last.Request.Attempt, true
 			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
 		case last.Reply == nil:
-			c.host.Logger.Warnf("%s: %s/%s attempt %d was cut by a restart again after its resend; sending it as the next attempt",
-				c.logName, w.layer.ID, w.turn, last.Request.Attempt)
+			recut = true
 			req.Attempt = last.Request.Attempt + 1
 			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
 		case !last.Reply.Outcome.Successful():
@@ -156,6 +156,10 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 		}
 		if req.Resent {
 			c.host.Logger.Infof("%s: %s/%s attempt %d resent: a restart cut it before its reply", c.logName, w.layer.ID, w.turn, req.Attempt)
+		}
+		if recut {
+			c.host.Logger.Warnf("%s: %s/%s attempt %d was cut by a restart again after its resend; sending it as attempt %d",
+				c.logName, w.layer.ID, w.turn, req.Attempt-1, req.Attempt)
 		}
 		deadline, expired := c.awaitModel(ctx, w)
 		wait, reserved, reason, err := c.reserve(ctx, w.layer, req, deadline)

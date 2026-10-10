@@ -436,6 +436,59 @@ func TestCtlRestartEverySendExhaustsAttempts(t *testing.T) {
 	}
 }
 
+// Crash right after the first resend rewrote request.json, before its
+// reservation: the resend was never reserved, so it is still free and
+// attempt 1 is resent at the next start; Alice is sent the message twice.
+func TestCtlCrashBeforeTheFirstResendIsReserved(t *testing.T) {
+	cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
+	cfg.Limits.MaxAttemptsPerTurn = 1
+	f := ctlLaunch(t, cfg)
+	if ctlCutAlice(t, f) {
+		t.Fatal("the run ended while Alice's send was cut")
+	}
+	aliceAttempt := func() AttemptRecord {
+		t.Helper()
+		for _, a := range f.attempts("talk") {
+			if a.Request.Participant == "alice" {
+				return a
+			}
+		}
+		t.Fatal("alice has no attempt")
+		return AttemptRecord{}
+	}
+	rel := attemptRel("talk", turnID(1, "alice"), 1) + "/" + fileRequest
+	c := f.open()
+	c.crashHook = func(ev string) bool {
+		if ev != "request" {
+			return false
+		}
+		var req AttemptRequest
+		if err := f.s.readJSON(rel, &req); err != nil {
+			t.Errorf("read %s: %v", rel, err)
+			return false
+		}
+		return req.Resent
+	}
+	if _, err := c.Run(context.Background()); !errors.Is(err, errCrashed) {
+		t.Fatalf("crashed run: %v", err)
+	}
+	if a := aliceAttempt(); !a.Request.Resent || a.ResendUsed || a.Reply != nil {
+		t.Fatalf("after the crash: %+v, want rewritten as resent, resend not used", a)
+	}
+	ctlWant(t, "alice calls before the restart", len(f.msg.find("alice", "talk", 1, false)), 1)
+	_, st := f.run()
+	ctlWant(t, "status", st, StatusCompleted)
+	ctlWant(t, "alice calls", len(f.msg.find("alice", "talk", 1, false)), 2)
+	if a := aliceAttempt(); a.Request.Attempt != 1 || !a.Request.Resent || !a.ResendUsed || a.Reply == nil {
+		t.Fatalf("after the restart: %+v, want attempt 1 resent once and answered", a)
+	}
+	for _, o := range f.state().Layers["talk"].Outputs {
+		if o.ParticipantID == "alice" && (o.Attempt != 1 || !o.Resent) {
+			t.Errorf("alice output = %+v, want attempt 1 marked resent", o)
+		}
+	}
+}
+
 // Crash at every durable write of the run that follows an attempt cut
 // twice (sent, then resent): the message goes out as attempt 2 and the
 // run completes, with Alice's output marked resent; any output whose turn
