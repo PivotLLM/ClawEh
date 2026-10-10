@@ -119,8 +119,9 @@ func TestAgentIDErrors_SuggestionIsFree(t *testing.T) {
 	c := &Config{}
 	c.Agents.List = []AgentConfig{{ID: "Alice-Smith"}, {ID: "alice smith"}}
 	c.Bindings = []AgentBinding{{AgentID: "alice smith"}}
-	var got []string
-	for _, err := range c.AgentIDErrors() {
+	errs := c.AgentIDErrors()
+	got := make([]string, 0, len(errs))
+	for _, err := range errs {
 		got = append(got, err.Error())
 	}
 	want := []string{

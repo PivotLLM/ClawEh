@@ -164,7 +164,7 @@ func listedOnBearer(t *testing.T, srv *MCPServer, bearer string) []string {
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("decode: %v\nbody: %s", err, raw)
 	}
-	names := []string{}
+	names := make([]string, 0, len(parsed.Result.Tools))
 	for _, tl := range parsed.Result.Tools {
 		names = append(names, tl.Name)
 	}
@@ -187,7 +187,7 @@ func TestToolsList_BearerListsOnlyTheAgentsTools(t *testing.T) {
 		}),
 		WithAllowlist([]string{"*"}),
 		WithACLPolicy(acl.PolicyFunc(func(agent, tool string) bool {
-			return !(agent == "bob" && tool == "read_file")
+			return agent != "bob" || tool != "read_file"
 		})),
 	)
 	if err != nil {

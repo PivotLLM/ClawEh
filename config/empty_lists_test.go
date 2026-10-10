@@ -198,14 +198,11 @@ func TestStore_AgentToolsAndSkillsKeepEmpty(t *testing.T) {
 				} else if !ok || raw != tc.wantRaw {
 					t.Fatalf("%s on disk = %q (present %v), want %s", f.name, raw, ok, tc.wantRaw)
 				}
-				for _, src := range []string{"store", "disk"} {
-					cfg, err := s.Current(), error(nil)
-					if src == "disk" {
-						cfg, err = LoadConfig(s.Path())
-						if err != nil {
-							t.Fatal(err)
-						}
-					}
+				fromDisk, err := LoadConfig(s.Path())
+				if err != nil {
+					t.Fatal(err)
+				}
+				for src, cfg := range map[string]*Config{"store": s.Current(), "disk": fromDisk} {
 					got := f.get(&cfg.Agents.List[0])
 					if (got == nil) != (tc.value == nil) || !slices.Equal(got, tc.value) {
 						t.Fatalf("%s from %s = %#v, want %#v", f.name, src, got, tc.value)

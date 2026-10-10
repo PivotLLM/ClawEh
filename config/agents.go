@@ -47,7 +47,10 @@ func (a AgentsConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-type AgentConfig struct {
+// AgentConfig is one agents.list entry. Its MarshalJSON has a value
+// receiver and its other methods a pointer one: an AgentConfig must encode
+// the same whether or not it is addressable.
+type AgentConfig struct { //nolint:recvcheck // see above
 	ID          string           `json:"id"`
 	Enabled     *bool            `json:"enabled,omitempty"`
 	Default     bool             `json:"default,omitempty"`
