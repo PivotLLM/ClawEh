@@ -324,7 +324,11 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop stops the bot and waits for its long poll and command registration to
+// exit, each wait bounded by pollExitTimeout and by ctx. It returns ctx's
+// error when ctx ended before they did.
 func (c *TelegramChannel) Stop(ctx context.Context) error {
+	var err error
 	c.stopOnce.Do(func() {
 		logger.InfoC("telegram", "Stopping Telegram bot...")
 		c.SetRunning(false)
@@ -355,25 +359,31 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 		// into a 409 "terminated by other getUpdates request" against an
 		// in-flight HTTP poll on Telegram's side.
 		if c.pollDone != nil {
-			select {
-			case <-c.pollDone:
-			case <-time.After(pollExitTimeout):
-				logger.WarnCF("telegram", "Timed out waiting for long-poll goroutine to exit", map[string]any{
-					"timeout": pollExitTimeout.String(),
-				})
-			}
+			err = waitStopped(ctx, c.pollDone, "Timed out waiting for long-poll goroutine to exit")
 		}
-		if c.commandRegDone != nil {
-			select {
-			case <-c.commandRegDone:
-			case <-time.After(pollExitTimeout):
-				logger.WarnCF("telegram", "Timed out waiting for command registration to stop", map[string]any{
-					"timeout": pollExitTimeout.String(),
-				})
-			}
+		if c.commandRegDone != nil && err == nil {
+			err = waitStopped(ctx, c.commandRegDone, "Timed out waiting for command registration to stop")
 		}
 	})
+	return err
+}
 
+// waitStopped waits for done, at most pollExitTimeout (logging timeoutMsg
+// when it passes) and no longer than ctx, whose error it returns when ctx
+// ends first.
+func waitStopped(ctx context.Context, done <-chan struct{}, timeoutMsg string) error {
+	timer := time.NewTimer(pollExitTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		logger.WarnCF("telegram", timeoutMsg, map[string]any{"timeout": pollExitTimeout.String()})
+	case <-ctx.Done():
+		logger.WarnCF("telegram", "Stop ended before the bot's goroutines exited", map[string]any{
+			"error": ctx.Err().Error(),
+		})
+		return ctx.Err()
+	}
 	return nil
 }
 
