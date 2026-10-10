@@ -9,6 +9,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 func TestSendFileTool_MissingPath(t *testing.T) {
@@ -30,6 +31,9 @@ func TestSendFileTool_NoContext(t *testing.T) {
 	result := tool.Execute(context.Background(), map[string]any{"path": "/tmp/test.txt"})
 	if !result.IsError {
 		t.Fatal("expected error when no channel context")
+	}
+	if !tools.IsExpectedRefusal(result.Err) {
+		t.Fatalf("Err = %v, want an expected refusal (logged at WARN)", result.Err)
 	}
 }
 

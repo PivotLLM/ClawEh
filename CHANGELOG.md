@@ -1334,6 +1334,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **`msg_send` and `msg_send_file` without a chat to send to log a warning,
+  not an error.** A call with no target chat (a service-token MCP call) or
+  inside an asked turn is refused as before, but logs "Tool call refused" at
+  WARN instead of "Tool execution failed" at ERROR.
+
 - **The id suggested for an invalid agent id is one no other agent has.**
   When the repaired id was already taken (`"alice smith"` while
   `Alice-Smith` exists), following the suggestion led to a second refusal.

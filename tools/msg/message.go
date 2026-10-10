@@ -81,12 +81,12 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	chatID := tools.ToolChatID(ctx)
 
 	if channel == "" || chatID == "" {
-		return &tools.ToolResult{ForLLM: "No target channel/chat specified", IsError: true}
+		return refused("No target channel/chat specified")
 	}
 	// An asked turn's own "chat" is the ask, whose only output is the final
 	// reply: a message sent there would reach no one.
 	if channel == constants.AgentMessageChannel {
-		return &tools.ToolResult{ForLLM: "msg_send needs a target in an asked turn", IsError: true}
+		return refused("msg_send needs a target in an asked turn")
 	}
 
 	if t.sendCallback == nil {
@@ -109,6 +109,12 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	}
 	// Silent: user already received the message directly
 	return &tools.ToolResult{ForLLM: text, Silent: true}
+}
+
+// refused is a send refused because the turn has no chat to send to: an
+// expected refusal (logged at WARN), not a failure.
+func refused(text string) *tools.ToolResult {
+	return &tools.ToolResult{ForLLM: text, IsError: true, Err: tools.Refusal(errors.New(text))}
 }
 
 // chatLabel names a chat as channel:chat, without repeating the channel

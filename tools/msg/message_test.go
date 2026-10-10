@@ -218,6 +218,9 @@ func TestMessageTool_Execute_NoTargetChannel(t *testing.T) {
 	if result.ForLLM != "No target channel/chat specified" {
 		t.Errorf("Expected ForLLM 'No target channel/chat specified', got '%s'", result.ForLLM)
 	}
+	if !tools.IsExpectedRefusal(result.Err) {
+		t.Errorf("Err = %v, want an expected refusal (logged at WARN)", result.Err)
+	}
 }
 
 func TestMessageTool_Execute_NotConfigured(t *testing.T) {
@@ -305,6 +308,9 @@ func TestMessageTool_RefusedInAskedTurn(t *testing.T) {
 	res := tool.Execute(ctx, map[string]any{"content": "hi"})
 	if !res.IsError || res.ForLLM != "msg_send needs a target in an asked turn" || sent {
 		t.Fatalf("result = %+v sent=%v, want the refusal and nothing sent", res, sent)
+	}
+	if !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("Err = %v, want an expected refusal (logged at WARN)", res.Err)
 	}
 	ctx = tools.WithToolContext(context.Background(), "telegram", "chat-1")
 	if res := tool.Execute(ctx, map[string]any{"content": "hi"}); res.IsError || !sent {
