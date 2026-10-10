@@ -198,7 +198,7 @@ func (c *Config) ConfigReloadInterval() time.Duration {
 // explicit agents.base_dir wins; otherwise it defaults to <data_dir>/agents.
 func (c *Config) BaseDir() string {
 	if c.Agents.BaseDir != "" {
-		return expandHome(c.Agents.BaseDir)
+		return ExpandHome(c.Agents.BaseDir)
 	}
 	return filepath.Join(c.dataDir, "agents")
 }
@@ -208,7 +208,7 @@ func (c *Config) BaseDir() string {
 // <data_dir>/common.
 func (c *Config) ResolveCommonDir() string {
 	if c.Agents.CommonDir != "" {
-		return expandHome(c.Agents.CommonDir)
+		return ExpandHome(c.Agents.CommonDir)
 	}
 	return filepath.Join(c.dataDir, global.CommonDir)
 }
@@ -247,7 +247,7 @@ func (c *Config) AgentSessionDirs() []string {
 			continue
 		}
 		if ws := strings.TrimSpace(ac.Workspace); ws != "" {
-			add(expandHome(ws))
+			add(ExpandHome(ws))
 			continue
 		}
 		id := strings.ToLower(strings.TrimSpace(ac.ID))
@@ -331,7 +331,9 @@ func (b BackupConfig) BackupRetainDays() int {
 	return b.RetainDays
 }
 
-func expandHome(path string) string {
+// ExpandHome replaces a leading "~" in path with the user's home directory.
+// When the home directory is unknown it logs a warning and returns path as is.
+func ExpandHome(path string) string {
 	if path == "" {
 		return path
 	}

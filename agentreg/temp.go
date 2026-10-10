@@ -509,7 +509,7 @@ func tempPaths(cfg *config.Config) (root, statePath string) {
 // <base_dir>/default.
 func ConfigWorkspace(ac *config.AgentConfig, baseDir string) string {
 	if ac != nil && strings.TrimSpace(ac.Workspace) != "" {
-		return expandHome(strings.TrimSpace(ac.Workspace))
+		return config.ExpandHome(strings.TrimSpace(ac.Workspace))
 	}
 	id := "default"
 	if ac != nil {
@@ -518,18 +518,4 @@ func ConfigWorkspace(ac *config.AgentConfig, baseDir string) string {
 		}
 	}
 	return filepath.Join(baseDir, id)
-}
-
-func expandHome(path string) string {
-	if path == "" || path[0] != '~' {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		logger.WarnCF("agent", "Failed to resolve home directory", map[string]any{"path": path, "error": err.Error()})
-	}
-	if len(path) > 1 && path[1] == '/' {
-		return home + path[1:]
-	}
-	return home
 }

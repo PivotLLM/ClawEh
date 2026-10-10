@@ -131,27 +131,12 @@ func bindAddr(host string, port int) string {
 	return host + ":" + itoa(port)
 }
 
-// expandHome mirrors config's ~ expansion for per-agent workspace paths.
-func expandHome(path string) string {
-	if path == "" || path[0] != '~' {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if len(path) > 1 && path[1] == '/' {
-		return home + path[1:]
-	}
-	return home
-}
-
 // resolveWorkspace is the per-agent workspace the runtime uses
 // (agent/instance.go resolveAgentWorkspace): an explicit workspace wins,
 // otherwise <base_dir>/<id> with the routing-default id at <base_dir>/default.
 func resolveWorkspace(cfg *config.Config, a *config.AgentConfig) string {
 	if a != nil && strings.TrimSpace(a.Workspace) != "" {
-		return expandHome(strings.TrimSpace(a.Workspace))
+		return config.ExpandHome(strings.TrimSpace(a.Workspace))
 	}
 	id := "default"
 	if a != nil {
