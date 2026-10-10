@@ -336,7 +336,9 @@ production instance directly; test against a dev instance.
   (`routing.NormalizeAgentID` delegates). Config keeps an id as the operator wrote
   it (`Bob`), and every comparison of agent ids goes through `config.SameAgentID`
   (identities equal; blank names nothing): never `==` on a config id or
-  `strings.EqualFold`. The WebUI's copy (`isValidAgentId`/`normalizeAgentId`/
+  `strings.EqualFold`. The forum, which imports no ClawEh package, has the same
+  rule as `sameAgent` (`forum/agentid.go`) for its owner, launcher and
+  participant checks. The WebUI's copy (`isValidAgentId`/`normalizeAgentId`/
   `sameAgentId`/`repairAgentId`/`agentIdProblem` in `agent-model.ts`; the setup
   wizard's `uniqueAgentId` keeps the name's case) is identical; both are checked
   against `config/testdata/agent_id_cases.json`, and both quote an id in a refusal

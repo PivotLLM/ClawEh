@@ -80,9 +80,9 @@ func (p *preflight) launcherClones() {
 	}
 	for _, id := range p.usedParticipants() {
 		switch part := p.cfg.Participants[id]; {
-		case part.Agent == p.env.Launcher:
+		case sameAgent(part.Agent, p.env.Launcher):
 			p.addf("participants."+id+".agent", "%s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
-		case part.Clone == p.env.Launcher:
+		case sameAgent(part.Clone, p.env.Launcher):
 			p.addf("participants."+id+".clone", "a clone of %s can read the forum's files, so it can't take part in an anonymous review", p.env.Launcher)
 		}
 	}

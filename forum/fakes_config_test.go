@@ -119,7 +119,8 @@ var errCfgtHost = errors.New("host unavailable")
 
 // cfgtNewAgents builds the fake for the example configuration with the launcher
 // "launcher": Alice and Bob exist and are allowed; every agent has the
-// models "default" and "large".
+// models "default" and "large". Like the host, it matches agent ids by
+// identity (agentKey).
 func cfgtNewAgents() *cfgtAgents {
 	two := []ModelInfo{{Name: "default", Provider: "p", Protocol: "openai"}, {Name: "large", Provider: "p", Protocol: "openai"}}
 	return &cfgtAgents{
@@ -146,7 +147,7 @@ func (a *cfgtAgents) Exists(_ context.Context, agentID string) (bool, error) {
 	if a.errOn == "Exists" {
 		return false, errCfgtHost
 	}
-	return a.exists[agentID], nil
+	return a.exists[agentKey(agentID)], nil
 }
 
 func (a *cfgtAgents) MayTarget(_ context.Context, launcherID, targetID string) (bool, error) {
@@ -154,7 +155,7 @@ func (a *cfgtAgents) MayTarget(_ context.Context, launcherID, targetID string) (
 	if a.errOn == "MayTarget" {
 		return false, errCfgtHost
 	}
-	return a.allowed[targetID], nil
+	return a.allowed[agentKey(targetID)], nil
 }
 
 func (a *cfgtAgents) Models(_ context.Context, agentID string) ([]ModelInfo, error) {
@@ -162,7 +163,7 @@ func (a *cfgtAgents) Models(_ context.Context, agentID string) ([]ModelInfo, err
 	if a.errOn == "Models" {
 		return nil, errCfgtHost
 	}
-	return a.models[agentID], nil
+	return a.models[agentKey(agentID)], nil
 }
 
 func (a *cfgtAgents) CreateClone(context.Context, CloneSpec) (string, error) {

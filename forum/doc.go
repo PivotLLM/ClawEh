@@ -15,8 +15,9 @@
 //
 // The files, by part (DESIGN.md §2):
 //
-//   - host.go, errors.go, records.go: what the host provides, the
-//     sentinel errors, and the on-disk record types every part shares.
+//   - host.go, errors.go, records.go, agentid.go: what the host provides,
+//     the sentinel errors, the on-disk record types every part shares, and
+//     the comparison of agent ids (case-insensitive, sameAgent).
 //   - config.go, config_schema.go, decode.go, validate.go, preflight.go,
 //     anonymity.go, schema_jsonschema.go, jsonpointer.go, mergepatch.go:
 //     the configuration contract and its JSON Schema, strict decoding,

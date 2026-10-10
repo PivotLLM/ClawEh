@@ -430,6 +430,9 @@ func TestPreflightLauncherWithAnonymousInput(t *testing.T) {
 	}{
 		{Participant{Clone: "launcher"}, "participants.bob.clone", "a clone of launcher can read the forum's files, so it can't take part in an anonymous review"},
 		{Participant{Agent: "launcher"}, "participants.bob.agent", "launcher can read the forum's files, so it can't take part in an anonymous review"},
+		// Agent ids are case-insensitive: "Launcher" is the launcher.
+		{Participant{Clone: "LAUNCHER"}, "participants.bob.clone", "a clone of launcher can read the forum's files, so it can't take part in an anonymous review"},
+		{Participant{Agent: "Launcher"}, "participants.bob.agent", "launcher can read the forum's files, so it can't take part in an anonymous review"},
 	} {
 		for _, anonymous := range []bool{false, true} {
 			testPreflightLauncher(t, tc.part, anonymous, tc.path, tc.want)

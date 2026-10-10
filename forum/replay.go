@@ -44,7 +44,7 @@ import (
 // checkOwner refuses a snapshot whose launcher is not the agent the store
 // was opened for (forumStore.owner), when that is known.
 func checkOwner(s *forumStore, snap *Snapshot) error {
-	if s.owner != "" && snap.Origin.AgentID != s.owner {
+	if s.owner != "" && !sameAgent(snap.Origin.AgentID, s.owner) {
 		return foreign("%s names launcher %q, not %q", fileSnapshot, snap.Origin.AgentID, s.owner)
 	}
 	return nil
@@ -67,7 +67,7 @@ func checkForumOwner(s *forumStore) error {
 	if err != nil {
 		return err
 	}
-	if s.owner != "" && m.Owner != s.owner {
+	if s.owner != "" && !sameAgent(m.Owner, s.owner) {
 		return foreign("%s names launcher %q, not %q", fileMeta, m.Owner, s.owner)
 	}
 	return nil

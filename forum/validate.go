@@ -359,17 +359,17 @@ func (v *staticValidator) participantNames(ids []string) {
 
 // realAgents reports two `agent` entries naming the same real agent.
 func (v *staticValidator) realAgents(ids []string) {
-	seen := map[string]string{} // agent ID -> first participant ID
+	seen := map[string]string{} // agent identity (agentKey) -> first participant ID
 	for _, id := range ids {
 		p := v.cfg.Participants[id]
 		if p.Agent == "" || p.Clone != "" {
 			continue
 		}
-		if prev, dup := seen[p.Agent]; dup {
+		if prev, dup := seen[agentKey(p.Agent)]; dup {
 			v.addf("participants."+id+".agent", "participants %q and %q are both agent %q; an agent can take one seat in a forum (use clone for another)", prev, id, p.Agent)
 			continue
 		}
-		seen[p.Agent] = id
+		seen[agentKey(p.Agent)] = id
 	}
 }
 
