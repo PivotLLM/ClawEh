@@ -385,6 +385,120 @@ func TestCtlRestartResendsTheSameAttempt(t *testing.T) {
 	}
 }
 
+// ctlCutAlice runs the forum once with every send to Alice cut by a
+// shutdown, and reports whether the run ended (no error) instead.
+func ctlCutAlice(t *testing.T, f *ctlForum) bool {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.msg.hook = func(ctx context.Context, cl ctlCall) error {
+		if cl.Participant != "alice" {
+			return nil
+		}
+		cancel()
+		return ctx.Err()
+	}
+	defer func() { f.msg.hook = nil }()
+	_, err := f.open().Run(ctx)
+	return err == nil
+}
+
+// Restart: each attempt is resent once for free; a turn whose every send
+// brings the process down uses up an attempt per second restart, so with
+// two attempts allowed it ends attempts_exhausted at the fifth start.
+func TestCtlRestartEverySendExhaustsAttempts(t *testing.T) {
+	cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
+	cfg.Limits.MaxAttemptsPerTurn = 2
+	f := ctlLaunch(t, cfg)
+	restarts := 0
+	for !ctlCutAlice(t, f) {
+		restarts++
+		if restarts > 10 {
+			t.Fatal("the turn never ended")
+		}
+	}
+	ctlWant(t, "restarts", restarts, 4)
+	ctlWant(t, "alice calls", len(f.msg.find("alice", "talk", 1, false)), 4)
+	ctlWant(t, "reason", f.result().Reason, EndAttemptsExhausted)
+	var alice []AttemptRecord
+	for _, a := range f.attempts("talk") {
+		if a.Request.Participant == "alice" {
+			alice = append(alice, a)
+		}
+	}
+	if len(alice) != 2 {
+		t.Fatalf("alice attempts = %+v, want 2", alice)
+	}
+	for i, a := range alice {
+		if a.Request.Attempt != i+1 || !a.Request.Resent || !a.ResendUsed || a.Reply != nil {
+			t.Errorf("alice attempt %d = %+v, want resent once and unanswered", i+1, a)
+		}
+	}
+}
+
+// Crash at every durable write of the run that follows an attempt cut
+// twice (sent, then resent): the message goes out as attempt 2 and the
+// run completes, with Alice's output marked resent; any output whose turn
+// a crash also cut is marked too, and the count matches the marks.
+func TestCtlCrashAtEveryBoundaryOfTheSecondResend(t *testing.T) {
+	setup := func(t *testing.T) *ctlForum {
+		t.Helper()
+		cfg := ctlConfig(ctlLayer("talk", DeliveryPerTurn, 1, FormatText))
+		cfg.Limits.MaxAttemptsPerTurn = 2
+		f := ctlLaunch(t, cfg)
+		for range 2 {
+			if ctlCutAlice(t, f) {
+				t.Fatal("the run ended while Alice's sends were cut")
+			}
+		}
+		return f
+	}
+	check := func(t *testing.T, f *ctlForum) {
+		t.Helper()
+		ctlWant(t, "status", f.result().Status, StatusCompleted)
+		cut := map[string]bool{}
+		for _, a := range f.attempts("talk") {
+			cut[a.Request.Participant] = cut[a.Request.Participant] || a.Request.Resent
+		}
+		resent := 0
+		for _, o := range f.state().Layers["talk"].Outputs {
+			if o.ParticipantID == "alice" {
+				ctlWant(t, "alice output attempt", o.Attempt, 2)
+			}
+			ctlWant(t, o.ParticipantID+" output resent", o.Resent, cut[o.ParticipantID])
+			if o.Resent {
+				resent++
+			}
+		}
+		ctlWant(t, "alice resent", cut["alice"], true)
+		ctlWant(t, "resent_after_restart", f.result().ResentAfterRestart, resent)
+	}
+	ref := setup(t)
+	var events []string
+	c := ref.open()
+	c.crashHook = func(ev string) bool {
+		events = append(events, ev)
+		return false
+	}
+	if st, err := c.Run(context.Background()); err != nil || st != StatusCompleted {
+		t.Fatalf("reference run: %s, %v", st, err)
+	}
+	check(t, ref)
+	for n := 1; n <= len(events); n++ {
+		t.Run(fmt.Sprintf("%02d-%s", n, events[n-1]), func(t *testing.T) {
+			f := setup(t)
+			c := f.open()
+			var k atomic.Int32
+			c.crashHook = func(string) bool { return int(k.Add(1)) == n }
+			if _, err := c.Run(context.Background()); !errors.Is(err, errCrashed) {
+				t.Fatalf("crashed run: %v", err)
+			}
+			f.run()
+			check(t, f)
+		})
+	}
+}
+
 // ctlCrashConfig is the example configuration with every controller path switched
 // on: a directed message and an assessment, a JSON repair, a moderator
 // that guides then stops.

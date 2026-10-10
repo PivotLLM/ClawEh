@@ -57,7 +57,8 @@ type attemptResult struct {
 //
 // Attempts are numbered from the attempts already reserved for this turn
 // ID up to limits.max_attempts_per_turn; an attempt a restart cut before
-// its reply is resent under its own number, so it uses up none. See
+// its reply is resent once under its own number, so one restart uses up
+// none; a second cut sends it as the next attempt. See
 // perform for adoption, resend and repair. Rejected content is never
 // published; every attempt stays on disk.
 func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, participantID string, cutoff int) (*OutputRecord, EndReason, error) {
@@ -101,7 +102,10 @@ func (c *forumController) runTurn(ctx context.Context, layer Layer, round int, p
 //     calling again;
 //     - no reply (uncertain: a restart cut it): its message is resent
 //     unchanged as the same attempt (AttemptRequest.Resent), so a
-//     restart uses up no attempt;
+//     restart uses up no attempt; if that attempt was already resent
+//     once (AttemptRecord.ResendUsed), the message goes out as the next
+//     attempt instead, so a turn that brings the process down every time
+//     ends within max_attempts_per_turn;
 //     - an unsuccessful outcome (timeout, error, cancelled, empty): its
 //     message is resent unchanged as the next attempt;
 //     - a rejected reply: the next attempt is a repair (repairFor);
@@ -132,8 +136,13 @@ func (c *forumController) perform(ctx context.Context, w work, cutoff int) (atte
 				return attemptResult{}, err
 			}
 			req.Message, req.ThroughSeq = message, cutoff
-		case last.Reply == nil:
+		case last.Reply == nil && !last.ResendUsed:
 			req.Attempt, req.Resent = last.Request.Attempt, true
+			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
+		case last.Reply == nil:
+			c.host.Logger.Warnf("%s: %s/%s attempt %d was cut by a restart again after its resend; sending it as the next attempt",
+				c.logName, w.layer.ID, w.turn, last.Request.Attempt)
+			req.Attempt = last.Request.Attempt + 1
 			req.Message, req.ThroughSeq, req.Repair = last.Request.Message, last.Request.ThroughSeq, last.Request.Repair
 		case !last.Reply.Outcome.Successful():
 			req.Attempt = last.Request.Attempt + 1
@@ -461,7 +470,7 @@ func (c *forumController) cacheAttempt(req AttemptRequest) {
 	if req.Resent {
 		for i := range list {
 			if list[i].Request.Turn == req.Turn && list[i].Request.Attempt == req.Attempt {
-				list[i] = AttemptRecord{Request: req}
+				list[i] = AttemptRecord{Request: req, ResendUsed: true}
 				return
 			}
 		}

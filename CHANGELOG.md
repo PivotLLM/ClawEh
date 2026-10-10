@@ -451,9 +451,10 @@ observe does not need an entry.
   up to five times per start of the service, then given up with a warning in
   the log. The notice also says how many outputs came from turns resent after
   a restart, the count `forum_status` gives. Runs survive a
-  restart and resume where they stopped; a turn the restart cut is sent again
-  as the same attempt, so a restart never uses up a participant's attempts
-  (`max_attempts_per_turn`), though the resend counts toward `max_calls`. A run that stops on an error raises the "Forum
+  restart and resume where they stopped; a turn the restart cut is resent once
+  for free as the same attempt, and a second restart during the same attempt
+  counts as a new attempt (`max_attempts_per_turn`); every send counts toward
+  `max_calls`. A run that stops on an error raises the "Forum
   run stopped" alert. The nightly backup and `claw backup` include each
   agent's `forums/` (without lock files or temporary files of a write in
   progress), and `claw restore` puts them back.

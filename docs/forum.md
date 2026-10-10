@@ -229,9 +229,11 @@ an unknown ID answers "Forum <id> was not found.".
 
 A run survives a restart: an interrupted run resumes where it stopped, and a
 turn that was in progress is sent again as the same attempt (an existing
-agent may see that message twice). A restart never uses up an attempt
-(`max_attempts_per_turn`), though the resend counts as a call
-(`max_calls`). `forum_results` then gives that output's `attempt` with
+agent may see that message twice). That resend is free once per attempt: a
+restart does not use up an attempt (`max_attempts_per_turn`), but a second
+restart during the same attempt sends the message as the next attempt, so a
+turn that crashes the service every time ends as `attempts_exhausted`. Every
+send counts as a call (`max_calls`). `forum_results` then gives that output's `attempt` with
 the note "its turn was resent after a restart",
 `forum_status` counts such outputs in every layer (`resent_after_restart`),
 and the completion notice gives the same count ("2 outputs came from turns

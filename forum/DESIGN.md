@@ -166,9 +166,15 @@ leaves only a temporary entry (`TempPrefix`) the next `Lock` sweeps.
    accepted reply (crash between reply and output commit); resent
    unchanged as the same attempt if it has no reply (`AttemptRequest.Resent`:
    request.json is rewritten and the attempt reserved again, the one case
-   where a `CommitAttempt` repeats an attempt number, and only the turn's
-   newest); followed by a repair if its reply was rejected. A restart uses
-   up no attempt (`max_attempts_per_turn`); the resend is a call like any
+   where a `CommitAttempt` repeats an attempt number, only for the turn's
+   newest, and at most once per attempt: `commitIndex` records the repeat,
+   and `checkCommit` and `WriteAttemptRequest` refuse a second one);
+   followed by a repair if its reply was rejected. An attempt already
+   resent once (`AttemptRecord.ResendUsed`) that a restart cuts again has
+   its message sent unchanged as the next attempt, a new reservation. So one
+   restart uses up no attempt (`max_attempts_per_turn`), and a turn that
+   brings the process down on every send ends `attempts_exhausted` within
+   2 × `max_attempts_per_turn` restarts; every send is a call like any
    other (`max_calls`, layer budgets), and no limit is reset. An output
    whose turn had an attempt resent after a restart is marked
    (`OutputRecord.Resent`); `forum_results`, `forum_status` and the

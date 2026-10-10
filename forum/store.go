@@ -127,8 +127,10 @@ type attemptKey struct {
 
 // reservation is what an attempt's first CommitAttempt fixed: a resend
 // reserves the attempt again only with the same round and ThroughSeq.
+// resent records that a second CommitAttempt did so; there is no third.
 type reservation struct {
 	round, through int
+	resent         bool
 }
 
 // turnKey identifies one turn (work) ID within a layer.
@@ -996,7 +998,8 @@ func attemptRel(layerID, turn string, attempt int) string {
 //
 // An attempt already reserved (a CommitAttempt names it) is written again
 // only as a resend (req.Resent) of the turn's newest attempt while it has
-// no reply: a restart cut it, and request.json is rewritten in place.
+// no reply and was not resent before: a restart cut it, and request.json
+// is rewritten in place.
 // Otherwise a reserved attempt fails: attempt numbers are allocated by the
 // controller from the reserved attempts, and a collision means two
 // controllers. An attempt directory that exists without a reservation is
@@ -1052,6 +1055,9 @@ func (s *forumStore) rewriteAttemptRequestLocked(req *AttemptRequest, rel string
 	if !req.Resent || req.Attempt != s.idx.latest[turnKey{req.Layer, req.Turn}] {
 		return fmt.Errorf("write attempt request %s: %w", rel, os.ErrExist)
 	}
+	if s.idx.attempts[attemptKey{req.Layer, req.Turn, req.Attempt}].resent {
+		return fmt.Errorf("write attempt request %s: %w: the attempt was already resent once", rel, os.ErrExist)
+	}
 	switch err := s.statRegular(path.Join(rel, fileReply)); {
 	case err == nil:
 		return fmt.Errorf("write attempt request %s: %w: the attempt has a reply", rel, os.ErrExist)
@@ -1105,9 +1111,11 @@ func (s *forumStore) ListAttempts(layerID string) ([]AttemptRecord, error) {
 		return nil, err
 	}
 	keys := make([]attemptKey, 0)
-	for k := range s.idx.attempts {
+	resent := map[attemptKey]bool{}
+	for k, r := range s.idx.attempts {
 		if k.layer == layerID {
 			keys = append(keys, k)
+			resent[k] = r.resent
 		}
 	}
 	s.mu.Unlock()
@@ -1120,7 +1128,7 @@ func (s *forumStore) ListAttempts(layerID string) ([]AttemptRecord, error) {
 	out := make([]AttemptRecord, 0, len(keys))
 	for _, k := range keys {
 		rel := attemptRel(k.layer, k.turn, k.attempt)
-		var rec AttemptRecord
+		rec := AttemptRecord{ResendUsed: resent[k]}
 		if err := s.readJSON(path.Join(rel, fileRequest), &rec.Request); err != nil {
 			return nil, corrupt("reserved attempt %s: %v", rel, err)
 		}
@@ -1478,7 +1486,10 @@ func (x *commitIndex) add(c *Commit) {
 	switch c.Kind {
 	case CommitAttempt:
 		k := attemptKey{c.Layer, c.Turn, c.Attempt}
-		if _, ok := x.attempts[k]; !ok {
+		if r, ok := x.attempts[k]; ok {
+			r.resent = true
+			x.attempts[k] = r
+		} else {
 			x.attempts[k] = reservation{round: c.Round, through: c.ThroughSeq}
 		}
 		x.latest[turnKey{c.Layer, c.Turn}] = max(x.latest[turnKey{c.Layer, c.Turn}], c.Attempt)

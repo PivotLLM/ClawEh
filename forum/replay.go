@@ -287,10 +287,13 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 		}
 		// An attempt is reserved again only when a restart cut it before
 		// its reply and it is resent (AttemptRequest.Resent): it must be the
-		// turn's newest attempt.
+		// turn's newest attempt, and it is resent at most once.
 		if first, ok := ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}]; ok {
 			if c.Attempt != ix.latest[tk] {
 				return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
+			}
+			if first.resent {
+				return fmt.Errorf("attempt %s/%s/%d: %w: it was already resent once", c.Layer, c.Turn, c.Attempt, os.ErrExist)
 			}
 			if c.Round != first.round || c.ThroughSeq != first.through {
 				return fmt.Errorf("attempt %s/%s/%d reserved again with round %d and through_seq %d, not %d and %d",

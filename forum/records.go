@@ -270,7 +270,8 @@ type AttemptRequest struct {
 	Repair bool `json:"repair,omitempty"`
 	// Resent is true when a restart cut this attempt before its reply and
 	// the message was sent again as the same attempt (request.json is
-	// rewritten with the new SentAt); the cut send uses up no attempt.
+	// rewritten with the new SentAt); the cut send uses up no attempt. An
+	// attempt is resent at most once.
 	Resent bool `json:"resent,omitempty"`
 	// ThroughSeq is the last commit whose public events (peer outputs,
 	// guidance, directed messages) the message includes; the participant's
@@ -293,6 +294,10 @@ type AttemptReply struct {
 type AttemptRecord struct {
 	Request AttemptRequest
 	Reply   *AttemptReply
+	// ResendUsed is true when the commit log reserves the attempt a second
+	// time: it was already resent after a restart, and a restart that cuts
+	// it again sends its message as the next attempt.
+	ResendUsed bool
 }
 
 // OutputRecord is the attributed artifact of one successful turn. Its

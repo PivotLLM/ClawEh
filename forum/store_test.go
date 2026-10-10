@@ -681,9 +681,19 @@ func TestStoreResendAttempt(t *testing.T) {
 	}
 
 	stReply(t, s, "debate", turn, 1, "x", []string{"bad"})
+
+	// An attempt rewritten as a resend whose reply then arrived is not
+	// reserved again.
+	bobTurn := turnID(1, "bob")
+	stReserve(t, s, "debate", 1, bobTurn, TurnParticipant, "bob", 1, 1, "bob first")
+	bobResend := &AttemptRequest{Layer: "debate", Round: 1, Turn: bobTurn, Attempt: 1, Kind: TurnParticipant, Participant: "bob", ThroughSeq: 1, Message: "bob first", Resent: true}
+	if err = s.WriteAttemptRequest(bobResend); err != nil {
+		t.Fatalf("bob resend: %v", err)
+	}
+	stReply(t, s, "debate", bobTurn, 1, "x", []string{"bad"})
 	if _, err = nextAppend(s, &Commit{
-		Kind: CommitAttempt, Layer: "debate", Round: 1, Turn: turn, TurnKind: TurnParticipant,
-		Participant: "alice", Attempt: 1, ThroughSeq: 1,
+		Kind: CommitAttempt, Layer: "debate", Round: 1, Turn: bobTurn, TurnKind: TurnParticipant,
+		Participant: "bob", Attempt: 1, ThroughSeq: 1,
 	}); err == nil || !strings.Contains(err.Error(), "it has a reply") {
 		t.Errorf("reserving an answered attempt again: %v, want refused", err)
 	}
@@ -710,6 +720,59 @@ func TestStoreResendAttempt(t *testing.T) {
 	earlier := *resend
 	if err := s.WriteAttemptRequest(&earlier); !errors.Is(err, os.ErrExist) {
 		t.Errorf("resend of an earlier attempt: %v, want ErrExist", err)
+	}
+}
+
+// An attempt is resent at most once: the store refuses to write or
+// reserve it a third time, ListAttempts reports the resend as used, and
+// replay refuses a log that reserves it a third time.
+func TestStoreSecondResendRefused(t *testing.T) {
+	s := stNewStore(t)
+	stLaunch(t, s, stConfig())
+	turn := turnID(1, "alice")
+	stReserve(t, s, "debate", 1, turn, TurnParticipant, "alice", 1, 1, "first")
+	resend := &AttemptRequest{Layer: "debate", Round: 1, Turn: turn, Attempt: 1, Kind: TurnParticipant, Participant: "alice", ThroughSeq: 1, Message: "first", Resent: true}
+	reserve := &Commit{
+		Kind: CommitAttempt, Layer: "debate", Round: 1, Turn: turn, TurnKind: TurnParticipant,
+		Participant: "alice", Attempt: 1, ThroughSeq: 1,
+	}
+	got, err := s.ListAttempts("debate")
+	if err != nil || len(got) != 1 || got[0].ResendUsed {
+		t.Fatalf("before the resend: %+v, %v", got, err)
+	}
+	if err = s.WriteAttemptRequest(resend); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if _, err = nextAppend(s, reserve); err != nil {
+		t.Fatalf("reserve the resend: %v", err)
+	}
+	got, err = stReopen(s).ListAttempts("debate")
+	if err != nil || len(got) != 1 || !got[0].ResendUsed {
+		t.Fatalf("after the resend: %+v, %v", got, err)
+	}
+
+	if err = s.WriteAttemptRequest(resend); !errors.Is(err, os.ErrExist) || !strings.Contains(err.Error(), "already resent once") {
+		t.Errorf("second resend request: %v, want refused", err)
+	}
+	if _, err = nextAppend(s, reserve); !errors.Is(err, os.ErrExist) || !strings.Contains(err.Error(), "already resent once") {
+		t.Errorf("second resend reservation: %v, want refused", err)
+	}
+	if _, err = stReopen(s).ListAttempts("debate"); err != nil {
+		t.Fatalf("the refused reservation damaged the log: %v", err)
+	}
+
+	cfg, snap, err := verify(s)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	commits, err := s.ReadCommits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	third := commits[len(commits)-1]
+	third.Seq++
+	if _, err = replay(cfg, snap, append(commits, third)); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "already resent once") {
+		t.Errorf("replay of a third reservation: %v, want ErrCorrupt", err)
 	}
 }
 
