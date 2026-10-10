@@ -708,9 +708,7 @@ func (e *svcEnv) running(id string) {
 // cleanupsPending is how many runs wait for a temporary-agent deletion
 // retry.
 func (e *svcEnv) cleanupsPending() int {
-	e.svc.mu.Lock()
-	defer e.svc.mu.Unlock()
-	return len(e.svc.cleanups)
+	return len(e.svc.pendingRuns(func(r *runEntry) (Scope, bool) { return Scope{}, r.cleanup != nil }))
 }
 
 // summary is the status of a forum's latest run.
@@ -726,27 +724,20 @@ func (e *svcEnv) summary(id string) *Summary {
 // noticeTries is how many tries of run 1's completion notice have failed
 // in this process and wait for a retry (0 when none is pending).
 func (e *svcEnv) noticeTries(id string) int {
-	e.svc.mu.Lock()
-	defer e.svc.mu.Unlock()
-	if nr := e.svc.notices[runKey{id: id, run: 1}]; nr != nil {
-		return nr.tries
-	}
-	return 0
+	return e.svc.runState(runKey{id: id, run: 1}).notice.tries
 }
 
 // notifying reports whether run 1's completion notice is being delivered.
 func (e *svcEnv) notifying(id string) bool {
-	e.svc.mu.Lock()
-	defer e.svc.mu.Unlock()
-	return e.svc.notifying[runKey{id: id, run: 1}]
+	return e.svc.runState(runKey{id: id, run: 1}).notifying
 }
 
 // keptAlive reports whether the service keeps the forum's agents alive.
 func (e *svcEnv) keptAlive(id string) bool {
 	e.svc.mu.Lock()
 	defer e.svc.mu.Unlock()
-	_, ok := e.svc.paused[id]
-	return ok
+	f := e.svc.forums[id]
+	return f != nil && f.paused != nil
 }
 
 // store opens the store of a forum's latest run directly (the forum's

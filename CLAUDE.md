@@ -280,7 +280,7 @@ production instance directly; test against a dev instance.
   name the launcher and act only on its participants, a store opened in a
   scope refuses a snapshot naming another launcher, and the notice ignores
   the recorded chat: the agent's answer goes to the launching chat the
-  service kept in memory (`forum.Chat`, `Service.launchChats`), and when that
+  service kept in memory (`forum.Chat`, the run's `launchChat` in `forum/tracking.go`), and when that
   is unknown (a restart) or reports offline/not found, to the launcher's
   default binding (`fallback_channel`/`fallback_chat_id` metadata,
   `systemReplyFallback` in `agent/loop_inbound.go`), or nowhere.

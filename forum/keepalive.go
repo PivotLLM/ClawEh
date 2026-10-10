@@ -51,12 +51,14 @@ func (s *Service) runKeepAlive() {
 // notices.
 func (s *Service) keepAliveTick(ctx context.Context) {
 	s.mu.Lock()
-	stores := make([]*forumStore, 0, len(s.paused)+len(s.runs))
-	for _, st := range s.paused {
-		stores = append(stores, st)
-	}
-	for _, r := range s.runs {
-		stores = append(stores, r.store)
+	var stores []*forumStore
+	for _, f := range s.forums {
+		if f.paused != nil {
+			stores = append(stores, f.paused)
+		}
+		if f.active != nil {
+			stores = append(stores, f.active.store)
+		}
 	}
 	s.mu.Unlock()
 	for _, store := range stores {
@@ -66,14 +68,17 @@ func (s *Service) keepAliveTick(ctx context.Context) {
 	s.retryNotices(ctx)
 }
 
-// retryCleanups retries the temporary-agent deletion of every run in
-// s.cleanups. A run whose forum is gone, or whose deletion succeeds, leaves
+// retryCleanups retries the temporary-agent deletion of every run with a
+// pending cleanup (runEntry.cleanup). A run whose forum is gone, or whose deletion succeeds, leaves
 // the set; one whose forum is running or locked by another process is
 // tried again at the next tick.
 func (s *Service) retryCleanups(ctx context.Context) {
-	s.mu.Lock()
-	pending := maps.Clone(s.cleanups)
-	s.mu.Unlock()
+	pending := s.pendingRuns(func(r *runEntry) (Scope, bool) {
+		if r.cleanup == nil {
+			return Scope{}, false
+		}
+		return *r.cleanup, true
+	})
 	for _, key := range sortedRunKeys(pending) {
 		if _, ok := s.running(pending[key], key.id); ok {
 			continue

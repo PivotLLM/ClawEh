@@ -31,7 +31,7 @@ supplies no validator.
 | (b) store and replay | `store.go`, `lock_unix.go`, `replay.go` |
 | (c) router | `router.go` (projections in `jsonpointer.go`) |
 | (d) controller | `controller.go`, `turn.go`, `moderator.go`, `recover.go`, `transcript.go` |
-| (e) service and tools | `service.go`, `service_launch.go`, `service_control.go`, `service_status.go`, `service_run.go`, `service_terminal.go`, `service_keepalive.go`, `service_recover.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
+| (e) service and tools | `service.go`, `tracking.go`, `launch.go`, `control.go`, `status.go`, `runner.go`, `terminal.go`, `keepalive.go`, `recovery.go`, `forums.go`, `tools.go`, `results_view.go`, `readme.go` (and `readme/`) |
 
 - `records.go` is the wire format between the parts (every on-disk type,
   plus `State`, `Result`, `Summary`): (b) writes it, (d) fills it and (e)
@@ -293,7 +293,7 @@ contract beyond the interface signatures:
   on its own goroutine, and `Close` waits for it until its context ends.
   It gets the run's launching chat (`Chat`: the channel and chat ID of the
   `forum_launch` call), which the service keeps in memory only
-  (`launchChats`, keyed by forum and run, set before the run starts,
+  (`runEntry.launchChat`, per run, set before the run starts,
   dropped after the notice, on supersede and on delete); it is never read
   from the forum directory, so the host may deliver to it. It is the zero
   `Chat` for a run whose launch this process did not see (a restart).

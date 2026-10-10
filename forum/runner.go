@@ -15,11 +15,13 @@ import (
 // what happens when a run stops on an error.
 
 // start runs ctrl in a goroutine whose context is the service's own,
-// cancelled by Close, not the launching call's. The run is in s.runs
+// cancelled by Close, not the launching call's. The run is its forum's
+// active run (forumEntry.active)
 // until it has stopped and its follow-up is done: for a terminal status,
 // completeTerminal; for a pause, registration for keep-alive; for an error,
 // the log line and, unless the host is shutting down, Host.OnStuck. The
-// lock is released and the run removed from s.runs in one step, so a
+// lock is released and the run stops being the forum's active one in one
+// step, so a
 // caller that no longer sees the run can take the lock.
 func (s *Service) start(store *forumStore, ctrl controller) error {
 	id := store.ID()
@@ -28,13 +30,13 @@ func (s *Service) start(store *forumStore, ctrl controller) error {
 		s.mu.Unlock()
 		return errClosed
 	}
-	if _, ok := s.runs[id]; ok {
+	if f := s.forums[id]; f != nil && f.active != nil {
 		s.mu.Unlock()
 		return invalidState("forum %s is already running", storeRef(store))
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	r := &run{store: store, ctrl: ctrl, cancel: cancel, done: make(chan struct{})}
-	s.runs[id] = r
+	s.withForumLocked(id, func(f *forumEntry) { f.active = r })
 	s.goLocked(func() {
 		defer close(r.done)
 		defer cancel()
@@ -43,9 +45,7 @@ func (s *Service) start(store *forumStore, ctrl controller) error {
 			status = ctrl.State().Status
 			s.runFailed(store, ctrl.Snapshot(), err)
 		} else {
-			s.mu.Lock()
-			delete(s.stuck, keyOf(store))
-			s.mu.Unlock()
+			s.withRun(keyOf(store), func(e *runEntry) { e.stuck = false })
 		}
 		if status.Terminal() {
 			st := ctrl.State()
@@ -53,10 +53,12 @@ func (s *Service) start(store *forumStore, ctrl controller) error {
 		}
 		s.mu.Lock()
 		store.Unlock()
-		delete(s.runs, id)
-		if status == StatusPaused {
-			s.paused[id] = store
-		}
+		s.withForumLocked(id, func(f *forumEntry) {
+			f.active = nil
+			if status == StatusPaused {
+				f.paused = store
+			}
+		})
 		s.mu.Unlock()
 		if status == StatusPaused {
 			s.host.Logger.Infof("%s: paused", logRun(store))
@@ -147,10 +149,11 @@ func (s *Service) stuckOnce(key runKey, origin Origin, err error) {
 	if s.host.OnStuck == nil {
 		return
 	}
-	s.mu.Lock()
-	seen := s.stuck[key]
-	s.stuck[key] = true
-	s.mu.Unlock()
+	var seen bool
+	s.withRun(key, func(r *runEntry) {
+		seen = r.stuck
+		r.stuck = true
+	})
 	if !seen {
 		s.host.OnStuck(key.id, key.run, origin, err)
 	}

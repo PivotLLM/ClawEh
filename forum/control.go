@@ -250,8 +250,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 			return err
 		}
 	}
-	s.forgetPaused(id)
-	s.forgetRuns(id)
+	s.forgetForum(id)
 	name := logForum(store)
 	if err := store.Remove(); err != nil {
 		return err
