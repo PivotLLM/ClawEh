@@ -349,8 +349,12 @@ production instance directly; test against a dev instance.
   `BlockUntil(ctx, n)` to wait until code is waiting on it), never real sleeps for
   correctness, and never package variables reassigned for timing. The forum, which
   imports no ClawEh package, declares its own `forum.Clock` (`Host.Clock`) that both
-  satisfy. Used by the agent loop (asks, requests to people, turn budget), agentreg
-  (sweep), the config watcher and the channel manager (retry backoff, connection watch).
+  satisfy. Used by the agent loop (asks, requests to people, turn budget, retry
+  backoff, session pruners, the wait for a replaced provider; it hands agentreg its
+  clock, `registryClock`, for idle times and the sweep), the config and service-token
+  file watchers and the channel manager (retry backoff, connection watch). A fake
+  deadline context (`Fake.WithDeadline`) behaves like `context.WithDeadline`: its
+  cause, an already-passed deadline, an earlier parent deadline.
 - **Expected refusals**: a tool error wrapped by `tools.Refusal` (or any error with a
   `Refusal() bool` method, which packages that do not import `tools` use, such as the forum)
   is an expected refusal (`tools.IsExpectedRefusal`) and logs at WARN "Tool call refused",
