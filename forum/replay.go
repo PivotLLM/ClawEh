@@ -267,95 +267,124 @@ func checkCommit(cfg *Config, snap *Snapshot, ix *commitIndex, c *Commit) error 
 	default:
 		return fmt.Errorf("unknown kind %q", c.Kind)
 	}
-	roundOK := func() error {
-		if c.Round < 1 || c.Round > layer.MaxRounds {
-			return fmt.Errorf("%s: round %d is outside 1..%d of layer %q", c.Kind, c.Round, layer.MaxRounds, c.Layer)
-		}
-		return nil
-	}
-	tk := turnKey{c.Layer, c.Turn}
 	switch c.Kind {
 	case CommitAttempt:
-		if err := roundOK(); err != nil {
-			return err
-		}
-		if c.Attempt < 1 {
-			return fmt.Errorf("attempt %d is not positive", c.Attempt)
-		}
-		if err := checkWorkID(layer, c.TurnKind, c.Round, c.Participant, c.Turn); err != nil {
-			return err
-		}
-		// An attempt is reserved again only when a restart cut it before
-		// its reply and it is resent (AttemptRequest.Resent): it must be the
-		// turn's newest attempt, and it is resent at most once.
-		if first, ok := ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}]; ok {
-			if c.Attempt != ix.latest[tk] {
-				return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
-			}
-			if first.resent {
-				return fmt.Errorf("attempt %s/%s/%d: %w: it was already resent once", c.Layer, c.Turn, c.Attempt, os.ErrExist)
-			}
-			if c.Round != first.round || c.ThroughSeq != first.through {
-				return fmt.Errorf("attempt %s/%s/%d reserved again with round %d and through_seq %d, not %d and %d",
-					c.Layer, c.Turn, c.Attempt, c.Round, c.ThroughSeq, first.round, first.through)
-			}
-		}
-		if ix.outputs[tk] {
-			return fmt.Errorf("attempt for %s/%s, which already has a committed output", c.Layer, c.Turn)
-		}
+		return checkAttemptCommit(layer, ix, c)
 	case CommitTurn:
-		o := c.Output
-		if o == nil || o.LayerID != c.Layer || o.Turn != c.Turn || o.Round != c.Round {
-			return fmt.Errorf("turn %q/%q (round %d) needs an output of that layer, turn and round", c.Layer, c.Turn, c.Round)
-		}
-		if err := roundOK(); err != nil {
-			return err
-		}
-		if err := checkWorkID(layer, TurnParticipant, c.Round, o.ParticipantID, c.Turn); err != nil {
-			return err
-		}
-		if !ix.reserved(c.Layer, c.Turn, o.Attempt) {
-			return fmt.Errorf("turn %s/%s: attempt %d is not reserved", c.Layer, c.Turn, o.Attempt)
-		}
-		if ix.outputs[tk] {
-			return fmt.Errorf("turn %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
-		}
+		return checkTurnCommit(layer, ix, c)
 	case CommitModerated:
-		if c.Decision == nil {
-			return fmt.Errorf("moderation %q/%q has no decision", c.Layer, c.Turn)
-		}
-		if err := roundOK(); err != nil {
-			return err
-		}
-		if layer.Moderator == nil {
-			return fmt.Errorf("moderation of layer %q, which has no moderator", c.Layer)
-		}
-		if want := moderatorTurnID(c.Round); c.Turn != want {
-			return fmt.Errorf("moderation turn %q is not %q", c.Turn, want)
-		}
-		if ix.latest[tk] == 0 {
-			return fmt.Errorf("moderation %s/%s has no reserved attempt", c.Layer, c.Turn)
-		}
-		if ix.outputs[tk] {
-			return fmt.Errorf("moderation %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
-		}
+		return checkModeratedCommit(layer, ix, c)
 	case CommitRoundPublished:
-		if layer.Delivery == DeliveryPerTurn {
-			return fmt.Errorf("round_published for per_turn layer %q", c.Layer)
-		}
-		if err := roundOK(); err != nil {
-			return err
-		}
-		if last := ix.published[c.Layer]; c.Round != last+1 {
-			return fmt.Errorf("round %d published after round %d", c.Round, last)
-		}
-		for _, pid := range layer.Participants {
-			if !ix.outputs[turnKey{c.Layer, turnID(c.Round, pid)}] {
-				return fmt.Errorf("round %d published before %s's turn is committed", c.Round, pid)
-			}
-		}
+		return checkRoundPublished(layer, ix, c)
 	case CommitLaunched, CommitLayerStarted, CommitLayerEnded, CommitPauseRequested,
 		CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
+	}
+	return nil
+}
+
+// checkRound checks that the round c names is within the layer's
+// max_rounds.
+func checkRound(layer Layer, c *Commit) error {
+	if c.Round < 1 || c.Round > layer.MaxRounds {
+		return fmt.Errorf("%s: round %d is outside 1..%d of layer %q", c.Kind, c.Round, layer.MaxRounds, c.Layer)
+	}
+	return nil
+}
+
+// checkAttemptCommit is checkCommit for an attempt.
+func checkAttemptCommit(layer Layer, ix *commitIndex, c *Commit) error {
+	if err := checkRound(layer, c); err != nil {
+		return err
+	}
+	if c.Attempt < 1 {
+		return fmt.Errorf("attempt %d is not positive", c.Attempt)
+	}
+	if err := checkWorkID(layer, c.TurnKind, c.Round, c.Participant, c.Turn); err != nil {
+		return err
+	}
+	tk := turnKey{c.Layer, c.Turn}
+	// An attempt is reserved again only when a restart cut it before
+	// its reply and it is resent (AttemptRequest.Resent): it must be the
+	// turn's newest attempt, and it is resent at most once.
+	if first, ok := ix.attempts[attemptKey{c.Layer, c.Turn, c.Attempt}]; ok {
+		if c.Attempt != ix.latest[tk] {
+			return fmt.Errorf("attempt %s/%s/%d: %w", c.Layer, c.Turn, c.Attempt, os.ErrExist)
+		}
+		if first.resent {
+			return fmt.Errorf("attempt %s/%s/%d: %w: it was already resent once", c.Layer, c.Turn, c.Attempt, os.ErrExist)
+		}
+		if c.Round != first.round || c.ThroughSeq != first.through {
+			return fmt.Errorf("attempt %s/%s/%d reserved again with round %d and through_seq %d, not %d and %d",
+				c.Layer, c.Turn, c.Attempt, c.Round, c.ThroughSeq, first.round, first.through)
+		}
+	}
+	if ix.outputs[tk] {
+		return fmt.Errorf("attempt for %s/%s, which already has a committed output", c.Layer, c.Turn)
+	}
+	return nil
+}
+
+// checkTurnCommit is checkCommit for a participant's committed output.
+func checkTurnCommit(layer Layer, ix *commitIndex, c *Commit) error {
+	o := c.Output
+	if o == nil || o.LayerID != c.Layer || o.Turn != c.Turn || o.Round != c.Round {
+		return fmt.Errorf("turn %q/%q (round %d) needs an output of that layer, turn and round", c.Layer, c.Turn, c.Round)
+	}
+	if err := checkRound(layer, c); err != nil {
+		return err
+	}
+	if err := checkWorkID(layer, TurnParticipant, c.Round, o.ParticipantID, c.Turn); err != nil {
+		return err
+	}
+	if !ix.reserved(c.Layer, c.Turn, o.Attempt) {
+		return fmt.Errorf("turn %s/%s: attempt %d is not reserved", c.Layer, c.Turn, o.Attempt)
+	}
+	if ix.outputs[turnKey{c.Layer, c.Turn}] {
+		return fmt.Errorf("turn %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
+	}
+	return nil
+}
+
+// checkModeratedCommit is checkCommit for a moderator's decision.
+func checkModeratedCommit(layer Layer, ix *commitIndex, c *Commit) error {
+	if c.Decision == nil {
+		return fmt.Errorf("moderation %q/%q has no decision", c.Layer, c.Turn)
+	}
+	if err := checkRound(layer, c); err != nil {
+		return err
+	}
+	if layer.Moderator == nil {
+		return fmt.Errorf("moderation of layer %q, which has no moderator", c.Layer)
+	}
+	if want := moderatorTurnID(c.Round); c.Turn != want {
+		return fmt.Errorf("moderation turn %q is not %q", c.Turn, want)
+	}
+	tk := turnKey{c.Layer, c.Turn}
+	if ix.latest[tk] == 0 {
+		return fmt.Errorf("moderation %s/%s has no reserved attempt", c.Layer, c.Turn)
+	}
+	if ix.outputs[tk] {
+		return fmt.Errorf("moderation %s/%s: %w", c.Layer, c.Turn, os.ErrExist)
+	}
+	return nil
+}
+
+// checkRoundPublished is checkCommit for an after_round layer's
+// publication of a round.
+func checkRoundPublished(layer Layer, ix *commitIndex, c *Commit) error {
+	if layer.Delivery == DeliveryPerTurn {
+		return fmt.Errorf("round_published for per_turn layer %q", c.Layer)
+	}
+	if err := checkRound(layer, c); err != nil {
+		return err
+	}
+	if last := ix.published[c.Layer]; c.Round != last+1 {
+		return fmt.Errorf("round %d published after round %d", c.Round, last)
+	}
+	for _, pid := range layer.Participants {
+		if !ix.outputs[turnKey{c.Layer, turnID(c.Round, pid)}] {
+			return fmt.Errorf("round %d published before %s's turn is committed", c.Round, pid)
+		}
 	}
 	return nil
 }
@@ -423,12 +452,28 @@ func replayApply(cfg *Config, snap *Snapshot, st *State, c *Commit) error {
 			return corrupt("commit %d names layer %q, which is not in the configuration", c.Seq, c.Layer)
 		}
 	}
-	needLayer := func() error {
+	switch c.Kind {
+	case CommitLaunched, CommitPauseRequested, CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
+		if err := applyRunCommit(st, c); err != nil {
+			return err
+		}
+	case CommitLayerStarted, CommitAttempt, CommitTurn, CommitRoundPublished, CommitModerated, CommitLayerEnded:
 		if ls == nil {
 			return corrupt("commit %d (%s) names no layer", c.Seq, c.Kind)
 		}
-		return nil
+		if err := applyLayerCommit(layer, ls, st, c); err != nil {
+			return err
+		}
+	default:
+		return corrupt("commit %d: unknown kind %q", c.Seq, c.Kind)
 	}
+	st.Seq = c.Seq
+	st.UpdatedAt = c.At
+	return nil
+}
+
+// applyRunCommit is replayApply for a commit that changes the run's status.
+func applyRunCommit(st *State, c *Commit) error {
 	switch c.Kind {
 	case CommitLaunched:
 		if st.Status != StatusQueued {
@@ -448,22 +493,21 @@ func replayApply(cfg *Config, snap *Snapshot, st *State, c *Commit) error {
 			return corrupt("commit %d: ended with non-terminal status %q", c.Seq, c.Status)
 		}
 		st.Status, st.Reason = c.Status, c.Reason
+	case CommitLayerStarted, CommitLayerEnded, CommitAttempt, CommitTurn, CommitModerated, CommitRoundPublished:
+	}
+	return nil
+}
+
+// applyLayerCommit is replayApply for a commit of layer, whose state is ls.
+func applyLayerCommit(layer Layer, ls *LayerState, st *State, c *Commit) error {
+	switch c.Kind {
 	case CommitLayerStarted:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		ls.Started = true
 	case CommitAttempt:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		ls.Calls++
 		ls.Round = c.Round
 		st.Calls++
 	case CommitTurn:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		if c.Output == nil {
 			return corrupt("commit %d: turn %q has no output", c.Seq, c.Turn)
 		}
@@ -472,28 +516,16 @@ func replayApply(cfg *Config, snap *Snapshot, st *State, c *Commit) error {
 			ls.RoundsPublished++
 		}
 	case CommitRoundPublished:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		ls.RoundsPublished++
 	case CommitModerated:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		if c.Decision == nil {
 			return corrupt("commit %d: moderation has no decision", c.Seq)
 		}
 		ls.Decisions = append(ls.Decisions, RoundDecision{Round: c.Round, Seq: c.Seq, Decision: *c.Decision})
 	case CommitLayerEnded:
-		if err := needLayer(); err != nil {
-			return err
-		}
 		ls.Ended, ls.EndReason = true, c.Reason
-	default:
-		return corrupt("commit %d: unknown kind %q", c.Seq, c.Kind)
+	case CommitLaunched, CommitPauseRequested, CommitPaused, CommitResumed, CommitCancelRequested, CommitEnded:
 	}
-	st.Seq = c.Seq
-	st.UpdatedAt = c.At
 	return nil
 }
 
