@@ -19,9 +19,9 @@ func TestPurposeAndCloneModel_SurviveReloadAndRestart(t *testing.T) {
 	cfg.Agents.List[0].Models = []string{"m1", "m2"}
 	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "m2", Model: "model-two", Provider: "p", Enabled: true})
 	r := mustNew(t, cfg, newFakeHost())
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), CloneModel("m2"), WithPurpose("forum"), OwnedBy("alice"))
-	fresh := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}}, WithPurpose("forum"))
-	plain := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	clone := mustClone(t, r, "alice", CloneModel("m2"), WithPurpose("forum"), OwnedBy("alice"))
+	fresh := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}}, WithPurpose("forum"))
+	plain := mustClone(t, r, "alice")
 
 	check := func(t *testing.T, r *Registry[*fakeInst], when string) {
 		t.Helper()
@@ -45,12 +45,14 @@ func TestPurposeAndCloneModel_SurviveReloadAndRestart(t *testing.T) {
 	check(t, mustNew(t, cfg, newFakeHost()), "restarted")
 }
 
-func TestCloneModel_RefusedForFreshAgent(t *testing.T) {
+// TestCloneModel_CloneOnly: CloneModel is not a fresh-agent option, and a
+// clone on an unconfigured model is refused.
+func TestCloneModel_CloneOnly(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	if _, err := r.Create(config.AgentConfig{Models: []string{"m1"}}, CloneModel("m1")); err == nil {
-		t.Fatal("CloneModel was accepted for a fresh agent")
+	if _, ok := CloneModel("m1").(FreshOption); ok {
+		t.Fatal("CloneModel is a FreshOption")
 	}
-	if _, err := r.Create(config.AgentConfig{}, CloneOf("alice"), CloneModel("nope")); err == nil {
+	if _, err := r.CreateClone("alice", CloneModel("nope")); err == nil {
 		t.Fatal("a clone on an unconfigured model was created")
 	}
 }
@@ -66,7 +68,7 @@ func TestTouch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := mustCreate(t, r, config.AgentConfig{}, Temp(time.Hour))
+	id := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
 	now = now.Add(50 * time.Minute)
 	if err := r.Touch(id); err != nil {
 		t.Fatalf("Touch: %v", err)
@@ -89,8 +91,8 @@ func TestCloneModel_DeletedWhenSourceDropsIt(t *testing.T) {
 	cfg.Agents.List[0].Models = []string{"m1", "m2"}
 	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "m2", Model: "model-two", Provider: "p", Enabled: true})
 	r := mustNew(t, cfg, newFakeHost())
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), CloneModel("m2"))
-	kept := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), CloneModel("m1"))
+	clone := mustClone(t, r, "alice", CloneModel("m2"))
+	kept := mustClone(t, r, "alice", CloneModel("m1"))
 
 	next := testConfig(t)
 	next.Models = cfg.Models

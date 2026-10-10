@@ -43,11 +43,11 @@ func TestNewAgentLoop_OnlyOwnerManagesTempAgents(t *testing.T) {
 	statePath := filepath.Join(internal, agentreg.StateFileName)
 
 	service := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil, OwnsDataDir())
-	saved, err := service.GetRegistry().Create(config.AgentConfig{})
+	saved, err := service.GetRegistry().CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	inFlight, err := service.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("main"), agentreg.EphemeralMemory())
+	inFlight, err := service.GetRegistry().CreateClone("main", agentreg.EphemeralMemory())
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestNewAgentLoop_OnlyOwnerManagesTempAgents(t *testing.T) {
 			t.Fatalf("a non-owner loop removed the service's agent %s: %v", id, statErr)
 		}
 	}
-	mine, err := cli.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	mine, err := cli.GetRegistry().CreateClone("main")
 	if err != nil {
 		t.Fatalf("non-owner Create: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestRunAgentLoop_StaleTempInstance(t *testing.T) {
 
 	tl := newTestAgentLoop(t)
 	al := tl.al
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	id, err := al.GetRegistry().CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

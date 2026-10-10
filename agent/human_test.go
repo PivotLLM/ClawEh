@@ -604,10 +604,10 @@ func TestHumanAgent_NeverClonedOrSpawned(t *testing.T) {
 	al, _, _ := newHumanLoop(t, 60)
 	registry := al.GetRegistry()
 
-	if _, err := registry.Create(config.AgentConfig{}, agentreg.CloneOf("bob")); !errors.Is(err, agentreg.ErrHuman) {
+	if _, err := registry.CreateClone("bob"); !errors.Is(err, agentreg.ErrHuman) {
 		t.Errorf("clone of bob: err = %v, want ErrHuman", err)
 	}
-	if _, err := registry.Create(config.AgentConfig{Models: []string{"Bob (human)"}}); !errors.Is(err, agentreg.ErrHuman) {
+	if _, err := registry.CreateFresh(config.AgentConfig{Models: []string{"Bob (human)"}}); !errors.Is(err, agentreg.ErrHuman) {
 		t.Errorf("fresh agent on Bob's model: err = %v, want ErrHuman", err)
 	}
 	if _, err := newAgentServices(al, "bob").CreateFresh("Bob (human)"); !errors.Is(err, agentreg.ErrHuman) {
@@ -621,7 +621,7 @@ func TestHumanAgent_NeverClonedOrSpawned(t *testing.T) {
 	if n := len(registry.ListTemp()); n != 0 {
 		t.Fatalf("%d temporary agents exist", n)
 	}
-	id, err := registry.Create(config.AgentConfig{}, agentreg.CloneOf("alice"))
+	id, err := registry.CreateClone("alice")
 	if err != nil {
 		t.Fatalf("clone of alice: %v", err)
 	}

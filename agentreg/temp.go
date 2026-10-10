@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -33,27 +32,45 @@ const TempDirName = "temp"
 // memory).
 const StateFileName = "temp_agents.json"
 
-// Option configures Create.
+// Option is an option for both CreateClone and CreateFresh.
 type Option func(*createOptions)
 
+func (f Option) applyClone(o *createOptions) { f(o) }
+func (f Option) applyFresh(o *createOptions) { f(o) }
+
+// CloneOption configures CreateClone: an Option or CloneModel.
+type CloneOption interface{ applyClone(o *createOptions) }
+
+// FreshOption configures CreateFresh: an Option, WithSystemPrompt,
+// WithoutMemory or SingleShot.
+type FreshOption interface{ applyFresh(o *createOptions) }
+
+// cloneOnly is an option only CreateClone takes.
+type cloneOnly func(*createOptions)
+
+func (f cloneOnly) applyClone(o *createOptions) { f(o) }
+
+// freshOnly is an option only CreateFresh takes.
+type freshOnly func(*createOptions)
+
+func (f freshOnly) applyFresh(o *createOptions) { f(o) }
+
 type createOptions struct {
-	ttl       time.Duration
+	ttl time.Duration
+	// clone makes the agent a clone of source.
+	clone     bool
 	source    string
 	ephemeral bool
 	owner     string
 	purpose   string
 	// cloneModel replaces a clone's model list with this one model.
 	cloneModel string
-	// The fresh-agent options; a clone refuses them.
+	// The fresh-agent options.
 	systemPrompt    string
 	hasSystemPrompt bool
 	noMemory        bool
 	singleShot      bool
 }
-
-// freshOnly reports whether any option that applies only to a fresh agent
-// was given.
-func (o createOptions) freshOnly() bool { return o.hasSystemPrompt || o.noMemory || o.singleShot }
 
 // mode is the fresh agent's mode the options select: single-shot wins over
 // no memory, and memory is the default.
@@ -79,20 +96,14 @@ func OwnedBy(agentID string) Option {
 func WithPurpose(purpose string) Option { return func(o *createOptions) { o.purpose = purpose } }
 
 // CloneModel makes a clone run on model, one of its source's models, instead
-// of its source's list. Only for a clone.
-func CloneModel(model string) Option {
-	return func(o *createOptions) { o.cloneModel = strings.TrimSpace(model) }
+// of its source's list.
+func CloneModel(model string) CloneOption {
+	return cloneOnly(func(o *createOptions) { o.cloneModel = strings.TrimSpace(model) })
 }
 
 // Temp sets how long the agent may sit idle before the sweep deletes it
 // (default DefaultTTL).
 func Temp(ttl time.Duration) Option { return func(o *createOptions) { o.ttl = ttl } }
-
-// CloneOf makes the agent a clone of the config agent srcID: the same
-// workspace, tools, models and configuration (always its source's current
-// ones), its own conversation, and a snapshot of the source's memory. The cfg
-// passed to Create must then be the zero value.
-func CloneOf(srcID string) Option { return func(o *createOptions) { o.source = srcID } }
 
 // EphemeralMemory makes the agent's memory read-only to the loop: recalled
 // from, but nothing is observed into it or consolidated. An ephemeral agent
@@ -100,56 +111,66 @@ func CloneOf(srcID string) Option { return func(o *createOptions) { o.source = s
 func EphemeralMemory() Option { return func(o *createOptions) { o.ephemeral = true } }
 
 // WithSystemPrompt sets a fresh agent's whole system prompt (default
-// DefaultSystemPrompt). Not for a clone.
-func WithSystemPrompt(text string) Option {
-	return func(o *createOptions) { o.systemPrompt, o.hasSystemPrompt = text, true }
+// DefaultSystemPrompt).
+func WithSystemPrompt(text string) FreshOption {
+	return freshOnly(func(o *createOptions) { o.systemPrompt, o.hasSystemPrompt = text, true })
 }
 
 // WithoutMemory gives a fresh agent no cognitive memory; it still keeps its
-// conversation. Not for a clone.
-func WithoutMemory() Option { return func(o *createOptions) { o.noMemory = true } }
+// conversation.
+func WithoutMemory() FreshOption { return freshOnly(func(o *createOptions) { o.noMemory = true }) }
 
 // SingleShot makes a fresh agent keep nothing: no memory, and every turn
 // starts on a blank context (the system prompt and the new message only).
-// Not for a clone.
-func SingleShot() Option { return func(o *createOptions) { o.singleShot = true } }
+func SingleShot() FreshOption { return freshOnly(func(o *createOptions) { o.singleShot = true }) }
 
-// Create adds a temporary agent and returns its UUID id. Without CloneOf the
-// agent is fresh: cfg (its id ignored) with an empty workspace of its own
-// under <CLAW_HOME>/internal/temp/<uuid>/workspace, no tools, no prompt files
-// and no skills. Its system prompt is WithSystemPrompt's text or
-// DefaultSystemPrompt, and its mode (ModeMemory unless WithoutMemory or
-// SingleShot) decides its cognitive memory, overriding cfg.Cogmem. The memory
-// snapshot and the build run outside the registry's lock, so creations run
-// in parallel.
-func (r *Registry[T]) Create(cfg config.AgentConfig, opts ...Option) (string, error) {
-	id, _, err := r.create(cfg, false, opts)
+// CreateClone adds a clone of the config agent sourceID and returns its UUID
+// id: the same workspace, tools, models and configuration (always its
+// source's current ones), its own conversation, and a snapshot of the
+// source's memory. The memory snapshot and the build run outside the
+// registry's lock, so creations run in parallel.
+func (r *Registry[T]) CreateClone(sourceID string, opts ...CloneOption) (string, error) {
+	id, _, err := r.create(config.AgentConfig{}, cloneOptions(sourceID, opts), false)
 	return id, err
 }
 
-// CreateInTurn is Create with a turn already begun on the new agent, before
-// anything else can see it, so it cannot be deleted, disposed or replaced
-// before its first turn; end ends that turn.
-func (r *Registry[T]) CreateInTurn(cfg config.AgentConfig, opts ...Option) (id string, end func(), err error) {
-	return r.create(cfg, true, opts)
+// CreateCloneInTurn is CreateClone with a turn already begun on the new
+// agent, before anything else can see it, so it cannot be deleted, disposed
+// or replaced before its first turn; end ends that turn.
+func (r *Registry[T]) CreateCloneInTurn(sourceID string, opts ...CloneOption) (id string, end func(), err error) {
+	return r.create(config.AgentConfig{}, cloneOptions(sourceID, opts), true)
 }
 
-func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option) (string, func(), error) {
+// CreateFresh adds a fresh temporary agent and returns its UUID id: cfg (its
+// id ignored) with an empty workspace of its own under
+// <CLAW_HOME>/internal/temp/<uuid>/workspace, no tools, no prompt files and
+// no skills. Its system prompt is WithSystemPrompt's text or
+// DefaultSystemPrompt, and its mode (ModeMemory unless WithoutMemory or
+// SingleShot) decides its cognitive memory, overriding cfg.Cogmem.
+func (r *Registry[T]) CreateFresh(cfg config.AgentConfig, opts ...FreshOption) (string, error) {
 	o := createOptions{ttl: DefaultTTL}
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyFresh(&o)
 	}
+	id, _, err := r.create(cfg, o, false)
+	return id, err
+}
+
+// cloneOptions are the options of a clone of sourceID.
+func cloneOptions(sourceID string, opts []CloneOption) createOptions {
+	o := createOptions{ttl: DefaultTTL}
+	for _, opt := range opts {
+		opt.applyClone(&o)
+	}
+	o.clone, o.source = true, sourceID
+	return o
+}
+
+// create adds a temporary agent: a clone of o.source when o.clone is set (cfg is then
+// unused), otherwise a fresh agent with cfg.
+func (r *Registry[T]) create(cfg config.AgentConfig, o createOptions, inTurn bool) (string, func(), error) {
 	if o.ttl <= 0 {
 		return "", nil, fmt.Errorf("agentreg: TTL must be positive, got %s", o.ttl)
-	}
-	if o.source != "" && !reflect.ValueOf(cfg).IsZero() {
-		return "", nil, errors.New("agentreg: a clone takes its configuration from its source; pass a zero AgentConfig")
-	}
-	if o.source != "" && o.freshOnly() {
-		return "", nil, errors.New("agentreg: a clone takes its prompt and memory from its source; WithSystemPrompt, WithoutMemory and SingleShot are for a fresh agent")
-	}
-	if o.source == "" && o.cloneModel != "" {
-		return "", nil, errors.New("agentreg: CloneModel is for a clone; a fresh agent takes its models from its configuration")
 	}
 	if o.hasSystemPrompt && strings.TrimSpace(o.systemPrompt) == "" {
 		return "", nil, errors.New("agentreg: the system prompt is empty")
@@ -165,7 +186,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 	r.mu.RLock()
 	closed, current, build := r.closed, r.cfg, r.build
 	var src *entry[T]
-	if o.source != "" {
+	if o.clone {
 		if se, ok := r.entries[routing.NormalizeAgentID(o.source)]; ok && se.spec.Origin == OriginConfig {
 			src = se
 		}
@@ -237,9 +258,9 @@ func (r *Registry[T]) create(cfg config.AgentConfig, inTurn bool, opts []Option)
 }
 
 // newTempSpec is the spec of a new temporary agent: a clone of src when the
-// options name a source, otherwise a fresh agent with cfg.
+// options make a clone, otherwise a fresh agent with cfg.
 func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *entry[T], id, stateDir string) (Spec, error) {
-	if o.source != "" {
+	if o.clone {
 		if src == nil {
 			return Spec{}, fmt.Errorf("%w: clone source %q is not a configured agent", ErrNotFound, o.source)
 		}
@@ -248,7 +269,7 @@ func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *
 			return Spec{}, err
 		}
 		if o.cloneModel != "" {
-			// The caller checks the model is one of the source's; Create
+			// The caller checks the model is one of the source's; create
 			// checks it is configured.
 			spec.CloneModel = o.cloneModel
 			spec.Config.Models = cloneModels(spec.Config.Models, o.cloneModel)

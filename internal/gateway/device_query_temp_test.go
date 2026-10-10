@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/agent"
-	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -30,11 +29,11 @@ func TestDeviceQuerierHidesTempAgents(t *testing.T) {
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
 	reg := al.GetRegistry()
-	clone, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("alice"))
+	clone, err := reg.CreateClone("alice")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
-	fresh, err := reg.Create(config.AgentConfig{Name: "Scratch"})
+	fresh, err := reg.CreateFresh(config.AgentConfig{Name: "Scratch"})
 	if err != nil {
 		t.Fatalf("Create fresh: %v", err)
 	}

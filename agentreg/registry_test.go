@@ -111,11 +111,20 @@ func mustNew(t *testing.T, cfg *config.Config, h *fakeHost) *Registry[*fakeInst]
 	return r
 }
 
-func mustCreate(t *testing.T, r *Registry[*fakeInst], cfg config.AgentConfig, opts ...Option) string {
+func mustFresh(t *testing.T, r *Registry[*fakeInst], cfg config.AgentConfig, opts ...FreshOption) string {
 	t.Helper()
-	id, err := r.Create(cfg, opts...)
+	id, err := r.CreateFresh(cfg, opts...)
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateFresh: %v", err)
+	}
+	return id
+}
+
+func mustClone(t *testing.T, r *Registry[*fakeInst], sourceID string, opts ...CloneOption) string {
+	t.Helper()
+	id, err := r.CreateClone(sourceID, opts...)
+	if err != nil {
+		t.Fatalf("CreateClone: %v", err)
 	}
 	return id
 }
@@ -156,7 +165,7 @@ func TestCreateFresh_GetListDelete(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
 
-	id := mustCreate(t, r, config.AgentConfig{ID: "ignored", Name: "Scratch", Models: []string{"m1"}})
+	id := mustFresh(t, r, config.AgentConfig{ID: "ignored", Name: "Scratch", Models: []string{"m1"}})
 	if len(id) != 36 || id == "ignored" {
 		t.Fatalf("id = %q, want a UUID", id)
 	}
@@ -212,20 +221,23 @@ func TestCreateFresh_GetListDelete(t *testing.T) {
 
 func TestCreate_Refusals(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	if _, err := r.Create(config.AgentConfig{Models: []string{"gone"}}); err == nil {
+	if _, err := r.CreateFresh(config.AgentConfig{Models: []string{"gone"}}); err == nil {
 		t.Error("an agent naming an unconfigured model must be refused")
 	}
-	if _, err := r.Create(config.AgentConfig{}, Temp(0)); err == nil {
+	if _, err := r.CreateFresh(config.AgentConfig{}, Temp(0)); err == nil {
 		t.Error("a zero TTL must be refused")
 	}
-	if _, err := r.Create(config.AgentConfig{Name: "x"}, CloneOf("alice")); err == nil {
-		t.Error("a clone with its own configuration must be refused")
+	if _, err := r.CreateClone("alice", Temp(0)); err == nil {
+		t.Error("a zero TTL must be refused for a clone")
 	}
-	if _, err := r.Create(config.AgentConfig{}, CloneOf("nobody")); !errors.Is(err, ErrNotFound) {
+	if _, err := r.CreateClone(""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("clone of no agent: err = %v, want ErrNotFound", err)
+	}
+	if _, err := r.CreateClone("nobody"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("clone of an unknown agent: err = %v, want ErrNotFound", err)
 	}
-	temp := mustCreate(t, r, config.AgentConfig{})
-	if _, err := r.Create(config.AgentConfig{}, CloneOf(temp)); !errors.Is(err, ErrNotFound) {
+	temp := mustFresh(t, r, config.AgentConfig{})
+	if _, err := r.CreateClone(temp); !errors.Is(err, ErrNotFound) {
 		t.Errorf("clone of a temporary agent: err = %v, want ErrNotFound", err)
 	}
 	if err := r.Delete("alice"); !errors.Is(err, ErrNotTemp) {
@@ -238,7 +250,7 @@ func TestCreate_Refusals(t *testing.T) {
 
 func TestCreateClone(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), EphemeralMemory(), Temp(time.Hour))
+	id := mustClone(t, r, "alice", EphemeralMemory(), Temp(time.Hour))
 	spec := mustGet(t, r, id).spec
 	alice := mustGet(t, r, "alice")
 	if !spec.IsClone() || spec.SourceID != "alice" || !spec.Ephemeral || spec.Fresh {
@@ -285,7 +297,7 @@ func TestCreate_InsertedHookSeesAgent(t *testing.T) {
 	if r, err = New(testConfig(t), hooks); err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	id := mustClone(t, r, "alice")
 	if len(seen) != 1 || seen[0] != id {
 		t.Fatalf("Inserted saw %v, want [%s]", seen, id)
 	}
@@ -311,7 +323,7 @@ func TestCreate_Concurrent(t *testing.T) {
 	errs := make(chan error, n)
 	for range n {
 		wg.Go(func() {
-			if _, err := r.Create(config.AgentConfig{}, CloneOf("alice"), EphemeralMemory()); err != nil {
+			if _, err := r.CreateClone("alice", EphemeralMemory()); err != nil {
 				errs <- err
 			}
 		})
@@ -333,7 +345,7 @@ func TestCreate_Concurrent(t *testing.T) {
 
 func TestDeleteRefusedMidTurn(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	id := mustCreate(t, r, config.AgentConfig{})
+	id := mustFresh(t, r, config.AgentConfig{})
 	end, _ := r.BeginTurn(id, mustGet(t, r, id))
 	if info, _ := r.Info(id); !info.InTurn {
 		t.Fatal("Info must report the turn")
@@ -356,7 +368,7 @@ func TestDeleteRefusedMidTurn(t *testing.T) {
 func TestDeleteWhenIdle(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
 
-	idle := mustCreate(t, r, config.AgentConfig{})
+	idle := mustFresh(t, r, config.AgentConfig{})
 	if err := r.DeleteWhenIdle(idle); err != nil {
 		t.Fatalf("DeleteWhenIdle of an idle agent: %v", err)
 	}
@@ -364,7 +376,7 @@ func TestDeleteWhenIdle(t *testing.T) {
 		t.Fatal("an idle agent was not deleted at once")
 	}
 
-	busy := mustCreate(t, r, config.AgentConfig{})
+	busy := mustFresh(t, r, config.AgentConfig{})
 	end1, _ := r.BeginTurn(busy, mustGet(t, r, busy))
 	end2, _ := r.BeginTurn(busy, mustGet(t, r, busy))
 	if err := r.DeleteWhenIdle(busy); !errors.Is(err, ErrDeletePending) {
@@ -398,13 +410,13 @@ func TestDeleteWhenIdle(t *testing.T) {
 	}
 }
 
-// CreateInTurn begins the turn before the agent is visible: it cannot be
+// CreateCloneInTurn begins the turn before the agent is visible: it cannot be
 // deleted until the turn ends.
-func TestCreateInTurn(t *testing.T) {
+func TestCreateCloneInTurn(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	id, end, err := r.CreateInTurn(config.AgentConfig{}, CloneOf("alice"))
+	id, end, err := r.CreateCloneInTurn("alice")
 	if err != nil {
-		t.Fatalf("CreateInTurn: %v", err)
+		t.Fatalf("CreateCloneInTurn: %v", err)
 	}
 	if err := r.Delete(id); !errors.Is(err, ErrBusy) {
 		t.Fatalf("Delete of a just-created agent = %v, want ErrBusy", err)
@@ -418,7 +430,7 @@ func TestCreateInTurn(t *testing.T) {
 func TestDelete_KeepsEntryWhenNotReleased(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	id := mustCreate(t, r, config.AgentConfig{})
+	id := mustFresh(t, r, config.AgentConfig{})
 	inst := mustGet(t, r, id)
 	h.failRetire = true
 	if err := r.Delete(id); err == nil {
@@ -433,8 +445,8 @@ func TestReload_KeepsAndRebuildsTempAgents(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	fresh := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}})
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	fresh := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}})
+	clone := mustClone(t, r, "alice")
 	before := mustGet(t, r, fresh)
 	cloneBefore := mustGet(t, r, clone)
 	created, _ := r.Info(fresh)
@@ -476,8 +488,8 @@ func TestReload_DeletesUnbuildableTempAgents(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	withModel := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}})
-	bobClone := mustCreate(t, r, config.AgentConfig{}, CloneOf("bob"))
+	withModel := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}})
+	bobClone := mustClone(t, r, "bob")
 	stateOf := func(id string) string { i, _ := r.Info(id); return i.Spec.StateDir }
 	withModelDir, bobCloneDir := stateOf(withModel), stateOf(bobClone)
 
@@ -507,9 +519,9 @@ func TestReload_LeavesAgentInTurnAlone(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	id, end, err := r.CreateInTurn(config.AgentConfig{}, CloneOf("bob"), EphemeralMemory())
+	id, end, err := r.CreateCloneInTurn("bob", EphemeralMemory())
 	if err != nil {
-		t.Fatalf("CreateInTurn: %v", err)
+		t.Fatalf("CreateCloneInTurn: %v", err)
 	}
 	inst := mustGet(t, r, id)
 
@@ -533,7 +545,7 @@ func TestReload_RechecksBusyAtCommit(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	id := mustClone(t, r, "alice")
 	inst := mustGet(t, r, id)
 	var end func()
 	h.onBuild = func(spec Spec) {
@@ -560,7 +572,7 @@ func TestReload_KeepsConcurrentDelete(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	doomed := mustCreate(t, r, config.AgentConfig{})
+	doomed := mustFresh(t, r, config.AgentConfig{})
 	deleted := false
 	h.onBuild = func(spec Spec) {
 		if spec.ID == doomed && !deleted {
@@ -600,7 +612,7 @@ func TestReload_AbandonedChangesNothingClosesBuilt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newFakeHost()
 			r := mustNew(t, testConfig(t), h)
-			temp := mustCreate(t, r, config.AgentConfig{})
+			temp := mustFresh(t, r, config.AgentConfig{})
 			old := mustGet(t, r, temp)
 			builtBefore := len(h.instances())
 			next := testConfig(t)
@@ -637,7 +649,7 @@ func TestReload_BuildFailureChangesNothing(t *testing.T) {
 func TestReload_DisposeKeepsEntryWhenNotReleased(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("bob"))
+	id := mustClone(t, r, "bob")
 	inst := mustGet(t, r, id)
 	h.failRetire = true
 	next := testConfig(t)
@@ -660,9 +672,9 @@ func TestSweep_DeletesIdleSkipsBusy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	idle := mustCreate(t, r, config.AgentConfig{}, Temp(time.Hour))
-	busy := mustCreate(t, r, config.AgentConfig{}, Temp(time.Hour))
-	recent := mustCreate(t, r, config.AgentConfig{}, Temp(time.Hour))
+	idle := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
+	busy := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
+	recent := mustFresh(t, r, config.AgentConfig{}, Temp(time.Hour))
 	end, _ := r.BeginTurn(busy, mustGet(t, r, busy))
 
 	now = now.Add(50 * time.Minute)
@@ -691,9 +703,9 @@ func TestPersistence_RoundTrip(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	fresh := mustCreate(t, r, config.AgentConfig{Name: "Scratch", Models: []string{"m1"}}, Temp(2*time.Hour))
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
-	ephemeral := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), EphemeralMemory())
+	fresh := mustFresh(t, r, config.AgentConfig{Name: "Scratch", Models: []string{"m1"}}, Temp(2*time.Hour))
+	clone := mustClone(t, r, "alice")
+	ephemeral := mustClone(t, r, "alice", EphemeralMemory())
 	ephemeralDir := mustGet(t, r, ephemeral).spec.StateDir
 
 	statePath := filepath.Join(cfg.DataDir(), global.InternalDir, StateFileName)
@@ -756,7 +768,7 @@ func TestPersistence_RoundTrip(t *testing.T) {
 func TestClose_Idempotent(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	mustCreate(t, r, config.AgentConfig{})
+	mustFresh(t, r, config.AgentConfig{})
 	r.Close()
 	r.Close()
 	for _, b := range h.instances() {
@@ -764,7 +776,7 @@ func TestClose_Idempotent(t *testing.T) {
 			t.Fatalf("%s closed %d times, want 1", b.spec.ID, n)
 		}
 	}
-	if _, err := r.Create(config.AgentConfig{}); !errors.Is(err, ErrClosed) {
+	if _, err := r.CreateFresh(config.AgentConfig{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Create after Close = %v, want ErrClosed", err)
 	}
 }
@@ -790,9 +802,9 @@ func TestOwner_SurvivesReloadAndRestart(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), OwnedBy("Bob"))
-	fresh := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}}, OwnedBy("bob"))
-	unowned := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	clone := mustClone(t, r, "alice", OwnedBy("Bob"))
+	fresh := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}}, OwnedBy("bob"))
+	unowned := mustClone(t, r, "alice")
 
 	check := func(t *testing.T, r *Registry[*fakeInst], when string) {
 		t.Helper()

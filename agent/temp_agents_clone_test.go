@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -108,7 +107,7 @@ func TestClone_IsACopyOfItsSource(t *testing.T) {
 	f := newCloneFixture(t)
 	reg := f.al.GetRegistry()
 
-	id, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	id, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
@@ -168,7 +167,7 @@ func TestClone_OwnMemoryAndConversation(t *testing.T) {
 	f := newCloneFixture(t)
 	reg := f.al.GetRegistry()
 
-	id, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	id, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
@@ -226,7 +225,7 @@ func TestClone_FollowsSourceConfigOnReload(t *testing.T) {
 	defer restore()
 	f := newCloneFixture(t)
 
-	id, err := f.al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	id, err := f.al.GetRegistry().CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}

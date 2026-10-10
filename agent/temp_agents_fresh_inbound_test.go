@@ -49,15 +49,15 @@ func TestInbound_SingleShotNeverMerges(t *testing.T) {
 
 	for _, tc := range []struct {
 		name      string
-		opts      []agentreg.Option
+		opts      []agentreg.FreshOption
 		wantCalls int
 	}{
-		{"single shot: one turn each", []agentreg.Option{agentreg.SingleShot()}, 3},
-		{"without memory: queued messages merged", []agentreg.Option{agentreg.WithoutMemory()}, 2},
+		{"single shot: one turn each", []agentreg.FreshOption{agentreg.SingleShot()}, 3},
+		{"without memory: queued messages merged", []agentreg.FreshOption{agentreg.WithoutMemory()}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			al, msgBus, model := gatedFreshLoop(t)
-			id, err := al.GetRegistry().Create(config.AgentConfig{}, tc.opts...)
+			id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, tc.opts...)
 			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
@@ -103,7 +103,7 @@ func TestSingleShot_InterruptedTurnIsDiscarded(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, _, model := gatedFreshLoop(t)
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestSingleShot_RetryStartsBlankWithTheMessage(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, model, _ := freshLoop(t)
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestSingleShot_CommandLeavesNothing(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, _, _ := freshLoop(t)
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestSingleShot_SkippedDiscard(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, model, _ := freshLoop(t)
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestDiscardConversation_ConcurrentWithSessionUse(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	al, model, _ := freshLoop(t)
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -274,11 +274,11 @@ func TestFreshAgent_InboundMediaNotCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := al.GetRegistry().Create(config.AgentConfig{})
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	cloneID, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := al.GetRegistry().CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}

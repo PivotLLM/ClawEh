@@ -322,9 +322,7 @@ func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string
 	if err != nil {
 		return "", err
 	}
-	opts := []agentreg.Option{
-		agentreg.CloneOf(spec.Source), agentreg.OwnedBy(spec.Owner), agentreg.WithPurpose(tools.TempPurposeForum),
-	}
+	opts := []agentreg.CloneOption{agentreg.OwnedBy(spec.Owner), agentreg.WithPurpose(tools.TempPurposeForum)}
 	if spec.Model != "" {
 		src, ok := r.GetConfigured(spec.Source)
 		if !ok || src == nil {
@@ -336,7 +334,7 @@ func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string
 		}
 		opts = append(opts, agentreg.CloneModel(candidateName(m)))
 	}
-	return r.Create(config.AgentConfig{}, opts...)
+	return r.CreateClone(spec.Source, opts...)
 }
 
 // CreateFresh implements forum.Agents: a fresh temporary agent on one of the

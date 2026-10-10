@@ -50,7 +50,7 @@ func TestRestore_UnusableStateFileKeepsEverything(t *testing.T) {
 			cfg := testConfig(t)
 			h := newFakeHost()
 			r := mustNew(t, cfg, h)
-			id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+			id := mustClone(t, r, "alice")
 			dir := mustGet(t, r, id).spec.StateDir
 			r.Close()
 
@@ -68,7 +68,7 @@ func TestRestore_UnusableStateFileKeepsEverything(t *testing.T) {
 			if !dirExists(dir) {
 				t.Fatal("a temporary agent's directory was removed although its list could not be read")
 			}
-			mustCreate(t, r2, config.AgentConfig{}, CloneOf("alice"))
+			mustClone(t, r2, "alice")
 			if after := readMaybe(statePath); !bytes.Equal(before, after) {
 				t.Fatalf("the unusable state file was rewritten: %q → %q", before, after)
 			}
@@ -85,8 +85,8 @@ func TestRestore_UnusableStateFileKeepsEverything(t *testing.T) {
 func TestRestore_BuildErrorKeepsAgentForNextStart(t *testing.T) {
 	cfg := testConfig(t)
 	r := mustNew(t, cfg, newFakeHost())
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
-	other := mustCreate(t, r, config.AgentConfig{Models: []string{"m1"}})
+	id := mustClone(t, r, "alice")
+	other := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}})
 	dir := mustGet(t, r, id).spec.StateDir
 	r.Close()
 
@@ -118,7 +118,7 @@ func TestReload_BuildErrorKeepsTempAgent(t *testing.T) {
 	cfg := testConfig(t)
 	h := newFakeHost()
 	r := mustNew(t, cfg, h)
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	id := mustClone(t, r, "alice")
 	inst := mustGet(t, r, id)
 	h.failID = id
 	if err := r.Reload(context.Background(), cfg, h.build, commitOK); err != nil {

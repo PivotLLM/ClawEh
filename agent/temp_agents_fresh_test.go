@@ -234,7 +234,7 @@ func TestFreshAgent_Default(t *testing.T) {
 	al, model, _ := freshLoop(t)
 	al.RegisterTool(&noopWriteFile{})
 
-	id, err := al.GetRegistry().Create(config.AgentConfig{Tools: []string{"*"}, MCPTools: []string{"*"}})
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{Tools: []string{"*"}, MCPTools: []string{"*"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestFreshAgent_WithSystemPrompt(t *testing.T) {
 	al, model, _ := freshLoop(t)
 
 	const prompt = "You are Bob. Review the diff you are given and list the defects."
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.WithSystemPrompt(prompt))
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.WithSystemPrompt(prompt))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestFreshAgent_WithoutMemory(t *testing.T) {
 	defer restore()
 	al, model, _ := freshLoop(t)
 
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.WithoutMemory())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.WithoutMemory())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestFreshAgent_SingleShot(t *testing.T) {
 	defer restore()
 	al, model, _ := freshLoop(t)
 
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot(), agentreg.WithSystemPrompt("Translate to French."))
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot(), agentreg.WithSystemPrompt("Translate to French."))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestFreshAgent_SingleShotStartsBlankWhenHistoryRemains(t *testing.T) {
 	defer restore()
 	al, model, _ := freshLoop(t)
 
-	id, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.SingleShot())
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -431,15 +431,15 @@ func TestFreshAgent_ModesSurviveRestart(t *testing.T) {
 	al, _, cfg := freshLoop(t)
 	reg := al.GetRegistry()
 
-	memID, err := reg.Create(config.AgentConfig{Name: "Bob"}, agentreg.WithSystemPrompt("You are Bob."), agentreg.OwnedBy("main"))
+	memID, err := reg.CreateFresh(config.AgentConfig{Name: "Bob"}, agentreg.WithSystemPrompt("You are Bob."), agentreg.OwnedBy("main"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	noMemID, err := reg.Create(config.AgentConfig{}, agentreg.WithoutMemory())
+	noMemID, err := reg.CreateFresh(config.AgentConfig{}, agentreg.WithoutMemory())
 	if err != nil {
 		t.Fatal(err)
 	}
-	shotID, err := reg.Create(config.AgentConfig{}, agentreg.SingleShot())
+	shotID, err := reg.CreateFresh(config.AgentConfig{}, agentreg.SingleShot())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -78,7 +78,7 @@ func TestFreshAgent_CLIModelIsolated(t *testing.T) {
 	}
 
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &recordingProvider{}, providers.NewProviderDispatcher(cfg), OwnsDataDir())
-	id, err := al.GetRegistry().Create(config.AgentConfig{Models: []string{"cc"}})
+	id, err := al.GetRegistry().CreateFresh(config.AgentConfig{Models: []string{"cc"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

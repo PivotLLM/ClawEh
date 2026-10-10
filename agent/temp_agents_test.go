@@ -65,7 +65,7 @@ func TestClone_SharesWorkspaceOwnsConversationAndMemory(t *testing.T) {
 		t.Fatalf("source memory_create: %s", res.ForLLM)
 	}
 
-	id, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"), agentreg.EphemeralMemory())
+	id, err := reg.CreateClone("main", agentreg.EphemeralMemory())
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestFreshTempAgent_HasNoTools(t *testing.T) {
 	al.RegisterTool(&noopWriteFile{})
 	reg := al.GetRegistry()
 
-	id, err := reg.Create(config.AgentConfig{Tools: []string{"*"}, MCPTools: []string{"*"}})
+	id, err := reg.CreateFresh(config.AgentConfig{Tools: []string{"*"}, MCPTools: []string{"*"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestFreshTempAgent_HasNoTools(t *testing.T) {
 	}
 
 	// A clone, by contrast, gets the source's tools and the host-built ones.
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
@@ -169,10 +169,10 @@ func TestTempAgents_InvisibleToOperators(t *testing.T) {
 	cfg := al.GetConfig()
 	agentsBefore, dirsBefore := len(cfg.Agents.List), cfg.AgentSessionDirs()
 
-	if _, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main")); err != nil {
+	if _, err := reg.CreateClone("main"); err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
-	if _, err := reg.Create(config.AgentConfig{}); err != nil {
+	if _, err := reg.CreateFresh(config.AgentConfig{}); err != nil {
 		t.Fatalf("Create fresh: %v", err)
 	}
 	if len(cfg.Agents.List) != agentsBefore || len(cfg.AgentSessionDirs()) != len(dirsBefore) {
@@ -289,11 +289,11 @@ func TestReload_RebuildsTempAgents(t *testing.T) {
 	tl := newTestAgentLoop(t)
 	al := tl.al
 	reg := al.GetRegistry()
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
-	freshID, err := reg.Create(config.AgentConfig{})
+	freshID, err := reg.CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create fresh: %v", err)
 	}

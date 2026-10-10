@@ -68,7 +68,7 @@ func TestCreate_OrderedBeforeReload(t *testing.T) {
 
 	created := make(chan string, 1)
 	go func() {
-		id, err := r.Create(config.AgentConfig{}, CloneOf("alice"))
+		id, err := r.CreateClone("alice")
 		if err != nil {
 			t.Errorf("Create: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestCreate_OrderedAfterReload(t *testing.T) {
 	go func() {
 		defer close(created)
 		var err error
-		if id, err = r.Create(config.AgentConfig{}, CloneOf("alice")); err != nil {
+		if id, err = r.CreateClone("alice"); err != nil {
 			t.Errorf("Create: %v", err)
 		}
 	}()
@@ -152,7 +152,7 @@ func TestNonOwner_PrivateRoot(t *testing.T) {
 	if r.TempRoot() != "" {
 		t.Fatal("a non-owner made a temp root before creating anything")
 	}
-	id := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"), EphemeralMemory())
+	id := mustClone(t, r, "alice", EphemeralMemory())
 	root := r.TempRoot()
 	state := mustGet(t, r, id).spec.StateDir
 	if root == "" || strings.HasPrefix(state, shared) || !strings.HasPrefix(state, root) {
@@ -172,7 +172,7 @@ func TestNonOwner_PrivateRoot(t *testing.T) {
 func TestPutBack_TakenIDClosesInstance(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	id := mustCreate(t, r, config.AgentConfig{})
+	id := mustFresh(t, r, config.AgentConfig{})
 	r.mu.Lock()
 	e := r.entries[id]
 	r.entries[id] = &entry[*fakeInst]{inst: &fakeInst{spec: e.spec}, spec: e.spec, meta: e.meta}
@@ -192,8 +192,8 @@ func TestOwner_OnlyOwnerTouchesSharedState(t *testing.T) {
 	tempRoot := filepath.Join(cfg.DataDir(), global.InternalDir, TempDirName)
 
 	owner := mustNew(t, cfg, newFakeHost())
-	saved := mustCreate(t, owner, config.AgentConfig{})
-	inFlight := mustCreate(t, owner, config.AgentConfig{}, CloneOf("alice"), EphemeralMemory())
+	saved := mustFresh(t, owner, config.AgentConfig{})
+	inFlight := mustClone(t, owner, "alice", EphemeralMemory())
 	before, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("owner did not save: %v", err)
@@ -210,7 +210,7 @@ func TestOwner_OnlyOwnerTouchesSharedState(t *testing.T) {
 	if !dirExists(filepath.Join(tempRoot, inFlight)) || !dirExists(filepath.Join(tempRoot, saved)) {
 		t.Fatal("a non-owner removed the owner's temporary agent directories")
 	}
-	mine, err := other.Create(config.AgentConfig{})
+	mine, err := other.CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("non-owner Create: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestOwner_OnlyOwnerTouchesSharedState(t *testing.T) {
 func TestBeginTurn_RefusesStaleInstance(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	id := mustCreate(t, r, config.AgentConfig{})
+	id := mustFresh(t, r, config.AgentConfig{})
 	stale := mustGet(t, r, id)
 	if err := r.Reload(context.Background(), testConfig(t), h.build, commitOK); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -265,7 +265,7 @@ func TestBeginTurn_RefusesStaleInstance(t *testing.T) {
 func TestRetireFailureAfterClose_ClosesInstance(t *testing.T) {
 	h := newFakeHost()
 	r := mustNew(t, testConfig(t), h)
-	id := mustCreate(t, r, config.AgentConfig{})
+	id := mustFresh(t, r, config.AgentConfig{})
 	inst := mustGet(t, r, id)
 	h.failRetire = true
 	r.mu.Lock()
@@ -281,7 +281,7 @@ func TestRetireFailureAfterClose_ClosesInstance(t *testing.T) {
 	// A replaced instance that cannot be released is closed by Close.
 	h2 := newFakeHost()
 	r2 := mustNew(t, testConfig(t), h2)
-	id2 := mustCreate(t, r2, config.AgentConfig{})
+	id2 := mustFresh(t, r2, config.AgentConfig{})
 	old := mustGet(t, r2, id2)
 	h2.failRetire = true
 	if err := r2.Reload(context.Background(), testConfig(t), h2.build, commitOK); err != nil {

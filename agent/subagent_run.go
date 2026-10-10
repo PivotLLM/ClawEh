@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/agentreg"
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -61,7 +60,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 	// validated against the agent's candidates by the Spawner) narrows it to
 	// that one model. A model that does not match is an error rather than a
 	// silent run on the default model.
-	opts := []agentreg.Option{agentreg.CloneOf(target.ID), agentreg.EphemeralMemory()}
+	opts := []agentreg.CloneOption{agentreg.EphemeralMemory()}
 	if strings.TrimSpace(model) != "" {
 		matched, found := toolsagents.MatchCandidate(target.Candidates, model)
 		if !found {
@@ -72,7 +71,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 
 	// The clone is in a turn from the moment it exists, so nothing (a reload,
 	// the sweep) can replace or delete it before the run is over.
-	cloneID, endTurn, err := registry.CreateInTurn(config.AgentConfig{}, opts...)
+	cloneID, endTurn, err := registry.CreateCloneInTurn(target.ID, opts...)
 	if err != nil {
 		return nil, noop, fmt.Errorf("subagent: %w", err)
 	}

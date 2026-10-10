@@ -355,20 +355,22 @@ production instance directly; test against a dev instance.
   whole new set, then swaps it in one step with `al.cfg`; a replaced instance is
   closed once no turn runs on it, and restart-recovery state is made per workspace on
   first use, so agents a reload adds record their pending turns). **Temporary agents**
-  are created at run time (`Create`, or `CreateInTurn` which begins a turn
-  atomically with insertion; options `CloneOf`, `EphemeralMemory`, `Temp(ttl)`, `OwnedBy`, and for a fresh
-  agent `WithSystemPrompt`, `WithoutMemory`, `SingleShot`;
-  UUID ids), kept across reloads (rebuilt; a clone always from its source's
+  are created at run time (`CreateClone(sourceID, ...CloneOption)`, or
+  `CreateCloneInTurn` which begins a turn atomically with insertion, and
+  `CreateFresh(cfg, ...FreshOption)`; the shared options `EphemeralMemory`,
+  `Temp(ttl)`, `OwnedBy`, `WithPurpose` are both kinds, `CloneModel` is a
+  `CloneOption` only and `WithSystemPrompt`, `WithoutMemory`, `SingleShot` are
+  `FreshOption`s only, so a wrong combination does not compile; UUID ids), kept across reloads (rebuilt; a clone always from its source's
   CURRENT config, never a stored copy; deleted only when the config can no longer
   build it (model or clone source gone, human), never on a build error; left alone
   while in a turn) and, unless ephemeral, across restarts
   (`internal/temp_agents.json`; any other dir under `internal/temp/` is removed
   at start, unless the file cannot be read or parsed or a newer release wrote it:
   then every folder is kept and the file is not rewritten while the process runs), deleted by `Delete` (refused mid-turn; `BeginTurn` marks turns) or
-  after `agentreg.DefaultTTL` (24h) idle by the sweep. Create/Delete take the
+  after `agentreg.DefaultTTL` (24h) idle by the sweep. Creation and Delete take the
   registry lock only to insert/remove (builds and memory snapshots run in
   parallel with each other) and are ordered against reloads by `reloadMu`
-  (Create holds it for reading from reading the config to inserting, Reload
+  (a creation holds it for reading from reading the config to inserting, Reload
   for writing), so a temporary agent is never kept on a superseded config;
   `Reload` reconciles with concurrent Deletes at its commit. Only the data-dir
   owner (`agent.OwnsDataDir()`, set by the gateway, which holds `claw.lock`)

@@ -79,7 +79,7 @@ func (s *agentServices) CreateClone(agentID string) (string, error) {
 	if !s.CanTarget(agentID) {
 		return "", fmt.Errorf("agent %q may not target agent %q (subagents.allow_agents)", s.callerID, agentID)
 	}
-	return s.al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf(agentID), agentreg.OwnedBy(s.callerID))
+	return s.al.GetRegistry().CreateClone(agentID, agentreg.OwnedBy(s.callerID))
 }
 
 func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (string, error) {
@@ -88,7 +88,7 @@ func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (st
 
 // createFresh is CreateFresh with its options applied, plus extra registry
 // options (the forum's purpose).
-func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ...agentreg.Option) (string, error) {
+func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ...agentreg.FreshOption) (string, error) {
 	a, err := s.caller()
 	if err != nil {
 		return "", err
@@ -101,7 +101,7 @@ func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ..
 		return "", fmt.Errorf("model %q is not one of agent %q's models", model, s.callerID)
 	}
 	modelName := candidateName(matched)
-	regOpts := append([]agentreg.Option{agentreg.OwnedBy(s.callerID)}, extra...)
+	regOpts := append([]agentreg.FreshOption{agentreg.OwnedBy(s.callerID)}, extra...)
 	if o.SystemPromptSet {
 		regOpts = append(regOpts, agentreg.WithSystemPrompt(o.SystemPrompt))
 	}
@@ -111,7 +111,7 @@ func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ..
 	if o.SingleShot {
 		regOpts = append(regOpts, agentreg.SingleShot())
 	}
-	return s.al.GetRegistry().Create(config.AgentConfig{
+	return s.al.GetRegistry().CreateFresh(config.AgentConfig{
 		Name:   o.Name,
 		Models: []string{modelName},
 	}, regOpts...)

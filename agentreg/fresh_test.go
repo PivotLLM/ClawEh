@@ -21,20 +21,20 @@ func TestCreateFresh_Modes(t *testing.T) {
 	tests := []struct {
 		name       string
 		cfg        config.AgentConfig
-		opts       []Option
+		opts       []FreshOption
 		wantMode   Mode
 		wantPrompt string
 	}{
 		{"default has memory even when the config says off", config.AgentConfig{Cogmem: new(false)}, nil, ModeMemory, DefaultSystemPrompt},
-		{"system prompt", config.AgentConfig{}, []Option{WithSystemPrompt("You are Bob.")}, ModeMemory, "You are Bob."},
-		{"without memory, even when the config says on", config.AgentConfig{Cogmem: new(true)}, []Option{WithoutMemory()}, ModeNoMemory, DefaultSystemPrompt},
-		{"single shot", config.AgentConfig{}, []Option{SingleShot()}, ModeSingleShot, DefaultSystemPrompt},
-		{"single shot wins over without memory", config.AgentConfig{}, []Option{WithoutMemory(), SingleShot()}, ModeSingleShot, DefaultSystemPrompt},
+		{"system prompt", config.AgentConfig{}, []FreshOption{WithSystemPrompt("You are Bob.")}, ModeMemory, "You are Bob."},
+		{"without memory, even when the config says on", config.AgentConfig{Cogmem: new(true)}, []FreshOption{WithoutMemory()}, ModeNoMemory, DefaultSystemPrompt},
+		{"single shot", config.AgentConfig{}, []FreshOption{SingleShot()}, ModeSingleShot, DefaultSystemPrompt},
+		{"single shot wins over without memory", config.AgentConfig{}, []FreshOption{WithoutMemory(), SingleShot()}, ModeSingleShot, DefaultSystemPrompt},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := mustNew(t, testConfig(t), newFakeHost())
-			spec := mustGet(t, r, mustCreate(t, r, tc.cfg, tc.opts...)).spec
+			spec := mustGet(t, r, mustFresh(t, r, tc.cfg, tc.opts...)).spec
 			if !spec.Fresh || spec.Mode != tc.wantMode || spec.SystemPrompt != tc.wantPrompt {
 				t.Fatalf("spec fresh %v mode %q prompt %q; want fresh, %q, %q", spec.Fresh, spec.Mode, spec.SystemPrompt, tc.wantMode, tc.wantPrompt)
 			}
@@ -48,21 +48,22 @@ func TestCreateFresh_Modes(t *testing.T) {
 	}
 }
 
-// TestCreate_FreshOptionRefusals: a clone takes its prompt and memory from its
-// source, so the fresh options are refused for it; a blank prompt is refused.
+// TestCreate_FreshOptionRefusals: the fresh-only options are not clone
+// options (a clone takes its prompt and memory from its source), and a blank
+// prompt is refused.
 func TestCreate_FreshOptionRefusals(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	for name, opt := range map[string]Option{
+	for name, opt := range map[string]FreshOption{
 		"WithSystemPrompt": WithSystemPrompt("x"),
 		"WithoutMemory":    WithoutMemory(),
 		"SingleShot":       SingleShot(),
 	} {
-		if _, err := r.Create(config.AgentConfig{}, CloneOf("alice"), opt); err == nil {
-			t.Errorf("a clone with %s was created", name)
+		if _, ok := opt.(CloneOption); ok {
+			t.Errorf("%s is a CloneOption", name)
 		}
 	}
 	for _, p := range []string{"", "  \n"} {
-		if _, err := r.Create(config.AgentConfig{}, WithSystemPrompt(p)); err == nil {
+		if _, err := r.CreateFresh(config.AgentConfig{}, WithSystemPrompt(p)); err == nil {
 			t.Errorf("a fresh agent with system prompt %q was created", p)
 		}
 	}
@@ -75,7 +76,7 @@ func TestCreate_FreshOptionRefusals(t *testing.T) {
 // prompt of its own.
 func TestCloneSpec_HasNoFreshFields(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
-	spec := mustGet(t, r, mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))).spec
+	spec := mustGet(t, r, mustClone(t, r, "alice")).spec
 	if spec.Fresh || spec.Mode != "" || spec.SystemPrompt != "" || spec.SingleShot() {
 		t.Fatalf("clone spec = %+v", spec)
 	}
@@ -87,9 +88,9 @@ func TestPersistence_FreshModes(t *testing.T) {
 	cfg := testConfig(t)
 	r := mustNew(t, cfg, newFakeHost())
 	ids := map[string]Spec{
-		mustCreate(t, r, config.AgentConfig{}, WithSystemPrompt("You are Bob."), OwnedBy("alice")): {Mode: ModeMemory, SystemPrompt: "You are Bob.", Owner: "alice"},
-		mustCreate(t, r, config.AgentConfig{}, WithoutMemory()):                                    {Mode: ModeNoMemory, SystemPrompt: DefaultSystemPrompt},
-		mustCreate(t, r, config.AgentConfig{}, SingleShot(), WithSystemPrompt("Translate.")):       {Mode: ModeSingleShot, SystemPrompt: "Translate."},
+		mustFresh(t, r, config.AgentConfig{}, WithSystemPrompt("You are Bob."), OwnedBy("alice")): {Mode: ModeMemory, SystemPrompt: "You are Bob.", Owner: "alice"},
+		mustFresh(t, r, config.AgentConfig{}, WithoutMemory()):                                    {Mode: ModeNoMemory, SystemPrompt: DefaultSystemPrompt},
+		mustFresh(t, r, config.AgentConfig{}, SingleShot(), WithSystemPrompt("Translate.")):       {Mode: ModeSingleShot, SystemPrompt: "Translate."},
 	}
 
 	r2 := mustNew(t, cfg, newFakeHost())

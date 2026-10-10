@@ -11,7 +11,6 @@ import (
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
-	"github.com/PivotLLM/ClawEh/config"
 )
 
 // A clone's snapshot of its source's memory is owner-only (directory 0700,
@@ -32,7 +31,7 @@ func TestCloneMemorySnapshot_Private(t *testing.T) {
 		t.Fatalf("close source memory: %v", err)
 	}
 
-	clone := mustCreate(t, r, config.AgentConfig{}, CloneOf("alice"))
+	clone := mustClone(t, r, "alice")
 	dir := cogmemhost.Dir(mustGet(t, r, clone).spec.StateDir)
 	info, err := os.Stat(dir)
 	if err != nil {

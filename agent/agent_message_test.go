@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
@@ -687,7 +686,7 @@ func TestAgentMessageTool_CloneUsesSourceList(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
 	al, _ := messagingLoop(t, messagingConfig(t), &recordingProvider{})
-	cloneID, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("alice"))
+	cloneID, err := al.GetRegistry().CreateClone("alice")
 	if err != nil {
 		t.Fatalf("clone alice: %v", err)
 	}
@@ -712,7 +711,7 @@ func TestWhispers_KeptAcrossRebuildDroppedOnRemoval(t *testing.T) {
 	model := &recordingProvider{}
 	al, _ := messagingLoop(t, cfg, model)
 	reg := al.GetRegistry()
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("alice"))
+	cloneID, err := reg.CreateClone("alice")
 	if err != nil {
 		t.Fatalf("clone alice: %v", err)
 	}

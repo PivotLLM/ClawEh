@@ -63,7 +63,7 @@ func (al *AgentLoop) agentBuilder(
 	}
 }
 
-// agentInserted is the registry's InsertedFunc: a temporary agent Create has
+// agentInserted is the registry's InsertedFunc: a temporary agent CreateClone or CreateFresh has
 // just made visible gets the current MCP tool set. Done after insertion and
 // under the MCP refresh lock, so a server that is replaced while the agent is
 // being created is either seen here or re-registered onto it by the refresh.

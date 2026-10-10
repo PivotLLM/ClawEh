@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -26,11 +25,11 @@ func TestAsyncResultTarget(t *testing.T) {
 
 	al := newTestAgentLoop(t).al
 	reg := al.GetRegistry()
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
-	freshID, err := reg.Create(config.AgentConfig{})
+	freshID, err := reg.CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create fresh: %v", err)
 	}
@@ -59,11 +58,11 @@ func TestMessageForDeletedTempAgentIsDropped(t *testing.T) {
 		t.Fatalf("AddMessage: %v", err)
 	}
 
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}
-	freshID, err := reg.Create(config.AgentConfig{})
+	freshID, err := reg.CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create fresh: %v", err)
 	}
@@ -112,7 +111,7 @@ func TestMessageForDeletedTempAgent_ReplyRequiredIsPlain(t *testing.T) {
 
 	tl := newTestAgentLoop(t)
 	reg := tl.al.GetRegistry()
-	id, err := reg.Create(config.AgentConfig{})
+	id, err := reg.CreateFresh(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -147,7 +146,7 @@ func TestReload_CloneFollowsSourceAllowlist(t *testing.T) {
 	provider := &mockProvider{}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), provider, nil)
 	reg := al.GetRegistry()
-	cloneID, err := reg.Create(config.AgentConfig{}, agentreg.CloneOf("main"))
+	cloneID, err := reg.CreateClone("main")
 	if err != nil {
 		t.Fatalf("Create clone: %v", err)
 	}

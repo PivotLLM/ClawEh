@@ -4,7 +4,7 @@
 // Package agentreg is the agent registry: every agent the loop can run a turn
 // for, with its origin. Config agents come from the configuration and are
 // rebuilt from it on every reload. Temporary agents are created at run time
-// (Create), get a UUID id, live until they are deleted or sit idle past their
+// (CreateClone, CreateFresh), get a UUID id, live until they are deleted or sit idle past their
 // TTL, are kept across reloads, and are invisible to operators and routing:
 // List, Default and ResolveRoute only ever see config agents.
 //
@@ -65,7 +65,7 @@ func (m Mode) valid() bool {
 const DefaultSystemPrompt = "You are an AI agent. Respond as requested."
 
 // DefaultTTL is how long a temporary agent may sit idle before the sweep
-// deletes it, unless Create was given another TTL.
+// deletes it, unless its creation was given another TTL.
 const DefaultTTL = 24 * time.Hour
 
 // SweepInterval is how often RunSweeper looks for idle temporary agents and
@@ -187,7 +187,7 @@ type BuildFunc[T Instance] func(cfg *config.Config, spec Spec) (T, error)
 // entry stays.
 type RetireFunc[T Instance] func(spec Spec, inst T) error
 
-// InsertedFunc is told when Create has made a new temporary agent visible
+// InsertedFunc is told when CreateClone or CreateFresh has made a new temporary agent visible
 // (Get finds it), so the host can bring anything that is applied to every
 // registered agent (MCP tools) up to date on it.
 type InsertedFunc[T Instance] func(spec Spec, inst T)
@@ -242,7 +242,7 @@ type entry[T Instance] struct {
 // Registry holds every agent, config and temporary.
 type Registry[T Instance] struct {
 	// reloadMu orders creations against reloads. A Reload holds it for
-	// writing; Create holds it for reading from reading the configuration to
+	// writing; a creation holds it for reading from reading the configuration to
 	// inserting the agent, so every temporary agent is built entirely before
 	// a reload (which then rebuilds it) or entirely after (against the new
 	// configuration). Creations still run in parallel with each other. Delete

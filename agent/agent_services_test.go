@@ -69,7 +69,7 @@ func TestAgentServices_CanTargetOnlyConfigAgents(t *testing.T) {
 	inst.Subagents = &config.SubagentsConfig{AllowAgents: []string{"*"}}
 	alice := newAgentServices(al, "alice")
 
-	tempID, err := al.GetRegistry().Create(config.AgentConfig{}, agentreg.CloneOf("bob"))
+	tempID, err := al.GetRegistry().CreateClone("bob")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
