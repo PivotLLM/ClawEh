@@ -22,9 +22,12 @@
 //     configuration contract and its JSON Schema, strict decoding,
 //     validation and preflight, JSON Schema compilation, `share`/`paths`
 //     projections, and the merge patch of forum_config_update.
-//   - store.go, lock_unix.go, replay.go: the store (one directory per
-//     forum, one per run), its lock, and the verification and replay of
-//     the commit log into State.
+//   - store.go, locking.go, lock_unix.go, runfiles.go, commits.go,
+//     cleanup.go, atomicfs.go, replay.go: the store (one directory per
+//     forum, one per run: handles and layout), its lock, its records, the
+//     commit log and its index, cleanup markers and removal, the atomic
+//     file primitives, and the verification and replay of the commit log
+//     into State.
 //   - router.go: resolving a layer's routes into the inputs each
 //     participant receives.
 //   - controller.go, turn.go, moderator.go, recover.go, transcript.go:
