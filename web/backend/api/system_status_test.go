@@ -66,7 +66,7 @@ func TestSystemStatus(t *testing.T) {
 // big" should still answer when the configuration cannot be read.
 //
 // Note LoadConfig returns the DEFAULT config for a missing file rather than an
-// error (config.go: os.IsNotExist -> return cfg, nil), so the counts fall back
+// error (config_load.go: os.IsNotExist -> return cfg, nil), so the counts fall back
 // to the seeded defaults instead of zero. That is the established behaviour
 // across the whole API, not something this endpoint decides.
 func TestSystemStatusSurvivesAnUnreadableConfig(t *testing.T) {

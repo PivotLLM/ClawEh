@@ -192,7 +192,7 @@ Prefer storing a **hash** (argon2id or bcrypt), not a plaintext password. Settin
 | Topic | Primary locations |
 |-------|-------------------|
 | Shared HTTP host (no TLS today) | `internal/gateway/httphost.go` |
-| CIDR allowlist | `web/backend/middleware/access_control.go`, `config/config.go` (`GatewayConfig.AllowedCIDRs`) |
+| CIDR allowlist | `web/backend/middleware/access_control.go`, `config/config_gateway.go` (`GatewayConfig.AllowedCIDRs`) |
 | Unauthenticated config API | `web/backend/api/config.go` |
 | WebUI WS token API | `web/backend/api/webui.go` |
 | WebUI WS authenticate | `channels/webui/webui.go` |
