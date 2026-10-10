@@ -38,13 +38,72 @@ func (p *fixedProvider) Chat(context.Context, []providers.Message, []providers.T
 
 func (p *fixedProvider) GetDefaultModel() string { return "mock-model" }
 
-// noOutbound fails the test if the loop publishes anything within a short wait.
+// noOutbound fails the test if anything is queued outbound. The caller
+// first makes sure whatever could publish has finished (a turn returned,
+// al.activeRequests.Wait()): a marker queued here must then be the next
+// outbound message, the queue being first in, first out.
 func noOutbound(t *testing.T, msgBus *bus.MessageBus) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	noOutboundExcept(t, msgBus, func(bus.OutboundMessage) bool { return false })
+}
+
+// noOutboundExcept is noOutbound ignoring the messages skip reports.
+func noOutboundExcept(t *testing.T, msgBus *bus.MessageBus, skip func(bus.OutboundMessage) bool) {
+	t.Helper()
+	marker := bus.OutboundMessage{Channel: "test-marker", ChatID: fmt.Sprintf("marker-%p", t)}
+	if err := msgBus.PublishOutbound(context.Background(), marker); err != nil {
+		t.Fatalf("queue the outbound marker: %v", err)
+	}
+	for {
+		out := nextOutbound(t, msgBus)
+		if out.Channel == marker.Channel && out.ChatID == marker.ChatID {
+			return
+		}
+		if !skip(out) {
+			t.Fatalf("unexpected outbound %+v", out)
+		}
+	}
+}
+
+// untilMarker queues an outbound marker on msgBus and returns what collected
+// (a goroutine forwarding msgBus's outbound queue) delivers before it: every
+// message queued before the call, in order.
+func untilMarker(t *testing.T, msgBus *bus.MessageBus, collected <-chan bus.OutboundMessage) []bus.OutboundMessage {
+	t.Helper()
+	marker := bus.OutboundMessage{Channel: "test-marker", ChatID: fmt.Sprintf("marker-%p", t)}
+	if err := msgBus.PublishOutbound(context.Background(), marker); err != nil {
+		t.Fatalf("queue the outbound marker: %v", err)
+	}
+	var before []bus.OutboundMessage
+	for {
+		select {
+		case out := <-collected:
+			if out.Channel == marker.Channel && out.ChatID == marker.ChatID {
+				return before
+			}
+			before = append(before, out)
+		case <-time.After(30 * time.Second):
+			t.Fatal("the outbound marker never arrived")
+		}
+	}
+}
+
+// noInbound fails the test if anything is queued inbound, the same way
+// noOutbound does. Only for a loop nothing consumes the inbound queue of.
+func noInbound(t *testing.T, msgBus *bus.MessageBus) {
+	t.Helper()
+	marker := bus.InboundMessage{Channel: "test-marker", ChatID: fmt.Sprintf("marker-%p", t)}
+	if err := msgBus.PublishInbound(context.Background(), marker); err != nil {
+		t.Fatalf("queue the inbound marker: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if out, ok := msgBus.SubscribeOutbound(ctx); ok {
-		t.Fatalf("unexpected outbound %+v", out)
+	msg, ok := msgBus.ConsumeInbound(ctx)
+	if !ok {
+		t.Fatal("the inbound marker was lost")
+	}
+	if msg.Channel != marker.Channel || msg.ChatID != marker.ChatID {
+		t.Fatalf("unexpected inbound %+v", msg)
 	}
 }
 
@@ -470,11 +529,13 @@ func TestInbound_CancelWhileWaitingForSlot(t *testing.T) {
 	defer restore()
 
 	al, msgBus, p := newBlockingLoop(t, twoAgentConfig(t, 1))
+	var slotWait <-chan struct{}
+	al.onWait, slotWait = waitSignals(waitTurnSlot)
 
 	go dispatch(al, bus.InboundMessage{Channel: "cha", ChatID: "x", SenderID: "u", MessageID: "a1", Content: "first"})
 	p.waitStarted(t)
 	go dispatch(al, required(bus.InboundMessage{Channel: "chb", ChatID: "y", SenderID: "u", MessageID: "b1", Content: "second"}))
-	time.Sleep(100 * time.Millisecond) // b's turn is now waiting for the slot
+	awaitSignal(t, slotWait, "b's turn to wait for the slot")
 	dispatch(al, bus.InboundMessage{Channel: "chb", ChatID: "y", SenderID: "u", MessageID: "b2", Content: "/cancel"})
 
 	got := map[string]bus.OutboundMessage{}

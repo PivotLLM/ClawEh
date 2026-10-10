@@ -180,10 +180,8 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 		}
 	}
 	// No third notice — the duplicates must have been suppressed.
-	select {
-	case m := <-collected:
-		t.Fatalf("dedup failed; got an extra notice: %q", m.Content)
-	case <-time.After(200 * time.Millisecond):
+	if extra := untilMarker(t, msgBus, collected); len(extra) > 0 {
+		t.Fatalf("dedup failed; got an extra notice: %q", extra[0].Content)
 	}
 }
 
@@ -227,10 +225,8 @@ func TestFallbackNotifier_OncePerModelChange(t *testing.T) {
 			t.Fatalf("timed out; got %q, want 2 notices", got)
 		}
 	}
-	select {
-	case m := <-collected:
-		t.Fatalf("notice repeated for the same model change: %q (earlier %q)", m.Content, got)
-	case <-time.After(200 * time.Millisecond):
+	if extra := untilMarker(t, tl.msgBus, collected); len(extra) > 0 {
+		t.Fatalf("notice repeated for the same model change: %q (earlier %q)", extra[0].Content, got)
 	}
 	if !strings.Contains(got[0], "Trying Luna") || !strings.Contains(got[1], "Trying Scout") {
 		t.Errorf("notices = %q", got)

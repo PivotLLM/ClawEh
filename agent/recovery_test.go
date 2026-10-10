@@ -111,6 +111,9 @@ func recordSource(t *testing.T, al *AgentLoop, channel, chatID string) *state.Ma
 	return sm
 }
 
+// consumeInbound returns the next queued inbound message. recoverSession
+// publishes before it returns, so the short bound only matters when nothing
+// was queued; noInbound checks that nothing was.
 func consumeInbound(t *testing.T, mb *bus.MessageBus) (bus.InboundMessage, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -118,6 +121,7 @@ func consumeInbound(t *testing.T, mb *bus.MessageBus) (bus.InboundMessage, bool)
 	return mb.ConsumeInbound(ctx)
 }
 
+// consumeOutbound is consumeInbound for the outbound queue.
 func consumeOutbound(t *testing.T, mb *bus.MessageBus) (bus.OutboundMessage, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -206,9 +210,7 @@ func TestRecoverSession_CapGivesUpWithNotice(t *testing.T) {
 	if notice.Channel != "webui" || notice.ChatID != "chat-7" || notice.Content != recoveryGiveUpNotice {
 		t.Errorf("notice = %+v, want give-up notice on webui/chat-7", notice)
 	}
-	if _, ok := consumeInbound(t, tl.msgBus); ok {
-		t.Error("no replay expected once the cap is reached")
-	}
+	noInbound(t, tl.msgBus) // no replay expected once the cap is reached
 	if !store.clearCalled || store.pendingCleared != testSessionKey {
 		t.Errorf("pending flag not cleared (called=%v key=%q)", store.clearCalled, store.pendingCleared)
 	}
@@ -229,12 +231,8 @@ func TestRecoverSession_MissingChannelClears(t *testing.T) {
 	if _, ok := sm.GetPendingTurn(testSessionKey); ok {
 		t.Error("source record should be cleared when the channel is gone")
 	}
-	if _, ok := consumeInbound(t, tl.msgBus); ok {
-		t.Error("no replay expected when the channel is gone")
-	}
-	if _, ok := consumeOutbound(t, tl.msgBus); ok {
-		t.Error("no notice can be sent when the channel is gone")
-	}
+	noInbound(t, tl.msgBus)  // no replay expected when the channel is gone
+	noOutbound(t, tl.msgBus) // no notice can be sent when the channel is gone
 }
 
 func TestRecoverSession_NoSourceClears(t *testing.T) {
@@ -245,9 +243,7 @@ func TestRecoverSession_NoSourceClears(t *testing.T) {
 	if !store.clearCalled || store.pendingCleared != testSessionKey {
 		t.Errorf("ClearPendingTurn not called for %q (called=%v key=%q)", testSessionKey, store.clearCalled, store.pendingCleared)
 	}
-	if _, ok := consumeInbound(t, tl.msgBus); ok {
-		t.Error("no replay expected without a recorded source")
-	}
+	noInbound(t, tl.msgBus) // no replay expected without a recorded source
 }
 
 // A pending turn in a session no turn runs in any more (a per-sender key from
@@ -268,12 +264,8 @@ func TestRecoverSession_UnusedSessionClears(t *testing.T) {
 	if _, ok := sm.GetPendingTurn(oldKey); ok {
 		t.Error("recorded source not cleared")
 	}
-	if _, ok := consumeInbound(t, tl.msgBus); ok {
-		t.Error("no replay expected for an unused session")
-	}
-	if _, ok := consumeOutbound(t, tl.msgBus); ok {
-		t.Error("no notice expected for an unused session")
-	}
+	noInbound(t, tl.msgBus)  // no replay expected for an unused session
+	noOutbound(t, tl.msgBus) // no notice expected for an unused session
 }
 
 func TestRecoverSession_NoUserMessageClears(t *testing.T) {
@@ -286,9 +278,7 @@ func TestRecoverSession_NoUserMessageClears(t *testing.T) {
 	if !store.clearCalled {
 		t.Error("ClearPendingTurn should be called when no user message is found")
 	}
-	if _, ok := consumeInbound(t, tl.msgBus); ok {
-		t.Error("no replay expected without a user message")
-	}
+	noInbound(t, tl.msgBus) // no replay expected without a user message
 }
 
 func TestRecordPendingTurnSource_SkipsInternalChannels(t *testing.T) {
@@ -378,9 +368,7 @@ func TestRecoverSession_GiveUpOnRequiredReplies(t *testing.T) {
 		if !flagged && (out.Outcome != "" || out.OriginalMessageID != "") {
 			t.Fatalf("give-up notice = %+v, want no outcome", out)
 		}
-		if extra, ok := consumeOutbound(t, tl.msgBus); ok {
-			t.Fatalf("flagged=%v: unexpected second outbound %+v", flagged, extra)
-		}
+		noOutbound(t, tl.msgBus) // no second outbound
 	}
 
 	// No user message to replay: a flagged turn still gets its error reply.

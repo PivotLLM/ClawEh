@@ -292,7 +292,7 @@ func (al *AgentLoop) ask(ctx context.Context, from sender, agentID, message stri
 	}
 
 	id := "ask-" + uuid.NewString()
-	replies := al.asks.open(id, from.name, time.Now().Add(wait), stopTurn)
+	replies := al.asks.open(id, from.name, al.clk().Now().Add(wait), stopTurn)
 	if err = al.publishAsk(ctx, id, from, target, message, chain, depth); err != nil {
 		al.asks.close(id)
 		return tools.AgentReply{}, fmt.Errorf("queue the message: %w", err)
@@ -357,7 +357,7 @@ func (al *AgentLoop) askWaitFor(ctx context.Context, target *AgentInstance, wait
 		wait = rt
 	}
 	if deadline, ok := ctx.Deadline(); ok {
-		if left := time.Until(deadline); left < wait {
+		if left := al.clk().Until(deadline); left < wait {
 			wait = left
 		}
 	}
@@ -405,12 +405,12 @@ func (al *AgentLoop) awaitAskReply(ctx context.Context, id string, replies <-cha
 			return tools.AgentReply{}, false
 		}
 	}
-	timer := time.NewTimer(wait)
+	timer := al.clk().NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case reply := <-replies:
 		return reply, true, nil
-	case <-timer.C:
+	case <-timer.C():
 	case <-ctx.Done():
 		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			if reply, ok := giveUp(); ok {

@@ -32,6 +32,21 @@ type turnSlot struct {
 
 type turnSlotKey struct{}
 
+// waitKind names what a turn waits for (AgentLoop.onWait).
+type waitKind int
+
+const (
+	waitTurnSlot waitKind = iota // a concurrent-turn slot
+	waitPerson                   // a person busy with another request
+)
+
+// notifyWait reports to the test hook that a turn starts waiting for kind.
+func (al *AgentLoop) notifyWait(kind waitKind) {
+	if al.onWait != nil {
+		al.onWait(kind)
+	}
+}
+
 // withTurnSlot puts s on ctx. A nil s hides the slot of an enclosing turn
 // from work that outlives it (/ask's background ask).
 func withTurnSlot(ctx context.Context, s *turnSlot) context.Context {

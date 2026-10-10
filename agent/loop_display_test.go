@@ -204,21 +204,15 @@ func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 
-	// Drain briefly; neither the ForUser payload nor the narration must appear.
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case m := <-collected:
-			if m.Content == userPayload {
-				t.Fatalf("ForUser must not be streamed when StreamToolActivity is off; got: %q", m.Content)
-			}
-			if m.Content == "let me check that for you" {
-				t.Fatalf("inter-tool narration must not be streamed when StreamToolActivity is off")
-			}
-		case <-deadline:
-			subCancel()
-			<-done
-			return
+	// Neither the ForUser payload nor the narration must appear.
+	for _, m := range untilMarker(t, msgBus, collected) {
+		if m.Content == userPayload {
+			t.Fatalf("ForUser must not be streamed when StreamToolActivity is off; got: %q", m.Content)
+		}
+		if m.Content == "let me check that for you" {
+			t.Fatalf("inter-tool narration must not be streamed when StreamToolActivity is off")
 		}
 	}
+	subCancel()
+	<-done
 }

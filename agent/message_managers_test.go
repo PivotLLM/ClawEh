@@ -4,7 +4,19 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/msgtoken"
 )
+
+// stopManagers stops ms's rotation goroutines when the test ends, as the loop
+// does on reload and Close, so none logs into a later test.
+func stopManagers(t *testing.T, ms map[string]*msgtoken.Manager) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, m := range ms {
+			m.Stop()
+		}
+	})
+}
 
 // TestBuildMessageManagers_TracksConfig guards the reload fix: a manager exists
 // only for agents whose message-token window is > 0, and rebuilding against a changed
@@ -27,6 +39,7 @@ func TestBuildMessageManagers_TracksConfig(t *testing.T) {
 	})
 	reg := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 	m := buildMessageManagers(reg, cfg)
+	stopManagers(t, m)
 	if _, ok := m["alice"]; !ok {
 		t.Error("alice (window>0) should have a message-token manager")
 	}
@@ -41,6 +54,7 @@ func TestBuildMessageManagers_TracksConfig(t *testing.T) {
 	})
 	reg2 := mustNewAgentRegistry(t, cfg2, &mockRegistryProvider{})
 	m2 := buildMessageManagers(reg2, cfg2)
+	stopManagers(t, m2)
 	if _, ok := m2["alice"]; ok {
 		t.Error("alice must lose its manager after the message endpoint is disabled")
 	}

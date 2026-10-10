@@ -778,6 +778,7 @@ func TestForumHost_NoticeRouting(t *testing.T) {
 					t.Errorf("fallback content = %q, want the same answer %q", out.Content, content)
 				}
 			}
+			r.al.activeRequests.Wait() // the notice's turn has ended
 			noChatOutbound(t, r.bus)
 		})
 	}
@@ -795,20 +796,11 @@ func chatOutbound(t *testing.T, msgBus *bus.MessageBus) bus.OutboundMessage {
 	}
 }
 
-// noChatOutbound fails on any outbound message to a chat for a short while.
+// noChatOutbound fails on any outbound message queued to a chat (noOutbound),
+// skipping the copies of system turns' replies.
 func noChatOutbound(t *testing.T, msgBus *bus.MessageBus) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	for {
-		out, ok := msgBus.SubscribeOutbound(ctx)
-		if !ok {
-			return
-		}
-		if out.Channel != "system" {
-			t.Fatalf("unexpected outbound %+v", out)
-		}
-	}
+	noOutboundExcept(t, msgBus, func(out bus.OutboundMessage) bool { return out.Channel == "system" })
 }
 
 // TestForumNoticeText: the notice names the run's status and, when it adds
