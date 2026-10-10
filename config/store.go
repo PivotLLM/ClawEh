@@ -86,8 +86,10 @@ func (s *Store) Current() *Config {
 // Update applies fn to a private copy of the current config, validates the
 // result, writes it to disk through SaveConfig and makes it current. Nothing
 // changes if fn returns an error (ErrUnchanged included, which Update reports
-// as success), validation fails or the write fails. Updates are serialised: a
-// concurrent Update sees this one's result.
+// as success), validation fails or the write fails. A refusal is a
+// *ValidationError naming every problem: those fn returned as one and the
+// store's own. Updates are serialised: a concurrent Update sees this one's
+// result.
 //
 // A secret reference that fn leaves in a field as a literal ("env:NAME", as
 // submitted through the WebUI) is resolved before the config becomes current,

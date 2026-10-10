@@ -47,12 +47,12 @@ type AgentLoop struct {
 	cmdRegistry     *commands.Registry
 	mcp             mcpRuntime
 	mu              sync.RWMutex
-	// Track active requests for safe provider cleanup
+	// activeRequests counts the turns and model calls in flight, for WaitTurns.
 	activeRequests sync.WaitGroup
 	// modelCalls counts the model calls in flight per provider, for
 	// closeReplacedProvider.
 	modelCalls providerCalls
-	dispatcher     *providers.ProviderDispatcher
+	dispatcher *providers.ProviderDispatcher
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
