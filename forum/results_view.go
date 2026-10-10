@@ -1,9 +1,30 @@
 package forum
 
 import (
+	"context"
 	"path/filepath"
+	"strconv"
 	"time"
 )
+
+// ResultsView is what forum_results returns for one run of a forum (its
+// latest when run is 0): Results with each result output's text inline
+// and every path relative to the launching agent's workspace, whose
+// forums/ folder is scope.BaseDirectory.
+func (s *Service) ResultsView(ctx context.Context, scope Scope, id string, run int) (*ResultsView, error) {
+	res, err := s.Results(ctx, scope, id, run)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.open(scope, id)
+	if err != nil {
+		return nil, err
+	}
+	prefix := filepath.Join(filepath.Base(scope.BaseDirectory), id, dirRuns, strconv.Itoa(res.Run))
+	rs := store.Run(res.Run)
+	view := newResultsView(res, prefix, rs.has(res.Transcript), rs.ReadPrefix)
+	return &view, nil
+}
 
 // MaxResultInlineChars is how much of each result output forum_results
 // returns inline, in Unicode characters. A longer output is cut at this many
