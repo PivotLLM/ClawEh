@@ -1334,6 +1334,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **`claw token revoke` works for an agent no longer in the config.** It
+  refused with "no agent … in config", so the token of a removed agent stayed
+  in the store and worked again if an agent with that id came back. It now
+  revokes from the token store.
+
 - **The WebUI shows why a save was refused.** A save refused for a model that
   does not exist, a human agent, a reserved mount name, an agent id or a
   listener setting showed "API error: 400"; it now shows the reason.

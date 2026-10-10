@@ -72,7 +72,7 @@ uses) on a stable footing.
 ```
 claw token issue  <agent>   # mint (or replace) and print the agent's service token
 claw token rotate <agent>   # alias for issue — replace the existing token
-claw token revoke <agent>   # remove the agent's service token
+claw token revoke <agent>   # remove the agent's service token (also after the agent left the config)
 claw token list             # list agents that have a service token (tokens NOT shown)
 ```
 Changes are written to the state file; a running ClawEh picks them up
