@@ -28,7 +28,8 @@ var (
 
 // sharedEngine returns the process-wide Fusion engine, building it once from the
 // fusion config folder and a shared SQLite-backed DataStore. Returns nil (after
-// logging) when the DataStore cannot be opened, so the provider yields no tools.
+// logging) when the DataStore cannot be opened or the engine cannot be built, so
+// the provider yields no tools.
 func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 	engineOnce.Do(func() {
 		ds, err := NewSQLiteDataStore(c.FusionTokensPath())
@@ -50,7 +51,7 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 		//
 		// Option order matters: WithLogger first, because WithDataStore and
 		// WithConfigDir use f.logger during construction.
-		engine = mcpfusion.New(
+		eng, err := mcpfusion.New(
 			mcpfusion.WithLogger(newFusionLogAdapter()),
 			mcpfusion.WithDataStore(ds),
 			mcpfusion.WithConfigDir(c.FusionPath()),
@@ -59,6 +60,12 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 			mcpfusion.WithExternalURL(c.Gateway.EffectiveExternalURL()),
 			mcpfusion.WithAuthCommandName("claw-auth"),
 		)
+		if err != nil {
+			logger.ErrorCF("fusion", "failed to build fusion engine; fusion tools disabled",
+				map[string]any{"error": err.Error()})
+			return
+		}
+		engine = eng
 	})
 	return engine
 }
