@@ -22,6 +22,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/health"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
 )
@@ -99,7 +100,13 @@ type Manager struct {
 	// alerter, when set, hears about channels that give up (start or send).
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter
+	// clock times retries and their backoff; nil means clock.Real (tests set
+	// a fake).
+	clock clock.Clock
 }
+
+// clk is the manager's clock.
+func (m *Manager) clk() clock.Clock { return clock.Or(m.clock) }
 
 // SetAlerter routes channel failures to an alerter. It is also handed to every
 // channel already registered, since the alerter is set after NewManager has
@@ -725,10 +732,6 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	return nil
 }
 
-// startRetryAfter is time.After; tests replace it to run the retry loop
-// without waiting.
-var startRetryAfter = time.After
-
 // retryChannelStart retries channel.Start in the background with exponential
 // backoff (StartRetryMin doubling to StartRetryMax) until it succeeds or
 // dispatchCtx is cancelled. A "Channel failed to start" alert is raised once,
@@ -741,7 +744,7 @@ func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, ch
 		select {
 		case <-dispatchCtx.Done():
 			return
-		case <-startRetryAfter(jitter(backoff)):
+		case <-m.clk().After(jitter(backoff)):
 		}
 
 		logger.InfoCF("channels", "Retrying channel start", map[string]any{
@@ -977,7 +980,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 	// One SendProgress across the retries: a channel that splits the message
 	// further resumes after the parts it already delivered.
 	sendCtx := WithSendProgress(ctx)
-	retries, err := retrySend(ctx, func() error { return w.ch.Send(sendCtx, msg) })
+	retries, err := m.retrySend(ctx, func() error { return w.ch.Send(sendCtx, msg) })
 	if err != nil && ctx.Err() == nil {
 		m.reportSendFailure(name, msg.ChatID, "message", err, retries)
 	}
@@ -992,7 +995,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 //   - ErrTemporary / unknown: exponential backoff retry
 //
 // A ctx that ends while waiting to retry returns ctx.Err().
-func retrySend(ctx context.Context, send func() error) (int, error) {
+func (m *Manager) retrySend(ctx context.Context, send func() error) (int, error) {
 	for attempt := 0; ; attempt++ {
 		err := send()
 		if err == nil || permanentSendError(err) || attempt == maxRetries {
@@ -1003,7 +1006,7 @@ func retrySend(ctx context.Context, send func() error) (int, error) {
 			delay = jitter(min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff))
 		}
 		select {
-		case <-time.After(delay):
+		case <-m.clk().After(delay):
 		case <-ctx.Done():
 			return attempt, ctx.Err()
 		}
@@ -1206,7 +1209,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		return
 	}
 
-	retries, err := retrySend(ctx, func() error { return ms.SendMedia(ctx, msg) })
+	retries, err := m.retrySend(ctx, func() error { return ms.SendMedia(ctx, msg) })
 	if err != nil && ctx.Err() == nil {
 		m.reportSendFailure(name, msg.ChatID, "file", err, retries)
 	}

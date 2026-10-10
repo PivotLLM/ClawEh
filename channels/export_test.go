@@ -1,11 +1,11 @@
 package channels
 
-import "time"
+import "github.com/PivotLLM/ClawEh/internal/clock"
 
-// SetConnAlertAfter shortens c's connection-down alert threshold for tests in
-// package channels_test.
-func SetConnAlertAfter(c *BaseChannel, d time.Duration) {
+// SetConnClock sets the clock c's connection-down alert is timed on, for
+// tests in package channels_test.
+func SetConnClock(c *BaseChannel, clk clock.Clock) {
 	c.conn.mu.Lock()
-	c.conn.alertAfter = d
+	c.conn.clock = clk
 	c.conn.mu.Unlock()
 }
