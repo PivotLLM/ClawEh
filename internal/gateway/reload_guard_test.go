@@ -12,30 +12,46 @@ import (
 // config, and it is not unit-testable end to end without standing up an agent
 // loop, a channel manager, cron, media and MCP — so these guards assert on the
 // source instead. Each one exists because dropping the call is silent: the
-// gateway keeps running and the loss only shows up in production.
+// gateway keeps running and the loss only shows up in production. The calls
+// of restartServices include those of the services.go functions it calls,
+// so a step moved into a helper still counts.
 func restartServicesBody(t *testing.T) string {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "helpers.go", nil, 0)
+	file, err := parser.ParseFile(fset, "services.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parsing helpers.go: %v", err)
+		t.Fatalf("parsing services.go: %v", err)
 	}
+	funcs := map[string]*ast.FuncDecl{}
 	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "restartServices" || fn.Body == nil {
-			continue
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Body != nil {
+			funcs[fn.Name.Name] = fn
 		}
-		var sb strings.Builder
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
+	}
+	if funcs["restartServices"] == nil {
+		t.Fatal("restartServices not found in services.go — this guard needs updating")
+	}
+	var sb strings.Builder
+	seen := map[string]bool{}
+	var walk func(name string)
+	walk = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		ast.Inspect(funcs[name].Body, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
-				sb.WriteString(dottedName(call.Fun) + "\n")
+				callee := dottedName(call.Fun)
+				sb.WriteString(callee + "\n")
+				if funcs[callee] != nil {
+					walk(callee)
+				}
 			}
 			return true
 		})
-		return sb.String()
 	}
-	t.Fatal("restartServices not found in helpers.go — this guard needs updating")
-	return ""
+	walk("restartServices")
+	return sb.String()
 }
 
 // dottedName renders a call target as source text ("services.MountWatcher.Start"),
