@@ -16,6 +16,9 @@ import (
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
+// processSystemMessage runs the turn for a "system" message (a tool or
+// sub-agent result, a forum notice) in the session of the agent it names,
+// replying to the chat it answers.
 func (al *AgentLoop) processSystemMessage(
 	ctx context.Context,
 	msg bus.InboundMessage,
@@ -43,13 +46,6 @@ func (al *AgentLoop) processSystemMessage(
 			"origin_chat_id": originChatID,
 		})
 
-	// Extract subagent result from message content
-	// Format: "Task 'label' completed.\n\nResult:\n<actual content>"
-	content := msg.Content
-	if idx := strings.Index(content, "Result:\n"); idx >= 0 {
-		content = content[idx+8:] // Extract just the result part
-	}
-
 	// A background result of an asked turn: the asker has its reply already,
 	// so the result goes to the agent's own main conversation only. The turn
 	// runs on the ask channel (no chat id): nothing is sent to any chat, no
@@ -64,7 +60,7 @@ func (al *AgentLoop) processSystemMessage(
 		logger.InfoCF("agent", "Subagent completed (internal channel)",
 			map[string]any{
 				"sender_id":   msg.SenderID,
-				"content_len": len(content),
+				"content_len": len(subagentResult(msg.Content)),
 				"channel":     originChannel,
 			})
 		return "", nil
@@ -78,18 +74,7 @@ func (al *AgentLoop) processSystemMessage(
 		return "", errors.New("no agent available for system message")
 	}
 
-	// An async sub-agent result is a tool result that arrives late: cap it as
-	// the synchronous path does, or an oversized one fails the turn it lands in.
-	result := capToolResult(msg.Content, false, agent.ContextWindow)
-	if len(result) != len(msg.Content) {
-		logger.WarnCF("agent", "Async task result truncated for context", map[string]any{
-			"agent_id":     agent.ID,
-			"sender_id":    msg.SenderID,
-			"original_len": len(msg.Content),
-			"kept_len":     len(result),
-		})
-	}
-
+	result := capAsyncResult(agent, msg)
 	response, err := al.runMeteredTurn(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
 		Channel:         originChannel,
@@ -107,6 +92,31 @@ func (al *AgentLoop) processSystemMessage(
 		return "", nil
 	}
 	return response, err
+}
+
+// subagentResult is the result part of a sub-agent's completion message
+// ("Task 'label' completed.\n\nResult:\n<actual content>"), or all of it.
+func subagentResult(content string) string {
+	if _, result, found := strings.Cut(content, "Result:\n"); found {
+		return result
+	}
+	return content
+}
+
+// capAsyncResult caps an async result for agent's context. It is a tool
+// result that arrives late: capped as the synchronous path does, or an
+// oversized one fails the turn it lands in.
+func capAsyncResult(agent *AgentInstance, msg bus.InboundMessage) string {
+	result := capToolResult(msg.Content, false, agent.ContextWindow)
+	if len(result) != len(msg.Content) {
+		logger.WarnCF("agent", "Async task result truncated for context", map[string]any{
+			"agent_id":     agent.ID,
+			"sender_id":    msg.SenderID,
+			"original_len": len(msg.Content),
+			"kept_len":     len(result),
+		})
+	}
+	return result
 }
 
 // Metadata of a "system" message naming the chat its reply falls back to
