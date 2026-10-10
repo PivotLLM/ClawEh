@@ -192,3 +192,34 @@ func TestTurnConfigReads_RaceWithReload(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// The MCP setup and the transcription echo read the configuration a reload
+// swaps in under the loop's lock (race detector).
+func TestMCPAndTranscriptionConfigReads_RaceWithReload(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	al := &AgentLoop{cfg: &config.Config{}}
+	stop, started := make(chan struct{}), make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		close(started)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			al.mu.Lock()
+			al.cfg = &config.Config{}
+			al.mu.Unlock()
+		}
+	})
+	<-started
+	for range 2000 {
+		if mgr := al.connectAndRegisterMCP(context.Background()); mgr != nil {
+			t.Fatal("MCP connected with it disabled")
+		}
+		al.sendTranscriptionFeedback(context.Background(), "telegram", "1", "m", []string{"hi"})
+	}
+	close(stop)
+	wg.Wait()
+}

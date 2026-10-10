@@ -139,8 +139,9 @@ func (al *AgentLoop) EnsureMCPInitialized(ctx context.Context) error {
 // Must be called after al.cfg/al.registry have been swapped to the new values
 // and before the MCP host server re-enumerates its catalogue.
 func (al *AgentLoop) ReinitMCP(ctx context.Context) {
+	cfg := al.GetConfig()
 	// MCP fully disabled now: tear down whatever is running and clear.
-	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
+	if !cfg.Tools.MCPClientEffectivelyEnabled() {
 		if old := al.mcp.takeManager(); old != nil {
 			if err := old.Close(context.WithoutCancel(ctx)); err != nil {
 				logger.WarnCF("agent", "Failed to close previous MCP manager on reload",
@@ -165,7 +166,7 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 	// Reuse the live manager: reconcile connections so unchanged servers keep
 	// running (no relaunch, no profile-lock race), then re-register tools onto the
 	// freshly-rebuilt agent registry.
-	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
+	if err := mgr.Sync(ctx, cfg.Tools.MCP, cfg.DataDir()); err != nil {
 		logger.WarnCF("agent", "Some MCP servers failed to reconcile on reload",
 			map[string]any{"error": err.Error()})
 	}
@@ -182,18 +183,19 @@ func (al *AgentLoop) ReinitMCP(ctx context.Context) {
 // connectAndRegisterMCP applies the MCP enablement guards, connects to the
 // configured servers, and registers each server's tools onto every agent whose
 // mcp_tools allow-list admits them. It returns the live manager, or nil when MCP
-// is disabled/unconfigured or the connection failed. It reads al.cfg/al.registry,
+// is disabled/unconfigured or the connection failed. It reads the config and registry,
 // which the caller must have already pointed at the desired (current) values.
 func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
-	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
+	cfg := al.GetConfig()
+	if !cfg.Tools.MCPClientEffectivelyEnabled() {
 		return nil
 	}
-	if len(al.cfg.Tools.MCP.Servers) == 0 {
+	if len(cfg.Tools.MCP.Servers) == 0 {
 		logger.WarnCF("agent", "MCP is enabled but no servers are configured, skipping MCP initialization", nil)
 		return nil
 	}
 	findValidServer := false
-	for _, serverCfg := range al.cfg.Tools.MCP.Servers {
+	for _, serverCfg := range cfg.Tools.MCP.Servers {
 		if serverCfg.Enabled {
 			findValidServer = true
 		}
@@ -211,7 +213,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		al.refreshMCPServerTools(mcpManager, server)
 	})
 
-	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.cfg.DataDir()); err != nil {
+	if err := mcpManager.LoadFromMCPConfig(ctx, cfg.Tools.MCP, cfg.DataDir()); err != nil {
 		// A failed initial connect is NOT fatal: keep the manager alive so the
 		// background retry loop (mcpRetryLoop) can reconnect these servers without a
 		// restart. Its desired set was recorded before the connect attempts, and
