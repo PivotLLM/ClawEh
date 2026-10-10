@@ -291,6 +291,16 @@ production instance directly; test against a dev instance.
   its run's snapshot (the forum stays as it was), and removes a folder
   missing `forum-meta.json` or `forum.json` (`ListIncomplete`; this includes
   every folder of the earlier development layout).
+  Install-wide maximums: `forum.limits` (`config.ForumLimitsConfig`,
+  `config/forum.go`; `max_calls` 200, `max_duration_seconds` 7200,
+  `call_timeout_seconds` 1800, `max_parallel_calls` 8 by default, 0/absent =
+  default, negative refused at load and by `Store.Update`; System page
+  **Forums**) reach the service as `forum.Ceilings` through
+  `forum.WithCeilings(ForumHost.Ceilings)`, read from the loop's current
+  config at every validation and launch (a reload applies to the next one;
+  runs keep their launched limits). Preflight refuses a limit or a layer's
+  `max_calls` above them ("... is more than this install allows (N)"), and
+  `forum_readme` ends with the current maximums.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.

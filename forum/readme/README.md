@@ -45,7 +45,10 @@ an agent (as itself or as a clone) only if it is in your allowed agents.
 `result_layers` names the layers whose outputs are the result; the default is
 the last layer. `limits` (`max_calls`, `max_duration_seconds`,
 `call_timeout_seconds`, `max_attempts_per_turn`, `max_parallel_calls`) are
-required and are hard limits.
+required and are hard limits. The install sets maximums for `max_calls`,
+`max_duration_seconds`, `call_timeout_seconds` and `max_parallel_calls` (a
+layer's `max_calls` included); they are listed at the end of this guide, and
+`forum_validate` reports any limit above them.
 
 ## Anonymous review
 

@@ -20,7 +20,8 @@ const forumCloseTimeout = 10 * time.Second
 // newForumService builds the process's forum service over host and installs
 // it for the forum tools. Called before the agent loop exists, because the
 // loop builds every agent's tools as it starts; host is bound to the loop
-// afterwards.
+// afterwards. The install's maximums (forum.limits) are read from the
+// loop's current configuration at every validation and launch.
 func newForumService(host *agent.ForumHost) *forum.Service {
 	svc := forum.New(forum.Host{
 		Messenger: host,
@@ -29,7 +30,7 @@ func newForumService(host *agent.ForumHost) *forum.Service {
 		Logger:    logger.NewLogger("forum"),
 		OnStuck:   host.OnStuck,
 		Cooldown:  host.Cooldown,
-	})
+	}, forum.WithCeilings(host.Ceilings))
 	toolsforum.SetService(svc)
 	return svc
 }

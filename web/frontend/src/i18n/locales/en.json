@@ -572,7 +572,8 @@
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
         "devices": "Devices",
-        "backup": "Backup"
+        "backup": "Backup",
+        "forum": "Forums"
       },
       "open_raw": "Raw config",
       "back_to_visual": "System settings",
@@ -604,7 +605,13 @@
       "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
       "backup_now_running": "Backing up…",
       "backup_now_done": "Backup written to {{folder}}",
-      "backup_now_failed": "Backup failed"
+      "backup_now_failed": "Backup failed",
+      "forum_desc": "The most any forum on this install may use. Blank uses the default.",
+      "forum_max_calls": "Max calls per forum",
+      "forum_max_duration_seconds": "Max run time (seconds)",
+      "forum_call_timeout_seconds": "Call timeout (seconds)",
+      "forum_max_parallel_calls": "Max parallel calls",
+      "forum_default": "Default {{value}}."
     },
     "logs": {
       "empty": "Waiting for logs...",

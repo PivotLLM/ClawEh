@@ -161,10 +161,11 @@ type preflightEnv struct {
 	// Launcher is the launching agent's ID.
 	Launcher string
 	Agents   Agents
-	// HostLimits are ceilings on Config.Limits; a zero field is no ceiling.
-	// A limit above its ceiling is reported as an issue naming the ceiling
-	// (it is never capped silently).
-	HostLimits Limits
+	// Ceilings are the install's maximums on Config.Limits and on each
+	// layer's max_calls; a zero field is no ceiling. A limit above its
+	// ceiling is reported as an issue naming the ceiling (it is never capped
+	// silently).
+	Ceilings Ceilings
 	// ResolveFile maps a source `file` reference to the absolute host path
 	// the launching agent's file tools would read for it (workspace,
 	// workspace folders and mounts), or fails with a message for the
@@ -212,7 +213,7 @@ type resolvedConfig struct {
 //     target) and that exists as a regular file; it is read once, here,
 //     into resolvedConfig.SourceContents; a json file source's content parses
 //     as one JSON value;
-//   - each limit is within HostLimits.
+//   - each limit, and each layer's max_calls, is within Ceilings.
 func runPreflight(ctx context.Context, cfg *Config, env preflightEnv) (*resolvedConfig, error) {
 	if env.Agents == nil || env.Launcher == "" {
 		return nil, errors.New("preflight: launcher and Agents are required")
@@ -231,7 +232,7 @@ func runPreflight(ctx context.Context, cfg *Config, env preflightEnv) (*resolved
 	if err := p.sources(); err != nil {
 		return nil, err
 	}
-	p.hostLimits()
+	p.ceilings()
 	if len(p.issues) > 0 {
 		return nil, &ValidationError{Issues: p.issues}
 	}
@@ -1213,21 +1214,29 @@ func issueText(err error) string {
 	return strings.Join(parts, "; ")
 }
 
-// hostLimits rejects any limit above its host ceiling.
-func (p *preflight) hostLimits() {
-	l, h := p.cfg.Limits, p.env.HostLimits
+// ceilings rejects any limit, and any layer's max_calls, above the
+// install's maximum.
+func (p *preflight) ceilings() {
+	l, c := p.cfg.Limits, p.env.Ceilings
 	for _, f := range []struct {
 		name           string
 		value, ceiling int
 	}{
-		{"max_calls", l.MaxCalls, h.MaxCalls},
-		{"max_duration_seconds", l.MaxDurationSeconds, h.MaxDurationSeconds},
-		{"call_timeout_seconds", l.CallTimeoutSeconds, h.CallTimeoutSeconds},
-		{"max_attempts_per_turn", l.MaxAttemptsPerTurn, h.MaxAttemptsPerTurn},
-		{"max_parallel_calls", l.MaxParallelCalls, h.MaxParallelCalls},
+		{"max_calls", l.MaxCalls, c.MaxCalls},
+		{"max_duration_seconds", l.MaxDurationSeconds, c.MaxDurationSeconds},
+		{"call_timeout_seconds", l.CallTimeoutSeconds, c.CallTimeoutSeconds},
+		{"max_parallel_calls", l.MaxParallelCalls, c.MaxParallelCalls},
 	} {
 		if f.ceiling > 0 && f.value > f.ceiling {
-			p.addf("limits."+f.name, "%d is above the host ceiling of %d", f.value, f.ceiling)
+			p.addf("limits."+f.name, "%d is more than this install allows (%d)", f.value, f.ceiling)
+		}
+	}
+	if c.MaxCalls <= 0 {
+		return
+	}
+	for i, layer := range p.cfg.Layers {
+		if layer.MaxCalls > c.MaxCalls {
+			p.addf(layerPath(i)+".max_calls", "layer %q: %d is more than this install allows (%d)", layer.ID, layer.MaxCalls, c.MaxCalls)
 		}
 	}
 }

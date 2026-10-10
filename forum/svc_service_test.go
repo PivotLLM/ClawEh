@@ -259,17 +259,31 @@ func TestSvcValidate(t *testing.T) {
 	}
 }
 
-func TestSvcHostLimits(t *testing.T) {
+func TestSvcCeilings(t *testing.T) {
 	e := svcSetup(t)
+	var current atomic.Int64
+	current.Store(5)
 	capped := New(Host{Messenger: svcMessenger{}, Agents: e.agents, Notifier: e.notifier, Logger: e.logger},
-		WithHostLimits(Limits{MaxCalls: 5}))
+		WithCeilings(func() Ceilings { return Ceilings{MaxCalls: int(current.Load())} }))
 	t.Cleanup(func() { svcClose(t, capped) })
 	err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts())
-	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "limits.max_calls: 10 is above the host ceiling of 5") {
+	if ve, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(ve.Error(), "limits.max_calls: 10 is more than this install allows (5)") {
 		t.Errorf("Validate above the ceiling = %v", err)
 	}
 	if id, err := svcLaunch(t, capped, svcSimpleJSON, e.opts()); err == nil || e.store(id).RunNumber() != 0 {
 		t.Errorf("Launch above the ceiling = %v", err)
+	}
+	// The ceiling is read at every check: raising it to the configured
+	// value admits the same configuration.
+	current.Store(10)
+	if err := capped.Validate(t.Context(), []byte(svcSimpleJSON), e.opts()); err != nil {
+		t.Errorf("Validate at the ceiling = %v", err)
+	}
+	if got := capped.Ceilings(); got.MaxCalls != 10 {
+		t.Errorf("Ceilings() = %+v, want MaxCalls 10", got)
+	}
+	if got := e.svc.Ceilings(); got != (Ceilings{}) {
+		t.Errorf("Ceilings() without WithCeilings = %+v, want none", got)
 	}
 }
 

@@ -102,29 +102,33 @@ func TestPreflightRejects(t *testing.T) {
 			c.Schemas["spare"] = cfgtRaw(`{"minLength":"x"}`)
 		}, "schemas.spare", []string{`"spare"`}},
 		{
-			"max_calls above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxCalls = 29 },
+			"max_calls above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.Ceilings.MaxCalls = 29 },
 			"limits.max_calls",
-			[]string{"30", "host ceiling of 29"},
+			[]string{"30 is more than this install allows (29)"},
 		},
 		{
-			"duration above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxDurationSeconds = 600 },
+			"duration above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.Ceilings.MaxDurationSeconds = 600 },
 			"limits.max_duration_seconds",
-			[]string{"1800", "600"},
+			[]string{"1800 is more than this install allows (600)"},
 		},
 		{
-			"call timeout above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.CallTimeoutSeconds = 60 },
+			"call timeout above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.Ceilings.CallTimeoutSeconds = 60 },
 			"limits.call_timeout_seconds",
-			[]string{"host ceiling of 60"},
+			[]string{"more than this install allows (60)"},
 		},
 		{
-			"attempts above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxAttemptsPerTurn = 1 },
-			"limits.max_attempts_per_turn",
-			[]string{"host ceiling of 1"},
-		},
-		{
-			"parallel above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.HostLimits.MaxParallelCalls = 1 },
+			"parallel above ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) { env.Ceilings.MaxParallelCalls = 1 },
 			"limits.max_parallel_calls",
-			[]string{"host ceiling of 1"},
+			[]string{"more than this install allows (1)"},
+		},
+		{
+			"layer max_calls above ceiling", func(c *Config, _ *cfgtAgents, env *preflightEnv) {
+				c.Limits.MaxCalls = 20
+				c.Layers[0].MaxCalls = 15
+				env.Ceilings.MaxCalls = 10
+			},
+			"layers[0].max_calls",
+			[]string{"15 is more than this install allows (10)"},
 		},
 	}
 	for _, tt := range tests {
@@ -196,10 +200,10 @@ func TestPreflightAccepts(t *testing.T) {
 			}
 		}},
 		{"limits equal to ceilings", func(_ *Config, _ *cfgtAgents, env *preflightEnv) {
-			env.HostLimits = Limits{MaxCalls: 30, MaxDurationSeconds: 1800, CallTimeoutSeconds: 300, MaxAttemptsPerTurn: 2, MaxParallelCalls: 2}
+			env.Ceilings = Ceilings{MaxCalls: 30, MaxDurationSeconds: 1800, CallTimeoutSeconds: 300, MaxParallelCalls: 2}
 		}, nil},
 		{"zero ceiling is no ceiling", func(_ *Config, _ *cfgtAgents, env *preflightEnv) {
-			env.HostLimits = Limits{MaxCalls: 100}
+			env.Ceilings = Ceilings{MaxCalls: 100}
 		}, nil},
 		{"moderator with assessment and directed", func(c *Config, _ *cfgtAgents, _ *preflightEnv) {
 			c.Layers[1].Moderator.Schema = "findings"

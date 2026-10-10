@@ -116,6 +116,7 @@ type Config struct {
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
 	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
 	Backup        BackupConfig        `json:"backup,omitempty"`
+	Forum         ForumConfig         `json:"forum,omitzero"`
 	// DefaultConfig marks a never-saved, auto-seeded config. DefaultConfig() sets
 	// it true and SeedDefaultConfig() preserves it on disk; the first save through
 	// SaveConfig clears it. The setup wizard uses it (with a "no usable model"
@@ -2734,6 +2735,9 @@ func LoadConfig(path string) (*Config, error) {
 	// half-configured certificate or an off-box MCP host, and the config
 	// watcher turns this into a "Config file invalid" alert on a live gateway.
 	if err := cfg.validateListeners(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Forum.Limits.Validate(); err != nil {
 		return nil, err
 	}
 

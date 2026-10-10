@@ -280,8 +280,8 @@ type Moderator struct {
 }
 
 // Limits protect against a runaway forum. All five are required and
-// positive; host ceilings (Service option WithHostLimits) are enforced by
-// runPreflight.
+// positive; the install's maximums (Ceilings, Service option WithCeilings)
+// are enforced by runPreflight.
 type Limits struct {
 	// MaxCalls is the forum's total budget: every message sent to a
 	// participant, repairs and moderator checks included.
@@ -291,6 +291,15 @@ type Limits struct {
 	// MaxAttemptsPerTurn includes the initial attempt; it applies to each
 	// moderator checkpoint as well.
 	MaxAttemptsPerTurn int `json:"max_attempts_per_turn"`
+	MaxParallelCalls   int `json:"max_parallel_calls"`
+}
+
+// Ceilings are the install's maximums on four of a configuration's limits
+// (and on every layer's max_calls). A zero field is no ceiling.
+type Ceilings struct {
+	MaxCalls           int `json:"max_calls"`
+	MaxDurationSeconds int `json:"max_duration_seconds"`
+	CallTimeoutSeconds int `json:"call_timeout_seconds"`
 	MaxParallelCalls   int `json:"max_parallel_calls"`
 }
 

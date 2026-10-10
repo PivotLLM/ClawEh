@@ -18,6 +18,7 @@ import { AgentModelDefaultsSection } from "@/components/config/sections/agent-mo
 import { BackupSection } from "@/components/config/sections/backup-section"
 import { ContextManagementSection } from "@/components/config/sections/context-management-section"
 import { DevicesSection } from "@/components/config/sections/devices-section"
+import { ForumSection } from "@/components/config/sections/forum-section"
 import { RuntimeSection } from "@/components/config/sections/runtime-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -25,9 +26,9 @@ import { Button } from "@/components/ui/button"
 type SaveStatus = "saving" | "saved" | "error" | null
 
 // SystemPage is everything about the running system that is not a listener:
-// agent defaults, context management, runtime, logging, backup and hardware
-// devices. Listeners (ports, HTTPS, allowlists, the device gateway) are on the
-// Network page. Fields autosave on a debounce, as a JSON merge patch.
+// agent defaults, context management, runtime, logging, backup, forum
+// maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
+// device gateway) are on the Network page. Fields autosave on a debounce, as a JSON merge patch.
 export function SystemPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -375,6 +376,31 @@ export function SystemPage() {
             // and falls back to <CLAW_HOME>/backup.
             dest: form.backupDest.trim(),
           },
+          // Blank (or 0) is the default; null removes the key from the file.
+          forum: {
+            limits: nullableInts({
+              max_calls: parseOptionalIntField(
+                form.forumMaxCalls,
+                "Max calls per forum",
+                { min: 0 },
+              ),
+              max_duration_seconds: parseOptionalIntField(
+                form.forumMaxDurationSeconds,
+                "Max run time (seconds)",
+                { min: 0 },
+              ),
+              call_timeout_seconds: parseOptionalIntField(
+                form.forumCallTimeoutSeconds,
+                "Call timeout (seconds)",
+                { min: 0 },
+              ),
+              max_parallel_calls: parseOptionalIntField(
+                form.forumMaxParallelCalls,
+                "Max parallel calls",
+                { min: 0 },
+              ),
+            }),
+          },
         }
       }
     } catch (err) {
@@ -459,6 +485,8 @@ export function SystemPage() {
               <RuntimeSection form={form} onFieldChange={updateField} />
 
               <BackupSection form={form} onFieldChange={updateField} />
+
+              <ForumSection form={form} onFieldChange={updateField} />
 
               <DevicesSection form={form} onFieldChange={updateField} />
             </div>

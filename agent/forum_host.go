@@ -74,6 +74,26 @@ func (h *ForumHost) registry() (*AgentRegistry, error) {
 	return r, nil
 }
 
+// Ceilings returns the install's forum maximums from the loop's current
+// configuration (forum.limits, defaults for unset fields), so a reload
+// applies to the next validation or launch. Before Bind it returns the
+// defaults.
+func (h *ForumHost) Ceilings() forum.Ceilings {
+	var limits config.ForumLimitsConfig
+	if al := h.loop.Load(); al != nil {
+		if cfg := al.GetConfig(); cfg != nil {
+			limits = cfg.Forum.Limits
+		}
+	}
+	l := limits.Effective()
+	return forum.Ceilings{
+		MaxCalls:           l.MaxCalls,
+		MaxDurationSeconds: l.MaxDurationSeconds,
+		CallTimeoutSeconds: l.CallTimeoutSeconds,
+		MaxParallelCalls:   l.MaxParallelCalls,
+	}
+}
+
 // Scopes lists the forum scope of every configured agent: its id and
 // <workspace>/forums. Startup recovery runs over these whatever the agent's
 // `forum` switch says, so forums of an agent whose switch was turned off

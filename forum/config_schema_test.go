@@ -237,7 +237,7 @@ func TestConfigSchemaAcceptsTemplatesAndExamples(t *testing.T) {
 // The guide's example patches match the patch schema.
 func TestPatchSchemaAcceptsGuideExamples(t *testing.T) {
 	patch := mustCompileSchema(t, PatchSchema())
-	guideText := guide()
+	guideText := guide(Ceilings{})
 	for _, example := range []string{
 		`{"sources": {"question": {"inline": "Should we use Go or Python?"}}, "participants": {"chair": {"model": "<a name from forum_models>"}}}`,
 		`{"sources": {"topic": {"file": "files/topic2.md"}}}`,

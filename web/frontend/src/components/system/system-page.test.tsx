@@ -26,7 +26,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 const patched = vi.mocked(patchAppConfig)
 
-const sample = {
+const sample: Record<string, unknown> = {
   agents: {
     list: [{ id: "alice", name: "Alice" }],
     defaults: { max_tokens: 4096 },
@@ -166,5 +166,66 @@ describe("SystemPage with the config already cached", () => {
       agents: { defaults: { max_tokens: number } }
     }
     expect(patch.agents.defaults.max_tokens).toBe(4096)
+  })
+})
+
+/** The `forum` block of the most recent PATCH. */
+function lastForumPatch() {
+  const patch = patched.mock.calls.at(-1)?.[0] as
+    { forum?: Record<string, unknown> } | undefined
+  return patch?.forum
+}
+
+describe("SystemPage forum maximums", () => {
+  // A field left blank shows the default and is saved as null (the key is
+  // removed, so the default applies); a value set in the config is shown
+  // and saved as a number.
+  it("shows set values and defaults, and saves them", async () => {
+    sample.forum = { limits: { max_calls: 300 } }
+    try {
+      renderPage()
+      const maxCalls = (await screen.findByTestId(
+        "forum-max_calls",
+      )) as HTMLInputElement
+      expect(maxCalls.value).toBe("300")
+      const timeout = screen.getByTestId(
+        "forum-call_timeout_seconds",
+      ) as HTMLInputElement
+      expect(timeout.value).toBe("")
+      expect(timeout.placeholder).toBe("1800")
+      expect(
+        (screen.getByTestId("forum-max_duration_seconds") as HTMLInputElement)
+          .placeholder,
+      ).toBe("7200")
+      expect(
+        (screen.getByTestId("forum-max_parallel_calls") as HTMLInputElement)
+          .placeholder,
+      ).toBe("8")
+
+      fireEvent.change(timeout, { target: { value: "600" } })
+      await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
+      })
+      expect(lastForumPatch()).toEqual({
+        limits: {
+          max_calls: 300,
+          max_duration_seconds: null,
+          call_timeout_seconds: 600,
+          max_parallel_calls: null,
+        },
+      })
+    } finally {
+      delete sample.forum
+    }
+  })
+
+  it("refuses a negative value without saving", async () => {
+    renderPage()
+    const maxCalls = await screen.findByTestId("forum-max_calls")
+    fireEvent.change(maxCalls, { target: { value: "-1" } })
+    await screen.findByText("Max calls per forum must be >= 0.", undefined, {
+      timeout: 3000,
+    })
+    expect(patched).not.toHaveBeenCalled()
   })
 })

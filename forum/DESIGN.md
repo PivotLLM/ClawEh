@@ -369,8 +369,13 @@ message.
    true (`to` is an enum of the layer's participants). It is stored in
    `Snapshot.ModeratorSchemas` and sent with every moderator request.
 4. **`conversation_view`:** `published` (default) or `full`.
-5. **Host ceilings:** a limit above its ceiling is rejected with an issue
-   naming the ceiling, never capped silently.
+5. **Host ceilings:** the install's maximums (`Ceilings`, from the
+   `forum.limits` config section through `WithCeilings`, read at every
+   validation and launch) cap `max_calls`, `max_duration_seconds`,
+   `call_timeout_seconds`, `max_parallel_calls` and every layer's
+   `max_calls`. A limit above its ceiling is rejected with an issue naming
+   the ceiling, never capped silently. Runs keep the limits they launched
+   with.
 6. **Projection shape:** `share`/`paths` select object members
    into a fresh object with the enclosing structure kept; pointers are
    nonempty, non-overlapping, no array traversal; a missing path fails.

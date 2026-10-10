@@ -49,7 +49,22 @@ export interface CoreConfigForm {
   backupAt: string
   backupRetainDays: string
   backupDest: string
+  // forum.limits: the install's maximums for every forum. "" means not set
+  // (the backend default, FORUM_LIMIT_DEFAULTS, applies).
+  forumMaxCalls: string
+  forumMaxDurationSeconds: string
+  forumCallTimeoutSeconds: string
+  forumMaxParallelCalls: string
 }
+
+// FORUM_LIMIT_DEFAULTS mirrors config.DefaultForum* in the backend: the value
+// each forum.limits field has when it is left out or set to 0.
+export const FORUM_LIMIT_DEFAULTS = {
+  max_calls: 200,
+  max_duration_seconds: 7200,
+  call_timeout_seconds: 1800,
+  max_parallel_calls: 8,
+} as const
 
 export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
@@ -95,6 +110,10 @@ export const EMPTY_FORM: CoreConfigForm = {
   backupAt: "03:00",
   backupRetainDays: "30",
   backupDest: "",
+  forumMaxCalls: "",
+  forumMaxDurationSeconds: "",
+  forumCallTimeoutSeconds: "",
+  forumMaxParallelCalls: "",
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -141,6 +160,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const summarization = asRecord(root.summarization)
   const devices = asRecord(root.devices)
   const logging = asRecord(root.logging)
+  const forumLimits = asRecord(asRecord(root.forum).limits)
 
   const agentList = Array.isArray(agents.list) ? agents.list : []
   const defaultAgentId = asString(
@@ -272,7 +292,18 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       EMPTY_FORM.backupRetainDays,
     ),
     backupDest: asString(asRecord(root.backup).dest),
+    forumMaxCalls: asLimitString(forumLimits.max_calls),
+    forumMaxDurationSeconds: asLimitString(forumLimits.max_duration_seconds),
+    forumCallTimeoutSeconds: asLimitString(forumLimits.call_timeout_seconds),
+    forumMaxParallelCalls: asLimitString(forumLimits.max_parallel_calls),
   }
+}
+
+// asLimitString shows a forum limit that is set; 0 or absent is "" (default).
+function asLimitString(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(value)
+    : ""
 }
 
 export function parseIntField(

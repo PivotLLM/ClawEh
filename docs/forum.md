@@ -305,6 +305,23 @@ write to it, and cannot read another agent's forums.
 - `limits` in the configuration are required and are hard limits: total calls
   (repairs and moderator checks included), total duration, time per turn,
   attempts per turn and parallel turns. A layer may set its own `max_calls`.
+- The install sets maximums on four of them in `config.json` (System page,
+  **Forums**):
+
+  ```json
+  "forum": {"limits": {"max_calls": 200, "max_duration_seconds": 7200,
+                       "call_timeout_seconds": 1800, "max_parallel_calls": 8}}
+  ```
+
+  The values shown are the defaults; a field left out or set to 0 uses its
+  default, and a negative value is refused when the config is loaded or
+  saved. `forum_validate` and `forum_launch` refuse a forum whose limit is
+  above its maximum, one issue per limit ("limits.max_calls: 500 is more than
+  this install allows (200)"); a layer's own `max_calls` is held to the
+  `max_calls` maximum too. `max_attempts_per_turn` has no maximum.
+  `forum_readme` ends with the current maximums, so the agent can stay under
+  them. A change applies to the next validation or launch; a run keeps the
+  limits it was launched with.
 - Each participant's own settings (its `request_timeout`, its tool limits)
   still apply to its turns.
 - A turn whose participant's models are all in cooldown is held until one is

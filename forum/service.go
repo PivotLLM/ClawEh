@@ -32,7 +32,7 @@ import (
 //	svc := forum.New(forum.Host{Messenger: ..., Agents: ..., Notifier: ...,
 //	        Logger: ...,
 //	        OnStuck: ..., Cooldown: ...},              // optional
-//	        forum.WithHostLimits(...))                 // optional ceilings
+//	        forum.WithCeilings(...))                   // optional install-wide maximums
 //	err := svc.Recover(ctx, scopes)                    // once at startup, every agent's <workspace>/forums
 //	defs := forum.Tools(svc, toolHost)                 // mount under "forum", gated by the forum permission
 //	...
@@ -107,9 +107,11 @@ func openController(ctx context.Context, s *forumStore, host Host) (controller, 
 
 // Service owns the forums of one process.
 type Service struct {
-	host       Host
-	hostLimits Limits
-	openCtrl   openFunc
+	host Host
+	// ceilings returns the install's current maximums (WithCeilings); nil
+	// is none.
+	ceilings func() Ceilings
+	openCtrl openFunc
 	// keepAliveEvery is keepAliveInterval; tests shorten it.
 	keepAliveEvery time.Duration
 
@@ -181,10 +183,21 @@ type run struct {
 // Option configures a Service.
 type Option func(*Service)
 
-// WithHostLimits sets ceilings on every configuration's limits (DESIGN.md
-// §7.5); a zero field is no ceiling.
-func WithHostLimits(l Limits) Option {
-	return func(s *Service) { s.hostLimits = l }
+// WithCeilings sets the install's maximums on every configuration's limits
+// (DESIGN.md §7.5). current is called at every validation and launch, so a
+// change takes effect for the next one; runs already launched keep the
+// limits they started with.
+func WithCeilings(current func() Ceilings) Option {
+	return func(s *Service) { s.ceilings = current }
+}
+
+// Ceilings returns the install's current maximums; the zero value (no
+// ceiling) when none were set.
+func (s *Service) Ceilings() Ceilings {
+	if s.ceilings == nil {
+		return Ceilings{}
+	}
+	return s.ceilings()
 }
 
 // New builds a service over the host dependencies. host.OnStuck and
@@ -279,7 +292,7 @@ func (s *Service) check(ctx context.Context, raw []byte, opts LaunchOptions) (*C
 	resolved, err := runPreflight(ctx, cfg, preflightEnv{
 		Launcher:    opts.Scope.AgentID,
 		Agents:      s.host.Agents,
-		HostLimits:  s.hostLimits,
+		Ceilings:    s.Ceilings(),
 		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,
 	})

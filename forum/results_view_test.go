@@ -190,7 +190,7 @@ func TestResultsView_ResentAfterRestart(t *testing.T) {
 
 // The guide states the limits the code applies.
 func TestGuideStatesTheLimits(t *testing.T) {
-	g := strings.Join(strings.Fields(guide()), " ")
+	g := strings.Join(strings.Fields(guide(Ceilings{})), " ")
 	for _, want := range []string{
 		"at most " + groupDigits(MaxNameChars) + " characters",
 		"up to " + groupDigits(MaxResultInlineChars) + " characters",

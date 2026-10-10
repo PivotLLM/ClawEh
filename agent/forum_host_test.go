@@ -91,7 +91,7 @@ func newForumRig(t *testing.T, cfg *config.Config, model providers.LLMProvider) 
 	svc := forum.New(forum.Host{
 		Messenger: host, Agents: host, Notifier: host, Logger: logger.NewLogger("forum"),
 		OnStuck: host.OnStuck, Cooldown: host.Cooldown,
-	})
+	}, forum.WithCeilings(host.Ceilings))
 	toolsforum.SetService(svc)
 	msgBus := bus.NewMessageBus()
 	al, err := NewAgentLoop(cfg, msgBus, model, nil, OwnsDataDir())
@@ -856,4 +856,59 @@ func TestForumHost_NilRegistry(t *testing.T) {
 		t.Errorf("sender = %q, want Forum", got)
 	}
 	h.OnStuck("f1", 1, forum.Origin{AgentID: "alice"}, nil)
+}
+
+// TestForumHost_Ceilings: the install's maximums come from forum.limits,
+// with the defaults for unset fields (and before the loop is bound), and a
+// reload applies to the next forum_validate.
+func TestForumHost_Ceilings(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	defaults := forum.Ceilings{MaxCalls: 200, MaxDurationSeconds: 7200, CallTimeoutSeconds: 1800, MaxParallelCalls: 8}
+	if got := NewForumHost().Ceilings(); got != defaults {
+		t.Errorf("unbound Ceilings() = %+v, want the defaults %+v", got, defaults)
+	}
+
+	cfg := forumConfig(t, true, false)
+	cfg.Forum.Limits.MaxCalls = 5
+	model := &forumModel{}
+	r := newForumRig(t, cfg, model)
+	want := defaults
+	want.MaxCalls = 5
+	if got := r.svc.Ceilings(); got != want {
+		t.Errorf("Ceilings() = %+v, want %+v", got, want)
+	}
+
+	call := func(tool string, args map[string]any) *tools.ToolResult {
+		t.Helper()
+		alice, _ := r.al.GetRegistry().Get("alice")
+		return alice.Tools.ExecuteWithContext(context.Background(), tool, args, "telegram", "chat-1", nil)
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(call("forum_new", map[string]any{}).ForLLM, "Forum "), " created.")
+	var cfgObj map[string]any
+	if err := json.Unmarshal([]byte(forumLaunchConfig), &cfgObj); err != nil {
+		t.Fatal(err)
+	}
+	if res := call("forum_config_import", map[string]any{"id": id, "config": cfgObj}); res.IsError {
+		t.Fatalf("forum_config_import = %+v", res)
+	}
+	res := call("forum_validate", map[string]any{"id": id})
+	if !res.IsError || !strings.Contains(res.ForLLM, "limits.max_calls: 10 is more than this install allows (5)") {
+		t.Errorf("forum_validate above the ceiling = %+v", res)
+	}
+	if res := call("forum_launch", map[string]any{"id": id}); !res.IsError {
+		t.Errorf("forum_launch above the ceiling = %+v", res)
+	}
+
+	next := forumConfig(t, true, false)
+	next.Agents.BaseDir = cfg.Agents.BaseDir
+	next.Forum.Limits.MaxCalls = 10
+	if err := r.al.ReloadProviderAndConfig(context.Background(), model, next); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := r.svc.Ceilings().MaxCalls; got != 10 {
+		t.Errorf("Ceilings().MaxCalls after reload = %d, want 10", got)
+	}
+	if res := call("forum_validate", map[string]any{"id": id}); res.IsError {
+		t.Errorf("forum_validate at the ceiling after reload = %+v", res)
+	}
 }

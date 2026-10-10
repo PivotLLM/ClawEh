@@ -434,6 +434,17 @@ observe does not need an entry.
   resend at once: a cooldown that ends in time costs nothing, and one that
   outlasts it is recorded as a timeout attempt (counted toward `max_calls`).
 
+- **Install-wide forum maximums.** A new config section, `forum.limits`, caps
+  what any forum may ask for: `max_calls` (default 200), `max_duration_seconds`
+  (default 7200), `call_timeout_seconds` (default 1800) and
+  `max_parallel_calls` (default 8). A value left out or set to 0 uses its
+  default; a negative value is refused. `forum_validate` and `forum_launch`
+  refuse a forum whose limit (or a layer's `max_calls`) is above the maximum,
+  one issue per limit, e.g. "limits.max_calls: 500 is more than this install
+  allows (200)". `forum_readme` lists the current maximums. Edit them on the
+  System page under **Forums**; a change applies to the next validation or
+  launch, and runs already started keep the limits they launched with.
+
 - **Where forums live, notices and cleanup.** Everything is kept under
   `<workspace>/forums/<id>/`: `forum.json` (the configuration) and `runs/<n>/`
   per run, with a live `transcript.md`. With the default workspace
