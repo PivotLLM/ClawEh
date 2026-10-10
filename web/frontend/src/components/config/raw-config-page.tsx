@@ -5,6 +5,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
+import { errorMessage } from "@/api/error-message"
 import { PageHeader } from "@/components/page-header"
 import {
   AlertDialog,
@@ -43,7 +44,7 @@ export function RawConfigPage() {
         body: newConfig,
       })
       if (!res.ok) {
-        throw new Error("Failed to save config")
+        throw new Error(await errorMessage(res))
       }
     },
     onSuccess: (_, submittedConfig) => {
@@ -57,8 +58,10 @@ export function RawConfigPage() {
         queryClient.invalidateQueries({ queryKey: ["config"] })
       }
     },
-    onError: () => {
-      toast.error(t("pages.config.save_error"))
+    onError: (err) => {
+      toast.error(
+        err instanceof Error ? err.message : t("pages.config.save_error"),
+      )
     },
   })
 

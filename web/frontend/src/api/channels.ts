@@ -1,4 +1,5 @@
 // API client for channels navigation and channel-specific config flows.
+import { errorMessage } from "./error-message"
 
 export type ChannelConfig = Record<string, unknown>
 export type AppConfig = Record<string, unknown>
@@ -24,22 +25,7 @@ const BASE_URL = ""
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, options)
   if (!res.ok) {
-    let message = `API error: ${res.status} ${res.statusText}`
-    try {
-      const body = (await res.json()) as {
-        error?: string
-        errors?: string[]
-        status?: string
-      }
-      if (Array.isArray(body.errors) && body.errors.length > 0) {
-        message = body.errors.join("; ")
-      } else if (typeof body.error === "string" && body.error.trim() !== "") {
-        message = body.error
-      }
-    } catch {
-      // Keep default fallback message if response body is not JSON.
-    }
-    throw new Error(message)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }

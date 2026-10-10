@@ -1,5 +1,6 @@
 // API client for the external-device gateway (pairing). The listener settings
 // are edited on the Network page through PATCH /api/config.
+import { errorMessage } from "./error-message"
 
 export interface DeviceStatus {
   payload: string
@@ -58,16 +59,7 @@ export interface AgentOption {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, options)
   if (!res.ok) {
-    let message = `API error: ${res.status} ${res.statusText}`
-    try {
-      const body = (await res.json()) as { error?: string }
-      if (typeof body.error === "string" && body.error.trim() !== "") {
-        message = body.error
-      }
-    } catch {
-      // keep fallback
-    }
-    throw new Error(message)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }

@@ -1,4 +1,5 @@
 // API client for model list management.
+import { errorMessage } from "./error-message"
 
 export interface ModelInfo {
   index: number
@@ -55,15 +56,7 @@ const BASE_URL = ""
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, options)
   if (!res.ok) {
-    // Surface the server's error body (e.g. 409 "model is still referenced
-    // by ...") so callers can show a meaningful message.
-    let detail = ""
-    try {
-      detail = (await res.text()).trim()
-    } catch {
-      // ignore
-    }
-    throw new Error(detail || `API error: ${res.status} ${res.statusText}`)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }

@@ -20,28 +20,29 @@ import (
 
 // A WebUI save refuses a device listener on a network address with
 // auto_approve on or no secret, naming the setting; loopback is allowed.
-func TestValidateConfig_DeviceExposure(t *testing.T) {
+func TestPatchConfig_DeviceExposure(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		dev     config.DeviceChannelConfig
+		device  string
 		wantKey string
 	}{
-		{"auto_approve on a network address", config.DeviceChannelConfig{Enabled: true, Host: "0.0.0.0", Token: "t", AutoApprove: true}, "channels.device.auto_approve"},
-		{"no secret on a network address", config.DeviceChannelConfig{Enabled: true, Host: "0.0.0.0"}, "channels.device.token"},
-		{"loopback with auto_approve and no secret", config.DeviceChannelConfig{Enabled: true, Host: "127.0.0.1", AutoApprove: true}, ""},
+		{"auto_approve on a network address", `{"enabled":true,"host":"0.0.0.0","token":"t","auto_approve":true}`, "channels.device.auto_approve"},
+		{"no secret on a network address", `{"enabled":true,"host":"0.0.0.0","token":"","word_token":""}`, "channels.device.token"},
+		{"loopback with auto_approve and no secret", `{"enabled":true,"host":"127.0.0.1","token":"","word_token":"","auto_approve":true}`, ""},
 	} {
-		cfg := validConfigForValidation()
-		cfg.Channels.Device = tc.dev
-		errs := validateConfig(cfg)
-		if tc.wantKey == "" {
-			if anyContains(errs, "channels.device") {
-				t.Errorf("%s: refused: %v", tc.name, errs)
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serveSave(t, setupTestEnv(t), http.MethodPatch, "/api/config",
+				`{"channels":{"device":`+tc.device+`}}`)
+			if tc.wantKey == "" {
+				if rec.Code != http.StatusOK {
+					t.Fatalf("refused: %d %s", rec.Code, rec.Body.String())
+				}
+				return
 			}
-			continue
-		}
-		if !anyContains(errs, tc.wantKey) {
-			t.Errorf("%s: errs = %v, want one naming %s", tc.name, errs, tc.wantKey)
-		}
+			if rec.Code != http.StatusBadRequest || !anyContains(responseErrors(t, rec), tc.wantKey) {
+				t.Fatalf("status %d, body %s: want a refusal naming %s", rec.Code, rec.Body.String(), tc.wantKey)
+			}
+		})
 	}
 }
 

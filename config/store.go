@@ -34,6 +34,26 @@ type ValidationError struct {
 func (e *ValidationError) Error() string { return e.Err.Error() }
 func (e *ValidationError) Unwrap() error { return e.Err }
 
+// Messages returns one sentence per refusal: each error joined into Err
+// (errors.Join) on its own, or Err's text when it is a single error.
+func (e *ValidationError) Messages() []string {
+	return errorMessages(e.Err)
+}
+
+func errorMessages(err error) []string {
+	if err == nil {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var msgs []string
+		for _, inner := range joined.Unwrap() {
+			msgs = append(msgs, errorMessages(inner)...)
+		}
+		return msgs
+	}
+	return []string{err.Error()}
+}
+
 // ErrUnchanged may be returned by an Update callback that found nothing to
 // change. Update then returns nil without writing: a save that changes
 // nothing would still touch the file's mtime and make the gateway's config

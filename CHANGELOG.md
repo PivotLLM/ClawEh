@@ -812,6 +812,18 @@ observe does not need an entry.
 
 ### Changed
 
+- **BREAKING (API): a configuration save the rules refuse answers 400 with
+  JSON `{"status": "validation_error", "errors": [...]}`, one sentence per
+  refusal, instead of plain text "Validation error: …".** The rules are a
+  model that does not exist, the human-agent rules, a reserved mount name, an
+  agent id, a listener setting and the forum limits. This covers
+  `PUT`/`PATCH /api/config` and every other endpoint that saves the
+  configuration (models, providers, CLIs, tools, voice, devices, WebUI setup).
+  A failure found while applying the change keeps its status code (404, 409,
+  500) and also answers `{"errors": [...]}`; a request the endpoint cannot
+  read (bad JSON, a missing field) still answers plain text. An integrator
+  that parsed the old text must read the `errors` list.
+
 - **BREAKING: agent ids must be 1 to 64 characters of lower-case letters,
   digits, - and _, starting with a letter or digit.** This applies to `agents.list[].id` and to every place that names an
   agent: `bindings[].agent_id`, `bindings[].agent_mentions` and
@@ -1278,6 +1290,10 @@ observe does not need an entry.
   agent's message token (`POST /api/message/{token}`).
 
 ### Fixed
+
+- **The WebUI shows why a save was refused.** A save refused for a model that
+  does not exist, a human agent, a reserved mount name, an agent id or a
+  listener setting showed "API error: 400"; it now shows the reason.
 
 - **The "Agent references a missing model" alert names the agent by its
   name.** It used the agent id, so an agent named "Alice" with id "alice" was

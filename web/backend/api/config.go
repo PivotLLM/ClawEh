@@ -136,12 +136,7 @@ func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mu
 	})
 	switch {
 	case errors.Is(err, errValidation):
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		encodeJSON(w, map[string]any{
-			"status": "validation_error",
-			"errors": errs,
-		})
+		writeValidationErrors(w, errs)
 		return false
 	case err != nil:
 		writeUpdateError(w, err)
@@ -244,31 +239,8 @@ func validateConfig(cfg *config.Config) []string {
 		logger.WarnCF("config", "reference to disabled model", map[string]any{"detail": w})
 	}
 
-	// Agent ids and references to them must be in normal form; Store.Update
-	// refuses the same, but this reports each in the validation_error shape
-	// the WebUI shows.
-	for _, err := range cfg.AgentIDErrors() {
-		errs = append(errs, err.Error())
-	}
-
 	// Validate agent bindings (default-channel constraints)
 	if err := cfg.ValidateBindings(); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Listener settings LoadConfig refuses (a port out of range, an unknown
-	// gateway.tls.mode, tls_port equal to port, a half-configured certificate,
-	// an off-box MCP host) must be refused here too, or a WebUI save could
-	// write a config the gateway then cannot start on.
-	if err := cfg.Gateway.Validate(); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := config.ValidateMCPHostListen(cfg.MCPHost.Listen); err != nil {
-		errs = append(errs, err.Error())
-	}
-	// A device gateway on a network address must not pair or admit devices
-	// without a secret; LoadConfig refuses the same.
-	if err := cfg.Channels.Device.ValidateExposure(); err != nil {
 		errs = append(errs, err.Error())
 	}
 

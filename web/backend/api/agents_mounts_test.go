@@ -72,7 +72,7 @@ func TestPatchConfig_ReservedMountRefused(t *testing.T) {
 			if rec.Code != tc.code {
 				t.Fatalf("status %d, want %d: %s", rec.Code, tc.code, rec.Body.String())
 			}
-			if tc.code != http.StatusOK && !strings.Contains(rec.Body.String(), `Main's mount "Tasks" uses a reserved name; choose another name.`) {
+			if tc.code != http.StatusOK && !anyContains(responseErrors(t, rec), `Main's mount "Tasks" uses a reserved name; choose another name.`) {
 				t.Errorf("body = %q", rec.Body.String())
 			}
 		})

@@ -214,19 +214,35 @@ func conflict(format string, args ...any) error {
 	return &httpError{status: http.StatusConflict, msg: fmt.Sprintf(format, args...)}
 }
 
-// writeUpdateError reports an updateConfig failure: an *httpError carries its
-// own status, a *config.ValidationError is the client's doing (400), anything
-// else is a failed save (500).
+// writeUpdateError reports an updateConfig failure as JSON {"errors": [...]}:
+// an *httpError carries its own status, a *config.ValidationError is the
+// client's doing (400, one entry per refusal), anything else is a failed save
+// (500). Every 400 is in the validation_error shape validateConfig findings
+// use.
 func writeUpdateError(w http.ResponseWriter, err error) {
 	if herr, ok := errors.AsType[*httpError](err); ok {
-		http.Error(w, herr.msg, herr.status)
+		if herr.status == http.StatusBadRequest {
+			writeValidationErrors(w, []string{herr.msg})
+			return
+		}
+		writeJSON(w, herr.status, map[string]any{"errors": []string{herr.msg}})
 		return
 	}
 	if verr, ok := errors.AsType[*config.ValidationError](err); ok {
-		http.Error(w, fmt.Sprintf("Validation error: %v", verr), http.StatusBadRequest)
+		writeValidationErrors(w, verr.Messages())
 		return
 	}
-	http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+	writeJSON(w, http.StatusInternalServerError, map[string]any{
+		"errors": []string{fmt.Sprintf("Failed to save config: %v", err)},
+	})
+}
+
+// writeValidationErrors answers 400 with one entry per refused setting.
+func writeValidationErrors(w http.ResponseWriter, errs []string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"status": "validation_error",
+		"errors": errs,
+	})
 }
 
 // SetServerOptions stores the current backend listen options. serverPublic

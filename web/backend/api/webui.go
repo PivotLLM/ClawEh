@@ -64,7 +64,7 @@ func (h *Handler) ensureWebUIChannel(r *http.Request) (bool, error) {
 func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
 	changed, err := h.ensureWebUIChannel(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeUpdateError(w, err)
 		return
 	}
 

@@ -229,3 +229,18 @@ describe("SystemPage forum maximums", () => {
     expect(patched).not.toHaveBeenCalled()
   })
 })
+
+describe("SystemPage refused save", () => {
+  // The server's sentence is what the operator sees, not a status code.
+  it("shows why the save was refused", async () => {
+    const why =
+      "Bob (human) represents a person and can't be a summarization model."
+    patched.mockRejectedValueOnce(new Error(why))
+    renderPage()
+    const dest = await screen.findByTestId("backup-dest")
+    fireEvent.change(dest, { target: { value: "/mnt/other" } })
+    expect(
+      await screen.findByText(why, undefined, { timeout: 3000 }),
+    ).toBeTruthy()
+  })
+})

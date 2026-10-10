@@ -146,7 +146,7 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
@@ -211,7 +211,7 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
@@ -243,7 +243,7 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, r *http
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
