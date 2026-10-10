@@ -564,15 +564,57 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.cooldown.SetPolicy(cooldownPolicy(cfg))
 	newFallback := providers.NewFallbackChain(al.cooldown)
 
-	// Rebuild every agent against the new config and provider (config agents
-	// from the config, temporary agents against it too), each with its tools
-	// registered the same way as at start. Nothing changes until all are built;
-	// then the registry swaps them in one step and, in the same step, the config
-	// and fallback chain are swapped here, so readers see a consistent pair.
-	// A ctx that ends first returns at once: the rebuild is abandoned (the
-	// commit below refuses) and closes what it built. Whichever of the commit
-	// and the abandonment comes first wins. Panics are recovered and reported
-	// as a failed reload.
+	if err := al.reloadRegistry(ctx, registry, provider, cfg, newFallback); err != nil {
+		return err
+	}
+
+	// Whispers held for an agent the new configuration removed are dropped;
+	// rebuilt agents keep theirs.
+	al.whispers.prune(func(id string) bool {
+		_, ok := registry.Get(id)
+		return ok
+	})
+	al.replaceMessageManagers(registry, cfg)
+
+	// Flush the dispatcher cache so stale providers are evicted on config reload.
+	if al.dispatcher != nil {
+		al.dispatcher.Flush(cfg)
+	}
+
+	// Have cached ContextManagers rebuilt from the new config, since per-session
+	// config is baked in at creation (notably the summarization model chain).
+	// Idle sessions are evicted now; sessions in use keep their manager and
+	// session token until released, then rebuild on their next access.
+	al.invalidateContextManagers(ctx)
+
+	if hadProvider {
+		al.closeReplacedProvider(ctx, oldProvider)
+	}
+
+	logger.InfoCF("agent", "Provider and config reloaded successfully",
+		map[string]any{
+			"model": cfg.Agents.Defaults.DefaultModelName(),
+		})
+
+	return nil
+}
+
+// reloadRegistry rebuilds every agent against the new config and provider
+// (config agents from the config, temporary agents against it too), each
+// with its tools registered the same way as at start. Nothing changes until
+// all are built; then the registry swaps them in one step and, in the same
+// step, the config and fallback chain are swapped here, so readers see a
+// consistent pair. A ctx that ends first returns at once: the rebuild is
+// abandoned (the commit refuses) and closes what it built. Whichever of the
+// commit and the abandonment comes first wins. Panics are recovered and
+// reported as a failed reload.
+func (al *AgentLoop) reloadRegistry(
+	ctx context.Context,
+	registry *AgentRegistry,
+	provider providers.LLMProvider,
+	cfg *config.Config,
+	newFallback *providers.FallbackChain,
+) error {
 	const (
 		reloadPending int32 = iota
 		reloadCommitted
@@ -615,66 +657,46 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 			return fmt.Errorf("registry creation failed: %w", err)
 		}
 	}
+	return nil
+}
 
-	// Whispers held for an agent the new configuration removed are dropped;
-	// rebuilt agents keep theirs.
-	al.whispers.prune(func(id string) bool {
-		_, ok := registry.Get(id)
-		return ok
-	})
-
-	// Rebuild callback managers against the new registry/config. Without this,
-	// the stale managers would keep validating tokens against the OLD config
-	// (e.g. an agent whose callbacks were since disabled).
+// replaceMessageManagers rebuilds the callback managers against the new
+// registry and config, so tokens are no longer validated against the old
+// config (e.g. an agent whose callbacks were since disabled), and stops the
+// superseded ones. Their tokens persist on disk and are reloaded by the
+// rebuilt manager for still-enabled agents.
+func (al *AgentLoop) replaceMessageManagers(registry *AgentRegistry, cfg *config.Config) {
 	newCallbackManagers := buildMessageManagers(registry, cfg)
 	al.mu.Lock()
 	oldCallbackManagers := al.messageManagers
 	al.messageManagers = newCallbackManagers
 	al.mu.Unlock()
-
-	// Stop the superseded callback managers (their tokens persist on disk and are
-	// reloaded by the rebuilt manager for still-enabled agents).
 	for _, mgr := range oldCallbackManagers {
 		mgr.Stop()
 	}
+}
 
-	// Flush the dispatcher cache so stale providers are evicted on config reload.
-	if al.dispatcher != nil {
-		al.dispatcher.Flush(cfg)
+// closeReplacedProvider closes the provider the reload replaced, once the
+// requests in flight on it have finished (at most 30 seconds, or until ctx
+// ends). It runs after the swap, so readers are never blocked by it.
+func (al *AgentLoop) closeReplacedProvider(ctx context.Context, oldProvider providers.LLMProvider) {
+	stateful, ok := oldProvider.(providers.StatefulProvider)
+	if !ok {
+		return
 	}
-
-	// Have cached ContextManagers rebuilt from the new config, since per-session
-	// config is baked in at creation (notably the summarization model chain).
-	// Idle sessions are evicted now; sessions in use keep their manager and
-	// session token until released, then rebuild on their next access.
-	al.invalidateContextManagers(ctx)
-
-	// Close old provider after releasing the lock
-	// This prevents blocking readers while closing
-	if hadProvider {
-		if stateful, ok := oldProvider.(providers.StatefulProvider); ok {
-			waitDone := make(chan struct{})
-			go func() {
-				al.activeRequests.Wait()
-				close(waitDone)
-			}()
-			select {
-			case <-waitDone:
-			case <-time.After(30 * time.Second):
-				logger.WarnCF("agent", "Timeout waiting for in-flight requests during provider close; forcing close", nil)
-			case <-ctx.Done():
-				logger.WarnCF("agent", "Context canceled waiting for in-flight requests; forcing close", nil)
-			}
-			stateful.Close()
-		}
+	waitDone := make(chan struct{})
+	go func() {
+		al.activeRequests.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(30 * time.Second):
+		logger.WarnCF("agent", "Timeout waiting for in-flight requests during provider close; forcing close", nil)
+	case <-ctx.Done():
+		logger.WarnCF("agent", "Context canceled waiting for in-flight requests; forcing close", nil)
 	}
-
-	logger.InfoCF("agent", "Provider and config reloaded successfully",
-		map[string]any{
-			"model": cfg.Agents.Defaults.DefaultModelName(),
-		})
-
-	return nil
+	stateful.Close()
 }
 
 // cooldownTracker returns the shared cooldown tracker (thread-safe). Compaction
