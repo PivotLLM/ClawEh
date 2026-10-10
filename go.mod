@@ -15,7 +15,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/ergochat/readline v0.1.3
 	github.com/go-pdf/fpdf v0.9.0
-	github.com/gomarkdown/markdown v0.0.0-20260923180740-94fc73f6b1a3
+	github.com/gomarkdown/markdown v0.0.0-20261006233006-5e92716d526e
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/h2non/filetype v1.1.3
@@ -30,9 +30,9 @@ require (
 	github.com/tenebris-tech/alerter v0.1.5
 	github.com/tenebris-tech/mlogger v0.0.5
 	github.com/tenebris-tech/secmsg v0.1.1
-	golang.org/x/crypto v0.57.0
-	golang.org/x/image v0.46.0
-	golang.org/x/term v0.46.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/image v0.47.0
+	golang.org/x/term v0.47.0
 	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.31.0
@@ -59,7 +59,7 @@ require (
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
-	github.com/mattn/go-colorable v0.1.15 // indirect
+	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/molecule-man/go-brrr v1.2.0 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
@@ -76,7 +76,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.74.0 // indirect
+	github.com/valyala/fasthttp v1.75.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
@@ -85,9 +85,9 @@ require (
 	go.etcd.io/bbolt v1.5.0 // indirect
 	go.mau.fi/util v0.10.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/arch v0.31.0 // indirect
-	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/arch v0.32.0 // indirect
+	golang.org/x/exp v0.0.0-20261009195045-ca0d7ba23607 // indirect
+	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
