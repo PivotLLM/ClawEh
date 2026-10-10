@@ -1,3 +1,5 @@
+import { normalizeAgentId } from "@/components/agents/agent-model"
+
 // Providers worth surfacing first in the picker — the rest follow alphabetically.
 export const COMMON_PROVIDERS = [
   "OpenAI",
@@ -23,14 +25,18 @@ export const CLI_DEFAULT = "__cli_default__"
 
 export type TestState = "idle" | "testing" | "ok" | "warn" | "fail"
 
-// slugify turns an agent display name into a stable id (lowercase, dash-joined).
-export function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "agent"
-  )
+// uniqueAgentId turns an agent display name into an agent id by the agent id
+// rule (normalizeAgentId; "agent" when the name leaves nothing usable), with
+// "-2", "-3", ... appended when taken, the base shortened to keep the id
+// within the 64-character limit.
+export function uniqueAgentId(name: string, taken: Set<string>): string {
+  const base = normalizeAgentId(name, "agent")
+  let id = base
+  for (let n = 2; taken.has(id); n++) {
+    const suffix = `-${n}`
+    id = base.slice(0, 64 - suffix.length).replace(/[-_]+$/, "") + suffix
+  }
+  return id
 }
 
 export interface StepDef {

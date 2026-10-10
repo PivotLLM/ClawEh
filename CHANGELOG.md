@@ -811,8 +811,8 @@ observe does not need an entry.
 
 ### Changed
 
-- **BREAKING: agent ids must be lower case and use only letters, digits, -
-  and _.** This applies to `agents.list[].id` and to every place that names an
+- **BREAKING: agent ids must be 1 to 64 characters of lower-case letters,
+  digits, - and _, starting with a letter or digit.** This applies to `agents.list[].id` and to every place that names an
   agent: `bindings[].agent_id`, `bindings[].agent_mentions` and
   `subagents.allow_agents` (`"*"` is still allowed). ClawEh used to rewrite
   such an id silently at run time; it now refuses it. A `config.json` with
@@ -823,8 +823,11 @@ observe does not need an entry.
   suggests in `agents.list` and everywhere it is named (bindings,
   `agent_mentions`, other agents' `allow_agents`). That form is the one ClawEh
   already used at run time, so the agent keeps its folder under `agents/`
-  (with its conversation and memory), its scheduled jobs and its devices. If
-  you choose a different id instead, rename the agent's folder
+  (with its conversation and memory), its scheduled jobs and its devices. The
+  exception is an id that starts with `_` (such as `_alice`, now `alice`) or
+  that ended in `_` or `-` after characters ClawEh replaced: its folder was
+  named after the old form, so rename `agents/<old id>` to the suggested id.
+  If you choose a different id instead, rename the agent's folder
   `agents/<suggested id>` to the new id first (an agent with its own
   `workspace` setting keeps that folder either way).
 

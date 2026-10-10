@@ -1,0 +1,230 @@
+[
+  {
+    "input": "alice",
+    "normalized": "alice",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "bob-2",
+    "normalized": "bob-2",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "a_b",
+    "normalized": "a_b",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "main",
+    "normalized": "main",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "9lives",
+    "normalized": "9lives",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "alice_",
+    "normalized": "alice_",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "alice-",
+    "normalized": "alice-",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "a",
+    "normalized": "a",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "0",
+    "normalized": "0",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "normalized": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "valid": true,
+    "problem": null
+  },
+  {
+    "input": "Alice",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"Alice\" may use only lower-case letters, digits, - and _; use \"alice\"."
+  },
+  {
+    "input": "Alice.Smith",
+    "normalized": "alice-smith",
+    "valid": false,
+    "problem": "Agent id \"Alice.Smith\" may use only lower-case letters, digits, - and _; use \"alice-smith\"."
+  },
+  {
+    "input": " alice",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \" alice\" may use only lower-case letters, digits, - and _; use \"alice\"."
+  },
+  {
+    "input": "alice smith",
+    "normalized": "alice-smith",
+    "valid": false,
+    "problem": "Agent id \"alice smith\" may use only lower-case letters, digits, - and _; use \"alice-smith\"."
+  },
+  {
+    "input": "  Bob.Smith  ",
+    "normalized": "bob-smith",
+    "valid": false,
+    "problem": "Agent id \"  Bob.Smith  \" may use only lower-case letters, digits, - and _; use \"bob-smith\"."
+  },
+  {
+    "input": "-alice",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"-alice\" must start with a letter or digit; use \"alice\"."
+  },
+  {
+    "input": "_alice",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"_alice\" must start with a letter or digit; use \"alice\"."
+  },
+  {
+    "input": "__alice__",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"__alice__\" must start with a letter or digit; use \"alice\"."
+  },
+  {
+    "input": "-_alice_-",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"-_alice_-\" must start with a letter or digit; use \"alice\"."
+  },
+  {
+    "input": "alice_!",
+    "normalized": "alice",
+    "valid": false,
+    "problem": "Agent id \"alice_!\" may use only lower-case letters, digits, - and _; use \"alice\"."
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "problem": "Agent id \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" is longer than 64 characters; use \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"."
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_b",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "problem": "Agent id \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_b\" is longer than 64 characters; use \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"."
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!b",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "problem": "Agent id \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!b\" may use only lower-case letters, digits, - and _; use \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"."
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bcd",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "problem": "Agent id \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bcd\" is longer than 64 characters; use \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"."
+  },
+  {
+    "input": "!!!",
+    "normalized": "main",
+    "valid": false,
+    "problem": "Agent id \"!!!\" may use only lower-case letters, digits, - and _."
+  },
+  {
+    "input": "",
+    "normalized": "main",
+    "valid": false,
+    "problem": "An agent has no id; give it one, such as \"alice\"."
+  },
+  {
+    "input": "   ",
+    "normalized": "main",
+    "valid": false,
+    "problem": "An agent has no id; give it one, such as \"alice\"."
+  },
+  {
+    "input": "-",
+    "normalized": "main",
+    "valid": false,
+    "problem": "Agent id \"-\" must start with a letter or digit."
+  },
+  {
+    "input": "_",
+    "normalized": "main",
+    "valid": false,
+    "problem": "Agent id \"_\" must start with a letter or digit."
+  },
+  {
+    "input": "MAIN",
+    "normalized": "main",
+    "valid": false,
+    "problem": "Agent id \"MAIN\" may use only lower-case letters, digits, - and _; use \"main\"."
+  },
+  {
+    "input": "İstanbul",
+    "normalized": "stanbul",
+    "valid": false,
+    "problem": "Agent id \"İstanbul\" may use only lower-case letters, digits, - and _; use \"stanbul\"."
+  },
+  {
+    "input": "café",
+    "normalized": "caf",
+    "valid": false,
+    "problem": "Agent id \"café\" may use only lower-case letters, digits, - and _; use \"caf\"."
+  },
+  {
+    "input": "Ünïcødé",
+    "normalized": "n-c-d",
+    "valid": false,
+    "problem": "Agent id \"Ünïcødé\" may use only lower-case letters, digits, - and _; use \"n-c-d\"."
+  },
+  {
+    "input": "Kelvin",
+    "normalized": "elvin",
+    "valid": false,
+    "problem": "Agent id \"Kelvin\" may use only lower-case letters, digits, - and _; use \"elvin\"."
+  },
+  {
+    "input": "a\tb",
+    "normalized": "a-b",
+    "valid": false,
+    "problem": "Agent id \"a\\tb\" may use only lower-case letters, digits, - and _; use \"a-b\"."
+  },
+  {
+    "input": "x/../y",
+    "normalized": "x-y",
+    "valid": false,
+    "problem": "Agent id \"x/../y\" may use only lower-case letters, digits, - and _; use \"x-y\"."
+  },
+  {
+    "input": "Alice:Bob",
+    "normalized": "alice-bob",
+    "valid": false,
+    "problem": "Agent id \"Alice:Bob\" may use only lower-case letters, digits, - and _; use \"alice-bob\"."
+  },
+  {
+    "input": "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-",
+    "normalized": "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-a",
+    "valid": false,
+    "problem": "Agent id \"ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-\" is longer than 64 characters; use \"ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-a\"."
+  }
+]

@@ -207,7 +207,8 @@ export function cliBypassWarnings(
     const flag = asArray(model.extra_args)
       .map(asString)
       .find((a) => cli.bypass_args.includes(a))
-    if (flag) out.push({ model: alias, provider: asString(provider.name), flag })
+    if (flag)
+      out.push({ model: alias, provider: asString(provider.name), flag })
   }
   return out
 }
@@ -219,7 +220,9 @@ export function cliBypassWarnings(
 // either checkbox toggles the same entry and both rows follow.
 export function toggleAccessEntry(entries: string[], name: string): string[] {
   const present = entries.some((e) => norm(e) === norm(name))
-  return present ? entries.filter((e) => norm(e) !== norm(name)) : [...entries, name]
+  return present
+    ? entries.filter((e) => norm(e) !== norm(name))
+    : [...entries, name]
 }
 
 // SHELL_TOOL is the one tool granted only by name: an agent runs shell
@@ -596,38 +599,51 @@ export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
   return { agents: { list: (cfg.list ?? []).map(agentPayload) } }
 }
 
-// Agent ids must already be in the form config.NormalizeAgentID gives
-// (config/agent_id.go); the server refuses any other with the same sentence.
+// The agent id rule, identical to config/agent_id.go (both are checked against
+// config/testdata/agent_id_cases.json): 1 to 64 characters of lower-case a-z,
+// 0-9, '-' and '_', starting with a letter or digit. The server refuses any
+// other id with the same sentence agentIdProblem gives.
 const AGENT_ID_MAX = 64
 const AGENT_ID_VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const AGENT_ID_INVALID_CHARS = /[^a-z0-9_-]+/
+const ASCII_SPACE_EDGES = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g
 
-// normalizeAgentId mirrors config.NormalizeAgentID.
-export function normalizeAgentId(id: string): string {
-  const trimmed = id.trim()
-  if (trimmed === "") return "main"
-  const lower = trimmed.toLowerCase()
-  if (AGENT_ID_VALID.test(lower)) return lower
+// asciiLower lower-cases A-Z only, as config's asciiLower does.
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase())
+}
+
+// isValidAgentId mirrors config.ValidAgentID.
+export function isValidAgentId(id: string): boolean {
+  return AGENT_ID_VALID.test(id)
+}
+
+// normalizeAgentId mirrors config.NormalizeAgentID: it turns any input into a
+// valid id, or fallback (config's is "main") when nothing usable is left.
+export function normalizeAgentId(id: string, fallback = "main"): string {
+  const lower = asciiLower(id)
+  if (isValidAgentId(lower)) return lower
   let result = lower
     .replace(new RegExp(AGENT_ID_INVALID_CHARS.source, "g"), "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-  if (result.length > AGENT_ID_MAX) result = result.slice(0, AGENT_ID_MAX)
-  return result === "" ? "main" : result
+    .replace(/^[-_]+|[-_]+$/g, "")
+  if (result.length > AGENT_ID_MAX) {
+    result = result.slice(0, AGENT_ID_MAX).replace(/[-_]+$/, "")
+  }
+  return result === "" ? fallback : result
 }
 
 // agentIdProblem returns why id cannot be an agent id, or null when it can.
 export function agentIdProblem(id: string): string | null {
-  const trimmed = id.trim()
+  if (isValidAgentId(id)) return null
+  const trimmed = id.replace(ASCII_SPACE_EDGES, "")
   if (trimmed === "") return 'An agent has no id; give it one, such as "alice".'
   const norm = normalizeAgentId(id)
-  if (norm === id) return null
-  const lower = trimmed.toLowerCase()
+  const lower = asciiLower(trimmed)
   const validChars = !AGENT_ID_INVALID_CHARS.test(lower)
   let problem = "may use only lower-case letters, digits, - and _"
   if (lower.length > AGENT_ID_MAX && validChars) {
     problem = `is longer than ${AGENT_ID_MAX} characters`
-  } else if (lower.startsWith("-") && validChars) {
+  } else if ((lower[0] === "-" || lower[0] === "_") && validChars) {
     problem = "must start with a letter or digit"
   }
   const msg = `Agent id ${JSON.stringify(id)} ${problem}`

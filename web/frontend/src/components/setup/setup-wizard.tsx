@@ -43,7 +43,7 @@ import {
   RECOMMENDED_MODEL,
   type StepDef,
   type TestState,
-  slugify,
+  uniqueAgentId,
 } from "@/components/setup/wizard-model"
 import { Button } from "@/components/ui/button"
 
@@ -358,9 +358,7 @@ export function SetupWizard() {
         )
       } else {
         const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
-        let id = slugify(agentName)
-        for (let n = 2; existingIds.has(id); n++)
-          id = `${slugify(agentName)}-${n}`
+        const id = uniqueAgentId(agentName, existingIds)
         const newAgent: Record<string, unknown> = {
           id,
           name: agentName.trim(),

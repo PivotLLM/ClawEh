@@ -21,9 +21,8 @@ var (
 	trailingDashRe = regexp.MustCompile(`-+$`)
 )
 
-// NormalizeAgentID sanitizes an agent ID to [a-z0-9][a-z0-9_-]{0,63}.
-// Invalid characters are collapsed to "-". Leading/trailing dashes stripped.
-// Empty input returns DefaultAgentID ("main").
+// NormalizeAgentID is config.NormalizeAgentID: it turns any input into a
+// valid agent id (config.ValidAgentID), "main" when nothing usable is left.
 func NormalizeAgentID(id string) string {
 	return config.NormalizeAgentID(id)
 }

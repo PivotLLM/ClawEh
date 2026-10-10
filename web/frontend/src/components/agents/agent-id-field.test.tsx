@@ -2,8 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { useState } from "react"
 import { describe, expect, it } from "vitest"
 
+import cases from "../../../../../config/testdata/agent_id_cases.json"
 import { AgentIdField } from "./agent-id-field"
-import { agentIdProblem, normalizeAgentId } from "./agent-model"
+import { agentIdProblem, isValidAgentId, normalizeAgentId } from "./agent-model"
 
 function Harness({ initial = "" }: { initial?: string }) {
   const [value, setValue] = useState(initial)
@@ -42,7 +43,18 @@ describe("agentIdProblem", () => {
   it("normalizes as config.NormalizeAgentID does", () => {
     expect(normalizeAgentId("  Bob.Smith  ")).toBe("bob-smith")
     expect(normalizeAgentId("")).toBe("main")
-    expect(normalizeAgentId("_x")).toBe("_x")
+    expect(normalizeAgentId("_x")).toBe("x")
+    expect(normalizeAgentId("", "agent")).toBe("agent")
+  })
+})
+
+// The table config/agent_id_rule_test.go checks the Go rule against, so the
+// two copies cannot drift.
+describe("agent id rule (shared cases)", () => {
+  it.each(cases)("$input", ({ input, normalized, valid, problem }) => {
+    expect(isValidAgentId(input)).toBe(valid)
+    expect(normalizeAgentId(input)).toBe(normalized)
+    expect(agentIdProblem(input)).toBe(problem)
   })
 })
 

@@ -323,13 +323,20 @@ production instance directly; test against a dev instance.
 - **Delivery reasons** (`channels/errors.go`): a failed send says why with a sentinel callers test with `errors.Is`, and `bus.OutboundMessage.OnDelivery` gets it: `ErrUnknownChannel` (not configured; the manager), `ErrNotRunning` (stopped, or no worker), `ErrRecipientOffline` and `ErrRecipientNotFound` (reported by the device, Telegram, Slack, Discord and WebUI channels: a paired device not connected or closing, a WebUI session with no browser open; an unknown/unpaired device, Telegram "chat not found"/upgraded to supergroup and every 403 (blocked, deactivated, can't initiate, bots, kicked), Slack `channel_not_found`/`not_in_channel`/`is_archived`, Discord unknown channel/user), `ErrReceiveOnly`, else `ErrSendFailed`/`ErrTemporary`/`ErrRateLimit` (Telegram: 429 rate limit, other 4xx send failed; it retries as plain text only on the "can't parse entities" 400). The channels keep the platform's (redacted) reason in the error, so the log and the alert say why. Only `ErrTemporary`/`ErrRateLimit`/unknown errors are retried; `sendSplit` stops at a chunk whose recipient is unavailable. Text and media share one retry loop and one failure report (`retrySend`, `reportSendFailure`). `sendWithRetry` puts one `channels.SendProgress` on the context across a message's retries, so a channel that splits it further (Telegram, when the HTML outgrows one message) resumes after the parts already delivered. Only the first part of a split message is a reply (`sendSplit`, then Telegram's own split); Telegram sets `allow_sending_without_reply`, so a reply to a deleted message still arrives, without the link. The "Channel send failed" alert fires only for a channel that reports itself not running and a send failing after its retries (incl. `ErrSendFailed`); offline/not found log at WARN, receive-only at INFO. Check Up marks a human agent whose chat is on a channel that is not set up (config-derived only, exact channel names).
 - **Built-in channels**: `channels.RegisterBuiltin(name, factory)` adds a channel every manager builds (each reload included) regardless of config; a configured channel of the same name wins. None is registered yet.
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
-  Agent ids in config must already be in the form `config.NormalizeAgentID` gives
-  (`routing.NormalizeAgentID` delegates to it): `config.AgentIDErrors` checks
+  The agent id rule is defined once in `config/agent_id.go`: 1–64 characters of
+  lower-case a–z, 0–9, `-` and `_`, starting with a letter or digit
+  (`config.ValidAgentID`); `config.NormalizeAgentID` turns any input into a valid
+  id (ASCII lower-case, invalid runs → `-`, leading/trailing `-`/`_` trimmed, cut
+  to 64, empty → `main`) and returns a valid id unchanged; every runtime
+  normalization goes through it (`routing.NormalizeAgentID` delegates). The
+  WebUI's copy (`isValidAgentId`/`normalizeAgentId`/`agentIdProblem` in
+  `agent-model.ts`, used by the setup wizard's `uniqueAgentId`) is identical; both
+  are checked against `config/testdata/agent_id_cases.json`. Agent ids in config
+  must already be valid: `config.AgentIDErrors` checks
   `agents.list[].id`, `bindings[].agent_id`/`agent_mentions` and `allow_agents`, and
   `LoadConfig` and `Store.Update` (and the WebUI's `validateConfig`) refuse any other,
   so config-side ids are compared as is, never normalized again (runtime input, such
-  as a typed `/agent Alice`, still is); the WebUI's `agentIdProblem` (`agent-model.ts`)
-  mirrors the rule. `subagents.allow_agents` is matched only by
+  as a typed `/agent Alice`, still is). `subagents.allow_agents` is matched only by
   `SubagentsConfig.Allows` (nil-safe; runtime and Check Up); an agent is named to people
   and in logs only by `AgentConfig.DisplayName` / `AgentInstance.DisplayName` (name, else id).
 - **Expected refusals**: a tool error wrapped by `tools.Refusal` (or any error with a
