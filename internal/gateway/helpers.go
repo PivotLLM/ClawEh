@@ -906,7 +906,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 			logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
 		} else {
 			if da, ok := agentLoop.GetRegistry().Get(defaultAgentID); ok && da != nil {
-				archiveDir := filepath.Join(da.StateDir, "sessions")
+				archiveDir := da.SessionsDir()
 				srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
 				logger.InfoCF("mcpserver", "Test session token registered",
 					map[string]any{"agent": defaultAgentID})
@@ -959,7 +959,7 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 				map[string]any{"agent": agentID})
 			return ""
 		}
-		return filepath.Join(da.StateDir, "sessions")
+		return da.SessionsDir()
 	})
 }
 

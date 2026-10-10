@@ -210,6 +210,10 @@ type SessionTokenIssuer interface {
 	Source(sessionKey string) (channel, chatID string)
 }
 
+// publishTimeout bounds handing one message to the bus, so a full queue
+// delays a turn or a background delivery by at most this much.
+const publishTimeout = 5 * time.Second
+
 const (
 	defaultResponse               = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
 	metadataKeyAccountID          = "account_id"

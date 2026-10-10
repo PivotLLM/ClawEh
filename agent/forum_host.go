@@ -435,7 +435,7 @@ func (h *ForumHost) ForumFinished(ctx context.Context, origin forum.Origin, chat
 		}
 	}
 	meta[bus.MetaOriginChannel] = channel
-	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 	defer cancel()
 	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",

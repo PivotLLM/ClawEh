@@ -100,7 +100,7 @@ func (al *AgentLoop) registerAgentTools(
 				// delivery: a channel reports an offline, unknown or
 				// stopped recipient at once (never retried); a slower
 				// outcome is reported as queued.
-				pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
+				pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
 				defer pubCancel()
 				msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content}
 				// Internal channels never reach the channel manager, which
@@ -181,7 +181,7 @@ func (al *AgentLoop) registerAgentTools(
 			if inbound.ChatID != "" && inbound.ChatID != "direct" {
 				inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
 			}
-			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 			defer cancel()
 			return al.bus.PublishInbound(pubCtx, inbound)
 		}
@@ -524,7 +524,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 		}
 		// A task started by an asked turn has no chat for user-facing output.
 		if !result.Silent && result.ForUser != "" && channel != constants.AgentMessageChannel {
-			outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
+			outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), publishTimeout)
 			if err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 				Channel: channel,
 				ChatID:  chatID,
@@ -544,7 +544,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string, s
 		if content == "" {
 			return
 		}
-		pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
+		pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), publishTimeout)
 		msg := bus.InboundMessage{
 			Channel:  "system",
 			SenderID: "async:agent_spawn",

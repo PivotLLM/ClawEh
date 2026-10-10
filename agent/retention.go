@@ -84,7 +84,7 @@ func (al *AgentLoop) runRetentionPass(now time.Time) retentionReport {
 		}
 		if days > 0 {
 			isOpen := func(key string) bool { return al.sessionOpen(ag.ID, key) }
-			r := pruneSessions(filepath.Join(ag.StateDir, "sessions"), ag.Sessions, now, days, isOpen)
+			r := pruneSessions(ag.SessionsDir(), ag.Sessions, now, days, isOpen)
 			rep.deleted = append(rep.deleted, r.deleted...)
 			rep.skippedOpen += r.skippedOpen
 			rep.errors = append(rep.errors, r.errors...)

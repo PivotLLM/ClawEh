@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -101,7 +100,7 @@ func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string
 	if !ok {
 		return
 	}
-	archiveDir := filepath.Join(agent.StateDir, "sessions")
+	archiveDir := agent.SessionsDir()
 	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
 		entry.setToken(tok)
 	}
@@ -377,7 +376,7 @@ func (al *AgentLoop) discardConversation(ctx context.Context, agent *AgentInstan
 	}
 	forgetSessionState(agent.Sessions, sessionKey)
 	al.releaseSessionPins(sessionKey)
-	if err := memory.DeleteSession(filepath.Join(agent.StateDir, "sessions"), sessionKey); err != nil {
+	if err := memory.DeleteSession(agent.SessionsDir(), sessionKey); err != nil {
 		logger.WarnCF("agent", "Failed to delete a single-shot conversation", map[string]any{
 			"agent": agent.Label(), "session_key": sessionKey, "error": err.Error(),
 		})
