@@ -166,21 +166,11 @@ func getGlobalConfigDir() string {
 }
 
 func NewContextBuilder(workspace string) *ContextBuilder {
-	// builtin skills: skills directory in current project
-	// Use the skills/ directory under the current working directory
-	builtinSkillsDir := strings.TrimSpace(os.Getenv("CLAW_BUILTIN_SKILLS"))
-	if builtinSkillsDir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			logger.WarnCF("agent", "Failed to resolve working directory for builtin skills", map[string]any{"error": err.Error()})
-		}
-		builtinSkillsDir = filepath.Join(wd, "skills")
-	}
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
 	return &ContextBuilder{
 		workspace:    workspace,
-		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
+		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir),
 		memory:       NewMemoryStore(workspace),
 	}
 }
@@ -390,7 +380,7 @@ func (cb *ContextBuilder) sourcePaths() []string {
 }
 
 // skillRoots returns all skill root directories that can affect
-// BuildSkillsSummary output (workspace/global/builtin).
+// BuildSkillsSummary output (workspace/global).
 func (cb *ContextBuilder) skillRoots() []string {
 	if cb.skillsLoader == nil {
 		return []string{filepath.Join(cb.workspace, "skills")}
@@ -488,7 +478,7 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 		return true
 	}
 
-	// --- Skill roots (workspace/global/builtin) ---
+	// --- Skill roots (workspace/global) ---
 	//
 	// For each root:
 	// 1. Creation/deletion and root directory mtime changes are tracked by fileChangedSince.

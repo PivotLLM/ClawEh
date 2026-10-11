@@ -41,7 +41,7 @@ func mcpServerRows(cfg *config.Config) [][]string {
 }
 
 func skillRows(cfg *config.Config) [][]string {
-	loader := skills.NewSkillsLoader("", cfg.SkillsPath(), "")
+	loader := skills.NewSkillsLoader("", cfg.SkillsPath())
 	var rows [][]string
 	for _, s := range loader.ListSkills() {
 		rows = append(rows, row(s.Name, s.Source, s.Description))
