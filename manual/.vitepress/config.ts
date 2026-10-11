@@ -29,6 +29,7 @@ export default defineConfig({
           { text: "What ClawEh is", link: "/getting-started/overview" },
           { text: "Installing", link: "/getting-started/install" },
           { text: "Quick start", link: "/getting-started/quickstart" },
+          { text: "A tour of the WebUI", link: "/getting-started/webui-tour" },
           { text: "Upgrading", link: "/getting-started/upgrading" },
         ],
       },
@@ -52,6 +53,7 @@ export default defineConfig({
         items: [
           { text: "Creating and editing agents", link: "/agents/creating" },
           { text: "Tools and skills", link: "/agents/tools-and-skills" },
+          { text: "Web search and fetch", link: "/agents/web-search" },
           { text: "Conversation and memory", link: "/agents/memory" },
           { text: "Files and mounts", link: "/agents/files-and-mounts" },
           { text: "Messages between agents", link: "/agents/messaging" },
@@ -72,6 +74,8 @@ export default defineConfig({
           { text: "Other chat channels", link: "/channels/other" },
           { text: "Devices", link: "/channels/devices" },
           { text: "Routing and bindings", link: "/channels/routing" },
+          { text: "Message API", link: "/channels/message-api" },
+          { text: "Voice messages and transcription", link: "/channels/voice" },
         ],
       },
       {
@@ -96,6 +100,7 @@ export default defineConfig({
           { text: "Signing in", link: "/admin/login" },
           { text: "HTTPS and certificates", link: "/admin/https" },
           { text: "Network access", link: "/admin/network" },
+          { text: "Remote access", link: "/admin/remote-access" },
           { text: "Check Up", link: "/admin/checkup" },
           { text: "Audit log", link: "/admin/audit" },
           { text: "Alerts", link: "/admin/alerts" },
@@ -110,6 +115,7 @@ export default defineConfig({
         items: [
           { text: "Configuration file", link: "/reference/configuration" },
           { text: "Command line", link: "/reference/cli" },
+          { text: "Chat commands", link: "/reference/chat-commands" },
           { text: "Troubleshooting", link: "/reference/troubleshooting" },
           { text: "Glossary", link: "/reference/glossary" },
         ],

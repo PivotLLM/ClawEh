@@ -8,13 +8,13 @@ New to ClawEh? Start with [What ClawEh is](./getting-started/overview.md), then 
 
 | Section | What it covers |
 |---|---|
-| [Getting started](./getting-started/index.md) | What ClawEh is, installing, the first chat, and upgrading. |
+| [Getting started](./getting-started/index.md) | What ClawEh is, installing, the first chat, a tour of the WebUI, and upgrading. |
 | [Providers and models](./providers/index.md) | Connecting to cloud APIs, OpenRouter, Amazon Bedrock, local models and coding CLIs. |
-| [Agents](./agents/index.md) | Creating agents, tools and skills, memory, files, messages between agents, human agents, sub-agents and scheduled jobs. |
-| [Channels](./channels/index.md) | The WebUI chat, Telegram, Slack, Discord, other chat apps, devices, and routing messages to agents. |
+| [Agents](./agents/index.md) | Creating agents, tools and skills, web search, memory, files, messages between agents, human agents, sub-agents and scheduled jobs. |
+| [Channels](./channels/index.md) | The WebUI chat, Telegram, Slack, Discord, other chat apps, devices, routing messages to agents, the Message API, and voice messages. |
 | [Forums](./forums/index.md) | Structured discussions among agents: templates, running a forum and reading its results. |
 | [Maestro](./maestro.md) | Projects, task lists and worker sub-agents for large, multi-step work. |
 | [MCPFusion](./mcpfusion.md) | Turning REST APIs into tools, with each agent signing in on its own. |
 | [MCP](./mcp.md) | ClawEh as an MCP server for CLI models and other clients, and as a client of external MCP servers. |
-| [Security and administration](./admin/index.md) | Signing in, HTTPS, network access, Check Up, the audit log, alerts, backups and logs. |
-| [Reference](./reference/index.md) | The configuration file, the command line, troubleshooting and the glossary. |
+| [Security and administration](./admin/index.md) | Signing in, HTTPS, network access, remote access, Check Up, the audit log, alerts, backups and logs. |
+| [Reference](./reference/index.md) | The configuration file, the command line, chat commands, troubleshooting and the glossary. |
