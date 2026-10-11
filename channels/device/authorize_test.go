@@ -64,9 +64,8 @@ func TestAuthorizeGateway_SharedSecrets(t *testing.T) {
 
 // TestAuthorizeGateway_UnsetSecretsFailClosed pins the fail-closed property: no
 // combination of unset shared secrets grants access, whatever the client
-// presents. This is the property docs/security-stability-review.md #11 records
-// as closed, so it is worth holding still independently of how the comparison
-// is implemented.
+// presents. It is worth holding still independently of how the comparison is
+// implemented.
 func TestAuthorizeGateway_UnsetSecretsFailClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
