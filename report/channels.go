@@ -119,6 +119,8 @@ func bindingsFor(cfg *config.Config, channel string) string {
 		}
 		if b.Match.Peer != nil && b.Match.Peer.ID != "" {
 			on = append(on, b.Match.Peer.Kind+" "+b.Match.Peer.ID)
+		} else if b.Match.Peer != nil && b.Match.Peer.Kind != "" {
+			on = append(on, "every "+b.Match.Peer.Kind+" message")
 		}
 		if b.Match.GuildID != "" {
 			on = append(on, "guild "+b.Match.GuildID)

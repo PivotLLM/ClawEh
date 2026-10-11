@@ -292,3 +292,41 @@ func TestResolveRoute_NoDefaultUsesFirst(t *testing.T) {
 		t.Errorf("AgentID = %q, want 'alpha' (first in list)", route.AgentID)
 	}
 }
+
+// A peer binding with a kind and no id (the Bindings page's "Direct
+// messages") matches every peer of that kind on its channel, below a binding
+// naming the peer itself and above channel-wide bindings and the default.
+func TestResolveRoute_PeerKindBinding(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}, {ID: "bob"}}
+	dmBinding := config.AgentBinding{AgentID: "alice", Match: config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct", ID: ""}}}
+	specific := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct", ID: "U2"}}}
+	wholeChannel := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "slack", AccountID: "*"}}
+	dm := func(id string) RouteInput {
+		return RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "direct", ID: id}}
+	}
+	channelMsg := RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "channel", ID: "C1"}}
+
+	for _, tc := range []struct {
+		name      string
+		bindings  []config.AgentBinding
+		input     RouteInput
+		agent     string
+		matchedBy string
+	}{
+		{"direct message routes to the kind binding", []config.AgentBinding{dmBinding}, dm("U1"), "alice", "binding.peer.kind"},
+		{"specific peer binding wins", []config.AgentBinding{dmBinding, specific}, dm("U2"), "bob", "binding.peer"},
+		{"other direct message still to the kind binding", []config.AgentBinding{dmBinding, specific}, dm("U1"), "alice", "binding.peer.kind"},
+		{"kind binding beats a whole-channel binding", []config.AgentBinding{wholeChannel, dmBinding}, dm("U1"), "alice", "binding.peer.kind"},
+		{"channel message unaffected, falls to default", []config.AgentBinding{dmBinding}, channelMsg, "main", "default"},
+		{"channel message unaffected, whole-channel binding", []config.AgentBinding{dmBinding, wholeChannel}, channelMsg, "bob", "binding.channel"},
+		{"other channel unaffected", []config.AgentBinding{dmBinding}, RouteInput{Channel: "telegram", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}, "main", "default"},
+		{"no binding goes to default", nil, dm("U1"), "main", "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
+			if route.AgentID != tc.agent || route.MatchedBy != tc.matchedBy {
+				t.Fatalf("route = %s by %s, want %s by %s", route.AgentID, route.MatchedBy, tc.agent, tc.matchedBy)
+			}
+		})
+	}
+}

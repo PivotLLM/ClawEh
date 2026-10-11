@@ -10,10 +10,12 @@ matches it, in this order:
 1. a binding for this exact chat (a Telegram group, a Slack channel, one
    person's direct messages);
 2. a binding for the Telegram forum topic the message belongs to;
-3. a binding for the whole Discord server;
-4. a binding for the whole Slack workspace;
-5. a binding for the whole channel (for example `telegram-alice` or `slack`);
-6. otherwise, the [default agent](#the-default-agent).
+3. a binding for every direct message on the channel (Slack's **Direct
+   messages**);
+4. a binding for the whole Discord server;
+5. a binding for the whole Slack workspace;
+6. a binding for the whole channel (for example `telegram-alice` or `slack`);
+7. otherwise, the [default agent](#the-default-agent).
 
 Whichever agent is chosen, the message joins that agent's one conversation.
 An agent has a single conversation and memory across all channels, so a
@@ -29,8 +31,10 @@ Devices are not routed by bindings: each device has its own agent setting
 3. Choose the **Channel**, for example `telegram-alice`. The list shows the
    channels that are turned on.
 4. Choose the **Agent**.
-5. For Slack, choose the **Slack routing**: **All messages**, or **Specific
-   channel** with the Slack channel ID.
+5. For Slack, choose the **Slack routing**: **All messages**, **Specific
+   channel** with the Slack channel ID, or **Direct messages** for every
+   direct message to the bot. A binding for one specific channel or person
+   still wins over **Direct messages**.
 6. Optional: fill in **Agent mentions** (see [Mentions](#mentions)).
 7. Click **Add**.
 
@@ -74,6 +78,10 @@ group, where Bob answers:
   ]
 }
 ```
+
+A peer with a `kind` and no `id` matches every chat of that kind on the
+channel: `"peer": { "kind": "direct" }` sends every direct message to the
+binding's agent, while groups and channels go on to the other bindings.
 
 A Discord binding can name a whole server with `"guild_id"` in `match`, and a
 Slack binding a whole workspace with `"team_id"`.

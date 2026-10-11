@@ -1378,6 +1378,14 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A "Direct messages" binding now routes every direct message on that
+  channel to its agent.** The Bindings page saves it as a peer with kind
+  `direct` and no id, which never matched, so direct messages went to the
+  default agent. A peer binding with a kind and no id now matches every chat
+  of that kind on its channel; a binding naming one specific chat still wins
+  over it, and it wins over whole-server, whole-workspace and whole-channel
+  bindings.
+
 - **Matrix Allow From accepts user IDs as written (`@bob:example.org`).** An
   entry in the natural form never matched, because the part before the first
   colon was read as a platform name; only `matrix:@bob:example.org` let the

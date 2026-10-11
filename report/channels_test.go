@@ -5,6 +5,8 @@ package report
 
 import (
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestCollectChannels_AnySenderCalledOut(t *testing.T) {
@@ -48,4 +50,17 @@ func TestCollectChannels_NoneEnabled(t *testing.T) {
 	if len(tb.Rows) != 1 || tb.Rows[0][0] != "(no channel enabled)" {
 		t.Errorf("rows = %v", tb.Rows)
 	}
+}
+
+// A peer binding with a kind and no id matches every peer of that kind, so
+// the report names it that way rather than as a whole-channel binding.
+func TestCollectChannels_PeerKindBinding(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Bindings = append(cfg.Bindings, config.AgentBinding{
+		AgentID: "bob",
+		Match:   config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct"}},
+	})
+	tb := findTable(t, collectChannels(t.Context(), cfg, env), "Enabled channels")
+	_, sl := findRow(t, tb, "slack")
+	contains(t, sl[4], "bob (account *, every direct message)", "slack direct-message binding")
 }

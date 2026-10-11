@@ -74,3 +74,31 @@ func TestRouting_CaseInsensitiveAgentIDs(t *testing.T) {
 		t.Error("slack does not reach BOB through agent_mentions [bob]")
 	}
 }
+
+// Reaches agrees with ResolveRoute on a kind-only peer binding: it matches
+// every direct message on its channel and nothing else.
+func TestReaches_PeerKindBinding(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}, {ID: "bob"}}
+	bindings := []config.AgentBinding{
+		{AgentID: "main", AgentMentions: []string{"bob"}, Match: config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct"}}},
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "telegram", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct"}}},
+	}
+	r := NewRouteResolver(testConfig(agents, bindings))
+	for _, tc := range []struct {
+		name  string
+		input RouteInput
+		agent string
+		want  bool
+	}{
+		{"mention on a direct-message binding", RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}, "bob", true},
+		{"channel message does not match it", RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "channel", ID: "C1"}}, "bob", false},
+		{"routed agent of a direct-message binding", RouteInput{Channel: "telegram", Peer: &RoutePeer{Kind: "direct", ID: "u1"}}, "alice", true},
+		{"group message does not reach it", RouteInput{Channel: "telegram", Peer: &RoutePeer{Kind: "group", ID: "g1"}}, "alice", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := r.Reaches(tc.input, tc.agent); got != tc.want {
+				t.Fatalf("Reaches(%+v, %q) = %v, want %v", tc.input, tc.agent, got, tc.want)
+			}
+		})
+	}
+}
