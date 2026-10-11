@@ -277,6 +277,10 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 	if len(t.messages) > 0 {
 		systemPromptLen = len(t.messages[0].Content)
 	}
+	var temperature any = "model default"
+	if t.agent.Temperature != nil {
+		temperature = *t.agent.Temperature
+	}
 	logger.DebugCF("agent", "LLM request",
 		map[string]any{
 			"agent_id":          t.agent.ID,
@@ -285,7 +289,7 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 			"messages_count":    len(t.messages),
 			"tools_count":       len(defs),
 			"max_tokens":        t.agent.MaxTokens,
-			"temperature":       t.agent.Temperature,
+			"temperature":       temperature,
 			"system_prompt_len": systemPromptLen,
 		})
 

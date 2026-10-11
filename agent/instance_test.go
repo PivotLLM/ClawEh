@@ -29,8 +29,8 @@ func TestNewAgentInstance_UsesDefaultsTemperatureAndMaxTokens(t *testing.T) {
 	if agent.MaxTokens != 1234 {
 		t.Fatalf("MaxTokens = %d, want %d", agent.MaxTokens, 1234)
 	}
-	if agent.Temperature != 1.0 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 1.0)
+	if agent.Temperature == nil || *agent.Temperature != 1.0 {
+		t.Fatalf("Temperature = %v, want 1.0", agent.Temperature)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenZero(t *testing.T) {
 	provider := &mockProvider{}
 	agent := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider)
 
-	if agent.Temperature != 0.0 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 0.0)
+	if agent.Temperature == nil || *agent.Temperature != 0.0 {
+		t.Fatalf("Temperature = %v, want 0.0", agent.Temperature)
 	}
 }
 
@@ -76,8 +76,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenUnset(t *testing.T) {
 	provider := &mockProvider{}
 	agent := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider)
 
-	if agent.Temperature != 0.2 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 0.2)
+	if agent.Temperature != nil {
+		t.Fatalf("Temperature = %v, want nil (the model's own default)", *agent.Temperature)
 	}
 }
 

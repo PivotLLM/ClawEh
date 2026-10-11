@@ -13,7 +13,6 @@ import (
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -40,7 +39,7 @@ type AgentInstance struct {
 	Spec           agentreg.Spec
 	MaxIterations  int
 	MaxTokens      int
-	Temperature    float64
+	Temperature    *float64 // nil: no temperature is sent, the model default applies
 	ThinkingLevel  ThinkingLevel
 	NoTools        bool
 	ContextWindow  int
@@ -363,7 +362,7 @@ func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cf
 type runLimits struct {
 	maxIterations int
 	maxTokens     int
-	temperature   float64
+	temperature   *float64 // nil: send none, the model's own default applies
 	contextWindow int
 	thinkingLevel ThinkingLevel
 	noTools       bool
@@ -376,7 +375,6 @@ func resolveRunLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConf
 	l := runLimits{
 		maxIterations: defaults.MaxToolIterations,
 		maxTokens:     defaults.MaxTokens,
-		temperature:   global.DefaultTemperature,
 		contextWindow: defaults.ContextWindow,
 	}
 	if l.maxIterations == 0 {
@@ -386,10 +384,12 @@ func resolveRunLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConf
 		l.maxTokens = 8192
 	}
 	if defaults.Temperature != nil {
-		l.temperature = *defaults.Temperature
+		t := *defaults.Temperature
+		l.temperature = &t
 	}
 	if agentCfg != nil && agentCfg.Temperature != nil {
-		l.temperature = *agentCfg.Temperature
+		t := *agentCfg.Temperature
+		l.temperature = &t
 	}
 	if l.contextWindow == 0 {
 		l.contextWindow = 128000

@@ -24,10 +24,6 @@ const CommonDir = "common"
 // EnvVarHome is the environment variable that overrides the default data directory.
 const EnvVarHome = "CLAW_HOME"
 
-// DefaultTemperature is the fallback LLM sampling temperature when neither
-// agent-level nor agent_defaults temperature is configured.
-const DefaultTemperature = 0.2
-
 // ImageDownscaleMaxEdgePx is the longest-edge pixel threshold for the
 // file_view_image tool: an image whose longest edge exceeds this is downscaled
 // so its longest edge becomes exactly this value (preserving aspect ratio),

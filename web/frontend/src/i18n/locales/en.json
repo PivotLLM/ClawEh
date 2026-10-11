@@ -507,7 +507,7 @@
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",
       "default_temperature": "Default temperature",
-      "default_temperature_hint": "0–2; blank uses the provider default.",
+      "default_temperature_hint": "0–2; blank lets each model use its own default.",
       "summarization_models": "Memory models",
       "summarization_models_hint": "Models tried in order for memory consolidation and context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
       "summarization_models_empty": "No memory models configured — each agent uses its own model.",

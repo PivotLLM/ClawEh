@@ -71,7 +71,7 @@ Require Reasoning Content matters most when an agent switches models: after a tu
 
 ### Temperature
 
-ClawEh sends a temperature with every request to an HTTP model: the agent's `temperature`, else **Default temperature** on the System page (`agents.defaults.temperature`), else 0.2. Some reasoning models reject any temperature. For those, list `temperature` in the model's **Drop Request Fields**, as the catalogue does for OpenAI GPT 5.5.
+ClawEh sends an HTTP model the agent's `temperature`, else **Default temperature** on the System page (`agents.defaults.temperature`). When neither is set it sends no temperature, and the model uses its own default. Some reasoning models reject any temperature. For those, list `temperature` in the model's **Drop Request Fields**, as the catalogue does for OpenAI GPT 5.5.
 
 ### Reasoning effort
 
