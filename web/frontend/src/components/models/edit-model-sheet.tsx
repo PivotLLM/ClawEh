@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 
+import { TurnTimeoutNote } from "./turn-timeout-note"
+
 interface EditForm {
   provider: string
   name: string
@@ -61,6 +63,8 @@ interface EditModelSheetProps {
   open: boolean
   onClose: () => void
   onSaved: () => void
+  // The install's effective Turn timeout in seconds; 0 when unknown.
+  turnTimeout: number
 }
 
 export function EditModelSheet({
@@ -68,6 +72,7 @@ export function EditModelSheet({
   open,
   onClose,
   onSaved,
+  turnTimeout,
 }: EditModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<EditForm>({
@@ -305,6 +310,10 @@ export function EditModelSheet({
                   min={0}
                 />
               </Field>
+              <TurnTimeoutNote
+                requestTimeout={form.requestTimeout}
+                turnTimeout={turnTimeout}
+              />
 
               <Field
                 label={t("models.field.rpm")}

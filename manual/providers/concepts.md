@@ -119,7 +119,7 @@ The request timeout is how long ClawEh waits for one model call.
 
 The CLI models are created with 3600 seconds, because a CLI runs a whole job of its own in one call.
 
-Every turn is also bounded by **Turn timeout (s)** on the System page (`agents.defaults.turn_timeout`, 900 seconds by default), which covers all model calls and tools of the turn. It applies to CLI models too: a CLI job that should run longer than 15 minutes needs a longer turn timeout. A call that times out counts as a failure and the next model is tried.
+Every turn is also bounded by **Turn timeout (s)** on the System page (`agents.defaults.turn_timeout`, 900 seconds by default), which covers all model calls and tools of the turn. It applies to CLI models too: a CLI job that should run longer than 15 minutes needs a longer turn timeout. A call that times out counts as a failure and the next model is tried. A model whose request timeout is longer than the turn timeout shows a note at its **Request Timeout (s)** field, with a link to the turn timeout.
 
 ## Models used on the side
 
