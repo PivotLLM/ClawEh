@@ -169,25 +169,19 @@ type ReadFileToolConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowReadPaths  []string `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
-	AllowWritePaths []string `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
-	// Overrides is a generic per-tool enable map keyed by published tool name
-	// (e.g. "skill_find"). It is the dynamic gating path for tools that have no
-	// dedicated typed field — namespaced/global-layer tools register here so the
-	// WebUI can toggle them without code changes. Checked first by IsToolEnabled.
-	Overrides    map[string]bool    `json:"tool_overrides,omitempty"`
-	Web          WebToolsConfig     `json:"web"`
-	Cron         CronToolsConfig    `json:"cron"`
-	Exec         ExecConfig         `json:"exec"`
-	Skills       SkillsToolsConfig  `json:"skills"`
-	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
-	MCP          MCPConfig          `json:"mcp"`
+	AllowReadPaths  []string           `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
+	AllowWritePaths []string           `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
+	Web             WebToolsConfig     `json:"web"`
+	Cron            CronToolsConfig    `json:"cron"`
+	Exec            ExecConfig         `json:"exec"`
+	Skills          SkillsToolsConfig  `json:"skills"`
+	MediaCleanup    MediaCleanupConfig `json:"media_cleanup"`
+	MCP             MCPConfig          `json:"mcp"`
 	// Discovery holds progressive-tool-discovery settings. It applies to all tool
 	// kinds (native, suites, MCP), so it lives at tools.discovery rather than under
 	// tools.mcp.
 	Discovery ToolDiscoveryConfig `json:"discovery"`
-	// ReadFile carries the read-size limit used at tool construction (its enabled
-	// state, like every per-tool toggle, lives in Overrides now).
+	// ReadFile carries the read-size limit used at tool construction.
 	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
 	// Subagent is a capability gate (off by default), not a per-tool enable.
 	Subagent ToolConfig `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
@@ -326,39 +320,4 @@ func (c *Config) MCPHostEffectivelyEnabled() bool {
 		return true
 	}
 	return c.MCPHost.AutoEnable && c.HasCLIProvider()
-}
-
-// IsToolEnabled is ToolEnabled for a caller without a per-tool default: the
-// capability gates "mcp" and "subagent" default to their settings, any other
-// tool to enabled.
-func (t *ToolsConfig) IsToolEnabled(name string) bool {
-	// Capability gates (off by default; these are not per-tool enables).
-	// Callers that lack a per-tool default treat any other tool as enabled
-	// unless an override disables it.
-	defaultAllow := true
-	switch name {
-	case "mcp":
-		defaultAllow = t.MCPClientEffectivelyEnabled()
-	case "subagent":
-		defaultAllow = t.Subagent.Enabled
-	}
-	return t.ToolEnabled(name, defaultAllow)
-}
-
-// ToolEnabled resolves a per-tool enabled state: an explicit Overrides entry wins,
-// otherwise the tool's own default-allow (from its descriptor) applies. This is the
-// gating path for global-layer tools, which have no dedicated typed config field.
-//
-// shell_exec is the exception: it has no install-wide switch, so it is always
-// enabled here and any tool_overrides entry for it is ignored; whether an agent
-// gets it is decided by AgentConfig.IsToolAllowed alone.
-func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
-	// shell_exec has no install-wide switch: the agent's tools list decides.
-	if IsShellTool(name) {
-		return true
-	}
-	if v, ok := t.Overrides[name]; ok {
-		return v
-	}
-	return defaultAllow
 }

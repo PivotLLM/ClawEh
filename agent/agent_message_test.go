@@ -47,7 +47,6 @@ func messagingConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := newTestConfig(t)
 	cfg.Tools.Subagent.Enabled = true
-	cfg.Tools.Overrides = map[string]bool{"agent_message": true}
 	cfg.Agents.List = []config.AgentConfig{
 		{ID: "alice", Name: "Alice", Default: true, Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
 		{ID: "bob", Name: "Bob", Tools: []string{"*"}},
@@ -761,18 +760,26 @@ func TestWhispers_KeptAcrossRebuildDroppedOnRemoval(t *testing.T) {
 	}
 }
 
-// TestAgentMessageTool_OffByDefault: without the per-tool switch no agent
-// has agent_message, whatever its allow list.
-func TestAgentMessageTool_OffByDefault(t *testing.T) {
+// TestAgentMessageTool_PerAgentGrant: agent_message, which is not in the
+// default tool set, is registered for an agent whose own tools list names it
+// and for none other; there is no install-wide switch.
+func TestAgentMessageTool_PerAgentGrant(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
 	cfg := messagingConfig(t)
-	cfg.Tools.Overrides = nil
+	cfg.Agents.List[0].Tools = []string{"agent_message"}
+	cfg.Agents.List[2].Tools = []string{"msg_send"}
 	al, _ := messagingLoop(t, cfg, &recordingProvider{})
-	for _, id := range []string{"alice", "helper"} {
-		a, _ := al.GetRegistry().Get(id)
-		if _, ok := a.Tools.Get("agent_message"); ok {
-			t.Fatalf("%s has agent_message with the tool switched off", id)
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{"alice", true},
+		{"helper", false},
+	} {
+		a, _ := al.GetRegistry().Get(tc.id)
+		if _, ok := a.Tools.Get("agent_message"); ok != tc.want {
+			t.Errorf("%s has agent_message = %v, want %v", tc.id, ok, tc.want)
 		}
 	}
 }

@@ -22,7 +22,6 @@ import {
   IconServer2,
   IconSettings,
   IconSparkles,
-  IconTools,
 } from "@tabler/icons-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
@@ -148,12 +147,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.skills",
             url: "/agent/skills",
             icon: IconSparkles,
-            translateTitle: true,
-          },
-          {
-            title: "navigation.tools",
-            url: "/agent/tools",
-            icon: IconTools,
             translateTitle: true,
           },
         ],

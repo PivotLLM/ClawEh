@@ -11,8 +11,6 @@ import (
 type ToolDescriptor struct {
 	Name           string // tool name as returned by Tool.Name()
 	Description    string // one-line description for the GUI
-	Category       string // GUI grouping: "filesystem", "web", "session", etc.
-	ConfigKey      string // maps to the config flag that enables/disables this tool
 	DefaultEnabled bool   // in the standard set the WebUI "Default tools" button writes
 	// Suite, when non-empty, marks this as an all-or-nothing tool suite (e.g.
 	// "cogmem", "maestro"): it is managed by a single per-agent toggle rather than

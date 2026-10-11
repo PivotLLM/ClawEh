@@ -244,12 +244,6 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		shellText += "; CLI models with Allow CLI to bypass restrictions have their own shell"
 	}
 	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText+".")
-	// An ignored value is shown where the operator looks: there is no
-	// install-wide shell switch any more.
-	if _, ok := cfg.Tools.Overrides[config.ShellExecTool]; ok {
-		add(false, "Install-wide shell setting",
-			"tools.tool_overrides.shell_exec has no effect; shell commands are allowed per agent.")
-	}
 	// A mount named after a workspace folder is set aside at load.
 	for _, m := range cfg.IgnoredMounts() {
 		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")

@@ -19,13 +19,11 @@ The **Tools** box on the agent's card has these parts:
 1. **MCP access**: one checkbox per configured [MCP server](../mcp.md). A checked server grants all of its tools. Nothing checked means no MCP tools.
 2. **Fusion services**: one checkbox per [Fusion service](../mcpfusion.md). A checked service grants its tools when the agent's **Fusion (REST-API tools)** switch is on. Nothing checked means no Fusion tools, even with the switch on.
 3. **Internal tools**: the built-in tools.
-   - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. You can then tick or untick single tools.
+   - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. It leaves out tools few agents need, such as `agent_spawn`, `agent_message`, `session_clear` and the byte-level file tools. You can then tick or untick single tools.
    - **Clear** empties the list.
    - Each checkbox grants one tool. Hover a tool for its description.
 4. **Allow shell commands**: see [Shell commands](#shell-commands).
 5. **Denied tools**: see [Deny a tool](#deny-a-tool).
-
-Most tools also have an install-wide switch on the **Tools** page (Enabled, Disabled or Blocked). A tool that is Disabled there is offered to no agent, whatever the agent's list says. Some tools are Disabled there until you enable them, for example `agent_spawn` and `agent_message`.
 
 ### Grant tools in config.json
 
@@ -46,7 +44,7 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 
 **Allow shell commands** lets the agent run commands on this machine with the `shell_exec` tool. It is off by default.
 
-- It is the only way to grant `shell_exec`: `"*"` and `file_*`-style entries never include it, and it has no switch on the Tools page.
+- It is the only way to grant `shell_exec`: `"*"` and `file_*`-style entries never include it.
 - It applies everywhere the agent acts: every chat, its sub-agents and clones, questions from other agents, forum turns and its MCP tokens.
 - Shell commands are **not** confined to the agent's folder, even when file tools are.
 - If `shell_exec` is also in **Denied tools**, the card shows "Ignored: blocked by Denied tools." and the agent cannot run commands.

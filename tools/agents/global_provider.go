@@ -33,7 +33,7 @@ func (globalAgentProvider) Available(cfg any) (bool, string) {
 	if !ok || c == nil {
 		return true, ""
 	}
-	if !c.Tools.IsToolEnabled("subagent") {
+	if !c.Tools.Subagent.Enabled {
 		return false, "requires_subagent"
 	}
 	return true, ""

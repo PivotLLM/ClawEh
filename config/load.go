@@ -27,16 +27,6 @@ func warnLegacyMaestroBool(cfg *Config) {
 	}
 }
 
-// warnShellOverride logs a warning when tools.tool_overrides still sets
-// shell_exec. There is no install-wide shell switch: an agent runs shell
-// commands only when its own tools list names shell_exec.
-func warnShellOverride(cfg *Config) {
-	if _, ok := cfg.Tools.Overrides[ShellExecTool]; ok {
-		logger.WarnCF("config", "tools.tool_overrides.shell_exec has no effect; allow shell commands per agent by adding shell_exec to its tools",
-			map[string]any{"key": "tools.tool_overrides." + ShellExecTool})
-	}
-}
-
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -102,7 +92,6 @@ func LoadConfig(path string) (*Config, error) {
 
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
-	warnShellOverride(cfg)
 	warnReservedMounts(cfg)
 
 	if err := env.Parse(cfg); err != nil {

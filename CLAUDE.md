@@ -222,8 +222,9 @@ production instance directly; test against a dev instance.
   session token (`SetTurnScope`) like the sub-agent depth.
 - **Tool grants**: an agent has only the native tools its own `tools` list names
   (`AgentConfig.IsToolAllowed`, the one rule for the loop, the MCP host, clones,
-  sub-agents and Check Up); an absent or empty list means none, and there is no
-  implicit default set. `tools.DefaultEnabledToolNames()` is only what the Agents
+  sub-agents and Check Up); an absent or empty list means none, there is no
+  implicit default set and no install-wide per-tool switch (no Tools page).
+  `tools.DefaultEnabledToolNames()` (each tool's `DefaultAllow`) is only what the Agents
   page's "Default tools" button writes into a list (`GET /api/agents/tools`
   `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`) and
   `mcp_tools` have their own switches. Check Up lists each enabled agent with no
@@ -235,10 +236,7 @@ production instance directly; test against a dev instance.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
   switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
   shell commands") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,
-  `config.ShellExecTool`). A `"*"` or prefix entry never includes it, and there is no
-  install-wide switch: `ToolsConfig.ToolEnabled` always admits it, a
-  `tool_overrides.shell_exec` is ignored with a load WARN and a Check Up row, and the
-  Tools page neither lists nor toggles it. Clones inherit it. There is no channel rule: it applies on every channel and to
+  `config.ShellExecTool`). A `"*"` or prefix entry never includes it. Clones inherit it. There is no channel rule: it applies on every channel and to
   everything acting as the agent (clones, asks, forum turns, MCP session and service
   tokens, cron watch probes). Fresh temporary and human agents have no tools. It is
   an ordinary tool: an agent without the grant never has it registered, so it is
@@ -609,7 +607,7 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 146 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 144 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

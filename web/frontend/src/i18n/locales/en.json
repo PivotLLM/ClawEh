@@ -58,7 +58,6 @@
     "agent_group": "Agents",
     "agents": "Agents",
     "skills": "Skills",
-    "tools": "Tools",
     "bindings": "Bindings",
     "services": "Services",
     "channels_group": "Channels",
@@ -337,37 +336,6 @@
         "load_detail_error": "Failed to load skill content.",
         "path": "Skill Path",
         "no_description": "No description provided."
-      },
-      "tools": {
-        "description": "This view reflects whether each agent tool is enabled, disabled, or blocked by a missing prerequisite.",
-        "empty": "No tools are available.",
-        "enable": "Enable",
-        "disable": "Disable",
-        "enable_success": "Tool enabled.",
-        "disable_success": "Tool disabled.",
-        "toggle_error": "Failed to update tool state.",
-        "config_key": "Controlled by tools.{{key}}",
-        "status": {
-          "enabled": "Enabled",
-          "disabled": "Disabled",
-          "blocked": "Blocked"
-        },
-        "categories": {
-          "automation": "Automation",
-          "filesystem": "Filesystem",
-          "web": "Web",
-          "communication": "Communication",
-          "skills": "Skills",
-          "agents": "Agents",
-          "context": "Context",
-          "common": "Common Directory",
-          "memory": "Memory"
-        },
-        "reasons": {
-          "requires_skills": "Enable `tools.skills` before this skill-registry tool can be used.",
-          "requires_subagent": "Enable `tools.subagent` before the spawn tool can delegate work.",
-          "requires_mcp_discovery": "Enable `tools.mcp.discovery` before MCP discovery tools become available."
-        }
       }
     },
     "network": {

@@ -254,7 +254,6 @@ const ROUTES = [
   "/agents",
   "/audit",
   "/agent/bindings",
-  "/agent/tools",
   "/agent/skills",
   "/channels",
   "/config",
@@ -574,12 +573,6 @@ if (useGroup("D", "i18n integrity")) {
     }
     assert(leaked.length === 0, `untranslated keys — ${leaked.join(" | ")}`)
     return `${ROUTES.length} routes clean`
-  })
-  await check(2, "tool categories all have labels", async () => {
-    const { close, text } = await open("/agent/tools")
-    const body = await text()
-    await close()
-    assert(!/categories\./.test(body), "a raw category key is rendered")
   })
 }
 

@@ -128,7 +128,7 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Append static (non-provider) tools.
-	for _, d := range staticToolDescriptors {
+	for _, d := range tools.StaticToolDescriptors {
 		builtinTools = append(builtinTools, agentToolEntry{
 			Name:        d.Name,
 			Description: d.Description,

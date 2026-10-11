@@ -164,7 +164,7 @@ type namespacedProvider struct {
 	p  global.ToolProvider
 	// bare suppresses the "<ns>_" tool-name prefix while keeping ns as the
 	// suite/catalog identity — for providers whose tool names are already
-	// globally unique (e.g. fusion's service-prefixed names). See toolName.
+	// globally unique (e.g. fusion's service-prefixed names). See namePrefix.
 	bare bool
 }
 
@@ -180,15 +180,6 @@ func NamespacedProvider(ns string, p global.ToolProvider) ToolProvider {
 // globally unique.
 func BareNamespacedProvider(ns string, p global.ToolProvider) ToolProvider {
 	return namespacedProvider{ns: ns, p: p, bare: true}
-}
-
-// toolName is the published name of a bare tool: bare mode uses it verbatim,
-// otherwise it gets the "<ns>_" prefix.
-func (a namespacedProvider) toolName(bare string) string {
-	if a.bare {
-		return bare
-	}
-	return a.ns + "_" + bare
 }
 
 // namePrefix is the "<ns>" passed to wrapGlobalTool ("" in bare mode).
@@ -228,32 +219,16 @@ func (a namespacedProvider) Available(cfg *config.Config) (bool, string) {
 }
 
 func (a namespacedProvider) Build(deps ToolDeps) []Tool {
-	suite := a.Suite()
 	// All-or-nothing suite: gated as a unit by the per-agent flag. When enabled,
 	// every tool is registered (bypassing the per-tool allow/deny gate — the flag
 	// IS the allow decision); when disabled, none are. The provider's RegisterTools
-	// already returns nothing for a disabled agent, but gate here too so the suite
-	// is never subject to the per-tool ToolEnabled filter.
-	if suite != "" {
-		if deps.Cfg != nil && !deps.Cfg.AgentSuiteEnabled(deps.AgentID, suite) {
-			return nil
-		}
-		defs := a.p.RegisterTools(a.toGlobalDeps(deps))
-		out := make([]Tool, 0, len(defs))
-		for _, d := range defs {
-			out = append(out, wrapGlobalTool(a.namePrefix(), d))
-		}
-		return out
+	// already returns nothing for a disabled agent, but gate here too.
+	if suite := a.Suite(); suite != "" && deps.Cfg != nil && !deps.Cfg.AgentSuiteEnabled(deps.AgentID, suite) {
+		return nil
 	}
-
 	defs := a.p.RegisterTools(a.toGlobalDeps(deps))
 	out := make([]Tool, 0, len(defs))
 	for _, d := range defs {
-		// Per-tool enabled gate: an explicit override wins, else the tool's own
-		// default-allow. Default-deny tools are not registered unless opted in.
-		if deps.Cfg != nil && !deps.Cfg.Tools.ToolEnabled(a.toolName(d.Name), d.DefaultAllowed()) {
-			continue
-		}
 		out = append(out, wrapGlobalTool(a.namePrefix(), d))
 	}
 	return out
@@ -270,8 +245,6 @@ func (a namespacedProvider) Describe() []ToolDescriptor {
 		return []ToolDescriptor{{
 			Name:        a.ns,
 			Description: desc,
-			Category:    a.ns,
-			ConfigKey:   a.ns,
 			Suite:       suite,
 		}}
 	}
@@ -282,19 +255,9 @@ func (a namespacedProvider) Describe() []ToolDescriptor {
 	defs := a.p.RegisterTools(global.Deps{})
 	out := make([]ToolDescriptor, 0, len(defs))
 	for _, d := range defs {
-		category := d.Category
-		if category == "" {
-			category = a.ns
-		}
-		configKey := d.ConfigKey
-		if configKey == "" {
-			configKey = a.ns + "_" + d.Name
-		}
 		out = append(out, ToolDescriptor{
 			Name:           a.ns + "_" + d.Name,
 			Description:    d.Description,
-			Category:       category,
-			ConfigKey:      configKey,
 			DefaultEnabled: d.DefaultAllowed(), // default-deny: only explicit DefaultAllow(true)
 		})
 	}

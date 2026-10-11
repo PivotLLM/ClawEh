@@ -14,8 +14,8 @@ import (
 type fakeSuiteProvider struct{ suite string }
 
 func (f fakeSuiteProvider) RegisterTools(global.Deps) []global.ToolDefinition {
-	// Default-deny tools (no DefaultAllow): a non-suite provider would have these
-	// filtered out, but a suite registers them as a unit.
+	// Tools outside the default set (no DefaultAllow): a suite registers them
+	// as a unit.
 	return []global.ToolDefinition{{Name: "alpha"}, {Name: "beta"}}
 }
 func (f fakeSuiteProvider) Suite() string { return f.suite }
@@ -27,13 +27,12 @@ func cfgWithAgent(a config.AgentConfig) *config.Config {
 func TestNamespacedProvider_SuiteGating(t *testing.T) {
 	p := NamespacedProvider("maestro", fakeSuiteProvider{suite: "maestro"})
 
-	// Suite off (maestro default off) → no tools, even though they're default-deny
-	// the gate is the flag, not ToolEnabled.
+	// Suite off (maestro default off) → no tools: the gate is the flag.
 	off := cfgWithAgent(config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: false}})
 	if got := p.Build(ToolDeps{Cfg: off, AgentID: "alice"}); len(got) != 0 {
 		t.Errorf("disabled suite should yield no tools, got %d", len(got))
 	}
-	// Suite on → ALL tools (bypassing the per-tool default-deny filter).
+	// Suite on → ALL tools.
 	on := cfgWithAgent(config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}})
 	if got := p.Build(ToolDeps{Cfg: on, AgentID: "alice"}); len(got) != 2 {
 		t.Errorf("enabled suite should register all tools, got %d", len(got))

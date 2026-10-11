@@ -241,89 +241,32 @@ func TestAgentConfig_IsToolAllowed_ShellExplicitOnly(t *testing.T) {
 	}
 }
 
-// tools.tool_overrides.shell_exec is not a switch: true, false or absent, the
-// install-wide gate always admits shell_exec, and other overrides still work.
-func TestToolsConfig_ShellOverrideIgnored(t *testing.T) {
-	for _, overrides := range []map[string]bool{
-		nil,
-		{"shell_exec": true},
-		{"shell_exec": false},
-	} {
-		tc := &ToolsConfig{Overrides: overrides}
-		if !tc.ToolEnabled("shell_exec", false) {
-			t.Errorf("ToolEnabled(shell_exec) with overrides %v = false, want true", overrides)
-		}
-		if !tc.IsToolEnabled("shell_exec") {
-			t.Errorf("IsToolEnabled(shell_exec) with overrides %v = false, want true", overrides)
-		}
-	}
-	tc := &ToolsConfig{Overrides: map[string]bool{"file_write": false, "shell_exec": false, "Shell_Exec": false}}
-	if tc.ToolEnabled("file_write", true) {
-		t.Error("an override for another tool no longer applies")
-	}
-	// The shell tool is matched in any case, as IsToolAllowed matches it.
-	if !tc.ToolEnabled("Shell_Exec", false) || !tc.IsToolEnabled("SHELL_EXEC") {
-		t.Error("an override for the shell tool in another case still applies")
-	}
-}
+// A config that still sets the removed tools.tool_overrides loads, the key is
+// reported as unknown, and it changes nobody's tools: each agent's own tools
+// list alone decides.
+func TestLoadConfig_ToolOverridesUnknown(t *testing.T) {
+	var buf bytes.Buffer
+	restore := logger.RedirectForTest(&buf)
+	defer restore()
 
-// IsToolEnabled keeps the capability gates and honours overrides like
-// ToolEnabled.
-func TestToolsConfig_IsToolEnabledGates(t *testing.T) {
-	tc := &ToolsConfig{}
-	if tc.IsToolEnabled("subagent") {
-		t.Error("subagent enabled without its setting")
+	path := filepath.Join(t.TempDir(), "config.json")
+	doc := `{"tools":{"tool_overrides":{"shell_exec":true,"file_write":false,"agent_spawn":true},"exec":{}},` +
+		`"agents":{"list":[{"id":"alice","tools":["file_write","shell_exec"]},{"id":"bob","tools":["file_read_lines"]}]}}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if !tc.IsToolEnabled("msg_send") {
-		t.Error("an ordinary tool is disabled by default")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
 	}
-	tc.Subagent.Enabled = true
-	if !tc.IsToolEnabled("subagent") {
-		t.Error("subagent disabled with its setting on")
+	if !strings.Contains(buf.String(), "unknown config key: tools.tool_overrides") {
+		t.Errorf("tools.tool_overrides not reported as unknown:\n%s", buf.String())
 	}
-	tc.Overrides = map[string]bool{"subagent": false, "msg_send": false}
-	if tc.IsToolEnabled("subagent") || tc.IsToolEnabled("msg_send") {
-		t.Error("an override does not win")
+	alice, bob := cfg.AgentByID("alice"), cfg.AgentByID("bob")
+	if !alice.IsToolAllowed("file_write") || !alice.IsToolAllowed("shell_exec") {
+		t.Error("alice lost a tool her list names")
 	}
-}
-
-// A config that still sets tools.tool_overrides.shell_exec loads, and a
-// warning names the key; without it there is no warning. Either way an
-// agent's shell access follows its own tools list only.
-func TestLoadConfig_ShellOverrideWarns(t *testing.T) {
-	for _, tc := range []struct {
-		name, overrides string
-		warn            bool
-	}{
-		{"set true", `"tool_overrides":{"shell_exec":true},`, true},
-		{"set false", `"tool_overrides":{"shell_exec":false},`, true},
-		{"absent", `"tool_overrides":{"file_write":true},`, false},
-		{"no overrides", ``, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			restore := logger.RedirectForTest(&buf)
-			defer restore()
-
-			path := filepath.Join(t.TempDir(), "config.json")
-			doc := `{"tools":{` + tc.overrides + `"exec":{}},"agents":{"list":[` +
-				`{"id":"alice","tools":["*","shell_exec"]},{"id":"bob","tools":["*"]}]}}`
-			if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			cfg, err := LoadConfig(path)
-			if err != nil {
-				t.Fatalf("LoadConfig: %v", err)
-			}
-			if got := strings.Contains(buf.String(), "tools.tool_overrides.shell_exec has no effect"); got != tc.warn {
-				t.Errorf("warning logged = %v, want %v:\n%s", got, tc.warn, buf.String())
-			}
-			if !cfg.AgentByID("alice").IsToolAllowed("shell_exec") {
-				t.Error("alice names shell_exec but is not allowed it")
-			}
-			if cfg.AgentByID("bob").IsToolAllowed("shell_exec") {
-				t.Error(`bob has only "*" but is allowed shell_exec`)
-			}
-		})
+	if bob.IsToolAllowed("shell_exec") || bob.IsToolAllowed("agent_spawn") {
+		t.Error("bob gained a tool his list does not name")
 	}
 }

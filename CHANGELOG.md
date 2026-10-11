@@ -19,9 +19,7 @@ observe does not need an entry.
   per-agent switch, off by default: *Allow shell commands* on the Agents page,
   which is `shell_exec` named in the agent's own `tools` list (and not in its
   `deny_tools`). A `"*"` or prefix entry in `tools` does **not** include it,
-  and there is no install-wide switch any more:
-  `tools.tool_overrides.shell_exec` has no effect (a warning names it at load,
-  Check Up shows it, and the Tools page no longer lists `shell_exec`).
+  and there is no install-wide switch any more.
   Migration: add `shell_exec` to the `tools` of each agent that should keep
   running shell commands, or turn on *Allow shell commands* on its card.
   Clones inherit the setting; fresh temporary and human agents never have it.
@@ -387,11 +385,10 @@ observe does not need an entry.
   within N seconds." after `wait_seconds` or that agent's model
   `request_timeout`, whichever is shorter. With `wait_seconds` 0 it whispers:
   the message is added, marked private, to the start of the other agent's next
-  message, and no turn starts. The tool is off by default
-  (`tools.tool_overrides.agent_message`, and like `agent_spawn` it needs
-  `tools.subagent.enabled`), and an agent can message only the agents in its
-  `subagents.allow_agents` (`"*"` for all), so no existing agent can message
-  anyone until both are set. Each ask counts as one level of
+  message, and no turn starts. The tool is not in **Default tools** (like
+  `agent_spawn` it needs `tools.subagent.enabled`), and an agent can message
+  only the agents in its `subagents.allow_agents` (`"*"` for all), so no
+  existing agent can message anyone until that is set. Each ask counts as one level of
   `agents.defaults.max_subagent_depth`, shared with `agent_spawn`, and an
   agent cannot ask one that is already waiting on it. The asked agent's reply
   never reaches a chat; in the asked turn `msg_send` and `session_clear` are
@@ -1366,6 +1363,10 @@ observe does not need an entry.
   instead of the old "no WebUI authentication" note.
 
 ### Removed
+
+- The Tools page and the install-wide per-tool switches (`tools.tool_overrides`)
+  are removed; they were redundant with each agent's own tool list, which alone
+  decides what an agent can use.
 
 - **BREAKING: the LINE channel is removed.** It received messages only
   through a webhook that had to be reachable from the internet, which the rest

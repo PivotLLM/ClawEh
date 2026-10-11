@@ -16,11 +16,10 @@ Sub-agents are useful for self-contained work (research, a long file review) or 
 
 ## Allow an agent to spawn
 
-1. Enable `agent_spawn` on the **Tools** page. Enable `agent_status` and `agent_list` too if the agent should check on its background tasks.
-2. Tick the same tools under **Internal tools** on the agent's card.
-3. To let Alice spawn a copy of **another** agent, add that agent to her `subagents.allow_agents` in `config.json` (see [Messages between agents](./messaging.md#who-may-message-whom)). An agent may always spawn copies of itself once it has the tool.
+1. Tick `agent_spawn` under **Internal tools** on the agent's card. Tick `agent_status` and `agent_list` too if the agent should check on its background tasks.
+2. To let Alice spawn a copy of **another** agent, add that agent to her `subagents.allow_agents` in `config.json` (see [Messages between agents](./messaging.md#who-may-message-whom)). An agent may always spawn copies of itself once it has the tool.
 
-If the Tools page shows the spawn tools as **Blocked** ("Enable `tools.subagent` before the spawn tool can delegate work."), the install-wide sub-agent switch is off; set `"tools": { "subagent": { "enabled": true } }` in `config.json`. It is on by default.
+The spawn tools also need the install-wide sub-agent switch, `"tools": { "subagent": { "enabled": true } }` in `config.json`. It is on by default.
 
 ## How the agent uses it
 

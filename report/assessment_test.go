@@ -484,29 +484,6 @@ func TestAssessment_ShellExplicitOnly(t *testing.T) {
 	}
 }
 
-// TestAssessment_ShellOverrideHasNoEffect: a tools.tool_overrides.shell_exec
-// entry, whatever its value, is shown as having no effect; without one there
-// is no such row.
-func TestAssessment_ShellOverrideHasNoEffect(t *testing.T) {
-	cfg, env := fixtureConfig(t)
-	for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
-		if row[1] == "Install-wide shell setting" {
-			t.Errorf("row present without the override: %v", row)
-		}
-	}
-	for _, v := range []bool{true, false} {
-		cfg.Tools.Overrides = map[string]bool{"shell_exec": v}
-		r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Install-wide shell setting")
-		if r[0] != "" || r[2] != "tools.tool_overrides.shell_exec has no effect; shell commands are allowed per agent." {
-			t.Errorf("override %v: row = %v", v, r)
-		}
-		// The override changes nobody's access.
-		if s := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access"); !strings.Contains(s[2], "Allow shell commands: Bob;") {
-			t.Errorf("override %v: shell row = %v", v, s)
-		}
-	}
-}
-
 // TestAssessment_IgnoredMount: a mount named after a workspace folder gets an
 // action row naming the agent and the mount; a normal mount gets none.
 func TestAssessment_IgnoredMount(t *testing.T) {

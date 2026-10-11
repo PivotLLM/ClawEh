@@ -95,7 +95,7 @@ If one particular tool is missing:
 | Tools of an MCP server | **MCP access** under the agent's **Tools** ([MCP](../mcp.md#grant-a-server-to-an-agent)). |
 | Fusion services | **Fusion (REST-API tools)** on, and the service ticked under **Fusion services**. Check Up marks **Fusion on with no service (…)** otherwise ([MCPFusion](../mcpfusion.md#give-an-agent-access)). |
 | Maestro, forum, memory tools | **Maestro**, **Allow forum**, **Cognitive memory** on the agent's card ([Tool suites](../agents/tools-and-skills.md#tool-suites)). |
-| Any tool | Not listed under **Denied tools**, and switched on for the install on the **Tools** page. |
+| Any tool | Not listed under **Denied tools**. |
 
 See [Tools and skills](../agents/tools-and-skills.md).
 

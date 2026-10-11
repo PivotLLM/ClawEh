@@ -11,9 +11,8 @@ There are two kinds of message:
 
 An agent uses the `agent_message` tool. For Alice to message Bob, all of these must be true:
 
-1. `agent_message` is **Enabled** on the **Tools** page. It is Disabled until you enable it.
-2. Alice has `agent_message` ticked under **Internal tools** on her card.
-3. Bob is in Alice's `subagents.allow_agents` in `config.json`. `"*"` allows every agent. With no list, Alice can message no one.
+1. Alice has `agent_message` ticked under **Internal tools** on her card. **Default tools** does not include it.
+2. Bob is in Alice's `subagents.allow_agents` in `config.json`. `"*"` allows every agent. With no list, Alice can message no one.
 
 ```json
 {

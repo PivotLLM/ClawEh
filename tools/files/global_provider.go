@@ -63,7 +63,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	if c != nil {
 		// Mirror filesProvider.Build's construction logic exactly so behaviour
 		// is preserved. The bridge + agent allowlist handle gating, so we
-		// construct ALL six tools here (no IsToolEnabled / isToolAllowed gate).
+		// construct ALL six tools here (no isToolAllowed gate).
 		workspace := cd.Workspace
 		restrict := c.Agents.Defaults.RestrictToWorkspace
 		// Shared with tools/files.Reader (cogmem attachments) so tools and

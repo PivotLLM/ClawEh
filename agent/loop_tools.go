@@ -89,10 +89,7 @@ func (al *AgentLoop) registerAgentTools(
 ) {
 	agentID := currentAgent.toolIdentity()
 	currentAgentID := currentAgent.ID
-	var messageTool tools.Tool
-	if cfg.Tools.IsToolEnabled("msg_send") {
-		messageTool = al.newMessageTool()
-	}
+	messageTool := al.newMessageTool()
 	candidateResolver := al.spawnCandidates
 	spawnAllowlist := func(callerID, targetID string) bool {
 		return canSpawnSubagent(al.GetRegistry(), currentAgentID, targetID)

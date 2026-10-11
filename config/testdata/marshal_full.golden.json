@@ -522,9 +522,6 @@
     "allow_write_paths": [
       "x"
     ],
-    "tool_overrides": {
-      "x": true
-    },
     "web": {
       "enabled": true,
       "brave": {

@@ -333,17 +333,10 @@ func TestShell_HumanAgentNever(t *testing.T) {
 }
 
 // TestShell_ConfigSwitches: only shell_exec named in the agent's own tools
-// grants it ("*" and prefixes do not), deny_tools wins, and
-// tools.tool_overrides.shell_exec, whatever its value, changes nothing.
+// grants it ("*" and prefixes do not), and deny_tools wins.
 func TestShell_ConfigSwitches(t *testing.T) {
 	alice := func(tools ...string) func(*config.Config) {
 		return func(c *config.Config) { c.Agents.List[0].Tools = tools }
-	}
-	override := func(v bool, tools ...string) func(*config.Config) {
-		return func(c *config.Config) {
-			c.Tools.Overrides["shell_exec"] = v
-			c.Agents.List[0].Tools = tools
-		}
 	}
 	for _, tc := range []struct {
 		name    string
@@ -356,10 +349,6 @@ func TestShell_ConfigSwitches(t *testing.T) {
 		{"tools shell_*", alice("shell_*"), false},
 		{"tools leave it out", alice("file_*"), false},
 		{"deny_tools", func(c *config.Config) { c.Agents.List[0].DenyTools = []string{"shell_exec"} }, false},
-		{"tool_overrides true, tools *", override(true, "*"), false},
-		{"tool_overrides true, named", override(true, "*", "shell_exec"), true},
-		{"tool_overrides false, named", override(false, "*", "shell_exec"), true},
-		{"tool_overrides false, tools *", override(false, "*"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
@@ -446,7 +435,6 @@ func TestShell_DelegationThroughAllowAgents(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 			cfg := shellConfig(t)
-			cfg.Tools.Overrides["agent_spawn"] = true
 			cfg.Agents.List[1].Tools = []string{"*"}
 			cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: tc.allow}
 			model := &shellModel{}

@@ -28,7 +28,7 @@ tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" p
 tools registry  (RegisterProvider / GetProviders)
         ├──► agent loop  → per-agent *tools.ToolRegistry  → LLM tool calling
         ├──► mcpserver (WithAgentRegistries)               → MCP /mcp
-        └──► web/backend/api/tools.go (Describe)           → WebUI catalogue
+        └──► web/backend/api/agents.go (Describe)          → WebUI catalogue
 ```
 
 Key idea: a tool package is **transport-neutral and dependency-free** (it imports
@@ -79,9 +79,9 @@ type ToolDefinition struct {
     Async         bool          // may use ToolCall.Notify / return Result.Async
     PrimaryOnly   bool          // vestigial: declared by toolspec, not enforced
 
-    DefaultAllow *bool          // nil/false ⇒ DENY by default; Allow(true) ⇒ on
-    Category     string         // GUI grouping (defaults to namespace)
-    ConfigKey    string         // config gate key (defaults to "<ns>_<name>")
+    DefaultAllow *bool          // Allow(true) ⇒ in the "Default tools" set
+    Category     string         // declared by toolspec, not read by ClawEh
+    ConfigKey    string         // declared by toolspec, not read by ClawEh
 }
 
 type ToolHandler func(call *ToolCall) (*Result, error)
@@ -131,14 +131,13 @@ renders `[]Parameter` into a JSON Schema object; you rarely call it yourself —
 the bridge does. Use `RawSchema` only when migrating a tool that already has a
 hand-written schema.
 
-### Default-allow (security model)
+### Default-allow
 
-`DefaultAllow` defaults to **deny**. A tool is exposed to clients only if it sets
-`DefaultAllow: global.Allow(true)`, or an operator explicitly enables it via
-config (`tools.tool_overrides["<ns>_<name>"] = true`). So new tools are off by
-default until you opt in or the operator turns them on. `shell_exec` is the
-exception: it has no install-wide switch and is granted only to an agent whose
-`tools` list names it.
+An agent has only the tools its own `tools` list names; there is no install-wide
+per-tool switch. `DefaultAllow: global.Allow(true)` only puts the tool in the
+standard set the Agents page's **Default tools** button writes into a list
+(`tools.DefaultEnabledToolNames`). Omit it for tools few agents need. `shell_exec`
+is granted only by naming it: `"*"` and prefix entries never include it.
 
 ### Sub-agents and the full toolset
 
@@ -205,7 +204,7 @@ func (globalWeatherProvider) RegisterTools(deps global.Deps) []global.ToolDefini
             Name:         "forecast",                 // published as weather_forecast
             Description:  "Return the forecast for a city.",
             Category:     "weather",
-            DefaultAllow: global.Allow(true),         // omit/false ⇒ off by default
+            DefaultAllow: global.Allow(true),         // omit/false ⇒ not in Default tools
             Parameters: []global.Parameter{
                 {Name: "city", Type: "string", Required: true, Description: "City name."},
                 {Name: "days", Type: "integer", Description: "Days ahead (1-7).", Default: 1},
@@ -333,5 +332,5 @@ host supplies the concrete implementation.
 | Sub-agent recursion bound | `agents.defaults.max_subagent_depth` (`tools/agents/depth.go`) |
 | Host deps available to handlers | `tools` `ToolDeps` (via `deps.Host`) |
 | MCP exposure | `mcpserver` (`WithAgentRegistries`) |
-| WebUI catalogue | `web/backend/api/tools.go` (`Describe`) |
+| WebUI catalogue | `web/backend/api/agents.go` (`GET /api/agents/tools`, `Describe`) |
 | Test probes | `test.sh`, `tests/test_mcpserver.sh` |

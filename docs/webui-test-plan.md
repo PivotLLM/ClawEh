@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-146 checks in all; the runner prints the same tally at the end.
+144 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -74,8 +74,8 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 22 routes in a browser with the console open:
-`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/tools`, `/agent/skills`,
+**Process.** Load each of the 21 routes in a browser with the console open:
+`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/skills`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
 `/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/report`,
 `/system`, `/voice`, `/setup`, `/status`.
@@ -96,8 +96,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 22 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
-| D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
+| D1 | Load all 21 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 
 ## E. Chat and WebSocket auth
 

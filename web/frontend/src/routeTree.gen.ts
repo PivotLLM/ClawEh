@@ -30,7 +30,6 @@ import { Route as SystemRouteImport } from './routes/system'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
-import { Route as AgentToolsRouteImport } from './routes/agent/tools'
 import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
 import { Route as ConfigRawRouteImport } from './routes/config.raw'
 import { Route as McpConfigRouteImport } from './routes/mcp/config'
@@ -141,11 +140,6 @@ const AgentSkillsRoute = AgentSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => AgentRoute,
 } as any)
-const AgentToolsRoute = AgentToolsRouteImport.update({
-  id: '/tools',
-  path: '/tools',
-  getParentRoute: () => AgentRoute,
-} as any)
 const ChannelsNameRoute = ChannelsNameRouteImport.update({
   id: '/$name',
   path: '/$name',
@@ -189,7 +183,6 @@ export interface FileRoutesByFullPath {
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
-  '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
   '/mcp/config': typeof McpConfigRoute
@@ -217,7 +210,6 @@ export interface FileRoutesByTo {
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
-  '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
   '/mcp/config': typeof McpConfigRoute
@@ -246,7 +238,6 @@ export interface FileRoutesById {
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
-  '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
   '/mcp/config': typeof McpConfigRoute
@@ -276,7 +267,6 @@ export interface FileRouteTypes {
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
-    | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
     | '/mcp/config'
@@ -304,7 +294,6 @@ export interface FileRouteTypes {
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
-    | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
     | '/mcp/config'
@@ -332,7 +321,6 @@ export interface FileRouteTypes {
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
-    | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
     | '/mcp/config'
@@ -510,13 +498,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentSkillsRouteImport
       parentRoute: typeof AgentRoute
     }
-    '/agent/tools': {
-      id: '/agent/tools'
-      path: '/tools'
-      fullPath: '/agent/tools'
-      preLoaderRoute: typeof AgentToolsRouteImport
-      parentRoute: typeof AgentRoute
-    }
     '/channels/$name': {
       id: '/channels/$name'
       path: '/$name'
@@ -563,13 +544,11 @@ const ChannelsRouteRouteWithChildren = ChannelsRouteRoute._addFileChildren(
 interface AgentRouteChildren {
   AgentBindingsRoute: typeof AgentBindingsRoute
   AgentSkillsRoute: typeof AgentSkillsRoute
-  AgentToolsRoute: typeof AgentToolsRoute
 }
 
 const AgentRouteChildren: AgentRouteChildren = {
   AgentBindingsRoute: AgentBindingsRoute,
   AgentSkillsRoute: AgentSkillsRoute,
-  AgentToolsRoute: AgentToolsRoute,
 }
 
 const AgentRouteWithChildren = AgentRoute._addFileChildren(AgentRouteChildren)

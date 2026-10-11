@@ -6,7 +6,6 @@ Agents search the web with `web_search` and read pages with `web_fetch`; this pa
 
 1. **A search provider.** None is set up on a new install, so `web_search` answers "web search is not configured on this server (no search provider is enabled)" until you enable one. `web_fetch` needs no setup.
 2. **The tools granted.** Tick `web_search` and `web_fetch` under **Internal tools** on the agent's card on the **Agents** page. **Default tools** includes both. See [Tools and skills](./tools-and-skills.md).
-3. **The tools enabled install-wide.** On the **Tools** page, under **Web**, both are **Enabled** unless you disabled them.
 
 ## Search providers
 

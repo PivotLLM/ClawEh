@@ -282,14 +282,6 @@ func TestUpdateConfig_AuditsEverySave(t *testing.T) {
 			"provider invalid", http.MethodPost, "/api/providers",
 			`{"name":"bad"}`, http.StatusBadRequest, "",
 		},
-		{
-			"tool toggled", http.MethodPut, "/api/tools/cron_schedule/state",
-			`{"enabled":false}`, http.StatusOK, "tools",
-		},
-		{
-			"tool unknown", http.MethodPut, "/api/tools/no_such_tool/state",
-			`{"enabled":false}`, http.StatusBadRequest, "",
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
