@@ -113,8 +113,9 @@ HTTPS address ClawEh derives (for example `https://<host name>:18443`). A
 computer other than the ClawEh machine must also be in **Allowed networks**
 on the same page (see [Network access](admin/network.md)). The sign-in itself does not need the WebUI login.
 
-`claw-auth` is built from the ClawEh source with `make claw-auth` (the
-binary is written to `build/claw-auth`); `make build` builds it too.
+`claw-auth` is included in every release download, next to `claw`. If you
+build ClawEh from source, `make build` builds it too (or `make claw-auth` on
+its own); the binary is written to `build/claw-auth`.
 
 To sign in again to a service that uses `claw-auth`, for example with a
 different account, ask the agent to run the service's sign-in setup again.
