@@ -868,7 +868,7 @@ observe does not need an entry.
 
 ### Changed
 
-- **A blank Default temperature no longer sends 0.2.** When neither
+- **BREAKING: a blank Default temperature no longer sends 0.2.** When neither
   **Default temperature** (System page, `agents.defaults.temperature`) nor the
   agent's `temperature` is set, ClawEh now sends no temperature and each HTTP
   model uses its own default. A configured value is still sent. To keep the
