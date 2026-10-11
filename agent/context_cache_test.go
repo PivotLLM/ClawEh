@@ -499,63 +499,38 @@ description: global-v2
 	}
 }
 
-// TestBuiltinSkillFileContentChange verifies that modifying a builtin skill
-// invalidates the cached system prompt.
-func TestBuiltinSkillFileContentChange(t *testing.T) {
+// TestSkillsNotLoadedFromWorkingDirectory verifies that a skills/ folder in
+// the directory ClawEh was started from is not a skill source.
+func TestSkillsNotLoadedFromWorkingDirectory(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
 	tmpDir := setupWorkspace(t, nil)
 	defer removeAll(t, tmpDir)
 
-	builtinRoot := t.TempDir()
-	t.Setenv("CLAW_BUILTIN_SKILLS", builtinRoot)
-
-	builtinSkillPath := filepath.Join(builtinRoot, "builtin-skill", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(builtinSkillPath), 0o755); err != nil {
+	wd := t.TempDir()
+	t.Chdir(wd)
+	skillPath := filepath.Join(wd, "skills", "cwd-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	v1 := `---
-name: builtin-skill
-description: builtin-v1
+	skill := `---
+name: cwd-skill
+description: cwd-skill-description
 ---
-# Builtin Skill v1`
-	if err := os.WriteFile(builtinSkillPath, []byte(v1), 0o644); err != nil {
+# Working directory skill`
+	if err := os.WriteFile(skillPath, []byte(skill), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	cb := NewContextBuilder(tmpDir).WithSkillsFilter([]string{"*"})
-	sp1 := cb.BuildSystemPromptWithCache()
-	if !strings.Contains(sp1, "builtin-v1") {
-		t.Fatal("expected initial prompt to contain builtin skill description")
+	if sp := cb.BuildSystemPromptWithCache(); strings.Contains(sp, "cwd-skill-description") {
+		t.Fatal("a skill in the working directory must not be in the prompt")
 	}
-
-	v2 := `---
-name: builtin-skill
-description: builtin-v2
----
-# Builtin Skill v2`
-	if err := os.WriteFile(builtinSkillPath, []byte(v2), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	future := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(builtinSkillPath, future, future); err != nil {
-		t.Fatalf("failed to update mtime for %s: %v", builtinSkillPath, err)
-	}
-
-	cb.systemPromptMutex.RLock()
-	changed := cb.sourceFilesChangedLocked()
-	cb.systemPromptMutex.RUnlock()
-	if !changed {
-		t.Fatal("sourceFilesChangedLocked() should detect builtin skill file content change")
-	}
-
-	sp2 := cb.BuildSystemPromptWithCache()
-	if !strings.Contains(sp2, "builtin-v2") {
-		t.Error("rebuilt prompt should contain updated builtin skill description")
-	}
-	if sp1 == sp2 {
-		t.Error("cache should be invalidated when builtin skill file content changes")
+	for _, root := range cb.skillRoots() {
+		if root == filepath.Join(wd, "skills") {
+			t.Fatalf("skill roots include the working directory: %v", cb.skillRoots())
+		}
 	}
 }
 

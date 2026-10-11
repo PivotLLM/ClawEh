@@ -62,13 +62,12 @@ type SkillsLoader struct {
 	workspace       string
 	workspaceSkills string // workspace skills (project-level)
 	globalSkills    string // global skills (~/.claw/skills)
-	builtinSkills   string // builtin skills
 }
 
 // SkillRoots returns all unique skill root directories used by this loader.
-// The order follows resolution priority: workspace > global > builtin.
+// The order follows resolution priority: workspace > global.
 func (sl *SkillsLoader) SkillRoots() []string {
-	roots := []string{sl.workspaceSkills, sl.globalSkills, sl.builtinSkills}
+	roots := []string{sl.workspaceSkills, sl.globalSkills}
 	seen := make(map[string]struct{}, len(roots))
 	out := make([]string, 0, len(roots))
 
@@ -88,9 +87,9 @@ func (sl *SkillsLoader) SkillRoots() []string {
 	return out
 }
 
-func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string) *SkillsLoader {
+func NewSkillsLoader(workspace string, globalSkills string) *SkillsLoader {
 	// An empty workspace means no workspace layer: the shared view lists the
-	// shared and builtin roots only.
+	// shared root only.
 	workspaceSkills := ""
 	if workspace != "" {
 		workspaceSkills = filepath.Join(workspace, "skills")
@@ -99,7 +98,6 @@ func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string
 		workspace:       workspace,
 		workspaceSkills: workspaceSkills,
 		globalSkills:    globalSkills, // ~/.claw/skills
-		builtinSkills:   builtinSkills,
 	}
 }
 
@@ -145,10 +143,9 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 		}
 	}
 
-	// Priority: workspace > global > builtin
+	// Priority: workspace > global
 	addSkills(sl.workspaceSkills, "workspace")
 	addSkills(sl.globalSkills, "global")
-	addSkills(sl.builtinSkills, "builtin")
 
 	return skills
 }
@@ -165,14 +162,6 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 2. then load from global skills (~/.claw/skills)
 	if sl.globalSkills != "" {
 		skillFile := filepath.Join(sl.globalSkills, name, "SKILL.md")
-		if content, err := os.ReadFile(skillFile); err == nil { //nolint:gosec // skill name is the operator's CLI argument (claw skills show)
-			return sl.stripFrontmatter(string(content)), true
-		}
-	}
-
-	// 3. finally load from builtin skills
-	if sl.builtinSkills != "" {
-		skillFile := filepath.Join(sl.builtinSkills, name, "SKILL.md")
 		if content, err := os.ReadFile(skillFile); err == nil { //nolint:gosec // skill name is the operator's CLI argument (claw skills show)
 			return sl.stripFrontmatter(string(content)), true
 		}

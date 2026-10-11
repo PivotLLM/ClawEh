@@ -1384,6 +1384,13 @@ observe does not need an entry.
   anything. Migration: drop them from scripts; install skills with
   `claw skills install`.
 
+- **BREAKING: skills are no longer loaded from a `skills/` folder in the
+  directory ClawEh was started from, and the `CLAW_BUILTIN_SKILLS`
+  environment variable is removed.** Skills now come only from the shared
+  skills folder (`<CLAW_HOME>/skills`) and each agent workspace's `skills/`
+  folder; the WebUI Skills page no longer lists a "builtin" source.
+  Migration: move any such skills into `<CLAW_HOME>/skills`.
+
 ### Fixed
 
 - **A "Direct messages" binding now routes every direct message on that
