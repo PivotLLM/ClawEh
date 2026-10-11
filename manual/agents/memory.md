@@ -55,6 +55,8 @@ Also in **Context management**:
 
 Because there is one conversation per agent, `/clear` from any chat clears it for every chat that talks to that agent.
 
+Every other command is listed in [Chat commands](../reference/chat-commands.md).
+
 ## Long-term memory (cognitive memory)
 
 With **Cognitive memory** on (the default), the agent keeps durable memories in its `cogmem/` folder and recalls the relevant ones on each turn without being asked.

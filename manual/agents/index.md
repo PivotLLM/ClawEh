@@ -20,6 +20,7 @@ An agent with no tools at all is told so in its instructions, and asks the perso
 |---|---|
 | [Creating and editing agents](./creating.md) | The Agents page, ids and names, models, turning an agent off, the default agent, its folder |
 | [Tools and skills](./tools-and-skills.md) | Granting tools and skills, shell commands, MCP and Fusion access, Maestro, forums, memory |
+| [Web search and fetch](./web-search.md) | The search providers, how to set one up, and fetching pages |
 | [Conversation and memory](./memory.md) | The one conversation per agent, how it is kept short, long-term memory, `/clear` and `/compact` |
 | [Files and mounts](./files-and-mounts.md) | The agent's folders, what it may read and write, external folders, the common folder |
 | [Messages between agents](./messaging.md) | `agent_message`, `/ask` and `/whisper` |
