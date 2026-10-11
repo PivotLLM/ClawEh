@@ -120,8 +120,6 @@ Alias: `claw c`.
 | `claw skills search [query]` | Searches available skills. |
 | `claw skills install <owner/repo/path>` | Installs a skill from GitHub into the shared skills folder. `--registry <name> <slug>` installs from a registry instead. |
 | `claw skills remove <name>` | Removes a skill. Aliases: `rm`, `uninstall`. |
-| `claw skills list-builtin` | Lists the built-in skills. |
-| `claw skills install-builtin` | Copies the built-in skills into the skills folder. |
 
 An installed skill is available to an agent only when the agent's skill list includes it.
 

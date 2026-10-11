@@ -63,13 +63,9 @@ func NewSkillsCommand() *cobra.Command {
 		return d.skillsLoader, nil
 	}
 
-	cfgFn := internal.LoadConfig
-
 	cmd.AddCommand(
 		newListCommand(loaderFn),
 		newInstallCommand(installerFn),
-		newInstallBuiltinCommand(cfgFn),
-		newListBuiltinCommand(),
 		newRemoveCommand(installerFn),
 		newSearchCommand(),
 		newShowCommand(loaderFn),

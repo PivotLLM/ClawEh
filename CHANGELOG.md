@@ -1371,6 +1371,11 @@ observe does not need an entry.
   of its own should message a separate agent, for example through that
   agent's message token (`POST /api/message/{token}`).
 
+- **BREAKING: `claw skills list-builtin` and `claw skills install-builtin`
+  are removed.** ClawEh includes no built-in skills, so they never installed
+  anything. Migration: drop them from scripts; install skills with
+  `claw skills install`.
+
 ### Fixed
 
 - **Matrix Allow From accepts user IDs as written (`@bob:example.org`).** An
