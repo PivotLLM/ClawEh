@@ -57,6 +57,8 @@ At the top of the **Network** page, **Addresses** lists where ClawEh can be open
 
 ## Behind a reverse proxy
 
+For complete NGINX, Caddy, Cloudflare Tunnel and Tailscale setups, see [Remote access](./remote-access.md).
+
 When a proxy such as nginx sits in front of ClawEh, every request seems to come from the proxy. To have ClawEh see the real client:
 
 1. Have the proxy send the client address in the `X-Real-IP` header. For nginx: `proxy_set_header X-Real-IP $remote_addr;`
