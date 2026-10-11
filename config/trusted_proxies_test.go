@@ -117,22 +117,16 @@ func TestLoadConfig_RefusesExposedOpenDeviceGateway(t *testing.T) {
 
 func TestProxyNotTrusted(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		external    string
-		devExternal string
-		devEnabled  bool
-		trusted     []string
-		seenPeer    string
-		want        bool
+		name     string
+		external string
+		trusted  []string
+		seenPeer string
+		want     bool
 	}{
-		{name: "nothing set"},
-		{name: "external URL, no trusted proxy", external: "https://claw.example.com", want: true},
-		{name: "external URL, loopback trusted", external: "https://claw.example.com", trusted: []string{"127.0.0.1"}},
-		{name: "external URL, IPv6 loopback trusted", external: "https://claw.example.com", trusted: []string{"::1"}},
-		{name: "external URL, other proxy trusted", external: "https://claw.example.com", trusted: []string{"10.0.0.5"}, want: true},
-		{name: "device external URL", devEnabled: true, devExternal: "https://claw.example.com", want: true},
-		{name: "device external URL, device off", devExternal: "https://claw.example.com"},
+		{name: "nothing seen"},
+		{name: "external URL alone is not a proxy", external: "https://claw.example.com"},
 		{name: "forwarded request seen", seenPeer: "127.0.0.1", want: true},
+		{name: "forwarded request seen, other proxy trusted", seenPeer: "127.0.0.1", trusted: []string{"10.0.0.5"}, want: true},
 		{name: "forwarded request seen, peer trusted", seenPeer: "127.0.0.1", trusted: []string{"127.0.0.0/8"}},
 		{name: "forwarded request seen from the other loopback", seenPeer: "::1", trusted: []string{"127.0.0.1"}, want: true},
 	} {
@@ -140,8 +134,6 @@ func TestProxyNotTrusted(t *testing.T) {
 			cfg := &Config{}
 			cfg.Gateway.ExternalURL = tc.external
 			cfg.Gateway.TrustedProxies = tc.trusted
-			cfg.Channels.Device.Enabled = tc.devEnabled
-			cfg.Channels.Device.ExternalURL = tc.devExternal
 			if got := cfg.ProxyNotTrusted(tc.seenPeer); got != tc.want {
 				t.Errorf("ProxyNotTrusted(%q) = %v, want %v", tc.seenPeer, got, tc.want)
 			}

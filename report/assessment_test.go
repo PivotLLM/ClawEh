@@ -634,9 +634,9 @@ func TestAssessment_AgentWithNoTools(t *testing.T) {
 }
 
 // TestAssessment_UntrustedProxy: a marked row, linked to the trusted-proxies
-// field, when an external URL is set with no trusted loopback proxy or the
-// listener saw a forwarded request from an untrusted loopback peer; none once
-// loopback is trusted.
+// field, only when the listener saw a forwarded request from an untrusted
+// loopback peer; an external URL alone (a LAN address, say) is not enough, and
+// the row goes once loopback is trusted.
 func TestAssessment_UntrustedProxy(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Gateway.ExternalURL = ""
@@ -650,13 +650,15 @@ func TestAssessment_UntrustedProxy(t *testing.T) {
 			}
 		}
 	}
-	const want = "Requests arrive through a proxy that is not trusted; network access control and lockout don't apply."
-	noRow("no external URL, nothing seen")
+	noRow("nothing seen")
+	cfg.Gateway.ExternalURL = "https://192.168.1.5:18443"
+	noRow("external URL set, nothing seen")
 
-	cfg.Gateway.ExternalURL = "https://claw.example.com"
+	env.ForwardedPeer = "127.0.0.1"
+	env.ForwardedSeen = time.Date(2026, 10, 10, 14, 3, 0, 0, time.UTC)
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemUntrustedProxy)
-	if r[0] != "*" || r[2] != want {
-		t.Errorf("config-derived row = %v", r)
+	if r[0] != "*" || r[2] != "Requests arrive through a proxy that is not trusted (last seen 2026-10-10 14:03); network access control and lockout don't apply." {
+		t.Errorf("runtime row = %v", r)
 	}
 	var link string
 	for _, a := range Assess(t.Context(), cfg, env).Assessment {
@@ -668,16 +670,7 @@ func TestAssessment_UntrustedProxy(t *testing.T) {
 		t.Errorf("link = %q", link)
 	}
 
-	cfg.Gateway.ExternalURL = ""
-	env.ForwardedPeer = "127.0.0.1"
-	env.ForwardedSeen = time.Date(2026, 10, 10, 14, 3, 0, 0, time.UTC)
-	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemUntrustedProxy)
-	if r[0] != "*" || r[2] != "Requests arrive through a proxy that is not trusted (last seen 2026-10-10 14:03); network access control and lockout don't apply." {
-		t.Errorf("runtime row = %v", r)
-	}
-
-	cfg.Gateway.ExternalURL = "https://claw.example.com"
-	cfg.Gateway.TrustedProxies = []string{"127.0.0.1", "::1"}
+	cfg.Gateway.TrustedProxies = []string{"127.0.0.1"}
 	noRow("loopback trusted")
 }
 

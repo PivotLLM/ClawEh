@@ -33,7 +33,7 @@ Behind a proxy, plain HTTP on these listeners is not marked, because the proxy d
 
 | Item | Marked when | What to do |
 |---|---|---|
-| **Reverse proxy** | Requests seem to arrive through a proxy on this machine that is not in **Trusted proxies**, so the allowed networks and the lockout don't apply. It shows when an external address is set and localhost is not trusted, or when a request from localhost carried forwarding headers. | Click the item to open **Trusted proxies** on the **Network** page and add the proxy's address, usually `127.0.0.1`. See [Remote access](./remote-access.md#what-to-set-in-claweh). |
+| **Reverse proxy** | Requests seem to arrive through a proxy on this machine that is not in **Trusted proxies**, so the allowed networks and the lockout don't apply. It shows once a request from localhost carried forwarding headers since ClawEh started. | Click the item to open **Trusted proxies** on the **Network** page and add the proxy's address, usually `127.0.0.1`. See [Remote access](./remote-access.md#what-to-set-in-claweh). |
 | **TLS certificate expiry** | Your own certificate expires within 14 days, or has expired. | Renew the certificate files. See [HTTPS and certificates](./https.md#renewals). |
 | **Data directory permissions** | Files under the data directory can be read by other users. | Restart ClawEh, which tightens them, or `chmod 700` the folders and `chmod 600` the files. See [Logs](./logs.md#startup-permission-checks). |
 | **WebUI chat token** | The WebUI channel is on without a token. | Set a token for the WebUI channel (`channels.webui.token`). It is for non-browser clients only. |

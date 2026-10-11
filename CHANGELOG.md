@@ -352,11 +352,10 @@ observe does not need an entry.
 ### Added
 
 - **Check Up and the Network page flag a proxy that is not trusted.** When
-  requests seem to reach ClawEh through a reverse proxy or tunnel on the same
-  machine that `gateway.trusted_proxies` does not list (an external address is
-  set and localhost is not trusted, or a request from localhost carried
-  `X-Forwarded-For`, `X-Real-IP` or `Forwarded` headers), every request looks
-  like localhost, so the allowed networks and the sign-in lockout never apply.
+  requests reach ClawEh through a reverse proxy or tunnel on the same machine
+  that `gateway.trusted_proxies` does not list (a request from localhost
+  carried `X-Forwarded-For`, `X-Real-IP` or `Forwarded` headers since start),
+  every request looks like localhost, so the allowed networks and the sign-in lockout never apply.
   Check Up shows a marked **Reverse proxy** row linking to **Trusted proxies**,
   and the Network page shows the same note under that field. Request handling
   is unchanged; add the proxy's address (usually `127.0.0.1`) to Trusted

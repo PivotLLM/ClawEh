@@ -78,26 +78,23 @@ func parseForwardedAddr(v string) (string, bool) {
 	return addr.Unmap().String(), true
 }
 
-// ProxyNotTrusted reports whether requests likely reach this install through
-// a reverse proxy or tunnel on this machine that gateway.trusted_proxies does
-// not list, so every request looks like loopback and the allowed networks and
-// the login lockout never apply. It is true when seenPeer, the loopback peer
-// last seen sending forwarding headers ("" when none was), is not trusted, or
-// when an external URL is set (gateway.external_url, or the device listener's
-// while it is on) and neither 127.0.0.1 nor ::1 is trusted.
+// ProxyNotTrusted reports whether requests reach this install through a
+// reverse proxy or tunnel on this machine that gateway.trusted_proxies does not
+// list, so every request looks like loopback and the allowed networks and the
+// login lockout never apply. seenPeer is the loopback peer last seen sending
+// forwarding headers ("" when none was); it is true when that peer is not
+// trusted. Only an observed request counts: an external URL alone may be a LAN
+// address with no proxy at all.
 func (c *Config) ProxyNotTrusted(seenPeer string) bool {
+	if seenPeer == "" {
+		return false
+	}
 	set, err := CompileTrustedProxies(c.Gateway.TrustedProxies)
 	if err != nil {
 		// Refused at load and by Store.Update; nothing to judge.
 		return false
 	}
-	if seenPeer != "" && !set.Trusts(seenPeer) {
-		return true
-	}
-	dev := c.Channels.Device
-	external := strings.TrimSpace(c.Gateway.ExternalURL) != "" ||
-		(dev.Enabled && strings.TrimSpace(dev.ExternalURL) != "")
-	return external && !set.Trusts("127.0.0.1") && !set.Trusts("::1")
+	return !set.Trusts(seenPeer)
 }
 
 // deviceDefaultPort is the device listener's port when channels.device.port
