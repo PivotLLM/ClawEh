@@ -61,3 +61,5 @@ Alerts appear on the **Logs** page (choose the alerts source). See [Alerts](../a
 
 - [Routing and bindings](./routing.md)
 - [Devices](./devices.md)
+- [Voice messages and transcription](./voice.md)
+- [Message API](./message-api.md): send messages to an agent from other apps

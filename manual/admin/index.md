@@ -9,6 +9,7 @@ This part of the manual covers running a ClawEh install safely: signing in, reac
 | [Signing in](./login.md) | The admin account, `claw admin`, sessions and login lockouts. |
 | [HTTPS and certificates](./https.md) | The HTTP and HTTPS listeners, the self-signed certificate, using your own, `claw tls`. |
 | [Network access](./network.md) | Localhost or network, allowed networks, trusted proxies, the device listener. |
+| [Remote access](./remote-access.md) | Reaching ClawEh from elsewhere: your network, a reverse proxy, Cloudflare Tunnel, Tailscale. |
 | [Check Up and the full report](./checkup.md) | The **Check Up** page, the PDF report, and what to do about a marked row. |
 | [Audit log](./audit.md) | The record of tool calls, configuration saves and logins. |
 | [Alerts](./alerts.md) | What alerts are for, how to receive them, and the list of alerts. |
