@@ -1,155 +1,54 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** 
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.**
 
 Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can connect to Telegram, Slack, Discord, Signal (via an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
-**Quickstart**: A tutorial can be found at
+## Documentation
 
-https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
+The **user manual** covers installing, providers and models, agents, channels, forums, Maestro, MCP, security and administration, and a configuration and command reference:
 
----
+- in a running ClawEh, open **Manual** in the WebUI (served at `/manual/`);
+- in this repository, the Markdown source is under [`manual/`](manual/index.md).
+
+A quickstart tutorial is at https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md.
+
+Changes in each release are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Development Status
 
-Version 0.6.0 represents a significant evolution toward a more secure business-class product. HTTPS is now enabled by default, and authentication is required to access the web interface. An overivew of the more important security-related configuration items is now displayed on the "Check-Up" page and a detailed .pdf report can be downloaded for review. Remaining legacy code from the original fork has also been removed and rewritten.
+Version 0.6.0 represents a significant evolution toward a more secure business-class product. HTTPS is now enabled by default, and authentication is required to access the web interface. An overview of the more important security-related configuration items is displayed on the **Check Up** page and a detailed PDF report can be downloaded for review. Remaining legacy code from the original fork has also been removed and rewritten.
 
----
-
-## Installation
-
-ClawEh provides three installation approaches (in order of convenience):
-
-### 1. One-Line Install (Recommended)
-
-A one-line install that installs ClawEh as a background service and tries to open a web browser to trigger the install wizard (and if it cannot open a browser, displays the URL):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
-```
-
-> **Headless or remote host?** You can pass network bind and access control options through to the installer:
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash -s -- --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24
-> ```
-
-### 2. Pre-Compiled Binary (GitHub Releases)
-
-Download the binary archive from GitHub Releases, uncompress it, run `./claw install` to set up the background service, and point your web browser to the install wizard:
-
-```bash
-# Example for Linux amd64 (choose the asset matching your OS/arch from Releases)
-curl -fsSL -O https://github.com/PivotLLM/ClawEh/releases/latest/download/claw-linux-amd64.tar.gz
-tar -xzf claw-linux-amd64.tar.gz
-./claw install
-```
-Then point your web browser to **http://localhost:18790** to complete the setup wizard.
-
-**Note:** If you wish the software to start at boot, without a user logging in, run claw install as root:
-
-```bash
-sudo ./claw install
-```
-
-Re-running `claw install` (for example after an upgrade, to refresh the service
-file) must use the same privilege level as the existing service: `sudo` for a
-system service, none for a user service. The installer refuses the other one
-rather than creating a second service.
-
-### 3. Compile from Source and Install
-
-Compile from source using Go and pnpm, then install:
-
-```bash
-git clone https://github.com/PivotLLM/ClawEh.git
-cd ClawEh
-make build
-./build/claw install
-```
-Then point your web browser to **http://localhost:18790** to complete the setup wizard.
-
-### Admin account
-
-The WebUI requires an admin login, and both `claw install` and the one-line installer create the account before they start the service: they ask for a username and a password (twice, not echoed, at least 12 characters). The prompt works under `curl … | bash` too — it reads from your terminal, not from the pipe. An account that already exists (`<CLAW_HOME>/credentials.json`) is kept; replace it any time with `claw admin`. `--yes` skips only the confirmation question, never the account. If there is no account and no terminal to ask on, the installer stops without starting the service and says how to proceed.
-
-For an unattended install, export `CLAW_ADMIN_USER` and `CLAW_ADMIN_PASSWORD` in the same shell, run the installer, then unset them. Do not write them in front of the command, where the password lands in your shell history (and, before `curl … |`, reaches only `curl`):
-
-```bash
-read -r CLAW_ADMIN_USER; read -rs CLAW_ADMIN_PASSWORD
-export CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
-curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash   # or: ./claw install
-unset CLAW_ADMIN_USER CLAW_ADMIN_PASSWORD
-```
-
-With `sudo`, keep the variables across it: `sudo --preserve-env=CLAW_ADMIN_USER,CLAW_ADMIN_PASSWORD ./claw install`. See [docs/webui-auth.md](docs/webui-auth.md).
-
----
-
-**Latest Changes:**
-
-Changes have been moved to CHANGES.md.
-
----
-
-**Feature overview:**
+## Features
 
 - **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
 - **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 - **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
 - **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Antigravity, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
-- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
+- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
-- **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI. The R1 connects through the Rabbit agent, which supports voice, text, and photos; see [ACP](docs/acp-protocol.md) for how that path works.
-- **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
-- **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
-- **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
-- **Maestro built-in ** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
-- **MCP server and client** — ClawEh provides its internal tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
-- **File tools** — Sandboxed tools for reading, searching, and editing files by line or byte, along with move and delete operations and an optional shared directory for exchanging files between agents.
-- **Image & vision** — A `file_view_image` tool lets vision-capable models view workspace images (auto-downscaled when large). Text-only models can be paired with an optional global vision model that describes inbound images, screenshots, and viewed image files for them automatically.
-- **Inbound webhooks** - Long-lived tokens allow external applications to send messages to a specific agent.
-- **Agent callbacks** - Agents can optionally have a time-limited callback token automatically injected into their prompts to facilitate callback scenarios.
-- **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
+- **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**.
+- **Forums** — Structured discussions among agents, run by ClawEh from a template: independent opinions, debate, and a final report.
+- **Maestro built-in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
+- **MCP server and client** — ClawEh provides its tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
+- **Files, mounts and scheduled jobs** — Sandboxed file tools, external folders mounted per agent, and reminders and recurring jobs.
+- **Message API** — Named tokens let other applications send a message to a chosen agent.
+- **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON.
 
----
+## Installation
 
-## Service and Remote Configuration
-
-When installed as a service (via `claw install` or the one-line installer):
-- **Linux**: registers a `systemd` user service (`~/.config/systemd/user/claw.service`) or system service (`/etc/systemd/system/claw.service` when run as root), starts it, and enables it at boot.
-- **macOS**: registers a `launchd` LaunchAgent (`~/Library/LaunchAgents/com.pivotllm.claweh.plist`) or LaunchDaemon.
-- Symlinks `openclaw` alongside `claw` (for the Rabbit R1 — see [External devices](#external-devices)).
-- Check status, view logs, or uninstall cleanly anytime: `claw uninstall`.
-
-### Headless or Remote Host Configuration
+The one-line installer installs ClawEh as a background service, asks for the admin account, and opens the setup wizard:
 
 ```bash
-claw install --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24   # your LAN subnet — recommended
-claw install --host 0.0.0.0 --allowed-cidrs private          # all RFC1918 private ranges
-claw install --host 0.0.0.0 --allowed-cidrs any              # any address — see the warning below
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
 ```
 
-`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Network → Allowed networks**, with `gateway.allowed_cidrs`, or — if the allowlist is what is keeping you out of the web UI — with `claw network` on the host itself:
+Or download an archive from [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases) (Linux and macOS, amd64 and arm64) and run `./claw install` (`sudo ./claw install` for a service that starts at boot). Then open **http://localhost:18790** and sign in.
 
-```bash
-claw network --show             # what is allowed right now
-claw network                    # allow the private LAN ranges
-claw network 192.168.1.0/24     # or one subnet
-claw network none               # back to loopback only
-```
-
-`claw network` writes the config and exits, so it is safe to run while ClawEh is running; ClawEh applies the new allowlist on its next config reload — about 15 seconds — without a restart. Its `--http`, `--https` and `--device` flags set where each listener binds (`localhost` or `network`; `all`, `localhost` or `off` for HTTPS); those take effect after a restart. See [If you are locked out](#if-you-are-locked-out).
-
-> Prefer the narrowest range that works. Anyone inside the allowlist reaches the login page, so the admin password is all that stands between them and your configuration — put ClawEh behind a VPN or reverse proxy if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
-
-> Not using systemd? Just run `claw` directly — it starts ClawEh and its web UI on port `18790`.
-
-### 3. Open the web UI and finish setup
-
-Browse to **http://localhost:18790** (or one of the HTTPS URLs the installer and `claw status` print) and sign in with the admin account created during install. On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Antigravity, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
+Other options (a bare binary with `claweh.sh`, an unattended install, a headless or remote host) are in the manual: [Installing ClawEh](manual/getting-started/install.md), then [Quick start](manual/getting-started/quickstart.md).
 
 ## File layout
 
@@ -182,125 +81,46 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `cron/` | claw | `jobs.json`, the scheduled jobs. |
 | `backup/` | claw | The nightly backup archives. |
 
-## Features
+## Building from source
 
-### Maestro task orchestration
+Prerequisites:
 
-Maestro lets an assistant plan, coordinate, and execute complex work rather than handling every step sequentially in a single conversation. It can break large or repeatable jobs into **projects**, reusable **playbooks**, and resumable **task lists**, then delegate individual tasks to fresh sub-agents running with the parent agent's models, tools, permissions, and workspace. Independent tasks can run in parallel, failed tasks can be retried, and completed work can be passed through automated QA and review steps before the results are combined into a final report. This makes it practical to automate multi-stage workflows such as repository analysis, research, testing, pre-audits, document generation, and recurring operational procedures. You can enable Maestro per agent with a single toggle, and all its data stays within that agent's workspace under `maestro/`. When enabled, that directory is also auto-mounted read/write for the native file tools (as a peer of `files/`), so the assistant can move reports and inputs between Maestro and `files/` with `file_move` / `file_copy`. The upstream project is also available as a stand-alone stdio MCP service: https://github.com/PivotLLM/Maestro
+- [Go](https://go.dev/dl/) 1.27 or later (the version in `go.mod`)
+- [Node.js](https://nodejs.org/) 20.19+ or 22.12+, for the WebUI and the manual
+- [pnpm](https://pnpm.io/installation) (`npm install -g pnpm`)
 
-### MCP servers
-ClawEh is both an MCP **server** — exposing its tools to CLI-based agents — and an MCP **client** that connects to upstream servers over **stdio** or **HTTP**, providing their tools to your agents. Add/edit external servers in the WebUI. Access is **granular per agent**: each agent is granted upstream tools individually (by server or tool-name prefix), and a coarse per-endpoint visibility filter controls what the host advertises.
-
-### Context management
-Two mechanisms keep long sessions inside the model's window. **Eviction** is a per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads, web fetches) to a short placeholder once the agent has moved on. By evicting stale data before every dispatch, summarization fires far less often. **Compression** summarizes older conversation when the window fills. It can be tailored per agent with a `COMPRESSION.md` in the workspace. See [docs/context-eviction.md](docs/context-eviction.md).
-
-### Cognitive memory
-Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, `rule`, `operational` (the assistant's own housekeeping) or `event`. Events are things that happened at a point in time; they are never loaded into the prompt, are reached by search, and are deleted after 30 days, so a scheduled job cannot bury an assistant in its own status reports. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**; its rules and output format are built in, and a per-agent `COGMEM.md` in the workspace adds instructions for that assistant. 
-
-The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-loaded by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
-
-The **memory page in the Web UI** is where you correct what an assistant filed:
-change a memory's type, retire and restore, select a whole domain and retype or
-delete it in one go, or add a memory by hand (recorded as `origin: user`, which
-the assistant is told outranks its own inferences). The whole store exports and
-imports as YAML. Full details in **[docs/memory.md](docs/memory.md)**.
-
-Use **`claw memory purge`** to clear everything that isn't current active memory
-— a dry run by default; add `--confirm` to delete and vacuum. Stop ClawEh
-first so you're not racing live agents:
+Do not install Node.js with `apt`; the packaged version is too old. Use the [NodeSource repository](https://github.com/nodesource/distributions) or [nvm](https://github.com/nvm-sh/nvm).
 
 ```bash
-claw memory purge             # dry run — review the counts
-claw memory purge --confirm   # delete + vacuum
+git clone https://github.com/PivotLLM/ClawEh.git
+cd ClawEh
+make build             # build/claw, with the WebUI and the manual embedded
+./build/claw install   # install it as a service
 ```
 
-### Agents, workspaces, and files
-By default, an agent's file tools see two directories: **`<workspace>/files`** (read
-**and** write — its working area, created automatically) and **`<workspace>/skills`**
-(read-only). Everything else is invisible to the agent, including the human-authored
-prompt files — `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` — which
-are combined into the system prompt every turn. Keep those **brief and general**; the
-agent no longer edits them, they're authoritative, and shape what it learns. A shared
-**common directory** lets agents that are given access to it exchange files.
+The WebUI (`web/frontend`) and the user manual (`manual/`, VitePress) are built and embedded in the one `claw` binary, which serves the agent runtime, the WebUI, its API and the manual from one process.
 
-**External mounts.** Mount any folder on the file system as a top-level name beside `files/` and
-`skills/` — per agent, on the **Agents page** (a name, an absolute path, and an
-optional **notify** toggle). A mount `notes` → `/home/ai/Documents/mynotes` is reachable
-as `notes/.... read **and** write, sandboxed so the agent can't climb above it (`..`
-is rejected). Unless write permissions are explicitly granted, the directory is read-only. With **notify** on, claw watches the tree and messages the agent on its default channel whenever a **new** file appears.
-A mount can't be named after a workspace folder (`files`, `skills`, `tasks`, `tmp`,
-`forums`, `maestro`, `sessions`, `cogmem`, `state`, `common`, in any case): such a name
-is refused on save, and one already in `config.json` is ignored, with a note on the
-Agents page and the Check Up page, until it is renamed.
+| Target | Description |
+|---|---|
+| `make build` | Build `claw` for the current platform |
+| `make install` | Build, then run `claw install` |
+| `make test` | The full gate: format check, vet, lint, govulncheck, the Go suite, the frontend checks, the manual build and the MCP integration tests |
+| `make manual` | Build the user manual |
+| `make check-webui` | The browser regression suite against a running dev instance |
+| `make clean` | Remove build artifacts |
 
-**File tools** address content explicitly by **lines** or **bytes**, so units never
-mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
-`file_edit_lines`/`insert`/`delete` (line and byte variants), plus `file_edit`
-(exact-text replace), `file_write`, `file_append`, `file_copy`, `file_move` (works
-across mounts), and `file_delete` (requires `sure=true`; refuses to delete backups).
+See [docs/test.md](docs/test.md) for how the suite is organised. Developer notes on protocols and internals are in [`docs/`](docs/).
 
-## External devices
+### Shared modules
 
-Two different transports reach your agents from outside the machine. They are
-separate listeners with separate credentials, and which one a client uses is not
-a choice you make — it depends on the client.
+Several parts of ClawEh are standalone Go modules so they can be reused (e.g. by Maestro) and compiled into one binary without import cycles:
 
-| | Device listener | ACP bridge |
-|---|---|---|
-| Used by | ClawToTalk (Android), OpenClaw-compatible apps | Rabbit R1 |
-| Port | `channels.device.port`, default **18791** | none — stdio, no listener |
-| Protocol | OpenClaw Gateway WebSocket | Agent Client Protocol (JSON-RPC 2.0 over stdio) |
-| Auth | shared token or 5-word passphrase, then Ed25519 pairing | inherits the device listener's, over loopback |
+- **[`toolspec`](https://github.com/PivotLLM/toolspec)** — the transport-neutral tool contract.
+- **[`spawnllm`](https://github.com/PivotLLM/spawnllm)** — the LLM-dispatch core: provider clients and the tool-call loop.
+- **[`ctxengine`](https://github.com/PivotLLM/ctxengine)** — the context engine: transcript, archive, compaction and the session tools.
+- **[`cogmem`](https://github.com/PivotLLM/cogmem)** — cognitive memory.
 
-Neither uses the web UI's chat socket (`/webui/ws` on port 18790). That one is
-for the browser console only.
-
-### Device listener — apps
-
-ClawEh speaks the **OpenClaw Gateway WebSocket protocol** on its own listener, so
-OpenClaw-compatible clients work without modification. Pair by scanning a QR code
-or typing a five-word passphrase, then approve the device in the web UI. Each
-device can be pointed at a chosen assistant, and replies stream live as the model
-produces them.
-
-`channels.device.allowed_cidrs` is empty by default here, meaning any address —
-unlike the web UI's allowlist. That is deliberate: this listener authenticates
-every client, so reachability is not the only thing standing between a stranger
-and your agents. See [the protocol notes](docs/device-protocol.md).
-
-### ACP bridge — the Rabbit R1
-
-The R1 does **not** connect over the network. Its `rabbit-agent` spawns a local
-helper process and talks to it over a pipe, so ClawEh has to be something
-`rabbit-agent` can launch:
-
-```
-rabbit-agent ──ACP over stdio──► openclaw acp ──WebSocket on 127.0.0.1:18791──► the running ClawEh
-                                 (a symlink to claw)                            (device listener)
-```
-
-`rabbit-agent` is configured to spawn `openclaw acp`. Installing ClawEh creates
-an `openclaw` symlink next to the `claw` binary — `claw install` and
-`make install` both do this — so that command resolves to ClawEh. `claw acp` is a
-stateless translator: it holds no agent loop, and simply converts each ACP prompt
-into a device listener turn against the **already-running** ClawEh on loopback.
-There is only ever one ClawEh instance.
-
-Because the bridge connects as a device, it uses the same credentials and pairing
-as any other client, and pairs only once: its Ed25519 identity and issued token
-persist in `$CLAW_HOME/internal/acp-bridge/`, so the short-lived processes
-`rabbit-agent` spawns do not re-pair every time.
-
-Two practical consequences:
-
-- **ClawEh must already be running.** The bridge is a translator, not a
-  server; it connects to ClawEh rather than starting one.
-- **Restarting ClawEh drops the bridge.** Upgrading ClawEh restarts the
-  service, so `openclaw` has to be restarted afterwards (or the host rebooted)
-  before the R1 reconnects.
-
-Full details, including the turn lifecycle and the JSON-RPC wire format, are in
-[docs/acp-protocol.md](docs/acp-protocol.md).
+None of them imports ClawEh; policy (model selection, fallback, cooldown, configuration) stays in ClawEh.
 
 ## Why ClawEh exists
 
@@ -310,178 +130,20 @@ It has since evolved into a separate project with different priorities: a smalle
 
 ClawEh remains grateful to PicoClaw for the original idea and inspiration.
 
-## Binary distribution
-
-For users who are not interested in compiling it themselves, prebuilt (and, on macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases) for Linux and macOS on amd64 and arm64.
-
-To install ClawEh as a background service and launch the setup wizard in one step:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
-```
-
-Alternatively, to install **only the bare binary** without registering a background service:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
-```
-
-This downloads the `claw` binary for your platform and installs it to `/usr/local/bin` (falling back to `~/.local/bin`), together with the license and third-party notices. It installs **only the binary** — it never touches your data directory (`~/.claw`), so it is safe to re-run to upgrade. It creates no admin account: `claw install` does that when it sets up the service (see [Admin account](#admin-account)), or run `claw admin` before starting `claw` yourself.
-
-Environment overrides:
-
-- `CLAWEH_VERSION` — install a specific release tag (e.g. `v0.4.53`); default: latest.
-- `CLAWEH_INSTALL_DIR` — install into a custom directory. Handy for **trying a
-  build without disturbing an existing install**:
-
-  ```sh
-  CLAWEH_INSTALL_DIR="$HOME/claw-test/bin" \
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh)"
-  ~/claw-test/bin/claw version
-  ```
-
-Every release ships `checksums.txt` and its minisign signature
-`checksums.txt.minisig`, plus a CycloneDX `sbom.json`. `claw upgrade` downloads
-the release, verifies the signature with the publisher key embedded in the
-running binary, and then checks the archive's SHA-256 against the signed list;
-a release without a valid signature is refused.
-
-If you'd like a platform that isn't listed, please open an issue — or build it
-yourself (see [Building](#building)).
-
-## Prerequisites
-
-- [Go](https://golang.org/dl/) 1.21 or later
-- [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (for building the web frontend)
-- [pnpm](https://pnpm.io/installation) — install via `npm install -g pnpm`
-
-**Do not install Node.js via `apt`** — the packaged version is too old. Use the [NodeSource repository](https://github.com/nodesource/distributions) for a system-wide install:
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-npm install -g pnpm
-```
-
-Alternatively, use [nvm](https://github.com/nvm-sh/nvm) for a per-user install (run as your regular user, not root):
-
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-# open a new shell, then:
-nvm install 22
-nvm alias default 22
-npm install -g pnpm
-```
-
-## Building
-
-Clone the repository and build the single `claw` binary (the WebUI is embedded):
-
-```bash
-git clone https://github.com/PivotLLM/ClawEh.git
-cd ClawEh
-make install
-```
-
-This builds `claw` (agent runtime + WebUI + session API in one binary) and installs
-it to `~/.local/bin`. The frontend bundle in `web/frontend` is built and
-embedded into the same binary, so a single `claw` invocation serves
-everything — the chat agent, the WebSocket WebUI, and the JSON config API —
-on `gateway.port` (default `18790`).
-
-If you do not have Node.js and pnpm installed, you can still build the agent
-side as long as `web/backend/dist/index.html` is already present (the
-embedded asset directory is committed empty with a `.gitkeep`, so missing
-frontend assets just mean the WebUI 404s, ClawEh still runs).
-
-The user manual is Markdown under `manual/`, built with VitePress (`make manual`, also run by `make build`), embedded in the binary and served at `/manual/` behind the WebUI login.
-
-**Available make targets:**
-
-| Target | Description |
-|---|---|
-| `make build` | Build `claw` (with embedded WebUI) for the current platform |
-| `make install` | Build and install `claw` to `~/.local/bin` |
-| `make test` | Run tests |
-| `make clean` | Remove build artifacts |
-
-### Shared modules
-
-Two pieces of ClawEh are factored into standalone, dependency-free Go modules so
-they can be reused (e.g. by Maestro) and compiled into one binary without import
-cycles:
-
-- **[`toolspec`](https://github.com/PivotLLM/toolspec)** — the transport-neutral
-  tool contract (`ToolProvider`/`ToolDefinition`/`Result`). Tool packages and
-  external hosts implement this.
-- **[`spawnllm`](https://github.com/PivotLLM/spawnllm)** — the LLM-dispatch core:
-  the provider clients (OpenAI-chat/responses, Azure, Anthropic, and the
-  claude/codex/agy CLIs) plus the API tool-call loop. spawnllm imports only
-  `toolspec` + stdlib; it never imports a host. Policy — model selection,
-  fallback, cooldown, config, results handling — stays in ClawEh.
-
-`global` and `providers` are thin alias shims re-exporting these modules,
-so a normal `go build` fetches them by version tag; no extra setup is needed.
-
-## Running
-
-Start claw with the bare command (no subcommand):
-
-```bash
-claw
-```
-
-The WebUI is served on `http://localhost:18790` — open that URL in a browser
-to reach the chat interface and configuration console. The port is
-configurable via `gateway.port` in `~/.claw/config.json`.
-
-On the first run ClawEh writes a complete `~/.claw/config.json` (mode `0600`)
-if none exists, with every section present and the full set of known models and
-providers listed. That generated file is the reference for what is
-configurable — there is no separate example config to fall out of date with the
-code. Edit it in the web console under **Config**, or by hand; the topic docs in
-[`docs/`](docs/) cover individual sections in more detail.
-
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
-
-## Assistant behaviour
-
-**One agent, one conversation — every channel, without exception**
-
-An agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device listener (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Alice from your R1 that dinner is at six, ask her from Slack, and she answers six.
-
-There is no per-user, per-channel or per-device carve-out, and no way to make one channel private by connecting through a different door. **If you want a separate conversation, create a separate agent** and control what that agent can reach — its own workspace, its own tools, its own bindings. A team or family that wants private assistants gives each person their own agent. If an agent should not accumulate memory at all, disable cognitive memory for it (`cogmem: false`). Those are the supported ways to separate things; the transport you happen to speak through is not one.
-
-**One-shot tasks without context**
-
-Every conversation adds to the agent's shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation. A sub-agent inherits the parent's full toolset and may itself spawn or orchestrate further sub-agents, bounded by `agents.defaults.max_subagent_depth` (default 3) so recursion cannot run away. See [docs/subagents.md](docs/subagents.md).
-
-**Security: access control**
-
-Every channel has an `allow_from` list. An empty list means **nobody** can connect. Set it to your user IDs to restrict access, or `["*"]` to allow all users.
-
-ClawEh is designed as a personal assistant framework. We strongly advise against allowing untrusted users to access your assistants. Every person who can reach the assistant is contributing to — and reading from — the same shared memory and context. An untrusted user can see the assistant's full history of what it knows and has been told. Only grant access to people you trust completely, and ensure you fully understand the security implications before opening any channel beyond your own use.
-
-On platforms like Telegram where bots are publicly discoverable by username, this risk is especially acute. Always set `allow_from` explicitly.
 
 ## Security Considerations
 
 ClawEh is intended to function as a personal or small-team assistant that runs on a computer the operator controls. It is not designed or intended to provide any kind of public service.
 
-The web console and its API require an admin login. There is no default account: create one on the server with `claw admin` (see [docs/webui-auth.md](docs/webui-auth.md)). Plain HTTP is served on loopback by default (`gateway.host`); HTTPS is served on every interface on `gateway.tls_port` (default `18443`) with a self-signed certificate or one you supply, and `gateway.tls.mode` restricts it to `localhost` or turns it `off` (see [docs/tls.md](docs/tls.md)). Setting `gateway.host` to a network address serves plain, unencrypted HTTP there too; the configuration report marks it. Network access is further limited by the IP allowlist: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port. ClawEh answers only to its own host names and rejects cross-site requests from other web pages, which defeats DNS-rebinding and CSRF attacks against a browser on the same machine.
-
-Every tool call, configuration change and login is recorded in the audit log ([docs/audit.md](docs/audit.md)).
-
-**Keeping secrets out of config.json.** Any credential field in `config.json` — a provider `api_key` or `api_keys` list, a channel `token`, a `*_secret` or `*password` field, the `env` and `headers` values of an MCP server or CLI model, or a `proxy` URL with a password — may hold a reference instead of the value: `"api_key": "env:OPENAI_API_KEY"` reads the environment variable when ClawEh starts (add it to the service unit's `Environment=` or an `EnvironmentFile=`), and `"token": "file:/etc/claw/telegram.token"` reads the file's contents (surrounding whitespace trimmed). The file must be readable only by its owner (`chmod 600`) and the path must be absolute. References are resolved when the configuration loads and written back unchanged whenever the configuration is saved, including saves from the web console, so the secret never appears in `config.json`. The web console shows a reference as written rather than masked; typing a new value into a referenced field replaces the reference with that literal. A reference that cannot be resolved — an unset variable, a missing file, or a file that group or other can read — stops ClawEh from starting, or is rejected by the web console, with a message naming the config key. CLI providers run without their vendor's permission prompts only when *Allow CLI to bypass restrictions* is ticked for that CLI; with it on, the CLI can run commands and modify files anywhere the service user can. The configuration report (**Check Up** in the web console) lists every such setting and marks the ones that need attention.
+The WebUI requires an admin login, HTTPS is on by default, and the **Check Up** page lists the settings that need attention. See [Security and administration](manual/admin/index.md) in the manual.
 
 In general, Claw should be operated as a local, user-controlled tool, not as an internet-facing application.
 
 This application assumes that messages sent to assistants come from an authorized user and are not malicious. While it may provide configuration options to restrict which users on services such as Slack or Telegram are allowed to communicate with an assistant, misconfiguration is possible, and flaws, bypasses, or unexpected behavior may exist. Exposing an assistant through external communication channels can be very convenient, but it also increases risk substantially: if an account is compromised, access controls are configured incorrectly, or a bug or unknown vulnerability is present, unauthorized parties may be able to interact with the assistant and trigger actions or consume paid API resources.
 
 When enabling tools, including connecting MCP servers, users must carefully consider the security and privacy implications. Granting an assistant access to sensitive systems or data can have severe consequences if that assistant is exposed beyond the intended user. For example, giving an assistant access to email and then accidentally allowing anyone on Telegram to interact with it could have catastrophic privacy and security consequences. The same principle applies to file systems, shells, calendars, internal APIs, and any other connected capability.
-
-ClawEh includes an HTTP external-message endpoint that is disabled by default. When enabled for an individual agent, an authenticated external process can deliver a message into the agent's active conversation (`POST /api/message/{token}`); the agent then responds on its standard communication channel. If this feature is used, care must be taken to avoid it being abused for malicious purposes. See [docs/external-messages.md](docs/external-messages.md).
 
 Users should also understand that data made available to an assistant through connected tools and services may contain malicious or misleading content. Content from email, chat systems, documents, web pages, issue trackers, or other data sources could potentially be interpreted or acted on by the assistant as if it were an instruction. It is the user's responsibility to ensure that they fully understand the risks, that appropriate security controls are in place, and that, where necessary, appropriate testing has been conducted.
 
@@ -490,542 +152,6 @@ ClawEh does not attempt to determine whether your deployment is appropriately se
 Users should also carefully consider the financial implications of connecting applications to LLM APIs and other metered services. A bug, a bad configuration, or accidental exposure through channels like Telegram or Slack can potentially result in large numbers of unintended requests and, in turn, unexpectedly large bills. This risk becomes especially serious when assistants are connected to paid APIs, tools, or automated workflows.
 
 To reduce the risk of financial surprises, we strongly recommend using prepaid APIs and/or subscription-based CLIs where possible. You should also ensure that appropriate cost monitoring, usage limits, budget alerts, rate limits, and other containment controls are in place. Choosing to run Claw, expose it through external services, and connect it to paid models or sensitive tools is your decision, and you bear full responsibility for the outcome.
-
-## If you are locked out
-
-Everything below is done on the server itself, as the user ClawEh runs as (on a
-system install `sudo -u <service user> CLAW_HOME=/opt/claw claw …`). Each
-command edits the config and exits; nothing here needs the WebUI.
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| "Forbidden" (403) from another machine, on HTTP and HTTPS alike | The allowlist (`gateway.allowed_cidrs`) no longer includes your network. Loopback is all that is served. | `claw network` (private LAN ranges) or `claw network 192.168.1.0/24`. Applied within about 15 seconds, no restart. |
-| Connection refused from another machine after a restart | The listener binds to this machine only (`gateway.host` 127.0.0.1, or `gateway.tls.mode` localhost/off). | `claw network --http network`, `claw network --https all`, `claw network --device network` as needed, then restart the service. |
-| Wrong or forgotten password | The admin account is the only login. | `claw admin` sets a new one; it also clears every login lock at once. |
-| "Too many failed logins" | An address or the account is locked (see below). | Wait it out with no further attempts, or `claw admin`, or restart the service. |
-| Settings changed that you did not touch | A bad save. | Restore `<CLAW_HOME>/backup/<date>/config.json.<timestamp>` (nightly) over `config.json`, then restart. |
-
-`claw network --show` prints where each listener binds and what the allowlist
-allows, from the config file, so you can see the state before changing it.
-
-## Authentication failures
-
-The WebUI login counts failed attempts two ways at once, and either one can lock logins out:
-
-- **Per client address.** 10 failed logins from one IP address within ten minutes lock that address for 5 minutes.
-- **Per account.** 10 failed logins against one username within ten minutes lock that username for 10 minutes, from every address. The username is counted exactly as typed, whether or not such an account exists, so the answer never reveals which username is the real one.
-
-While a lock is in force, **every** attempt it covers is refused, including one with the right password, and each refused attempt restarts the lock at its full length (5 minutes for an address, 10 for an account). There is no cap and no escalation: a lock ends only after a full lockout period with no attempts at all. Failures older than ten minutes stop counting, and a successful login clears the failure counts of its address and username.
-
-A locked attempt is answered `429 Too Many Requests` with a `Retry-After` header (seconds) and the body `{"error":"too many failed logins","retry_after":<seconds>}`. The body is the same whether the address or the account is locked and whether the account exists; the WebUI shows "Too many failed sign-ins. Try again in N seconds." Trying again before then restarts the lock. An ordinary wrong username or password is `401` with `{"error":"invalid username or password"}`.
-
-To end every lock at once, run `claw admin` on the server (setting a new password, or the same one): ClawEh notices the credentials file changed on the next login attempt, clears all address and account locks, and accepts the new account straight away. Restarting ClawEh also clears all locks, since they are kept only in memory.
-
-`gateway.lockout_exempt` is a list of IP addresses and CIDRs (for example a reverse proxy, `["192.168.1.10", "10.0.0.0/8"]`) that are never locked out by address, neither at the WebUI login nor at the device listener; loopback is always exempt. Account locks still apply to attempts from these addresses, so a proxy cannot be used to get around them. On the WebUI Network page the field is "Never locked out", and a change applies on the next config reload without a restart.
-
-`gateway.trusted_proxies` lists the addresses (IPs or CIDRs) of reverse proxies you run in front of ClawEh, for example `["127.0.0.1"]` for nginx on the same host. A request whose TCP peer is one of them is treated as coming from the address in its `X-Real-IP` header, or without one from the first `X-Forwarded-For` entry. That address is what the IP allowlists, the address lockouts, `gateway.lockout_exempt`, the logs and the audit log see, on the WebUI and at the device listener. From any other peer the headers are ignored, and loopback is trusted only if listed. Have the proxy set `X-Real-IP` to the client (nginx: `proxy_set_header X-Real-IP $remote_addr;`). With a proxy listed, the allowlists judge the real clients, so a proxied WebUI needs `gateway.allowed_cidrs` to cover them (for example `["*"]`). A change applies on the next config reload without a restart.
-
-Each lock that starts raises a Normal-priority operator alert: "WebUI login address locked out" (event id `auth-lockout-ip`, naming the address) or "WebUI login account locked out" (`auth-lockout-account`, naming the username). Attempts that only extend an existing lock do not alert again; a new lock after an earlier one has ended does. Failed logins, lock starts and refused attempts are logged with the username and client address (never the password) and recorded in the audit log. See [ALERTS.md](ALERTS.md) and [docs/audit.md](docs/audit.md).
-
-## Running as a service (Linux)
-
-`claw.service` in the project root is a systemd unit file for running ClawEh
-as a background service on Linux. The merged binary handles the agent runtime, the
-WebUI HTTP layer, and the session API in one process — there is no longer a
-separate `claw-web` service. Replace `YOUR_USERNAME` with the user account
-the service should run under, then install with:
-
-```
-sudo cp claw.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now claw
-```
-
-ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
-in the service file. See [Logging](#logging) for rotation and retention.
-
-The unit uses `KillMode=mixed`: on `systemctl stop` only the `claw` process gets
-SIGTERM and shuts down its channels, turns and MCP servers itself, normally
-within a few seconds; anything still running afterwards is killed.
-
-## Logging
-
-ClawEh writes its own log files to `$CLAW_HOME/logs/` (default `~/.claw/logs/`),
-so the systemd unit needs no `StandardOutput`/`StandardError` redirection:
-
-- **`claw.log`** — the main log: everything at or above the configured `level`.
-- **`error.log`** — a high-signal companion containing only `WARN` and above, so
-  you can scan for problems quickly without wading through routine activity.
-  Fatal errors (including config-file errors that abort startup) are written
-  here as well as to `claw.log`.
-
-### Daily rotation and retention
-
-Both files roll once per day. At local midnight the active `claw.log` / `error.log`
-are renamed to date-stamped archives — `YYYYMMDD-claw.log` and `YYYYMMDD-error.log`
-— and fresh active files are opened. The date is taken from each file's
-last-modified time, so if ClawEh was not running at midnight the roll
-happens as soon as it next starts, stamping the archive with the day the log
-actually covers.
-
-Retention is a single setting, `logging.retention_days`. After each roll,
-date-stamped archives older than that many days are deleted; **`0` keeps logs
-forever**. The default is `30`. It can also be set via the
-`CLAW_LOGGING_RETENTION_DAYS` environment variable, and is editable in the WebUI
-under **System → Runtime → Log retention (days)** (changes apply on the next
-ClawEh start). Only `YYYYMMDD-*.log` archives are pruned — the active
-`claw.log` / `error.log` and the `dumps/` directory are never touched.
-
-### Logging options
-
-```json
-{
-  "logging": {
-    "file": true,
-    "console": true,
-    "level": "info",
-    "json": false,
-    "retention_days": 30,
-    "log_message_content": false,
-    "dump_refusals": true,
-    "dump_all": false,
-    "dump_failed_compressions": false
-  }
-}
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `file` | `true` | Write to `claw.log` (and `error.log`). |
-| `console` | `true` | Also write to stdout/console. |
-| `level` | `info` | Minimum level: `debug`, `info`, `warn`, `error`. |
-| `json` | `false` | Emit JSON instead of the human-readable console format. |
-| `retention_days` | `30` | Days of rolled daily logs to keep; `0` = keep forever. |
-| `log_message_content` | `false` | Include message text and API request/response bodies in logs. Off by default for privacy. |
-| `dump_refusals` | `true` | See [Diagnostic dumps](#diagnostic-dumps). |
-| `dump_all` | `false` | See [Diagnostic dumps](#diagnostic-dumps). |
-| `dump_failed_compressions` | `false` | Write a dump when a context-compaction (summarization) attempt fails. |
-
-Each option also has a `CLAW_LOGGING_*` environment override (e.g.
-`CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
-
-## Operator alerts
-
-ClawEh raises an **alert** when something needs a person rather than a retry:
-a model parked because its CLI logged out or its key was revoked, a channel
-that gave up starting, an MCP server that cannot be reconnected, a scheduled
-job or config reload that failed. Alerts are produced by the
-[tenebris-tech/alerter](https://github.com/tenebris-tech/alerter) module.
-Every alert is written to `$CLAW_HOME/logs/alerts.log` (or the file named by
-the `ALERTER_LOG` environment variable), and delivered to any channel
-configured through `ALERTER_*` environment variables (Pushover, SMS, SMTP
-mail, a JSON webhook), set in the service environment or in `~/.alerter` for
-the user running ClawEh; see the module's README for the variables. The web
-console's **Logs** page shows the alerts log when its source selector is set
-to **Alerts**, and `GET /api/gateway/alerts` returns it. All ClawEh alerts
-are normal priority. Every alert is listed in `ALERTS.md`, and the record
-format is in [docs/alerts.md](docs/alerts.md).
-
-## Backup and restore
-
-ClawEh takes a nightly **backup** — **on by default** — of everything needed to bring the install back: `config.json`, the cron jobs file, the `internal/` state and token stores, the admin credentials and TLS files when present, and every SQLite database under `CLAW_HOME` (session archives and cognitive memory included), written as one archive `claw-backup-<timestamp>.tar.gz` (mode 0600). Databases are snapshotted with SQLite's `VACUUM INTO` after a `PRAGMA quick_check`, so a live store is captured consistently. Media caches, logs, per-agent `tmp/` and temporary agents (`internal/temp/`) are excluded.
-
-Manage it in the web console under **Config → Backup**, or in `config.json`:
-
-```json
-"backup": { "enabled": true, "at": "03:00", "retain_days": 30, "dest": "" }
-```
-
-| Field | Default | Description |
-|---|---|---|
-| `enabled` | `true` | Set `false` to turn the nightly backup off. |
-| `at` | `03:00` | Local time of day (`HH:MM`) to run. |
-| `retain_days` | `30` | Delete archives older than this. |
-| `dest` | `$CLAW_HOME/backup` | Directory to write archives to (an off-host mount, for example). |
-
-`claw backup [--dest DIR]` runs the same backup on demand, and `claw restore <archive>` restores one (ClawEh must be stopped; the files it replaces are kept in `restore-backup-<timestamp>/`). The **Back up now** button (or `POST /api/backup`) runs a backup immediately. See [docs/backup.md](docs/backup.md).
-
-## Diagnostic dumps
-
-ClawEh can write full LLM request/response snapshots to disk for debugging. Files are written to `$CLAW_HOME/logs/dumps/` (e.g. `~/.claw/logs/dumps/`). Each dump produces two files sharing a common base name (`YYYYMMDD-HHMMSS-<id>`):
-
-- **`.json`** — structured JSON with three top-level keys (`metadata`, `input`, `output`) where `input` and `output` are proper nested JSON objects, suitable for programmatic parsing.
-- **`.txt`** — human-readable version: metadata as key/value pairs, input and output as pretty-printed JSON with escaped `\n` sequences expanded to real newlines so message content is legible.
-
-The warning log entry emits the base name for correlation to both files.
-
-Two options are available in the `logging` config block:
-
-```json
-{
-  "logging": {
-    "dump_refusals": true,
-    "dump_all": false
-  }
-}
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `dump_refusals` | `true` | Write a dump whenever the LLM returns `finish_reason: "refusal"`. A `WARNING` log entry is emitted with the filename and correlation fields (agent, model, session key, channel). |
-| `dump_all` | `false` | Write a dump for every LLM response regardless of finish reason. Logged at `DEBUG` level. Useful for deep debugging; generates significant disk output under normal load. |
-
-When `dump_refusals` is `true` and the response is a refusal, only the refusal dump is written — `dump_all` does not also fire for the same response.
-
-## External message endpoint
-
-ClawEh provides an optional per-agent HTTP endpoint that lets external processes deliver a message into an agent's active conversation without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
-
-```
-POST http://localhost:18790/api/message/{token}
-```
-
-The rotating per-agent token is configured under **Agents** (`message.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature. See [docs/external-messages.md](docs/external-messages.md).
-
-> **Security notice:** plain HTTP, bound to `127.0.0.1` only. Do not expose it externally.
-
-## Service tokens (long-lived MCP credentials)
-
-For an external MCP client that needs to drive an agent's tools — most notably **Maestro** — on a stable footing, mint a long-lived per-agent **service token**. Unlike the per-session token (which rotates, idles out after 2h, and dies on restart), a service token persists until you revoke it.
-
-```
-claw token issue  <agent>   # mint (or replace) and print the agent's service token
-claw token rotate <agent>   # replace the existing token
-claw token revoke <agent>   # remove it
-claw token list             # list agents that have one (tokens are not shown)
-```
-
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. It drives the agent's **main** session like every other surface, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. If an integration must be walled off, give it its own agent. Tokens are stored at `$CLAW_HOME/internal/service-tokens.json` (`0o600`); a running ClawEh picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
-
-## Context management
-
-Each agent session maintains a persistent SQLite archive of every message it sends and receives. When the context window fills, claw compresses older messages into a structured summary and moves them out of the active window, keeping the conversation continuous across long sessions.
-
-### How it works
-
-1. **Archive** — every message is written to a per-session SQLite database (WAL mode, FTS5 index) with a sequence number and timestamp. **Tool result** content larger than 4 096 bytes is truncated before archiving so that large file reads don't produce unbounded blobs; **user and assistant** content gets a larger 16 384-byte cap, because conversation is not re-retrievable and it is what cognitive-memory consolidation reads.
-
-2. **Compression trigger** — after each LLM turn, claw estimates the token usage of the current request (stored history plus the tool schemas, the rendered summary and the system prompt) and compacts when any trigger fires: a percentage of the context window, a message count, or the **age of the oldest message in the window**. The percentage and count triggers are gated by a floor (`trigger.min_percent`); the age trigger and the emergency threshold are not, which is what ages out a low-volume session that never approaches any percentage.
-
-3. **Summarisation** — the oldest messages above a retained tail are sent to a summarisation model (defaults to the agent's primary model). The summary is structured JSON covering topics, decisions, key moments, and a retrievable history index. The rendered summary is injected at the top of the context window on every subsequent turn, and begins with the date range and message numbers it covers so the LLM can orient itself after compaction.
-
-4. **Retrieval** — the archive is available via the session tools (see [Session tools](#session-tools) below). The LLM can query any archived message by sequence number or full-text search, and browse its own past summaries, so nothing within the retention window is lost. Clearing a conversation (`/clear`) **preserves** this long-term memory — it resets only the active window, not the archive or summary log. A hard wipe is done by deleting the session's `.archive.db` manually.
-
-5. **Retention** — by default the archive and summaries grow without bound (nothing is pruned). Optionally bound them by age or count (see [Configuration](#configuration)); pruning runs on archive open and after each compaction.
-
-### Configuration
-
-Context management options live in the agent config block (or `agents.defaults`):
-
-Compaction itself is configured under a `compression` block, split by what each setting controls: `trigger` decides **when** a compaction runs, `retain` decides **what survives** it, and `estimate` tunes how token cost is measured (every percentage is relative to it). Each field is optional; omitting one keeps the built-in default.
-
-| Field | Default | Description |
-|---|---|---|
-| `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
-| `compression.trigger.min_percent` | `20` | Floor below which the percentage and count triggers never fire. The age trigger and `safety_percent` ignore it. |
-| `compression.trigger.normal_percent` | `50` | Routine compaction threshold, as a percentage of the context window. |
-| `compression.trigger.safety_percent` | `80` | Emergency threshold. Also checked mid-turn, between tool iterations. |
-| `compression.trigger.message_count` | `100` | Compact after this many new messages since the last compaction. `0` disables it. |
-| `compression.trigger.days` | `7` | Compact once the oldest message in the window is this old, regardless of how little of the window it occupies. Keep it **above** `retain.max_age_days`. `0` disables it. |
-| `compression.retain.token_percent` | `10` | Retained tail budget, as a percentage of the context window. Must be below `trigger.min_percent`, or every pass lands back on the floor and immediately re-fires. |
-| `compression.retain.max_tokens` | `40000` | Absolute ceiling on the retained tail, applied alongside the percentage (the smaller wins). The percentage scales with the window, so without this a million-token model keeps 100 k of tail purely because it can. A no-op on 128 k models, where the percentage already binds tighter. `0` disables it. |
-| `compression.retain.max_age_days` | `5` | Trim the retained tail back to this age. Lower spends fewer tokens per request; higher keeps more history in context. `0` disables it. |
-| `compression.retain.min_messages` | `2` | Floor that overrides every other retention bound. The most recent user message is always kept as well. |
-| `compression.target_percent` | derived | Stop condition for the compaction loop. Unset derives it from `trigger.normal_percent`. |
-| `compression.estimate.chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
-| `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
-| `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
-| `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
-| `retention_days` (in the `session` block) | `0` (keep forever) | Delete a whole session archive once it has had no activity for *n* days, checked nightly at 03:45. Only sessions other than the agent's `main` conversation are affected (sub-agent and per-sender sessions left by earlier releases); `main` is never deleted (use `archive_days` to trim messages inside it). A session with a turn in flight, or one ClawEh still has open, is skipped until the next night. The same pass deletes cogmem migration snapshots (`agents/<id>/cogmem/cogmem.db.pre-vN.db`) older than 30 days. |
-
-**Erasing a sender.** `claw sessions erase --channel telegram --chat 12345` deletes every per-sender session Alice or Bob hold for that chat id on Telegram (direct and group sessions left by earlier releases) and prints each key removed. With the service running use `DELETE /api/sessions?channel=telegram&chat_id=12345` instead (login required); it returns `{"erased":[...],"skipped":[...],"shared_session":"...","cogmem":"..."}`. The sender's messages are in the agent's shared `agent:<id>:main` session, which cannot be split by sender; it is reported as kept, and `--all` (`all=true`) deletes that whole shared session. Cognitive memories are never removed by erase: cogmem stores no per-sender attribution.
-| `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
-| `summary_retention_days` | `0` (unlimited) | Permanently delete context summaries older than *n* days. `0` = no age limit. |
-| `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |
-| `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
-
-> The code default for all four retention knobs is `0` (unlimited). A **newly generated** config file ships `archive_days: 365` and `summary_retention_days: 3650`; existing configs are left untouched on upgrade. A count of `0` disables the count cap and defers to the day limit.
-
-Example (per-agent override):
-
-```json
-{
-  "id": "alice",
-  "model": "claude-opus-4-7",
-  "context_window": 200000,
-  "archive_message_count": 2000,
-  "compression": {
-    "trigger": { "days": 7 },
-    "retain": { "max_age_days": 5, "max_tokens": 40000 }
-  },
-  "compress_model": {
-    "model": "claude-haiku-4-5",
-    "provider": "anthropic"
-  }
-}
-```
-
-> The flat `compress_*` keys this block replaces are migrated automatically on
-> load and logged at WARN with their new locations. Rewrite `config.json` in the
-> nested form to silence the warning.
-
-### Session tools
-
-The LLM has access to six session management tools:
-
-| Tool | Description |
-|---|---|
-| `session_info` | Returns session metadata: key, start time, channel, context message count, archive bounds, current summary coverage, and last compaction time. Use to orient after a context compression. |
-| `session_compact` | Triggers an immediate context compaction. The LLM can call this after completing a major task to free context window space before starting the next one. |
-| `session_messages` | Returns archived messages in a sequence range. Assistant messages include paired tool call inputs and results. Each message carries a timestamp and sequence number. |
-| `session_search` | Full-text search over the archived message history. Returns matching messages with sequence numbers and timestamps. |
-| `session_summary_list` | Lists recorded context-summary checkpoints (id, covered message range, dates, model) so the LLM can review what it previously summarised. |
-| `session_summary_get` | Retrieves the full text of one context-summary checkpoint by id. |
-
-These tools are available to the LLM in both access paths described in the next section.
-
----
-
-## MCP server (claw as an MCP host)
-
-ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Antigravity, Cursor CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
-
-### Tool access paths
-
-There are two ways an LLM running inside claw can call tools, depending on the provider type:
-
-**Path 1 — LLM API tool calls (direct API providers)**
-
-For providers that use the direct LLM API (`anthropic`, `openai`, `openai-compat`, `gemini`), tool calls are returned as structured blocks in the API response (`tool_use` / `function_call`). The agent loop intercepts these, executes the tool, and feeds the result back to the LLM. No `session_token` is required — the session context is implicit in the agent loop.
-
-All tools are available on this path, including the session tools (`session_compact`, `session_info`, `session_messages`, `session_search`, `session_summary_list`, `session_summary_get`).
-
-**Path 2 — MCP HTTP server (CLI providers)**
-
-For CLI providers (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
-
-For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
-
-| | Direct API providers | CLI providers |
-|---|---|---|
-| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/internal` |
-| Session context | Implicit (agent loop) | `session_token` parameter |
-| Session tools available | All six | All six |
-
-> **Important:** CLI providers (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
-
-The server auto-starts whenever any enabled model in `models` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
-
-```json
-{
-  "mcp_host": {
-    "enabled": false,
-    "auto_enable": true,
-    "listen": "127.0.0.1:5911",
-    "endpoint_path": "/mcp",
-    "tools": [
-      "read_file",
-      "write_file",
-      "edit_file",
-      "append_file",
-      "list_dir",
-      "web_fetch",
-      "web_search",
-      "send_file"
-    ]
-  }
-}
-```
-
-The `tools` list is a single global allowlist applied to all MCP clients (not per-LLM). Supports `"*"` (all tools), prefix globs like `"read_*"`, and exact names. The agent's internal `message` tool is never exposed regardless of the allowlist. Tools inherit the default agent's workspace and sandboxing rules.
-
-### Consuming external MCP servers (claw as an MCP client)
-
-Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. **Manage them in the WebUI (the MCP page)** — add each server with **Add server** (transport **stdio** or **http**; `sse` is a deprecated alias of http), and enable it. No JSON editing required; the underlying config is `tools.mcp.servers`. Claw connects to enabled servers on startup, lists each server's tools, and registers them — no extra switch to flip.
-
-(`tools.mcp.enabled` and `tools.mcp.auto_enable` remain in the config file and **both default to on**, so defining and enabling a server is all that's needed.)
-
-Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
-
-- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): claw lists the upstream tools, presents them to the model alongside its own, and proxies each call.
-- **CLI providers** (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
-
-Per-agent tool allowlists apply: allow an external server's tools with the `mcp_<server>_*` pattern (or `*`).
-
-### Client configuration
-
-The server speaks the Streamable HTTP transport on the MCP host `listen` address (default `127.0.0.1:5911`, loopback only — do not expose it externally) and offers **two endpoints**:
-
-- **`/internal`** — authenticated by a per-call `session_token` parameter. This is ClawEh's multi-assistant routing: one local CLI install can act as **several agents** by supplying the appropriate agent's `session_token` on each call. **Local CLIs that authenticate as multiple agents should use `/internal`.**
-- **`/mcp`** — standard bearer auth (`Authorization: Bearer <token>`), one identity per connection, for external/generic MCP clients.
-
-See [docs/mcp.md](docs/mcp.md) for the full design.
-
-#### Quick setup — `set-mcp.sh`
-
-The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whichever of Antigravity, Codex CLI, and Claude Code are **installed on your PATH** — the rest are skipped. It removes and re-adds each CLI one at a time, pointing them at the `/internal` endpoint:
-
-```bash
-./set-mcp.sh
-```
-
-> **Port:** the script's URL must match the MCP host `listen` port in your config (`tools → mcp_host → listen`). **If you change that port, update the script** — edit `CLAW_MCP_URL` at the top, or run `CLAW_MCP_URL=http://127.0.0.1:<port>/internal ./set-mcp.sh`.
-
-The per-CLI commands it runs are below if you prefer to do it by hand.
-
-> **Cursor CLI:** `set-mcp.sh` does not register Cursor. To give the Cursor agent access to claw's tools, add claw as an MCP server in Cursor's own MCP config (e.g. `~/.cursor/mcp.json`), pointing at the same `/internal` endpoint.
-
-#### Claude Code
-
-To register claw as an MCP server scoped to the user (all projects):
-
-```bash
-claude mcp add --transport http claw --scope user http://127.0.0.1:5911/internal
-```
-
-To list configured MCP servers:
-
-```bash
-claude mcp list
-```
-
-For further information:
-
-```bash
-claude mcp -h
-```
-
-#### Codex CLI
-
-Register claw with the `codex mcp add` command:
-
-```bash
-codex mcp add claw --url http://127.0.0.1:5911/internal
-```
-
-This writes the entry to `~/.codex/config.toml`. You can also edit the file directly:
-
-```toml
-[mcp_servers.claw]
-url = "http://127.0.0.1:5911/internal"
-```
-
-#### Antigravity
-
-[Antigravity](https://antigravity.google) (binary `agy`) replaces the Gemini CLI, which Google has deprecated. It supports MCP servers via `agy mcp add`.
-
-```bash
-agy mcp add claw http://127.0.0.1:5911/internal --type http
-```
-
-`agy mcp list` shows what is registered, and `agy mcp remove claw` undoes it.
-
-ClawEh still accepts `gemini-cli` as a provider protocol — it is an alias that runs `agy` — so an existing configuration keeps starting after an upgrade. New configurations should use `antigravity-cli`.
-
-#### Cursor CLI
-
-Cursor has no `mcp add` subcommand; it reads `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project). Add claw under `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "claw": {
-      "url": "http://127.0.0.1:5911/internal"
-    }
-  }
-}
-```
-
-`cursor-agent mcp list` shows what it picked up.
-
-#### Clients without HTTP transport support
-
-For clients limited to stdio MCP transport (e.g., Claude Desktop), bridge to claw's network-based server using <https://github.com/PivotLLM/MCPRelay>.
-
-### Testing
-
-`make test` runs the whole suite. See [docs/test.md](docs/test.md) for how it is organised and where failure details are reported.
-
-The MCP server integration tests are fully self-contained. `./test.sh -i` builds a fresh claw binary, starts an ephemeral ClawEh instance in a temporary `CLAW_HOME`, runs the probe-driven test suite, then tears everything down.
-
-```bash
-./test.sh -i          # unit tests + MCP integration (self-contained)
-./test.sh -i -x       # same, but preserve artifacts for debugging
-```
-
-Requires [`probe`](https://github.com/PivotLLM/MCPProbe) on `PATH`.
-
-The test suite runs in two tiers:
-
-- **Tier 1** — always runs: tool catalogue checks (all expected tools present) and unauthenticated rejection (verifies `session_token` is enforced on every call).
-- **Tier 2** — automatically enabled by `./test.sh -i`: file operation round-trips and session tool smoke tests using a per-run `CLAW_MCP_TEST_TOKEN` generated at startup and passed to ClawEh via environment variable. The token is never written to a config file.
-
-To run Tier 2 against an already-running claw instance, set `SESSION_TOKEN` to the `SST<64hex>` token from an active session's system prompt:
-
-```bash
-SESSION_TOKEN=SST... ./tests/test_mcpserver.sh
-```
-
-## OpenRouter
-
-OpenRouter is reached through a provider entry with protocol `openai-chat` (or
-`openai-responses`) and base URL `https://openrouter.ai/api/v1`. Two things
-trip people up:
-
-- **The `model` field must be the full OpenRouter model id**, for example
-  `x-ai/grok-4.7`. Anything else comes back as
-  `400 "... is not a valid model ID"`. See `docs/troubleshooting.md` for the
-  `openrouter/free` case.
-- **Choosing which upstream endpoint serves the model is not part of the model
-  id.** OpenRouter takes that in a `provider` object in the request body. The
-  only model-id shorthands OpenRouter supports are the `:nitro` (sort by
-  throughput) and `:floor` (sort by price) suffixes. A form such as
-  `xai/zdr/grok-4.7` is not a model id and is rejected.
-
-ClawEh sends any keys in a model's `extra_body` verbatim at the top level of
-the request for the `openai-chat` and `openai-responses` protocols, so the
-`provider` block goes there. The WebUI exposes it as the "Extra Request Body"
-JSON field on the add and edit model sheets. For example, to pin Grok to xAI's
-zero-data-retention endpoint and refuse any other:
-
-```json
-{
-  "model_name": "OR Grok ZDR",
-  "model": "x-ai/grok-4.7",
-  "provider": "OpenRouter Chat",
-  "enabled": true,
-  "extra_body": {
-    "provider": {
-      "only": ["xai/zdr"],
-      "allow_fallbacks": false
-    }
-  }
-}
-```
-
-The entries in `only`, `order` and `ignore` are OpenRouter endpoint tags. The
-base tag (`xai`) matches every endpoint of that provider; a variant is written
-as `provider/variant` (for grok-4.7 the tags are `xai`, `xai/zdr`,
-`xai/priority` and `xai/zdr/priority`). To list the tags for a model:
-
-```bash
-curl -s https://openrouter.ai/api/v1/models/x-ai/grok-4.7/endpoints | jq '.data.endpoints[].tag'
-```
-
-`"provider": {"zdr": true}` is the provider-agnostic form: it routes only to
-endpoints with a zero-data-retention policy, whichever provider they belong
-to. Other `provider` fields (`order`, `require_parameters`, `data_collection`,
-`quantizations`, `sort`, `max_price`) are passed through the same way.
-
-`extra_body` keys that collide with fields ClawEh builds itself (`model`,
-`messages`, `tools`, `temperature`, `max_tokens` and so on) are rejected when
-the config loads. If you set `require_parameters: true`, pair it with
-`drop_params` for any parameter the endpoint does not advertise, such as
-`temperature` on some reasoning models, or the request is refused.
-
-## Third-party integrations
-
-ClawEh takes a deliberately narrow approach to third-party integrations, incorporating those that add practical value. It includes the MPCFusion library, enabling configuration-defined tools, and provides solid MCP (Model Context Protocol) support, allowing users to connect the specific tools they want and trust. 
 
 ## Copyright and license
 
