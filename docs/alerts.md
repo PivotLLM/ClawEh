@@ -23,7 +23,7 @@ One record per alert: time, the priority (`NORMAL`, `URGENT` or `EMERGENCY`),
 description, then details indented:
 
 ```
-2026-09-24T10:00:00-04:00 NORMAL    ClawEh@empire [claude-cli/claude] Model authentication or billing failure: claude-cli/claude parked for 1m0s after 1 consecutive failure(s): auth (status 401)
+2026-09-24T10:00:00-04:00 NORMAL    ClawEh@hostname [claude-cli/claude] Model authentication or billing failure: claude-cli/claude parked for 1m0s after 1 consecutive failure(s): auth (status 401)
 ```
 
 ## Priority

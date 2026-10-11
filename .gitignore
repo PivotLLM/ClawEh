@@ -44,10 +44,6 @@ ralph/
 .ralph/
 tasks/
 
-# Plans
-docs/plans/
-
-
 # Frontend dependencies (managed by pnpm)
 web/frontend/node_modules/
 
