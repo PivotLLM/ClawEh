@@ -64,6 +64,8 @@ It costs one model call on the CLI account, so it is off by default and the
 summary prints `CLI smoke: skipped`. `CLAW_TEST_CLI_COMMAND` names another CLI
 binary.
 
+**Telegram live check (opt-in).** `CLAW_TEST_TELEGRAM=1 CLAW_TEST_TELEGRAM_TOKEN=<bot token> go test ./channels/telegram/ -run TestLive` sends to chats that cannot exist and expects "recipient not found" with Telegram's reason and no token in the error; nothing is delivered.
+
 Useful flags:
 
 | Flag | Effect |
