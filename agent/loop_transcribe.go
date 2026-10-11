@@ -19,19 +19,42 @@ import (
 
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 
+// untranscribedVoiceNote is what the model sees in place of a voice message
+// whose transcription failed, so it can tell the user instead of answering
+// an empty message.
+const untranscribedVoiceNote = "[voice message: could not be transcribed, so its content is unknown; let the user know]"
+
+// voiceTranscript is the outcome of transcribing one audio attachment.
+type voiceTranscript struct {
+	text   string
+	failed bool
+}
+
+// annotation is what replaces the audio annotation in the user message.
+func (v voiceTranscript) annotation() string {
+	if v.failed {
+		return untranscribedVoiceNote
+	}
+	return "[voice: " + v.text + "]"
+}
+
 // transcribeAudioInMessage resolves audio media refs, transcribes them, and
-// replaces audio annotations in msg.Content with the transcribed text.
-// Returns the (possibly modified) message and true if audio was transcribed.
-func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.InboundMessage) (bus.InboundMessage, bool) {
+// replaces audio annotations in msg.Content with the transcribed text, or
+// with untranscribedVoiceNote for audio that could not be transcribed.
+// target is the agent the message is addressed to (nil if unknown); it names
+// the agent in the echoed feedback. Returns the (possibly modified) message
+// and true if the message carried audio.
+func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.InboundMessage, target *AgentInstance) (bus.InboundMessage, bool) {
 	if al.transcriber == nil || al.mediaStore == nil || len(msg.Media) == 0 {
 		return msg, false
 	}
 
 	// Transcribe each audio media ref in order. Non-audio refs (and audio we can't
-	// resolve) pass through in kept for normal attachment handling; transcribed
-	// audio is dropped from Media so it isn't also materialized as a raw file the
-	// model can't use (it becomes a "[voice: ...]" transcript in the content).
-	var transcriptions []string
+	// resolve) pass through in kept for normal attachment handling; audio is
+	// dropped from Media so it isn't also materialized as a raw file the model
+	// can't use (it becomes a "[voice: ...]" transcript, or the untranscribed
+	// note, in the content).
+	var transcriptions []voiceTranscript
 	kept := make([]string, 0, len(msg.Media))
 	for _, ref := range msg.Media {
 		path, meta, err := al.mediaStore.ResolveWithMeta(ref)
@@ -46,11 +69,13 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		}
 		result, err := al.transcriber.Transcribe(ctx, path)
 		if err != nil {
-			logger.WarnCF("voice", "Transcription failed", map[string]any{"ref": ref, "error": err})
-			transcriptions = append(transcriptions, "")
+			logger.WarnCF("voice", "Transcription failed", map[string]any{
+				"ref": ref, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error(),
+			})
+			transcriptions = append(transcriptions, voiceTranscript{failed: true})
 			continue
 		}
-		transcriptions = append(transcriptions, result.Text)
+		transcriptions = append(transcriptions, voiceTranscript{text: result.Text})
 	}
 
 	if len(transcriptions) == 0 {
@@ -58,7 +83,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	}
 	msg.Media = kept
 
-	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptions)
+	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptionFeedback(target, transcriptions))
 
 	// Replace audio annotations sequentially with transcriptions.
 	idx := 0
@@ -66,15 +91,15 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		if idx >= len(transcriptions) {
 			return match
 		}
-		text := transcriptions[idx]
+		text := transcriptions[idx].annotation()
 		idx++
-		return "[voice: " + text + "]"
+		return text
 	})
 
 	// Append any remaining transcriptions not matched by an annotation.
 	var newContentSb78 strings.Builder
 	for ; idx < len(transcriptions); idx++ {
-		newContentSb78.WriteString("\n[voice: " + transcriptions[idx] + "]")
+		newContentSb78.WriteString("\n" + transcriptions[idx].annotation())
 	}
 	newContent += newContentSb78.String()
 
@@ -187,34 +212,51 @@ func copyFileContents(src, dst string) error {
 	return out.Close()
 }
 
-// sendTranscriptionFeedback sends feedback to the user with the result of
-// audio transcription if the option is enabled. It uses Manager.SendMessage
-// which executes synchronously (rate limiting, splitting, retry) so that
-// ordering with the subsequent placeholder is guaranteed.
+// transcriptionFeedback is the echo of a message's transcripts: the text
+// heard, a sentence naming the agent for audio that could not be
+// transcribed, or "No voice detected in the audio" when nothing was heard.
+func transcriptionFeedback(target *AgentInstance, transcriptions []voiceTranscript) string {
+	var heard []string
+	failed := false
+	for _, t := range transcriptions {
+		switch {
+		case t.failed:
+			failed = true
+		case t.text != "":
+			heard = append(heard, t.text)
+		}
+	}
+	var lines []string
+	if len(heard) > 0 {
+		lines = append(lines, "Transcript: "+strings.Join(heard, "\n"))
+	}
+	if failed {
+		name := "The assistant"
+		if target != nil {
+			name = target.DisplayName()
+		}
+		lines = append(lines, name+" couldn't understand your voice message.")
+	}
+	if len(lines) == 0 {
+		return "No voice detected in the audio"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sendTranscriptionFeedback echoes feedbackMsg (transcriptionFeedback) to the
+// user if the option is enabled. It uses Manager.SendMessage which executes
+// synchronously (rate limiting, splitting, retry) so that ordering with the
+// subsequent placeholder is guaranteed.
 func (al *AgentLoop) sendTranscriptionFeedback(
 	ctx context.Context,
 	channel, chatID, messageID string,
-	validTexts []string,
+	feedbackMsg string,
 ) {
 	if cfg := al.GetConfig(); cfg == nil || !cfg.Voice.EchoTranscription {
 		return
 	}
 	if al.channelManager == nil {
 		return
-	}
-
-	var nonEmpty []string
-	for _, t := range validTexts {
-		if t != "" {
-			nonEmpty = append(nonEmpty, t)
-		}
-	}
-
-	var feedbackMsg string
-	if len(nonEmpty) > 0 {
-		feedbackMsg = "Transcript: " + strings.Join(nonEmpty, "\n")
-	} else {
-		feedbackMsg = "No voice detected in the audio"
 	}
 
 	err := al.channelManager.SendMessage(ctx, bus.OutboundMessage{

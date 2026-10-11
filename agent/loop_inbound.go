@@ -237,8 +237,8 @@ func (al *AgentLoop) prepareInbound(ctx context.Context, msg bus.InboundMessage)
 	var hadAudio bool
 	// A request to a person is relayed as written: no transcription model
 	// sees a human agent's conversation.
-	if al.humanTarget(msg) == nil {
-		msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
+	if target := al.inboundTarget(msg); target == nil || target.HumanModel == "" {
+		msg, hadAudio = al.transcribeAudioInMessage(ctx, msg, target)
 	}
 
 	// For audio messages the placeholder was deferred by the channel.

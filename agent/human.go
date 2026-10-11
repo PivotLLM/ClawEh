@@ -606,6 +606,17 @@ func (al *AgentLoop) replyInHumanChat(ctx context.Context, msg bus.InboundMessag
 // as processMessage will route it. A preresolved agent that is gone is left to
 // processMessage to report.
 func (al *AgentLoop) humanTarget(msg bus.InboundMessage) *AgentInstance {
+	agent := al.inboundTarget(msg)
+	if agent == nil || agent.HumanModel == "" {
+		return nil
+	}
+	return agent
+}
+
+// inboundTarget returns the agent msg is addressed to, or nil, resolved as
+// processMessage will route it. A system message and a preresolved agent that
+// is gone are left to processMessage.
+func (al *AgentLoop) inboundTarget(msg bus.InboundMessage) *AgentInstance {
 	registry := al.GetRegistry()
 	if registry == nil || msg.Channel == "system" {
 		return nil
@@ -615,9 +626,6 @@ func (al *AgentLoop) humanTarget(msg bus.InboundMessage) *AgentInstance {
 		agent, _ = registry.Get(routing.NormalizeAgentID(id))
 	} else if _, routed, err := al.resolveMessageRoute(msg); err == nil {
 		agent = routed
-	}
-	if agent == nil || agent.HumanModel == "" {
-		return nil
 	}
 	return agent
 }

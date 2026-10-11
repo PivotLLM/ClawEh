@@ -218,7 +218,7 @@ func TestMCPAndTranscriptionConfigReads_RaceWithReload(t *testing.T) {
 		if mgr := al.connectAndRegisterMCP(context.Background()); mgr != nil {
 			t.Fatal("MCP connected with it disabled")
 		}
-		al.sendTranscriptionFeedback(context.Background(), "telegram", "1", "m", []string{"hi"})
+		al.sendTranscriptionFeedback(context.Background(), "telegram", "1", "m", "Transcript: hi")
 	}
 	close(stop)
 	wg.Wait()

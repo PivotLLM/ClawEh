@@ -1412,6 +1412,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **A voice message that cannot be transcribed is no longer treated as an
+  empty message.** The agent is told a voice message arrived but could not be
+  transcribed, so it can tell the user; with `voice.echo_transcription` on,
+  the echo says "Alice couldn't understand your voice message." The reason
+  stays in the log.
+
 - **A "Direct messages" binding now routes every direct message on that
   channel to its agent.** The Bindings page saves it as a peer with kind
   `direct` and no id, which never matched, so direct messages went to the
