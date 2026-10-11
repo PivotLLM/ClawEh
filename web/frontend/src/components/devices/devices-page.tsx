@@ -1,3 +1,4 @@
+import { IconAlertTriangle } from "@tabler/icons-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
@@ -27,6 +28,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 // copyToClipboard works in both secure and insecure contexts. navigator.clipboard
 // is undefined when the WebUI is served over plain HTTP on a non-localhost host, so
@@ -161,8 +167,8 @@ export function DevicesPage() {
           <CardHeader>
             <CardTitle>Pair a device</CardTitle>
             <CardDescription>
-              Generate a QR code, then scan it with your device. The first
-              connection appears below for approval.
+              Generate a QR code and scan it with your device, then approve it
+              below.
               {s && (
                 <>
                   {" "}
@@ -173,28 +179,40 @@ export function DevicesPage() {
                   >
                     {s.connect_url}
                   </code>
-                  . The device listener is on{" "}
-                  <code className="text-foreground">
-                    {s.listen_host}:{s.listen_port}
-                  </code>{" "}
-                  ({s.listen_lan ? "local network" : "loopback only"}); change
-                  that on the{" "}
-                  <Link to="/network" className="underline">
-                    Network page
-                  </Link>
                   .
                 </>
               )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {s?.warnings?.length ? (
-              <ul className="text-sm text-amber-600 dark:text-amber-400">
-                {s.warnings.map((w) => (
-                  <li key={w}>⚠ {w}</li>
-                ))}
-              </ul>
-            ) : null}
+            {/* Access is a label; a problem is an icon with short hover
+                text, and the link goes where it is fixed. */}
+            {s && (
+              <div
+                className="flex items-center gap-2 text-sm"
+                data-testid="devices-access"
+              >
+                <span className="text-muted-foreground">Access:</span>
+                <span>{s.listen_lan ? "network" : "localhost"}</span>
+                {s.warnings?.length ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="text-amber-600 dark:text-amber-400"
+                        data-testid="devices-warning"
+                      >
+                        <IconAlertTriangle className="size-4" aria-hidden />
+                        <span className="sr-only">{s.warnings.join(" ")}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{s.warnings.join(" ")}</TooltipContent>
+                  </Tooltip>
+                ) : null}
+                <Link to="/network" className="underline">
+                  Change
+                </Link>
+              </div>
+            )}
             <Button onClick={() => genMut.mutate()} disabled={genMut.isPending}>
               {qr ? "Regenerate pairing QR" : "Generate pairing QR"}
             </Button>

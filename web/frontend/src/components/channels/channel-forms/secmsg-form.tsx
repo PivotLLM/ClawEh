@@ -146,7 +146,8 @@ function AccountRow({
           size="icon-sm"
           onClick={onRemove}
           className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          title={t("models.action.delete")}
+          aria-label={`Remove account ${channelName}`}
+          title={`Remove account ${channelName}`}
         >
           <IconTrash className="size-3.5" />
         </Button>

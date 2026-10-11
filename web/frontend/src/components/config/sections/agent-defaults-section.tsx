@@ -29,7 +29,7 @@ export function AgentDefaultsSection({
         <Input
           value={form.baseDir}
           onChange={(e) => onFieldChange("baseDir", e.target.value)}
-          placeholder="~/.claw/agents"
+          placeholder="<data directory>/agents"
         />
       </Field>
 
@@ -41,7 +41,7 @@ export function AgentDefaultsSection({
         <Input
           value={form.commonDir}
           onChange={(e) => onFieldChange("commonDir", e.target.value)}
-          placeholder="<agents>/common"
+          placeholder="<data directory>/common"
         />
       </Field>
 

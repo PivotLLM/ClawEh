@@ -34,7 +34,8 @@ A file counts as audio by its type (`audio/...`) or its name (`.mp3`, `.wav`,
    | `openai` | `https://api.openai.com/v1` | `whisper-1` |
    | `openrouter` | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` |
 
-   For `custom`, fill in both: left blank, they fall back to the Groq values.
+   For `custom`, both are required: a `custom` backend without them is not
+   used, and the page marks it **Not used**.
 7. Make sure the switch on the backend says **Enabled**.
 
 The page saves by itself ("Saved ✓"), and the change applies without a
@@ -49,7 +50,8 @@ backend with no key of its own and no matching provider is skipped.
 
 ## Several backends
 
-Backends are tried in the order listed. If one fails (the service is down, or
+Backends are tried in the order listed: the first enabled one is marked
+**Primary**, the others **Fallback**. If one fails (the service is down, or
 refuses the key), the next enabled backend with a key is tried. Silence is not
 a failure: an empty transcript does not move on to the next backend.
 

@@ -1,5 +1,8 @@
 {
   "agents": {
+    "delete": "Delete",
+    "deleteTitle": "Delete {{name}}?",
+    "deleteDescription": "Its files stay on disk.",
     "idLabel": "Agent ID",
     "idPlaceholder": "Agent ID (e.g. alice)",
     "summarizationModels": "Memory models (optional)",
@@ -439,7 +442,7 @@
         "port_hint": "Port of the device listener (default 18791).",
         "external_address": "External address",
         "external_address_hint": "Where devices connect from outside, for example through a reverse proxy.",
-        "external_address_placeholder": "host or host:port",
+        "external_address_placeholder": "claw.example.com:8443",
         "cidrs": "Allowed network CIDRs",
         "cidrs_hint": "Networks that may reach the device listener; empty allows any, localhost is always allowed.",
         "auto_approve": "Auto-approve pairings",
@@ -467,9 +470,9 @@
     "config": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
       "base_dir": "Agent base directory",
-      "base_dir_hint": "Base directory for all agent files. Each agent lives in <base>/<id> (the default agent in <base>/default). Leave blank for ~/.claw/agents; point it at another volume to relocate every agent.",
+      "base_dir_hint": "Folder that holds every agent's files, one folder per agent. Blank uses the agents folder in the data directory.",
       "common_dir": "Common directory",
-      "common_dir_hint": "Shared directory agents can read/write (default: <agents>/common). Set an absolute path to place it anywhere.",
+      "common_dir_hint": "Folder agents share files through. Blank uses the common folder in the data directory.",
       "restrict_workspace": "Restrict to workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
       "stream_tool_activity": "Stream tool activity",
@@ -479,7 +482,7 @@
       "max_tool_iterations": "Max tool iterations",
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
       "request_timeout": "Request timeout (s)",
-      "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
+      "request_timeout_hint": "Seconds to wait for a model's reply when the model sets no timeout of its own.",
       "turn_timeout": "Turn timeout (s)",
       "turn_timeout_hint": "Overall wall-clock budget in seconds for a single user turn (across all model calls and tool loops). 0 = built-in 900s (15 min) default.",
       "max_subagent_depth": "Max sub-agent depth",
@@ -930,7 +933,7 @@
     },
     "agent": {
       "title": "Create your first agent",
-      "body": "Give your agent a name. It will use the default model and standard tools — you can fine-tune it later on the Agents page.",
+      "body": "Give your agent a name. It starts with no tools; add them later on the Agents page with Default tools.",
       "nameLabel": "Agent name"
     },
     "review": {

@@ -84,6 +84,31 @@ func TestDetectTranscriber(t *testing.T) {
 			wantNil: true,
 		},
 		{
+			// custom has no preset: blank endpoint or model is never filled
+			// in with another provider's (it used to fall back to Groq).
+			name: "custom entry without endpoint or model is skipped",
+			cfg: &config.Config{
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"},
+						{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"},
+					},
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "custom entry with endpoint and model is used",
+			cfg: &config.Config{
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1", Model: "whisper-1"},
+					},
+				},
+			},
+			wantName: "custom",
+		},
+		{
 			name: "stt entry borrows key from matching provider",
 			cfg: &config.Config{
 				Providers: []config.Provider{

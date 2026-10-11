@@ -26,7 +26,7 @@ export default defineConfig({
         link: "/getting-started/",
         collapsed: false,
         items: [
-          { text: "What ClawEh is", link: "/getting-started/overview" },
+          { text: "Overview", link: "/getting-started/overview" },
           { text: "Installing", link: "/getting-started/install" },
           { text: "Quick start", link: "/getting-started/quickstart" },
           { text: "A tour of the WebUI", link: "/getting-started/webui-tour" },

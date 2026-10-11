@@ -870,6 +870,19 @@ observe does not need an entry.
 - **Default tools** on the Agents page no longer includes `common_delete`;
   grant it to an agent by hand if it should delete files in the common folder.
 
+- **Deleting an agent now asks first.** The trash button on the Agents page
+  opens a "Delete Alice? Its files stay on disk." dialog; nothing is removed
+  until **Delete** is clicked.
+
+- **Clearer WebUI wording.** The setup wizard says a new agent starts with no
+  tools; the Speech page labels backends **Primary** and **Fallback**; the
+  System page's directory and request timeout hints are shorter and correct;
+  Telegram bots are named by their id ("Default bot") instead of an internal
+  channel name; delete buttons on channel cards name what they delete; the
+  Devices page shows access as a label with a warning icon and a link to the
+  Network page; the device external address shows an example; the Rotating
+  Tokens hint points to Integration Tokens.
+
 - **BREAKING: a blank Default temperature no longer sends 0.2.** When neither
   **Default temperature** (System page, `agents.defaults.temperature`) nor the
   agent's `temperature` is set, ClawEh now sends no temperature and each HTTP
@@ -1424,6 +1437,13 @@ observe does not need an entry.
   transcribed, so it can tell the user; with `voice.echo_transcription` on,
   the echo says "Alice couldn't understand your voice message." The reason
   stays in the log.
+
+- **BREAKING: a `custom` speech backend no longer falls back to Groq.** A
+  `voice.stt` entry with provider `custom` (or any provider other than
+  `groq`, `openai` and `openrouter`) and a blank endpoint or model used to be
+  sent to Groq's endpoint and model. It is now skipped, and the Speech page
+  marks it **Not used**. To keep using Groq, choose the `groq` provider, or
+  fill in the endpoint and model.
 
 - **A "Direct messages" binding now routes every direct message on that
   channel to its agent.** The Bindings page saves it as a peer with kind

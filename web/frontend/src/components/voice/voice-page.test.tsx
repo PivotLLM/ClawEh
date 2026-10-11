@@ -104,4 +104,55 @@ describe("VoicePage", () => {
     await screen.findByText(/No transcription backends configured/)
     expect(screen.queryByLabelText("Provider")).toBe(null)
   })
+
+  it("labels the primary and fallback backends and marks a custom one with no endpoint", async () => {
+    const data: VoiceSTTResponse = {
+      stt: [
+        {
+          provider: "custom",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+        {
+          provider: "groq",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+        {
+          provider: "groq",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+      ],
+      presets: configured.presets,
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => data })),
+    )
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    renderPage(qc)
+
+    await screen.findByText("Primary")
+    expect(screen.getAllByText("Fallback")).toHaveLength(1)
+    expect(
+      screen.getByText("Not used: needs an endpoint and model."),
+    ).toBeTruthy()
+    // custom has no default endpoint or model to suggest.
+    expect(
+      (document.getElementById("stt-base-url-0") as HTMLInputElement)
+        .placeholder,
+    ).toBe("Required")
+    expect(
+      (document.getElementById("stt-model-0") as HTMLInputElement).placeholder,
+    ).toBe("Required")
+  })
 })

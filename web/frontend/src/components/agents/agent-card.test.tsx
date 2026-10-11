@@ -186,4 +186,20 @@ describe("AgentCard for a person", () => {
       "shell_exec",
     ])
   })
+
+  it("asks before deleting an agent", () => {
+    const onDelete = vi.fn()
+    renderCard([], { name: "Alice", onDelete })
+    fireEvent.click(screen.getByRole("button", { name: "Delete agent alice" }))
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(screen.getByText("Delete Alice?")).toBeTruthy()
+    expect(screen.getByText("Its files stay on disk.")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(screen.queryByText("Delete Alice?")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete agent alice" }))
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+    expect(onDelete).toHaveBeenCalledTimes(1)
+  })
 })

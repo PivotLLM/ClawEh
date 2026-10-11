@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { DevicesPage } from "./devices-page"
 
@@ -63,13 +64,14 @@ const pairedDevice = {
 function renderPage(
   pending: object[] = [],
   paired: { devices: object[]; agents: object[] } = { devices: [], agents: [] },
+  pair: object = pairStatus,
 ) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       const body = url.endsWith("/api/devices/pair")
-        ? pairStatus
+        ? pair
         : url.endsWith("/api/devices/pending")
           ? { pending }
           : paired
@@ -81,9 +83,11 @@ function renderPage(
   })
   return render(
     <QueryClientProvider client={qc}>
-      <SidebarProvider>
-        <DevicesPage />
-      </SidebarProvider>
+      <TooltipProvider>
+        <SidebarProvider>
+          <DevicesPage />
+        </SidebarProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   )
 }
@@ -101,6 +105,29 @@ describe("DevicesPage", () => {
       ),
     )
     expect(screen.getByText(/pages\.devices\.connect_to/)).toBeTruthy()
+  })
+
+  it("shows access as a label, with no warning when devices can connect", async () => {
+    renderPage()
+    const access = await screen.findByTestId("devices-access")
+    expect(access.textContent).toContain("network")
+    expect(screen.queryByTestId("devices-warning")).toBeNull()
+    expect(
+      screen.getByRole("link", { name: "Change" }).getAttribute("href"),
+    ).toBe("/network")
+  })
+
+  it("marks a problem with an icon whose hover text names it", async () => {
+    renderPage([], undefined, {
+      ...pairStatus,
+      listen_lan: false,
+      warnings: ["Devices on your network can't connect."],
+    })
+    const access = await screen.findByTestId("devices-access")
+    expect(access.textContent).toContain("localhost")
+    expect(screen.getByTestId("devices-warning").textContent).toBe(
+      "Devices on your network can't connect.",
+    )
   })
 
   it("shows the client address of a pending request next to its name", async () => {

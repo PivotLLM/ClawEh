@@ -95,7 +95,8 @@ function BotCard({
   const { t } = useTranslation()
   const configured = asString(bot.token) !== ""
   const botId = asString(bot.id)
-  const displayId = botId === "" || botId === "default" ? "default" : botId
+  // The bot's id names it; the default bot (blank or "default" id) has none.
+  const label = botId === "" || botId === "default" ? "Default bot" : botId
 
   return (
     <div className="border-border/60 bg-card rounded-xl border">
@@ -120,7 +121,7 @@ function BotCard({
               className="h-7 text-sm"
             />
           ) : (
-            <span>telegram-{displayId}</span>
+            <span>{label}</span>
           )}
         </span>
 
@@ -143,7 +144,8 @@ function BotCard({
           size="icon-sm"
           onClick={onDelete}
           className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          title={t("models.action.delete")}
+          aria-label={isNew ? "Delete bot" : `Delete ${label}`}
+          title={isNew ? "Delete bot" : `Delete ${label}`}
         >
           <IconTrash className="size-3.5" />
         </Button>

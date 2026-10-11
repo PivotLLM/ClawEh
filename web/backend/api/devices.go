@@ -287,20 +287,28 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 
 	lanIPs := device.LANIPv4s()
 	payload, perr := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, lanIPs, devicePort, token, dev.TLS)
+	badAddress := perr != nil // only the external address can make it fail
 	encoded := ""
 	if perr == nil {
 		encoded, perr = payload.Encode()
 	}
 
+	// Warnings are short hover text beside the access label on the Devices
+	// page, which links to the Network page where each is fixed.
 	warnings := []string{}
 	if device.IsLoopbackHost(host) {
-		warnings = append(warnings, "The device listener is on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
+		warnings = append(warnings, "Devices on your network can't connect.")
 	}
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
-		warnings = append(warnings, "No routable LAN IPv4 address detected; set an External URL.")
+		warnings = append(warnings, "No network address found; set an external address.")
 	}
 	if perr != nil {
-		warnings = append(warnings, perr.Error())
+		logger.WarnCF("api", "Device pairing payload unavailable", map[string]any{"error": perr.Error()})
+		if badAddress {
+			warnings = append(warnings, "The external address is not valid.")
+		} else {
+			warnings = append(warnings, "The pairing code could not be made.")
+		}
 	}
 
 	out := map[string]any{

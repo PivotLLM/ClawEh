@@ -24,6 +24,16 @@ import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
 import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Link } from "@tanstack/react-router"
 
 import { FallbacksSelect } from "@/components/agents/model-selects"
@@ -163,6 +173,8 @@ export function AgentCard({
   const deliverValue = (b: AgentBindingView) =>
     deliverEdits[b.index] ?? b.deliverTo
   const mcpServers = availableTools.mcp_servers ?? []
+  // The trash button only opens this; the agent is deleted on confirm.
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   return (
     <div className="space-y-4">
@@ -200,7 +212,7 @@ export function AgentCard({
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={onDelete}
+              onClick={() => setConfirmDelete(true)}
               // Icon-only, so it needs an explicit name: without one a screen
               // reader announces nothing at all, and the button that DELETES AN
               // AGENT is the last place to leave unlabelled. The enable switch
@@ -211,6 +223,32 @@ export function AgentCard({
             >
               <IconTrash className="size-3.5" />
             </Button>
+          )}
+          {onDelete && (
+            <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {t("agents.deleteTitle", { name: name || label })}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t("agents.deleteDescription")}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => {
+                      setConfirmDelete(false)
+                      onDelete()
+                    }}
+                  >
+                    {t("agents.delete")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
       </div>
@@ -471,7 +509,8 @@ export function AgentCard({
               Rotating Tokens
             </p>
             <p className="text-muted-foreground text-xs">
-              Short-lived token the assistant can share; rotates automatically.
+              A token that changes automatically; use Integration Tokens for new
+              apps.
             </p>
             <div className="flex items-center gap-2">
               <Input

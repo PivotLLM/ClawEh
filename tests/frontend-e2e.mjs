@@ -862,7 +862,6 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    page.on("dialog", (d) => d.accept())
     // By accessible name. It used to be an icon-only button with no name at
     // all, which meant a screen reader announced nothing and this step had to
     // guess at CSS classes — `[class*="destructive"]` matches every shadcn
@@ -870,6 +869,11 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const trash = page.getByRole("button", { name: new RegExp(`Delete agent ${PROBE}`, "i") })
     assert((await trash.count()) > 0, "no labelled delete control on the agent card")
     await trash.click()
+    // The trash button only opens the confirmation dialog; nothing is deleted
+    // until its Delete button is clicked.
+    const confirm = page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true })
+    await confirm.waitFor({ timeout: 5000 })
+    await confirm.click()
     await page.waitForTimeout(1500)
     await close()
     const c = await config()

@@ -76,7 +76,7 @@ See [Devices](../channels/devices.md).
 
 ### Speech
 
-Transcribe voice messages before they reach the agent. **Add backend** adds a transcription service (any OpenAI-compatible Whisper endpoint); the first enabled one is used and marked **Active**. With none, voice messages reach the agent untranscribed.
+Transcribe voice messages before they reach the agent. **Add backend** adds a transcription service (any OpenAI-compatible Whisper endpoint); enabled ones are tried in order, the first marked **Primary** and the rest **Fallback**. With none, voice messages reach the agent untranscribed.
 
 ### Network
 

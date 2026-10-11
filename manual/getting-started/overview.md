@@ -1,4 +1,4 @@
-# What ClawEh is
+# Overview
 
 ClawEh is a self-hosted program that runs one or more personal AI assistants on a computer you control.
 
