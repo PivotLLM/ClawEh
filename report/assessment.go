@@ -205,7 +205,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		add(false, itemProxy, "Behind a proxy: "+strings.Join(proxies, ", ")+".")
 	}
 	if cfg.ProxyNotTrusted(env.ForwardedPeer) {
-		add(true, itemUntrustedProxy, untrustedProxyStatus(cfg, env))
+		add(true, itemUntrustedProxy, untrustedProxyStatus(env))
 	}
 	dd := dataDir(cfg, env)
 
@@ -374,14 +374,12 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 }
 
-// untrustedProxyStatus is the status of the untrusted-proxy row, with when a
-// forwarded request from an untrusted peer was last seen if one was.
-func untrustedProxyStatus(cfg *config.Config, env Environment) string {
+// untrustedProxyStatus is the status of the untrusted-proxy row, with when
+// the forwarded request was last seen.
+func untrustedProxyStatus(env Environment) string {
 	seen := ""
-	if env.ForwardedPeer != "" && !env.ForwardedSeen.IsZero() {
-		if set, err := config.CompileTrustedProxies(cfg.Gateway.TrustedProxies); err == nil && !set.Trusts(env.ForwardedPeer) {
-			seen = " (last seen " + env.ForwardedSeen.Format("2006-01-02 15:04") + ")"
-		}
+	if !env.ForwardedSeen.IsZero() {
+		seen = " (last seen " + env.ForwardedSeen.Format("2006-01-02 15:04") + ")"
 	}
 	return "Requests arrive through a proxy that is not trusted" + seen + "; network access control and lockout don't apply."
 }
