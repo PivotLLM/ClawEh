@@ -66,6 +66,7 @@ func parityContextBuilder(t *testing.T) *ContextBuilder {
 	}
 
 	cb := NewContextBuilder(ws).
+		WithSkillsFilter([]string{"*"}).
 		WithToolDiscovery(true).
 		WithMemoryGuidance("**Memory** - Retrieve before you assume.").
 		WithMounts([]config.MountConfig{{Name: "notes", Path: "/srv/notes", Writable: true}})

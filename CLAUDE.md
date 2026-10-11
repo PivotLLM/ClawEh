@@ -209,7 +209,11 @@ production instance directly; test against a dev instance.
   page's "Default tools" button writes into a list (`GET /api/agents/tools`
   `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`) and
   `mcp_tools` have their own switches. Check Up lists each enabled agent with no
-  tools.
+  tools. An agent whose registry is empty (no native, suite or MCP tool) gets
+  `noToolsNotice` in its dynamic prompt layer (`ContextBuilder.WithToolsGranted`,
+  read every turn; not for fresh temporary or human agents). Skills follow the
+  same rule: only the `skills` list (glob patterns, `"*"` = every skill; the
+  Agents page's "All skills" writes `["*"]`), absent or empty = none.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
   switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
   shell commands") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,

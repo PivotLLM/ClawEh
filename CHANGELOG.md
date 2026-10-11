@@ -331,17 +331,23 @@ observe does not need an entry.
   switches. `agents.defaults.default_tools` is removed (a config that still
   has it gets an unknown-key warning at load). New agents, on the Agents page
   and in the setup wizard, start with no tools, and the card shows "No tools".
-  Check Up lists every enabled agent that has no tools. Migration: on the
+  Check Up lists every enabled agent that has no tools, and an agent with no
+  tools at all (native, suite or MCP) is told so in its prompt and asked to
+  point the user to the web interface. Migration: on the
   Agents page click **Default tools** in the agent's tool list (the standard
   set is written into the list and can then be edited), or list the tools in
   the agent's `tools` in `config.json`. Saving no longer writes an empty
   `"tools": []`; an absent key means the same.
 
-- **An agent saved with no skills now has none.** Saving the configuration
-  (the WebUI, `PATCH /api/config`) dropped an empty `skills` list, so
-  `skills: []` (no skills) became every skill. It is now written and kept. An
-  agent without a `skills` key still gets every skill, and the Agents page
-  says so ("All skills (default)").
+- **BREAKING: an agent gets only the skills its configuration lists.** An
+  agent with no `skills` list, or an empty one, now has no skills; previously
+  an agent without a `skills` key got every installed skill. Entries are skill
+  names or patterns (`"*"` is every skill, including ones installed later). New
+  agents start with no skills, and the Agents page shows "No skills". Saving no
+  longer writes an empty `"skills": []`; an absent key means the same.
+  Migration: on the Agents page click **All skills** or pick the agent's
+  skills (written as `["*"]` or the names), or list them in the agent's
+  `skills` in `config.json`.
 
 ### Added
 

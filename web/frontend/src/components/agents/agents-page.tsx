@@ -68,9 +68,9 @@ export function AgentsPage() {
   const [addingId, setAddingId] = useState("")
   const [addingName, setAddingName] = useState("")
   const [addingModels, setAddingModels] = useState<string[]>([])
-  // undefined: every skill, as for a saved agent. A new agent starts with no
-  // tools; "Default tools" in the selector writes the standard set.
-  const [addingSkills, setAddingSkills] = useState<string[] | undefined>()
+  // A new agent starts with no skills and no tools; "All skills" and
+  // "Default tools" in the selectors write them into its lists.
+  const [addingSkills, setAddingSkills] = useState<string[]>([])
   const [addingTools, setAddingTools] = useState<string[]>([])
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -323,7 +323,7 @@ export function AgentsPage() {
         id: newId,
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
         ...(addingModels.length > 0 ? { models: addingModels } : {}),
-        skills: addingSkills,
+        ...(addingSkills.length > 0 ? { skills: addingSkills } : {}),
         ...(addingTools.length > 0 ? { tools: addingTools } : {}),
       },
     ])
@@ -335,7 +335,7 @@ export function AgentsPage() {
       setAddingId("")
       setAddingName("")
       setAddingModels([])
-      setAddingSkills(undefined)
+      setAddingSkills([])
       setAddingTools([])
       setShowAdd(false)
       // Update local state in place instead of reloading the whole page, which
@@ -363,7 +363,7 @@ export function AgentsPage() {
     setAddingId("")
     setAddingName("")
     setAddingModels([])
-    setAddingSkills(undefined)
+    setAddingSkills([])
     setAddingTools([])
     setAddingToolsExpanded(false)
   }

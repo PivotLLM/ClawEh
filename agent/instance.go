@@ -225,7 +225,7 @@ func newAgentInstance(
 	// construction by AgentLoop.agentBuilder (and again on config reload), so
 	// the full runtime deps (session closures, the sub-agent spawner, the
 	// per-agent message tool) are present.
-	return &AgentInstance{
+	inst := &AgentInstance{
 		ID:             agentID,
 		Name:           agentName,
 		Model:          model,
@@ -249,7 +249,16 @@ func newAgentInstance(
 		Candidates:     candidates,
 		Config:         agentCfg,
 		HumanModel:     humanModel,
-	}, nil
+	}
+	// An agent left with no tools at all is told so. Its registry is read at
+	// every turn: tools are registered after this, and MCP tools may arrive
+	// later. A fresh temporary agent keeps its creator's prompt exactly, and a
+	// human agent never builds one.
+	if !inst.toolless() {
+		registry := inst.Tools
+		contextBuilder.WithToolsGranted(func() bool { return registry.Count() > 0 })
+	}
+	return inst, nil
 }
 
 // humanAgentConfig returns the human model of a human agent and the config
@@ -337,10 +346,8 @@ func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cf
 		// Only an agent that has the subsystem is told how to use it.
 		contextBuilder = contextBuilder.WithMemoryGuidance(cogmem.Guidance())
 	}
-	// For named agents, always apply the skills filter — even if empty.
-	// nil filter = no restriction (all skills); empty filter = no skills.
-	// Default/nil agentCfg means the default agent which gets all skills.
-	if agentCfg != nil && agentCfg.Skills != nil && !spec.Fresh {
+	// An agent has only the skills its list names; absent or [] is none.
+	if agentCfg != nil && !spec.Fresh {
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
 	if agentCfg != nil {

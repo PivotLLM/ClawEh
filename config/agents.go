@@ -47,17 +47,15 @@ func (a AgentsConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// AgentConfig is one agents.list entry. Its MarshalJSON has a value
-// receiver and its other methods a pointer one: an AgentConfig must encode
-// the same whether or not it is addressable.
-type AgentConfig struct { //nolint:recvcheck // see above
+// AgentConfig is one agents.list entry.
+type AgentConfig struct {
 	ID          string           `json:"id"`
 	Enabled     *bool            `json:"enabled,omitempty"`
 	Default     bool             `json:"default,omitempty"`
 	Name        string           `json:"name,omitempty"`
 	Workspace   string           `json:"workspace,omitempty"`
 	Models      []string         `json:"models,omitempty"`
-	Skills      []string         `json:"skills,omitempty"` // nil: every skill; []: none (see MarshalJSON)
+	Skills      []string         `json:"skills,omitempty"` // the skills the agent may use ("*" patterns); absent or []: none
 	Tools       []string         `json:"tools,omitempty"`  // the native tools the agent may call; absent or []: none
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
 	Message     *MessageConfig   `json:"message,omitempty"`
@@ -179,32 +177,6 @@ type AgentConfig struct { //nolint:recvcheck // see above
 	// "shell_exec" blocks that local tool and "google_calendar_event_delete"
 	// blocks that MCP tool under a broader "google" grant. Empty ⇒ no denials.
 	DenyTools []string `json:"deny_tools,omitempty"`
-}
-
-// MarshalJSON writes Skills as [] when it is empty but not nil, and leaves it
-// out when nil: the two mean "none" and "every skill", so omitempty alone
-// would turn an agent saved with no skills into one with every skill.
-func (a AgentConfig) MarshalJSON() ([]byte, error) {
-	type Alias AgentConfig
-	// The fields before Skills are repeated so the keys keep their order.
-	// Tools follows from Alias with omitempty: absent and [] both mean none.
-	aux := struct {
-		ID        string    `json:"id"`
-		Enabled   *bool     `json:"enabled,omitempty"`
-		Default   bool      `json:"default,omitempty"`
-		Name      string    `json:"name,omitempty"`
-		Workspace string    `json:"workspace,omitempty"`
-		Models    []string  `json:"models,omitempty"`
-		Skills    *[]string `json:"skills,omitempty"`
-		Alias
-	}{
-		ID: a.ID, Enabled: a.Enabled, Default: a.Default, Name: a.Name,
-		Workspace: a.Workspace, Models: a.Models, Alias: Alias(a),
-	}
-	if a.Skills != nil {
-		aux.Skills = &a.Skills
-	}
-	return json.Marshal(aux)
 }
 
 // MountConfig mounts an external directory tree as a top-level name in an agent's

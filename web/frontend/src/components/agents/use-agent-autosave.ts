@@ -19,8 +19,8 @@ import {
 // enforced that but care.
 export interface AgentEdits {
   models: string[]
-  /** undefined = every skill (no skills key); [] = none. */
-  skills: string[] | undefined
+  /** The skills the agent may use ("*" = every skill); [] = none. */
+  skills: string[]
   /** The native tools the agent may call; [] = none. */
   tools: string[]
   message: { mins: number; count: number }
@@ -41,7 +41,7 @@ export interface AgentEdits {
 export function editsFromAgent(a: AgentEntry): AgentEdits {
   return {
     models: a.models ?? [],
-    skills: a.skills,
+    skills: a.skills ?? [],
     tools: a.tools ?? [],
     message: {
       mins: a.message?.window_minutes ?? 0,

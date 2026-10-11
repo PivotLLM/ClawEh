@@ -35,7 +35,7 @@ describe("editsFromAgent", () => {
   it("applies the documented defaults for an unconfigured agent", () => {
     expect(editsFromAgent(agent("a"))).toEqual({
       models: [],
-      skills: undefined,
+      skills: [],
       tools: [],
       message: { mins: 0, count: 2 },
       temperature: undefined,
@@ -53,12 +53,11 @@ describe("editsFromAgent", () => {
     })
   })
 
-  // No skills list means every skill, an empty list none: the buffer keeps
-  // the difference. No tools list and an empty one both mean none.
-  it("keeps an absent skills list apart from an empty one; no tools is none", () => {
+  // No skills or tools list and an empty one both mean none.
+  it("reads an absent skills or tools list as none", () => {
     const absent = editsFromAgent({ id: "a" })
     expect(absent.tools).toEqual([])
-    expect(absent.skills).toBeUndefined()
+    expect(absent.skills).toEqual([])
     const empty = editsFromAgent({ id: "a", tools: [], skills: [] })
     expect(empty.tools).toEqual([])
     expect(empty.skills).toEqual([])

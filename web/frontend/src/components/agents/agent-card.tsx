@@ -43,8 +43,8 @@ export interface AgentCardProps {
   name?: string
   enabled?: boolean
   selectedModels: string[]
-  /** undefined = every skill; [] = none. */
-  skills: string[] | undefined
+  /** The skills the agent may use ("*" = every skill); [] = none. */
+  skills: string[]
   /** The native tools the agent may call; [] = none. */
   tools: string[]
   availableSkills: SkillInfo[]
@@ -82,7 +82,7 @@ export interface AgentCardProps {
   human?: boolean
   /** Human-agent rule notes for this agent (GET /api/agents/human). */
   humanNotes?: HumanAgentProblem[]
-  onSkillsChange: (skills: string[] | undefined) => void
+  onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
   onEventRetentionDaysChange?: (v: number | undefined) => void

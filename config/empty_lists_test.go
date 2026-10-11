@@ -156,18 +156,19 @@ func TestLoadConfig_BuiltinListKeyPresence(t *testing.T) {
 	}
 }
 
-// TestStore_AgentSkillsKeepEmpty: an agent's skills tell an absent key (every
-// skill) from an empty list (none). A save must keep that difference: an agent
-// saved with no skills must not come back with every skill.
-func TestStore_AgentSkillsKeepEmpty(t *testing.T) {
+// TestStore_AgentSkillsOnlyWhatIsListed: an agent has only the skills its list
+// names. An absent key and an empty list both mean none and are saved the same
+// way (no key); a listed skill is kept.
+func TestStore_AgentSkillsOnlyWhatIsListed(t *testing.T) {
 	cases := []struct {
 		name    string
 		value   []string
 		wantRaw string // "" means the key is absent
+		want    []string
 	}{
-		{name: "absent", value: nil, wantRaw: ""},
-		{name: "empty", value: []string{}, wantRaw: "[]"},
-		{name: "listed", value: []string{"weather"}, wantRaw: `["weather"]`},
+		{name: "absent", value: nil},
+		{name: "empty", value: []string{}},
+		{name: "listed", value: []string{"weather"}, wantRaw: `["weather"]`, want: []string{"weather"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,11 +192,8 @@ func TestStore_AgentSkillsKeepEmpty(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for src, cfg := range map[string]*Config{"store": s.Current(), "disk": fromDisk} {
-				got := cfg.Agents.List[0].Skills
-				if (got == nil) != (tc.value == nil) || !slices.Equal(got, tc.value) {
-					t.Fatalf("skills from %s = %#v, want %#v", src, got, tc.value)
-				}
+			if got := fromDisk.Agents.List[0].Skills; !slices.Equal(got, tc.want) {
+				t.Fatalf("skills from disk = %#v, want %#v", got, tc.want)
 			}
 		})
 	}

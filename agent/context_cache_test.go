@@ -464,7 +464,7 @@ description: global-v1
 		t.Fatal(err)
 	}
 
-	cb := NewContextBuilder(tmpDir)
+	cb := NewContextBuilder(tmpDir).WithSkillsFilter([]string{"*"})
 	sp1 := cb.BuildSystemPromptWithCache()
 	if !strings.Contains(sp1, "global-v1") {
 		t.Fatal("expected initial prompt to contain global skill description")
@@ -524,7 +524,7 @@ description: builtin-v1
 		t.Fatal(err)
 	}
 
-	cb := NewContextBuilder(tmpDir)
+	cb := NewContextBuilder(tmpDir).WithSkillsFilter([]string{"*"})
 	sp1 := cb.BuildSystemPromptWithCache()
 	if !strings.Contains(sp1, "builtin-v1") {
 		t.Fatal("expected initial prompt to contain builtin skill description")
@@ -571,7 +571,7 @@ description: delete-me-v1
 	})
 	defer removeAll(t, tmpDir)
 
-	cb := NewContextBuilder(tmpDir)
+	cb := NewContextBuilder(tmpDir).WithSkillsFilter([]string{"*"})
 	sp1 := cb.BuildSystemPromptWithCache()
 	if !strings.Contains(sp1, "delete-me-v1") {
 		t.Fatal("expected initial prompt to contain skill description")

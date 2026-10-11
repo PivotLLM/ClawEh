@@ -329,7 +329,12 @@ has no tools at all; there is no implicit default set. On the Agents page,
 **Default tools** writes the standard set into an agent's list, where it can be
 edited. Check Up lists every enabled agent that has no tools. Tool suites
 (`cogmem`, `maestro`, `fusion`, `forum`) and `mcp_tools` have their own
-per-agent switches.
+per-agent switches. An agent with no tools at all is told so in its prompt and
+asked to point the user to the web interface.
+
+An agent's `skills` list works the same way: it has only the skills the list
+names (`"*"` is every installed skill, `"fetch-*"` a prefix), and an absent or
+empty list means no skills. **All skills** on the Agents page writes `["*"]`.
 
 The global `tools` section controls which tools exist in the system; each
 agent's list controls which of them that agent may use.

@@ -14,6 +14,7 @@ import {
   parseAgentsConfig,
   shellAllowed,
   shellDenied,
+  skillsSummary,
   toggleAccessEntry,
   withShellAllowed,
 } from "./agent-model"
@@ -432,10 +433,9 @@ describe("agentsPayload", () => {
     expect(aliceOn.alice).toMatchObject(unedited("alice"))
   })
 
-  // An agent has only the tools its list names: an absent and an empty tools
-  // list both mean none and are saved without the key. Skills keep the
-  // difference (every skill / none).
-  it("reads an absent tools list as none and keeps skills apart", () => {
+  // An agent has only the tools and skills its lists name: an absent and an
+  // empty list both mean none and are saved without the key.
+  it("reads an absent tools or skills list as none", () => {
     const cfg = parseAgentsConfig({
       agents: {
         list: [{ id: "alice" }, { id: "bob", tools: [], skills: [] }],
@@ -443,7 +443,7 @@ describe("agentsPayload", () => {
     })
     const [alice, bob] = cfg.list ?? []
     expect(alice.tools).toEqual([])
-    expect(alice.skills).toBeUndefined()
+    expect(alice.skills).toEqual([])
     expect(bob.tools).toEqual([])
     expect(bob.skills).toEqual([])
     const out = (
@@ -452,12 +452,19 @@ describe("agentsPayload", () => {
     expect(out[0]).not.toHaveProperty("tools")
     expect(out[0]).not.toHaveProperty("skills")
     expect(out[1]).not.toHaveProperty("tools")
-    expect(out[1].skills).toEqual([])
+    expect(out[1]).not.toHaveProperty("skills")
   })
 
   it("Allow shell commands on an agent with no tools grants only the shell", () => {
     expect(withShellAllowed([], true)).toEqual(["shell_exec"])
     expect(withShellAllowed(["shell_exec"], false)).toEqual([])
+  })
+
+  it("skillsSummary labels an empty list No skills", () => {
+    expect(skillsSummary([])).toBe("No skills")
+    expect(skillsSummary(["*"])).toBe("All skills")
+    expect(skillsSummary(["weather"])).toBe("1 skill selected")
+    expect(skillsSummary(["weather", "news"])).toBe("2 skills selected")
   })
 
   it("internalToolsSummary labels an empty list No tools", () => {

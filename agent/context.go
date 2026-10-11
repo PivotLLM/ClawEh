@@ -32,6 +32,10 @@ type ContextBuilder struct {
 	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
 	maestroEnabled bool
 
+	// toolsGranted, when set, reports whether the agent has any tool at all;
+	// when it has none the dynamic prompt says so (noToolsNotice).
+	toolsGranted func() bool
+
 	// fixedPrompt, when set, is the agent's whole system prompt: no identity,
 	// workspace files, skills, memory guidance, date or runtime block. A fresh
 	// temporary agent's prompt (see WithFixedPrompt).
@@ -77,6 +81,17 @@ func (cb *ContextBuilder) WithMaestro(enabled bool) *ContextBuilder {
 	cb.maestroEnabled = enabled
 	return cb
 }
+
+// WithToolsGranted sets the check of whether the agent has any tool. It is
+// read on every turn, so a tool registered later (an MCP server that connects)
+// removes the notice.
+func (cb *ContextBuilder) WithToolsGranted(granted func() bool) *ContextBuilder {
+	cb.toolsGranted = granted
+	return cb
+}
+
+// noToolsNotice is the line an agent with no tools at all gets in its prompt.
+const noToolsNotice = "You have not been granted any tools. If a request requires tools, please advise the user and ask them to enable the tools in the web user interface."
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
 	cb.toolDiscoveryActive = active
@@ -131,9 +146,9 @@ func (cb *ContextBuilder) WithFixedPrompt(text string) *ContextBuilder {
 	return cb
 }
 
-// WithSkillsFilter restricts which skills are available to this agent.
-// An empty or nil filter means all skills are available.
-// Each pattern may use '*' as a wildcard (e.g. "fetch-*").
+// WithSkillsFilter sets the skills available to this agent: only those the
+// filter names. A nil or empty filter means no skills. Each pattern may use
+// '*' as a wildcard (e.g. "fetch-*"; "*" is every skill).
 func (cb *ContextBuilder) WithSkillsFilter(filter []string) *ContextBuilder {
 	cb.skillsFilter = filter
 	return cb
@@ -623,6 +638,12 @@ func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 		fmt.Fprintf(&sb, "\n\n%s", extra)
 	}
 
+	// Here, not in the cached static prompt: the registry can gain tools
+	// between turns.
+	if cb.toolsGranted != nil && !cb.toolsGranted() {
+		sb.WriteString("\n\n" + noToolsNotice)
+	}
+
 	return sb.String()
 }
 
@@ -733,11 +754,8 @@ func (cb *ContextBuilder) AddAssistantMessage(
 }
 
 // matchSkillFilter returns true if name matches any pattern in the filter.
-// An empty filter matches everything. '*' is a wildcard suffix/prefix/infix.
+// An empty filter matches nothing. '*' is a wildcard suffix/prefix/infix.
 func matchSkillFilter(name string, filter []string) bool {
-	if len(filter) == 0 {
-		return true
-	}
 	for _, pattern := range filter {
 		if matchGlob(pattern, name) {
 			return true
@@ -763,16 +781,13 @@ func matchGlob(pattern, name string) bool {
 	return strings.HasSuffix(name, suffix)
 }
 
-// filteredSkills returns the skills available to this agent, respecting the filter.
-// A nil filter means no restriction (all skills). An empty non-nil filter means no skills.
+// filteredSkills returns the skills the filter names. A nil or empty filter
+// means no skills.
 func (cb *ContextBuilder) filteredSkills() []skills.SkillInfo {
-	all := cb.skillsLoader.ListSkills()
-	if cb.skillsFilter == nil {
-		return all
-	}
 	if len(cb.skillsFilter) == 0 {
 		return nil
 	}
+	all := cb.skillsLoader.ListSkills()
 	result := make([]skills.SkillInfo, 0, len(all))
 	for _, s := range all {
 		if matchSkillFilter(s.Name, cb.skillsFilter) {

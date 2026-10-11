@@ -16,7 +16,7 @@ export interface AgentEntry {
   enabled?: boolean
   default?: boolean
   models?: string[]
-  /** undefined (key absent) = every skill; [] = none. */
+  /** The skills the agent may use ("*" = every skill); absent or [] = none. */
   skills?: string[]
   /** The native tools the agent may call; absent or [] = none. */
   tools?: string[]
@@ -272,11 +272,16 @@ export function internalToolsSummary(tools: string[]): {
   }
 }
 
-// optionalList reads a list whose absence means something else than an empty
-// list (skills): undefined when the key is absent or null.
-function optionalList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  return value.map(asString).filter(Boolean)
+// ALL_SKILLS is the skills entry that grants every installed skill, including
+// ones installed later ("All skills" on the Agents page).
+export const ALL_SKILLS = "*"
+
+// skillsSummary is the label of an agent's skills list: an agent has only the
+// skills it lists, so an empty list is "No skills".
+export function skillsSummary(skills: string[]): string {
+  if (skills.length === 0) return "No skills"
+  if (skills.includes(ALL_SKILLS)) return "All skills"
+  return `${skills.length} skill${skills.length === 1 ? "" : "s"} selected`
 }
 
 // settingsCardClass groups a set of agent settings into one bordered card.
@@ -295,7 +300,7 @@ export function parseAgent(value: unknown): AgentEntry {
     enabled: enabledRaw === false ? false : true,
     default: r.default === true,
     models: asArray(r.models).map(asString).filter(Boolean),
-    skills: optionalList(r.skills),
+    skills: asArray(r.skills).map(asString).filter(Boolean),
     // Drop any stale mcp_* entries from the per-tool allowlist: MCP access now
     // lives in mcp_tools, so saving an edited agent cleanly migrates it off the
     // old all-or-nothing wildcard.
@@ -565,9 +570,8 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     ...(a.name ? { name: a.name } : {}),
     ...(a.default ? { default: true } : {}),
     ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
-    // Absent and [] differ for skills (every skill against none), so an
-    // empty list is sent as [] and kept. For tools both mean none.
-    ...(a.skills !== undefined ? { skills: a.skills } : {}),
+    // Absent and [] both mean none for skills and tools.
+    ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
     ...(a.tools && a.tools.length > 0 ? { tools: a.tools } : {}),
     message:
       a.message && a.message.window_minutes > 0

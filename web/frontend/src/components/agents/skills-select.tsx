@@ -1,35 +1,60 @@
-import { type SkillInfo } from "@/components/agents/agent-model"
+import {
+  ALL_SKILLS,
+  type SkillInfo,
+  skillsSummary,
+} from "@/components/agents/agent-model"
+import { Button } from "@/components/ui/button"
 
 export interface SkillsSelectProps {
-  /** undefined = every skill (no skills list); [] = none. */
-  selected: string[] | undefined
+  /** The agent's skills list ("*" = every skill); [] = none. */
+  selected: string[]
   availableSkills: SkillInfo[]
   onChange: (skills: string[]) => void
 }
 
 export function SkillsSelect({
-  selected: value,
+  selected,
   availableSkills,
   onChange,
 }: SkillsSelectProps) {
-  // Without a skills list the agent has every skill: all are shown active,
-  // and the first change writes the list out explicitly.
-  const allByDefault = value === undefined
-  const selected = value ?? availableSkills.map((s) => s.name)
+  const all = selected.includes(ALL_SKILLS)
+  // With "*" every skill is shown active; the first change writes the
+  // installed skills out explicitly.
+  const current = all ? availableSkills.map((s) => s.name) : selected
   return (
     <div className="space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([ALL_SKILLS])}
+          className="h-6 px-2 text-xs"
+        >
+          All skills
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([])}
+          className="h-6 px-2 text-xs"
+        >
+          Clear
+        </Button>
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {availableSkills.map((skill) => {
-          const active = selected.includes(skill.name)
+          const active = current.includes(skill.name)
           return (
             <button
               key={skill.name}
               type="button"
               onClick={() => {
                 if (active) {
-                  onChange(selected.filter((s) => s !== skill.name))
+                  onChange(current.filter((s) => s !== skill.name))
                 } else {
-                  onChange([...selected, skill.name])
+                  onChange([...current, skill.name])
                 }
               }}
               className={[
@@ -52,11 +77,7 @@ export function SkillsSelect({
       </div>
       {availableSkills.length > 0 && (
         <p className="text-muted-foreground text-xs">
-          {allByDefault
-            ? "All skills (default)"
-            : selected.length === 0
-              ? "No skills selected (agent has no skill access)"
-              : `${selected.length} skill${selected.length === 1 ? "" : "s"} selected`}
+          {skillsSummary(selected)}
         </p>
       )}
     </div>
