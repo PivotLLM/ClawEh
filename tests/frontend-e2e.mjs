@@ -1148,12 +1148,14 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     for (const u of t.urls.http ?? []) assert(body.includes(u), `HTTP URL ${u} not listed: ${body}`)
     for (const u of t.urls.https ?? []) assert(body.includes(u), `HTTPS URL ${u} not listed: ${body}`)
     const http = t.urls.http ?? []
-    assert(marks === http.length, `${marks} warning marks for ${http.length} plain-HTTP network addresses`)
+    // Behind a proxy (TLS ends there) plain HTTP is not marked.
+    const want = t.behind_proxy ? 0 : http.length
+    assert(marks === want, `${marks} warning marks for ${http.length} plain-HTTP network addresses (behind proxy: ${!!t.behind_proxy})`)
     for (const u of [...http, ...(t.urls.https ?? [])]) {
       const host = new URL(u).hostname
       assert(!/^172\.(1[7-9]|2\d|3[01])\.0\.1$/.test(host), `Docker bridge address advertised: ${u}`)
     }
-    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked)`
+    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked${t.behind_proxy ? ", behind proxy" : ""})`
   })
 
   await check(10, "changing the HTTPS port autosaves and shows the restart banner; then restore it", async () => {
