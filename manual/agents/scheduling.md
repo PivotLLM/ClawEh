@@ -33,7 +33,7 @@ Ask the agent to list, show, disable, enable or remove its jobs. An agent sees a
 2. The agent handles it in its one conversation, behind any message it is already working on, and replies in that chat.
 3. A job runs at sub-agent depth 0, like a message from a person, so it may spawn sub-agents and ask other agents within the [depth limit](./subagents.md#the-depth-limit).
 
-A one-time job is removed after it runs. A job whose agent has lost its default channel is skipped and logged. A job that fails raises the "Scheduled job failed" alert.
+A one-time job is removed after it runs. A job that cannot run, including one whose agent has lost its default channel, raises the "Scheduled job failed" [alert](../admin/alerts.md); its next run is still scheduled.
 
 To have the agent recall a topic from memory when a job fires, word the job's message so it contains one of that memory domain's keyword triggers (see [Conversation and memory](./memory.md#long-term-memory-cognitive-memory)).
 
@@ -83,6 +83,6 @@ claw cron remove <job-id>
 claw cron add --name "Standup" --message "Time for the standup." --cron "0 9 * * 1-5" --channel slack --to C0ANLEQP5GQ
 ```
 
-The message is handled by whichever agent that chat is bound to. Use `--every <seconds>` instead of `--cron` for an interval.
+The message is handled by whichever agent that chat is bound to (see [Routing and bindings](../channels/routing.md)). All `claw cron` options are in [Command line](../reference/cli.md). Use `--every <seconds>` instead of `--cron` for an interval.
 
 Jobs are stored in `cron/jobs.json` in the data directory and survive restarts.

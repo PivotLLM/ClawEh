@@ -36,7 +36,7 @@ The `agent_spawn` tool takes:
 
 In `callback` mode the result is written to the agent's `tasks/` folder and the agent is told where; `agent_status` and `agent_list` show progress.
 
-**Maestro** tasks also run as sub-agents of the agent that dispatches them.
+[Maestro](../maestro.md) tasks also run as sub-agents of the agent that dispatches them.
 
 ## The depth limit
 
@@ -51,11 +51,11 @@ Set the limit on the **System** page, in **Agent**, as **Max sub-agent depth** (
 
 ## Temporary agents
 
-Sub-agents are one kind of **temporary agent**: an agent created while ClawEh runs, not listed in the configuration. Forums create temporary agents too. In plain terms:
+Sub-agents are one kind of **temporary agent**: an agent created while ClawEh runs, not listed in the configuration. [Forums](../forums/index.md#who-can-take-part) create temporary agents too. In plain terms:
 
 - **Clones** copy a configured agent, as described above.
 - **Fresh** temporary agents start empty: their own empty folder, no instruction files, no skills and no tools.
 
-Temporary agents never appear on the Agents page, on **Check Up** or in a device's agent list, and no chat routes to them. Their conversation and memory copy are kept in `internal/temp/` in the data directory, which backups leave out. A sub-agent left behind by a crash is removed at the next start, and a temporary agent idle for 24 hours is deleted. In the logs a clone is named after its agent, for example `alice (clone 1a2b3c4d)`; audit records list it under `alice`.
+Temporary agents never appear on the Agents page, on **Check Up** or in a device's agent list, and no chat routes to them. Their conversation and memory copy are kept in `internal/temp/` in the data directory, which backups leave out. A sub-agent left behind by a crash is removed at the next start, and a temporary agent idle for 24 hours is deleted. In the logs a clone is named after its agent, for example `alice (clone 1a2b3c4d)`; [audit](../admin/audit.md) records list it under `alice`.
 
 A [human agent](./human-agents.md) is never cloned or spawned.

@@ -24,7 +24,8 @@ address or a webhook.
    separated by commas (see [Who may write to the bot](#who-may-write-to-the-bot)).
 6. Leave **Enable channel** on and click **Save**.
 7. Open [Bindings](./routing.md) and bind the bot's channel to the agent that
-   should answer. Without a binding, the default agent answers.
+   should answer. Without a binding, the
+   [default agent](../agents/creating.md#the-default-agent-and-default-models) answers.
 
 The bot's channel name, which you use in bindings, is `telegram` for a bot with
 a blank id (or the id `default`) and `telegram-<id>` for any other, for example
@@ -125,7 +126,7 @@ any binding or default chat that used the old one.
 An agent that tried to send the message is told so, for example "Not sent:
 … can't be reached."
 
-What does raise an alert:
+What does raise an [alert](../admin/alerts.md):
 
 - **Telegram polling failed**: Telegram rejected the bot token (it was revoked
   or is wrong). Create a new token with BotFather (`/revoke`) and paste it into
@@ -139,7 +140,7 @@ Bot tokens never appear in ClawEh's logs or alerts.
 ## Commands
 
 The bot registers its commands in Telegram's command menu, including `/ask`
-and `/whisper` for messaging other agents. Type `/` in the chat to see them.
+and `/whisper` for [messaging other agents](../agents/messaging.md). Type `/` in the chat to see them.
 
 ## Related pages
 

@@ -5,7 +5,7 @@ This page lists common problems, the message ClawEh shows or logs for each, and 
 ## Where to look first
 
 - **Check Up** in the WebUI marks configuration that needs attention. See [Check Up and the full report](../admin/checkup.md).
-- **Logs** in the WebUI shows the log and, through its source selector, the alerts.
+- **Logs** in the WebUI shows the log and, through its source selector, the alerts. See [Logs](../admin/logs.md) and [Alerts](../admin/alerts.md).
 - On the server, the data directory holds `logs/claw.log` (everything), `logs/error.log` (warnings and errors only) and `logs/alerts.log`.
 - `claw status` shows whether ClawEh is running and where to reach it.
 
@@ -50,9 +50,9 @@ See [Network access](../admin/network.md) and [Signing in](../admin/login.md).
 
 ## A model is unavailable
 
-When a model fails, ClawEh tries the next model in the agent's list and pauses the failing one for a while (a cooldown). The reply then starts with a line such as:
+When a model fails, ClawEh tries the next model in the agent's list and pauses the failing one for a while (a [cooldown](../providers/concepts.md#cooldowns)). The reply then starts with a line such as:
 
-> ⚠️ gpt-5 unavailable — rate limited (retry in 9m). Using claude-sonnet.
+> ⚠️ Claude Sonnet 4.6 unavailable — rate limited (retry in 9m). Using OpenAI GPT 5.5.
 
 If every model fails, the reply is "All models failed", with the reason for each model.
 
@@ -69,7 +69,7 @@ The reply reads, for example:
 
 > Alice: The Claude CLI declined to use tools (file_read_lines). Tick *Allow CLI to bypass restrictions* for this CLI on the Providers page, or allow the tools in the CLI's own settings.
 
-A CLI provider runs under its own permission settings unless **Allow CLI to bypass restrictions** is ticked for it on the **Providers** page. Tick it only if the CLI may run commands and change files anywhere the service user can.
+A CLI provider runs under its own permission settings unless **Allow CLI to bypass restrictions** is ticked for it on the **Providers** page (see [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions)). Tick it only if the CLI may run commands and change files anywhere the service user can.
 
 ### An agent's model disappeared
 
@@ -91,13 +91,13 @@ If one particular tool is missing:
 
 | Tool | Where it is granted |
 |---|---|
-| Shell commands (`shell_exec`) | **Allow shell commands** on the agent's card. Not included by **Default tools** or `"*"`. |
-| Tools of an MCP server | **MCP access** under the agent's **Tools**. |
-| Fusion services | **Fusion (REST-API tools)** on, and the service ticked under **Fusion services**. Check Up marks **Fusion on with no service (…)** otherwise. |
-| Maestro, forum, memory tools | **Maestro**, **Allow forum**, **Cognitive memory** on the agent's card. |
+| Shell commands (`shell_exec`) | **Allow shell commands** on the agent's card ([Shell commands](../agents/tools-and-skills.md#shell-commands)). Not included by **Default tools** or `"*"`. |
+| Tools of an MCP server | **MCP access** under the agent's **Tools** ([MCP](../mcp.md#grant-a-server-to-an-agent)). |
+| Fusion services | **Fusion (REST-API tools)** on, and the service ticked under **Fusion services**. Check Up marks **Fusion on with no service (…)** otherwise ([MCPFusion](../mcpfusion.md#give-an-agent-access)). |
+| Maestro, forum, memory tools | **Maestro**, **Allow forum**, **Cognitive memory** on the agent's card ([Tool suites](../agents/tools-and-skills.md#tool-suites)). |
 | Any tool | Not listed under **Denied tools**, and switched on for the install on the **Tools** page. |
 
-See [Agents](../agents/index.md).
+See [Tools and skills](../agents/tools-and-skills.md).
 
 ## A channel does not deliver
 
@@ -105,12 +105,12 @@ See [Agents](../agents/index.md).
 
 1. **Is the channel enabled and running?** Check its page under **Channels**, and the alerts on the **Logs** page: "Channel failed to start", "Telegram polling failed", "Channel credentials rejected" or "Telegram down" (and the same for other platforms) name the channel and the reason.
 2. **Is the sender allowed?** Every channel has an allowed-senders list (`allow_from`). An empty list lets **nobody** in. Add your user id, or `*` for everyone.
-3. **Does the message reach the right agent?** Messages go to the agent a binding on the **Bindings** page names, else to the default agent.
+3. **Does the message reach the right agent?** Messages go to the agent a binding on the **Bindings** page names, else to the default agent. See [Routing and bindings](../channels/routing.md).
 4. **Does the agent work?** Try the same message in **Chat**. If it fails there too, see [A model is unavailable](#a-model-is-unavailable).
 
 ### Scheduled jobs and notifications are not delivered
 
-Scheduled job output and other messages the agent starts by itself go to the agent's default channel. Set it under **Default Channel** on the agent's card. For a channel with no fixed chat, such as a Telegram bot, enter the chat id too. Without one, the alert "Scheduled job failed" says the agent has no default channel.
+Scheduled job output and other messages the agent starts by itself go to the agent's default channel. Set it under **Default Channel** on the agent's card (see [Creating and editing agents](../agents/creating.md#default-channel)). For a channel with no fixed chat, such as a Telegram bot, enter the chat id too. Without one, the alert "Scheduled job failed" says the agent has no default channel.
 
 ### Replies are not delivered
 
@@ -125,7 +125,7 @@ Common marked rows and what they mean:
 | Row | Meaning | Fix |
 |---|---|---|
 | Data directory permissions | Files in the data directory can be read by others. | Restart ClawEh, which tightens them, or `chmod 700`/`600` as listed. |
-| File confinement | Agents may read or write outside their workspace. | Turn on **Restrict to workspace** on the **System** page. |
+| File confinement | Agents may read or write outside their workspace. | Turn on **Restrict to workspace** on the **System** page, under **Agent**. |
 | Shell access | Agents may run shell commands without the built-in deny patterns. | Turn deny patterns back on (`tools.exec.enable_deny_patterns`), or remove **Allow shell commands** from the agents listed. |
 | Channels accepting any sender | A channel's allowed senders contain `*`. | List the allowed users instead. |
 | Message content in logs | Logging options write message text to disk. `dump_refusals` is on in a new install. | Turn off the listed `logging` options if you do not want that. |

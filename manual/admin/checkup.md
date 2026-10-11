@@ -34,13 +34,13 @@ A self-signed certificate is stated, never marked.
 | **TLS certificate expiry** | Your own certificate expires within 14 days, or has expired. | Renew the certificate files. See [HTTPS and certificates](./https.md#renewals). |
 | **Data directory permissions** | Files under the data directory can be read by other users. | Restart ClawEh, which tightens them, or `chmod 700` the folders and `chmod 600` the files. See [Logs](./logs.md#startup-permission-checks). |
 | **WebUI chat token** | The WebUI channel is on without a token. | Set a token for the WebUI channel (`channels.webui.token`). It is for non-browser clients only. |
-| **Device auto-approve** | New devices are paired without approval. | Turn off **Auto-approve pairings** on the **Network** page. |
-| **File confinement** | Agents may read (or read and write) outside their workspace. | On the **System** page, under **Agent defaults**, turn on **Restrict to workspace**, unless you mean it. |
-| **Shell access** | Some agent may run shell commands and the deny patterns are off. | Check that each listed agent should have **Allow shell commands**. |
-| **Mount (name)** | A mount uses a reserved folder name and is ignored. | Rename the mount on the **Agents** page. |
-| **Fusion on with no service (agent)** | Fusion is on for an agent but no service is ticked, so it has no Fusion tools. | Tick its services under **Fusion services** on the **Agents** page. |
-| **Person's chat (name)** | A person's chat is on a channel that is not set up. | Set up that channel, or bind the person to a channel that is. |
-| **Channels accepting any sender** | A messaging channel allows anyone (`*`) to message it. | Limit its allowed senders on that channel's page. |
+| **Device auto-approve** | New devices are paired without approval. | Turn off **Auto-approve pairings** on the **Network** page. See [Devices](../channels/devices.md). |
+| **File confinement** | Agents may read (or read and write) outside their workspace. | On the **System** page, under **Agent**, turn on **Restrict to workspace**, unless you mean it. See [Files and mounts](../agents/files-and-mounts.md#install-wide-file-settings). |
+| **Shell access** | Some agent may run shell commands and the deny patterns are off. | Check that each listed agent should have **Allow shell commands**. See [Tools and skills](../agents/tools-and-skills.md#shell-commands). |
+| **Mount (name)** | A mount uses a reserved folder name and is ignored. | Rename the mount on the **Agents** page. See [Files and mounts](../agents/files-and-mounts.md#reserved-names). |
+| **Fusion on with no service (agent)** | Fusion is on for an agent but no service is ticked, so it has no Fusion tools. | Tick its services under **Fusion services** on the **Agents** page. See [MCPFusion](../mcpfusion.md#give-an-agent-access). |
+| **Person's chat (name)** | A person's chat is on a channel that is not set up. | Set up that channel, or bind the person to a channel that is. See [Human agents](../agents/human-agents.md). |
+| **Channels accepting any sender** | A messaging channel allows anyone (`*`) to message it. | Limit its allowed senders (**Allow From**) on that channel's page. See [Channels](../channels/index.md). |
 | **Message content in logs** | Message text or full prompts are written to the logs. | Turn off the logging options named in the row unless you need them. See [Logs](./logs.md#logging-options). |
 | **Audit log** | The audit log file is missing. | Restart ClawEh; it creates the file at start. See [Audit log](./audit.md). |
 
@@ -48,10 +48,10 @@ These rows are information only:
 
 - **Install-wide shell setting**: an old install-wide shell setting is in the config and has no effect. Shell commands are allowed per agent.
 - **File confinement vs shell (agent)**: the agent's file tools are confined, but it can run shell commands, which are not.
-- **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts.
-- **No tools (agent)**: the agent has no tools.
-- **MCP servers running local programs**: MCP servers started as programs on this machine.
-- **Sub-agent spawning**: whether agents may start sub-agents, and how deep.
+- **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).
+- **No tools (agent)**: the agent has no tools. See [Tools and skills](../agents/tools-and-skills.md).
+- **MCP servers running local programs**: [MCP servers](../mcp.md#external-mcp-servers) started as programs on this machine.
+- **Sub-agent spawning**: whether agents may start [sub-agents](../agents/subagents.md), and how deep.
 
 ## Download the full report
 

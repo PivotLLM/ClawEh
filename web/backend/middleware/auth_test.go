@@ -289,7 +289,7 @@ func TestAuth_ExemptPathsPassWithoutSession(t *testing.T) {
 		{http.MethodGet, "/webui/ws"},
 		{http.MethodGet, "/manual"},
 		{http.MethodGet, "/manual/"},
-		{http.MethodHead, "/manual/guide/introduction.html"},
+		{http.MethodHead, "/manual/getting-started/overview.html"},
 		{http.MethodPost, "/"},
 		{http.MethodPost, "/webhook/slack"},
 		{http.MethodGet, "/api/v1x"},

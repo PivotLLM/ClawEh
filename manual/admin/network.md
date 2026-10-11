@@ -80,7 +80,7 @@ External devices (Rabbit R1, voice apps) connect to a separate listener with its
 | **Auto-approve pairings** | Pairs new devices without approval. |
 | **Protocol** | **ws (unencrypted)** or **wss (HTTPS)**, using the WebUI certificate. **wss** needs HTTPS to be on. |
 
-Pair and manage devices on the **Devices** page.
+Pair and manage devices on the **Devices** page (see [Devices](../channels/devices.md)).
 
 ClawEh refuses a configuration that puts the device listener on the network with **Auto-approve pairings** on, or without a device token set.
 

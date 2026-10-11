@@ -7,7 +7,7 @@ OpenRouter reaches many vendors' models through one API key and one bill. ClawEh
 ## Set up
 
 1. Create an API key in your OpenRouter account.
-2. In **Providers**, under **API providers**, click **Edit** on each OpenRouter provider you plan to use, paste the key into **API Key** and click **Save**. To keep one copy of the key, write `env:OPENROUTER_API_KEY` (or any variable name you choose) in each, and set that variable in the service's environment.
+2. In **Providers**, under **API providers**, click **Edit** on each OpenRouter provider you plan to use, paste the key into **API Key** and click **Save**. To keep one copy of the key, write `env:OPENROUTER_API_KEY` (or any variable name you choose) in each, and set that variable in the service's environment (see [Keeping secrets out of the file](../reference/configuration.md#keeping-secrets-out-of-the-file)).
 3. In **Models**, switch on the models you want. They are grouped by provider.
 
 ## Which provider

@@ -36,7 +36,7 @@ agent's replies, the completion notice and the log then call it
 
 Material for the participants comes from **sources**: text written into the
 setup, or a file. A file is read exactly as the agent's own file tools would
-read it: from its workspace, or from one of its mounts such as `maestro/`.
+read it: from its workspace, or from one of its [mounts](../agents/files-and-mounts.md) such as `maestro/`.
 
 ## Run it again on new material
 
@@ -91,7 +91,7 @@ Forums survive a restart of ClawEh:
   `forum_status` and in the completion notice ("2 outputs came from turns
   resent after a restart.").
 - A launch interrupted before its run started leaves the forum as it was.
-- A run that stops on an error raises the **Forum run stopped** alert and
+- A run that stops on an error raises the **Forum run stopped** [alert](../admin/alerts.md) and
   continues when the agent resumes it or at the next start.
 
 ## Limits
@@ -108,7 +108,7 @@ Every forum setup carries its own hard limits, which the agent chooses:
 
 Each participant's own settings (its model's request timeout, its tool
 limits) still apply to its turns. When all of a participant's models are in
-cooldown, its turn waits for one within the turn's time limit; a wait that
+[cooldown](../providers/concepts.md#cooldowns), its turn waits for one within the turn's time limit; a wait that
 outlasts it counts as a timed-out attempt.
 
 ### Install-wide maximums

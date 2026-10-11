@@ -16,7 +16,7 @@ What is kept, and what is not:
 - Tool calls record the tool, the outcome (ok or error), how long it took, and a shortened copy of the arguments. File contents, edit text and web request bodies are recorded only as their size.
 - Config writes record which sections changed, never the values.
 - Sign-ins never record the password.
-- A call made by a sub-agent is recorded under the agent it copies, marked as a clone.
+- A call made by a [sub-agent](../agents/subagents.md) is recorded under the agent it copies, marked as a clone.
 
 ## Read it in the WebUI
 

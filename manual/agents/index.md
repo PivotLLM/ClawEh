@@ -2,7 +2,7 @@
 
 An agent is one assistant: a name, the models it runs on, the tools and skills it may use, a folder of its own and one ongoing conversation.
 
-You can run several agents side by side, for example Alice for daily planning and Bob for research. Each has its own settings, its own files and its own memory. Chats, devices and scheduled jobs reach an agent through its bindings; the agent that answers everything else is the default agent.
+You can run several agents side by side, for example Alice for daily planning and Bob for research. Each has its own settings, its own files and its own memory. Chats, devices and scheduled jobs reach an agent through its [bindings](../channels/routing.md); the agent that answers everything else is the default agent.
 
 ## What an agent starts with
 

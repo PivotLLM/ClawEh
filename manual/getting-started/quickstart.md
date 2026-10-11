@@ -9,20 +9,20 @@ It assumes ClawEh is installed and running. If not, see [Installing ClawEh](./in
 1. Open the address the installer printed, for example `http://127.0.0.1:18790/` on the same machine. `claw status` prints it again.
 2. Sign in with the admin account you created during the install.
 
-If the page says "No admin account", run `claw admin` on the server and reload the page.
+If the page says "No admin account", run `claw admin` on the server and reload the page. See [Signing in](../admin/login.md).
 
 ## 2. Run the setup wizard
 
 On a fresh install the setup wizard opens by itself. It has six steps:
 
 1. **Welcome** — what the wizard will set up.
-2. **Network** — whether other machines may reach the WebUI. Leave **Enable network access** off unless you need it. You can change it later on the **Network** page.
-3. **Provider** — choose a provider, paste its API key, and click **Test key**. CLIs installed on this machine (Claude Code, Codex, Antigravity, Cursor) are listed too and need no key.
+2. **Network** — whether other machines may reach the WebUI ([Network access](../admin/network.md)). Leave **Enable network access** off unless you need it. You can change it later on the **Network** page.
+3. **Provider** — choose a provider, paste its API key, and click **Test key** (see [Providers and models](../providers/index.md)). CLIs installed on this machine (Claude Code, Codex, Antigravity, Cursor) are listed too and need no key.
 4. **Model** — choose the model to use by default.
 5. **Agent** — give your first agent a name.
 6. **Review** — check the summary and click **Finish setup**.
 
-Your agent is now the default agent, using the model you picked.
+Your agent is now the [default agent](../agents/creating.md#the-default-agent-and-default-models), using the model you picked.
 
 ## 3. Give your agent tools
 
@@ -40,13 +40,13 @@ Some capabilities have their own switch on the same card, each off by default:
 - **Maestro**, **Fusion (REST-API tools)** and **Allow forum** add their tool suites.
 - **Cognitive memory** is on by default; turn it off for an agent that should keep no memory.
 
-Grant only what the agent needs. See [Agents](../agents/index.md) for every setting.
+Grant only what the agent needs. See [Tools and skills](../agents/tools-and-skills.md) for every switch, and [Maestro](../maestro.md), [MCPFusion](../mcpfusion.md) and [Forums](../forums/index.md) for the suites.
 
 ## 4. Chat
 
-Open **Chat** at the top of the sidebar and type a message. The WebUI chat goes to the default agent, unless a binding on the **Bindings** page sends it to another one.
+Open **Chat** at the top of the sidebar and type a message. The WebUI chat goes to the default agent, unless a binding on the **Bindings** page sends it to another one (see [WebUI chat](../channels/webui-chat.md) and [Routing and bindings](../channels/routing.md)).
 
-The agent has one conversation. Messages from other channels, such as Telegram, join the same conversation.
+The agent has one conversation. Messages from other channels, such as Telegram, join the same conversation (see [Conversation and memory](../agents/memory.md)).
 
 ## 5. Check the install
 

@@ -8,12 +8,13 @@ Each channel connects ClawEh to one chat service. A message that arrives on a
 channel is handed to one agent, and the agent's reply goes back the same way.
 
 - **Which agent answers** is decided by [bindings](./routing.md). A message that
-  matches no binding goes to the default agent.
+  matches no binding goes to the
+  [default agent](../agents/creating.md#the-default-agent-and-default-models).
 - **One conversation per agent.** Every message to an agent, from any channel,
   joins that agent's single conversation, with one history and one memory. If
   Alice is reachable on Telegram, Slack and the WebUI chat, she remembers on
   Slack what she was told on Telegram. To keep two audiences apart, give each
-  its own agent.
+  its own agent (see [Conversation and memory](../agents/memory.md)).
 - **Who may write** is set per channel with **Allow From**. On every chat
   channel an empty list means nobody is allowed; add the user IDs that may
   write, or `*` for anyone.
@@ -54,7 +55,7 @@ failed after its retries, a token the service rejects, a channel that has had
 no working connection for ten minutes ("Telegram down", followed by "Telegram
 up" when it recovers), and a channel that keeps failing to start. An offline or
 unreachable recipient is a normal situation and is not alerted or retried.
-Alerts appear on the **Logs** page (choose the alerts source).
+Alerts appear on the **Logs** page (choose the alerts source). See [Alerts](../admin/alerts.md).
 
 ## Related pages
 

@@ -27,7 +27,7 @@ The service's name is its key in the file's `services` object, such as
 `microsoft365` or `wxca`. Its tools are named after it:
 `microsoft365_calendar_read_summary`, `wxca_city_current`.
 
-The **Check Up** report lists the `fusion/` folder and the token store under
+The [Check Up](admin/checkup.md) report lists the `fusion/` folder and the token store under
 Data.
 
 ## How a service signs in
@@ -46,7 +46,8 @@ by Alice. To reach two accounts, use two agents.
 
 ## Give an agent access
 
-An agent needs two things, both on the **Agents** page:
+An agent needs two things, both on the **Agents** page (see
+[Tools and skills](agents/tools-and-skills.md#grant-tools)):
 
 1. On the agent's card, turn on **Fusion (REST-API tools)** ("Lets this agent
    use the Fusion services ticked under Tools.").
@@ -110,7 +111,7 @@ The computer running `claw-auth` must reach ClawEh's web address: the
 **Hostname / external URL** on the **Network** page when set, otherwise the
 HTTPS address ClawEh derives (for example `https://<host name>:18443`). A
 computer other than the ClawEh machine must also be in **Allowed networks**
-on the same page. The sign-in itself does not need the WebUI login.
+on the same page (see [Network access](admin/network.md)). The sign-in itself does not need the WebUI login.
 
 `claw-auth` is built from the ClawEh source with `make claw-auth` (the
 binary is written to `build/claw-auth`); `make build` builds it too.
@@ -123,9 +124,9 @@ That discards the old sign-in and gives you a new command.
 
 - Sign-in tokens are kept in `<CLAW_HOME>/internal/fusion-tokens.db`, one
   set per agent and service, and refreshed automatically.
-- The nightly backup includes them.
+- The nightly [backup](admin/backup.md) includes them.
 - If the token store cannot be opened, every Fusion tool is disabled and
-  the **Fusion token store unavailable** alert is raised; restart ClawEh once
+  the **Fusion token store unavailable** [alert](admin/alerts.md) is raised; restart ClawEh once
   the file is readable.
 - Sign-ins are kept under the agent's ID. An agent whose ID changes must
   sign in again.
@@ -140,7 +141,7 @@ That discards the old sign-in and gives you a new command.
   any the definition marks as destructive) are listed but refuse to run
   unless `fusion/env` contains `MCP_FUSION_ALLOW_DESTRUCTIVE=true`. The
   agent can tell you the capability exists.
-- A clone or sub-agent of Alice uses Alice's sign-ins.
+- A clone or [sub-agent](agents/subagents.md) of Alice uses Alice's sign-ins.
 - Agents on a CLI provider reach the same tools through ClawEh's MCP host
   (see [ClawEh as an MCP server](mcp.md)).
 

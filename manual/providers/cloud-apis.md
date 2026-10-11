@@ -18,7 +18,7 @@ If the catalogue has no model you want, add one:
 2. Fill in **Model Alias** (your name for it), **Model Identifier** (the vendor's exact model id) and **Provider**.
 3. Click **Add Model**. Turn on **Default Model** first if it should become the default.
 
-To keep a key out of `config.json`, write a reference in the `api_key` field instead of the key: `env:OPENAI_API_KEY` reads an environment variable of the service, and `file:/etc/claw/openai.key` reads a file that only its owner can read. ClawEh will not start, and the WebUI refuses the save, if the reference cannot be resolved.
+To keep a key out of `config.json`, write a reference in the `api_key` field instead of the key: `env:OPENAI_API_KEY` reads an environment variable of the service, and `file:/etc/claw/openai.key` reads a file that only its owner can read. ClawEh will not start, and the WebUI refuses the save, if the reference cannot be resolved. See [Keeping secrets out of the file](../reference/configuration.md#keeping-secrets-out-of-the-file).
 
 ## Vendors in the catalogue
 

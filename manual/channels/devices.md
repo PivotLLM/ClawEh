@@ -12,7 +12,8 @@ pairing on the **Devices** page.
 The device listener starts on localhost only, so other machines cannot reach
 it yet.
 
-1. Open **Services → Network** and find **Device listener**.
+1. Open **Services → Network** and find **Device listener** (see
+   [Network access](../admin/network.md)).
 2. Set **Scope** to **Network**.
 3. Optional settings in the same section:
    - **Port**: 18791 by default.
@@ -98,7 +99,7 @@ default agent instead, and the Devices page shows the reason under the device,
 for example "Ignored: Bob no longer exists; using the default agent." Choose
 another agent in the **Assistant** list, or have the person send `/agent`.
 
-Agents that represent a person (human agents) are never offered to devices.
+Agents that represent a person ([human agents](../agents/human-agents.md)) are never offered to devices.
 
 ## Encryption
 
@@ -106,7 +107,8 @@ By default devices connect over plain WebSocket (`ws://`). To encrypt:
 
 1. Open **Services → Network → Device listener**.
 2. Set **Protocol** to **wss (HTTPS)**. This uses the same certificate as the
-   WebUI's HTTPS, so HTTPS must not be **Off**.
+   WebUI's HTTPS, so HTTPS must not be **Off** (see
+   [HTTPS and certificates](../admin/https.md)).
 3. Pair or re-pair devices: the QR code and the connect address now use
    `wss://`. The device must accept the certificate; with the self-signed
    one, check that it does.
@@ -131,7 +133,8 @@ message is told "Not sent: device:… is offline." See
 [When a message cannot be delivered](./index.md#when-a-message-cannot-be-delivered).
 
 Five failed connection attempts from one address within ten minutes lock that
-address out for a while and raise **Device authentication locked out**. A
+address out for a while and raise **Device authentication locked out** (an
+[alert](../admin/alerts.md)). A
 device that keeps using a revoked token causes this; pair it again once the
 lockout ends.
 

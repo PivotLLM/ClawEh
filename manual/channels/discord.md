@@ -61,7 +61,7 @@ In `config.json`, a binding can also name one Discord channel (peer kind
 - A message to an unknown channel or user, or to a user who does not accept
   messages from the bot, is recorded as **can't be reached** and logged as a
   warning; there is no alert and no retry.
-- **Discord down** (alert): no working connection to Discord for ten minutes.
+- **Discord down** ([alert](../admin/alerts.md)): no working connection to Discord for ten minutes.
   ClawEh keeps reconnecting and raises **Discord up** when it is back.
 - Long replies are split into several messages, because Discord limits a
   message to 2,000 characters.

@@ -8,13 +8,13 @@ No model runs for a human agent. When an agent asks Bob something, the question 
 
 The example sets up Bob, who answers in a Telegram direct chat.
 
-1. **Providers** page: add a provider with protocol `human`. It needs no address or key.
+1. **Providers** page ([Providers and models](../providers/concepts.md)): add a provider with protocol `human`. It needs no address or key.
 2. **Models** page: add a model on that provider.
    - Give it a name of its own that names the person, for example `Bob (human)`. No other model may use that name.
    - The model id can be any placeholder, such as `bob`.
    - Set **Request Timeout (s)** to how long Bob may take to answer. 0 uses the install's default request timeout.
 3. **Agents** page: add an agent, for example `bob`, whose **Models (tried in order)** is only that model. Its card then shows only the models, the line "Represents a person: answers are typed by hand." and **Default Channel**.
-4. **Bindings** page: bind one chat used by Bob alone (a Telegram direct chat, a Slack channel of his own) to the agent. It must name one chat, not a whole bot, and no other agent may be bound to it.
+4. **Bindings** page ([Routing and bindings](../channels/routing.md#bind-one-chat-to-an-agent)): bind one chat used by Bob alone (a Telegram direct chat, a Slack channel of his own) to the agent. It must name one chat, not a whole bot, and no other agent may be bound to it.
 5. Back on the agent's card, pick that binding as its **Default Channel**.
 
 The agent is not run until it has its default chat. In `config.json` the result looks like this:
@@ -41,7 +41,7 @@ A WebUI save that would break a rule is refused with a one-line reason. If `conf
 
 ## Asking Bob
 
-Agents ask Bob the same way they ask any agent: with the `agent_message` tool, the `/ask` command or a forum turn (see [Messages between agents](./messaging.md)). The asking agent must be allowed to message Bob.
+Agents ask Bob the same way they ask any agent: with the `agent_message` tool, the `/ask` command or a [forum](../forums/index.md#a-person-in-a-forum) turn (see [Messages between agents](./messaging.md)). The asking agent must be allowed to message Bob.
 
 ## What Bob sees
 

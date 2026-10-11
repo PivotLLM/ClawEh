@@ -55,6 +55,8 @@ The same alert about the same thing within ten minutes is counted, not sent agai
 
 ### Models
 
+See [Cooldowns](../providers/concepts.md#cooldowns) for when a model is set aside.
+
 | Alert | Raised when |
 |---|---|
 | Model authentication or billing failure | A model failed for a key, login or credit problem; it is set aside until fixed. |
@@ -63,6 +65,8 @@ The same alert about the same thing within ten minutes is counted, not sent agai
 | Context compaction breaker tripped | Summarizing a long conversation failed three times in a row; check the memory models. |
 
 ### Channels and devices
+
+See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for which delivery failures are alerted.
 
 | Alert | Raised when |
 |---|---|
@@ -85,11 +89,11 @@ The same alert about the same thing within ten minutes is counted, not sent agai
 
 | Alert | Raised when |
 |---|---|
-| MCP `<name>` down | An MCP server is unreachable; reminded at most hourly. |
+| MCP `<name>` down | An [MCP server](../mcp.md#external-mcp-servers) is unreachable; reminded at most hourly. |
 | MCP `<name>` up | That server is back. |
-| Fusion token store unavailable | The Google/Microsoft token database could not be opened; Fusion tools are off. |
-| Maestro tools disabled | An agent's Maestro folder could not be prepared. |
-| Forum `<id>` run `<n>` of `<agent>` stopped | A forum run stopped on an error it cannot recover from by itself. |
+| Fusion token store unavailable | The Google/Microsoft token database could not be opened; [Fusion](../mcpfusion.md#tokens) tools are off. |
+| Maestro tools disabled | An agent's [Maestro](../maestro.md) folder could not be prepared. |
+| Forum `<id>` run `<n>` of `<agent>` stopped | A [forum](../forums/running.md#restarts) run stopped on an error it cannot recover from by itself. |
 
 ### ClawEh itself
 
@@ -120,7 +124,7 @@ The same alert about the same thing within ten minutes is counted, not sent agai
 | Mount marker not written | A watched mount's record of seen files could not be saved. |
 | Cron store unreadable | The scheduled jobs file could not be read; no jobs run. Fix it before anything saves over it. |
 | Cron store not saved | A scheduled job's state could not be saved. |
-| Scheduled job failed | A scheduled job did not run. |
+| Scheduled job failed | A [scheduled job](../agents/scheduling.md) did not run. |
 
 ### Security and backup
 

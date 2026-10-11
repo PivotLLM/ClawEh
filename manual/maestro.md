@@ -29,7 +29,7 @@ tools. Its first step is usually to read the built-in guide
 
 Maestro is per agent and off by default.
 
-1. Open the **Agents** page.
+1. Open the **Agents** page (see [Tools and skills](agents/tools-and-skills.md#tool-suites)).
 2. On the agent's card, turn on **Maestro**.
 3. Optionally adjust the settings that appear below the switch:
 
@@ -75,19 +75,19 @@ runs the agent without Maestro until the object form is set.
 
 ## How workers run
 
-- Every worker, quality check and revision runs as a **sub-agent of the
-  agent**: on the agent's default model, with the agent's tools and
+- Every worker, quality check and revision runs as a [sub-agent](agents/subagents.md) of the
+  agent: on the agent's default model, with the agent's tools and
   permissions, in its workspace.
 - A task may name another of the agent's models. An unknown model name fails
   the task without a retry.
-- Workers count toward the sub-agent depth limit
-  (`agents.defaults.max_subagent_depth`, default 3), so a chain of workers
+- Workers count toward the [sub-agent depth limit](agents/subagents.md#the-depth-limit)
+  (**Max sub-agent depth** on the System page, default 3), so a chain of workers
   starting workers cannot run away.
 - A worker whose tool calls all failed counts as a failed attempt.
 
 ## What Maestro can read
 
-- The agent's **mounts** appear in Maestro's reference material under each
+- The agent's [mounts](agents/files-and-mounts.md#mounts-external-folders) appear in Maestro's reference material under each
   mount's name.
 - When the agent imports a file into a project, it can import only what its
   own file tools may read: its workspace, its mounts and any paths allowed
@@ -107,11 +107,11 @@ The same folder is mounted as `maestro/` for the agent's ordinary file
 tools, so the agent can move inputs and finished reports between
 `maestro/` and `files/`. Project logs and results are never pruned.
 
-The nightly backup does **not** include the `maestro/` folder. Back it up
+The nightly [backup](admin/backup.md) does **not** include the `maestro/` folder. Back it up
 yourself if the projects matter.
 
 Maestro's operational log goes to the ClawEh log with the component
-`maestro`, visible on the **Logs** page.
+`maestro`, visible on the **Logs** page (see [Logs](admin/logs.md)).
 
 ## Using Maestro from another program
 

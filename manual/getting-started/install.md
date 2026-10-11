@@ -91,7 +91,7 @@ It also:
 
 - creates the data directory, `~/.claw` by default (`CLAW_HOME` overrides it; an existing `/opt/claw` is used if present);
 - writes a complete `config.json` there on first start;
-- creates an `openclaw` link next to `claw`, which the Rabbit R1 needs;
+- creates an `openclaw` link next to `claw`, which the Rabbit R1 needs (see [Devices](../channels/devices.md));
 - prints the addresses where the WebUI can be opened.
 
 `--bin-dir` installs the binary somewhere else. `--user` picks the account the system service runs as (default: the user who ran `sudo`). `-y` skips the confirmation question but never the admin account.
@@ -105,7 +105,7 @@ By default ClawEh listens on:
 - `http://127.0.0.1:18790/` — plain HTTP, this machine only;
 - `https://<this machine>:18443/` — HTTPS on every interface, with a self-signed certificate. Your browser warns about it once.
 
-Other machines are refused until you allow their network, even over HTTPS. `claw status` prints the current addresses at any time.
+Other machines are refused until you allow their network, even over HTTPS (see [HTTPS and certificates](../admin/https.md)). `claw status` prints the current addresses at any time.
 
 ## Installing on a headless or remote host
 

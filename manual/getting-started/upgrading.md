@@ -52,7 +52,7 @@ The WebUI and its API now require the admin account, also from the same machine.
 
 ### HTTPS is on
 
-ClawEh also serves HTTPS on port 18443, on every interface, with a self-signed certificate. Other machines are still refused until their network is allowed. To keep the old footprint, set **HTTPS** to **Localhost only** or **Off** on the **Network** page. See [HTTPS and certificates](../admin/https.md).
+ClawEh also serves HTTPS on port 18443, on every interface, with a self-signed certificate. Other machines are still refused until their network is allowed. To keep the old footprint, set **Listen on** under **HTTPS** to **Localhost only** or **Off** on the **Network** page. See [HTTPS and certificates](../admin/https.md).
 
 ClawEh now answers only to its own host names. If you reach it by another name, such as a reverse proxy name, set **Hostname / external URL** on the **Network** page.
 
@@ -65,27 +65,29 @@ For each agent, on the **Agents** page:
 1. Under **Tools**, click **Default tools** and untick what the agent should not have.
 2. Under **Skills**, click **All skills** or pick the skills.
 
+See [Tools and skills](../agents/tools-and-skills.md).
+
 **Check Up** lists every agent that has no tools.
 
 ### Shell commands are a per-agent switch
 
-`tools.exec.allow_remote` and the install-wide shell setting are gone. Turn on **Allow shell commands** on the card of each agent that should run shell commands. It is off by default.
+`tools.exec.allow_remote` and the install-wide shell setting are gone. Turn on **Allow shell commands** on the card of each agent that should run shell commands. It is off by default. See [Tools and skills](../agents/tools-and-skills.md#shell-commands).
 
 ### CLI providers no longer bypass their permission prompts
 
-A CLI provider (Claude Code, Codex, Antigravity, Cursor) now runs under its own permission settings. If its agents must run tools without asking, tick **Allow CLI to bypass restrictions** for that CLI on the **Providers** page.
+A CLI provider (Claude Code, Codex, Antigravity, Cursor) now runs under its own permission settings. If its agents must run tools without asking, tick **Allow CLI to bypass restrictions** for that CLI on the **Providers** page. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).
 
 ### Fusion services are granted per agent
 
-The agent's Fusion switch no longer grants every Fusion service. Tick the services under **Fusion services** on the agent's card.
+The agent's Fusion switch no longer grants every Fusion service. Tick the services under **Fusion services** on the agent's card. See [MCPFusion](../mcpfusion.md#give-an-agent-access).
 
 ### Agent ids must be valid
 
-An agent id may use only letters, digits, `-` and `_`, starts with a letter or digit, and is at most 64 characters. Ids are case-insensitive: `Bob` and `bob` are the same agent. A `config.json` with an invalid id does not start; the error names the id and suggests a fix. See [Troubleshooting](../reference/troubleshooting.md#the-service-does-not-start).
+An agent id may use only letters, digits, `-` and `_`, starts with a letter or digit, and is at most 64 characters. Ids are case-insensitive: `Bob` and `bob` are the same agent. A `config.json` with an invalid id does not start; the error names the id and suggests a fix. See [Agent ids](../agents/creating.md#agent-ids) and [Troubleshooting](../reference/troubleshooting.md#the-service-does-not-start).
 
 ### One conversation per agent
 
-Session modes are removed. Every message to an agent joins its one conversation. For a separate conversation, create a separate agent.
+Session modes are removed. Every message to an agent joins its one conversation. For a separate conversation, create a separate agent. See [Conversation and memory](../agents/memory.md).
 
 ### The data directory layout changed
 
@@ -93,10 +95,10 @@ ClawEh's own files moved into `internal/`, shared skills into `skills/`, and the
 
 ### The device listener needs a secret
 
-An enabled device listener on a network address now needs a token and approval of each device. Use **Pair a device** on the **Devices** page to set a token.
+An enabled device listener on a network address now needs a token and approval of each device. Use **Pair a device** on the **Devices** page to set a token. See [Devices](../channels/devices.md).
 
 ## After any upgrade
 
 1. Run `claw version` to confirm the new version.
-2. Open **Check Up** and act on any marked rows.
-3. Check `logs/error.log` in the data directory for warnings such as "unknown config key", which name settings that no longer apply.
+2. Open [Check Up](../admin/checkup.md) and act on any marked rows.
+3. Check `logs/error.log` in the data directory (see [Logs](../admin/logs.md)) for warnings such as "unknown config key", which name settings that no longer apply.

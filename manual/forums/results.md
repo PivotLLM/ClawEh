@@ -18,10 +18,10 @@ Alice then answers, usually by reading the results and summarising them.
 Her answer goes to:
 
 1. the chat she launched the forum from (the WebUI chat included);
-2. her default chat (her default binding) if that chat is no longer known
+2. her [Default Channel](../agents/creating.md#default-channel) if that chat is no longer known
    (the run ended after a restart) or cannot be reached (for example a WebUI
    chat with no browser open);
-3. nowhere, if she has no default chat. It still stays in her conversation.
+3. nowhere, if she has no default channel. It still stays in her conversation.
 
 If the notice cannot be delivered, or the results cannot be written, ClawEh
 tries again every hour, up to five times per start of the service, and then
@@ -66,7 +66,7 @@ forums/<id>/
 
 Nothing is deleted until the agent deletes the forum.
 
-The agent's file tools can read its `forums/` folder but cannot write to it,
+The agent's [file tools](../agents/files-and-mounts.md) can read its `forums/` folder but cannot write to it,
 and cannot read another agent's forums.
 
 ## The transcript
@@ -106,7 +106,7 @@ In plain terms:
 
 ## Backups
 
-The nightly backup includes every agent's `forums/` folder: each forum's
+The nightly [backup](../admin/backup.md) includes every agent's `forums/` folder: each forum's
 setup and every run's files. Lock files and the temporary files of a write
 in progress are left out. A forum that was running during the backup is
 recovered after a restore like a run interrupted by a restart, and its

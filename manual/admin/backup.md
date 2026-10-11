@@ -50,13 +50,13 @@ Each archive is complete on its own.
 | Included | What it is |
 |---|---|
 | `config.json` | The configuration, with every credential in it. |
-| `cron/jobs.json` | Scheduled jobs. |
+| `cron/jobs.json` | [Scheduled jobs](../agents/scheduling.md). |
 | `credentials.json` | The admin account. |
 | `tls/` | The HTTPS certificate and key. |
 | `internal/` | ClawEh's own state: tokens, paired devices, Google/Microsoft sign-ins, the [audit log](./audit.md). |
 | `agents/<agent>/sessions/` | Conversations. |
 | `agents/<agent>/cogmem/` | Memory. |
-| `agents/<agent>/forums/` | Each forum's setup and every run's files. |
+| `agents/<agent>/forums/` | Each [forum](../forums/results.md#where-the-files-are)'s setup and every run's files. |
 | Any other database under the data directory | |
 
 Databases are copied safely while ClawEh keeps running. Each one is checked first; a damaged database is left out, the rest is still written, and the "Database failed integrity check" [alert](./alerts.md) names it.
@@ -65,9 +65,9 @@ A forum that is running during the backup is copied file by file. After a restor
 
 ## What is not included
 
-- Agent `files/` and `skills/` folders. Back these up like any other folder you own.
+- Agent `files/`, `skills/` and `maestro/` folders. Back these up like any other folder you own (see [Maestro](../maestro.md#where-its-data-lives)).
 - Logs, the media cache, each agent's `tmp/`.
-- Temporary agents (sub-agent runs).
+- [Temporary agents](../agents/subagents.md#temporary-agents) (sub-agent runs).
 - Earlier backups.
 
 ### Agents with their own workspace

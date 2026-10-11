@@ -181,7 +181,11 @@ which `web/backend/manual.go` embeds and serves at `/manual/` behind the
 WebUI login (`middleware.authProtected`); `/manual` redirects there and an
 unknown page is a 404 with the manual's own not-found page. The WebUI links
 it from the sidebar footer ("Manual", new tab). `cd manual && pnpm dev` runs
-the VitePress dev server while writing.
+the VitePress dev server while writing. One folder per section
+(`getting-started`, `providers`, `agents`, `channels`, `forums`, `admin`,
+`reference`, each with an `index.md` landing page) plus `maestro.md`,
+`mcpfusion.md` and `mcp.md`; the sidebar lists every page. Links are relative
+`.md` paths, and a dead link fails the build.
 
 Production and development instances are deployed differently; the service
 names, ports and deploy procedure for a given machine belong in

@@ -9,7 +9,7 @@ A **provider** is a named endpoint. It holds what is shared by everything reache
 | Field | Config key | Meaning |
 |---|---|---|
 | Name | `name` | A unique name. Models refer to the provider by it. |
-| Protocol | `protocol` | The wire protocol: `openai-chat`, `openai-responses`, `azure`, `anthropic` (same as `anthropic-messages`), one of the CLI protocols (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), or `human`. |
+| Protocol | `protocol` | The wire protocol: `openai-chat`, `openai-responses`, `azure`, `anthropic` (same as `anthropic-messages`), one of the CLI protocols (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), or `human` (see [Human agents](../agents/human-agents.md)). |
 | Base URL | `base_url` | Required for the HTTP protocols. Not used by CLI providers. |
 | API Key | `api_key` | The key for a cloud service. CLI providers sign in on their own and need none. |
 | HTTP Proxy | `proxy` | Optional outbound proxy. |
@@ -37,7 +37,7 @@ The model pickers on the **Agents** and **System** pages offer only configured m
 
 ## Which model an agent uses
 
-Each agent has an ordered list of models. On the **Agents** page it is shown as **Models (tried in order)**; in `config.json` it is `agents.list[].models`. An agent with no list of its own uses the default list, `agents.defaults.models`, which is **Default models** on the **System** page.
+Each agent has an ordered list of models. On the **Agents** page (see [Creating and editing agents](../agents/creating.md)) it is shown as **Models (tried in order)**; in `config.json` it is `agents.list[].models`. An agent with no list of its own uses the default list, `agents.defaults.models`, which is **Default models** on the **System** page.
 
 - The first model in the list is the one normally used.
 - The others are the **fallback chain**: when a model fails in a way another model could fix, ClawEh tries the next one in the same turn.
@@ -84,7 +84,7 @@ How long a model is parked depends on the HTTP status of the failure:
 
 Except for billing and key failures, the first three failures in a row park the model for 1, 3 and 5 minutes; only the fourth uses the time in the table. A success resets the count. A 413 (request too large) and a failure with no HTTP status never cause a cooldown. A `Retry-After` from the server is honoured up to 5 minutes.
 
-In each key, 0 means the default and a negative number turns cooldown off for that kind of failure. These keys are not on a WebUI page; set them in `config.json` (the **Raw config** button on the System page) under a top-level `cooldown` block:
+In each key, 0 means the default and a negative number turns cooldown off for that kind of failure. These keys are not on a WebUI page; set them in `config.json` (see [Configuration file](../reference/configuration.md)) (the **Raw config** button on the System page) under a top-level `cooldown` block:
 
 ```json
 "cooldown": {
@@ -95,7 +95,7 @@ In each key, 0 means the default and a negative number turns cooldown off for th
 ### What you see
 
 - In the chat: `⚠️ Claude Sonnet 4.6 unavailable — rate limited (retry in 7m). Using OpenAI GPT 5.5.` Several skipped models are summed up on one line.
-- Operator alerts: one when a model is parked for a key or billing failure (raised on the first such failure), and one when a model is parked after repeated failures of another kind, once the 1, 3 and 5 minute steps are used up.
+- Operator [alerts](../admin/alerts.md): one when a model is parked for a key or billing failure (raised on the first such failure), and one when a model is parked after repeated failures of another kind, once the 1, 3 and 5 minute steps are used up.
 - Chat commands: `/cooldowns list` shows parked models; `/cooldowns clear` clears all of them, and `/cooldowns clear <provider>/<model>` clears one. `/retry` clears all cooldowns and resends your last message.
 
 ## Context window and output length
@@ -127,7 +127,7 @@ Besides the agent's own models, two chains are set on the **System** page.
 
 ### Memory models
 
-**Memory models** (`summarization.models`) summarize older conversation when the context fills, and consolidate the agent's long-term memory. For each agent, ClawEh tries:
+**Memory models** (`summarization.models`) summarize older conversation when the context fills, and consolidate the agent's long-term memory (see [Conversation and memory](../agents/memory.md)). For each agent, ClawEh tries:
 
 1. the agent's own **Memory models (optional)** on the Agents page (`agents.list[].summarization_models`),
 2. then the global **Memory models**,
@@ -146,7 +146,7 @@ When an agent's model is set to **Off** and it receives an image, ClawEh sends t
 
 ### Image model
 
-`agents.defaults.image_model` and `image_model_fallbacks` exist in the configuration and are listed by the Check Up report, but no current ClawEh feature uses them.
+`agents.defaults.image_model` and `image_model_fallbacks` exist in the configuration and are listed by the Check Up report, but no current ClawEh feature uses them. See [Check Up and the full report](../admin/checkup.md).
 
 ## Other model settings
 

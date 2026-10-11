@@ -83,7 +83,7 @@ default agent.
 
 ## The default channel
 
-An agent's default channel is where its scheduled (cron) output and other
+An agent's default channel is where its [scheduled](../agents/scheduling.md) (cron) output and other
 messages it starts on its own are delivered. Each agent has at most one.
 
 1. Open **Agents → Agents** and select the agent.
@@ -116,7 +116,8 @@ is not listed, the binding's agent answers.
 - Mentions only work in chats that match a binding; a message that falls
   through to the default agent cannot be redirected this way.
 - A binding that names Bob as its agent or in its agent mentions also lets
-  people in that chat use `/ask Bob …` and `/whisper Bob …`.
+  people in that chat use `/ask Bob …` and `/whisper Bob …` (see
+  [Messages between agents](../agents/messaging.md#ask-and-whisper-from-a-chat)).
 
 ## The default agent
 
@@ -127,7 +128,7 @@ WebUI chat when it has no binding.
 2. In **Agent defaults**, choose the **Default agent**.
 
 If none is chosen, the first agent in the list is the default. An agent that
-represents a person (a human agent) is never the default.
+represents a person (a [human agent](../agents/human-agents.md)) is never the default.
 
 ## Related pages
 

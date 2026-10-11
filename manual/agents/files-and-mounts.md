@@ -14,8 +14,8 @@ Each agent's workspace (see [Creating and editing agents](./creating.md#workspac
 | `skills/` | Skills of this agent alone | Read |
 | `tasks/` | Results of its [sub-agents](./subagents.md) | Read |
 | `tmp/` | Attachments and voice transcriptions it received | Read |
-| `forums/` | Its forums and their results | Read |
-| `maestro/` | Maestro projects and tasks, when **Maestro** is on | Read and write |
+| `forums/` | Its [forums](../forums/results.md#where-the-files-are) and their results | Read |
+| `maestro/` | [Maestro](../maestro.md) projects and tasks, when **Maestro** is on | Read and write |
 | `sessions/` | Its conversation | Not through file tools |
 | `cogmem/` | Its long-term memory | Not through file tools |
 | `state/` | Turns in progress and its message tokens | Not through file tools |
@@ -28,7 +28,7 @@ The agent refers to these folders by name, for example `files/report.md`.
 
 On the **System** page, in **Agent**:
 
-- **Restrict to workspace** (on by default) keeps file tools inside the workspace and mounts. Turning it off lets file tools read and write anything the service account can, and **Check Up** marks it.
+- **Restrict to workspace** (on by default) keeps file tools inside the workspace and mounts. Turning it off lets file tools read and write anything the service account can, and [Check Up](../admin/checkup.md) marks it.
 - **Agent base directory** moves every agent's workspace to another location.
 - **Common directory** sets where the [common folder](#the-common-folder) is.
 
@@ -57,7 +57,7 @@ In `config.json`:
 
 ### New-file notices
 
-With **notify** on, ClawEh checks the mounted folder every 10 seconds. When a new file appears, the agent gets the message "A new file is available in a mounted folder: <path>" in its default channel, as if it had been sent there, and handles it like any other message. Files that are only changed do not count. The agent needs a **Default Channel** for this; without one the notice is skipped and logged.
+With **notify** on, ClawEh checks the mounted folder every 10 seconds. When a new file appears, the agent gets the message "A new file is available in a mounted folder: \<path\>" in its default channel, as if it had been sent there, and handles it like any other message. Files that are only changed do not count. The agent needs a **Default Channel** for this; without one the notice is skipped and logged.
 
 ### Reserved names
 

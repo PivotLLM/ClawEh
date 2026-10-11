@@ -90,5 +90,5 @@ claw status     # the addresses, the certificate's expiry and fingerprint
 
 ## Other listeners
 
-- The device listener has its own port and can use the same certificate; see [Network access](./network.md#the-device-listener).
-- The MCP host, which local CLI tools use, always stays on this machine.
+- The device listener has its own port and can use the same certificate; see [Network access](./network.md#the-device-listener) and [Devices](../channels/devices.md#encryption).
+- The [MCP host](../mcp.md), which local CLI tools use, always stays on this machine.

@@ -61,9 +61,9 @@ func TestManual_ServesIndex(t *testing.T) {
 		t.Errorf("index Cache-Control = %q, want no-cache", got)
 	}
 
-	rec = serveManual(h, http.MethodGet, "/manual/guide/introduction.html", cookie)
+	rec = serveManual(h, http.MethodGet, "/manual/getting-started/overview.html", cookie)
 	if rec.Code != http.StatusOK {
-		t.Errorf("GET placeholder page = %d, want 200", rec.Code)
+		t.Errorf("GET a manual page = %d, want 200", rec.Code)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestManual_NotFound(t *testing.T) {
 
 func TestManual_RequiresLogin(t *testing.T) {
 	h, _ := manualServer(t)
-	for _, path := range []string{"/manual", "/manual/", "/manual/guide/introduction.html"} {
+	for _, path := range []string{"/manual", "/manual/", "/manual/getting-started/overview.html"} {
 		if rec := serveManual(h, http.MethodGet, path, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s without a session = %d, want 401", path, rec.Code)
 		}

@@ -8,7 +8,7 @@ An agent has only the tools and skills you grant it; this page shows how to gran
 - An agent with no skills list, or an empty one, has **no skills**. The card shows "No skills".
 - New agents start with neither.
 
-An agent with no tools at all (no internal tools, no MCP or Fusion access, no tool suite) is told in its instructions that it has no tools, and asks the person to enable them in the web interface when a request needs one. **Check Up** lists every enabled agent with an empty tools list as **No tools (Alice)**.
+An agent with no tools at all (no internal tools, no MCP or Fusion access, no tool suite) is told in its instructions that it has no tools, and asks the person to enable them in the web interface when a request needs one. [Check Up](../admin/checkup.md) lists every enabled agent with an empty tools list as **No tools (Alice)**.
 
 A tool an agent is not granted is not offered to its model at all, so it cannot be called by any route: from a chat, from another agent, from a scheduled job or over MCP.
 
@@ -16,8 +16,8 @@ A tool an agent is not granted is not offered to its model at all, so it cannot 
 
 The **Tools** box on the agent's card has these parts:
 
-1. **MCP access**: one checkbox per configured MCP server. A checked server grants all of its tools. Nothing checked means no MCP tools.
-2. **Fusion services**: one checkbox per Fusion service. A checked service grants its tools when the agent's **Fusion (REST-API tools)** switch is on. Nothing checked means no Fusion tools, even with the switch on.
+1. **MCP access**: one checkbox per configured [MCP server](../mcp.md). A checked server grants all of its tools. Nothing checked means no MCP tools.
+2. **Fusion services**: one checkbox per [Fusion service](../mcpfusion.md). A checked service grants its tools when the agent's **Fusion (REST-API tools)** switch is on. Nothing checked means no Fusion tools, even with the switch on.
 3. **Internal tools**: the built-in tools.
    - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. You can then tick or untick single tools.
    - **Clear** empties the list.
@@ -65,9 +65,9 @@ Some tool sets are switched on and off as a whole, on the lower part of the card
 | Switch | Default | What it gives the agent |
 |---|---|---|
 | **Cognitive memory** | On | Long-term memory, recalled automatically, with the `cogmem_*` tools. See [Conversation and memory](./memory.md). |
-| **Maestro** | Off | The Maestro task-orchestration tools (projects, playbooks, tasks). Its data is kept in the agent's `maestro/` folder. Tasks run as [sub-agents](./subagents.md). When on, it shows its own concurrency and rate-limit settings. |
-| **Fusion (REST-API tools)** | Off | The Fusion services ticked under **Fusion services**, and nothing else. |
-| **Allow forum** | Off | The `forum_*` tools, to hold structured discussions with the agents it may message (see [Messages between agents](./messaging.md#who-may-message-whom)). |
+| **Maestro** | Off | The [Maestro](../maestro.md) task-orchestration tools (projects, playbooks, tasks). Its data is kept in the agent's `maestro/` folder. Tasks run as [sub-agents](./subagents.md). When on, it shows its own concurrency and rate-limit settings. |
+| **Fusion (REST-API tools)** | Off | The [Fusion](../mcpfusion.md) services ticked under **Fusion services**, and nothing else. |
+| **Allow forum** | Off | The `forum_*` tools, to hold structured discussions ([Forums](../forums/index.md)) with the agents it may message (see [Messages between agents](./messaging.md#who-may-message-whom)). |
 | **Share common directory** | On | Access to the shared common folder through the `common_*` tools, which must also be granted. See [Files and mounts](./files-and-mounts.md#the-common-folder). |
 | **Global cron** | Off | Lets the agent create and manage scheduled jobs for other agents. See [Scheduled jobs](./scheduling.md). |
 
@@ -75,7 +75,7 @@ Some tool sets are switched on and off as a whole, on the lower part of the card
 
 ## Grant skills
 
-Skills are instructions packaged as folders with a `SKILL.md`. Shared skills are managed on the **Skills** page; an agent can also have skills of its own in its `skills/` folder.
+Skills are instructions packaged as folders with a `SKILL.md`. Shared skills are managed on the **Skills** page (or with `claw skills`; see [Command line](../reference/cli.md#skills)); an agent can also have skills of its own in its `skills/` folder.
 
 Under **Skills** on the agent's card:
 

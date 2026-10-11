@@ -95,7 +95,7 @@ or `"group_trigger": { "prefixes": ["!ask"] }`.
 - **A message to an archived channel, or to a channel the app is not in**:
   ClawEh records that the chat **can't be reached** and logs a warning; there
   is no alert and no retry.
-- **Channel credentials rejected** (alert): Slack refused the token. Create a
+- **Channel credentials rejected** ([alert](../admin/alerts.md)): Slack refused the token. Create a
   new token in the app settings and paste it in. An App Token must start with
   `xapp-`; if it starts with `xoxb-`, the two tokens are swapped.
 - **Slack down** (alert): no working connection for ten minutes. ClawEh keeps

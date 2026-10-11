@@ -41,7 +41,7 @@ Notes:
 ## LINE
 
 LINE delivers messages to ClawEh through a webhook, so ClawEh must be
-reachable from the internet over HTTPS.
+reachable from the internet over HTTPS (see [HTTPS and certificates](../admin/https.md)).
 
 1. In the LINE Developers console, create a Messaging API channel and note its
    **channel secret** and **channel access token**.
@@ -54,7 +54,7 @@ reachable from the internet over HTTPS.
 5. In the LINE console, set the webhook URL to your public ClawEh address plus
    the path, for example `https://claw.example.com/webhook/line`.
 6. Make sure that host name is ClawEh's external address (**Network** page,
-   **Hostname / external URL**); ClawEh refuses requests for host names it does
+   **Hostname / external URL**; see [Network access](../admin/network.md)); ClawEh refuses requests for host names it does
    not know.
 7. In **Allow From**, list the LINE user IDs that may write. An empty list lets
    nobody in.
@@ -95,7 +95,7 @@ advanced: pin specific accounts**, then **Pin account**. A pinned account has
 its own **Device Linking** section. If the daemon has no account yet, pin one
 and link it there.
 
-Alerts: **SecMsg has no linked accounts** (link one as above), **SecMsg
+[Alerts](../admin/alerts.md): **SecMsg has no linked accounts** (link one as above), **SecMsg
 account discovery failed** (the daemon could not be reached; it is asked again
 at the next configuration reload), and **SecMsg down** after ten minutes
 without a connection.

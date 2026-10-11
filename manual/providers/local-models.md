@@ -34,6 +34,6 @@ A server on another machine, for example `http://192.168.1.20:11434/v1`, is trea
 
 ## Tips for small local models
 
-- Many local models handle tool calls poorly. If a model answers with tool-call text instead of using the tools, turn **Tools Enabled** off for it, or keep it for memory summarizing only (**Memory models** on the System page).
+- Many local models handle tool calls poorly. If a model answers with tool-call text instead of using the tools, turn **Tools Enabled** off for it, or keep it for memory summarizing only (**Memory models** on the System page; see [Concepts](./concepts.md#memory-models)).
 - Models that reject system messages, or that need user and assistant messages to alternate, need **Strict Role Alternation** on and **Tools Enabled** off.
 - A local model is a good last entry in an agent's model list: when the cloud models are rate limited or out of credit, the agent still answers. See [Concepts](./concepts.md#which-model-an-agent-uses).

@@ -29,7 +29,8 @@ turns (a debate).
 | A fresh participant | A temporary agent with no tools and no workspace files, on one of Alice's own models. Deleted when the run ends. |
 
 Alice can name Bob, as himself or as a clone, only when Bob is in her
-`subagents.allow_agents` list in `config.json`. Each turn is checked against
+`subagents.allow_agents` list in `config.json` (see
+[Messages between agents](../agents/messaging.md#who-may-message-whom)). Each turn is checked against
 that list when it is sent: if Bob has been removed from it, the forum stops
 rather than asking him. A [human agent](#a-person-in-a-forum) can take part as
 an existing agent; it is never cloned.
@@ -40,7 +41,7 @@ Alice's model list first.
 
 ### A person in a forum
 
-When a human agent takes part, its turns are posted to that person's chat
+When a [human agent](../agents/human-agents.md) takes part, its turns are posted to that person's chat
 like any other question from an agent, and the forum waits for the typed
 answer within the forum's time limits.
 
@@ -54,15 +55,15 @@ Use a forum when:
   (the [writing](templates.md#writing) template);
 - you want a panel to review a proposal or a decision from different angles.
 
-Do not use one for a quick question or a single task: one sub-agent or one
-message to another agent costs far less. A forum costs one model call per
+Do not use one for a quick question or a single task: one [sub-agent](../agents/subagents.md) or one
+[message to another agent](../agents/messaging.md) costs far less. A forum costs one model call per
 participant per round, and the agent's guide tells it the same.
 
 ## Allow an agent to hold forums
 
 The switch is per agent and off by default.
 
-1. Open the **Agents** page.
+1. Open the **Agents** page (see [Tools and skills](../agents/tools-and-skills.md#tool-suites)).
 2. On the agent's card, turn on **Allow forum** ("Lets this agent hold forums
    with the other agents it may message.").
 3. If the forum should include other agents, list them in the agent's
@@ -78,7 +79,7 @@ They come as a set: the agent's tool list does not select them, but
 In `config.json` the same switch is `"forum": true` on the agent in
 `agents.list`.
 
-The **Check Up** page shows a Forum row for every agent, and lists
+The [Check Up](../admin/checkup.md) page shows a Forum row for every agent, and lists
 `forum_launch` among the sensitive tools of each agent that has the switch
 on.
 

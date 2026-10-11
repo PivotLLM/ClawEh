@@ -6,7 +6,7 @@ ClawEh speaks the Model Context Protocol (MCP) in both directions: it serves its
 
 ### Why it exists
 
-Agents on a CLI provider (Claude Code, Codex CLI, Antigravity, Cursor CLI)
+Agents on a [CLI provider](providers/cli-providers.md) (Claude Code, Codex CLI, Antigravity, Cursor CLI)
 run the vendor's CLI as a separate program. That program cannot call
 ClawEh's tools directly, so it calls them over MCP from ClawEh's **MCP
 host**. Agents on an HTTP provider (Anthropic, OpenAI and similar APIs)
@@ -77,6 +77,8 @@ claw token revoke alice   # remove it
 claw token list           # agents that have a token (tokens are not shown)
 ```
 
+See [Command line](reference/cli.md) for every `claw` command.
+
 - Use it as `Authorization: Bearer <token>` on `/mcp`, or as the session
   token on `/internal`.
 - It is stored only as a hash in `<CLAW_HOME>/internal/service-tokens.json`;
@@ -93,7 +95,8 @@ claw token list           # agents that have a token (tokens are not shown)
 
 Every call is checked against the agent's own permissions: its tool list,
 **Denied tools**, its suites (**Maestro**, **Fusion (REST-API tools)**,
-**Allow forum**, cognitive memory) and its MCP access. The MCP host never
+**Allow forum**, **Cognitive memory**) and its MCP access (see
+[Tools and skills](agents/tools-and-skills.md)). The MCP host never
 gives an agent a tool it would not have in a normal chat.
 
 - On `/mcp`, the tool list shows only the tools the token's agent may call.
@@ -148,7 +151,7 @@ or in an env file.
 
 A server's tools are available only to agents granted access.
 
-1. Open the **Agents** page.
+1. Open the **Agents** page (see [Tools and skills](agents/tools-and-skills.md#grant-tools)).
 2. In the agent's card, **Tools** section, under **MCP access**, tick the
    server.
 
@@ -194,3 +197,4 @@ Resilience** on **MCP** → **Config**.
 
 - [External services through Fusion](mcpfusion.md)
 - [Maestro](maestro.md)
+- [CLI providers](providers/cli-providers.md)

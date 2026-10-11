@@ -37,7 +37,7 @@ If rotation fails, the "Log rotation failed" [alert](./alerts.md) is raised.
 
 ## Log levels
 
-The level is set in `config.json`, under `logging.level`: `debug`, `info` (default), `warn` or `error`. A restart applies it.
+The level is set in `config.json` (see [Configuration file](../reference/configuration.md)), under `logging.level`: `debug`, `info` (default), `warn` or `error`. A restart applies it.
 
 ```json
 "logging": { "level": "info" }

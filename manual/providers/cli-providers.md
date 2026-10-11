@@ -57,7 +57,7 @@ To keep bypass off and still let the CLI use ClawEh's tools, allow those tools i
 
 **On:** ClawEh passes the flag from the table above on every call. The CLI can then run commands and change files anywhere the service user can, without asking, outside ClawEh's own workspace and shell controls. Turn it on only for a CLI running as a user whose access you are comfortable giving to the agent.
 
-Either way, the **Check Up** page has one row per CLI provider saying which state it is in.
+Either way, the [Check Up](../admin/checkup.md) page has one row per CLI provider saying which state it is in.
 
 ## Extra arguments
 
@@ -71,7 +71,7 @@ A model's `env` (also `config.json` only) sets extra environment variables for t
 
 The CLI runs in the model's **Workspace Path** (`workspace`). When that is empty, it runs in `<CLAW_HOME>/cli`, shared by all CLI models. The **Check Up** report lists each CLI model's command line and working directory.
 
-Temporary agents created fresh at run time are the exception: their CLI runs in the agent's own empty folder and never with the bypass flag, whatever the checkbox says.
+Temporary agents created fresh at run time (see [Sub-agents](../agents/subagents.md)) are the exception: their CLI runs in the agent's own empty folder and never with the bypass flag, whatever the checkbox says.
 
 ## Timeouts
 
@@ -100,9 +100,9 @@ Cursor has no such command. Add this to `~/.cursor/mcp.json` of the service user
 "claw": { "url": "http://127.0.0.1:5911/internal" }
 ```
 
-If you change **Listen Address**, use the new port in these commands. Without this step the CLI still answers, but it has none of ClawEh's tools.
+If you change **Listen Address**, use the new port in these commands. [MCP](../mcp.md) covers the server in full. Without this step the CLI still answers, but it has none of ClawEh's tools.
 
-ClawEh puts a session token in each agent's prompt, and the CLI sends it with every tool call. That is how one CLI installation can serve several agents: each call runs as the agent whose token it carries, with that agent's tools, folders and permissions. The tools of external MCP servers that an agent is allowed reach the CLI the same way, through ClawEh.
+ClawEh puts a session token in each agent's prompt, and the CLI sends it with every tool call. That is how one CLI installation can serve several agents: each call runs as the agent whose token it carries, with that agent's [tools](../agents/tools-and-skills.md), folders and permissions. The tools of external MCP servers that an agent is allowed reach the CLI the same way, through ClawEh.
 
 ## Related
 

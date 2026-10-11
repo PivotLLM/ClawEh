@@ -26,9 +26,9 @@ An invalid id is refused with a suggestion, for example `Agent id "Alice.Smith" 
 
 ## Models
 
-**Models (tried in order)** is the agent's model chain. The first model answers; if it fails or is unavailable, the next one is tried. The models themselves are set up on the **Models** and **Providers** pages.
+**Models (tried in order)** is the agent's model chain. The first model answers; if it fails or is unavailable, the next one is tried. The models themselves are set up on the **Models** and **Providers** pages (see [Providers and models](../providers/index.md)).
 
-If a model in the chain runs on a command-line provider that is not allowed to bypass its restrictions, the card says `<provider> is not allowed to bypass its restrictions.` with an **Allow it** link to the Providers page.
+If a model in the chain runs on a [command-line provider](../providers/cli-providers.md#allow-cli-to-bypass-restrictions) that is not allowed to bypass its restrictions, the card says `<provider> is not allowed to bypass its restrictions.` with an **Allow it** link to the Providers page.
 
 Other model settings on the card:
 
@@ -48,7 +48,7 @@ The default agent handles messages that do not match any binding. Set it on the 
 
 ## Default channel
 
-**Default Channel** on the card lists the channels bound to the agent (bindings are made on the **Bindings** page) and lets you pick one. That chat is where the agent's [scheduled jobs](./scheduling.md) and other notices are delivered.
+**Default Channel** on the card lists the channels bound to the agent (bindings are made on the **Bindings** page; see [Routing and bindings](../channels/routing.md)) and lets you pick one. That chat is where the agent's [scheduled jobs](./scheduling.md) and other notices are delivered.
 
 - For a binding to one specific chat (a Slack channel, say), that chat is used.
 - For a channel with no specific chat (a Telegram bot), type the chat id to deliver to first. This affects delivery only, not who may write to the bot.

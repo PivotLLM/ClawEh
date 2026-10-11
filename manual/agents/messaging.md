@@ -23,7 +23,7 @@ An agent uses the `agent_message` tool. For Alice to message Bob, all of these m
 }
 ```
 
-`allow_agents` has no control on the Agents page; set it in `config.json` (or **Raw config** on the System page). Saving on the Agents page keeps it. The same list decides which agents Alice may [spawn](./subagents.md) and which may take part in her forums.
+`allow_agents` has no control on the Agents page; set it in `config.json` (or **Raw config** on the System page; see [Configuration file](../reference/configuration.md)). Saving on the Agents page keeps it. The same list decides which agents Alice may [spawn](./subagents.md) and which may take part in her [forums](../forums/index.md).
 
 Only configured agents can be messaged, never temporary ones. A message is refused when:
 
@@ -68,11 +68,11 @@ A person can type, in any chat:
 /whisper Bob the report is in common/report.md
 ```
 
-The agent can be named by id or name. The person must already be allowed to talk to Bob from that chat: the chat routes to Bob, or a binding that matches this channel and chat names Bob as its agent or in its `agent_mentions`.
+The agent can be named by id or name. The person must already be allowed to talk to Bob from that chat: the chat [routes](../channels/routing.md) to Bob, or a binding that matches this channel and chat names Bob as its agent or in its `agent_mentions`.
 
 | Case | The person sees |
 |---|---|
-| `/ask` allowed | Bob's reply posted in the chat as "Bob: <reply>". The chat is not held while Bob works. |
+| `/ask` allowed | Bob's reply posted in the chat as "Bob: \<reply\>". The chat is not held while Bob works. |
 | `/whisper` allowed | "Whispered to Bob." |
 | Not allowed | "You don't have permission to /ask Bob." (or /whisper) |
 | Unknown agent | "There is no agent named Bob." |

@@ -6,7 +6,7 @@ The WebUI has one admin account, created on the server, and every page needs it.
 
 There is no default account and no default password. The account cannot be created or changed from the browser.
 
-`claw install` (and the one-line installer) creates it before it starts the service. If it was not created then, or you need a new password, use `claw admin` on the server.
+`claw install` (and the one-line installer) creates it before it starts the service (see [Installing ClawEh](../getting-started/install.md#the-admin-account)). If it was not created then, or you need a new password, use `claw admin` on the server.
 
 The account lives in `<CLAW_HOME>/credentials.json` (on a system install, `/opt/claw/credentials.json`). The password is stored only as a hash.
 

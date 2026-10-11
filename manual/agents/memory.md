@@ -4,7 +4,7 @@ Each agent has one conversation, shared by every chat that reaches it, and a lon
 
 ## One conversation per agent
 
-Every message to an agent, from any chat, device, the WebUI chat, `claw agent` or an MCP service token, goes into the same conversation, with one history and one memory. If you talk to Alice on Telegram and then in the WebUI chat, she remembers both.
+Every message to an agent, from any [chat](../channels/index.md), device, the WebUI chat, `claw agent` or an [MCP service token](../mcp.md#service-tokens), goes into the same conversation, with one history and one memory. If you talk to Alice on Telegram and then in the WebUI chat, she remembers both.
 
 Where you want a separate conversation, create a separate agent. Turn its **Cognitive memory** off if it should keep no long-term memory.
 
@@ -31,7 +31,7 @@ The thresholds are on the **System** page, in **Context management**, and apply 
 | **Tail age limit (days)**, **Tail token ceiling**, **Tail window size (%)**, **Minimum tail messages** | How much recent conversation is kept as it is after a compaction. |
 | **Context eviction**, **Protected age**, **Expiry age**, **Read byte budget** | When large tool results are replaced by placeholders. |
 
-The models that write the summaries are the **Memory models** on the System page (in **Agent defaults**), and the agent's own **Memory models (optional)** on its card, tried first. If none is set, the agent's own model is used.
+The models that write the summaries (see [Memory models](../providers/concepts.md#memory-models)) are the **Memory models** on the System page (in **Agent defaults**), and the agent's own **Memory models (optional)** on its card, tried first. If none is set, the agent's own model is used.
 
 ### How long the archive is kept
 
