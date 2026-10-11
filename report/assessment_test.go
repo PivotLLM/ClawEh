@@ -632,3 +632,101 @@ func TestAssessment_AgentWithNoTools(t *testing.T) {
 		t.Error("a human agent is listed")
 	}
 }
+
+// TestAssessment_UntrustedProxy: a marked row, linked to the trusted-proxies
+// field, when an external URL is set with no trusted loopback proxy or the
+// listener saw a forwarded request from an untrusted loopback peer; none once
+// loopback is trusted.
+func TestAssessment_UntrustedProxy(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Gateway.ExternalURL = ""
+	cfg.Channels.Device.ExternalURL = ""
+	cfg.Gateway.TrustedProxies = nil
+	noRow := func(why string) {
+		t.Helper()
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == itemUntrustedProxy {
+				t.Errorf("%s: row present: %v", why, row)
+			}
+		}
+	}
+	const want = "Requests arrive through a proxy that is not trusted; network access control and lockout don't apply."
+	noRow("no external URL, nothing seen")
+
+	cfg.Gateway.ExternalURL = "https://claw.example.com"
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemUntrustedProxy)
+	if r[0] != "*" || r[2] != want {
+		t.Errorf("config-derived row = %v", r)
+	}
+	var link string
+	for _, a := range Assess(t.Context(), cfg, env).Assessment {
+		if a.Item == itemUntrustedProxy {
+			link = a.Link
+		}
+	}
+	if link != "/network#trusted-proxies" {
+		t.Errorf("link = %q", link)
+	}
+
+	cfg.Gateway.ExternalURL = ""
+	env.ForwardedPeer = "127.0.0.1"
+	env.ForwardedSeen = time.Date(2026, 10, 10, 14, 3, 0, 0, time.UTC)
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemUntrustedProxy)
+	if r[0] != "*" || r[2] != "Requests arrive through a proxy that is not trusted (last seen 2026-10-10 14:03); network access control and lockout don't apply." {
+		t.Errorf("runtime row = %v", r)
+	}
+
+	cfg.Gateway.ExternalURL = "https://claw.example.com"
+	cfg.Gateway.TrustedProxies = []string{"127.0.0.1", "::1"}
+	noRow("loopback trusted")
+}
+
+// TestAssessment_BehindProxy: behind a proxy, TLS ends at the proxy, so plain
+// HTTP on the WebUI/API and device listeners is not marked and a neutral row
+// names the proxy; without one, network HTTP is marked as before.
+func TestAssessment_BehindProxy(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Gateway.Host = "0.0.0.0"
+	cfg.Gateway.TLS.Mode = config.TLSModeOff
+	cfg.Gateway.TrustedProxies = nil
+	cfg.Gateway.ExternalURL = ""
+	cfg.Channels.Device.ExternalURL = ""
+	cfg.Channels.Device.Host = "0.0.0.0"
+	cfg.Channels.Device.Enabled = true
+	cfg.Channels.Device.TLS = false
+
+	marked := []string{"WebUI/API HTTP", "WebUI/API HTTPS", "Device HTTP"}
+	s := collectAssessment(t.Context(), cfg, env)
+	for _, item := range marked {
+		if r := assessmentRow(t, s, item); r[0] != "*" {
+			t.Errorf("no proxy: %s = %q, want marked", item, r)
+		}
+	}
+	for _, row := range s.Tables[0].Rows {
+		if row[1] == itemProxy {
+			t.Errorf("proxy row without a proxy: %v", row)
+		}
+	}
+
+	cfg.Gateway.TrustedProxies = []string{"10.0.0.5"}
+	s = collectAssessment(t.Context(), cfg, env)
+	for _, item := range marked {
+		if r := assessmentRow(t, s, item); r[0] != "" {
+			t.Errorf("trusted remote proxy: %s = %q, want unmarked", item, r)
+		}
+	}
+	if r := assessmentRow(t, s, itemProxy); r[0] != "" || r[2] != "Behind a proxy: 10.0.0.5." {
+		t.Errorf("proxy row = %q", r)
+	}
+
+	// An https external URL ClawEh does not serve itself is a proxy too.
+	cfg.Gateway.TrustedProxies = nil
+	cfg.Gateway.ExternalURL = "https://claw.example.com"
+	s = collectAssessment(t.Context(), cfg, env)
+	if r := assessmentRow(t, s, "WebUI/API HTTP"); r[0] != "" {
+		t.Errorf("https external URL: HTTP row = %q, want unmarked", r)
+	}
+	if r := assessmentRow(t, s, itemProxy); r[2] != "Behind a proxy: https://claw.example.com." {
+		t.Errorf("proxy row = %q", r)
+	}
+}

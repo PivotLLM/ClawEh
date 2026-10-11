@@ -20,7 +20,7 @@ func TestTrustedProxy_AllowlistUsesForwardedAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen string
-	chain := TrustedProxy(func() *config.TrustedProxySet { return trusted },
+	chain := TrustedProxy(func() *config.TrustedProxySet { return trusted }, nil,
 		IPAllowlist(func() *Allowlist { return allow }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			seen = r.RemoteAddr
 		})))

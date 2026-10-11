@@ -37,6 +37,13 @@ const (
 	itemLINE        = "LINE webhook"
 )
 
+// itemProxy is the neutral row naming the proxies the install is behind.
+const itemProxy = "Proxy"
+
+// itemUntrustedProxy is the row for a proxy gateway.trusted_proxies does not
+// list; the WebUI links it to the field that fixes it (assessmentLinks).
+const itemUntrustedProxy = "Reverse proxy"
+
 // Status phrases of the per-listener rows, written for a reader who does not
 // know what a bind address is.
 const (
@@ -55,17 +62,20 @@ type assessRow struct {
 // HTTP and HTTPS, the device listener over HTTP and HTTPS, the MCP host, and
 // the LINE webhook when that channel is on. Only unencrypted network access
 // is marked: WebUI/API or Device HTTP open to the network, and
-// WebUI/API HTTPS off while its HTTP is. A self-signed certificate is stated,
+// WebUI/API HTTPS off while its HTTP is, unless the install is behind a
+// proxy (Config.BehindProxy), where TLS ends at the proxy and the proxy row
+// says so. A self-signed certificate is stated,
 // never marked: on a LAN there is usually no alternative. Raw bind addresses
 // are left to the Network section.
 func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	gw := cfg.Gateway
 	webAllow := webAllowPhrase(gw.EffectiveAllowedCIDRs())
+	plainIsFinding := len(cfg.BehindProxy()) == 0
 	var rows []assessRow
 
 	if gw.HTTPOnNetwork() {
 		rows = append(rows, assessRow{
-			true, itemWebHTTP,
+			plainIsFinding, itemWebHTTP,
 			enabledNetwork + " (unencrypted)" + webAllow + ".",
 		})
 	} else {
@@ -79,7 +89,7 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 		rows = append(rows, assessRow{false, itemWebHTTPS, enabledLocal + certificatePhrase(cfg, now) + "."})
 	default:
 		if gw.HTTPOnNetwork() {
-			rows = append(rows, assessRow{true, itemWebHTTPS, "Disabled, while HTTP is enabled for network access."})
+			rows = append(rows, assessRow{plainIsFinding, itemWebHTTPS, "Disabled, while HTTP is enabled for network access."})
 		} else {
 			rows = append(rows, assessRow{false, itemWebHTTPS, disabledStatus})
 		}
@@ -96,7 +106,7 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	case devLocal:
 		rows = append(rows, assessRow{false, itemDeviceHTTP, enabledLocal + "."})
 	default:
-		rows = append(rows, assessRow{true, itemDeviceHTTP, enabledNetwork + " (unencrypted)" + devAllow + "."})
+		rows = append(rows, assessRow{plainIsFinding, itemDeviceHTTP, enabledNetwork + " (unencrypted)" + devAllow + "."})
 	}
 	switch {
 	case !dev.Enabled || !dev.TLS:
@@ -190,6 +200,12 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		if action, item, status := certificateExpiryRow(cfg, env.Now); item != "" {
 			add(action, item, status)
 		}
+	}
+	if proxies := cfg.BehindProxy(); len(proxies) > 0 {
+		add(false, itemProxy, "Behind a proxy: "+strings.Join(proxies, ", ")+".")
+	}
+	if cfg.ProxyNotTrusted(env.ForwardedPeer) {
+		add(true, itemUntrustedProxy, untrustedProxyStatus(cfg, env))
 	}
 	dd := dataDir(cfg, env)
 
@@ -356,6 +372,18 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		Notes:  []string{"A " + actionMark + " in the first column means action is recommended. Details for every item are in the sections below."},
 		Tables: []Table{t},
 	}
+}
+
+// untrustedProxyStatus is the status of the untrusted-proxy row, with when a
+// forwarded request from an untrusted peer was last seen if one was.
+func untrustedProxyStatus(cfg *config.Config, env Environment) string {
+	seen := ""
+	if env.ForwardedPeer != "" && !env.ForwardedSeen.IsZero() {
+		if set, err := config.CompileTrustedProxies(cfg.Gateway.TrustedProxies); err == nil && !set.Trusts(env.ForwardedPeer) {
+			seen = " (last seen " + env.ForwardedSeen.Format("2006-01-02 15:04") + ")"
+		}
+	}
+	return "Requests arrive through a proxy that is not trusted" + seen + "; network access control and lockout don't apply."
 }
 
 // channelSetUp reports whether name is a channel the configuration starts.

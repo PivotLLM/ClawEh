@@ -75,6 +75,8 @@ failed sign-ins never lock out an address, because localhost never is. With it, 
 address the proxy reports, from the `X-Real-IP` header or else the first
 `X-Forwarded-For` entry. See
 [Behind a reverse proxy](./network.md#behind-a-reverse-proxy).
+If step 4 is missing, the **Network** page and [Check Up](./checkup.md) say
+"Requests arrive through a proxy that is not trusted".
 
 Ports, scope and **Listen on** need a restart; the page offers **Restart now**.
 

@@ -12,6 +12,24 @@ vi.mock("react-i18next", () => ({
   }),
 }))
 
+// Rows with a link use the router's Link; the router is not mounted here.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    children,
+    to,
+    hash,
+    ...rest
+  }: {
+    children: React.ReactNode
+    to: string
+    hash?: string
+  }) => (
+    <a href={hash ? `${to}#${hash}` : to} {...rest}>
+      {children}
+    </a>
+  ),
+}))
+
 function renderPage() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -83,6 +101,34 @@ describe("ReportPage", () => {
     const link = screen.getByTestId("report-download")
     expect(link.getAttribute("href")).toBe("/api/report/pdf")
     expect(link.textContent).toContain("pages.report.download")
+  })
+
+  it("links a row to the page that fixes it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ...sample,
+          assessment: [
+            {
+              action: true,
+              item: "Reverse proxy",
+              status:
+                "Requests arrive through a proxy that is not trusted; network access control and lockout don't apply.",
+              link: "/network#trusted-proxies",
+            },
+            ...sample.assessment,
+          ],
+        }),
+      }),
+    )
+    renderPage()
+    const link = await screen.findByTestId("report-row-link")
+    expect(link.getAttribute("href")).toBe("/network#trusted-proxies")
+    expect(link.textContent).toBe("Reverse proxy")
+    // Rows without a link stay plain text.
+    expect(screen.getAllByTestId("report-row-link")).toHaveLength(1)
   })
 
   it("omits the build segment when the binary is unstamped", async () => {

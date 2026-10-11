@@ -67,6 +67,8 @@ When a proxy such as nginx sits in front of ClawEh, every request seems to come 
 
 The real client address is then what the allowed networks, the lockouts, the logs and the [audit log](./audit.md) see. Requests from any other address cannot set these headers.
 
+When requests seem to come through a proxy on this machine that is not trusted, a note under **Trusted proxies** (and a row on [Check Up](./checkup.md)) says so. Behind a proxy, the page does not flag plain HTTP on the network, because the proxy does the encryption.
+
 For a proxy on the same host you can keep HTTP on localhost and set HTTPS **Listen on** to **Localhost only** or **Off**. Set **Hostname / external URL** to the public address so ClawEh answers to that name.
 
 ## The device listener
