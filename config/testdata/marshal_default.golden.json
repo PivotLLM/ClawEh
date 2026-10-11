@@ -688,7 +688,7 @@
     "json": false,
     "retention_days": 30,
     "log_message_content": false,
-    "dump_refusals": true,
+    "dump_refusals": false,
     "dump_all": false,
     "dump_failed_compressions": false
   },

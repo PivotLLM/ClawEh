@@ -864,6 +864,9 @@ observe does not need an entry.
 
 ### Changed
 
+- `logging.dump_refusals` is now off by default. To keep writing a dump when a
+  model refuses, set `"logging": { "dump_refusals": true }` in `config.json`.
+
 - **Default tools** on the Agents page no longer includes `common_delete`;
   grant it to an agent by hand if it should delete files in the common folder.
 

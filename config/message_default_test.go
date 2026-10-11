@@ -2,6 +2,14 @@ package config
 
 import "testing"
 
+// A new install writes no refusal dumps (they hold message content); the
+// operator turns them on with logging.dump_refusals.
+func TestDefaultConfig_DumpRefusalsOff(t *testing.T) {
+	if DefaultConfig().Logging.DumpRefusals {
+		t.Error("logging.dump_refusals must be off by default")
+	}
+}
+
 // TestDefaultConfig_MessageEndpointOffByDefault locks in that newly-created agents do
 // not get the external-message endpoint enabled by default — it is opt-in (the prompt-injected
 // token framing is gone). It must only stay off unless an agent explicitly sets a

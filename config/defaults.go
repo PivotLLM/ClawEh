@@ -343,7 +343,7 @@ func DefaultConfig() *Config {
 			Level:         global.DefaultLogLevel,
 			JSON:          global.DefaultLogJSON,
 			RetentionDays: global.DefaultLogRetentionDays,
-			DumpRefusals:  true,
+			DumpRefusals:  false,
 			DumpAll:       false,
 		},
 		MCPHost: MCPHostConfig{

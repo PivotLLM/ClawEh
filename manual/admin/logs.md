@@ -55,7 +55,7 @@ Use `debug` only while looking into a problem; it is much more verbose.
   "json": false,
   "retention_days": 30,
   "log_message_content": false,
-  "dump_refusals": true,
+  "dump_refusals": false,
   "dump_all": false,
   "dump_failed_compressions": false
 }
@@ -69,7 +69,7 @@ Use `debug` only while looking into a problem; it is much more verbose.
 | `json` | `false` | Write JSON lines instead of plain text. |
 | `retention_days` | `30` | Days of earlier logs to keep; `0` keeps them forever. |
 | `log_message_content` | `false` | Include message text and model requests and replies. |
-| `dump_refusals` | `true` | Write a dump when a model refuses. |
+| `dump_refusals` | `false` | Write a dump when a model refuses. |
 | `dump_all` | `false` | Write a dump of every model call. |
 | `dump_failed_compressions` | `false` | Write a dump when summarizing a long conversation fails. |
 

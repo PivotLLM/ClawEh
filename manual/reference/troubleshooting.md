@@ -128,7 +128,7 @@ Common marked rows and what they mean:
 | File confinement | Agents may read or write outside their workspace. | Turn on **Restrict to workspace** on the **System** page, under **Agent**. |
 | Shell access | Agents may run shell commands without the built-in deny patterns. | Turn deny patterns back on (`tools.exec.enable_deny_patterns`), or remove **Allow shell commands** from the agents listed. |
 | Channels accepting any sender | A channel's allowed senders contain `*`. | List the allowed users instead. |
-| Message content in logs | Logging options write message text to disk. `dump_refusals` is on in a new install. | Turn off the listed `logging` options if you do not want that. |
+| Message content in logs | Logging options write message text to disk. | Turn off the listed `logging` options if you do not want that. |
 | Mount (…) | A mount uses a reserved folder name and is ignored. | Rename the mount on the **Agents** page. |
 | Fusion on with no service (…) | The agent has Fusion on but no service ticked. | Tick its services under **Fusion services**. |
 
