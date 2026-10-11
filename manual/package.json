@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "dev": "vitepress dev",
-    "build": "vitepress build && touch ../web/backend/manual/.gitkeep",
+    "build": "vitepress build; status=$?; mkdir -p ../web/backend/manual && touch ../web/backend/manual/.gitkeep; exit $status",
     "preview": "vitepress preview"
   },
   "devDependencies": {
