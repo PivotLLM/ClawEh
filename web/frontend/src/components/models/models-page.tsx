@@ -39,7 +39,7 @@ export function ModelsPage() {
   )
 
   const {
-    data: models = [],
+    data,
     isPending: loading,
     error,
   } = useQuery({
@@ -49,13 +49,16 @@ export function ModelsPage() {
       // Sort by provider, then alphabetically by model name within each
       // provider. The provider groups are ordered alphabetically below; this
       // keeps each group's models in alphabetical order.
-      return [...data.models].sort((a, b) => {
+      const models = [...data.models].sort((a, b) => {
         const byProvider = (a.provider || "").localeCompare(b.provider || "")
         if (byProvider !== 0) return byProvider
         return a.model_name.localeCompare(b.model_name)
       })
+      return { models, turnTimeout: data.turn_timeout }
     },
   })
+  const models = data?.models ?? []
+  const turnTimeout = data?.turnTimeout ?? 0
   const fetchError = error
     ? error instanceof Error
       ? error.message
@@ -179,6 +182,7 @@ export function ModelsPage() {
         open={editingModel !== null}
         onClose={() => setEditingModel(null)}
         onSaved={fetchModels}
+        turnTimeout={turnTimeout}
       />
 
       <AddModelSheet
@@ -186,6 +190,7 @@ export function ModelsPage() {
         onClose={() => setAddOpen(false)}
         onSaved={fetchModels}
         existingModelNames={models.map((model) => model.model_name)}
+        turnTimeout={turnTimeout}
       />
 
       <DeleteModelDialog

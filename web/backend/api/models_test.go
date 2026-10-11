@@ -212,3 +212,46 @@ func TestHandleListModels_NormalizesWildcardLocalAPIBaseForProbe(t *testing.T) {
 		t.Fatalf("probe api base = %q, want %q", gotProbe, "http://127.0.0.1:8000/v1|custom-model")
 	}
 }
+
+func TestHandleListModels_TurnTimeout(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{name: "unset uses the built-in default", configured: 0, want: int(config.DefaultTurnTimeout / time.Second)},
+		{name: "configured value", configured: 1200, want: 1200},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := setupTestEnv(t)
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			cfg.Agents.Defaults.TurnTimeout = tt.configured
+			if err := config.SaveConfig(configPath, cfg); err != nil {
+				t.Fatalf("SaveConfig() error = %v", err)
+			}
+
+			h := NewHandler(configPath)
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/models", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+			}
+
+			var resp struct {
+				TurnTimeout int `json:"turn_timeout"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if resp.TurnTimeout != tt.want {
+				t.Fatalf("turn_timeout = %d, want %d", resp.TurnTimeout, tt.want)
+			}
+		})
+	}
+}

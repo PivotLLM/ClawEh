@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -111,6 +112,9 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 		"models":        models,
 		"total":         len(models),
 		"default_model": defaultModel,
+		// The effective turn budget in seconds, so the page can note a request
+		// timeout that a turn never lets run to its end.
+		"turn_timeout": int(cfg.Agents.Defaults.GetTurnTimeout() / time.Second),
 	})
 }
 

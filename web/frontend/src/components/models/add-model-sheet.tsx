@@ -34,6 +34,8 @@ import {
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 
+import { TurnTimeoutNote } from "./turn-timeout-note"
+
 interface AddForm {
   modelName: string
   model: string
@@ -75,6 +77,8 @@ interface AddModelSheetProps {
   onClose: () => void
   onSaved: () => void
   existingModelNames: string[]
+  // The install's effective Turn timeout in seconds; 0 when unknown.
+  turnTimeout: number
 }
 
 export function AddModelSheet({
@@ -82,6 +86,7 @@ export function AddModelSheet({
   onClose,
   onSaved,
   existingModelNames,
+  turnTimeout,
 }: AddModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<AddForm>(EMPTY_ADD_FORM)
@@ -325,6 +330,10 @@ export function AddModelSheet({
                   min={0}
                 />
               </Field>
+              <TurnTimeoutNote
+                requestTimeout={form.requestTimeout}
+                turnTimeout={turnTimeout}
+              />
 
               <Field
                 label={t("models.field.rpm")}

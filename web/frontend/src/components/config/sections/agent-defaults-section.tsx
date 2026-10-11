@@ -110,6 +110,7 @@ export function AgentDefaultsSection({
         layout="setting-row"
       >
         <Input
+          id="turn-timeout"
           type="number"
           min={0}
           value={form.turnTimeout}

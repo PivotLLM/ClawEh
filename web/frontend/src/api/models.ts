@@ -43,6 +43,9 @@ interface ModelsListResponse {
   models: ModelInfo[]
   total: number
   default_model: string
+  // The install's effective Turn timeout in seconds (the built-in default
+  // when unset); 0 from a server that does not send it.
+  turn_timeout: number
 }
 
 interface ModelActionResponse {
@@ -70,6 +73,7 @@ export async function getModels(): Promise<ModelsListResponse> {
     models,
     total: data.total ?? models.length,
     default_model: data.default_model ?? "",
+    turn_timeout: data.turn_timeout ?? 0,
   }
 }
 

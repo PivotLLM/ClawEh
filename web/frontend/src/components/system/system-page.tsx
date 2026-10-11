@@ -91,6 +91,16 @@ export function SystemPage() {
     setBaseline(parsed)
   }
 
+  // A link to a field (the Models page links /system#turn-timeout) arrives
+  // before the form has loaded, so the router cannot scroll to it; do it
+  // once the fields are on the page.
+  const loaded = data !== undefined
+  useEffect(() => {
+    if (!loaded) return
+    const id = window.location.hash.slice(1)
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "center" })
+  }, [loaded])
+
   // Clear pending timers on unmount so a debounced save can't fire after teardown.
   useEffect(
     () => () => {

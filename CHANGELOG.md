@@ -351,6 +351,11 @@ observe does not need an entry.
 
 ### Added
 
+- **The Models page notes a request timeout the turn timeout cuts short.** A
+  model whose **Request Timeout** is longer than the System page's **Turn
+  timeout** (`agents.defaults.turn_timeout`) shows "Limited to 15 minutes by the
+  Turn timeout." at that field, linking to the turn timeout; `GET /api/models`
+  now also returns `turn_timeout`, the effective value in seconds.
 - **Check Up and the Network page flag a proxy that is not trusted.** When
   requests reach ClawEh through a reverse proxy or tunnel on the same machine
   that `gateway.trusted_proxies` does not list (a request from localhost
