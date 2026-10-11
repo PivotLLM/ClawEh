@@ -57,6 +57,7 @@ Each archive is complete on its own.
 | `agents/<agent>/sessions/` | Conversations. |
 | `agents/<agent>/cogmem/` | Memory. |
 | `agents/<agent>/forums/` | Each [forum](../forums/results.md#where-the-files-are)'s setup and every run's files. |
+| `agents/<agent>/maestro/` | [Maestro](../maestro.md#where-its-data-lives) projects and playbooks. Lock and temporary files are left out. |
 | Any other database under the data directory | |
 
 Databases are copied safely while ClawEh keeps running. Each one is checked first; a damaged database is left out, the rest is still written, and the "Database failed integrity check" [alert](./alerts.md) names it.
@@ -65,7 +66,7 @@ A forum that is running during the backup is copied file by file. After a restor
 
 ## What is not included
 
-- Agent `files/`, `skills/` and `maestro/` folders. Back these up like any other folder you own (see [Maestro](../maestro.md#where-its-data-lives)).
+- Agent `files/` and `skills/` folders. Back these up like any other folder you own.
 - Logs, the media cache, each agent's `tmp/`.
 - [Temporary agents](../agents/subagents.md#temporary-agents) (sub-agent runs).
 - Earlier backups.
@@ -74,7 +75,7 @@ A forum that is running during the backup is copied file by file. After a restor
 
 Only agents in the usual agents folder are fully covered. For an agent whose workspace is set to another folder:
 
-- inside the data directory: its conversations and memory are backed up, its forums are not;
+- inside the data directory: its conversations and memory are backed up, its forums and Maestro data are not;
 - outside the data directory: nothing of it is backed up.
 
 Back such a folder up yourself, or move the agent back into the agents folder.

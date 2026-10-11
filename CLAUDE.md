@@ -114,7 +114,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   restarts the process.
 - **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
   DB via `VACUUM INTO`, `internal/`, credentials, TLS, every agent's `forums/` without
-  `.locks/` and `.tmp-*`, `collectForums`); `claw backup` / `claw restore`. See
+  `.locks/` and `.tmp-*`, `collectForums`; every agent's `maestro/` without
+  `*.lock`/`*.tmp`, databases there via `VACUUM INTO`, `collectMaestro`; both
+  through `collectAgentFolder`, which never follows a symlink); `claw backup` / `claw restore`. See
   `manual/admin/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`

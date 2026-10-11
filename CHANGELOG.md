@@ -873,6 +873,14 @@ observe does not need an entry.
   agent's `temperature` is set, ClawEh now sends no temperature and each HTTP
   model uses its own default. A configured value is still sent. To keep the
   old behaviour, set **Default temperature** to 0.2 on the System page.
+
+- **Backups now include each agent's Maestro data.** The nightly backup and
+  `claw backup` include every agent's `maestro/` folder (projects, playbooks
+  and the rest), and `claw restore` puts it back. Maestro's lock files
+  (`*.lock`), temporary files (`*.tmp`) and symbolic links are left out; file
+  modes are kept. Archives grow by the size of that folder, which can be
+  several hundred megabytes on an install with many projects.
+
 - **BREAKING (API): a configuration save the rules refuse answers 400 with
   JSON `{"status": "validation_error", "errors": [...]}`, one sentence per
   refusal, instead of plain text "Validation error: …".** The rules are a

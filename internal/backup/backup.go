@@ -3,7 +3,8 @@
 
 // Package backup writes a dated tarball of everything ClawEh needs to come back
 // on a new host — config.json, the cron jobs file, internal/ (tokens and the device
-// pairing database), credentials.json and tls/ when present, and every SQLite
+// pairing database), credentials.json and tls/ when present, each agent's
+// forums and Maestro data, and every SQLite
 // database under CLAW_HOME (session archives, cognitive memory, the fusion
 // OAuth store) — and restores one. It is driven on a nightly schedule by the
 // gateway, on demand from the WebUI, and by `claw backup` / `claw restore`.
@@ -377,8 +378,9 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 			return nil, false, err
 		}
 	}
-	// Every agent's forums, before the database walk so a forum file with a
-	// database extension (a materialised source) is copied as it is.
+	// Every agent's forums and Maestro data, before the database walk so a
+	// forum file with a database extension (a materialised source) is copied
+	// as it is.
 	external := src.AgentsDir != "" && !within(src.Home, src.AgentsDir)
 	if src.AgentsDir != "" {
 		agentsPrefix := externalAgentsPrefix
@@ -394,6 +396,11 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 		}
 		if err := collectForums(src.AgentsDir, agentsPrefix, dest, func(path, name string) {
 			add(entry{src: path, name: name})
+		}); err != nil {
+			return nil, false, err
+		}
+		if err := collectMaestro(src.AgentsDir, agentsPrefix, dest, func(path, name string, db bool) {
+			add(entry{src: path, name: name, db: db})
 		}); err != nil {
 			return nil, false, err
 		}
@@ -419,15 +426,59 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 // forums directory (<agentsDir>/<agent>/forums/) with archive name
 // prefix+<agent>/forums/<rel>. The forum store's lock files (.locks/) and the
 // temporary files a write in progress or a crash leaves (.tmp-*) are skipped;
-// its cleanup markers (.cleanup/) are state and are kept. Symbolic links are
-// never followed, at any level: an agent directory or forums directory that
-// is a link is skipped like any link inside. Every file the store publishes is
-// written whole (a temporary file renamed or linked into place), so a plain
-// copy taken while a forum runs reads each file either before or after a
-// write, never torn. The copy is not one instant across files; a restored run
-// is recovered from its commit log like one interrupted by a restart, which
-// also rebuilds transcript.md, the one file appended in place.
+// its cleanup markers (.cleanup/) are state and are kept. Every file the store
+// publishes is written whole (a temporary file renamed or linked into place),
+// so a plain copy taken while a forum runs reads each file either before or
+// after a write, never torn. The copy is not one instant across files; a
+// restored run is recovered from its commit log like one interrupted by a
+// restart, which also rebuilds transcript.md, the one file appended in place.
 func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) error {
+	return collectAgentFolder(agentsDir, prefix, forumfs.BaseDirName, skip,
+		func(rel string, d fs.DirEntry) bool {
+			if strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
+				return true
+			}
+			return d.IsDir() && rel == forumfs.LocksDir
+		}, fn)
+}
+
+// Maestro's own scratch files: the flock beside a taskset being written
+// (<taskset>.lock) and the temporary file of an atomic write (<file>.tmp,
+// renamed into place).
+const (
+	maestroLockSuffix = ".lock"
+	maestroTempSuffix = ".tmp"
+)
+
+// collectMaestro calls fn(path, archiveName, db) for every file of every
+// agent's Maestro data directory (<agentsDir>/<agent>/maestro/: projects,
+// playbooks, lists and the rest) with archive name prefix+<agent>/maestro/<rel>.
+// Maestro's lock files (*.lock) and temporary files (*.tmp) are skipped, as are
+// SQLite sidecars; a file with a database extension is reported with db set so
+// it is copied with VACUUM INTO. Maestro writes its files whole (a temporary
+// file renamed into place), so a plain copy reads each one before or after a
+// write, never torn.
+func collectMaestro(agentsDir, prefix, skip string, fn func(path, name string, db bool)) error {
+	return collectAgentFolder(agentsDir, prefix, config.MaestroMountName, skip,
+		func(_ string, d fs.DirEntry) bool {
+			if d.IsDir() {
+				return false
+			}
+			n := d.Name()
+			return strings.HasSuffix(n, maestroLockSuffix) || strings.HasSuffix(n, maestroTempSuffix) || isDBSidecar(n)
+		}, func(path, name string) {
+			fn(path, name, isDB(path))
+		})
+}
+
+// collectAgentFolder calls fn(path, archiveName) for every regular file under
+// <agentsDir>/<agent>/<folder>/, for every agent, with archive name
+// prefix+<agent>/<folder>/<rel>. excluded is asked about every directory and
+// file below the folder (rel is relative to it); an excluded directory is not
+// entered. Symbolic links are never followed, at any level: an agent directory
+// or folder that is a link is skipped like any link inside. skip (the backup
+// destination) is never entered.
+func collectAgentFolder(agentsDir, prefix, folder, skip string, excluded func(rel string, d fs.DirEntry) bool, fn func(path, name string)) error {
 	agents, err := os.ReadDir(agentsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -439,7 +490,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
 			continue
 		}
-		base := prefix + a.Name() + "/" + forumfs.BaseDirName + "/"
+		base := prefix + a.Name() + "/" + folder + "/"
 		// Temporary agents' workspaces live in internal/temp/, never in the
 		// agents directory; this only matters when agents.base_dir is set to
 		// CLAW_HOME's internal/ (or internal/temp/) folder, where it keeps them
@@ -447,7 +498,7 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 		if isTempAgentPath(base) {
 			continue
 		}
-		root := filepath.Join(agentsDir, a.Name(), forumfs.BaseDirName)
+		root := filepath.Join(agentsDir, a.Name(), folder)
 		fi, err := os.Lstat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -470,12 +521,12 @@ func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) e
 				return rerr
 			}
 			if d.IsDir() {
-				if path == filepath.Clean(skip) || rel == forumfs.LocksDir || strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
+				if path == filepath.Clean(skip) || excluded(rel, d) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
+			if !d.Type().IsRegular() || excluded(rel, d) {
 				return nil
 			}
 			fn(path, base+filepath.ToSlash(rel))

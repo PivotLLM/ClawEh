@@ -107,8 +107,8 @@ The same folder is mounted as `maestro/` for the agent's ordinary file
 tools, so the agent can move inputs and finished reports between
 `maestro/` and `files/`. Project logs and results are never pruned.
 
-The nightly [backup](admin/backup.md) does **not** include the `maestro/` folder. Back it up
-yourself if the projects matter.
+The nightly [backup](admin/backup.md) includes the `maestro/` folder, and a
+restore puts it back.
 
 Maestro's operational log goes to the ClawEh log with the component
 `maestro`, visible on the **Logs** page (see [Logs](admin/logs.md)).
