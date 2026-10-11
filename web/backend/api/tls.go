@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // The TLS page of the WebUI: where the two listeners are, which certificate
@@ -59,6 +60,12 @@ type tlsStatusResponse struct {
 	URLs            tlsURLs             `json:"urls"`
 	Certificate     *tlsCertificateJSON `json:"certificate"`
 	RestartRequired bool                `json:"restart_required"`
+	// UntrustedProxy says requests arrive through a proxy that
+	// gateway.trusted_proxies does not list (Config.ProxyNotTrusted).
+	UntrustedProxy bool `json:"untrusted_proxy"`
+	// BehindProxy says TLS ends at a proxy (Config.BehindProxy), so plain
+	// HTTP on the network is not flagged.
+	BehindProxy bool `json:"behind_proxy"`
 }
 
 // SetBootListeners records the listener settings the running gateway bound
@@ -76,6 +83,23 @@ func (h *Handler) SetTLSManager(m *tlscert.Manager) {
 	h.reloadMu.Lock()
 	h.tlsManager = m
 	h.reloadMu.Unlock()
+}
+
+// SetProxyWatch hands the handler the listener's record of forwarded requests
+// from an untrusted loopback peer, read by GET /api/tls and Check Up.
+func (h *Handler) SetProxyWatch(w *middleware.ProxyWatch) {
+	h.reloadMu.Lock()
+	h.proxyWatch = w
+	h.reloadMu.Unlock()
+}
+
+// untrustedProxySeen is the loopback peer and time of the last forwarded
+// request from an untrusted peer; peer is "" when none was seen.
+func (h *Handler) untrustedProxySeen() (string, time.Time) {
+	h.reloadMu.Lock()
+	w := h.proxyWatch
+	h.reloadMu.Unlock()
+	return w.LastSeen()
 }
 
 func (h *Handler) tlsState() (*config.ListenerSettings, *tlscert.Manager) {
@@ -143,6 +167,9 @@ func (h *Handler) handleGetTLS(w http.ResponseWriter, _ *http.Request) {
 		},
 		RestartRequired: boot != nil && *boot != gw.Listeners(),
 	}
+	seenPeer, _ := h.untrustedProxySeen()
+	resp.UntrustedProxy = cfg.ProxyNotTrusted(seenPeer)
+	resp.BehindProxy = len(cfg.BehindProxy()) > 0
 	if mgr != nil {
 		resp.Certificate = certificateJSON(mgr.Info())
 	} else {

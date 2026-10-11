@@ -103,7 +103,7 @@ func TestAuthLogin_TrustedProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain := middleware.TrustedProxy(func() *config.TrustedProxySet { return trusted }, env.mux)
+	chain := middleware.TrustedProxy(func() *config.TrustedProxySet { return trusted }, nil, env.mux)
 	login := func(peer, realIP, user, pass string) int {
 		t.Helper()
 		body := fmt.Sprintf(`{"username":%q,"password":%q}`, user, pass)

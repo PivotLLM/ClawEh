@@ -113,8 +113,12 @@ type httpHost struct {
 	opts    hostOptions
 	handler http.Handler // the shared chain, outermost first (see newHTTPHost)
 
-	mux         atomic.Pointer[http.ServeMux]
-	trusted     atomic.Pointer[config.TrustedProxySet]
+	mux     atomic.Pointer[http.ServeMux]
+	trusted atomic.Pointer[config.TrustedProxySet]
+	// proxyWatch records forwarded requests from an untrusted loopback peer
+	// (a proxy missing from gateway.trusted_proxies); Check Up and the
+	// Network page read it through the API handler.
+	proxyWatch  middleware.ProxyWatch
 	allow       atomic.Pointer[middleware.Allowlist]
 	hosts       atomic.Pointer[middleware.HostAllowlist]
 	crossOrigin atomic.Pointer[http.CrossOriginProtection]
@@ -150,7 +154,9 @@ func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	// The chain in front of the dynamic mux, outermost first:
 	//   Trusted proxy  — from a gateway.trusted_proxies peer, the client is
 	//                    the X-Real-IP / X-Forwarded-For address; every layer
-	//                    below sees that address as RemoteAddr.
+	//                    below sees that address as RemoteAddr. A forwarded
+	//                    request from an untrusted loopback peer is noted in
+	//                    proxyWatch.
 	//   IP allowlist   — who may connect. Loopback always; otherwise the
 	//                    configured networks, regardless of bind address.
 	//                    Matches the TCP peer (RemoteAddr), so behind a reverse
@@ -172,7 +178,7 @@ func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	if err := h.SetTrustedProxies(opts.TrustedProxies); err != nil {
 		return nil, err
 	}
-	h.handler = middleware.TrustedProxy(h.trusted.Load,
+	h.handler = middleware.TrustedProxy(h.trusted.Load, &h.proxyWatch,
 		middleware.IPAllowlist(h.allow.Load,
 			middleware.HostCheck(h.hosts.Load,
 				middleware.CrossOrigin(h.crossOrigin.Load,

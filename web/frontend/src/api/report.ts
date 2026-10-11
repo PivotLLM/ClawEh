@@ -18,6 +18,8 @@ export interface AssessmentRow {
   action: boolean
   item: string
   status: string
+  /** WebUI page (and field) where the row is acted on, e.g. "/network#trusted-proxies". */
+  link?: string
 }
 
 export interface ReportAssessment {

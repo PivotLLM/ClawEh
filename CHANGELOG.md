@@ -351,6 +351,25 @@ observe does not need an entry.
 
 ### Added
 
+- **Check Up and the Network page flag a proxy that is not trusted.** When
+  requests seem to reach ClawEh through a reverse proxy or tunnel on the same
+  machine that `gateway.trusted_proxies` does not list (an external address is
+  set and localhost is not trusted, or a request from localhost carried
+  `X-Forwarded-For`, `X-Real-IP` or `Forwarded` headers), every request looks
+  like localhost, so the allowed networks and the sign-in lockout never apply.
+  Check Up shows a marked **Reverse proxy** row linking to **Trusted proxies**,
+  and the Network page shows the same note under that field. Request handling
+  is unchanged; add the proxy's address (usually `127.0.0.1`) to Trusted
+  proxies. `GET /api/tls` gains `untrusted_proxy`, and
+  `GET /api/report/assessment` rows may carry a `link`.
+- **Check Up names the proxy ClawEh is behind and no longer flags plain HTTP
+  there.** With `gateway.trusted_proxies` set, or an https/wss external address
+  (`gateway.external_url`, the device listener's External address) that
+  ClawEh's own HTTPS does not serve, the proxy does the encryption: the
+  WebUI/API HTTP, WebUI/API HTTPS (off) and Device HTTP rows are no longer
+  marked, a neutral **Proxy** row lists the proxies, and the Network page drops
+  its plain-HTTP warnings. `GET /api/tls` gains `behind_proxy`.
+
 - **A user manual, served by claw.** The WebUI sidebar has a *Manual* link
   that opens the manual in a new tab at `/manual/`, behind the same login as
   the WebUI. Its content is still to come. Building from source now also needs

@@ -447,7 +447,8 @@
         "lockout_exempt": "Never locked out",
         "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is.",
         "trusted_proxies": "Trusted proxies",
-        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted."
+        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted.",
+        "untrusted_proxy": "Requests arrive through a proxy that is not trusted; network access control and lockout don't apply."
       },
       "device": {
         "title": "Device listener",

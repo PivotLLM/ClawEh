@@ -13,9 +13,13 @@ import (
 // lockout, lockout_exempt, logs and the audit log all see the real client.
 // From any other peer those headers are ignored. It must be the outermost
 // handler. The set is read per request, so a config reload applies at once.
-func TrustedProxy(current func() *config.TrustedProxySet, next http.Handler) http.Handler {
+// A forwarded request from an untrusted loopback peer is recorded in watch
+// (nil records nothing); it is handled like any other.
+func TrustedProxy(current func() *config.TrustedProxySet, watch *ProxyWatch, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		addr := current().ClientAddr(r.RemoteAddr, r.Header.Get("X-Real-IP"), r.Header.Get("X-Forwarded-For"))
+		trusted := current()
+		watch.observe(r, trusted)
+		addr := trusted.ClientAddr(r.RemoteAddr, r.Header.Get("X-Real-IP"), r.Header.Get("X-Forwarded-For"))
 		if peer := clientIPFromRemoteAddr(r.RemoteAddr); peer == nil || peer.String() != addr {
 			r.RemoteAddr = addr
 		}

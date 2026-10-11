@@ -242,6 +242,16 @@ export function NetworkPage() {
     baselineRef.current = baseline
   })
 
+  // A link to a field (Check Up links /network#trusted-proxies) arrives
+  // before the form has loaded, so the router cannot scroll to it; do it
+  // once the fields are on the page.
+  const loaded = configQuery.data !== undefined
+  useEffect(() => {
+    if (!loaded) return
+    const id = window.location.hash.slice(1)
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "center" })
+  }, [loaded])
+
   const [status, setStatus] = useState<SaveStatus>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   // A validation failure that belongs to one field, shown under it.
@@ -462,25 +472,29 @@ export function NetworkPage() {
                                   >
                                     {u}
                                   </a>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span
-                                        className="text-amber-600 dark:text-amber-400"
-                                        data-testid="network-http-warning"
-                                      >
-                                        <IconAlertTriangle
-                                          className="size-3.5"
-                                          aria-hidden
-                                        />
-                                        <span className="sr-only">
-                                          {t("pages.network.urls.http_warning")}
+                                  {!tls.behind_proxy && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span
+                                          className="text-amber-600 dark:text-amber-400"
+                                          data-testid="network-http-warning"
+                                        >
+                                          <IconAlertTriangle
+                                            className="size-3.5"
+                                            aria-hidden
+                                          />
+                                          <span className="sr-only">
+                                            {t(
+                                              "pages.network.urls.http_warning",
+                                            )}
+                                          </span>
                                         </span>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      {t("pages.network.urls.http_warning")}
-                                    </TooltipContent>
-                                  </Tooltip>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {t("pages.network.urls.http_warning")}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
                                 </li>
                               ))}
                             </ul>
@@ -552,7 +566,10 @@ export function NetworkPage() {
                     {
                       value: "network",
                       label: t("pages.network.http.scope_network"),
-                      warning: t("pages.network.http.scope_network_warning"),
+                      // Behind a proxy TLS ends there: not a concern.
+                      warning: tls?.behind_proxy
+                        ? undefined
+                        : t("pages.network.http.scope_network_warning"),
                     },
                   ]}
                 />
@@ -675,6 +692,7 @@ export function NetworkPage() {
                   controlClassName="md:max-w-md"
                 >
                   <Textarea
+                    id="trusted-proxies"
                     value={form.trustedProxiesText}
                     className="min-h-[66px]"
                     data-testid="network-trusted-proxies"
@@ -683,6 +701,18 @@ export function NetworkPage() {
                     }
                   />
                 </Field>
+                {tls?.untrusted_proxy && (
+                  <p
+                    className="flex items-center gap-2 pb-4 text-xs text-amber-700 dark:text-amber-300"
+                    data-testid="network-untrusted-proxy"
+                  >
+                    <IconAlertTriangle
+                      className="size-3.5 shrink-0"
+                      aria-hidden
+                    />
+                    {t("pages.network.allowed.untrusted_proxy")}
+                  </p>
+                )}
               </ConfigSectionCard>
 
               <ConfigSectionCard

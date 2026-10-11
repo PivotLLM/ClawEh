@@ -27,10 +27,13 @@ One row each for **WebUI/API HTTP**, **WebUI/API HTTPS**, **Device HTTP**, **Dev
 
 A self-signed certificate is stated, never marked.
 
+Behind a proxy, plain HTTP on these listeners is not marked, because the proxy does the encryption. A **Proxy** row names it: each **Trusted proxies** entry, and each https or wss external address that ClawEh's own HTTPS does not serve.
+
 ### Other rows
 
 | Item | Marked when | What to do |
 |---|---|---|
+| **Reverse proxy** | Requests seem to arrive through a proxy on this machine that is not in **Trusted proxies**, so the allowed networks and the lockout don't apply. It shows when an external address is set and localhost is not trusted, or when a request from localhost carried forwarding headers. | Click the item to open **Trusted proxies** on the **Network** page and add the proxy's address, usually `127.0.0.1`. See [Remote access](./remote-access.md#what-to-set-in-claweh). |
 | **TLS certificate expiry** | Your own certificate expires within 14 days, or has expired. | Renew the certificate files. See [HTTPS and certificates](./https.md#renewals). |
 | **Data directory permissions** | Files under the data directory can be read by other users. | Restart ClawEh, which tightens them, or `chmod 700` the folders and `chmod 600` the files. See [Logs](./logs.md#startup-permission-checks). |
 | **WebUI chat token** | The WebUI channel is on without a token. | Set a token for the WebUI channel (`channels.webui.token`). It is for non-browser clients only. |
@@ -46,6 +49,7 @@ A self-signed certificate is stated, never marked.
 
 These rows are information only:
 
+- **Proxy**: the proxies ClawEh is reached through (see [Listeners](#listeners)).
 - **Install-wide shell setting**: an old install-wide shell setting is in the config and has no effect. Shell commands are allowed per agent.
 - **File confinement vs shell (agent)**: the agent's file tools are confined, but it can run shell commands, which are not.
 - **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).

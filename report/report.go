@@ -27,6 +27,12 @@ type Environment struct {
 	Commit     string
 	BuildTime  string
 	Now        time.Time
+	// ForwardedPeer and ForwardedSeen are the loopback peer and time of the
+	// last request the WebUI listener received with forwarding headers from a
+	// peer gateway.trusted_proxies does not list; ForwardedPeer is "" when
+	// there was none.
+	ForwardedPeer string
+	ForwardedSeen time.Time
 }
 
 // Report is the collected report: identity, then one Section per area.

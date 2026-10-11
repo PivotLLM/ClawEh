@@ -70,6 +70,9 @@ type Handler struct {
 	// SetTLSManager; see tls.go). Guarded by reloadMu.
 	bootListeners *config.ListenerSettings
 	tlsManager    *tlscert.Manager
+	// proxyWatch records forwarded requests from a proxy that is not trusted
+	// (SetProxyWatch); nil until the gateway sets it. Guarded by reloadMu.
+	proxyWatch *middleware.ProxyWatch
 	// restartHook is the gateway's clean-shutdown-and-exit path (SetRestart);
 	// nil until the gateway sets it. serviceManagedFn overrides the
 	// service-manager check in tests; nil means the real environment check.

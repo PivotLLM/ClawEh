@@ -373,6 +373,7 @@ func startHTTPHost(services *gatewayServices, cfg *config.Config, agentLoop *age
 	services.bootListeners = cfg.Gateway.Listeners()
 	services.WebServer.APIHandler().SetBootListeners(services.bootListeners)
 	services.WebServer.APIHandler().SetTLSManager(services.TLSCerts)
+	services.WebServer.APIHandler().SetProxyWatch(&services.HTTPHost.proxyWatch)
 	return nil
 }
 
