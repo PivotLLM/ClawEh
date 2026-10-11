@@ -71,8 +71,8 @@ func (e *AuthExempt) Matches(r *http.Request) bool {
 var defaultAuthExempt = CompileAuthExempt()
 
 // Auth requires a login session on every request that could act on or read
-// from the gateway: /api/*, the WebUI WebSocket under /webui/, and any
-// non-GET request. Exempt routes pass untouched. GET/HEAD requests elsewhere
+// from the gateway: /api/*, the WebUI WebSocket under /webui/, the manual
+// under /manual/, and any non-GET request. Exempt routes pass untouched. GET/HEAD requests elsewhere
 // (the SPA shell and its assets, which hold no secrets) pass too — that is how
 // the login page reaches the browser; the frontend's own gate then keeps an
 // unauthenticated visitor on it.
@@ -134,7 +134,8 @@ func authProtected(r *http.Request) bool {
 		return true
 	}
 	p := r.URL.Path
-	return p == "/api" || strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/webui/")
+	return p == "/api" || strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/webui/") ||
+		p == "/manual" || strings.HasPrefix(p, "/manual/")
 }
 
 // WriteUnauthorized writes the 401 the WebUI client understands: a JSON body

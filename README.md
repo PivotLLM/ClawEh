@@ -394,6 +394,8 @@ side as long as `web/backend/dist/index.html` is already present (the
 embedded asset directory is committed empty with a `.gitkeep`, so missing
 frontend assets just mean the WebUI 404s, ClawEh still runs).
 
+The user manual is Markdown under `manual/`, built with VitePress (`make manual`, also run by `make build`), embedded in the binary and served at `/manual/` behind the WebUI login.
+
 **Available make targets:**
 
 | Target | Description |

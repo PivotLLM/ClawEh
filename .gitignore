@@ -63,6 +63,13 @@ dist/
 web/backend/dist/*
 !web/backend/dist/.gitkeep
 
+# The manual's build (make manual) lands in the Go embed source; keep only the
+# placeholder.
+web/backend/manual/*
+!web/backend/manual/.gitkeep
+manual/node_modules/
+manual/.vitepress/cache/
+
 # Playwright MCP session output (page snapshots, console logs).
 .playwright-mcp/
 

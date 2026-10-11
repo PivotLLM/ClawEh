@@ -9,6 +9,9 @@ something fails.
 `make` (or `make all`) runs it before building, so a failing suite never
 produces a binary. It runs, in order:
 
+- the user manual build (`make manual-check`: VitePress, rebuilt every run so a
+  broken manual fails the gate; a missing `manual/node_modules` fails it with
+  the fix, `make manual-deps`)
 - `go generate ./...`
 - `gofmt`/`gofumpt` formatting check (`make fmt-check`)
 - `go vet ./...`

@@ -70,6 +70,7 @@
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
+    "manual": "Manual",
     "report": "Check Up",
     "audit": "Audit"
   },

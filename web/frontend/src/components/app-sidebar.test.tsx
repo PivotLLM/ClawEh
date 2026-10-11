@@ -66,4 +66,15 @@ describe("AppSidebar", () => {
     })
     expect(models.getAttribute("aria-expanded")).not.toBeNull()
   })
+
+  it("links the manual in a new tab", async () => {
+    await renderSidebar()
+
+    const manual = screen.getByTestId("nav-manual")
+    expect(manual.tagName).toBe("A")
+    expect(manual.getAttribute("href")).toBe("/manual/")
+    expect(manual.getAttribute("target")).toBe("_blank")
+    expect(manual.getAttribute("rel")).toContain("noopener")
+    expect(manual.textContent).toBe("navigation.manual")
+  })
 })

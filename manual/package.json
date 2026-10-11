@@ -1,0 +1,15 @@
+{
+  "name": "claw-manual",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build && touch ../web/backend/manual/.gitkeep",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
+}

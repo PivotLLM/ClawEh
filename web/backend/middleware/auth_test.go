@@ -287,6 +287,9 @@ func TestAuth_ExemptPathsPassWithoutSession(t *testing.T) {
 		{http.MethodGet, "/api/message/abcdef"}, // only POST is the token API
 		{http.MethodGet, "/api/auth/login"},     // only POST is exempt
 		{http.MethodGet, "/webui/ws"},
+		{http.MethodGet, "/manual"},
+		{http.MethodGet, "/manual/"},
+		{http.MethodHead, "/manual/guide/introduction.html"},
 		{http.MethodPost, "/"},
 		{http.MethodPost, "/webhook/slack"},
 		{http.MethodGet, "/api/v1x"},
@@ -330,6 +333,10 @@ func TestAuth_SessionCookieAdmitsEitherName(t *testing.T) {
 		rec = serve(h, http.MethodGet, "/webui/ws", &http.Cookie{Name: name, Value: id})
 		if rec.Code != http.StatusOK {
 			t.Errorf("cookie %s on /webui/ws: status = %d, want 200", name, rec.Code)
+		}
+		rec = serve(h, http.MethodGet, "/manual/", &http.Cookie{Name: name, Value: id})
+		if rec.Code != http.StatusOK {
+			t.Errorf("cookie %s on /manual/: status = %d, want 200", name, rec.Code)
 		}
 	}
 	rec := serve(h, http.MethodGet, "/api/config", &http.Cookie{Name: SessionCookieInsecure, Value: "forged"})

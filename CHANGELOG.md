@@ -351,6 +351,12 @@ observe does not need an entry.
 
 ### Added
 
+- **A user manual, served by claw.** The WebUI sidebar has a *Manual* link
+  that opens the manual in a new tab at `/manual/`, behind the same login as
+  the WebUI. Its content is still to come. Building from source now also needs
+  the manual's dependencies (`make manual-deps`, Node.js and pnpm, as for the
+  WebUI).
+
 - **Agents can message each other: the `agent_message` tool.**
   `agent_message(agent, message, wait_seconds)` with `wait_seconds` above 0
   asks: the other agent gets a normal turn with the message, its own tools

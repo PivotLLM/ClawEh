@@ -157,8 +157,10 @@ started with an operator surprised by their own configuration.
 
 ## Build & Install
 ```
-make build       # build the binary (embeds the frontend bundle)
-make test        # the full gate: generate, format check, vet, golangci-lint,
+make build       # build the binary (embeds the frontend bundle and the manual)
+make manual      # build only the user manual (VitePress)
+make test        # the full gate: builds the manual, then generate, format
+                 # check, vet, golangci-lint,
                  # govulncheck (pinned, installed into bin/, needs network),
                  # then test.sh: the Go suite with -race and a coverage floor,
                  # the frontend typecheck/lint/unit tests and the MCP server
@@ -171,6 +173,16 @@ make test-maestro-host   # Maestro's MCP suite against a live ClawEh (own
                          # target: binds ports; needs probe, jq, zip)
 make check-webui         # the browser suite against a running dev instance
 ```
+**User manual:** Markdown under `manual/` (a VitePress project with its own
+`package.json` and lockfile; config `manual/.vitepress/config.ts`, sidebar
+groups nest). `make manual` (a prerequisite of `make build`, the per-platform
+build targets b9 calls, and `make test`) builds it into `web/backend/manual/`,
+which `web/backend/manual.go` embeds and serves at `/manual/` behind the
+WebUI login (`middleware.authProtected`); `/manual` redirects there and an
+unknown page is a 404 with the manual's own not-found page. The WebUI links
+it from the sidebar footer ("Manual", new tab). `cd manual && pnpm dev` runs
+the VitePress dev server while writing.
+
 Production and development instances are deployed differently; the service
 names, ports and deploy procedure for a given machine belong in
 `CLAUDE.local.md` (not committed). Never build to, install to, or restart a
