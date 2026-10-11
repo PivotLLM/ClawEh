@@ -90,7 +90,7 @@ automatically within a few seconds (a file watcher re-syncs the live store).
       `RegisterService` each (alongside the existing `CLAW_MCP_TEST_TOKEN` path).
 - [x] `internal/token` cobra command (`issue`/`rotate`/`revoke`/`list`) wired
       into `NewClawCommand`.
-- [x] README: document service tokens + the `claw token` commands.
+- [x] Manual (`manual/mcp.md`): document service tokens + the `claw token` commands.
 - [x] `docs/mcp.md`: cross-reference service tokens as the long-lived credential
       for the `/mcp` bearer endpoint.
 

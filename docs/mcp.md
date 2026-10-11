@@ -98,7 +98,8 @@ at.
   - `/mcp`: tools registered **without** the param; an `HTTPContextFunc` extracts
     the bearer into context; dispatch reads the token from context.
 - The only difference between the two registrations is *inject-param* vs
-  *read-header*, so duplication is minimal. Both mount on the existing shared mux.
+  *read-header*, so duplication is minimal. Both are served by the MCP host's own
+  listener (`mcp_host.listen`, default `127.0.0.1:5911`), not the WebUI mux.
 - `WithStateLess(true)` is retained; the context func runs per request, so each
   request's bearer routes consistently (and a single client could even drive
   multiple sessions via per-request bearers, though that is unusual).
@@ -146,9 +147,9 @@ reconnect.
 
 ## Security
 
-- Both endpoints stay bound to `127.0.0.1` (same posture as today; see
-  [external-messages.md](external-messages.md)). The bearer header is no weaker than the in-call
-  parameter over the same transport.
+- Both endpoints are bound to `127.0.0.1` by default (`mcp_host.listen`).
+  The bearer header is no weaker than the in-call parameter over the same
+  transport.
 - Exposing either endpoint beyond localhost is a separate TLS decision, out of
   scope here.
 

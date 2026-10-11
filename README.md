@@ -2,7 +2,7 @@
 
 **ClawEh is a small, fast, self-hosted runtime for personal AI assistants.**
 
-Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can connect to Telegram, Slack, Discord, Signal (via an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
+Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can connect to Telegram, Slack, Discord, Matrix, Signal (via an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
@@ -27,7 +27,7 @@ Version 0.6.0 represents a significant evolution toward a more secure business-c
 - **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 - **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
 - **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Antigravity, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
-- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing.
+- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Matrix, Signal, and the built-in web interface, with configurable per-agent routing.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
 - **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**.
@@ -67,8 +67,9 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `agents/<id>/state/` | claw | The agent's own state, such as interrupted turns and its message tokens. |
 | `agents/<id>/tmp/`, `tasks/` | claw | Scratch space and background task records for the agent. |
 | `agents/<id>/forums/` | claw | The agent's forums, which it can read but not change. |
+| `agents/<id>/maestro/` | claw | The agent's Maestro projects and playbooks. |
 | `common/` | You and the agents | A shared folder agents with access can exchange files through (`agents.common_dir` moves it). |
-| `skills/` | You | Shared skills every agent can use. |
+| `skills/` | You | Shared skills; an agent uses only the ones it is granted. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
 | `internal/` | claw | claw's own state: service and message tokens, the device pairing database and Fusion's OAuth tokens. |
 | `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |

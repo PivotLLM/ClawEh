@@ -19,7 +19,7 @@ It also feeds the WebUI tool catalogue. You write a module once; all three get i
 your package (tools/<ns>/)        ← implements global.ToolProvider, BARE tool names
         │  RegisterTools(deps) []ToolDefinition
         ▼
-global  (transport-neutral, stdlib-only)
+toolspec, aliased as global  (transport-neutral, stdlib-only)
         │  ToolProvider / ToolDefinition / Parameter / ToolCall / Result / Deps
         ▼
 tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" prefix
@@ -58,7 +58,12 @@ To add an internal module you (a) add its import and (b) add one
 
 ---
 
-## 2. Core types (`global/tools.go`)
+## 2. Core types (`github.com/PivotLLM/toolspec`)
+
+The types live in the standalone `toolspec` module; `global/tools.go` re-exports
+them as aliases under the historical `global.*` names. Abridged below: toolspec
+also has `Group`/`RevealTogether` on `ToolDefinition` and `ConfigDir`/`DB` on
+`Deps`.
 
 ```go
 // A package implements this. deps is injected at build time.
@@ -277,8 +282,8 @@ network/LLM tools.
 
 ## 5. Importing as an external module
 
-`global` is intentionally dependency-free (standard library + `context`
-only), so the `ToolProvider`/`ToolDefinition` contract can be vendored or
+`toolspec` (re-exported as `global`) is intentionally dependency-free
+(standard library only), so the `ToolProvider`/`ToolDefinition` contract can be vendored or
 imported by another codebase (e.g. Maestro/MCPFusion) without pulling in Claw.
 A package written against `global` alone — no `tools`, `config`, etc.
 — is portable: any host that can adapt `global.ToolProvider` into its own
@@ -324,7 +329,7 @@ host supplies the concrete implementation.
 
 | Thing | Location |
 |---|---|
-| Transport-neutral types | `global/tools.go` |
+| Transport-neutral types | `github.com/PivotLLM/toolspec` (aliases in `global/tools.go`) |
 | Namespacing bridge | `tools/namespaced.go` (`NamespacedProvider`) |
 | Registry | `tools/providers.go` (`RegisterProvider` / `GetProviders`) |
 | **Aggregator (wire new modules here)** | `internal/gateway/tool_providers.go` |

@@ -68,29 +68,31 @@ R1:
   why the bridge persists the issued token rather than re-presenting the
   shared one.
 - **Pairing**: on first connect the device is unpaired → ClawEh records a
-  pending pairing and rejects the connect. Approve it once with `claw devices`
-  (or set `channels.device.auto_approve`, allowed only with the device listener on
-  loopback), then re-run. There is
-  no ACP-layer auth — the stdio pipe is the trust boundary.
+  pending pairing and rejects the connect. Because the bridge is a local
+  same-user process, it then approves its own pending pairing directly in the
+  local device store and reconnects (`autoApproveLocalDevice`). With
+  `--no-auto-pair` it stops instead; approve it once with `claw devices`, then
+  re-run. There is no ACP-layer auth — the stdio pipe is the trust boundary.
 
 ## Running it
 
 ```
-claw acp                         # bridge to ws://127.0.0.1:<device-port>/
-claw acp --url ws://127.0.0.1:8078/   # explicit device listener URL
+claw acp                         # bridge to ws://127.0.0.1:<device-port>/ (wss:// with channels.device.tls)
+claw acp --url ws://127.0.0.1:18791/  # explicit device listener URL
+claw acp --no-auto-pair          # require a manual `claw devices` approval
 claw acp --debug                 # debug logging (file only — stdout is the wire)
 ```
 
 Because stdout carries the protocol, the console logger is disabled and all
 logging goes to `$CLAW_HOME/logs/claw.log`.
 
-### One-time pairing
+### One-time pairing with `--no-auto-pair`
 
 1. Ensure ClawEh is running with the device channel enabled.
-2. Run `claw acp` once. It logs its `deviceId` and exits with a "pairing required"
-   message.
+2. Run `claw acp --no-auto-pair` once. It logs its `deviceId` and exits with a
+   "pairing required" message.
 3. Approve the pending device with `claw devices` (list → approve).
-4. Re-run `claw acp` — it connects and serves.
+4. Re-run it — it connects and serves.
 
 ## Content types
 
@@ -123,10 +125,5 @@ logging goes to `$CLAW_HOME/logs/claw.log`.
   `session/update` notifications + turn completion.
 - `internal/gateway/acp_bridge_test.go` — unit tests over the translation logic
   with a fake ClawEh (streamed, chat-final, stray-event, empty-prompt paths).
-
-## Status
-
-Compiles; unit-tested. **The live pairing handshake against the real device
-server has not yet been exercised end-to-end** — connection/pairing, the `node`
-role handshake, and the exact event shapes should be confirmed against a running
-instance (see the one-time pairing steps above).
+- `internal/gateway/acp_pair_test.go`, `acp_integration_test.go` — the
+  self-approval path and the bridge against a real device server.
