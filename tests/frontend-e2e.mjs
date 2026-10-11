@@ -679,11 +679,10 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
-    // The toggle must persist an explicit tools list (a default-only agent has
-    // none), and time_now must have flipped.
-    assert(Array.isArray(a?.tools), `tools = ${JSON.stringify(a?.tools)}; expected an explicit list after the toggle`)
-    const has = a.tools.includes("time_now")
-    assert(has === !was, `tools = ${JSON.stringify(a.tools)}; time_now should be ${was ? "removed" : "added"}`)
+    // time_now must have flipped; an absent tools list means none.
+    const tools = a?.tools ?? []
+    const has = tools.includes("time_now")
+    assert(has === !was, `tools = ${JSON.stringify(a?.tools)}; time_now should be ${was ? "removed" : "added"}`)
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the second save")
   })
 

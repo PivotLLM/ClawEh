@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { getAgentTools, getAppConfig, patchAppConfig } from "@/api/channels"
+import { getAppConfig, patchAppConfig } from "@/api/channels"
 import {
   type ModelInfo,
   addModel,
@@ -43,7 +43,7 @@ import {
   RECOMMENDED_MODEL,
   type StepDef,
   type TestState,
-  uniqueAgentId,
+  wizardAgentList,
 } from "@/components/setup/wizard-model"
 import { Button } from "@/components/ui/button"
 
@@ -55,7 +55,6 @@ export function SetupWizard() {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [clis, setClis] = useState<CLIInfo[]>([])
-  const [defaultTools, setDefaultTools] = useState<string[]>([])
   // Whether a usable model already exists — drives the "already configured"
   // warning and whether the wizard reconfigures the default agent in place
   // (fresh install) or appends a new one.
@@ -96,17 +95,15 @@ export function SetupWizard() {
     let cancelled = false
     void (async () => {
       try {
-        const [provs, mods, tools, cliList, status] = await Promise.all([
+        const [provs, mods, cliList, status] = await Promise.all([
           getProviders(),
           getModels(),
-          getAgentTools(),
           listCLIs(),
           getSetupStatus(),
         ])
         if (cancelled) return
         setProviders(provs.providers)
         setModels(mods.models)
-        setDefaultTools(tools.default_tools ?? [])
         setClis(cliList)
         setAlreadyConfigured(status.has_usable_model)
       } catch (e) {
@@ -342,32 +339,12 @@ export function SetupWizard() {
       const rawList = Array.isArray(agentsCfg.list)
         ? (agentsCfg.list as Record<string, unknown>[])
         : []
-      const defaultIdx = rawList.findIndex((a) => a.default === true)
-
-      let list: Record<string, unknown>[]
-      if (!alreadyConfigured && defaultIdx >= 0) {
-        list = rawList.map((a, i) =>
-          i === defaultIdx
-            ? {
-                ...a,
-                name: agentName.trim(),
-                models: [defaultName],
-                tools: defaultTools,
-              }
-            : a,
-        )
-      } else {
-        const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
-        const id = uniqueAgentId(agentName, existingIds)
-        const newAgent: Record<string, unknown> = {
-          id,
-          name: agentName.trim(),
-          models: [defaultName],
-          tools: defaultTools,
-        }
-        if (defaultIdx < 0) newAgent.default = true
-        list = [...rawList, newAgent]
-      }
+      const list = wizardAgentList(
+        rawList,
+        agentName,
+        defaultName,
+        alreadyConfigured,
+      )
 
       // Persist the reviewed network defaults alongside the agent list. A blank
       // or invalid port falls back to the standard 18790 so Next never blocks.
@@ -410,7 +387,6 @@ export function SetupWizard() {
     customLabel,
     presetModels,
     agentName,
-    defaultTools,
     alreadyConfigured,
     networkAccess,
     gatewayPort,

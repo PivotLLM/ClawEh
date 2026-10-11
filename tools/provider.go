@@ -13,7 +13,7 @@ type ToolDescriptor struct {
 	Description    string // one-line description for the GUI
 	Category       string // GUI grouping: "filesystem", "web", "session", etc.
 	ConfigKey      string // maps to the config flag that enables/disables this tool
-	DefaultEnabled bool   // include in the default agent tool allowlist
+	DefaultEnabled bool   // in the standard set the WebUI "Default tools" button writes
 	// Suite, when non-empty, marks this as an all-or-nothing tool suite (e.g.
 	// "cogmem", "maestro"): it is managed by a single per-agent toggle rather than
 	// the per-tool allowlist, and the GUI renders it as one (read-only) entry

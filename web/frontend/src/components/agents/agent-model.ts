@@ -18,7 +18,7 @@ export interface AgentEntry {
   models?: string[]
   /** undefined (key absent) = every skill; [] = none. */
   skills?: string[]
-  /** undefined (key absent) = the install's default tools; [] = none. */
+  /** The native tools the agent may call; absent or [] = none. */
   tools?: string[]
   message?: MessageConfig | null
   temperature?: number
@@ -257,40 +257,23 @@ export function withShellAllowed(tools: string[], allowed: boolean): string[] {
   return allowed ? [...rest, SHELL_TOOL] : rest
 }
 
-// withShellSwitch applies the "Allow shell commands" switch to an agent's
-// tools. An agent without a tools list has the install's default tools
-// (defaults); switching shell on writes them out with shell_exec added, so
-// the agent keeps them. Switching it off there changes nothing: the defaults
-// never include shell_exec.
-export function withShellSwitch(
-  tools: string[] | undefined,
-  defaults: string[],
-  allowed: boolean,
-): string[] | undefined {
-  if (tools === undefined && !allowed) return undefined
-  return withShellAllowed(tools ?? defaults, allowed)
-}
-
-// internalToolsSummary is the "Internal tools (…)" label of an agent's tools,
-// leaving out shell_exec, which has its own switch. none is true when the
-// agent has no internal tools at all.
-export function internalToolsSummary(
-  tools: string[] | undefined,
-  defaults: string[],
-): { text: string; none: boolean } {
-  const list = withShellAllowed(tools ?? defaults, false)
-  const granted =
-    list.length === 0
-      ? "none — no tool access"
-      : `${list.includes("*") ? "all" : list.length} granted`
+// internalToolsSummary is the label of an agent's internal tools, leaving out
+// shell_exec, which has its own switch. An agent has only the tools its list
+// names, so an empty list is "No tools".
+export function internalToolsSummary(tools: string[]): {
+  text: string
+  none: boolean
+} {
+  const list = withShellAllowed(tools, false)
+  if (list.length === 0) return { text: "No tools", none: true }
   return {
-    text: tools === undefined ? `default — ${granted}` : granted,
-    none: list.length === 0,
+    text: `${list.includes("*") ? "all" : list.length} granted`,
+    none: false,
   }
 }
 
 // optionalList reads a list whose absence means something else than an empty
-// list (tools, skills): undefined when the key is absent or null.
+// list (skills): undefined when the key is absent or null.
 function optionalList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   return value.map(asString).filter(Boolean)
@@ -316,9 +299,10 @@ export function parseAgent(value: unknown): AgentEntry {
     // Drop any stale mcp_* entries from the per-tool allowlist: MCP access now
     // lives in mcp_tools, so saving an edited agent cleanly migrates it off the
     // old all-or-nothing wildcard.
-    tools: optionalList(r.tools)?.filter(
-      (tName) => !tName.toLowerCase().startsWith("mcp_"),
-    ),
+    tools: asArray(r.tools)
+      .map(asString)
+      .filter(Boolean)
+      .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
     message:
@@ -581,10 +565,10 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     ...(a.name ? { name: a.name } : {}),
     ...(a.default ? { default: true } : {}),
     ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
-    // Absent and [] differ for skills and tools (every skill / the default
-    // tools against none), so an empty list is sent as [] and kept.
+    // Absent and [] differ for skills (every skill against none), so an
+    // empty list is sent as [] and kept. For tools both mean none.
     ...(a.skills !== undefined ? { skills: a.skills } : {}),
-    ...(a.tools !== undefined ? { tools: a.tools } : {}),
+    ...(a.tools && a.tools.length > 0 ? { tools: a.tools } : {}),
     message:
       a.message && a.message.window_minutes > 0
         ? {

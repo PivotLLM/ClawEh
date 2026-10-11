@@ -18,7 +18,7 @@ import {
   internalToolsSummary,
   shellAllowed,
   shellDenied,
-  withShellSwitch,
+  withShellAllowed,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
@@ -45,8 +45,8 @@ export interface AgentCardProps {
   selectedModels: string[]
   /** undefined = every skill; [] = none. */
   skills: string[] | undefined
-  /** undefined = the install's default tools; [] = none. */
-  tools: string[] | undefined
+  /** The native tools the agent may call; [] = none. */
+  tools: string[]
   availableSkills: SkillInfo[]
   availableTools: AgentToolCatalogResponse
   models: ModelInfo[]
@@ -83,7 +83,7 @@ export interface AgentCardProps {
   /** Human-agent rule notes for this agent (GET /api/agents/human). */
   humanNotes?: HumanAgentProblem[]
   onSkillsChange: (skills: string[] | undefined) => void
-  onToolsChange: (tools: string[] | undefined) => void
+  onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
   onEventRetentionDaysChange?: (v: number | undefined) => void
   onRetiredRetentionDaysChange?: (v: number | undefined) => void
@@ -155,8 +155,8 @@ export function AgentCard({
 }: AgentCardProps) {
   const { t } = useTranslation()
   // The shell entry has its own box; the count is of the other tools.
-  const toolsSummary = internalToolsSummary(tools, availableTools.default_tools)
-  const shellOn = shellAllowed(tools ?? [])
+  const toolsSummary = internalToolsSummary(tools)
+  const shellOn = shellAllowed(tools)
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
@@ -318,7 +318,7 @@ export function AgentCard({
               <p
                 className={`text-xs font-semibold ${toolsSummary.none ? "text-amber-400" : "text-foreground"}`}
               >
-                Internal tools ({toolsSummary.text})
+                Internal tools: {toolsSummary.text}
               </p>
               <p className="text-muted-foreground text-xs">
                 Native tools that stay in this agent&apos;s context on every
@@ -341,9 +341,7 @@ export function AgentCard({
               <Switch
                 checked={shellOn}
                 onCheckedChange={(v) =>
-                  onToolsChange(
-                    withShellSwitch(tools, availableTools.default_tools, v),
-                  )
+                  onToolsChange(withShellAllowed(tools, v))
                 }
                 aria-label={t("agents.allowShell")}
               />

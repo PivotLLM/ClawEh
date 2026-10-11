@@ -47,3 +47,32 @@ export interface StepDef {
   key: string
   title: string
 }
+
+// wizardAgentList is agents.list after the wizard's agent step: the default
+// agent renamed and put on the chosen model in place (first setup), or a new
+// agent added (an install that already has a usable model, or no default
+// agent). The wizard grants no tools; an agent has only the tools its list
+// names, which the operator picks on the Agents page.
+export function wizardAgentList(
+  rawList: Record<string, unknown>[],
+  agentName: string,
+  modelName: string,
+  alreadyConfigured: boolean,
+): Record<string, unknown>[] {
+  const defaultIdx = rawList.findIndex((a) => a.default === true)
+  if (!alreadyConfigured && defaultIdx >= 0) {
+    return rawList.map((a, i) =>
+      i === defaultIdx
+        ? { ...a, name: agentName.trim(), models: [modelName] }
+        : a,
+    )
+  }
+  const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
+  const newAgent: Record<string, unknown> = {
+    id: uniqueAgentId(agentName, existingIds),
+    name: agentName.trim(),
+    models: [modelName],
+  }
+  if (defaultIdx < 0) newAgent.default = true
+  return [...rawList, newAgent]
+}

@@ -202,6 +202,14 @@ production instance directly; test against a dev instance.
   agent's next message.
 - **Turn scope** (`tools/turnscope.go`): the ask chain rides the context and the MCP
   session token (`SetTurnScope`) like the sub-agent depth.
+- **Tool grants**: an agent has only the native tools its own `tools` list names
+  (`AgentConfig.IsToolAllowed`, the one rule for the loop, the MCP host, clones,
+  sub-agents and Check Up); an absent or empty list means none, and there is no
+  implicit default set. `tools.DefaultEnabledToolNames()` is only what the Agents
+  page's "Default tools" button writes into a list (`GET /api/agents/tools`
+  `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`) and
+  `mcp_tools` have their own switches. Check Up lists each enabled agent with no
+  tools.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
   switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
   shell commands") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,

@@ -46,9 +46,9 @@ func TestAgentConfig_IsToolAllowed_DenyTools(t *testing.T) {
 		{"empty deny, wildcard allow", []string{"*"}, []string{}, "file_read_lines", true},
 		{"nil deny, empty allow", []string{}, nil, "shell_exec", false},
 
-		// nil Tools falls back to the install defaults, still subject to deny.
-		{"default tools minus deny", nil, []string{"shell_exec"}, "shell_exec", false},
-		{"default tools, other tool allowed", nil, []string{"shell_exec"}, "file_read_lines", true},
+		// nil Tools (no tools key) grants nothing.
+		{"no tools key, nothing denied", nil, nil, "file_read_lines", false},
+		{"no tools key, other tool denied", nil, []string{"shell_exec"}, "file_read_lines", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,23 +238,6 @@ func TestAgentConfig_IsToolAllowed_ShellExplicitOnly(t *testing.T) {
 					tc.toolName, tc.tools, tc.deny, got, tc.wantAllow)
 			}
 		})
-	}
-}
-
-// With no tools key the install defaults apply; a "*" default does not
-// include shell_exec, and a default list naming it does.
-func TestAgentConfig_IsToolAllowed_ShellDefaults(t *testing.T) {
-	saved := DefaultAgentTools
-	t.Cleanup(func() { DefaultAgentTools = saved })
-	a := &AgentConfig{}
-
-	DefaultAgentTools = []string{"*"}
-	if a.IsToolAllowed("shell_exec") {
-		t.Error(`default tools ["*"] granted shell_exec`)
-	}
-	DefaultAgentTools = []string{"file_read_lines", "shell_exec"}
-	if !a.IsToolAllowed("shell_exec") {
-		t.Error("default tools naming shell_exec did not grant it")
 	}
 }
 

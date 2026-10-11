@@ -11,20 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// DefaultAgentTools is the baseline tool allowlist used when an agent has no
-// explicit tools list. Populated at startup from provider descriptors via
-// SetDefaultAgentTools; the value here is a safe fallback only.
-var DefaultAgentTools = []string{"*"}
-
-// SetDefaultAgentTools replaces the default tool allowlist. Called from the
-// gateway after all tool providers are registered, so each provider's
-// DefaultEnabled flag drives which tools are in every agent's baseline.
-func SetDefaultAgentTools(names []string) {
-	if len(names) > 0 {
-		DefaultAgentTools = names
-	}
-}
-
 // DefaultConfig returns the default configuration for ClawEh.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
@@ -80,10 +66,8 @@ func DefaultConfig() *Config {
 					ID:      "claw",
 					Name:    "Claw",
 					Default: true,
-					// Tools intentionally omitted (nil): the agent inherits the
-					// install default tool set (DefaultAgentTools, driven by each
-					// provider's DefaultEnabled flag). Using ["*"] here would grant
-					// every tool, exceeding the defaults.
+					// Tools omitted: an agent has only the tools its list
+					// names, so the seeded agent starts with none.
 				},
 			},
 		},

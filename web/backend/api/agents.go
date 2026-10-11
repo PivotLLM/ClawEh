@@ -29,7 +29,9 @@ type agentToolCatalogResponse struct {
 	// folder; an mcp_tools entry naming one grants the agent that service's
 	// tools when its Fusion switch is on.
 	FusionServices []string `json:"fusion_services,omitempty"`
-	DefaultTools   []string `json:"default_tools"`
+	// DefaultTools is the standard set the Agents page's "Default tools"
+	// button writes into an agent's list; an agent has only what it lists.
+	DefaultTools []string `json:"default_tools"`
 }
 
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
@@ -147,12 +149,12 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	effectiveDefaults := config.DefaultAgentTools
+	defaultTools := tools.DefaultEnabledToolNames()
+	if defaultTools == nil {
+		defaultTools = []string{}
+	}
 	var fusionServices []string
 	if cfg, cfgErr := h.currentConfig(); cfgErr == nil {
-		if len(cfg.Agents.Defaults.DefaultTools) > 0 {
-			effectiveDefaults = cfg.Agents.Defaults.DefaultTools
-		}
 		fusionServices = fusion.ServiceNames(cfg) //nolint:contextcheck // the engine is process-wide and built once, outside any request
 	}
 
@@ -161,6 +163,6 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 		Tools:          builtinTools,
 		MCPServers:     mcpServers,
 		FusionServices: fusionServices,
-		DefaultTools:   effectiveDefaults,
+		DefaultTools:   defaultTools,
 	})
 }

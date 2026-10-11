@@ -584,3 +584,51 @@ func TestAssessment_PersonChatNotSetUp(t *testing.T) {
 		t.Fatal("an agent that is not a person must not be listed")
 	}
 }
+
+// TestAssessment_AgentWithNoTools: an enabled agent with an empty or missing
+// tools list gets a row naming it, without an action mark; an agent that lists
+// tools, a disabled agent and a human agent get none.
+func TestAssessment_AgentWithNoTools(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	hasRow := func(item string) bool {
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	// alice has no tools key; bob lists his.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "No tools (Alice)")
+	if r[0] != "" || r[2] != "Alice has no tools." {
+		t.Errorf("row = %v", r)
+	}
+	if hasRow("No tools (Bob)") {
+		t.Error("bob lists tools but has a no-tools row")
+	}
+
+	cfg.Agents.List[0].Tools = []string{}
+	if !hasRow("No tools (Alice)") {
+		t.Error("an empty tools list has no row")
+	}
+	cfg.Agents.List[0].Tools = []string{"file_read_lines"}
+	if hasRow("No tools (Alice)") {
+		t.Error("an agent listing a tool has a no-tools row")
+	}
+
+	off := false
+	cfg.Agents.List[1].Tools = nil
+	cfg.Agents.List[1].Enabled = &off
+	if hasRow("No tools (Bob)") {
+		t.Error("a disabled agent is listed")
+	}
+
+	cfg.Agents.List[1].Enabled = nil
+	cfg.Providers = append(cfg.Providers, config.Provider{Name: "People", Protocol: config.HumanProtocol})
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Bob person", Model: "bob", Provider: "People", Enabled: true})
+	cfg.Agents.List[1].Models = []string{"Bob person"}
+	if hasRow("No tools (Bob)") {
+		t.Error("a human agent is listed")
+	}
+}

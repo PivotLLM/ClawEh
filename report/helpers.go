@@ -219,19 +219,8 @@ func defaultAgentID(cfg *config.Config) string {
 	return routing.DefaultAgentID
 }
 
-// effectiveTools is the agent's internal-tool allowlist as IsToolAllowed
-// applies it: nil (key absent) means the install defaults, an empty list means
-// no tools.
-func effectiveTools(a *config.AgentConfig) []string {
-	if a.Tools == nil {
-		return config.DefaultAgentTools
-	}
-	return a.Tools
-}
-
 // agentHasTool reports whether the agent can call the named internal tool, as
-// IsToolAllowed decides it: the allow list (or the install defaults) minus
-// deny_tools.
+// IsToolAllowed decides it: the allow list minus deny_tools.
 func agentHasTool(a *config.AgentConfig, name string) bool {
 	return a.IsToolAllowed(name)
 }

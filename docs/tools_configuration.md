@@ -323,10 +323,13 @@ The skills tool configures skill discovery and installation via registries like 
 
 ## Per-Agent Tool Allowlist
 
-Each named agent has a tool allowlist. An agent in `agents.list` with no `tools`
-key receives the install defaults (`agents.defaults.tools`, which ClawEh
-seeds from the enabled tool providers); an agent with `"tools": []` receives no
-tools at all.
+Each named agent has a tool allowlist, and it gets only the native tools that
+list names. An agent in `agents.list` with no `tools` key, or with `"tools": []`,
+has no tools at all; there is no implicit default set. On the Agents page,
+**Default tools** writes the standard set into an agent's list, where it can be
+edited. Check Up lists every enabled agent that has no tools. Tool suites
+(`cogmem`, `maestro`, `fusion`, `forum`) and `mcp_tools` have their own
+per-agent switches.
 
 The global `tools` section controls which tools exist in the system; each
 agent's list controls which of them that agent may use.
@@ -338,8 +341,7 @@ agent's list controls which of them that agent may use.
 | `["*"]` | Allow all tools that are globally enabled, except `shell_exec` |
 | `["read_file", "exec"]` | Allow only the listed tools |
 | `["read_*"]` | Allow all tools whose names start with `read_` (case-insensitive prefix match) |
-| `[]` (present but empty) | Deny all tools |
-| _(absent)_ | Use the install defaults |
+| `[]` or _(absent)_ | No tools |
 
 `shell_exec` is granted only by naming it: an agent runs shell commands only
 when its `tools` list contains `shell_exec` itself (*Allow shell commands* on

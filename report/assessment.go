@@ -283,6 +283,16 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		}
 	}
 
+	// An agent has only the tools its list names, so one with an empty or
+	// missing list has none. Shown so an agent left without tools (an upgrade
+	// from the implicit default set) is visible. A human agent never runs
+	// tools, so it is not listed.
+	for _, a := range enabledAgents(cfg) {
+		if len(a.Tools) == 0 && !cfg.IsHumanAgent(a.ID) {
+			add(false, "No tools ("+a.DisplayName()+")", a.DisplayName()+" has no tools.")
+		}
+	}
+
 	// A person's chat on a channel that is not set up: requests to them
 	// cannot be delivered. Only the configuration is checked here; whether
 	// the chat itself exists is known only when a request is sent.

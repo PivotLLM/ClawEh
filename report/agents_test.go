@@ -109,11 +109,17 @@ func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 
 func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(t.Context(), cfg, env)
 
-	// alice has no tools key: the install defaults ("*") apply, and every
-	// sensitive tool but shell_exec is admitted by the pattern (shell_exec is
-	// granted only by name).
+	// alice has no tools key: she has no tools.
+	aliceTable := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Internal tools")
+	if len(aliceTable.Rows) != 1 || aliceTable.Rows[0][0] != "(none)" {
+		t.Errorf("no tools key rows = %v", aliceTable.Rows)
+	}
+
+	// With "*", every sensitive tool but shell_exec is admitted by the
+	// pattern (shell_exec is granted only by name).
+	cfg.Agents.List[0].Tools = []string{"*"}
+	s := collectAgents(t.Context(), cfg, env)
 	alice := toolMarkers(findTable(t, agentSub(t, s, "alice"), "Internal tools"))
 	if alice["*"] != "no" {
 		t.Errorf("* marker = %q", alice["*"])

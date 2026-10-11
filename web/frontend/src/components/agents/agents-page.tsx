@@ -68,9 +68,10 @@ export function AgentsPage() {
   const [addingId, setAddingId] = useState("")
   const [addingName, setAddingName] = useState("")
   const [addingModels, setAddingModels] = useState<string[]>([])
-  // undefined: every skill / the default tools, as for a saved agent.
+  // undefined: every skill, as for a saved agent. A new agent starts with no
+  // tools; "Default tools" in the selector writes the standard set.
   const [addingSkills, setAddingSkills] = useState<string[] | undefined>()
-  const [addingTools, setAddingTools] = useState<string[] | undefined>()
+  const [addingTools, setAddingTools] = useState<string[]>([])
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   // Which agent the left rail has selected; only that agent's card is rendered.
@@ -135,10 +136,7 @@ export function AgentsPage() {
   const models = loaded?.models ?? EMPTY_MODELS
   const availableSkills = loaded?.availableSkills ?? EMPTY_SKILLS
   const availableTools = loaded?.availableTools ?? EMPTY_TOOLS
-  const addingSummary = internalToolsSummary(
-    addingTools,
-    availableTools.default_tools,
-  )
+  const addingSummary = internalToolsSummary(addingTools)
   const bindings = loaded?.bindings ?? EMPTY_BINDINGS
 
   // Seed the editable config when a fetch lands. Adjusted during render rather
@@ -326,7 +324,7 @@ export function AgentsPage() {
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
         ...(addingModels.length > 0 ? { models: addingModels } : {}),
         skills: addingSkills,
-        tools: addingTools,
+        ...(addingTools.length > 0 ? { tools: addingTools } : {}),
       },
     ])
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -338,7 +336,7 @@ export function AgentsPage() {
       setAddingName("")
       setAddingModels([])
       setAddingSkills(undefined)
-      setAddingTools(undefined)
+      setAddingTools([])
       setShowAdd(false)
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
@@ -366,7 +364,7 @@ export function AgentsPage() {
     setAddingName("")
     setAddingModels([])
     setAddingSkills(undefined)
-    setAddingTools(undefined)
+    setAddingTools([])
     setAddingToolsExpanded(false)
   }
   const escapeCancelsAdd = (e: React.KeyboardEvent) => {
@@ -593,7 +591,7 @@ export function AgentsPage() {
                             <span
                               className={`text-sm font-semibold ${addingSummary.none ? "text-amber-400" : "text-foreground"}`}
                             >
-                              Internal tools ({addingSummary.text})
+                              Internal tools: {addingSummary.text}
                             </span>
                           </button>
                           {addingToolsExpanded && (

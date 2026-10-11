@@ -53,11 +53,11 @@ describe("editsFromAgent", () => {
     })
   })
 
-  // No tools or skills list means the defaults, an empty list means none: the
-  // buffer keeps the difference so a save does not turn one into the other.
-  it("keeps an absent tools or skills list apart from an empty one", () => {
+  // No skills list means every skill, an empty list none: the buffer keeps
+  // the difference. No tools list and an empty one both mean none.
+  it("keeps an absent skills list apart from an empty one; no tools is none", () => {
     const absent = editsFromAgent({ id: "a" })
-    expect(absent.tools).toBeUndefined()
+    expect(absent.tools).toEqual([])
     expect(absent.skills).toBeUndefined()
     const empty = editsFromAgent({ id: "a", tools: [], skills: [] })
     expect(empty.tools).toEqual([])

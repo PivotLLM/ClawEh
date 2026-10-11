@@ -64,7 +64,7 @@ func humanLoopConfig(t *testing.T, timeoutSec int) *config.Config {
 	cfg.Providers = []config.Provider{{Name: "People", Protocol: config.HumanProtocol}}
 	cfg.Models = []config.ModelConfig{{ModelName: "Bob (human)", Model: "bob", Provider: "People", Enabled: true, RequestTimeout: timeoutSec}}
 	cfg.Agents.List = []config.AgentConfig{
-		{ID: "alice", Name: "Alice", Default: true},
+		{ID: "alice", Name: "Alice", Default: true, Tools: []string{"*"}},
 		{ID: "bob", Name: "Bob", Models: []string{"Bob (human)"}, Tools: []string{"*"}, MCPTools: []string{"*"}},
 	}
 	cfg.Bindings = []config.AgentBinding{{

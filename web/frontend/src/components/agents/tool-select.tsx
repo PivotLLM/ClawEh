@@ -8,20 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 
 export interface ToolSelectProps {
-  /** undefined = the install's default tools (catalog.default_tools). */
-  selected: string[] | undefined
+  /** The agent's tools list; [] = none. */
+  selected: string[]
   catalog: AgentToolCatalogResponse
-  onChange: (tools: string[] | undefined) => void
+  onChange: (tools: string[]) => void
 }
 
-export function ToolSelect({
-  selected: value,
-  catalog,
-  onChange,
-}: ToolSelectProps) {
-  // An agent without a tools list has the default tools: they are shown
-  // checked, and the first change writes them out explicitly.
-  const selected = value ?? catalog.default_tools
+export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   // Only per-tool (native) tools are listed here — these are the tools always in
   // the agent's context. Suites (cogmem, maestro, fusion, forum) are
   // all-or-nothing and controlled by their own switches on the agent card, so
@@ -56,13 +49,10 @@ export function ToolSelect({
     }
   }
 
-  // Default goes back to no tools list (the install's default tools), unless
-  // shell is on: then the defaults are written out to keep shell_exec.
-  const handleDefault = () =>
-    onChange(shell ? withShellAllowed(catalog.default_tools, true) : undefined)
+  // "Default tools" writes the standard set into the list, which stays
+  // editable; shell_exec keeps its own switch's setting.
+  const handleDefault = () => emit(catalog.default_tools)
   const handleClear = () => emit([])
-
-  const noneSelected = selected.length === 0
 
   return (
     <div className="space-y-2">
@@ -74,7 +64,7 @@ export function ToolSelect({
           onClick={handleDefault}
           className="h-6 px-2 text-xs"
         >
-          Default
+          Default tools
         </Button>
         <Button
           type="button"
@@ -86,12 +76,6 @@ export function ToolSelect({
           Clear
         </Button>
       </div>
-
-      {noneSelected && (
-        <p className="text-xs font-medium text-amber-400">
-          No tools selected — this agent has no tool access.
-        </p>
-      )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
         {[...perToolTools]

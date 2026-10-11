@@ -42,16 +42,16 @@ func lastUser(messages []providers.Message) string {
 
 // messagingConfig has Alice (the default agent, allowed to target Bob), Bob
 // (bound to the telegram user u1, allowed nothing) and Helper (allowed "*"),
-// with agent_message switched on.
+// with agent_message switched on. Each lists every tool ("*").
 func messagingConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := newTestConfig(t)
 	cfg.Tools.Subagent.Enabled = true
 	cfg.Tools.Overrides = map[string]bool{"agent_message": true}
 	cfg.Agents.List = []config.AgentConfig{
-		{ID: "alice", Name: "Alice", Default: true, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
-		{ID: "bob", Name: "Bob"},
-		{ID: "helper", Name: "Helper", Subagents: &config.SubagentsConfig{AllowAgents: []string{"*"}}},
+		{ID: "alice", Name: "Alice", Default: true, Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
+		{ID: "bob", Name: "Bob", Tools: []string{"*"}},
+		{ID: "helper", Name: "Helper", Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"*"}}},
 	}
 	cfg.Bindings = []config.AgentBinding{{
 		AgentID: "bob",

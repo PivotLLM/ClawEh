@@ -159,9 +159,9 @@ func access(read, write bool) string {
 // sensitive marker, so the table uses the page width.
 func agentToolsTable(a *config.AgentConfig) Table {
 	t := Table{Caption: "Internal tools", Columns: []string{"Tool", "Sensitive", "Tool", "Sensitive"}}
-	tools := effectiveTools(a)
+	tools := a.Tools
 	if len(tools) == 0 {
-		t.Rows = append(t.Rows, row("(none: the tools list is empty)", "", "", ""))
+		t.Rows = append(t.Rows, row("(none)", "", "", ""))
 		return t
 	}
 	var cells [][]string
@@ -284,7 +284,6 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 		row("Workspace write area", orValue(d.WorkspaceWriteSubdir, "(whole workspace)")),
 		row("Workspace read areas", joinOr(readSubdirs, "(whole workspace)")),
 		row("Agents base directory", cfg.BaseDir()),
-		row("Default tool allowlist (when an agent sets none)", joinOr(config.DefaultAgentTools, none)),
 		row("Max sub-agent depth", itoa(d.GetMaxSubagentDepth())),
 	)
 	s := Section{

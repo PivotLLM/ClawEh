@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { AgentCard } from "./agent-card"
@@ -146,5 +146,44 @@ describe("AgentCard for a person", () => {
     const note = screen.getByTestId("human-agent-problem")
     expect(note.textContent).toBe("Not running: Bob has no chat. Channels")
     expect(note.querySelector("a")?.getAttribute("href")).toBe("/channels")
+  })
+
+  // An agent has only the tools its list names: an empty list is labelled
+  // "No tools", and "Default tools" writes the standard set into the list,
+  // keeping the shell switch's setting.
+  const catalog = {
+    tools: [
+      { name: "file_read", description: "" },
+      { name: "msg_send", description: "" },
+      { name: "web_fetch", description: "" },
+    ],
+    default_tools: ["file_read", "msg_send"],
+  }
+
+  it("labels an agent with no tools", () => {
+    renderCard([], { availableTools: catalog, tools: [] })
+    expect(screen.queryByText("Internal tools: No tools")).not.toBeNull()
+  })
+
+  it("Default tools writes the standard set into the list", () => {
+    const onToolsChange = vi.fn()
+    renderCard([], { availableTools: catalog, tools: [], onToolsChange })
+    fireEvent.click(screen.getByRole("button", { name: "Default tools" }))
+    expect(onToolsChange).toHaveBeenCalledWith(["file_read", "msg_send"])
+  })
+
+  it("Default tools keeps shell commands allowed", () => {
+    const onToolsChange = vi.fn()
+    renderCard([], {
+      availableTools: catalog,
+      tools: ["web_fetch", "shell_exec"],
+      onToolsChange,
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Default tools" }))
+    expect(onToolsChange).toHaveBeenCalledWith([
+      "file_read",
+      "msg_send",
+      "shell_exec",
+    ])
   })
 })

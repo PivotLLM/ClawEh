@@ -67,6 +67,7 @@ export interface AgentToolCatalogResponse {
   // Fusion services defined in the fusion config folder. An mcp_tools entry
   // naming one grants the service's tools when the agent's Fusion switch is on.
   fusion_services?: string[]
+  // The standard set the "Default tools" button writes into an agent's list.
   default_tools: string[]
 }
 

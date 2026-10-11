@@ -58,7 +58,7 @@ type AgentConfig struct { //nolint:recvcheck // see above
 	Workspace   string           `json:"workspace,omitempty"`
 	Models      []string         `json:"models,omitempty"`
 	Skills      []string         `json:"skills,omitempty"` // nil: every skill; []: none (see MarshalJSON)
-	Tools       []string         `json:"tools,omitempty"`  // nil: the default tools; []: none (see MarshalJSON)
+	Tools       []string         `json:"tools,omitempty"`  // the native tools the agent may call; absent or []: none
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
 	Message     *MessageConfig   `json:"message,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
@@ -181,13 +181,13 @@ type AgentConfig struct { //nolint:recvcheck // see above
 	DenyTools []string `json:"deny_tools,omitempty"`
 }
 
-// MarshalJSON writes Skills and Tools as [] when they are empty but not nil,
-// and leaves them out when nil: the two mean "none" and "the defaults" (see
-// Skills), so omitempty alone would turn an agent saved with no tools into
-// one with the default tools.
+// MarshalJSON writes Skills as [] when it is empty but not nil, and leaves it
+// out when nil: the two mean "none" and "every skill", so omitempty alone
+// would turn an agent saved with no skills into one with every skill.
 func (a AgentConfig) MarshalJSON() ([]byte, error) {
 	type Alias AgentConfig
 	// The fields before Skills are repeated so the keys keep their order.
+	// Tools follows from Alias with omitempty: absent and [] both mean none.
 	aux := struct {
 		ID        string    `json:"id"`
 		Enabled   *bool     `json:"enabled,omitempty"`
@@ -196,7 +196,6 @@ func (a AgentConfig) MarshalJSON() ([]byte, error) {
 		Workspace string    `json:"workspace,omitempty"`
 		Models    []string  `json:"models,omitempty"`
 		Skills    *[]string `json:"skills,omitempty"`
-		Tools     *[]string `json:"tools,omitempty"`
 		Alias
 	}{
 		ID: a.ID, Enabled: a.Enabled, Default: a.Default, Name: a.Name,
@@ -204,9 +203,6 @@ func (a AgentConfig) MarshalJSON() ([]byte, error) {
 	}
 	if a.Skills != nil {
 		aux.Skills = &a.Skills
-	}
-	if a.Tools != nil {
-		aux.Tools = &a.Tools
 	}
 	return json.Marshal(aux)
 }
@@ -392,12 +388,8 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if strings.HasPrefix(strings.ToLower(name), "mcp_") {
 		return a.MCPToolAllowed(name)
 	}
-	// nil Tools (key absent in config) → use install defaults.
-	// Empty Tools (tools: [] in config) → deny all intentionally.
+	// Only the tools the list names: absent or [] grants none.
 	allow := a.Tools
-	if allow == nil {
-		allow = DefaultAgentTools
-	}
 	// shell_exec is granted only by naming it: no wildcard or prefix entry
 	// includes it, and no install-wide setting turns it on or off.
 	if IsShellTool(name) {
@@ -853,12 +845,11 @@ type AgentDefaults struct {
 	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
 	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
 
-	ArchiveMessageCount    int      `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
-	ArchiveDays            int      `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
-	SummaryMaxCount        int      `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
-	SummaryRetentionDays   int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
-	ArchiveContentMaxBytes int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
-	DefaultTools           []string `json:"default_tools,omitempty"`
+	ArchiveMessageCount    int `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
+	ArchiveDays            int `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	SummaryMaxCount        int `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
+	SummaryRetentionDays   int `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
+	ArchiveContentMaxBytes int `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 
 	// ContextEviction is the default per-turn tool-result eviction policy
 	// (overridable per agent via AgentConfig.ContextEviction).

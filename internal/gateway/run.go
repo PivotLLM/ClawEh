@@ -26,7 +26,6 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/servicetoken"
-	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // gatewayCmd runs the gateway until it is stopped: a signal, a core service
@@ -62,9 +61,6 @@ func gatewayCmd(debug bool) error {
 	provider := bootProvider(cfg)
 
 	registerToolProviders()
-	// Default per-agent allowlist = every DefaultEnabled tool (single source of
-	// truth; the MCP-host default uses the same set).
-	config.SetDefaultAgentTools(tools.DefaultEnabledToolNames())
 
 	// Operator alerts: parked models, unreachable MCP servers, channels that
 	// give up, failed jobs and reloads. Closed in shutdownGateway. Installed

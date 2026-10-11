@@ -156,19 +156,10 @@ func TestLoadConfig_BuiltinListKeyPresence(t *testing.T) {
 	}
 }
 
-// TestStore_AgentToolsAndSkillsKeepEmpty: an agent's tools and skills tell an
-// absent key (the defaults: the install's default tools, every skill) from an
-// empty list (none). A save must keep that difference: an agent saved with no
-// tools must not come back with the default tools.
-func TestStore_AgentToolsAndSkillsKeepEmpty(t *testing.T) {
-	fields := []struct {
-		name string
-		set  func(a *AgentConfig, v []string)
-		get  func(a *AgentConfig) []string
-	}{
-		{"tools", func(a *AgentConfig, v []string) { a.Tools = v }, func(a *AgentConfig) []string { return a.Tools }},
-		{"skills", func(a *AgentConfig, v []string) { a.Skills = v }, func(a *AgentConfig) []string { return a.Skills }},
-	}
+// TestStore_AgentSkillsKeepEmpty: an agent's skills tell an absent key (every
+// skill) from an empty list (none). A save must keep that difference: an agent
+// saved with no skills must not come back with every skill.
+func TestStore_AgentSkillsKeepEmpty(t *testing.T) {
 	cases := []struct {
 		name    string
 		value   []string
@@ -176,63 +167,94 @@ func TestStore_AgentToolsAndSkillsKeepEmpty(t *testing.T) {
 	}{
 		{name: "absent", value: nil, wantRaw: ""},
 		{name: "empty", value: []string{}, wantRaw: "[]"},
-		{name: "listed", value: []string{"file_read_lines"}, wantRaw: `["file_read_lines"]`},
+		{name: "listed", value: []string{"weather"}, wantRaw: `["weather"]`},
 	}
-	for _, f := range fields {
-		for _, tc := range cases {
-			t.Run(f.name+"/"+tc.name, func(t *testing.T) {
-				s := newTestStore(t)
-				err := s.Update(func(c *Config) error {
-					c.Agents.List = []AgentConfig{{ID: "alice"}}
-					f.set(&c.Agents.List[0], tc.value)
-					return nil
-				})
-				if err != nil {
-					t.Fatalf("Update: %v", err)
-				}
-				raw, ok := rawAgentKey(t, s.Path(), f.name)
-				if tc.wantRaw == "" {
-					if ok {
-						t.Fatalf("%s on disk = %s, want absent", f.name, raw)
-					}
-				} else if !ok || raw != tc.wantRaw {
-					t.Fatalf("%s on disk = %q (present %v), want %s", f.name, raw, ok, tc.wantRaw)
-				}
-				fromDisk, err := LoadConfig(s.Path())
-				if err != nil {
-					t.Fatal(err)
-				}
-				for src, cfg := range map[string]*Config{"store": s.Current(), "disk": fromDisk} {
-					got := f.get(&cfg.Agents.List[0])
-					if (got == nil) != (tc.value == nil) || !slices.Equal(got, tc.value) {
-						t.Fatalf("%s from %s = %#v, want %#v", f.name, src, got, tc.value)
-					}
-				}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			err := s.Update(func(c *Config) error {
+				c.Agents.List = []AgentConfig{{ID: "alice", Skills: tc.value}}
+				return nil
 			})
-		}
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			raw, ok := rawAgentKey(t, s.Path(), "skills")
+			if tc.wantRaw == "" {
+				if ok {
+					t.Fatalf("skills on disk = %s, want absent", raw)
+				}
+			} else if !ok || raw != tc.wantRaw {
+				t.Fatalf("skills on disk = %q (present %v), want %s", raw, ok, tc.wantRaw)
+			}
+			fromDisk, err := LoadConfig(s.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for src, cfg := range map[string]*Config{"store": s.Current(), "disk": fromDisk} {
+				got := cfg.Agents.List[0].Skills
+				if (got == nil) != (tc.value == nil) || !slices.Equal(got, tc.value) {
+					t.Fatalf("skills from %s = %#v, want %#v", src, got, tc.value)
+				}
+			}
+		})
 	}
 }
 
-// TestAgentConfig_SavedWithNoToolsHasNone: the effect of the round trip on
-// what the agent may call.
-func TestAgentConfig_SavedWithNoToolsHasNone(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Update(func(c *Config) error {
-		c.Agents.List = []AgentConfig{{ID: "alice", Tools: []string{}}, {ID: "bob"}}
-		return nil
-	}); err != nil {
-		t.Fatalf("Update: %v", err)
+// TestStore_AgentToolsOnlyWhatIsListed: an agent has only the tools its list
+// names. An absent key and an empty list both mean none and are saved the same
+// way (no key); a listed tool is kept and is the only one allowed.
+func TestStore_AgentToolsOnlyWhatIsListed(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   []string
+		wantRaw string // "" means the key is absent
+		allowed []string
+		denied  []string
+	}{
+		{name: "absent", value: nil, denied: []string{"file_read_lines", "cron_schedule", "shell_exec"}},
+		{name: "empty", value: []string{}, denied: []string{"file_read_lines", "cron_schedule", "shell_exec"}},
+		{
+			name: "listed", value: []string{"file_read_lines"}, wantRaw: `["file_read_lines"]`,
+			allowed: []string{"file_read_lines"}, denied: []string{"file_write", "cron_schedule", "shell_exec"},
+		},
 	}
-	cfg, err := LoadConfig(s.Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	const tool = "file_read_lines" // in the test defaults ("*")
-	if cfg.Agents.List[0].IsToolAllowed(tool) {
-		t.Fatalf("alice (saved with no tools) may call %s", tool)
-	}
-	if !cfg.Agents.List[1].IsToolAllowed(tool) {
-		t.Fatalf("bob (no tools key) may not call default tool %s", tool)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			err := s.Update(func(c *Config) error {
+				c.Agents.List = []AgentConfig{{ID: "alice", Tools: tc.value}}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			raw, ok := rawAgentKey(t, s.Path(), "tools")
+			if tc.wantRaw == "" {
+				if ok {
+					t.Fatalf("tools on disk = %s, want absent", raw)
+				}
+			} else if !ok || raw != tc.wantRaw {
+				t.Fatalf("tools on disk = %q (present %v), want %s", raw, ok, tc.wantRaw)
+			}
+			fromDisk, err := LoadConfig(s.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for src, cfg := range map[string]*Config{"store": s.Current(), "disk": fromDisk} {
+				a := &cfg.Agents.List[0]
+				for _, tool := range tc.allowed {
+					if !a.IsToolAllowed(tool) {
+						t.Errorf("%s: %s may not call listed tool %s", src, a.ID, tool)
+					}
+				}
+				for _, tool := range tc.denied {
+					if a.IsToolAllowed(tool) {
+						t.Errorf("%s: %s may call unlisted tool %s", src, a.ID, tool)
+					}
+				}
+			}
+		})
 	}
 }
 

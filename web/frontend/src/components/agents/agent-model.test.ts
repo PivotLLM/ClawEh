@@ -16,7 +16,6 @@ import {
   shellDenied,
   toggleAccessEntry,
   withShellAllowed,
-  withShellSwitch,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -433,17 +432,17 @@ describe("agentsPayload", () => {
     expect(aliceOn.alice).toMatchObject(unedited("alice"))
   })
 
-  // An agent without a tools list has the install's default tools, one with
-  // an empty list has none; skills likewise (every skill / none). Loading and
-  // saving keep the difference.
-  it("keeps an absent tools or skills list apart from an empty one", () => {
+  // An agent has only the tools its list names: an absent and an empty tools
+  // list both mean none and are saved without the key. Skills keep the
+  // difference (every skill / none).
+  it("reads an absent tools list as none and keeps skills apart", () => {
     const cfg = parseAgentsConfig({
       agents: {
         list: [{ id: "alice" }, { id: "bob", tools: [], skills: [] }],
       },
     })
     const [alice, bob] = cfg.list ?? []
-    expect(alice.tools).toBeUndefined()
+    expect(alice.tools).toEqual([])
     expect(alice.skills).toBeUndefined()
     expect(bob.tools).toEqual([])
     expect(bob.skills).toEqual([])
@@ -452,41 +451,26 @@ describe("agentsPayload", () => {
     ).agents.list
     expect(out[0]).not.toHaveProperty("tools")
     expect(out[0]).not.toHaveProperty("skills")
-    expect(out[1].tools).toEqual([])
+    expect(out[1]).not.toHaveProperty("tools")
     expect(out[1].skills).toEqual([])
   })
 
-  it("Allow shell commands on an agent with the default tools keeps them", () => {
-    const defaults = ["file_read", "msg_send"]
-    expect(withShellSwitch(undefined, defaults, true)).toEqual([
-      "file_read",
-      "msg_send",
-      "shell_exec",
-    ])
-    // Off there changes nothing: the defaults never include shell_exec.
-    expect(withShellSwitch(undefined, defaults, false)).toBeUndefined()
-    // An explicit list is edited as before.
-    expect(withShellSwitch([], defaults, true)).toEqual(["shell_exec"])
-    expect(
-      withShellSwitch(["file_read", "shell_exec"], defaults, false),
-    ).toEqual(["file_read"])
+  it("Allow shell commands on an agent with no tools grants only the shell", () => {
+    expect(withShellAllowed([], true)).toEqual(["shell_exec"])
+    expect(withShellAllowed(["shell_exec"], false)).toEqual([])
   })
 
-  it("internalToolsSummary tells the default tools from none", () => {
-    const defaults = ["file_read", "msg_send"]
-    expect(internalToolsSummary(undefined, defaults)).toEqual({
-      text: "default — 2 granted",
+  it("internalToolsSummary labels an empty list No tools", () => {
+    expect(internalToolsSummary(["file_read", "msg_send"])).toEqual({
+      text: "2 granted",
       none: false,
     })
-    expect(internalToolsSummary([], defaults)).toEqual({
-      text: "none — no tool access",
+    expect(internalToolsSummary([])).toEqual({ text: "No tools", none: true })
+    expect(internalToolsSummary(["shell_exec"])).toEqual({
+      text: "No tools",
       none: true,
     })
-    expect(internalToolsSummary(["shell_exec"], defaults)).toEqual({
-      text: "none — no tool access",
-      none: true,
-    })
-    expect(internalToolsSummary(["*"], defaults)).toEqual({
+    expect(internalToolsSummary(["*"])).toEqual({
       text: "all granted",
       none: false,
     })
@@ -527,7 +511,6 @@ describe("agentsPayload", () => {
       {
         id: "bob",
         name: "Bob",
-        tools: [],
         message: null,
         mcp_tools: [],
         deny_tools: [],

@@ -322,17 +322,26 @@ observe does not need an entry.
   client address without the port (behind a trusted proxy, the forwarded
   address), so the approval list shows who asked.
 
-- **An agent saved with no tools now has none.** Saving the configuration
-  (the WebUI, `PATCH /api/config`) dropped an empty `tools` list, and an agent
-  without a `tools` key gets the install's default tools, so an agent whose
-  tools were all deselected ran with the defaults while the Agents page showed
-  "none". `tools: []` is now written and kept. The same applied to `skills`:
-  `skills: []` (no skills) became every skill and is now kept. An agent
-  without a `tools` or `skills` key still gets the defaults (every skill), and
-  the Agents page now says so ("default — N granted", "All skills
-  (default)") instead of showing it as none. Turning on *Allow shell commands*
-  for such an agent writes its default tools with `shell_exec` added, so it
-  keeps them.
+- **BREAKING: an agent gets only the tools its configuration lists.** An
+  agent with no `tools` list, or an empty one, now has no tools; previously
+  an agent without a `tools` key got the install's default tool set. This
+  applies everywhere the agent acts: its own turns, clones and sub-agents,
+  asks, forum turns and its MCP session and service tokens. Tool suites
+  (`cogmem`, `maestro`, `fusion`, `forum`) and `mcp_tools` keep their own
+  switches. `agents.defaults.default_tools` is removed (a config that still
+  has it gets an unknown-key warning at load). New agents, on the Agents page
+  and in the setup wizard, start with no tools, and the card shows "No tools".
+  Check Up lists every enabled agent that has no tools. Migration: on the
+  Agents page click **Default tools** in the agent's tool list (the standard
+  set is written into the list and can then be edited), or list the tools in
+  the agent's `tools` in `config.json`. Saving no longer writes an empty
+  `"tools": []`; an absent key means the same.
+
+- **An agent saved with no skills now has none.** Saving the configuration
+  (the WebUI, `PATCH /api/config`) dropped an empty `skills` list, so
+  `skills: []` (no skills) became every skill. It is now written and kept. An
+  agent without a `skills` key still gets every skill, and the Agents page
+  says so ("All skills (default)").
 
 ### Added
 
