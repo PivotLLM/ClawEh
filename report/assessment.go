@@ -350,7 +350,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	add(false, "MCP servers running local programs", joinOr(stdio, "None."))
 
 	add(false, "Sub-agent spawning",
-		"Gate "+onOff(cfg.Tools.Subagent.Enabled)+", max depth "+itoa(d.GetMaxSubagentDepth())+".")
+		"Max depth "+itoa(d.GetMaxSubagentDepth())+".")
 
 	return Section{
 		Title:  "Security assessment",

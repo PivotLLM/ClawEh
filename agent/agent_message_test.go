@@ -46,7 +46,6 @@ func lastUser(messages []providers.Message) string {
 func messagingConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := newTestConfig(t)
-	cfg.Tools.Subagent.Enabled = true
 	cfg.Agents.List = []config.AgentConfig{
 		{ID: "alice", Name: "Alice", Default: true, Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
 		{ID: "bob", Name: "Bob", Tools: []string{"*"}},

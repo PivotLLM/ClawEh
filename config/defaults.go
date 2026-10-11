@@ -329,9 +329,6 @@ func DefaultConfig() *Config {
 				Enabled:         true,
 				MaxReadFileSize: 32 * 1024, // 32KB (~8K tokens) per read
 			},
-			Subagent: ToolConfig{
-				Enabled: true,
-			},
 		},
 		Devices: DevicesConfig{
 			Enabled:    false,

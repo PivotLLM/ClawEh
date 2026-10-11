@@ -672,9 +672,6 @@
     "read_file": {
       "enabled": true,
       "max_read_file_size": 32768
-    },
-    "subagent": {
-      "enabled": true
     }
   },
   "devices": {

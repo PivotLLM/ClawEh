@@ -241,7 +241,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	if a.Subagents != nil && (len(a.Subagents.AllowAgents) > 0 || len(a.Subagents.Models) > 0) {
 		sub = "agents " + joinOr(a.Subagents.AllowAgents, none) + "; models " + joinOr(a.Subagents.Models, "(agent's own)")
 	}
-	sub += "; gate " + onOff(cfg.Tools.Subagent.Enabled) + ", max depth " + itoa(d.GetMaxSubagentDepth())
+	sub += "; max depth " + itoa(d.GetMaxSubagentDepth())
 	memory := onOff(a.CognitiveMemoryEnabled())
 	if a.Memory != nil {
 		memory += " (per-agent memory block)"

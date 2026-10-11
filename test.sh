@@ -592,7 +592,6 @@ PY
       }
     },
     "skills": { "registry": { "enabled": true } },
-    "subagent": { "enabled": true },
     "cron": { "enabled": true }
   },
   "mcp_host": {

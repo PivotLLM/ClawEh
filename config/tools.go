@@ -183,8 +183,6 @@ type ToolsConfig struct {
 	Discovery ToolDiscoveryConfig `json:"discovery"`
 	// ReadFile carries the read-size limit used at tool construction.
 	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
-	// Subagent is a capability gate (off by default), not a per-tool enable.
-	Subagent ToolConfig `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
 }
 
 type SearchCacheConfig struct {

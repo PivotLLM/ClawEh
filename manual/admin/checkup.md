@@ -55,7 +55,7 @@ These rows are information only:
 - **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).
 - **No tools (agent)**: the agent has no tools. See [Tools and skills](../agents/tools-and-skills.md).
 - **MCP servers running local programs**: [MCP servers](../mcp.md#external-mcp-servers) started as programs on this machine.
-- **Sub-agent spawning**: whether agents may start [sub-agents](../agents/subagents.md), and how deep.
+- **Sub-agent spawning**: how deep [sub-agents](../agents/subagents.md) may nest.
 
 ## Download the full report
 

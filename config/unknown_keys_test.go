@@ -14,7 +14,8 @@ func TestUnknownConfigKeys(t *testing.T) {
 		"providers": [{"name": "openai", "protocol": "openai-chat", "api_key": "x", "apikey": "wrong"}],
 		"tools": {
 			"mcp": {"servers": {"fusion": {"command": "npx", "comand": "typo"}}},
-			"discovery": {"ttl": 3}
+			"discovery": {"ttl": 3},
+			"subagent": {"enabled": true}
 		},
 		"gateway": {"tls": {"cert_file": "/c", "key_file": "/k", "certfile": "typo"}},
 		"channels": {"line": {"enabled": true}},
@@ -31,6 +32,7 @@ func TestUnknownConfigKeys(t *testing.T) {
 		"gateway.tls.certfile",
 		"providers[0].apikey",
 		"tools.mcp.servers.fusion.comand",
+		"tools.subagent",
 		"top_level_typo",
 	}
 	if !reflect.DeepEqual(got, want) {

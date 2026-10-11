@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 )
 
@@ -25,19 +24,7 @@ type globalAgentProvider struct{}
 func (globalAgentProvider) Namespace() string   { return "agent" }
 func (globalAgentProvider) Description() string { return "Subagent spawning and task tracking" }
 
-// Available gates the package on the subagent capability being enabled, matching
-// the old Build-time check. When disabled the host reports the tool as blocked
-// with reason "requires_subagent".
-func (globalAgentProvider) Available(cfg any) (bool, string) {
-	c, ok := cfg.(*config.Config)
-	if !ok || c == nil {
-		return true, ""
-	}
-	if !c.Tools.Subagent.Enabled {
-		return false, "requires_subagent"
-	}
-	return true, ""
-}
+func (globalAgentProvider) Available(cfg any) (bool, string) { return true, "" }
 
 const spawnToolDescription = "Spawn a subagent to handle a task. Use 'mode' to choose how it runs: " +
 	"'callback' (default) runs it in the background and notifies you when done with a pointer to a result file " +

@@ -385,8 +385,7 @@ observe does not need an entry.
   within N seconds." after `wait_seconds` or that agent's model
   `request_timeout`, whichever is shorter. With `wait_seconds` 0 it whispers:
   the message is added, marked private, to the start of the other agent's next
-  message, and no turn starts. The tool is not in **Default tools** (like
-  `agent_spawn` it needs `tools.subagent.enabled`), and an agent can message
+  message, and no turn starts. The tool is not in **Default tools**, and an agent can message
   only the agents in its `subagents.allow_agents` (`"*"` for all), so no
   existing agent can message anyone until that is set. Each ask counts as one level of
   `agents.defaults.max_subagent_depth`, shared with `agent_spawn`, and an
@@ -1364,6 +1363,8 @@ observe does not need an entry.
 
 ### Removed
 
+- `tools.subagent.enabled` is removed; each agent's own tool list decides
+  whether it has the agent tools.
 - The Tools page and the install-wide per-tool switches (`tools.tool_overrides`)
   are removed; they were redundant with each agent's own tool list, which alone
   decides what an agent can use.

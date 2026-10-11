@@ -26,7 +26,6 @@ import (
 func humanMessagingConfig(t *testing.T, timeoutSec int) *config.Config {
 	t.Helper()
 	cfg := humanLoopConfig(t, timeoutSec)
-	cfg.Tools.Subagent.Enabled = true
 	cfg.Agents.List[0].Subagents = &config.SubagentsConfig{AllowAgents: []string{"bob"}}
 	cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: []string{"*"}}
 	cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{ID: "helper", Name: "Helper"})
