@@ -87,12 +87,14 @@ func (globalCommonProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				return putCommon(commonDir, workspace, call.Args), nil
 			},
 		},
+		// Not in the default set: deleting from the folder every agent shares
+		// is granted per agent.
 		{
 			Name:         "delete",
 			Description:  "Delete a file from the shared common directory.",
 			RawSchema:    deleteSchema,
 			Category:     "common",
-			DefaultAllow: global.Allow(true),
+			DefaultAllow: global.Allow(false),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return deleteCommon(commonDir, call.Args), nil
 			},

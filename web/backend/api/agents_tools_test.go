@@ -38,3 +38,17 @@ func TestHandleListAgentTools_DefaultTools(t *testing.T) {
 		t.Errorf("default_tools = %v, want %v", *body.DefaultTools, want)
 	}
 }
+
+// The default set lets an agent delete in its own folders (file_delete) but
+// not in the common folder every agent shares (common_delete).
+func TestDefaultTools_CommonDeleteNotDefault(t *testing.T) {
+	names := tools.DefaultEnabledToolNames()
+	for _, want := range []string{"file_delete", "common_get", "common_put"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("%s missing from the default tools %v", want, names)
+		}
+	}
+	if slices.Contains(names, "common_delete") {
+		t.Errorf("common_delete must not be in the default tools %v", names)
+	}
+}

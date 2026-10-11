@@ -864,6 +864,9 @@ observe does not need an entry.
 
 ### Changed
 
+- **Default tools** on the Agents page no longer includes `common_delete`;
+  grant it to an agent by hand if it should delete files in the common folder.
+
 - **BREAKING: a blank Default temperature no longer sends 0.2.** When neither
   **Default temperature** (System page, `agents.defaults.temperature`) nor the
   agent's `temperature` is set, ClawEh now sends no temperature and each HTTP
