@@ -80,7 +80,7 @@ observe does not need an entry.
   /api/message/{token}`, the signed LINE webhook, and the login endpoints
   themselves. Loopback is **not** exempt. A credentials file readable by group
   or others is ignored (logged with the `chmod 600` fix) and counts as no
-  account. See `docs/webui-auth.md`.
+  account. See `manual/admin/login.md`.
 
 - **`claw install` and the one-line installer create the admin account and
   will not start the service without one.** When
@@ -139,7 +139,7 @@ observe does not need an entry.
   `claw tls --regenerate` replaces the self-signed pair. `mcp_host.listen` must
   be a loopback address; ClawEh refuses to start otherwise. Changing
   `gateway.host`, `port`, `tls_port`, `tls.mode` or the certificate files
-  needs a restart (ClawEh logs a warning on reload). See `docs/tls.md`.
+  needs a restart (ClawEh logs a warning on reload). See `manual/admin/https.md`.
 
 - **BREAKING:** the shared HTTP listener (WebUI, `/api/*`, `/webui/ws`,
   `/health`, `/ready`, channel webhooks) now answers only to known host names
@@ -380,7 +380,7 @@ observe does not need an entry.
   Whispers not yet delivered are lost on restart. A whisper tells the
   recipient how to answer privately only when it can: it has `agent_message`
   and the sender is in its `subagents.allow_agents`. See
-  `docs/agent-messaging.md`.
+  `manual/agents/messaging.md`.
 
 - **`/ask` and `/whisper` commands.** From any chat, `/ask Bob <text>` asks
   Bob and posts his reply to the chat as "Bob: <reply>" (waiting up to his
@@ -543,7 +543,7 @@ observe does not need an entry.
   channel. A save that breaks these rules is refused; a human agent without a
   default chat is saved but not run, and the Agents page says why.
   `GET /api/agents/human` lists the human agents and any rule problems. See
-  `docs/human-agents.md`, which also gives every message the person and the
+  `manual/agents/human-agents.md`, which also gives every message the person and the
   asker see.
 
 - **Check Up rows for the two states that silently cost agents their tools.**
@@ -633,7 +633,7 @@ observe does not need an entry.
   (`{"identity":{name,version,build,platform,generated_at},"assessment":[{action,item,status}]}`).
   Rows about an agent name it by its display name, and the `shell_exec` row
   reads the same on the page and in the PDF. Secret values never appear. See
-  `docs/report.md`.
+  `manual/admin/checkup.md`.
 
 - **Operator alerts.** Conditions the operator should hear about are written
   to `<CLAW_HOME>/logs/alerts.log` (or the file named by `ALERTER_LOG`), one
@@ -655,7 +655,7 @@ observe does not need an entry.
   ten minutes are counted, not repeated. The Logs page shows the alerts log
   through its new source selector, and `GET /api/gateway/alerts` returns it.
   Every alert is listed in `ALERTS.md`; the record format is in
-  `docs/alerts.md`. Alerts are also delivered to any channel configured
+  `manual/admin/alerts.md`. Alerts are also delivered to any channel configured
   through `ALERTER_*` environment variables or `~/.alerter` (Pushover, SMS,
   SMTP mail, webhook), and a channel's `ALERTER_<CHANNEL>_MIN_PRI` filter is
   honoured. All ClawEh alerts are normal priority.
@@ -700,7 +700,7 @@ observe does not need an entry.
   gets a short random `turn_id` (8 hex) carried on its inbound, routing,
   tool-dispatch and outbound log lines and on its audit rows, so one turn's
   activity can be pulled together across `claw.log` and the audit log. See
-  `docs/audit.md`.
+  `manual/admin/audit.md`.
 
 - **Full backup and restore.** The nightly backup now writes one archive,
   `claw-backup-<timestamp>.tar.gz` (0600, in a 0700 directory), containing
@@ -720,7 +720,7 @@ observe does not need an entry.
   listing every file it will replace, moving the current files to
   `restore-backup-<timestamp>/` and aborting before any change if a restored
   database fails its integrity check. `POST /api/backup` additionally returns
-  `archive`, `bytes` and `skipped`. See `docs/backup.md`.
+  `archive`, `bytes` and `skipped`. See `manual/admin/backup.md`.
 
 - `agents.list[].deny_tools`: a per-agent list of tools the agent may never
   call, evaluated after every grant and always winning — over `tools`, over
@@ -1839,7 +1839,7 @@ behalf, and an assistant is only told about memory when it actually has it.
   replays it on every reconnect. An absent field is "no data", not a change;
   failures retry with backoff and are reported after five in a row. Jobs of
   schedule kind `listen` have no next run and show as `listen (continuous)`.
-  See docs/cron.md, "Listen jobs".
+  See the scheduled jobs guide, "Listen jobs".
 
 ### Changed
 
@@ -2507,11 +2507,11 @@ on, and breaking one is a deliberate decision rather than a free move.
 - Billing failures now surface OpenRouter's top-up URL, which it sends in
   `error.metadata.remedy_hint` rather than a `billing_url` field, and the
   provider is rechecked every 30 minutes.
-- `docs/remote-access.md` described the WebUI and device gateway as sharing port
+- The remote access guide described the WebUI and device gateway as sharing port
   18790. The device gateway is a separate listener on `channels.device.port`
   (default 18791); following the old text published the wrong port and left the
   gateway unreachable.
-- `docs/tools_configuration.md` documented `use_bm25` / `use_regex` discovery
+- The tools configuration guide documented `use_bm25` / `use_regex` discovery
   keys and `tool_search_tool_*` tools that do not exist. The meta-tools are
   `search_tools` and `get_tool_details`, and discovery config lives at
   `tools.discovery`, not `tools.mcp.discovery`.

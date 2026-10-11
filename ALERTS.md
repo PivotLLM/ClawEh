@@ -4,7 +4,7 @@ Every alert ClawEh raises through `github.com/tenebris-tech/alerter`. The
 **alert id** is the alerter's `EventID` field: repeats of the same title with
 the same id inside the suppression window (ten minutes) are counted, not
 re-sent, so the id names the thing that failed. Where alerts go, and the record
-format, are described in `docs/alerts.md`.
+format, are described in `manual/admin/alerts.md`.
 
 **Priority.** The alerter has three levels: Normal, Urgent and Emergency.
 Every ClawEh alert is Normal: written to the log and delivered on the
@@ -76,7 +76,7 @@ failures in ctxengine, cognitive-memory consolidation failures in cogmem, and
 Google/Microsoft OAuth refresh failures in MCPFusion. The agreed design is a
 typed error-event hook per module (`WithArchiveErrorHook`, `WithRunErrorHook`,
 `WithAuthEventHook`), with ClawEh writing the alert in the hook body; see
-"Shared modules" in `docs/alerts.md`. That is a separate project.
+"Shared modules" below. That is a separate project.
 
 ## Where the alerter comes from
 
@@ -89,3 +89,34 @@ which ClawEh sets once at startup. Tests capture the default with
 `internal/testalerts.Install`.
 
 Titles are fixed strings, so the alert log can be searched by them.
+
+## Shared modules
+
+Three failure classes live inside shared modules and are not alerted yet:
+session archive open/append failures (ctxengine), consolidation failures
+(cogmem) and OAuth token refresh failures (MCPFusion). Matching their log
+lines through the logger bridges was rejected as fragile: the messages are
+free text with no stable code or agent identity, and a level change upstream
+would silently stop an alert.
+
+The agreed design, to be done as its own project, is one typed error-event
+hook per module, on the option type each already has, with ClawEh writing the
+alert (title, priority, event id) in the hook body so no module depends on
+the alerter or decides operator policy:
+
+- ctxengine: `WithArchiveErrorHook(func(ArchiveError))` with `Op`, `SessionKey`,
+  `Path`, `Seq`, `Err`; called from the archive open and append paths. ClawEh
+  raises "Session archive not written" (id `<agent>`).
+- cogmem: `WithRunErrorHook(func(RunError))` on the consolidation manager with
+  `Job`, `Trigger`, `Stage` (factory or run), `Status`, `Err`. ClawEh raises
+  "Memory consolidation failed" (id `<agent>`; retried on the next trigger,
+  repeats collapse).
+- MCPFusion: a typed `RefreshError{StatusCode, Body}` from the strategies so
+  a revoked token (400/401) can be told from a transient failure, and
+  `WithAuthEventHook(func(AuthEvent))` on the Fusion engine with `Kind`
+  (refresh failed, client reported error), `Tenant`, `Service`, `AuthType`,
+  `StatusCode`, `Message`, `Err`. ClawEh raises "OAuth token refresh rejected"
+  (id `<agent>/<service>`) and "OAuth client reported error".
+
+Each is a minor version bump of its module, then a `go get` in ClawEh and four
+rows in this file.

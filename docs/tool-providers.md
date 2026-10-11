@@ -165,7 +165,7 @@ they belong:
   ones — sub-agents specifically need them. The snapshot is a throwaway copy,
   deleted with the session when the worker finishes, so anything it writes stays
   on that copy and never reaches the parent's memory. See
-  [docs/subagents.md](subagents.md).
+  [Sub-agents](../manual/agents/subagents.md).
 
 There is correspondingly no `tools.IsPrimaryOnly` helper: it was removed with
 the mechanism.

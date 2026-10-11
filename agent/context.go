@@ -620,7 +620,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 // caches by longest-common-prefix, and the system message precedes the entire
 // conversation history — so a single per-request byte here invalidates the cache
 // for the whole history behind it, not just for the system prompt. That is why
-// the current time is NOT in this block: see docs/context-management-plan.md.
+// the current time is NOT in this block.
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	var sb strings.Builder

@@ -87,7 +87,7 @@ configured security marker and treated as untrusted (it must not be obeyed as
 instructions).
 
 For long-lived, named, per-agent tokens managed in the Web UI, see
-[message-api.md](message-api.md).
+[Message API](../manual/channels/message-api.md).
 
 ---
 

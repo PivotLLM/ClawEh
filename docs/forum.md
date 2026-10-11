@@ -39,10 +39,10 @@ cleaned up, whether the switch is on or off.
 | A fresh agent | `"model": "<name>"` | A temporary agent with no tools and no workspace files, on one of the launching agent's models (`forum_models` lists them). Optional `system_prompt` and `mode` (`memory`, `no_memory`, `single_shot`). Deleted when the forum ends. |
 
 Alice can name Bob (as himself or as a clone) only when Bob is in her
-`subagents.allow_agents`. A human agent (see `human-agents.md`) can take part
+`subagents.allow_agents`. A human agent (see `manual/agents/human-agents.md`) can take part
 as an existing agent; it is never cloned.
 
-Every turn is an ask from Alice (see `agent-messaging.md`): Bob sees
+Every turn is an ask from Alice (see `manual/agents/messaging.md`): Bob sees
 `[Message from Alice — Alice is waiting for your reply]`. Each ask is checked
 against Alice's permissions at that moment: if Bob has left her
 `subagents.allow_agents`, the forum stops instead of asking him. The turn

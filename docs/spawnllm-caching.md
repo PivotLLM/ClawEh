@@ -2,8 +2,7 @@
 
 Audience: whoever works on `github.com/PivotLLM/spawnllm`. Everything here is a
 change in **that** repo, not ClawEh. Written after tracing why ClawEh's
-cross-turn cache hit rate was effectively zero (see
-`docs/context-management-plan.md` for the ClawEh half, which is fixed).
+cross-turn cache hit rate was effectively zero (the ClawEh half is fixed).
 
 **Assume a user may run Claude over the Anthropic HTTP API, over the Claude CLI,
 or both at once** — different agents, same install. The CLI route manages its own

@@ -31,7 +31,7 @@ func NewBackupCommand() *cobra.Command {
 			"cognitive memory, the fusion OAuth store), each checked with quick_check and\n" +
 			"copied with VACUUM INTO, and the agents' forums. Safe to run while claw is up.\n" +
 			"An agent with its own workspace outside agents.base_dir is not fully covered\n" +
-			"(see docs/backup.md). Archives older than backup.retain_days are pruned from\n" +
+			"(see Backup and restore in the manual). Archives older than backup.retain_days are pruned from\n" +
 			"the destination.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -78,7 +78,7 @@ func NewRestoreCommand() *cobra.Command {
 			"archived copy is put in place. Restored databases are checked with quick_check\n" +
 			"first; if any fails the restore aborts and nothing is changed. An agent with\n" +
 			"its own workspace outside agents.base_dir is restored only as far as the\n" +
-			"backup covered it (see docs/backup.md).",
+			"backup covered it (see Backup and restore in the manual).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestore(cmd, args[0], yes)
