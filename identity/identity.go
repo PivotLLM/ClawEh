@@ -38,17 +38,26 @@ func ParseCanonicalID(canonical string) (platform, id string, ok bool) {
 //   - "@alice"              → matches sender.Username
 //   - "123456|alice"        → matches PlatformID or Username
 //   - "telegram:123456"     → exact match on sender.CanonicalID
+//   - "@bob:example.org"    → matches sender.PlatformID as written (Matrix user ids)
 func MatchAllowed(sender bus.SenderInfo, allowed string) bool {
 	allowed = strings.TrimSpace(allowed)
 	if allowed == "" {
 		return false
 	}
 
+	// An entry equal to the sender's platform id matches as written. This is
+	// how a Matrix user id ("@bob:example.org") is listed: it contains a colon
+	// but is a whole id, not "platform:id".
+	if sender.PlatformID != "" && sender.PlatformID == allowed {
+		return true
+	}
+
 	// Try canonical match first: "platform:id" format
 	if platform, id, ok := ParseCanonicalID(allowed); ok {
-		// Only treat as canonical if the platform portion looks like a known platform name
-		// (not a pure-numeric string, which could be a compound ID)
-		if !isNumeric(platform) {
+		// Only treat as canonical if the platform portion looks like a platform
+		// name: not a pure-numeric string (which could be a compound ID) and not
+		// "@..." (the start of a user id such as "@bob:example.org").
+		if !isNumeric(platform) && !strings.HasPrefix(platform, "@") {
 			candidate := BuildCanonicalID(platform, id)
 			if candidate != "" && sender.CanonicalID != "" {
 				return strings.EqualFold(sender.CanonicalID, candidate)

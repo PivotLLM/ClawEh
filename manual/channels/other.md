@@ -22,9 +22,8 @@ in rooms and direct chats.
    - **Device Id**: optional.
    - **Join On Invite**: on by default; the account joins any room it is
      invited to.
-4. In **Allow From**, list who may write, each as `matrix:` followed by the
-   full user ID, for example `matrix:@bob:example.org`. An empty list lets
-   nobody in; `*` lets anyone in.
+4. In **Allow From**, list who may write, each by full user ID, for example
+   `@bob:example.org`. An empty list lets nobody in; `*` lets anyone in.
 5. Bind the channel `matrix` to an agent.
 
 Notes:

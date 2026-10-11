@@ -1355,6 +1355,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Matrix Allow From accepts user IDs as written (`@bob:example.org`).** An
+  entry in the natural form never matched, because the part before the first
+  colon was read as a platform name; only `matrix:@bob:example.org` let the
+  user in. Both forms now match.
+
 - **MCP `/mcp`: `tools/list` offers only the tools the token's agent may
   call.** It listed every agent's tools, and calling one the agent was not
   allowed answered "not enabled for this agent". A service or session token

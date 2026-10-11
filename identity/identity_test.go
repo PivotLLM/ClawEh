@@ -227,6 +227,107 @@ func TestMatchAllowed(t *testing.T) {
 	}
 }
 
+// TestMatchAllowedAcrossChannels checks every channel's sender id format
+// against allow-list entries written the way an operator would write them,
+// so a fix for one channel's ids cannot break another's.
+func TestMatchAllowedAcrossChannels(t *testing.T) {
+	matrix := bus.SenderInfo{
+		Platform:    "matrix",
+		PlatformID:  "@bob:example.org",
+		CanonicalID: BuildCanonicalID("matrix", "@bob:example.org"),
+		Username:    "@bob:example.org",
+		DisplayName: "@bob:example.org",
+	}
+	telegram := bus.SenderInfo{
+		Platform:    "telegram",
+		PlatformID:  "123456",
+		CanonicalID: "telegram:123456",
+		Username:    "alice",
+	}
+	slack := bus.SenderInfo{
+		Platform:    "slack",
+		PlatformID:  "U123ABC",
+		CanonicalID: "slack:U123ABC",
+	}
+	discord := bus.SenderInfo{
+		Platform:    "discord",
+		PlatformID:  "98765432",
+		CanonicalID: "discord:98765432",
+		Username:    "bob",
+	}
+	line := bus.SenderInfo{
+		Platform:    "line",
+		PlatformID:  "U4af4980629",
+		CanonicalID: "line:U4af4980629",
+	}
+	secmsg := bus.SenderInfo{
+		Platform:    "signal",
+		PlatformID:  "+15551234567",
+		CanonicalID: "signal:+15551234567",
+		DisplayName: "Alice",
+	}
+	device := bus.SenderInfo{
+		Platform:    "device",
+		PlatformID:  "a1b2c3d4e5f6",
+		CanonicalID: "device:a1b2c3d4e5f6",
+	}
+
+	tests := []struct {
+		name    string
+		sender  bus.SenderInfo
+		allowed string
+		want    bool
+	}{
+		{"matrix user id as written", matrix, "@bob:example.org", true},
+		{"matrix canonical", matrix, "matrix:@bob:example.org", true},
+		{"matrix canonical any platform case", matrix, "Matrix:@bob:example.org", true},
+		{"matrix user id with spaces", matrix, "  @bob:example.org  ", true},
+		{"matrix other user", matrix, "@alice:example.org", false},
+		{"matrix same name other server", matrix, "@bob:example.com", false},
+		{"matrix canonical other user", matrix, "matrix:@alice:example.org", false},
+		{"matrix localpart alone", matrix, "@bob", false},
+		{"matrix server alone", matrix, "example.org", false},
+		{"matrix user id without @", matrix, "bob:example.org", false},
+		{"matrix id under another platform", matrix, "telegram:@bob:example.org", false},
+
+		{"telegram numeric id", telegram, "123456", true},
+		{"telegram @username", telegram, "@alice", true},
+		{"telegram canonical", telegram, "telegram:123456", true},
+		{"telegram compound", telegram, "123456|alice", true},
+		{"telegram other @username", telegram, "@bob", false},
+		{"telegram matrix-style id", telegram, "@alice:example.org", false},
+
+		{"slack user id", slack, "U123ABC", true},
+		{"slack canonical", slack, "slack:U123ABC", true},
+		{"slack other id", slack, "U999", false},
+
+		{"discord user id", discord, "98765432", true},
+		{"discord canonical", discord, "discord:98765432", true},
+		{"discord @username", discord, "@bob", true},
+		{"discord other platform", discord, "telegram:98765432", false},
+
+		{"line user id", line, "U4af4980629", true},
+		{"line canonical", line, "line:U4af4980629", true},
+
+		{"secmsg phone number", secmsg, "+15551234567", true},
+		{"secmsg canonical", secmsg, "signal:+15551234567", true},
+		{"secmsg other number", secmsg, "+15557654321", false},
+
+		{"device id", device, "a1b2c3d4e5f6", true},
+		{"device canonical", device, "device:a1b2c3d4e5f6", true},
+		{"device other id", device, "device:ffffff", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MatchAllowed(tt.sender, tt.allowed); got != tt.want {
+				t.Errorf("MatchAllowed(%+v, %q) = %v, want %v",
+					tt.sender, tt.allowed, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsNumeric(t *testing.T) {
 	tests := []struct {
 		input string
