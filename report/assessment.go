@@ -34,7 +34,6 @@ const (
 	itemDeviceHTTP  = "Device HTTP"
 	itemDeviceHTTPS = "Device HTTPS"
 	itemMCPHost     = "MCP host (local tools)"
-	itemLINE        = "LINE webhook"
 )
 
 // itemProxy is the neutral row naming the proxies the install is behind.
@@ -59,8 +58,8 @@ type assessRow struct {
 }
 
 // listenerRows is one row per listener, in a fixed order: the WebUI/API over
-// HTTP and HTTPS, the device listener over HTTP and HTTPS, the MCP host, and
-// the LINE webhook when that channel is on. Only unencrypted network access
+// HTTP and HTTPS, the device listener over HTTP and HTTPS, and the MCP host.
+// Only unencrypted network access
 // is marked: WebUI/API or Device HTTP open to the network, and
 // WebUI/API HTTPS off while its HTTP is, unless the install is behind a
 // proxy (Config.BehindProxy), where TLS ends at the proxy and the proxy row
@@ -122,14 +121,6 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 		rows = append(rows, assessRow{false, itemMCPHost, enabledLocal + "."})
 	} else {
 		rows = append(rows, assessRow{false, itemMCPHost, disabledStatus})
-	}
-
-	if line := cfg.Channels.LINE; line.Enabled {
-		if isLoopback(line.WebhookHost) {
-			rows = append(rows, assessRow{false, itemLINE, enabledLocal + "."})
-		} else {
-			rows = append(rows, assessRow{false, itemLINE, enabledNetwork + "; every request must carry LINE's signature."})
-		}
 	}
 	return rows
 }

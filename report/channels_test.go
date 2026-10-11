@@ -43,7 +43,6 @@ func TestCollectChannels_NoneEnabled(t *testing.T) {
 	cfg.Channels.Discord.Enabled = false
 	cfg.Channels.Slack.Enabled = false
 	cfg.Channels.Matrix.Enabled = false
-	cfg.Channels.LINE.Enabled = false
 	cfg.Channels.WebUI.Enabled = false
 	cfg.Channels.Device.Enabled = false
 	tb := findTable(t, collectChannels(t.Context(), cfg, env), "Enabled channels")

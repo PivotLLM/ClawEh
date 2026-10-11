@@ -19,7 +19,7 @@ func newPolicyHost(t *testing.T, gw config.GatewayConfig) *httpHost {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	h.SetMux(mux)
-	if err := h.ApplyPolicy(gw, nil); err != nil {
+	if err := h.ApplyPolicy(gw); err != nil {
 		t.Fatalf("ApplyPolicy() error = %v", err)
 	}
 	return h
@@ -112,7 +112,7 @@ func TestHTTPHostApplyPolicy_HotSwap(t *testing.T) {
 		t.Fatalf("before: Origin old.example status = %d, want %d", got, http.StatusOK)
 	}
 
-	if err := h.ApplyPolicy(config.GatewayConfig{Host: "127.0.0.1", Port: 18790, ExternalURL: "https://new.example"}, nil); err != nil {
+	if err := h.ApplyPolicy(config.GatewayConfig{Host: "127.0.0.1", Port: 18790, ExternalURL: "https://new.example"}); err != nil {
 		t.Fatalf("ApplyPolicy() error = %v", err)
 	}
 	if got := get("new.example"); got != http.StatusOK {
@@ -128,7 +128,7 @@ func TestHTTPHostApplyPolicy_HotSwap(t *testing.T) {
 		t.Fatalf("after: Origin old.example status = %d, want %d", got, http.StatusForbidden)
 	}
 
-	if err := h.ApplyPolicy(config.GatewayConfig{Host: "127.0.0.1", Port: 18790, ExternalURL: "not a url"}, nil); err == nil {
+	if err := h.ApplyPolicy(config.GatewayConfig{Host: "127.0.0.1", Port: 18790, ExternalURL: "not a url"}); err == nil {
 		t.Fatal("ApplyPolicy() accepted an invalid external_url")
 	}
 	if got := get("new.example"); got != http.StatusOK {

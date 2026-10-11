@@ -27,11 +27,6 @@ func TestCollectNetwork_Listeners(t *testing.T) {
 	}
 	contains(t, dev[2], "any address", "device allowlist")
 
-	_, line := findRow(t, tb, "LINE webhook")
-	if line[1] != "0.0.0.0:18792/webhook/line" {
-		t.Errorf("line bind = %q", line[1])
-	}
-
 	// Proxy credentials never appear.
 	s := collectNetwork(t.Context(), cfg, env)
 	pt := findTable(t, s, "Origins and proxies")

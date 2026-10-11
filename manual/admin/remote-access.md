@@ -16,8 +16,7 @@ ClawEh has two separate front doors. Opening one does not open the other.
 | The device listener | Its own | 18791 | Rabbit R1, voice apps (see [Devices](../channels/devices.md)) |
 
 Chat channels such as Telegram, Slack and Discord need neither: ClawEh connects
-out to them. LINE is the exception; it needs the WebUI address to be reachable
-from the internet (see [Other chat channels](../channels/other.md#line)).
+out to them.
 
 Whatever you choose, every WebUI request needs the [admin sign-in](./login.md),
 and every device must be paired.

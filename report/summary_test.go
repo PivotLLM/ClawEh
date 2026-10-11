@@ -31,7 +31,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 	contains(t, in[1], "WebUI/API on 127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 0.0.0.0:18443 (HTTPS)", "inbound gateway")
 	contains(t, in[1], "MCP host on 127.0.0.1:5911/mcp", "inbound mcp host (auto_enable with a CLI provider)")
 	_, msg := findRow(t, tb, "Messaging")
-	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, Line, WebUI, Device" {
+	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, WebUI, Device" {
 		t.Errorf("Messaging = %q", msg[1])
 	}
 	_, dev := findRow(t, tb, "Devices")

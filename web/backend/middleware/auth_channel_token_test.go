@@ -13,7 +13,7 @@ import (
 func TestAuth_WebUIChannelTokenPassesToChannel(t *testing.T) {
 	store := NewAuthStore(t.TempDir() + "/credentials.json")
 	reached := false
-	h := Auth(func() *AuthStore { return store }, func() *AuthExempt { return nil },
+	h := Auth(func() *AuthStore { return store },
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 
 	for _, tc := range []struct {

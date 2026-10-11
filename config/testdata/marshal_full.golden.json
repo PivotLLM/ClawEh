@@ -451,31 +451,6 @@
       },
       "reasoning_channel_id": "x"
     },
-    "line": {
-      "enabled": true,
-      "channel_secret": "x",
-      "channel_access_token": "x",
-      "webhook_host": "x",
-      "webhook_port": 1,
-      "webhook_path": "x",
-      "allow_from": [
-        "x"
-      ],
-      "group_trigger": {
-        "mention_only": true,
-        "prefixes": [
-          "x"
-        ]
-      },
-      "typing": {
-        "enabled": true
-      },
-      "placeholder": {
-        "enabled": true,
-        "text": "x"
-      },
-      "reasoning_channel_id": "x"
-    },
     "webui": {
       "enabled": true,
       "token": "x",

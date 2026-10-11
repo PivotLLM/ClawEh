@@ -100,17 +100,6 @@ func listeners(cfg *config.Config) []listener {
 		dl.Notes = strings.Join(notes, "; ")
 	}
 	out = append(out, dl)
-
-	line := cfg.Channels.LINE
-	ll := listener{Name: "LINE webhook", Enabled: line.Enabled}
-	if line.Enabled {
-		ll.Addr = bindAddr(line.WebhookHost, line.WebhookPort) + line.WebhookPath
-		ll.Allow = "LINE request signature (channel_secret)"
-		if !isLoopback(line.WebhookHost) {
-			ll.Notes = "reachable from other hosts (a webhook must be)"
-		}
-	}
-	out = append(out, ll)
 	return out
 }
 

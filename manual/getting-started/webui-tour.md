@@ -62,7 +62,7 @@ See [Providers, models and fallback](../providers/concepts.md).
 
 ## Channels
 
-One page per chat channel, in alphabetical order: **Discord**, **LINE**, **Matrix**, **SecMsg**, **Slack**, **Telegram** and **Web** (the WebUI chat). Each page holds the channel's credentials and **Allow From**, the list of people who may write.
+One page per chat channel, in alphabetical order: **Discord**, **Matrix**, **SecMsg**, **Slack**, **Telegram** and **Web** (the WebUI chat). Each page holds the channel's credentials and **Allow From**, the list of people who may write.
 
 See [Channels](../channels/index.md), which links to the page for each channel.
 

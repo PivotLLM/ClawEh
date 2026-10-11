@@ -17,6 +17,7 @@ func TestUnknownConfigKeys(t *testing.T) {
 			"discovery": {"ttl": 3}
 		},
 		"gateway": {"tls": {"cert_file": "/c", "key_file": "/k", "certfile": "typo"}},
+		"channels": {"line": {"enabled": true}},
 		"top_level_typo": 1
 	}`))
 	if err != nil {
@@ -26,6 +27,7 @@ func TestUnknownConfigKeys(t *testing.T) {
 	want := []string{
 		"agents.defaults.worksapce",
 		"agents.list[0].colour",
+		"channels.line",
 		"gateway.tls.certfile",
 		"providers[0].apikey",
 		"tools.mcp.servers.fusion.comand",

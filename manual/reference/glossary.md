@@ -16,7 +16,7 @@ This page explains the terms used in ClawEh and this manual.
 
 **Binding** — A rule that sends messages from a channel, chat or account to a particular agent. It also sets an agent's default channel. Set on the **Bindings** page. See [Routing and bindings](../channels/routing.md).
 
-**Channel** — A way to reach agents: the WebUI chat, Telegram, Slack, Discord, Signal, Matrix, LINE or the device listener. See [Channels](../channels/index.md).
+**Channel** — A way to reach agents: the WebUI chat, Telegram, Slack, Discord, Signal, Matrix or the device listener. See [Channels](../channels/index.md).
 
 **Check Up** — The WebUI page that lists the security-relevant settings of the install and marks those that need attention. See [Check Up and the full report](../admin/checkup.md).
 

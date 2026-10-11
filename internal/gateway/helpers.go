@@ -7,7 +7,6 @@ import (
 
 	_ "github.com/PivotLLM/ClawEh/channels/device"
 	_ "github.com/PivotLLM/ClawEh/channels/discord"
-	_ "github.com/PivotLLM/ClawEh/channels/line"
 	_ "github.com/PivotLLM/ClawEh/channels/matrix"
 	_ "github.com/PivotLLM/ClawEh/channels/secmsg"
 	_ "github.com/PivotLLM/ClawEh/channels/slack"

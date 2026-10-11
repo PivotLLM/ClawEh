@@ -54,8 +54,8 @@ a `peer` in `config.json`. The peer kinds are:
 
 | Kind | Channels | ID |
 |---|---|---|
-| `direct` | Telegram, Slack, Discord, Matrix, LINE, SecMsg | the person's user ID on that service |
-| `group` | Telegram, Matrix, LINE, SecMsg | the group's chat or room ID |
+| `direct` | Telegram, Slack, Discord, Matrix, SecMsg | the person's user ID on that service |
+| `group` | Telegram, Matrix, SecMsg | the group's chat or room ID |
 | `channel` | Slack, Discord | the channel ID |
 
 Example: the Telegram bot `telegram-alice` answers as Alice, except in one

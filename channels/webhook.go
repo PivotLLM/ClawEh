@@ -7,7 +7,7 @@ import "net/http"
 // and registers them on the shared HTTP server.
 type WebhookHandler interface {
 	// WebhookPath returns the path to mount this handler on the shared server.
-	// Example: "/webhook/line"
+	// Example: "/webui/"
 	WebhookPath() string
 	http.Handler // ServeHTTP(w http.ResponseWriter, r *http.Request)
 }

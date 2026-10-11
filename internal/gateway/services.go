@@ -354,7 +354,7 @@ func startHTTPHost(services *gatewayServices, cfg *config.Config, agentLoop *age
 	if services.TLSCerts != nil {
 		services.HTTPHost.SetCertificateNames(services.TLSCerts.Info().Names())
 	}
-	if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+	if err := services.HTTPHost.ApplyPolicy(cfg.Gateway); err != nil {
 		return err
 	}
 	if err := startWebAuth(services, cfg); err != nil {
@@ -742,10 +742,10 @@ func reapplyListenerPolicy(services *gatewayServices, cfg *config.Config) {
 		if err := services.HTTPHost.SetTrustedProxies(cfg.Gateway.TrustedProxies); err != nil {
 			logger.WarnF("Invalid trusted proxy list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
 		}
-		// external_url and the LINE webhook path can change on reload; a bad
+		// external_url can change on reload; a bad
 		// external_url keeps the previous policy rather than dropping to
 		// loopback-only.
-		if err := services.HTTPHost.ApplyPolicy(cfg.Gateway, services.ChannelManager); err != nil {
+		if err := services.HTTPHost.ApplyPolicy(cfg.Gateway); err != nil {
 			logger.WarnF("Invalid gateway.external_url in reloaded config; keeping the previous host policy", map[string]any{"error": err.Error()})
 		}
 	}
@@ -880,7 +880,7 @@ func startTLSWatch(services *gatewayServices, agentLoop *agent.AgentLoop) {
 			services.AuthStore.Reload()
 		}
 		services.HTTPHost.SetCertificateNames(info.Names())
-		if err := services.HTTPHost.ApplyPolicy(agentLoop.GetConfig().Gateway, services.ChannelManager); err != nil {
+		if err := services.HTTPHost.ApplyPolicy(agentLoop.GetConfig().Gateway); err != nil {
 			logger.WarnCF("gateway", "Host policy not re-applied after certificate change", map[string]any{"error": err.Error()})
 		}
 	})

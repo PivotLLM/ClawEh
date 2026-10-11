@@ -6,7 +6,7 @@ ClawEh is a self-hosted program that runs one or more personal AI assistants on 
 
 ClawEh runs [agents](../agents/index.md). An agent is an assistant with its own name, models, tools, files and memory.
 
-You reach an agent through [channels](../channels/index.md): the built-in WebUI chat, Telegram, Slack, Discord, Signal, Matrix, LINE, and paired devices such as the Rabbit R1 or a voice app.
+You reach an agent through [channels](../channels/index.md): the built-in WebUI chat, Telegram, Slack, Discord, Signal, Matrix, and paired devices such as the Rabbit R1 or a voice app.
 
 Each agent uses one or more **models**. A model is reached through a [provider](../providers/index.md): an API such as OpenAI, Anthropic or OpenRouter, or a coding CLI installed on the same machine (Claude Code, Codex, Antigravity, Cursor).
 

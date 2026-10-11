@@ -15,7 +15,6 @@ var channelCatalog = []channelCatalogItem{
 	{Name: "secmsg", ConfigKey: "secmsg"},
 	{Name: "discord", ConfigKey: "discord"},
 	{Name: "slack", ConfigKey: "slack"},
-	{Name: "line", ConfigKey: "line"},
 	{Name: "webui", ConfigKey: "webui"},
 	{Name: "matrix", ConfigKey: "matrix"},
 }

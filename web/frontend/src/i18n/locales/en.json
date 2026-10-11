@@ -214,7 +214,6 @@
       "secmsg": "SecMsg",
       "discord": "Discord",
       "slack": "Slack",
-      "line": "LINE",
       "webui": "Web",
       "matrix": "Matrix"
     },
@@ -289,9 +288,6 @@
         "corpId": "Enterprise Corp ID.",
         "agentId": "Enterprise application Agent ID.",
         "webhookUrl": "Full webhook URL.",
-        "webhookHost": "Webhook listening host.",
-        "webhookPort": "Webhook listening port.",
-        "webhookPath": "Webhook route path.",
         "replyTimeout": "Reply timeout in seconds.",
         "maxSteps": "Maximum number of processing steps.",
         "welcomeMessage": "Welcome message content for new sessions.",

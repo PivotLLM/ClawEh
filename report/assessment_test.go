@@ -86,8 +86,8 @@ func assessmentRow(t *testing.T, s Section, item string) []string {
 
 // TestAssessment_ListenerRows: one row per listener, in order, in plain
 // words. The fixture is the default install: HTTP on localhost, HTTPS on the
-// network with a self-signed certificate, the device listener and the LINE
-// webhook on the network. Only the unencrypted device listener earns a mark.
+// network with a self-signed certificate, the device listener on the
+// network. Only the unencrypted device listener earns a mark.
 func TestAssessment_ListenerRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
@@ -97,7 +97,6 @@ func TestAssessment_ListenerRows(t *testing.T) {
 		{"*", "Device HTTP", "Enabled for network access (unencrypted); allowed from any address."},
 		{"", "Device HTTPS", "Disabled."},
 		{"", "MCP host (local tools)", "Enabled for localhost."},
-		{"", "LINE webhook", "Enabled for network access; every request must carry LINE's signature."},
 	}
 	rows := s.Tables[0].Rows
 	if len(rows) < len(want) {
@@ -144,12 +143,11 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	}
 
 	// HTTPS on localhost only; any-address allowlists; device on loopback;
-	// MCP host and LINE off.
+	// MCP host off.
 	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
 	cfg.Gateway.AllowedCIDRs = []string{"*"}
 	cfg.Channels.Device.Host = "127.0.0.1"
 	cfg.MCPHost.Enabled, cfg.MCPHost.AutoEnable = false, false
-	cfg.Channels.LINE.Enabled = false
 	s = collectAssessment(t.Context(), cfg, env)
 	for item, status := range map[string]string{
 		"WebUI/API HTTPS":        "Enabled for localhost, self-signed certificate.",
@@ -158,11 +156,6 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	} {
 		if r = assessmentRow(t, s, item); r[0] != "" || r[2] != status {
 			t.Errorf("%s = %q, want %q", item, r, status)
-		}
-	}
-	for _, row := range s.Tables[0].Rows {
-		if row[1] == "LINE webhook" {
-			t.Errorf("LINE row with the channel off: %q", row)
 		}
 	}
 	cfg.Gateway.TLS.Mode = config.TLSModeAll

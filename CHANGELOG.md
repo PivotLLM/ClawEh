@@ -1349,6 +1349,14 @@ observe does not need an entry.
 
 ### Removed
 
+- **BREAKING: the LINE channel is removed.** It received messages only
+  through a webhook that had to be reachable from the internet, which the rest
+  of ClawEh is built to avoid. The **Channels → LINE** page, the `line`
+  channel, its `/webhook/line` route and the LINE rows on the Check Up page and
+  in the configuration report are gone. Migration: remove `channels.line` from
+  `config.json`; until you do, it is ignored and logged as an unknown key at
+  startup. Bind the agent to another channel to keep reaching it.
+
 - **`launcher-config.json` is no longer read.** The retired launcher's
   separate IP allowlist file was folded into `gateway.allowed_cidrs` on every
   load. Nothing writes that file any more; if one is still present, startup

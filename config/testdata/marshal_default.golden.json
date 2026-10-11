@@ -550,21 +550,6 @@
       },
       "reasoning_channel_id": ""
     },
-    "line": {
-      "enabled": false,
-      "channel_secret": "",
-      "channel_access_token": "",
-      "webhook_host": "0.0.0.0",
-      "webhook_port": 18791,
-      "webhook_path": "/webhook/line",
-      "allow_from": [],
-      "group_trigger": {
-        "mention_only": true
-      },
-      "typing": {},
-      "placeholder": {},
-      "reasoning_channel_id": ""
-    },
     "webui": {
       "enabled": false,
       "token": "",

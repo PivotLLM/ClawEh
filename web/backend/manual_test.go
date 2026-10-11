@@ -28,7 +28,6 @@ func manualServer(t *testing.T) (http.Handler, *http.Cookie) {
 	RegisterEmbedRoutes(mux)
 	h := middleware.Auth(
 		func() *middleware.AuthStore { return store },
-		func() *middleware.AuthExempt { return nil },
 		mux,
 	)
 	return h, &http.Cookie{Name: middleware.SessionCookieInsecure, Value: id}

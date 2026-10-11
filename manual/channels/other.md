@@ -1,6 +1,6 @@
 # Other chat channels
 
-Set up the remaining chat channels ClawEh supports: Matrix, LINE and SecMsg (Signal and similar services through a separate daemon).
+Set up the remaining chat channels ClawEh supports: Matrix and SecMsg (Signal and similar services through a separate daemon).
 
 Each of these works like the others: set it up on its page under
 **Channels**, fill in **Allow From**, then bind it to an agent on the
@@ -36,33 +36,6 @@ Notes:
 - If the homeserver rejects the token, ClawEh raises **Channel credentials
   rejected**; with no working connection for ten minutes it raises **Matrix
   down**, then **Matrix up** when it is back.
-
-## LINE
-
-LINE delivers messages to ClawEh through a webhook, so ClawEh must be
-reachable from the internet over HTTPS (see [HTTPS and certificates](../admin/https.md)).
-
-1. In the LINE Developers console, create a Messaging API channel and note its
-   **channel secret** and **channel access token**.
-2. In the WebUI sidebar, open **Channels → LINE** and turn on **Enable
-   channel**.
-3. Fill in **Channel Secret** and **Channel Access Token**.
-4. Leave **Webhook Path** at `/webhook/line` unless you need another path.
-   The webhook is served by ClawEh's own web address, the same one as the
-   WebUI; **Webhook Host** and **Webhook Port** are not used for it.
-5. In the LINE console, set the webhook URL to your public ClawEh address plus
-   the path, for example `https://claw.example.com/webhook/line`.
-6. Make sure that host name is ClawEh's external address (**Network** page,
-   **Hostname / external URL**; see [Network access](../admin/network.md)); ClawEh refuses requests for host names it does
-   not know.
-7. In **Allow From**, list the LINE user IDs that may write. An empty list lets
-   nobody in.
-8. Bind the channel `line` to an agent.
-
-Every webhook request must carry LINE's signature; requests without a valid
-one are refused. No WebUI login is needed for the webhook itself.
-
-In group chats the bot answers only when mentioned (the default for LINE).
 
 ## SecMsg (Signal)
 

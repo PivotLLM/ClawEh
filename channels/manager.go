@@ -74,7 +74,6 @@ var channelRateConfig = map[string]float64{
 	"discord":  1,
 	"slack":    1,
 	"matrix":   2,
-	"line":     10,
 }
 
 type channelWorker struct {
@@ -633,11 +632,6 @@ func (m *Manager) initChannels() error {
 		m.config.Channels.Matrix.AccessToken != "" {
 		warnEmptyAllowFrom("Matrix", m.config.Channels.Matrix.AllowFrom)
 		m.initChannel("matrix", "Matrix")
-	}
-
-	if m.config.Channels.LINE.Enabled && m.config.Channels.LINE.ChannelAccessToken != "" {
-		warnEmptyAllowFrom("LINE", m.config.Channels.LINE.AllowFrom)
-		m.initChannel("line", "LINE")
 	}
 
 	if m.config.Channels.WebUI.Enabled && m.config.Channels.WebUI.Token != "" {

@@ -121,16 +121,6 @@ func DefaultConfig() *Config {
 					Text:    "Thinking... 💭",
 				},
 			},
-			LINE: LINEConfig{
-				Enabled:            false,
-				ChannelSecret:      "",
-				ChannelAccessToken: "",
-				WebhookHost:        "0.0.0.0",
-				WebhookPort:        18791,
-				WebhookPath:        "/webhook/line",
-				AllowFrom:          FlexibleStringSlice{},
-				GroupTrigger:       GroupTriggerConfig{MentionOnly: true},
-			},
 			WebUI: WebUIConfig{
 				Enabled:        false,
 				Token:          "",

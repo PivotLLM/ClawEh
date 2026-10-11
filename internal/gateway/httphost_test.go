@@ -301,7 +301,7 @@ func TestHTTPHostApplyPolicy_CertificateNames(t *testing.T) {
 		t.Fatalf("unknown name before SetCertificateNames: %d", got)
 	}
 	h.SetCertificateNames([]string{"box.lan", "192.168.1.20"})
-	if err := h.ApplyPolicy(config.GatewayConfig{Host: "0.0.0.0", Port: 18790}, nil); err != nil {
+	if err := h.ApplyPolicy(config.GatewayConfig{Host: "0.0.0.0", Port: 18790}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"box.lan:18443", "192.168.1.20:18443"} {
@@ -310,7 +310,7 @@ func TestHTTPHostApplyPolicy_CertificateNames(t *testing.T) {
 		}
 	}
 	h.SetCertificateNames([]string{"other.lan"})
-	if err := h.ApplyPolicy(config.GatewayConfig{Host: "0.0.0.0", Port: 18790}, nil); err != nil {
+	if err := h.ApplyPolicy(config.GatewayConfig{Host: "0.0.0.0", Port: 18790}); err != nil {
 		t.Fatal(err)
 	}
 	if got := status("box.lan:18443"); got != http.StatusMisdirectedRequest {

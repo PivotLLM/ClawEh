@@ -255,11 +255,6 @@ func TestMatchAllowedAcrossChannels(t *testing.T) {
 		CanonicalID: "discord:98765432",
 		Username:    "bob",
 	}
-	line := bus.SenderInfo{
-		Platform:    "line",
-		PlatformID:  "U4af4980629",
-		CanonicalID: "line:U4af4980629",
-	}
 	secmsg := bus.SenderInfo{
 		Platform:    "signal",
 		PlatformID:  "+15551234567",
@@ -305,9 +300,6 @@ func TestMatchAllowedAcrossChannels(t *testing.T) {
 		{"discord canonical", discord, "discord:98765432", true},
 		{"discord @username", discord, "@bob", true},
 		{"discord other platform", discord, "telegram:98765432", false},
-
-		{"line user id", line, "U4af4980629", true},
-		{"line canonical", line, "line:U4af4980629", true},
 
 		{"secmsg phone number", secmsg, "+15551234567", true},
 		{"secmsg canonical", secmsg, "signal:+15551234567", true},

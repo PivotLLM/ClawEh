@@ -284,7 +284,6 @@ var platformNames = map[string]string{
 	"discord":  "Discord",
 	"slack":    "Slack",
 	"matrix":   "Matrix",
-	"line":     "LINE",
 	"secmsg":   "SecMsg",
 	"webui":    "WebUI",
 	"device":   "Device",

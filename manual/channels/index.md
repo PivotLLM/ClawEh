@@ -28,7 +28,6 @@ channel is handed to one agent, and the agent's reply goes back the same way.
 | Slack | **Channels → Slack** | `slack` | [Slack](./slack.md) |
 | Discord | **Channels → Discord** | `discord` | [Discord](./discord.md) |
 | Matrix | **Channels → Matrix** | `matrix` | [Other chat channels](./other.md#matrix) |
-| LINE | **Channels → LINE** | `line` | [Other chat channels](./other.md#line) |
 | SecMsg (Signal and similar, through a separate daemon) | **Channels → SecMsg** | `<daemon name>-<account>` | [Other chat channels](./other.md#secmsg-signal) |
 | Devices (Rabbit R1, voice apps) | **Services → Devices** | — (each device picks its agent) | [Devices](./devices.md) |
 

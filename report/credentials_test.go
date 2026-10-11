@@ -84,7 +84,6 @@ func TestChannelCredentialRows_NamesOnly(t *testing.T) {
 	txt := tableText(Table{Rows: channelCredentialRows(cfg)})
 	contains(t, txt, "Telegram telegram-bob | token set", "telegram")
 	contains(t, txt, "Slack | bot_token set, app_token set", "slack")
-	contains(t, txt, "LINE | channel_secret set, channel_access_token set", "line")
 	contains(t, txt, "Device listener | token set, word_token set", "device")
 	for _, s := range allSecrets {
 		if strings.Contains(txt, s) {

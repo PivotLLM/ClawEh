@@ -93,9 +93,6 @@ func enabledChannels(cfg *config.Config) []channelInfo {
 		}
 		add("matrix", id, ch.Matrix.AllowFrom, false, groupTrigger(ch.Matrix.GroupTrigger))
 	}
-	if ch.LINE.Enabled {
-		add("line", "webhook "+ch.LINE.WebhookPath, ch.LINE.AllowFrom, false, groupTrigger(ch.LINE.GroupTrigger))
-	}
 	if ch.WebUI.Enabled {
 		add("webui", "browser sessions on the WebUI listener", ch.WebUI.AllowFrom, false, "n/a")
 	}

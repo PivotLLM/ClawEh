@@ -17,7 +17,7 @@ Fix the marked rows first. Then re-open **Check Up**; it is rebuilt each time th
 
 ### Listeners
 
-One row each for **WebUI/API HTTP**, **WebUI/API HTTPS**, **Device HTTP**, **Device HTTPS** and **MCP host (local tools)**, plus **LINE webhook** when LINE is on. The status says "Enabled for localhost", "Enabled for network access" or "Disabled.", which certificate is used, and which networks are allowed.
+One row each for **WebUI/API HTTP**, **WebUI/API HTTPS**, **Device HTTP**, **Device HTTPS** and **MCP host (local tools)**. The status says "Enabled for localhost", "Enabled for network access" or "Disabled.", which certificate is used, and which networks are allowed.
 
 | Marked when | What to do |
 |---|---|
