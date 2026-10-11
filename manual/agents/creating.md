@@ -33,7 +33,7 @@ If a model in the chain runs on a [command-line provider](../providers/cli-provi
 Other model settings on the card:
 
 - **Memory models (optional)**: models tried first when this agent's memory is consolidated or its conversation is summarized, ahead of the install's memory models. Use them when the default models refuse this agent's content.
-- **Temperature**: 0 to 2; blank uses the default.
+- **Temperature**: 0 to 2; blank uses **Default temperature** on the System page, else the model's own default.
 
 ## Turn an agent off or delete it
 

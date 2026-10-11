@@ -49,7 +49,7 @@ The catch: if the request carries a parameter that no host of that model adverti
 
 The two usual causes:
 
-1. **Temperature.** ClawEh sends a temperature with every request (0.2 unless you set one). Many reasoning models do not accept it. Fix: add `temperature` to the model's **Drop Request Fields** (`drop_params`). The catalogue does this for OpenRouter GPT 5.5.
+1. **Temperature.** ClawEh sends a temperature when the agent or **Default temperature** sets one. Many reasoning models do not accept it. Fix: add `temperature` to the model's **Drop Request Fields** (`drop_params`). The catalogue does this for OpenRouter GPT 5.5.
 2. **Parallel tool calls.** **Disable Parallel Tool Calls** (`no_parallel_tool_calls`) on the provider sends `parallel_tool_calls: false`. If no host of the model supports that parameter, the model is refused. Fix: turn the setting off for the provider, or move the model to a provider without it.
 
 You can also list `provider` in **Drop Request Fields** to remove the routing hint altogether. The model is then no longer refused, but OpenRouter may again route it to a host that ignores tools.

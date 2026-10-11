@@ -543,7 +543,7 @@ export function AgentCard({
                 placeholder="default"
               />
               <span className="text-muted-foreground text-xs">
-                (0–2, blank = use default)
+                (0–2; blank uses the default temperature, else the model's own)
               </span>
             </div>
           </div>

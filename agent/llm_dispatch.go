@@ -55,8 +55,9 @@ func (t *llmTurn) newDispatch(defs []providers.ToolDefinition, promptEstimate in
 		"prompt_cache_key": agent.ID,
 	}
 	// CLI providers run a subprocess and take no HTTP request parameters.
-	if _, isCLI := runProvider.(providers.CLIProvider); !isCLI {
-		llmOpts["temperature"] = agent.Temperature
+	// With no temperature configured none is sent: the model's default applies.
+	if _, isCLI := runProvider.(providers.CLIProvider); !isCLI && agent.Temperature != nil {
+		llmOpts["temperature"] = *agent.Temperature
 	}
 	// parseThinkingLevel guarantees ThinkingOff for empty/unknown values.
 	if agent.ThinkingLevel != ThinkingOff {
