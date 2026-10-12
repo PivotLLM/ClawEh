@@ -122,7 +122,6 @@ type GLMSearchConfig struct {
 }
 
 type WebToolsConfig struct {
-	ToolConfig `                 envPrefix:"CLAW_TOOLS_WEB_"`
 	Brave      BraveConfig      `                                json:"brave"`
 	Tavily     TavilyConfig     `                                json:"tavily"`
 	DuckDuckGo DuckDuckGoConfig `                                json:"duckduckgo"`
@@ -141,7 +140,6 @@ type CronToolsConfig struct {
 }
 
 type ExecConfig struct {
-	ToolConfig          `         envPrefix:"CLAW_TOOLS_EXEC_"`
 	EnableDenyPatterns  bool     `                                 env:"CLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS"  json:"enable_deny_patterns"`
 	CustomDenyPatterns  []string `                                 env:"CLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"  json:"custom_deny_patterns"`
 	CustomAllowPatterns []string `                                 env:"CLAW_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS" json:"custom_allow_patterns"`
@@ -149,7 +147,6 @@ type ExecConfig struct {
 }
 
 type SkillsToolsConfig struct {
-	Local                 ToolConfig             `json:"local"                    envPrefix:"CLAW_TOOLS_SKILLS_LOCAL_"`
 	Registry              ToolConfig             `json:"registry"                 envPrefix:"CLAW_TOOLS_SKILLS_REGISTRY_"`
 	Registries            SkillsRegistriesConfig `json:"registries"`
 	Github                SkillsGithubConfig     `json:"github"`
@@ -164,8 +161,7 @@ type MediaCleanupConfig struct {
 }
 
 type ReadFileToolConfig struct {
-	Enabled         bool `json:"enabled"`
-	MaxReadFileSize int  `json:"max_read_file_size"`
+	MaxReadFileSize int `json:"max_read_file_size"`
 }
 
 type ToolsConfig struct {

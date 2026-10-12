@@ -74,7 +74,13 @@ func TestLoadConfig_UnknownKeyDoesNotFailLoad(t *testing.T) {
 func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 	doc, err := decodeDocument([]byte(`{
 		"agents": {"defaults": {"image_model": "m", "image_model_fallbacks": ["m"]}},
-		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60, "connect_mode": "stdio"}]
+		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60, "connect_mode": "stdio"}],
+		"tools": {
+			"web": {"enabled": true, "proxy": "http://proxy:3128"},
+			"exec": {"enabled": true, "timeout_seconds": 60},
+			"skills": {"local": {"enabled": true}},
+			"read_file": {"enabled": true, "max_read_file_size": 1024}
+		}
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +91,10 @@ func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 		"agents.defaults.image_model_fallbacks",
 		"models[0].connect_mode",
 		"models[0].rpm",
+		"tools.exec.enabled",
+		"tools.read_file.enabled",
+		"tools.skills.local",
+		"tools.web.enabled",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)

@@ -517,7 +517,6 @@
       "x"
     ],
     "web": {
-      "enabled": true,
       "brave": {
         "enabled": true,
         "api_key": "x",
@@ -567,7 +566,6 @@
       "exec_timeout_minutes": 1
     },
     "exec": {
-      "enabled": true,
       "enable_deny_patterns": true,
       "custom_deny_patterns": [
         "x"
@@ -578,9 +576,6 @@
       "timeout_seconds": 1
     },
     "skills": {
-      "local": {
-        "enabled": true
-      },
       "registry": {
         "enabled": true
       },
@@ -646,7 +641,6 @@
       "max_search_results": 1
     },
     "read_file": {
-      "enabled": true,
       "max_read_file_size": 1
     }
   },

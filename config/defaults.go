@@ -242,9 +242,6 @@ func DefaultConfig() *Config {
 				Interval: 5,
 			},
 			Web: WebToolsConfig{
-				ToolConfig: ToolConfig{
-					Enabled: true,
-				},
 				Proxy:           "",
 				FetchLimitBytes: 10 * 1024 * 1024, // 10MB by default
 				Brave: BraveConfig{
@@ -289,16 +286,10 @@ func DefaultConfig() *Config {
 				ExecTimeoutMinutes: 5,
 			},
 			Exec: ExecConfig{
-				ToolConfig: ToolConfig{
-					Enabled: true,
-				},
 				EnableDenyPatterns: true,
 				TimeoutSeconds:     60,
 			},
 			Skills: SkillsToolsConfig{
-				Local: ToolConfig{
-					Enabled: true,
-				},
 				Registry: ToolConfig{
 					Enabled: false,
 				},
@@ -326,7 +317,6 @@ func DefaultConfig() *Config {
 				MaxSearchResults: DefaultDiscoveryMaxSearchHits,
 			},
 			ReadFile: ReadFileToolConfig{
-				Enabled:         true,
 				MaxReadFileSize: 32 * 1024, // 32KB (~8K tokens) per read
 			},
 		},

@@ -1397,6 +1397,9 @@ observe does not need an entry.
   effect. A leftover key is ignored and logged as an unknown key.
 - `agents.defaults.image_model` and `image_model_fallbacks` are removed; nothing
   used them. `vision_model` is the image setting.
+- The unused keys `tools.web.enabled`, `tools.exec.enabled`,
+  `tools.skills.local.enabled` and `tools.read_file.enabled` are removed, with
+  the full report's on/off for web tools and its "Local skills tool" row.
 
 - **BREAKING: the LINE channel is removed.** It received messages only
   through a webhook that had to be reachable from the internet, which the rest

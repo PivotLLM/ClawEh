@@ -579,7 +579,6 @@
     "allow_read_paths": null,
     "allow_write_paths": null,
     "web": {
-      "enabled": true,
       "brave": {
         "enabled": false,
         "api_key": "",
@@ -622,16 +621,12 @@
       "exec_timeout_minutes": 5
     },
     "exec": {
-      "enabled": true,
       "enable_deny_patterns": true,
       "custom_deny_patterns": null,
       "custom_allow_patterns": null,
       "timeout_seconds": 60
     },
     "skills": {
-      "local": {
-        "enabled": true
-      },
       "registry": {
         "enabled": false
       },
@@ -670,7 +665,6 @@
       "max_search_results": 10
     },
     "read_file": {
-      "enabled": true,
       "max_read_file_size": 32768
     }
   },
