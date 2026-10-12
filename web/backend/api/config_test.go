@@ -53,9 +53,6 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got := cfg.Models[0].ConnectMode; got != "" {
-		t.Fatalf("models[0].connect_mode = %q, want empty string (not inherited from default template)", got)
-	}
 	if got := cfg.Models[0].Workspace; got != "" {
 		t.Fatalf("models[0].workspace = %q, want empty string (not inherited from default template)", got)
 	}

@@ -189,8 +189,6 @@
       "providerHint": "The named provider this model is reached through. Manage providers on the Providers page.",
       "providerPlaceholder": "Select a provider",
       "proxyHint": "Optional. e.g. http://127.0.0.1:7890",
-      "connectMode": "Connect Mode",
-      "connectModeHint": "Connection mode for CLI-based providers: stdio or grpc.",
       "workspace": "Workspace Path",
       "workspaceHint": "Working directory for CLI-based providers (e.g. GitHub Copilot).",
       "requestTimeout": "Request Timeout (s)",

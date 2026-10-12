@@ -1393,8 +1393,8 @@ observe does not need an entry.
 - The Tools page and the install-wide per-tool switches (`tools.tool_overrides`)
   are removed; they were redundant with each agent's own tool list, which alone
   decides what an agent can use.
-- The model setting `rpm` is removed; it never had an effect. A leftover key
-  is ignored and logged as an unknown key.
+- The model settings `rpm` and `connect_mode` are removed; they never had an
+  effect. A leftover key is ignored and logged as an unknown key.
 
 - **BREAKING: the LINE channel is removed.** It received messages only
   through a webhook that had to be reachable from the internet, which the rest

@@ -40,7 +40,6 @@ interface AddForm {
   modelName: string
   model: string
   provider: string
-  connectMode: string
   workspace: string
   contextWindow: string
   maxTokensField: string
@@ -57,7 +56,6 @@ const EMPTY_ADD_FORM: AddForm = {
   modelName: "",
   model: "",
   provider: "",
-  connectMode: "",
   workspace: "",
   contextWindow: "",
   maxTokensField: "",
@@ -160,7 +158,6 @@ export function AddModelSheet({
         model_name: modelName,
         model: modelId,
         provider: form.provider.trim(),
-        connect_mode: form.connectMode.trim() || undefined,
         workspace: form.workspace.trim() || undefined,
         context_window: form.contextWindow
           ? Number(form.contextWindow)
@@ -290,17 +287,6 @@ export function AddModelSheet({
                   placeholder="128000"
                   type="number"
                   min={0}
-                />
-              </Field>
-
-              <Field
-                label={t("models.field.connectMode")}
-                hint={t("models.field.connectModeHint")}
-              >
-                <Input
-                  value={form.connectMode}
-                  onChange={setField("connectMode")}
-                  placeholder="stdio"
                 />
               </Field>
 

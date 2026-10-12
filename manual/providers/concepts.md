@@ -159,4 +159,4 @@ When an agent's model is set to **Off** and it receives an image, ClawEh sends t
 | Drop Request Fields | `drop_params` | See [Cloud APIs](./cloud-apis.md#extra-request-body-and-drop-request-fields). |
 | Workspace Path | `workspace` | CLI models only. See [CLI providers](./cli-providers.md#where-the-cli-runs). |
 
-The model form also shows **Connect Mode** and **Thinking Level**. The current providers do not act on them; ClawEh logs a warning when a thinking level is set on a model that does not support it.
+The model form also shows **Thinking Level**. The current providers do not act on it; ClawEh logs a warning when a thinking level is set on a model that does not support it.

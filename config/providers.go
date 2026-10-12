@@ -144,8 +144,7 @@ type ModelConfig struct {
 	Provider  string `json:"provider"`   // Name of the Provider this model is reached through
 
 	// Special providers (CLI-based, OAuth, etc.)
-	ConnectMode string `json:"connect_mode,omitempty"` // Connection mode: stdio, grpc
-	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
+	Workspace string `json:"workspace,omitempty"` // Workspace path for CLI-based providers
 
 	// Optional optimizations
 	MaxTokens      int    `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults

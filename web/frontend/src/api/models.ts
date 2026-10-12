@@ -8,7 +8,6 @@ export interface ModelInfo {
   // Name of the provider this model is reached through.
   provider: string
   // Advanced fields
-  connect_mode?: string
   workspace?: string
   max_tokens?: number
   // Model context window size in tokens. 0/undefined → use the agent default.

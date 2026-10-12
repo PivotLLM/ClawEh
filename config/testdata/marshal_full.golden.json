@@ -22,7 +22,6 @@
       "model_name": "x",
       "model": "x",
       "provider": "x",
-      "connect_mode": "x",
       "workspace": "x",
       "max_tokens": 1,
       "context_window": 1,

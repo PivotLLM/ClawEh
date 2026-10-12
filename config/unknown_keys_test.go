@@ -73,13 +73,14 @@ func TestLoadConfig_UnknownKeyDoesNotFailLoad(t *testing.T) {
 // had an effect are reported when an existing config.json still has them.
 func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 	doc, err := decodeDocument([]byte(`{
-		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60}]
+		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60, "connect_mode": "stdio"}]
 	}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := unknownConfigKeys(doc)
 	want := []string{
+		"models[0].connect_mode",
 		"models[0].rpm",
 	}
 	if !reflect.DeepEqual(got, want) {

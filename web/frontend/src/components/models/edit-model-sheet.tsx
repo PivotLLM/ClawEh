@@ -42,7 +42,6 @@ interface EditForm {
   provider: string
   name: string
   modelId: string
-  connectMode: string
   workspace: string
   maxTokens: string
   contextWindow: string
@@ -78,7 +77,6 @@ export function EditModelSheet({
     name: "",
     modelId: "",
     provider: "",
-    connectMode: "",
     workspace: "",
     maxTokens: "",
     contextWindow: "",
@@ -119,7 +117,6 @@ export function EditModelSheet({
       name: model.model_name ?? "",
       modelId: model.model ?? "",
       provider: model.provider ?? "",
-      connectMode: model.connect_mode ?? "",
       workspace: model.workspace ?? "",
       maxTokens: model.max_tokens ? String(model.max_tokens) : "",
       contextWindow: model.context_window ? String(model.context_window) : "",
@@ -158,7 +155,6 @@ export function EditModelSheet({
         model_name: form.name.trim(),
         model: form.modelId.trim(),
         provider: form.provider || undefined,
-        connect_mode: form.connectMode || undefined,
         workspace: form.workspace || undefined,
         max_tokens: form.maxTokens ? Number(form.maxTokens) : undefined,
         context_window: form.contextWindow
@@ -269,17 +265,6 @@ export function EditModelSheet({
                   placeholder="128000"
                   type="number"
                   min={0}
-                />
-              </Field>
-
-              <Field
-                label={t("models.field.connectMode")}
-                hint={t("models.field.connectModeHint")}
-              >
-                <Input
-                  value={form.connectMode}
-                  onChange={setField("connectMode")}
-                  placeholder="stdio"
                 />
               </Field>
 
