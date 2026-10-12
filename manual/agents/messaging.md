@@ -12,7 +12,16 @@ There are two kinds of message:
 An agent uses the `agent_message` tool. For Alice to message Bob, all of these must be true:
 
 1. Alice has `agent_message` ticked under **Internal tools** on her card. **Default tools** does not include it.
-2. Bob is in Alice's `subagents.allow_agents` in `config.json`. `"*"` allows every agent. With no list, Alice can message no one.
+2. Bob is ticked under **May message** on Alice's card, just below **Internal tools**. **All agents** allows every agent, including ones added later. With nothing ticked, Alice can message no one.
+
+The card says when the two do not fit together:
+
+- `agent_message` is ticked but no agent is: "Alice can't message any agent yet."
+- Agents are ticked but nothing uses the list (no `agent_message`, no `agent_spawn`, **Allow forum** off; a tool blocked by **Denied tools** counts as missing): "No effect until agent_message is ticked above."
+
+An entry that names no other configured agent, such as an agent since deleted, stays in the list, ticked and marked "(not another configured agent)", until you untick it.
+
+**May message** is `subagents.allow_agents` in `config.json`; **All agents** writes `"*"`:
 
 ```json
 {
@@ -22,7 +31,7 @@ An agent uses the `agent_message` tool. For Alice to message Bob, all of these m
 }
 ```
 
-`allow_agents` has no control on the Agents page; set it in `config.json` (or **Raw config** on the System page; see [Configuration file](../reference/configuration.md)). Saving on the Agents page keeps it. The same list decides which agents Alice may [spawn](./subagents.md) and which may take part in her [forums](../forums/index.md).
+The same list decides which agents Alice may [spawn](./subagents.md) and which may take part in her [forums](../forums/index.md).
 
 Only configured agents can be messaged, never temporary ones. A message is refused when:
 

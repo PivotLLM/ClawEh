@@ -203,3 +203,97 @@ describe("AgentCard for a person", () => {
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("AgentCard May message", () => {
+  const agents = [
+    { id: "alice", name: "Alice" },
+    { id: "Bob" },
+    { id: "carol", name: "Carol" },
+  ]
+  const mayMessage = (
+    extra: Partial<React.ComponentProps<typeof AgentCard>> = {},
+  ) => {
+    const onAllowAgentsChange = vi.fn()
+    renderCard([], {
+      name: "Alice",
+      configuredAgents: agents,
+      onAllowAgentsChange,
+      ...extra,
+    })
+    return onAllowAgentsChange
+  }
+  const box = (label: string) =>
+    screen.getByRole("checkbox", { name: label }) as HTMLElement
+
+  it("lists the other agents by name, else id, with the saved ones ticked", () => {
+    mayMessage({ allowAgents: ["bob"] })
+    expect(screen.queryByText("May message")).not.toBeNull()
+    expect(screen.queryByRole("checkbox", { name: "Alice" })).toBeNull()
+    expect(box("Bob").getAttribute("aria-checked")).toBe("true")
+    expect(box("Carol").getAttribute("aria-checked")).toBe("false")
+    expect(box("All agents").getAttribute("aria-checked")).toBe("false")
+  })
+
+  it("saves a ticked agent by its configured id and keeps the rest", () => {
+    const onChange = mayMessage({ allowAgents: ["BOB"] })
+    fireEvent.click(box("Carol"))
+    expect(onChange).toHaveBeenLastCalledWith(["BOB", "carol"])
+    fireEvent.click(box("Bob"))
+    expect(onChange).toHaveBeenLastCalledWith(["carol"])
+  })
+
+  it("All agents writes [\"*\"] and ticks every agent", () => {
+    const onChange = mayMessage({ allowAgents: ["bob"] })
+    fireEvent.click(box("All agents"))
+    expect(onChange).toHaveBeenLastCalledWith(["*"])
+    expect(box("Carol").getAttribute("aria-checked")).toBe("true")
+  })
+
+  it("keeps an entry that names no other agent visible and removable", () => {
+    const onChange = mayMessage({ allowAgents: ["dave", "bob"] })
+    expect(box("dave").getAttribute("aria-checked")).toBe("true")
+    expect(screen.queryByText("(not another configured agent)")).not.toBeNull()
+    fireEvent.click(box("dave"))
+    expect(onChange).toHaveBeenLastCalledWith(["bob"])
+  })
+
+  it("says the agent can message no one when the tool is granted", () => {
+    mayMessage({ tools: ["agent_message"], allowAgents: [] })
+    expect(screen.getByTestId("may-message-note").textContent).toBe(
+      "Alice can't message any agent yet.",
+    )
+  })
+
+  it("says the list has no effect without the tool", () => {
+    mayMessage({ tools: ["file_read"], allowAgents: ["bob"] })
+    expect(screen.getByTestId("may-message-note").textContent).toBe(
+      "No effect until agent_message is ticked above.",
+    )
+  })
+
+  it("treats a denied agent_message as not granted", () => {
+    mayMessage({
+      tools: ["*"],
+      denyTools: ["agent_*"],
+      allowAgents: ["bob"],
+    })
+    expect(screen.getByTestId("may-message-note").textContent).toBe(
+      "No effect until agent_message is ticked above.",
+    )
+  })
+
+  it("shows no no-effect note when agent_spawn reads the list", () => {
+    mayMessage({ tools: ["agent_spawn"], allowAgents: ["bob"] })
+    expect(screen.queryByTestId("may-message-note")).toBeNull()
+  })
+
+  it("shows no no-effect note when the forum reads the list", () => {
+    mayMessage({ forum: true, allowAgents: ["bob"] })
+    expect(screen.queryByTestId("may-message-note")).toBeNull()
+  })
+
+  it("shows no note when the tool and the list agree", () => {
+    mayMessage({ tools: ["agent_message"], allowAgents: ["bob"] })
+    expect(screen.queryByTestId("may-message-note")).toBeNull()
+  })
+})

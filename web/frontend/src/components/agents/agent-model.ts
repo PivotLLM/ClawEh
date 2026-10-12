@@ -38,6 +38,9 @@ export interface AgentEntry {
   mcp_tools?: string[]
   /** Tools the agent may never call, even when tools / mcp_tools admit them. */
   deny_tools?: string[]
+  /** subagents.allow_agents: the agents this one may message ("*" = every
+   *  agent); absent or [] = none. */
+  allow_agents?: string[]
   /** The agent exactly as loaded. A save starts from it, so every key this
    *  page does not edit (workspace, subagents, memory, compression, …) is
    *  written back unchanged. Absent for an agent added on this page. */
@@ -257,6 +260,93 @@ export function withShellAllowed(tools: string[], allowed: boolean): string[] {
   return allowed ? [...rest, SHELL_TOOL] : rest
 }
 
+// MESSAGE_TOOL is the tool an agent messages other agents with; whom it may
+// message is subagents.allow_agents ("May message" on the Agents page).
+export const MESSAGE_TOOL = "agent_message"
+
+// ALL_AGENTS is the allow_agents entry that allows every agent.
+export const ALL_AGENTS = "*"
+
+// toolPatternMatches is config.MatchToolPattern for one entry: "*", a
+// case-insensitive prefix ending in "*", or an exact name.
+function toolPatternMatches(entry: string, name: string): boolean {
+  if (entry === "*") return true
+  if (entry.endsWith("*")) {
+    return name.toLowerCase().startsWith(entry.slice(0, -1).toLowerCase())
+  }
+  return entry.toLowerCase() === name.toLowerCase()
+}
+
+// SPAWN_TOOL also reads subagents.allow_agents: the agents it may start.
+export const SPAWN_TOOL = "agent_spawn"
+
+// toolGranted reports whether the agent has the internal tool, under the
+// backend's rule (AgentConfig.IsToolAllowed): the tools list admits it and
+// deny_tools does not name it. Not for shell_exec, which is granted only by
+// name (shellAllowed).
+export function toolGranted(
+  tools: string[],
+  denyTools: string[],
+  name: string,
+): boolean {
+  const denied = denyTools.some((raw) => {
+    const d = norm(raw)
+    return d.endsWith("*") ? name.startsWith(d.slice(0, -1)) : d === name
+  })
+  return !denied && tools.some((e) => toolPatternMatches(e, name))
+}
+
+// MayMessageRow is one box of the "May message" checklist.
+export interface MayMessageRow {
+  /** The agent id as configured, or the entry as saved for a stale row. */
+  id: string
+  label: string
+  checked: boolean
+  /** false for a saved entry that names no other configured agent (a removed
+   *  agent, or the agent itself); it is shown checked so it can be removed. */
+  configured: boolean
+}
+
+// mayMessageRows turns an agent's allow_agents into checklist rows: one per
+// other configured agent (by display name, else id), checked when an entry
+// names it or the list holds "*", then one row per entry that names no other
+// configured agent.
+export function mayMessageRows(
+  allow: string[],
+  selfId: string,
+  agents: { id: string; name?: string }[],
+): MayMessageRow[] {
+  const all = allow.includes(ALL_AGENTS)
+  const others = agents.filter((a) => !sameAgentId(a.id, selfId))
+  const rows: MayMessageRow[] = others.map((a) => ({
+    id: a.id,
+    label: a.name || a.id,
+    checked: all || allow.some((e) => sameAgentId(e, a.id)),
+    configured: true,
+  }))
+  for (const e of allow) {
+    if (e === ALL_AGENTS || others.some((a) => sameAgentId(e, a.id))) continue
+    if (rows.some((r) => !r.configured && sameAgentId(r.id, e))) continue
+    rows.push({ id: e, label: e, checked: true, configured: false })
+  }
+  return rows
+}
+
+// toggleAllowAgent adds the agent id to allow_agents when no entry names it
+// and removes every entry naming it (sameAgentId) when one does. Other
+// entries keep their order and spelling.
+export function toggleAllowAgent(allow: string[], id: string): string[] {
+  return allow.some((e) => sameAgentId(e, id))
+    ? allow.filter((e) => !sameAgentId(e, id))
+    : [...allow, id]
+}
+
+// withAllAgents writes ["*"] for "All agents", and drops "*" (keeping any
+// named entries) when it is turned off.
+export function withAllAgents(allow: string[], on: boolean): string[] {
+  return on ? [ALL_AGENTS] : allow.filter((e) => e !== ALL_AGENTS)
+}
+
 // internalToolsSummary is the label of an agent's internal tools, leaving out
 // shell_exec, which has its own switch. An agent has only the tools its list
 // names, so an empty list is "No tools".
@@ -310,6 +400,7 @@ export function parseAgent(value: unknown): AgentEntry {
       .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
+    allow_agents: asArray(asRecord(r.subagents).allow_agents).map(asString),
     message:
       cbMins > 0
         ? {
@@ -538,6 +629,7 @@ const AGENT_PAGE_KEYS = [
   "mcp_tools",
   "deny_tools",
   "mounts",
+  "subagents",
 ]
 
 // MAESTRO_PAGE_KEYS are the keys of the maestro block maestroPayload writes;
@@ -609,6 +701,7 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     // Always sent so clearing the list persists; blank rows (an entry being
     // typed) are dropped. The backend drops an empty slice on save.
     deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
+    ...subagentsPayload(raw, a.allow_agents),
     // Always sent (like tools) so removing all mounts persists; the backend
     // drops an empty slice on save (omitempty).
     mounts: (a.mounts ?? [])
@@ -620,6 +713,24 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
         ...(m.writable ? { writable: true } : {}),
       })),
   }
+}
+
+// subagentsPayload is the subagents block as saved: the loaded block with
+// allow_agents replaced by the page's list (absent when empty), and no block
+// at all when nothing is left in it.
+function subagentsPayload(
+  raw: Record<string, unknown>,
+  allow: string[] | undefined,
+): Record<string, unknown> {
+  const loaded = asRecord(raw.subagents)
+  if (allow === undefined) {
+    return raw.subagents === undefined ? {} : { subagents: raw.subagents }
+  }
+  const block = {
+    ...withoutKeys(loaded, ["allow_agents"]),
+    ...(allow.length > 0 ? { allow_agents: allow } : {}),
+  }
+  return Object.keys(block).length > 0 ? { subagents: block } : {}
 }
 
 /** agentsPayload is the PATCH /api/config body for the agent list. It

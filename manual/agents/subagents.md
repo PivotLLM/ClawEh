@@ -17,7 +17,7 @@ Sub-agents are useful for self-contained work (research, a long file review) or 
 ## Allow an agent to spawn
 
 1. Tick `agent_spawn` under **Internal tools** on the agent's card. Tick `agent_status` and `agent_list` too if the agent should check on its background tasks.
-2. To let Alice spawn a copy of **another** agent, add that agent to her `subagents.allow_agents` in `config.json` (see [Messages between agents](./messaging.md#who-may-message-whom)). An agent may always spawn copies of itself once it has the tool.
+2. To let Alice spawn a copy of **another** agent, tick that agent under **May message** on her card (`subagents.allow_agents`; see [Messages between agents](./messaging.md#who-may-message-whom)). An agent may always spawn copies of itself once it has the tool.
 
 ## How the agent uses it
 

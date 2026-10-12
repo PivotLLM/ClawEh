@@ -349,6 +349,12 @@ observe does not need an entry.
 
 ### Added
 
+- **May message on the Agents page.** Each agent card has a **May message**
+  checklist of the other agents, plus **All agents** (`"*"`), saved to the
+  agent's `subagents.allow_agents`, which until now could be set only in
+  `config.json`. The card notes when `agent_message` is granted but no agent is
+  ticked, and when the list has no effect.
+
 - **The Models page notes a request timeout the turn timeout cuts short.** A
   model whose **Request Timeout** is longer than the System page's **Turn
   timeout** (`agents.defaults.turn_timeout`) shows "Limited to 15 minutes by the

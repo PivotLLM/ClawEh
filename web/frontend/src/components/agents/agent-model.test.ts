@@ -290,6 +290,36 @@ describe("agentsPayload", () => {
     expect(byId.bob).not.toHaveProperty("maestro")
   })
 
+  it("writes May message into subagents.allow_agents, keeping models", () => {
+    const cfg = parseAgentsConfig(loaded)
+    const edit = (allow: string[]) =>
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, allow_agents: allow } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list[0]
+    expect(edit(["*"]).subagents).toEqual({
+      allow_agents: ["*"],
+      models: ["fast"],
+    })
+    expect(edit([]).subagents).toEqual({ models: ["fast"] })
+  })
+
+  it("adds no subagents block for an agent without one", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    const list = (cfg.list ?? []).map((a) => ({ ...a, allow_agents: [] }))
+    const out = agentsPayload({ ...cfg, list }) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(out.agents.list[0]).not.toHaveProperty("subagents")
+    const bob = agentsPayload({
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({ ...a, allow_agents: ["Bob"] })),
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(bob.agents.list[0].subagents).toEqual({ allow_agents: ["Bob"] })
+  })
+
   it("toggling Allow forum on Alice writes forum and keeps everything else", () => {
     const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
       // As handleToggleForum applies it: only Alice's forum flag flips.

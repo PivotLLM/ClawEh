@@ -16,12 +16,16 @@ import {
   settingsCardClass,
   type CLIBypassWarning,
   internalToolsSummary,
+  MESSAGE_TOOL,
+  SPAWN_TOOL,
+  toolGranted,
   shellAllowed,
   shellDenied,
   withShellAllowed,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
+import { MayMessageSelect } from "@/components/agents/may-message-select"
 import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
 import {
@@ -82,6 +86,11 @@ export interface AgentCardProps {
   onMCPToolsChange?: (mcpTools: string[]) => void
   denyTools?: string[]
   onDenyToolsChange?: (denyTools: string[]) => void
+  /** subagents.allow_agents ("May message"). */
+  allowAgents?: string[]
+  /** Every configured agent, for the "May message" list. */
+  configuredAgents?: { id: string; name?: string }[]
+  onAllowAgentsChange?: (allow: string[]) => void
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
@@ -140,6 +149,9 @@ export function AgentCard({
   onMCPToolsChange = undefined,
   denyTools = [],
   onDenyToolsChange = undefined,
+  allowAgents = [],
+  configuredAgents = [],
+  onAllowAgentsChange = undefined,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
@@ -338,6 +350,7 @@ export function AgentCard({
       {!human &&
         (onMCPToolsChange !== undefined ||
           onDenyToolsChange !== undefined ||
+          onAllowAgentsChange !== undefined ||
           availableTools.tools.length > 0) && (
         <div className={settingsCardClass}>
           <p className="text-foreground text-sm font-semibold">Tools</p>
@@ -369,6 +382,24 @@ export function AgentCard({
                 onChange={onToolsChange}
               />
             </div>
+          )}
+
+          {onAllowAgentsChange !== undefined && (
+            <MayMessageSelect
+              agentName={name || label}
+              agentId={label}
+              agents={configuredAgents}
+              value={allowAgents}
+              messageGranted={toolGranted(tools, denyTools, MESSAGE_TOOL)}
+              // The list also decides whom agent_spawn may start and whom a
+              // forum may ask, so it has an effect with either of those.
+              listUsed={
+                toolGranted(tools, denyTools, MESSAGE_TOOL) ||
+                toolGranted(tools, denyTools, SPAWN_TOOL) ||
+                forum
+              }
+              onChange={onAllowAgentsChange}
+            />
           )}
 
           <div className="space-y-1.5">

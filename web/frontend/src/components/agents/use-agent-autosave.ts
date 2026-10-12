@@ -32,6 +32,8 @@ export interface AgentEdits {
   mounts: MountEntry[]
   mcpTools: string[]
   denyTools: string[]
+  /** subagents.allow_agents ("May message"); [] = none. */
+  allowAgents: string[]
   maestro: MaestroRunnerEdits
 }
 
@@ -55,6 +57,7 @@ export function editsFromAgent(a: AgentEntry): AgentEdits {
     mounts: a.mounts ?? [],
     mcpTools: a.mcp_tools ?? [],
     denyTools: a.deny_tools ?? [],
+    allowAgents: a.allow_agents ?? [],
     maestro: maestroEditsFromAgent(a),
   }
 }

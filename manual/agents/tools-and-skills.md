@@ -22,8 +22,9 @@ The **Tools** box on the agent's card has these parts:
    - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. It leaves out tools few agents need, such as `agent_spawn`, `agent_message`, `session_clear` and the byte-level file tools. You can then tick or untick single tools.
    - **Clear** empties the list.
    - Each checkbox grants one tool. Hover a tool for its description.
-4. **Allow shell commands**: see [Shell commands](#shell-commands).
-5. **Denied tools**: see [Deny a tool](#deny-a-tool).
+4. **May message**: the other agents this agent may message with `agent_message`, start as sub-agents or invite to forums. See [Messages between agents](./messaging.md#who-may-message-whom).
+5. **Allow shell commands**: see [Shell commands](#shell-commands).
+6. **Denied tools**: see [Deny a tool](#deny-a-tool).
 
 ### Grant tools in config.json
 

@@ -177,6 +177,7 @@ export function AgentsPage() {
       mounts: edits.mounts,
       mcp_tools: edits.mcpTools,
       deny_tools: edits.denyTools,
+      allow_agents: edits.allowAgents,
       maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -527,6 +528,11 @@ export function AgentsPage() {
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}
                       denyTools={e.denyTools}
                       onDenyToolsChange={(dt) => edit(i, { denyTools: dt })}
+                      allowAgents={e.allowAgents}
+                      configuredAgents={agentsCfg.list ?? []}
+                      onAllowAgentsChange={(aa) =>
+                        edit(i, { allowAgents: aa })
+                      }
                       agentBindings={bindingViewsForAgent(bindings, agent.id)}
                       onSetDefaultBinding={(target, deliverTo) =>
                         handleSetDefaultBinding(agent.id, target, deliverTo)

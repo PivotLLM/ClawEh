@@ -29,7 +29,7 @@ turns (a debate).
 | A fresh participant | A temporary agent with no tools and no workspace files, on one of Alice's own models. Deleted when the run ends. |
 
 Alice can name Bob, as himself or as a clone, only when Bob is in her
-`subagents.allow_agents` list in `config.json` (see
+**May message** list on the Agents page (`subagents.allow_agents`; see
 [Messages between agents](../agents/messaging.md#who-may-message-whom)). Each turn is checked against
 that list when it is sent: if Bob has been removed from it, the forum stops
 rather than asking him. A [human agent](#a-person-in-a-forum) can take part as
@@ -66,9 +66,8 @@ The switch is per agent and off by default.
 1. Open the **Agents** page (see [Tools and skills](../agents/tools-and-skills.md#tool-suites)).
 2. On the agent's card, turn on **Allow forum** ("Lets this agent hold forums
    with the other agents it may message.").
-3. If the forum should include other agents, list them in the agent's
-   `subagents.allow_agents` in `config.json`. Fresh participants need no
-   such entry.
+3. If the forum should include other agents, tick them under **May message**
+   on the same card. Fresh participants need no such entry.
 
 The change is saved automatically and takes effect when the configuration
 reloads, a few seconds later. The agent then has the fifteen forum tools

@@ -44,6 +44,7 @@ describe("editsFromAgent", () => {
       mounts: [],
       mcpTools: [],
       denyTools: [],
+      allowAgents: [],
       maestro: {
         maxConcurrent: undefined,
         rateLimitRequests: undefined,
