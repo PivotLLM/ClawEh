@@ -133,8 +133,8 @@ type Provider struct {
 // Vision passthrough modes for ModelConfig.Vision.
 const (
 	VisionOff          = "off"           // default: tool images are not sent to the model
-	VisionUserMessage  = "user_message"  // inject images as a follow-up user turn (Chat Completions)
-	VisionToolResponse = "tool_response" // attach images to the tool result (Responses API only)
+	VisionUserMessage  = "user_message"  // inject images as a follow-up user turn (any chat endpoint)
+	VisionToolResponse = "tool_response" // attach images to the tool result (OpenAI Responses API, xAI)
 )
 
 type ModelConfig struct {
@@ -155,9 +155,9 @@ type ModelConfig struct {
 	NoTools        bool   `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	// Vision controls how images returned by tools (e.g. MCP screenshots) reach
 	// this model: "off"/"" (default) drops them; "user_message" injects them as a
-	// follow-up user turn (works on Chat Completions, where tool messages are
-	// text-only); "tool_response" attaches them to the tool result itself (only
-	// valid on the Responses API, whose function_call_output accepts images).
+	// follow-up user turn (works on any chat endpoint); "tool_response" attaches
+	// them to the tool result itself (the OpenAI Responses API and xAI accept
+	// it; plain OpenAI chat, whose tool messages are text-only, does not).
 	Vision    string            `json:"vision,omitempty"`
 	ExtraArgs []string          `json:"extra_args,omitempty"` // Additional CLI arguments appended after required flags
 	Env       map[string]string `json:"env,omitempty"`        // Environment variables for CLI-based providers (merged with os.Environ)

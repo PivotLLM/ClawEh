@@ -140,7 +140,7 @@ Use this to put summarizing on a cheaper model, or on one that will not refuse t
 A model can see images only when its **Vision (tool-result images)** setting (`vision`) is not **Off**:
 
 - **User message** (`user_message`): images are added as a follow-up message. Works on chat-completion models.
-- **Tool response** (`tool_response`): images are attached to the tool result itself. The Responses API (`openai-responses`) takes this; most chat-completion endpoints do not, though the catalogue's Grok models on xAI use it.
+- **Tool response** (`tool_response`): images are attached to the tool result itself. The OpenAI Responses API (`openai-responses`) and xAI accept this; plain OpenAI chat does not, so use **User message** there.
 
 When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the **Vision models** chain (`agents.defaults.vision_model`, then `agents.defaults.vision_model_fallbacks`) for a text description and gives the agent that description. With no vision model set, images are dropped for such models.
 

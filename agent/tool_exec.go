@@ -217,7 +217,7 @@ type toolImages struct {
 func (ti *toolImages) route(result *tools.ToolResult, msg *providers.Message) {
 	switch ti.mode {
 	case config.VisionToolResponse:
-		// The Responses API takes images on the tool result itself.
+		// The OpenAI Responses API and xAI take images on the tool result itself.
 		msg.Media = result.Images
 	case config.VisionUserMessage:
 		ti.followUp = append(ti.followUp, result.Images...)

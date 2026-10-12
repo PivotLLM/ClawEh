@@ -18,8 +18,8 @@ export interface ModelInfo {
   no_tools?: boolean
   // Vision passthrough for MCP tool-result images: "" / "off" drops them,
   // "user_message" injects them as a follow-up user turn, "tool_response"
-  // attaches them to the tool result. Chat models need "user_message"
-  // (tool-role content is text-only); Responses models can use "tool_response".
+  // attaches them to the tool result (the OpenAI Responses API and xAI accept
+  // it; plain OpenAI chat does not, so use "user_message" there).
   vision?: string
   // Shape 3 per-LLM custom fields. extra_body accepts an explicit `null` on
   // save to clear a previously-stored value; the backend handler merge-loads

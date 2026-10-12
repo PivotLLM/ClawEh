@@ -378,7 +378,7 @@ export function EditModelSheet({
 
               <Field
                 label="Vision (tool-result images)"
-                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Chat models need 'User message'; Responses models can use 'Tool response'."
+                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Tool response works on the OpenAI Responses API and xAI; use User message for plain OpenAI chat."
               >
                 <Select
                   value={form.vision || "off"}
