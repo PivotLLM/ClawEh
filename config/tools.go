@@ -292,7 +292,10 @@ type MCPHostConfig struct {
 	// is matched by MatchVisibility: equality-or-prefix after collapsing
 	// underscores and stripping a leading mcp_, so "file"/"session_info" catch
 	// local tools and "fusion"/"fusion_wxca" catch upstream MCP tools (no mcp_
-	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
+	// prefix or glob needed). "*" exposes everything; empty means "*" — every
+	// tool an agent is allowed is listed (mcpVisibilityList in
+	// internal/gateway/mcp_host.go), with per-agent gating still applied on
+	// each call. To expose no tools, disable mcp_host.
 	InternalTools []string `json:"internal_tools,omitempty"`
 	ExternalTools []string `json:"external_tools,omitempty"`
 }
