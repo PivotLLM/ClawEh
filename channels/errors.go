@@ -1,6 +1,9 @@
 package channels
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Every failed send says why, as one of these sentinels (wrapped with the
 // detail), so a caller can test the reason with errors.Is. The Manager decides
@@ -30,7 +33,8 @@ var (
 	ErrRecipientNotFound = errors.New("recipient not found")
 
 	// ErrRateLimit indicates the platform returned a rate-limit response (e.g. HTTP 429).
-	// Manager will wait a fixed delay and retry.
+	// Manager retries after a fixed delay, or after the wait the platform
+	// asked for when the error carries one (WithRetryAfter).
 	ErrRateLimit = errors.New("rate limited")
 
 	// ErrTemporary indicates a transient failure (e.g. network timeout, 5xx).
@@ -46,3 +50,23 @@ var (
 	// operator choice, not a fault: Manager will not retry and logs it at INFO.
 	ErrReceiveOnly = errors.New("recipient account is receive-only")
 )
+
+// RetryAfterError is a failed send that carries the wait the platform asked
+// for before the next attempt (Telegram's retry_after). It wraps the error,
+// so errors.Is still finds its sentinel; read it with errors.As.
+type RetryAfterError struct {
+	Err   error
+	After time.Duration
+}
+
+func (e *RetryAfterError) Error() string { return e.Err.Error() }
+func (e *RetryAfterError) Unwrap() error { return e.Err }
+
+// WithRetryAfter returns err carrying the wait after; a non-positive after
+// returns err unchanged.
+func WithRetryAfter(err error, after time.Duration) error {
+	if err == nil || after <= 0 {
+		return err
+	}
+	return &RetryAfterError{Err: err, After: after}
+}

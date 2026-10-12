@@ -13,9 +13,15 @@ const (
 	ConnDownAlertAfter = 10 * time.Minute
 
 	// RetryAfterPadding is added to a server's own retry-after delay (a
-	// Telegram 429 "retry after 5" waits 6s), so a retry never lands at the
-	// edge of the window the server asked for.
-	RetryAfterPadding = time.Second
+	// Telegram 429 "retry after 5" waits 10s), so a retry never lands at the
+	// edge of the window the server asked for. It applies to connections and
+	// to sends.
+	RetryAfterPadding = 5 * time.Second
+
+	// MaxSendRetryAfter is the longest retry-after a send waits for: a send
+	// refused with a longer one fails at once instead of holding the
+	// channel's queue.
+	MaxSendRetryAfter = time.Minute
 
 	// ConnRetryMin and ConnRetryMax bound the backoff between connection
 	// attempts when the server gives no retry-after: the wait starts at

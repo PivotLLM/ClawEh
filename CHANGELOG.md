@@ -1460,6 +1460,8 @@ observe does not need an entry.
   text was sent without a `/`, so no ClawEh command ever ran, and a command
   in a direct message ignored bindings for that person.
 
+- A Telegram message refused for sending too fast is now retried after the
+  wait Telegram asks for plus 5 seconds, up to a minute, instead of being lost.
 - **A voice message that cannot be transcribed is no longer treated as an
   empty message.** The agent is told a voice message arrived but could not be
   transcribed, so it can tell the user; with `voice.echo_transcription` on,

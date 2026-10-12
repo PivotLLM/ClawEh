@@ -985,7 +985,9 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 // number of retries made and the last error. Errors are classified:
 //   - ErrNotRunning / ErrSendFailed / ErrReceiveOnly / ErrRecipientOffline /
 //     ErrRecipientNotFound / ErrUnknownChannel: permanent, no retry
-//   - ErrRateLimit: fixed delay retry
+//   - ErrRateLimit: fixed delay retry; one carrying a retry-after
+//     (RetryAfterError) waits it plus RetryAfterPadding, and fails at once
+//     when it is longer than MaxSendRetryAfter
 //   - ErrTemporary / unknown: exponential backoff retry
 //
 // A ctx that ends while waiting to retry returns ctx.Err().
@@ -996,8 +998,14 @@ func (m *Manager) retrySend(ctx context.Context, send func() error) (int, error)
 			return attempt, err
 		}
 		delay := rateLimitDelay
-		if !errors.Is(err, ErrRateLimit) {
+		var ra *RetryAfterError
+		switch {
+		case !errors.Is(err, ErrRateLimit):
 			delay = jitter(min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff))
+		case errors.As(err, &ra) && ra.After > MaxSendRetryAfter:
+			return attempt, err
+		case errors.As(err, &ra) && ra.After > 0:
+			delay = ra.After + RetryAfterPadding
 		}
 		select {
 		case <-m.clk().After(delay):

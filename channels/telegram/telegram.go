@@ -612,20 +612,25 @@ func recipientNotFound(err error) bool {
 // classifySendErr maps a failed Telegram send to a channel sentinel: a chat
 // that cannot be reached is ErrRecipientNotFound, a 429 ErrRateLimit, any
 // other 4xx ErrSendFailed (the same request fails again), anything else
-// ErrTemporary (retried). The redacted error is kept so logs and alerts say
-// why.
+// ErrTemporary (retried). A 429 carries Telegram's retry_after
+// (channels.WithRetryAfter). The redacted error is kept so logs and alerts
+// say why.
 func classifySendErr(op string, err error) error {
 	sentinel := channels.ErrTemporary
+	var retryAfter time.Duration
 	var apiErr *ta.Error
 	switch {
 	case recipientNotFound(err):
 		sentinel = channels.ErrRecipientNotFound
 	case errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusTooManyRequests:
 		sentinel = channels.ErrRateLimit
+		if apiErr.Parameters != nil {
+			retryAfter = time.Duration(apiErr.Parameters.RetryAfter) * time.Second
+		}
 	case errors.As(err, &apiErr) && apiErr.ErrorCode >= 400 && apiErr.ErrorCode < 500:
 		sentinel = channels.ErrSendFailed
 	}
-	return fmt.Errorf("%s: %w: %w", op, sentinel, redactErr(err))
+	return channels.WithRetryAfter(fmt.Errorf("%s: %w: %w", op, sentinel, redactErr(err)), retryAfter)
 }
 
 // StartTyping implements channels.TypingCapable.
