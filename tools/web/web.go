@@ -25,7 +25,7 @@ const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 	// HTTP client timeouts for web tool providers.
-	searchTimeout     = 10 * time.Second // Brave, Tavily, DuckDuckGo
+	searchTimeout     = 10 * time.Second // Brave, Tavily, DuckDuckGo, SearXNG
 	perplexityTimeout = 30 * time.Second // Perplexity (LLM-based, slower)
 	fetchTimeout      = 60 * time.Second // WebFetchTool
 
@@ -480,6 +480,22 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 
 type SearXNGSearchProvider struct {
 	baseURL string
+	client  *http.Client
+}
+
+// isLoopbackURL reports whether rawURL names this machine (localhost,
+// 127.0.0.0/8 or ::1). A proxy elsewhere cannot reach such an address.
+func isLoopbackURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count int) (string, error) {
@@ -492,8 +508,7 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -686,7 +701,17 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = opts.BraveMaxResults
 		}
 	} else if opts.SearXNGEnabled && opts.SearXNGBaseURL != "" {
-		provider = &SearXNGSearchProvider{baseURL: opts.SearXNGBaseURL}
+		// A SearXNG on this machine is reached directly: the proxy cannot
+		// reach this machine's loopback address.
+		proxy := opts.Proxy
+		if isLoopbackURL(opts.SearXNGBaseURL) {
+			proxy = ""
+		}
+		client, err := utils.CreateHTTPClient(proxy, searchTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HTTP client for SearXNG: %w", err)
+		}
+		provider = &SearXNGSearchProvider{baseURL: opts.SearXNGBaseURL, client: client}
 		if opts.SearXNGMaxResults > 0 {
 			maxResults = opts.SearXNGMaxResults
 		}

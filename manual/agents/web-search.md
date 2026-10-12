@@ -95,4 +95,4 @@ Search results and fetched pages are marked to the model as content from the web
 
 `tools.web.proxy` sends searches and fetches through a proxy: `http://`, `https://`, `socks5://` or `socks5h://`. For a proxy that needs a password, set the `HTTP_PROXY`/`HTTPS_PROXY` environment variables of the service instead of writing the password into `config.json`.
 
-SearXNG searches ignore `tools.web.proxy`.
+A SearXNG server on this machine (`localhost`, `127.x.x.x` or `::1`) is reached directly; any other SearXNG server goes through the proxy.

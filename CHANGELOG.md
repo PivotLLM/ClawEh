@@ -870,6 +870,9 @@ observe does not need an entry.
 
 ### Changed
 
+- SearXNG search now goes through `tools.web.proxy` like the other search
+  providers; a SearXNG server on this machine is still reached directly.
+
 - `logging.dump_refusals` is now off by default. To keep writing a dump when a
   model refuses, set `"logging": { "dump_refusals": true }` in `config.json`.
 
