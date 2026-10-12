@@ -183,7 +183,9 @@ func TestNewWebSearchTool_SearXNGRemoteUsesProxy(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxied.Store(r.Host)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(searxngOneResult))
+		if _, err := w.Write([]byte(searxngOneResult)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer proxy.Close()
 
@@ -192,7 +194,7 @@ func TestNewWebSearchTool_SearXNGRemoteUsesProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if got, _ := proxied.Load().(string); got != "searx.example.test" {
+	if got, ok := proxied.Load().(string); !ok || got != "searx.example.test" {
 		t.Fatalf("proxy saw host %q, want searx.example.test", got)
 	}
 	if !strings.Contains(result, "go.dev") {
@@ -210,7 +212,9 @@ func TestNewWebSearchTool_SearXNGLoopbackDirect(t *testing.T) {
 	defer proxy.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(searxngOneResult))
+		if _, err := w.Write([]byte(searxngOneResult)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -241,7 +245,10 @@ func TestNewWebSearchTool_SearXNGNoProxyDirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Proxy: %v", err)
 	}
-	want, _ := http.ProxyFromEnvironment(req)
+	want, err := http.ProxyFromEnvironment(req)
+	if err != nil {
+		t.Fatalf("ProxyFromEnvironment: %v", err)
+	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("proxy = %v, want %v (environment only)", got, want)
 	}
