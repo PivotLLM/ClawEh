@@ -80,7 +80,7 @@ claw cron remove <job-id>
 `claw cron add` creates a job delivered to a chat you name rather than to an agent:
 
 ```
-claw cron add --name "Standup" --message "Time for the standup." --cron "0 9 * * 1-5" --channel slack --to C0ANLEQP5GQ
+claw cron add --name "Standup" --message "Time for the standup." --cron "0 9 * * 1-5" --channel slack --to C0323456789
 ```
 
 The message is handled by whichever agent that chat is bound to (see [Routing and bindings](../channels/routing.md)). All `claw cron` options are in [Command line](../reference/cli.md). Use `--every <seconds>` instead of `--cron` for an interval.

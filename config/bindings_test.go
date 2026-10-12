@@ -89,7 +89,7 @@ func TestCronTargetCaseInsensitive(t *testing.T) {
 		Bindings: []AgentBinding{
 			{
 				AgentID: "bob", Default: true,
-				Match: BindingMatch{Channel: "slack", Peer: &PeerMatch{Kind: "channel", ID: "C0AMNPSSQRK"}},
+				Match: BindingMatch{Channel: "slack", Peer: &PeerMatch{Kind: "channel", ID: "C0123456789"}},
 			},
 		},
 		Agents: AgentsConfig{List: []AgentConfig{{ID: "bob", GlobalCron: true}}},

@@ -2196,7 +2196,7 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 			// Alice owns a specific Slack channel.
 			{AgentID: "alice", Match: config.BindingMatch{
 				Channel: "slack",
-				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0AN5SN702V"},
+				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0223456789"},
 			}},
 			// Bob is the Slack-wide catch-all (binding.account match).
 			{AgentID: "bob", Match: config.BindingMatch{Channel: "slack"}},
@@ -2209,7 +2209,7 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 	// falls through to Bob's account-level binding. This is the old bug.
 	msg := bus.InboundMessage{
 		Channel: "slack",
-		ChatID:  "C0AN5SN702V",
+		ChatID:  "C0223456789",
 		Peer:    bus.Peer{Kind: "direct", ID: "alice"},
 	}
 	route, agent, err := al.resolveMessageRoute(msg)

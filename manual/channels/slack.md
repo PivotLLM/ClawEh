@@ -57,6 +57,8 @@ Bot Token.
    An empty list lets nobody in; `*` lets everyone in the workspace in.
 5. Invite the app into each Slack channel where it should listen
    (`/invite @Alice` in that channel).
+6. Test it: in Slack, open the app under **Apps** and send it a direct message.
+   The agent bound to Slack (or the default agent) should answer.
 
 Settings save as you type.
 
@@ -67,13 +69,15 @@ The channel name is `slack`. On the **Bindings** page, choosing the channel
 
 - **All messages**: every Slack message goes to the chosen agent.
 - **Specific channel**: only messages in one Slack channel. Enter its channel
-  ID (for example `C0ANLEQP5GQ`; in Slack, open the channel details to find it).
+  ID (for example `C0123456789`; in Slack, open the channel details to find it).
+- **Direct messages**: every direct message to the app.
 
-A binding for a specific channel wins over one for all messages, so you can
-send one channel to Bob and everything else to Alice. To send one person's
-direct messages to an agent, add a binding in `config.json` with the peer kind
-`direct` and that person's member ID (see
-[Routing and bindings](./routing.md#bind-one-chat-to-an-agent)).
+A binding for a specific channel or for direct messages wins over one for all
+messages, so you can send one channel to Bob and everything else to Alice. To
+send one person's direct messages to a different agent, add a binding in
+`config.json` with the peer kind `direct` and that person's member ID (see
+[Routing and bindings](./routing.md#bind-one-chat-to-an-agent)); it wins over
+the **Direct messages** binding.
 
 ## Channels and direct messages
 

@@ -625,7 +625,7 @@ export function BindingsPage() {
                         <Input
                           value={addPeerId}
                           onChange={(e) => setAddPeerId(e.target.value)}
-                          placeholder="Slack channel ID (e.g. C0ANLEQP5GQ)"
+                          placeholder="Slack channel ID (e.g. C0323456789)"
                           className="mt-1.5 font-mono text-xs"
                         />
                       )}

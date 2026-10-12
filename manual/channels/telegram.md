@@ -26,6 +26,11 @@ address or a webhook.
 7. Open [Bindings](./routing.md) and bind the bot's channel to the agent that
    should answer. Without a binding, the
    [default agent](../agents/creating.md#the-default-agent-and-default-models) answers.
+8. Test it: in Telegram, search for the bot's username, open the chat and
+   press **Start** (or send `/start`). Then send a message; the agent should
+   answer. A bot cannot write to anyone who has not started a chat with it
+   first, so each person who should receive messages from the agent, such as
+   scheduled ones, must do this once.
 
 The bot's channel name, which you use in bindings, is `telegram` for a bot with
 a blank id (or the id `default`) and `telegram-<id>` for any other, for example
@@ -68,6 +73,9 @@ Accepted entries:
 - a numeric Telegram user ID, such as `123456789`;
 - a username with `@`, such as `@alice_example`;
 - `*` to let anyone in (not recommended).
+
+A username is the easiest to enter: it is shown on the person's Telegram
+profile. A numeric ID keeps working if the person changes their username.
 
 Messages from anyone else are ignored without a reply.
 
@@ -113,6 +121,15 @@ Private chats with the bot are always answered.
 
 To send a group to a different agent than the bot's private chats, bind the
 group's chat ID (see [Routing and bindings](./routing.md#bind-one-chat-to-an-agent)).
+
+## When the bot does not answer
+
+- **The sender is not in Allow From**: the message is ignored without a reply
+  and without a warning in the log. Add the person's username or ID.
+- **The bot is switched off**: check the switch on its card.
+- **A group message is not answered**: see [Groups](#groups); with Group
+  Privacy on, Telegram never delivers ordinary group messages.
+- **Another agent answers**: check the bot's binding on the **Bindings** page.
 
 ## When the bot is blocked or removed
 
