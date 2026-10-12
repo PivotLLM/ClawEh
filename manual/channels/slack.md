@@ -25,6 +25,7 @@ Token** (starts with `xapp-`).
    | `groups:history` | reading private channels |
    | `im:history` | reading direct messages |
    | `mpim:history` | reading group direct messages |
+   | `commands` | the `/claw` slash command |
    | `channels:read`, `users:read` | optional: looking up channels and people |
 
    Click **Install to Workspace**, approve, and copy the **Bot User OAuth
@@ -37,6 +38,10 @@ Token** (starts with `xapp-`).
    **Allow users to send Slash commands and messages from the messages tab**.
    Without this, people see "Sending messages to this app has been turned
    off".
+6. **Slash Commands**: click **Create New Command**, enter `/claw` as the
+   command, give it a short description (for example `Run a ClawEh command`)
+   and click **Save**. No Request URL is needed in Socket Mode. Then
+   reinstall the app to the workspace (Slack asks for the `commands` scope).
 
 If you add a scope later, reinstall the app to the workspace and paste the new
 Bot Token.
@@ -87,6 +92,19 @@ with a keyword, set `group_trigger` in `config.json`:
 ```
 
 or `"group_trigger": { "prefixes": ["!ask"] }`.
+
+## Commands in Slack
+
+ClawEh commands such as `/model` can be run three ways:
+
+- **`/claw model`**: the `/claw` slash command runs the command after it;
+  `/claw` alone shows the help. It needs step 6 above.
+- **` /model`** with a leading space: Slack only treats a message as a slash
+  command when `/` is its first character, so the space sends it as a message.
+- **`!model`**: `!` works like `/` and needs no space.
+
+The answer appears where the command was typed. If the app is not in that
+channel, only you see the answer to `/claw`; invite the app to answer there.
 
 ## When something goes wrong
 

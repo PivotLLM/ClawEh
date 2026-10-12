@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/identity"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mdhelper"
 	"github.com/PivotLLM/ClawEh/media"
@@ -36,6 +37,10 @@ type SlackChannel struct {
 	cancel        context.CancelFunc
 	pendingAcks   sync.Map
 	userNameCache sync.Map // userID → display name string
+	// slashResponses maps a slash command's trigger id to its slashResponse.
+	slashResponses sync.Map
+	// clock dates slash command response URLs; nil means clock.Real.
+	clock clock.Clock
 }
 
 type slackMessageRef struct {
@@ -212,7 +217,11 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	_, _, err := c.api.PostMessageContext(ctx, channelID, opts...)
 	if err != nil {
-		return classifySendErr("slack send", err)
+		sendErr := classifySendErr("slack send", err)
+		if url, ok := c.slashResponseURL(msg.OriginalMessageID); ok && errors.Is(sendErr, channels.ErrRecipientNotFound) {
+			return c.sendSlashResponse(ctx, url, msg.Content, channelID, sendErr)
+		}
+		return sendErr
 	}
 
 	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
@@ -234,6 +243,29 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		"thread_ts":  threadTS,
 	})
 
+	return nil
+}
+
+// sendSlashResponse delivers a slash command's reply through its
+// response_url, visible only to the user who ran it, when the app cannot post
+// in the conversation (it is not a member, or the command came from a DM the
+// app is not part of). If that fails too, the original send error stands.
+func (c *SlackChannel) sendSlashResponse(ctx context.Context, url, content, channelID string, sendErr error) error {
+	err := slack.PostWebhookContext(ctx, url, &slack.WebhookMessage{
+		Text:         mdhelper.FormatTables(markdownToMrkdwn(content)),
+		ResponseType: slack.ResponseTypeEphemeral,
+	})
+	if err != nil {
+		logger.WarnCF("slack", "Slash command reply failed through its response URL", map[string]any{
+			"channel_id": channelID,
+			"error":      err.Error(),
+		})
+		return sendErr
+	}
+	logger.InfoCF("slack", "Slash command reply sent privately: the app cannot post in this conversation", map[string]any{
+		"channel_id": channelID,
+		"reason":     sendErr.Error(),
+	})
 	return nil
 }
 
@@ -348,6 +380,10 @@ func classifySendErr(op string, err error) error {
 func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID string) (func(), error) {
 	channelID, _ := parseSlackChatID(chatID)
 	if channelID == "" {
+		return func() {}, nil
+	}
+	// A slash command has no message to react to.
+	if _, ok := c.slashResponses.Load(messageID); ok {
 		return func() {}, nil
 	}
 
@@ -524,14 +560,7 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	peerKind := "channel"
-	peerID := channelID
-	if strings.HasPrefix(channelID, "D") {
-		peerKind = "direct"
-		peerID = senderID
-	}
-
-	peer := bus.Peer{Kind: peerKind, ID: peerID}
+	peer := slackPeer(channelID, senderID)
 
 	metadata := map[string]string{
 		"message_ts": messageTS,
@@ -597,14 +626,7 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		return
 	}
 
-	mentionPeerKind := "channel"
-	mentionPeerID := channelID
-	if strings.HasPrefix(channelID, "D") {
-		mentionPeerKind = "direct"
-		mentionPeerID = senderID
-	}
-
-	mentionPeer := bus.Peer{Kind: mentionPeerKind, ID: mentionPeerID}
+	mentionPeer := slackPeer(channelID, senderID)
 
 	metadata := map[string]string{
 		"message_ts": messageTS,
@@ -616,6 +638,43 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 	}
 
 	c.HandleMessage(c.ctx, mentionPeer, messageTS, senderID, chatID, content, nil, metadata, mentionSender)
+}
+
+// slashResponseTTL is how long Slack accepts posts to a slash command's
+// response_url.
+const slashResponseTTL = 30 * time.Minute
+
+// slashResponse is a slash command's response_url, kept so its replies can
+// still reach the user when the app cannot post in the conversation.
+type slashResponse struct {
+	url string
+	at  time.Time
+}
+
+// slashCommandText turns a slash command into the ClawEh command it runs:
+// "/claw model gpt" is "/model gpt" and a bare "/claw" is "/help". Every
+// command the app registers is read this way, whatever its name.
+func slashCommandText(text string) string {
+	text = strings.TrimSpace(text)
+	if after, ok := strings.CutPrefix(text, "/"); ok {
+		text = after
+	} else if after, ok := strings.CutPrefix(text, "!"); ok {
+		text = after
+	}
+	if strings.TrimSpace(text) == "" {
+		return "/help"
+	}
+	return "/" + text
+}
+
+// slackPeer is the routing peer of a conversation: a DM is the sender's
+// direct peer, anything else the channel, so bindings apply alike to
+// messages and slash commands.
+func slackPeer(channelID, senderID string) bus.Peer {
+	if strings.HasPrefix(channelID, "D") {
+		return bus.Peer{Kind: "direct", ID: senderID}
+	}
+	return bus.Peer{Kind: "channel", ID: channelID}
 }
 
 func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
@@ -643,18 +702,19 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 
 	senderID := cmd.UserID
 	channelID := cmd.ChannelID
-	chatID := channelID
-	content := cmd.Text
+	content := slashCommandText(cmd.Text)
 
-	if strings.TrimSpace(content) == "" {
-		content = "help"
+	// The trigger id names this command's turn: replies carry it back as
+	// OriginalMessageID, which finds the response_url when the app cannot
+	// post in the conversation.
+	messageID := cmd.TriggerID
+	if messageID != "" && cmd.ResponseURL != "" {
+		c.rememberSlashResponse(messageID, cmd.ResponseURL)
 	}
 
 	metadata := map[string]string{
 		"channel_id": channelID,
 		"platform":   "slack",
-		"is_command": "true",
-		"trigger_id": cmd.TriggerID,
 		"team_id":    c.teamID,
 	}
 
@@ -666,15 +726,45 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 
 	c.HandleMessage(
 		c.ctx,
-		bus.Peer{Kind: "channel", ID: channelID},
-		"",
+		slackPeer(channelID, senderID),
+		messageID,
 		senderID,
-		chatID,
+		channelID,
 		content,
 		nil,
 		metadata,
 		cmdSender,
 	)
+}
+
+// rememberSlashResponse keeps a command's response_url for its lifetime and
+// drops the expired ones.
+func (c *SlackChannel) rememberSlashResponse(triggerID, url string) {
+	now := clock.Or(c.clock).Now()
+	c.slashResponses.Range(func(k, v any) bool {
+		if r, ok := v.(slashResponse); ok && now.Sub(r.at) >= slashResponseTTL {
+			c.slashResponses.Delete(k)
+		}
+		return true
+	})
+	c.slashResponses.Store(triggerID, slashResponse{url: url, at: now})
+}
+
+// slashResponseURL returns the live response_url of the slash command a
+// reply answers, if any.
+func (c *SlackChannel) slashResponseURL(originalMessageID string) (string, bool) {
+	if originalMessageID == "" {
+		return "", false
+	}
+	v, ok := c.slashResponses.Load(originalMessageID)
+	if !ok {
+		return "", false
+	}
+	r, ok := v.(slashResponse)
+	if !ok || clock.Or(c.clock).Since(r.at) >= slashResponseTTL {
+		return "", false
+	}
+	return r.url, true
 }
 
 func (c *SlackChannel) downloadSlackFile(file slack.File) string {

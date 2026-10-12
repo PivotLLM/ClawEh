@@ -349,6 +349,14 @@ observe does not need an entry.
 
 ### Added
 
+- **Slack `/claw` slash command runs ClawEh commands.** `/claw model` runs
+  `/model`, and `/claw` alone shows the help. It is routed like a message from
+  the same conversation, so bindings for a channel or a person's direct
+  messages apply. If the app is not in the channel, the answer is shown only
+  to the person who ran it. Requires adding `/claw` under **Slash Commands**
+  in the Slack app and reinstalling it (`commands` scope); see the Slack page
+  of the manual. Typing ` /model` (leading space) or `!model` still works.
+
 - **May message on the Agents page.** Each agent card has a **May message**
   checklist of the other agents, plus **All agents** (`"*"`), saved to the
   agent's `subagents.allow_agents`, which until now could be set only in
@@ -1447,6 +1455,10 @@ observe does not need an entry.
   Migration: move any such skills into `<CLAW_HOME>/skills`.
 
 ### Fixed
+
+- **Slack slash commands reached the agent as plain text.** The command's
+  text was sent without a `/`, so no ClawEh command ever ran, and a command
+  in a direct message ignored bindings for that person.
 
 - **A voice message that cannot be transcribed is no longer treated as an
   empty message.** The agent is told a voice message arrived but could not be
