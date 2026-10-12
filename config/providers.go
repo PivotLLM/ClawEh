@@ -148,7 +148,6 @@ type ModelConfig struct {
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
 
 	// Optional optimizations
-	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit
 	MaxTokens      int    `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
 	ContextWindow  int    `json:"context_window,omitempty"`   // Actual model context window size in tokens
 	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")

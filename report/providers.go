@@ -79,9 +79,6 @@ func modelSettings(m *config.ModelConfig) string {
 	if m.ContextWindow > 0 {
 		s = append(s, "context "+itoa(m.ContextWindow))
 	}
-	if m.RPM > 0 {
-		s = append(s, "rpm "+itoa(m.RPM))
-	}
 	if m.ReasoningEffort != "" {
 		s = append(s, "reasoning "+m.ReasoningEffort)
 	}

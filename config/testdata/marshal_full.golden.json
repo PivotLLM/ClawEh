@@ -24,7 +24,6 @@
       "provider": "x",
       "connect_mode": "x",
       "workspace": "x",
-      "rpm": 1,
       "max_tokens": 1,
       "context_window": 1,
       "max_tokens_field": "x",

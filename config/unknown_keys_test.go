@@ -68,3 +68,21 @@ func TestLoadConfig_UnknownKeyDoesNotFailLoad(t *testing.T) {
 		t.Fatalf("gateway.port = %d, want the default (the typo must be ignored)", cfg.Gateway.Port)
 	}
 }
+
+// TestUnknownConfigKeys_RemovedSettings: settings removed because they never
+// had an effect are reported when an existing config.json still has them.
+func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
+	doc, err := decodeDocument([]byte(`{
+		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unknownConfigKeys(doc)
+	want := []string{
+		"models[0].rpm",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)
+	}
+}

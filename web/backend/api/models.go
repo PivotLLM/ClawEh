@@ -33,7 +33,6 @@ type modelResponse struct {
 	// Advanced fields
 	ConnectMode    string `json:"connect_mode,omitempty"`
 	Workspace      string `json:"workspace,omitempty"`
-	RPM            int    `json:"rpm,omitempty"`
 	MaxTokens      int    `json:"max_tokens,omitempty"`
 	ContextWindow  int    `json:"context_window,omitempty"` // tokens; 0 = use the agent default
 	MaxTokensField string `json:"max_tokens_field,omitempty"`
@@ -89,7 +88,6 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Provider:          m.Provider,
 			ConnectMode:       m.ConnectMode,
 			Workspace:         m.Workspace,
-			RPM:               m.RPM,
 			MaxTokens:         m.MaxTokens,
 			ContextWindow:     m.ContextWindow,
 			MaxTokensField:    m.MaxTokensField,

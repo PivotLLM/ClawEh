@@ -195,8 +195,6 @@
       "workspaceHint": "Working directory for CLI-based providers (e.g. GitHub Copilot).",
       "requestTimeout": "Request Timeout (s)",
       "requestTimeoutHint": "Maximum seconds to wait for a response. 0 = use default.",
-      "rpm": "Rate Limit (RPM)",
-      "rpmHint": "Maximum requests per minute. 0 = no limit.",
       "thinkingLevel": "Thinking Level",
       "thinkingLevelHint": "Extended thinking budget: off, low, medium, high, xhigh, adaptive.",
       "maxTokens": "Max Output Tokens",
