@@ -73,6 +73,7 @@ func TestLoadConfig_UnknownKeyDoesNotFailLoad(t *testing.T) {
 // had an effect are reported when an existing config.json still has them.
 func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 	doc, err := decodeDocument([]byte(`{
+		"agents": {"defaults": {"image_model": "m", "image_model_fallbacks": ["m"]}},
 		"models": [{"model_name": "m", "model": "m", "provider": "p", "rpm": 60, "connect_mode": "stdio"}]
 	}`))
 	if err != nil {
@@ -80,6 +81,8 @@ func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 	}
 	got := unknownConfigKeys(doc)
 	want := []string{
+		"agents.defaults.image_model",
+		"agents.defaults.image_model_fallbacks",
 		"models[0].connect_mode",
 		"models[0].rpm",
 	}

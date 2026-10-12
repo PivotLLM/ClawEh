@@ -95,7 +95,7 @@ const (
 	// HumanDefault: a human agent is marked the default agent.
 	HumanDefault
 	// HumanModelMisused: a human model is used where a model must answer
-	// (defaults, summarization, vision, image, sub-agent models).
+	// (defaults, summarization, vision, sub-agent models).
 	HumanModelMisused
 	// HumanSharedName: a human model's model_name is also another model's.
 	HumanSharedName
@@ -138,8 +138,8 @@ func (p HumanProblem) SetsAgentAside() bool {
 //   - it has exactly one binding: its default, naming one chat;
 //   - that chat is bound to no other agent;
 //   - it is never the default agent;
-//   - a human model is never anyone's default, summarization, vision, image
-//     or sub-agent model, and its model_name is no other model's.
+//   - a human model is never anyone's default, summarization, vision or
+//     sub-agent model, and its model_name is no other model's.
 func (c *Config) HumanProblems() []HumanProblem {
 	var out []HumanProblem
 	for i := range c.Agents.List {

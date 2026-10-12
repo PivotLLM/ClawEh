@@ -153,7 +153,6 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 		row("Default model", orValue(d.DefaultModelName(), none)),
 		row("Fallback models", joinLines(tail(d.Models), none)),
 		row("Summarization and memory model chain", chain),
-		row("Image model", joinLines(append([]string{orValue(d.ImageModel, none)}, d.ImageModelFallbacks...), none)),
 		row("Vision model (describes images for text-only models)",
 			joinLines(append([]string{orValue(d.VisionModel, none)}, d.VisionModelFallbacks...), none)),
 	}}

@@ -31,8 +31,6 @@ func (c *Config) modelRefSites() []modelRef {
 	d := &c.Agents.Defaults
 	sites := []modelRef{
 		{where: "agents.defaults.models", slice: &d.Models, role: "a default model"},
-		{where: "agents.defaults.image_model", scalar: &d.ImageModel, role: "an image model"},
-		{where: "agents.defaults.image_model_fallbacks", slice: &d.ImageModelFallbacks, role: "an image model"},
 		{where: "agents.defaults.vision_model", scalar: &d.VisionModel, role: "a vision model"},
 		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks, role: "a vision model"},
 		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},

@@ -415,7 +415,7 @@ func (c *Config) ValidateModels() error {
 }
 
 // RenameModelReferences repoints every reference to a model alias from oldName
-// to newName across agent defaults, per-agent model chains, image models, and
+// to newName across agent defaults, per-agent model chains, vision models, and
 // the global summarization chain. Used when a model's
 // model_name changes via the WebUI so existing references are not orphaned.
 // No-op when oldName is empty or unchanged. Mutates in-memory config only.

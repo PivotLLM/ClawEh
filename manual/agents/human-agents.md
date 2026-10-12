@@ -35,7 +35,7 @@ The agent is not run until it has its default chat. In `config.json` the result 
 
 - A human agent has exactly one binding, its default, naming one chat that no other agent is bound to.
 - It is never the default agent.
-- A human model is never another agent's model, fallback, memory, vision, image or sub-agent model.
+- A human model is never another agent's model, fallback, memory, vision or sub-agent model.
 
 A WebUI save that would break a rule is refused with a one-line reason. If `config.json` is edited by hand into breaking one, the agent is set aside: its card says "Not running: …" with the reason, and messages from its chat get "Bob is not running." A human model named where a model must answer is ignored there, with a note on the agent's card or on the System or Models page. **Check Up** marks a human agent whose chat is on a channel that is not set up.
 

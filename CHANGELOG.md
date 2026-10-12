@@ -1395,6 +1395,8 @@ observe does not need an entry.
   decides what an agent can use.
 - The model settings `rpm` and `connect_mode` are removed; they never had an
   effect. A leftover key is ignored and logged as an unknown key.
+- `agents.defaults.image_model` and `image_model_fallbacks` are removed; nothing
+  used them. `vision_model` is the image setting.
 
 - **BREAKING: the LINE channel is removed.** It received messages only
   through a webhook that had to be reachable from the internet, which the rest

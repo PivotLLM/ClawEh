@@ -144,10 +144,6 @@ A model can see images only when its **Vision (tool-result images)** setting (`v
 
 When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the **Vision models** chain (`agents.defaults.vision_model`, then `agents.defaults.vision_model_fallbacks`) for a text description and gives the agent that description. With no vision model set, images are dropped for such models.
 
-### Image model
-
-`agents.defaults.image_model` and `image_model_fallbacks` exist in the configuration and are listed by the Check Up report, but no current ClawEh feature uses them. See [Check Up and the full report](../admin/checkup.md).
-
 ## Other model settings
 
 | Setting | Config key | Notes |

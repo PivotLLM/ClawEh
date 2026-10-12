@@ -208,7 +208,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		cfg.Models[idx] = mc
 
 		// If the alias was renamed, repoint every reference (agent defaults,
-		// per-agent chains, routing, image models, summarization) so nothing orphans.
+		// per-agent chains, routing, vision models, summarization) so nothing orphans.
 		if mc.ModelName != oldName {
 			cfg.RenameModelReferences(oldName, mc.ModelName)
 		}

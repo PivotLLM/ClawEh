@@ -197,10 +197,6 @@
       "models": [
         "x"
       ],
-      "image_model": "x",
-      "image_model_fallbacks": [
-        "x"
-      ],
       "vision_model": "x",
       "vision_model_fallbacks": [
         "x"

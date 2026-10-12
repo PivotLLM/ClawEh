@@ -17,8 +17,6 @@ func refTestConfig() *Config {
 		{ModelName: "alpha", Model: "a2", Provider: "p2", Enabled: false}, // duplicate alias: legal
 	}
 	cfg.Agents.Defaults.Models = []string{"alpha"}
-	cfg.Agents.Defaults.ImageModel = "alpha"
-	cfg.Agents.Defaults.ImageModelFallbacks = []string{"alpha"}
 	cfg.Agents.Defaults.VisionModel = "alpha"
 	cfg.Agents.Defaults.VisionModelFallbacks = []string{"alpha"}
 	cfg.Summarization.Models = []string{"alpha"}
@@ -35,8 +33,6 @@ func refTestConfig() *Config {
 
 var allSites = []string{
 	"agents.defaults.models",
-	"agents.defaults.image_model",
-	"agents.defaults.image_model_fallbacks",
 	"agents.defaults.vision_model",
 	"agents.defaults.vision_model_fallbacks",
 	"summarization.models",
@@ -85,10 +81,10 @@ func TestValidateModelReferences(t *testing.T) {
 			name: "missing alias is an error naming site and alias",
 			mutate: func(c *Config) {
 				c.Agents.List[0].Models = []string{"ghost", "alpha"}
-				c.Agents.Defaults.ImageModel = "ghost"
+				c.Agents.Defaults.VisionModel = "ghost"
 			},
 			wantErrs: []string{
-				`agents.defaults.image_model: model "ghost" does not exist`,
+				`agents.defaults.vision_model: model "ghost" does not exist`,
 				`agents.list[alice].models: model "ghost" does not exist`,
 			},
 		},
@@ -130,13 +126,12 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	cfg := refTestConfig()
 	cfg.Agents.List[0].Models = []string{"ghost", "alpha", "beta", "phantom"}
 	cfg.Agents.List[0].Subagents.Models = []string{"ghost"}
-	cfg.Agents.Defaults.ImageModel = "ghost"
-	cfg.Agents.Defaults.VisionModel = "beta"
+	cfg.Agents.Defaults.VisionModel = "ghost"
 
 	removed := cfg.PruneDanglingModelReferences()
 
 	want := []DanglingModelReference{
-		{Site: "agents.defaults.image_model", Alias: "ghost"},
+		{Site: "agents.defaults.vision_model", Alias: "ghost"},
 		{Site: "agents.list[alice].models", Alias: "ghost", Agent: "alice"},
 		{Site: "agents.list[alice].models", Alias: "phantom", Agent: "alice"},
 		{Site: "agents.list[alice].subagents.models", Alias: "ghost", Agent: "alice"},
@@ -151,12 +146,9 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	if got := cfg.Agents.List[0].Subagents.Models; len(got) != 0 {
 		t.Fatalf("subagents.models = %v, want empty", got)
 	}
-	// Scalars are blanked; a disabled scalar is left alone.
-	if cfg.Agents.Defaults.ImageModel != "" {
-		t.Fatalf("image_model = %q, want blank", cfg.Agents.Defaults.ImageModel)
-	}
-	if cfg.Agents.Defaults.VisionModel != "beta" {
-		t.Fatalf("vision_model = %q, want beta (disabled models are kept)", cfg.Agents.Defaults.VisionModel)
+	// Scalars are blanked.
+	if cfg.Agents.Defaults.VisionModel != "" {
+		t.Fatalf("vision_model = %q, want blank", cfg.Agents.Defaults.VisionModel)
 	}
 	// Nothing dangling remains, and a second pass removes nothing.
 	if errs, _ := cfg.ValidateModelReferences(); len(errs) != 0 {
@@ -164,6 +156,11 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	}
 	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 {
 		t.Fatalf("second prune removed %v, want nothing", again)
+	}
+	// A disabled scalar is left alone.
+	cfg.Agents.Defaults.VisionModel = "beta"
+	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 || cfg.Agents.Defaults.VisionModel != "beta" {
+		t.Fatalf("disabled vision_model: removed %v, vision_model = %q, want it kept", again, cfg.Agents.Defaults.VisionModel)
 	}
 }
 
