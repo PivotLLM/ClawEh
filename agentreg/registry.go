@@ -262,6 +262,11 @@ type Registry[T Instance] struct {
 	// orphans are replaced instances the host could not release yet; a
 	// sweep retries them and Close closes them with the rest.
 	orphans []*entry[T]
+	// background counts the goroutines a turn's end starts (deleteDeferred,
+	// retireIfIdle), so Close can wait for them. Add runs under mu while
+	// closed is false, and Close sets closed under mu before it waits, so no
+	// Add can race the Wait.
+	background sync.WaitGroup
 
 	retire    RetireFunc[T]
 	inserted  InsertedFunc[T]
@@ -576,19 +581,47 @@ func (r *Registry[T]) endTurn(e *entry[T]) func() {
 			}
 			if idle && e.meta.deleteWhenIdle.Load() {
 				// Not on the turn's own goroutine: deleting closes the
-				// instance the turn has just finished with.
-				go r.deleteDeferred(e.spec.ID)
+				// instance the turn has just finished with. Once Close has
+				// begun there is nothing to do: deleteEntry would refuse
+				// with ErrClosed, and the agent stays saved.
+				r.goBackground(func() { r.deleteDeferred(e.spec.ID) }, false)
 			}
 			if idle && e.retireWhenIdle.Load() {
-				go r.retireIfIdle(e) // likewise
+				// Likewise. A replaced instance is in neither entries nor
+				// orphans, so Close does not close it: it must be retired
+				// even after Close has begun.
+				r.goBackground(func() { r.retireIfIdle(e) }, true)
 			}
 		})
 	}
 }
 
-// Close closes every instance. It runs once; later calls do nothing, and the
-// registry refuses to create, delete or reload afterwards. Saved temporary
-// agents stay on disk and are restored at the next start.
+// goBackground runs f on a goroutine of its own that Close waits for. Once
+// Close has begun, f is dropped, or (afterClose) run on an untracked
+// goroutine: Close may already be past its wait, and Add must not race it.
+func (r *Registry[T]) goBackground(f func(), afterClose bool) {
+	r.mu.RLock()
+	if r.closed {
+		r.mu.RUnlock()
+		if afterClose {
+			go f()
+		}
+		return
+	}
+	r.background.Add(1)
+	r.mu.RUnlock()
+	go func() {
+		defer r.background.Done()
+		f()
+	}()
+}
+
+// Close closes every instance and waits for the work a turn's end started
+// (a deferred delete, the retirement of a replaced instance), so nothing
+// writes under the data directory once it returns. It runs once; later calls
+// do nothing, and the registry refuses to create, delete or reload
+// afterwards. Saved temporary agents stay on disk and are restored at the
+// next start. Close must not be called from a turn's end or a retire hook.
 func (r *Registry[T]) Close() {
 	r.mu.Lock()
 	if r.closed {
@@ -606,6 +639,9 @@ func (r *Registry[T]) Close() {
 	for _, e := range entries {
 		closeQuietly(e.inst, e.spec)
 	}
+	// The goroutines take mu, persistMu and the host's hooks; Close holds
+	// none of them here.
+	r.background.Wait()
 	// A non-owner's temporary agents live only as long as the process.
 	if root := r.TempRoot(); r.privateRoot && root != "" {
 		removeDir(root)

@@ -42,6 +42,7 @@ type fakeHost struct {
 	failID     string // building this id fails
 	failRetire bool
 	onBuild    func(Spec) // called (unlocked) before each build returns
+	onRetire   func(Spec) // called (unlocked) before each retirement
 }
 
 func newFakeHost() *fakeHost { return &fakeHost{builds: map[string]int{}} }
@@ -62,6 +63,9 @@ func (h *fakeHost) build(_ *config.Config, spec Spec) (*fakeInst, error) {
 }
 
 func (h *fakeHost) retire(spec Spec, _ *fakeInst) error {
+	if h.onRetire != nil {
+		h.onRetire(spec)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.failRetire {
@@ -109,6 +113,10 @@ func mustNew(t *testing.T, cfg *config.Config, h *fakeHost) *Registry[*fakeInst]
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Registered after the test's CLAW_HOME, so it runs before that
+	// directory is removed: Close waits for any deferred delete still writing
+	// temp_agents.json.
+	t.Cleanup(r.Close)
 	return r
 }
 
@@ -855,5 +863,35 @@ func TestRunSweeper_SweepsOnEachTick(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunSweeper did not return once stop was closed")
+	}
+}
+
+// Close waits for a deletion a turn's end started: once it returns, the
+// agent's directory is gone and nothing writes under the data directory.
+func TestCloseWaitsForDeferredDelete(t *testing.T) {
+	h := newFakeHost()
+	r := mustNew(t, testConfig(t), h)
+	id := mustFresh(t, r, config.AgentConfig{})
+	inst := mustGet(t, r, id)
+	end, _ := r.BeginTurn(id, inst)
+	if err := r.DeleteWhenIdle(id); !errors.Is(err, ErrDeletePending) {
+		t.Fatalf("DeleteWhenIdle mid-turn = %v, want ErrDeletePending", err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	h.onRetire = func(Spec) { close(entered); <-release }
+	end()
+	<-entered // the deferred deletion is under way
+
+	closed := make(chan struct{})
+	go func() { r.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while the deferred deletion was running")
+	default:
+	}
+	close(release)
+	<-closed
+	if !inst.closed() || dirExists(inst.spec.StateDir) {
+		t.Fatal("Close returned before the deferred deletion finished")
 	}
 }
