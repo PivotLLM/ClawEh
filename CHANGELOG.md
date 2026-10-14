@@ -920,6 +920,12 @@ observe does not need an entry.
   model uses its own default. A configured value is still sent. To keep the
   old behaviour, set **Default temperature** to 0.2 on the System page.
 
+- **Anthropic models never receive a temperature.** Claude Fable 5.1, Opus
+  5.5, Sonnet 5.5 and Haiku 5.5 refuse any temperature other than 1, so a
+  configured temperature made every request to them fail and fall back to the
+  next model. The `anthropic` and `anthropic-messages` protocols now leave it
+  out; other providers still receive it.
+
 - **Backups now include each agent's Maestro data.** The nightly backup and
   `claw backup` include every agent's `maestro/` folder (projects, playbooks
   and the rest), and `claw restore` puts it back. Maestro's lock files
