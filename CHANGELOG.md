@@ -1456,6 +1456,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Provider error messages are no longer lost.** When a model call failed,
+  the log showed the failure as `"Wrapped":{}` instead of the provider's
+  explanation, and the chat said only, for example, "Claude Fable 5.1 error
+  HTTP 400 (bad response format)". Errors are now logged with their full
+  text, and the reply and the "Trying …" notice end with the provider's own
+  message when it gave one (cut to 200 characters).
 - **OpenRouter routing preferences are kept when tools are used.** A model's
   `extra_body.provider` (provider order, allow/deny lists, and so on) was
   dropped, with a warning in the log, whenever tools were offered, because

@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -266,7 +269,68 @@ func attemptText(model string, err error, reason providers.FailoverReason) strin
 		}
 		return model + " error: " + declined.Error()
 	}
-	return attemptDescription(model, failoverStatus(err), reason)
+	text := attemptDescription(model, failoverStatus(err), reason)
+	if msg := providerMessage(err); msg != "" {
+		text += ": " + msg
+	}
+	return text
+}
+
+// maxProviderMessageRunes caps the provider's own message in a reply, which
+// must stay a short line in a chat.
+const maxProviderMessageRunes = 200
+
+// providerMessageRe finds a "message" string in an error body that is not
+// whole JSON (the provider's preview of the body may be cut short).
+var providerMessageRe = regexp.MustCompile(`"message"\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// providerMessage returns the one-line message a provider gave with a failed
+// request (the "message" of its JSON error body, e.g. Anthropic's
+// {"type":"error","error":{"message":"..."}}), trimmed to
+// maxProviderMessageRunes, or "" when the error carries none.
+func providerMessage(err error) string {
+	fe, ok := errors.AsType[*providers.FailoverError](err)
+	if !ok || fe == nil || fe.Wrapped == nil {
+		return ""
+	}
+	raw := fe.Wrapped.Error()
+	start := strings.IndexByte(raw, '{')
+	if start < 0 {
+		return ""
+	}
+	msg := jsonErrorMessage(raw[start:])
+	if msg == "" {
+		if m := providerMessageRe.FindStringSubmatch(raw[start:]); m != nil {
+			msg, _ = strconv.Unquote(m[1])
+		}
+	}
+	msg = strings.TrimRight(strings.Join(strings.Fields(msg), " "), ".")
+	if r := []rune(msg); len(r) > maxProviderMessageRunes {
+		msg = strings.TrimSpace(string(r[:maxProviderMessageRunes])) + "…"
+	}
+	return msg
+}
+
+// jsonErrorMessage reads the message from a JSON error body: error.message,
+// a string error, or a top-level message. It returns "" when body does not
+// start with a JSON object or has none of these.
+func jsonErrorMessage(body string) string {
+	var doc map[string]any
+	if json.NewDecoder(strings.NewReader(body)).Decode(&doc) != nil {
+		return ""
+	}
+	switch e := doc["error"].(type) {
+	case map[string]any:
+		if m, ok := e["message"].(string); ok {
+			return m
+		}
+	case string:
+		return e
+	}
+	if m, ok := doc["message"].(string); ok {
+		return m
+	}
+	return ""
 }
 
 // failoverStatus extracts the HTTP status code carried by a classified

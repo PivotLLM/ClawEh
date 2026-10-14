@@ -482,6 +482,11 @@ func appendFields(event *zerolog.Event, fields map[string]any) {
 			event.Float64(k, val)
 		case bool:
 			event.Bool(k, val)
+		case error:
+			// An error is logged by its message. Marshalled as a value, a struct
+			// error shows its exported fields and its wrapped error (usually an
+			// unexported type) as {}, losing the reason it failed.
+			event.AnErr(k, val)
 		default:
 			event.Interface(k, v) // Fallback for struct, slice and maps
 		}
