@@ -12,6 +12,9 @@ import (
 
 const anthropic400 = `bad request (400): {"type":"error","error":{"type":"invalid_request_error","message":"thinking.type: adaptive is required for this model."}}`
 
+const openai400 = "API request failed:\n  Status: 400\n  Body:   " +
+	`{"error":{"message":"Invalid  value\nfor tools.","type":"invalid_request_error"}}`
+
 func fable400() *providers.FailoverError {
 	return &providers.FailoverError{
 		Reason: providers.FailoverFormat, Provider: "Anthropic", Model: "claude-fable-5-1",
@@ -27,9 +30,7 @@ func TestProviderMessage(t *testing.T) {
 		want string
 	}{
 		{"anthropic error body", fable400(), "thinking.type: adaptive is required for this model"},
-		{"openai error body", &providers.FailoverError{Status: 400, Wrapped: errors.New(
-			"API request failed:\n  Status: 400\n  Body:   {\"error\":{\"message\":\"Invalid  value\\nfor tools.\",\"type\":\"invalid_request_error\"}}")},
-			"Invalid value for tools"},
+		{"openai error body", &providers.FailoverError{Status: 400, Wrapped: errors.New(openai400)}, "Invalid value for tools"},
 		{"string error", &providers.FailoverError{Wrapped: errors.New(`failed: {"error":"model not found"}`)}, "model not found"},
 		{"top-level message", &providers.FailoverError{Wrapped: errors.New(`{"message":"quota"}`)}, "quota"},
 		{"cut-short body", &providers.FailoverError{Wrapped: errors.New(`bad request (400): {"error":{"message":"too long","details":"abc`)}, "too long"},

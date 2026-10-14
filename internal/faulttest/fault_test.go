@@ -65,7 +65,7 @@ func TestRateLimit_PersistentFailsOverAndParks(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 429 (rate limited)" + tryingFallback
+	want := "⚠️ primary error HTTP 429 (rate limited): Rate limit reached for requests" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}
@@ -104,7 +104,7 @@ func TestServerError_FailsOver(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 503 (timeout)" + tryingFallback
+	want := "⚠️ primary error HTTP 503 (timeout): The server had an error processing your request" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}
@@ -370,7 +370,7 @@ func TestAuthFailure_ParksAlertsAndFailsOver(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 401 (auth failed)" + tryingFallback
+	want := "⚠️ primary error HTTP 401 (auth failed): Incorrect API key provided" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}

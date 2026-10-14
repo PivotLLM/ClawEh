@@ -260,12 +260,12 @@ func TestFormatFieldValue(t *testing.T) {
 	}
 }
 
-type structErr struct {
+type statusError struct {
 	Status  int
 	Wrapped error
 }
 
-func (e *structErr) Error() string {
+func (e *statusError) Error() string {
 	return "status " + strconv.Itoa(e.Status) + ": " + e.Wrapped.Error()
 }
 
@@ -274,7 +274,7 @@ func TestErrorFieldLoggedByMessage(t *testing.T) {
 	restore := RedirectForTest(&buf)
 	defer restore()
 
-	err := &structErr{Status: 400, Wrapped: errors.New(`bad request (400): {"error":{"message":"thinking is required"}}`)}
+	err := &statusError{Status: 400, Wrapped: errors.New(`bad request (400): {"error":{"message":"thinking is required"}}`)}
 	WarnCF("test", "candidate failed", map[string]any{"error": err})
 
 	var line map[string]any

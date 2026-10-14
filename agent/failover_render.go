@@ -301,7 +301,9 @@ func providerMessage(err error) string {
 	msg := jsonErrorMessage(raw[start:])
 	if msg == "" {
 		if m := providerMessageRe.FindStringSubmatch(raw[start:]); m != nil {
-			msg, _ = strconv.Unquote(m[1])
+			if unquoted, err := strconv.Unquote(m[1]); err == nil {
+				msg = unquoted
+			}
 		}
 	}
 	msg = strings.TrimRight(strings.Join(strings.Fields(msg), " "), ".")
