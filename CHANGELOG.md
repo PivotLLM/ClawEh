@@ -1456,6 +1456,24 @@ observe does not need an entry.
 
 ### Fixed
 
+- **OpenRouter routing preferences are kept when tools are used.** A model's
+  `extra_body.provider` (provider order, allow/deny lists, and so on) was
+  dropped, with a warning in the log, whenever tools were offered, because
+  ClawEh sets its own `provider` field to route tool calls only to providers
+  that support them. The two are now merged; your keys win.
+- **BREAKING: model names are sent exactly as configured.** ClawEh used to
+  strip a leading `groq/`, `deepseek/`, `google/`, `mistral/`, `moonshot/`,
+  `nvidia/`, `ollama/`, `litellm/` or `openrouter/` from a model name before
+  calling any endpoint other than OpenRouter, so Avian's
+  `deepseek/deepseek-v3.2` was sent under the wrong name. If a model of yours
+  relied on that (for example `deepseek/deepseek-chat` on DeepSeek's own API),
+  change its Model field to the name the provider expects
+  (`deepseek-chat`).
+- **Thinking Level now works for Anthropic models.** `thinking_level` on a
+  model using the `anthropic` or `anthropic-messages` protocol turns on
+  extended thinking (`low`, `medium`, `high`, `xhigh` or `adaptive`) instead
+  of being ignored with a warning, and tool calls keep working with it on.
+
 - **Slack slash commands reached the agent as plain text.** The command's
   text was sent without a `/`, so no ClawEh command ever ran, and a command
   in a direct message ignored bindings for that person.

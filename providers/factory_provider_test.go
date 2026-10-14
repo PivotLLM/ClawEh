@@ -131,6 +131,26 @@ func TestCreateProviderFromConfig_Anthropic(t *testing.T) {
 	}
 }
 
+// TestCreateProviderFromConfig_AnthropicThinkingCapable verifies both
+// Anthropic protocol names build a provider that takes a thinking level, so the
+// loop sends it instead of warning that it is ignored.
+func TestCreateProviderFromConfig_AnthropicThinkingCapable(t *testing.T) {
+	for _, protocol := range []string{"anthropic", "anthropic-messages"} {
+		t.Run(protocol, func(t *testing.T) {
+			model := &config.ModelConfig{ModelName: "m", Model: "claude-sonnet-4.6", Provider: "p"}
+			prov := &config.Provider{Name: "p", Protocol: protocol, APIKey: "test-key"}
+			provider, _, err := CreateProviderFromConfig(model, prov)
+			if err != nil {
+				t.Fatalf("CreateProviderFromConfig() error = %v", err)
+			}
+			tc, ok := provider.(ThinkingCapable)
+			if !ok || !tc.SupportsThinking() {
+				t.Fatalf("%s provider %T does not support thinking", protocol, provider)
+			}
+		})
+	}
+}
+
 func TestCreateProviderFromConfig_ClaudeCLI(t *testing.T) {
 	model := &config.ModelConfig{
 		ModelName: "test-claude-cli",

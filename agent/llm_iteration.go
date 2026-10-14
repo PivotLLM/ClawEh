@@ -537,6 +537,9 @@ func assistantToolCallMessage(agentID string, response *providers.LLMResponse, c
 		// Responses reasoning items are replayed before this turn's
 		// function_call on the next request (reasoning models with tools).
 		ResponsesReasoning: response.ResponsesReasoning,
+		// Anthropic thinking blocks must go back with the tool_use turn
+		// they preceded, or Anthropic refuses the next request.
+		AnthropicThinking: response.AnthropicThinking,
 	}
 	for _, tc := range calls {
 		argumentsJSON, err := json.Marshal(tc.Arguments)
