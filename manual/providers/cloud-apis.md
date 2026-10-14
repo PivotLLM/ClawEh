@@ -71,7 +71,7 @@ Require Reasoning Content matters most when an agent switches models: after a tu
 
 ### Temperature
 
-ClawEh sends an HTTP model the agent's `temperature`, else **Default temperature** on the System page (`agents.defaults.temperature`). When neither is set it sends no temperature, and the model uses its own default. Anthropic models never receive one: the newest Claude models refuse any temperature other than 1. Some other reasoning models reject any temperature too. For those, list `temperature` in the model's **Drop Request Fields**, as the catalogue does for OpenAI GPT 5.5.
+ClawEh sends an HTTP model the agent's `temperature`, else **Default temperature** on the System page (`agents.defaults.temperature`). When neither is set it sends no temperature, and the model uses its own default. Anthropic models never receive one: the newest Claude models do not use temperature. Some other reasoning models reject any temperature too. For those, list `temperature` in the model's **Drop Request Fields**, as the catalogue does for OpenAI GPT 5.5.
 
 ### Reasoning effort
 
