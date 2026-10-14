@@ -51,8 +51,8 @@ device:… is offline."):
 
 Only real outages raise an alert: a channel that is not running, a send that
 failed after its retries, a token the service rejects, a channel that has had
-no working connection for ten minutes ("Telegram down", followed by "Telegram
-up" when it recovers), and a channel that keeps failing to start. An offline or
+no working connection for ten minutes ("Telegram down: telegram-alice", followed by
+"Telegram up: telegram-alice" when it recovers; the title names the channels), and a channel that keeps failing to start. An offline or
 unreachable recipient is a normal situation and is not alerted or retried.
 Alerts appear on the **Logs** page (choose the alerts source). See [Alerts](../admin/alerts.md).
 

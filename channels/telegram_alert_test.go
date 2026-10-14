@@ -117,7 +117,7 @@ func TestTelegramDownAlert_NoToken(t *testing.T) {
 	fc.Advance(channels.ConnDownAlertAfter)
 	var down *alerter.Alert
 	for _, a := range rec.snapshot() {
-		if a.Title == "Telegram down" {
+		if a.Title == "Telegram down: telegram-redact" {
 			down = &a
 		}
 	}

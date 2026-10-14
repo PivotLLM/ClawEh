@@ -71,7 +71,7 @@ func TestConnWatch_ProlongedOutageAlertsOnce(t *testing.T) {
 		t.Fatalf("want 1 alert, got %d", n)
 	}
 	a := rec.alerts[0]
-	if a.Title != "Test down" || a.EventID != "test" || a.Details != "Channels: test\nLast error: latest" {
+	if a.Title != "Test down: test" || a.EventID != "test" || a.Details != "Channels: test\nLast error: latest" {
 		t.Fatalf("unexpected alert %+v", a)
 	}
 }
@@ -106,7 +106,7 @@ func TestConnWatch_NewOutageAfterRecoveryAlertsAgain(t *testing.T) {
 	bc.ReportConnFailure(errors.New("two"))
 	waitPastAlert(fc)
 	alerts := snapshot(rec)
-	if len(alerts) != 3 || alerts[0].Title != "Test down" || alerts[1].Title != "Test up" || alerts[2].Title != "Test down" {
+	if len(alerts) != 3 || alerts[0].Title != "Test down: test" || alerts[1].Title != "Test up: test" || alerts[2].Title != "Test down: test" {
 		t.Fatalf("want down, up, down; got %+v", alerts)
 	}
 }
@@ -151,7 +151,7 @@ func TestConnWatch_PlatformOutageAlertsOnce(t *testing.T) {
 		t.Fatalf("want 1 down alert, got %+v", alerts)
 	}
 	down := alerts[0]
-	if down.Title != "Telegram down" || down.EventID != "telegram" ||
+	if down.Title != "Telegram down: telegram-bot0, telegram-bot1, telegram-bot2, +4 more" || down.EventID != "telegram" ||
 		!strings.HasPrefix(down.Description, "7 bots, no working connection for ") ||
 		!strings.HasPrefix(down.Details, "Channels: telegram-bot0, telegram-bot1, telegram-bot2, telegram-bot3, telegram-bot4, telegram-bot5, telegram-bot6\nLast error: ") {
 		t.Fatalf("unexpected down alert %+v", down)
@@ -169,7 +169,7 @@ func TestConnWatch_PlatformOutageAlertsOnce(t *testing.T) {
 		t.Fatalf("want down then up, got %+v", alerts)
 	}
 	up := alerts[1]
-	if up.Title != "Telegram up" || up.EventID != "telegram-up" || !strings.HasPrefix(up.Description, "back after ") {
+	if up.Title != "Telegram up: telegram-bot0, telegram-bot1, telegram-bot2, +4 more" || up.EventID != "telegram-up" || !strings.HasPrefix(up.Description, "back after ") {
 		t.Fatalf("unexpected up alert %+v", up)
 	}
 }
@@ -193,10 +193,10 @@ func TestConnWatch_TwoPlatformsAlertSeparately(t *testing.T) {
 	for _, a := range alerts {
 		byID[a.EventID] = a
 	}
-	if byID["telegram"].Title != "Telegram down" || !strings.HasPrefix(byID["telegram"].Description, "2 bots,") {
+	if byID["telegram"].Title != "Telegram down: telegram-a, telegram-b" || !strings.HasPrefix(byID["telegram"].Description, "2 bots,") {
 		t.Fatalf("unexpected telegram alert %+v", byID["telegram"])
 	}
-	if byID["slack"].Title != "Slack down" || !strings.HasPrefix(byID["slack"].Description, "1 bot,") {
+	if byID["slack"].Title != "Slack down: slack" || !strings.HasPrefix(byID["slack"].Description, "1 bot,") {
 		t.Fatalf("unexpected slack alert %+v", byID["slack"])
 	}
 }
@@ -220,7 +220,7 @@ func TestConnWatch_StoppedChannelLeavesPlatformOutage(t *testing.T) {
 	}
 	a.ReportConnected()
 	alerts := snapshot(rec)
-	if len(alerts) != 2 || alerts[1].Title != "Telegram up" {
+	if len(alerts) != 2 || alerts[1].Title != "Telegram up: telegram-a, telegram-b" {
 		t.Fatalf("want up alert once the remaining bot reconnects, got %+v", alerts)
 	}
 }
@@ -241,7 +241,7 @@ func TestConnWatch_AllStoppedEndsOutageSilently(t *testing.T) {
 	a.ReportConnFailure(errors.New("down again"))
 	waitPastAlert(fc)
 	alerts := snapshot(rec)
-	if len(alerts) != 2 || alerts[1].Title != "Telegram down" {
+	if len(alerts) != 2 || alerts[1].Title != "Telegram down: telegram-a" {
 		t.Fatalf("want a fresh down alert, got %+v", alerts)
 	}
 }
@@ -253,7 +253,7 @@ func TestConnAlertText(t *testing.T) {
 	g.failure(tg, time.Now().Add(-18*time.Minute), "boom")
 	down := g.expired(tg, ConnDownAlertAfter)
 	want := alerter.Alert{
-		Title:       "Telegram down",
+		Title:       "Telegram down: telegram-Alice",
 		Description: "1 bot, no working connection for 10m",
 		Details:     "Channels: telegram-Alice\nLast error: boom",
 		EventID:     "telegram",
@@ -262,7 +262,7 @@ func TestConnAlertText(t *testing.T) {
 		t.Fatalf("down alert = %+v, want %+v", *down, want)
 	}
 	up := g.connected(tg)
-	if up == nil || *up != (alerter.Alert{Title: "Telegram up", Description: "back after 18m", EventID: "telegram-up"}) {
+	if up == nil || *up != (alerter.Alert{Title: "Telegram up: telegram-Alice", Description: "back after 18m", EventID: "telegram-up"}) {
 		t.Fatalf("unexpected up alert %+v", up)
 	}
 

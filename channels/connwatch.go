@@ -172,6 +172,7 @@ type platformOutage struct {
 	// recovered is set once an affected channel reconnects; an outage whose
 	// channels all stopped instead ends without an "up" alert.
 	recovered bool
+	names     []string // channels named in the active alert's title
 }
 
 type channelOutage struct {
@@ -229,8 +230,9 @@ func (g *connAggregator) expired(c *BaseChannel, after time.Duration) *alerter.A
 		}
 	}
 	slices.Sort(names)
+	p.names = names
 	return &alerter.Alert{
-		Title:       platformDisplayName(id) + " down",
+		Title:       platformDisplayName(id) + " down: " + nameList(names),
 		Description: fmt.Sprintf("%s, no working connection for %s", countNoun(id, len(names)), shortDuration(after)),
 		Details:     "Channels: " + strings.Join(names, ", ") + "\nLast error: " + mine.lastErr,
 		EventID:     id,
@@ -269,12 +271,12 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 	var up *alerter.Alert
 	if p.recovered {
 		up = &alerter.Alert{
-			Title:       platformDisplayName(id) + " up",
+			Title:       platformDisplayName(id) + " up: " + nameList(p.names),
 			Description: "back after " + shortDuration(c.conn.clk().Since(p.since)),
 			EventID:     id + "-up",
 		}
 	}
-	p.alerted, p.recovered, p.since = false, false, time.Time{}
+	p.alerted, p.recovered, p.since, p.names = false, false, time.Time{}, nil
 	return up
 }
 
@@ -311,6 +313,19 @@ func countNoun(platform string, n int) string {
 		noun += "s"
 	}
 	return fmt.Sprintf("%d %s", n, noun)
+}
+
+// maxTitleNames is how many channels an alert title names before it says
+// how many more there are.
+const maxTitleNames = 3
+
+// nameList names the channels for an alert title: "telegram-alice" or
+// "telegram-alice, telegram-bob, +2 more".
+func nameList(names []string) string {
+	if len(names) <= maxTitleNames {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(names[:maxTitleNames], ", "), len(names)-maxTitleNames)
 }
 
 // shortDuration formats d to the minute from a minute up ("10m", "1h5m",

@@ -148,9 +148,9 @@ What does raise an [alert](../admin/alerts.md):
 - **Telegram polling failed**: Telegram rejected the bot token (it was revoked
   or is wrong). Create a new token with BotFather (`/revoke`) and paste it into
   **Bot Token**.
-- **Telegram down**: the bot has had no working connection to Telegram for ten
-  minutes. ClawEh keeps retrying and raises **Telegram up** when the
-  connection is back.
+- **Telegram down: telegram-alice**: the named bot has had no working
+  connection to Telegram for ten minutes. ClawEh keeps retrying and raises
+  **Telegram up: telegram-alice** when the connection is back.
 
 Bot tokens never appear in ClawEh's logs or alerts.
 
