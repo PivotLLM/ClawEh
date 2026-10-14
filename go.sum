@@ -8,8 +8,8 @@ github.com/PivotLLM/cogmem v0.0.9 h1:dFDi0yT08NP8mgRd28XmFFOL7/ZPg9hBC0iDiTc7AZQ
 github.com/PivotLLM/cogmem v0.0.9/go.mod h1:UQO989cyn+D36QX7Gc60NKNULS5KN92YYLZTtU4JdJ4=
 github.com/PivotLLM/ctxengine v0.0.10 h1:mt1x73q3MEXfHV+s95HDJtSZOn51lPPtUZNXEcILgNs=
 github.com/PivotLLM/ctxengine v0.0.10/go.mod h1:4aMZct+7FqRZEWYHvKi1g++b9eWhyLlZ9Zu30P/9qgs=
-github.com/PivotLLM/spawnllm v0.1.17 h1:qhpOtf8VaZ8EMVjPFZQ8g7e0ydWwhpaGbfe5Ln7ngro=
-github.com/PivotLLM/spawnllm v0.1.17/go.mod h1:hjsEu/LmJTvoBB1oQuasnF8ob4enllfh9EYUI7BYkso=
+github.com/PivotLLM/spawnllm v0.1.18 h1:h4hleFP1pf1JEsl0xS15AD8CwX8ZCMh++rg3mMrHZyU=
+github.com/PivotLLM/spawnllm v0.1.18/go.mod h1:hjsEu/LmJTvoBB1oQuasnF8ob4enllfh9EYUI7BYkso=
 github.com/PivotLLM/toolspec v0.4.0 h1:/6EZ8XvQoMi6LmFw24gt5UcekuQPoj88evwfMUn5xTU=
 github.com/PivotLLM/toolspec v0.4.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/a3tai/openclaw-go v1.20260325.0 h1:bYZV2zSgI01tSwWJc9DKMlOGku5ydMAkhgt/SL5kxCc=
