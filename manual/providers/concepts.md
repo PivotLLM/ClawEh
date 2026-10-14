@@ -157,13 +157,16 @@ When an agent's model is set to **Off** and it receives an image, ClawEh sends t
 
 The model form also shows **Thinking Level** (`thinking_level`), which turns on Anthropic's extended thinking. It applies to models on the `anthropic` and `anthropic-messages` protocols; on any other model ClawEh ignores it and logs a warning.
 
-| Level | Thinking budget |
+Every level other than `off` turns on adaptive thinking: Claude decides how much to think, and the level is the effort it puts in.
+
+| Level | Effort |
 |---|---|
 | `off` (or empty) | No thinking. |
-| `low` | 4,096 tokens |
-| `medium` | 16,384 tokens |
-| `high` | 32,000 tokens |
-| `xhigh` | 64,000 tokens |
-| `adaptive` | The model decides how much to think. |
+| `adaptive` | The model's default effort. |
+| `low` | Low |
+| `medium` | Medium |
+| `high` | High |
+| `xhigh` | Extra high |
+| `max` | Maximum |
 
-While thinking is on, no temperature is sent, and the budget is kept below the model's Max Tokens. A budget that would fall below Anthropic's minimum of 1,024 tokens sends no thinking, with a warning in the log.
+Newer Claude models always think adaptively, so `off` cannot turn their thinking off entirely. While thinking is on, no temperature is sent.

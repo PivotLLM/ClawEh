@@ -885,6 +885,13 @@ observe does not need an entry.
   `claude-sonnet-4-6`). This applies to new installs; an existing
   `config.json` keeps its models.
 
+- **Thinking Level (`thinking_level`) adds `max`, and every level is now
+  adaptive thinking with that effort.** `low`, `medium`, `high`, `xhigh` and
+  `max` set how hard Claude thinks instead of a fixed token budget;
+  `adaptive` uses the model's default effort and `off` sends no thinking.
+  Newer Claude models always think adaptively, so `off` cannot turn their
+  thinking off entirely.
+
 - SearXNG search now goes through `tools.web.proxy` like the other search
   providers; a SearXNG server on this machine is still reached directly.
 

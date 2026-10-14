@@ -194,7 +194,7 @@
       "requestTimeout": "Request Timeout (s)",
       "requestTimeoutHint": "Maximum seconds to wait for a response. 0 = use default.",
       "thinkingLevel": "Thinking Level",
-      "thinkingLevelHint": "Anthropic models only: off, low, medium, high, xhigh, adaptive.",
+      "thinkingLevelHint": "Anthropic models only: off, adaptive, low, medium, high, xhigh, max.",
       "maxTokens": "Max Output Tokens",
       "maxTokensHint": "Maximum tokens the model may generate per response. Overrides the global default for this model only.",
       "contextWindow": "Context Window (tokens)",

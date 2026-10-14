@@ -151,7 +151,7 @@ type ModelConfig struct {
 	ContextWindow  int    `json:"context_window,omitempty"`   // Actual model context window size in tokens
 	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
 	RequestTimeout int    `json:"request_timeout,omitempty"`
-	ThinkingLevel  string `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
+	ThinkingLevel  string `json:"thinking_level,omitempty"` // Extended thinking: off|adaptive|low|medium|high|xhigh|max
 	NoTools        bool   `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	// Vision controls how images returned by tools (e.g. MCP screenshots) reach
 	// this model: "off"/"" (default) drops them; "user_message" injects them as a
