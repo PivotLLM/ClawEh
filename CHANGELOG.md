@@ -1476,6 +1476,12 @@ observe does not need an entry.
 
 ### Fixed
 
+- **Anthropic models failed on any conversation with earlier tool calls.** A
+  tool call reloaded from the saved conversation was sent with an empty name
+  and no input, and Anthropic refused the request (400 "tool_use.name: String
+  should have at least 1 character"), so the agent fell back to another
+  model. Saved tool calls now keep their name and input on every provider.
+
 - **Provider error messages are no longer lost.** When a model call failed,
   the log showed the failure as `"Wrapped":{}` instead of the provider's
   explanation, and the chat said only, for example, "Claude Fable 5.1 error
