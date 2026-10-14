@@ -878,6 +878,13 @@ observe does not need an entry.
 
 ### Changed
 
+- **The built-in Anthropic models are Claude Sonnet 5.5, Claude Opus 5.5 and
+  Claude Fable 5.1** (`claude-sonnet-5-5`, `claude-opus-5-5`,
+  `claude-fable-5-1`), all off until you enable them. They replace "Claude
+  Sonnet 4.6", whose model name `claude-sonnet-4.6` was wrong (Anthropic's is
+  `claude-sonnet-4-6`). This applies to new installs; an existing
+  `config.json` keeps its models.
+
 - SearXNG search now goes through `tools.web.proxy` like the other search
   providers; a SearXNG server on this machine is still reached directly.
 

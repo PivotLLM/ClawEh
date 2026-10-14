@@ -193,7 +193,9 @@ func DefaultConfig() *Config {
 
 			// HTTP providers.
 			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},
-			{ModelName: "Claude Sonnet 4.6", Model: "claude-sonnet-4.6", Provider: "Anthropic", Enabled: false},
+			{ModelName: "Claude Sonnet 5.5", Model: "claude-sonnet-5-5", Provider: "Anthropic", Enabled: false},
+			{ModelName: "Claude Opus 5.5", Model: "claude-opus-5-5", Provider: "Anthropic", Enabled: false},
+			{ModelName: "Claude Fable 5.1", Model: "claude-fable-5-1", Provider: "Anthropic", Enabled: false},
 			{ModelName: "DeepSeek Flash", Model: "deepseek-flash", Provider: "DeepSeek", ContextWindow: 900000, Enabled: false},
 			{ModelName: "Gemini 3.8 Flash", Model: "gemini-3.8-flash", Provider: "Google API", Enabled: false},
 			{ModelName: "Qwen Plus", Model: "qwen-plus", Provider: "Qwen", Enabled: false},

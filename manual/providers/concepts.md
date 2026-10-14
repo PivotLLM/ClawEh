@@ -18,7 +18,7 @@ A **model** is one way of calling one model through one provider:
 
 | Field (Models page) | Config key | Meaning |
 |---|---|---|
-| Model Alias / Model Name | `model_name` | The name you and your agents use, for example `Claude Sonnet 4.6`. Agents, the default model list and the memory and vision chains all refer to models by this name. |
+| Model Alias / Model Name | `model_name` | The name you and your agents use, for example `Claude Sonnet 5.5`. Agents, the default model list and the memory and vision chains all refer to models by this name. |
 | Model Identifier / Model ID | `model` | The id the endpoint expects, exactly as the vendor writes it, for example `gpt-5.5`. No protocol prefix. |
 | Provider | `provider` | The provider's name. |
 | (switch on the card) | `enabled` | Off means ClawEh ignores the model everywhere. |
@@ -56,7 +56,7 @@ If a server answers with a short `Retry-After` (3 seconds or less), ClawEh waits
 While it falls back, the person in the chat sees a short notice, for example:
 
 ```
-⚠️ Claude Sonnet 4.6 error HTTP 429 (rate limited).
+⚠️ Claude Sonnet 5.5 error HTTP 429 (rate limited).
 Trying OpenAI GPT 5.5…
 ```
 
@@ -94,7 +94,7 @@ In each key, 0 means the default and a negative number turns cooldown off for th
 
 ### What you see
 
-- In the chat: `⚠️ Claude Sonnet 4.6 unavailable — rate limited (retry in 7m). Using OpenAI GPT 5.5.` Several skipped models are summed up on one line.
+- In the chat: `⚠️ Claude Sonnet 5.5 unavailable — rate limited (retry in 7m). Using OpenAI GPT 5.5.` Several skipped models are summed up on one line.
 - Operator [alerts](../admin/alerts.md): one when a model is parked for a key or billing failure (raised on the first such failure), and one when a model is parked after repeated failures of another kind, once the 1, 3 and 5 minute steps are used up.
 - Chat commands: `/cooldowns list` shows parked models; `/cooldowns clear` clears all of them, and `/cooldowns clear <provider>/<model>` clears one. `/retry` clears all cooldowns and resends your last message.
 

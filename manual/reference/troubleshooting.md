@@ -52,7 +52,7 @@ See [Network access](../admin/network.md) and [Signing in](../admin/login.md).
 
 When a model fails, ClawEh tries the next model in the agent's list and pauses the failing one for a while (a [cooldown](../providers/concepts.md#cooldowns)). The reply then starts with a line such as:
 
-> ⚠️ Claude Sonnet 4.6 unavailable — rate limited (retry in 9m). Using OpenAI GPT 5.5.
+> ⚠️ Claude Sonnet 5.5 unavailable — rate limited (retry in 9m). Using OpenAI GPT 5.5.
 
 If every model fails, the reply is "All models failed", with the reason for each model.
 

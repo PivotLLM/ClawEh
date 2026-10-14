@@ -25,7 +25,7 @@ To keep a key out of `config.json`, write a reference in the `api_key` field ins
 | Provider | Protocol | Base URL | Catalogue models | Preset settings |
 |---|---|---|---|---|
 | OpenAI | `openai-chat` | `https://api.openai.com/v1` | OpenAI GPT 5.5 | Model drops `temperature` |
-| Anthropic | `anthropic` | `https://api.anthropic.com/v1` | Claude Sonnet 4.6 | |
+| Anthropic | `anthropic` | `https://api.anthropic.com/v1` | Claude Sonnet 5.5, Claude Opus 5.5, Claude Fable 5.1 | |
 | Google API | `openai-chat` | `https://generativelanguage.googleapis.com/v1beta/openai` | Gemini 3.8 Flash | |
 | DeepSeek | `openai-chat` | `https://api.deepseek.com/v1` | DeepSeek Flash | Require Reasoning Content |
 | xAI | `openai-chat` | `https://api.x.ai/v1` | Grok 4.7, Grok 4.7 High, Grok 4.7 Medium, Grok 4.7 None | Reasoning effort per model |
