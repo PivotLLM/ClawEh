@@ -27,8 +27,8 @@ channel is handed to one agent, and the agent's reply goes back the same way.
 | Telegram | **Channels → Telegram** | `telegram`, or `telegram-<id>` for each extra bot | [Telegram](./telegram.md) |
 | Slack | **Channels → Slack** | `slack` | [Slack](./slack.md) |
 | Discord | **Channels → Discord** | `discord` | [Discord](./discord.md) |
-| Matrix | **Channels → Matrix** | `matrix` | [Other chat channels](./other.md#matrix) |
-| SecMsg (Signal and similar, through a separate daemon) | **Channels → SecMsg** | `<daemon name>-<account>` | [Other chat channels](./other.md#secmsg-signal) |
+| Matrix | **Channels → Matrix** | `matrix` | [Matrix](./matrix.md) |
+| SecMsg (Signal and similar, through a separate daemon) | **Channels → SecMsg** | `<daemon name>-<account>` | [SecMsg (Signal)](./secmsg.md) |
 | Devices (Rabbit R1, voice apps) | **Services → Devices** | — (each device picks its agent) | [Devices](./devices.md) |
 
 Channel settings save as you type. Saving reloads the configuration and

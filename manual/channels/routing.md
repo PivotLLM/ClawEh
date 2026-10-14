@@ -141,5 +141,5 @@ represents a person (a [human agent](../agents/human-agents.md)) is never the de
 ## Related pages
 
 - [Channels overview](./index.md)
-- [Telegram](./telegram.md), [Slack](./slack.md), [Discord](./discord.md), [Other chat channels](./other.md)
+- [Telegram](./telegram.md), [Slack](./slack.md), [Discord](./discord.md), [Matrix](./matrix.md), [SecMsg (Signal)](./secmsg.md)
 - [Devices](./devices.md)
