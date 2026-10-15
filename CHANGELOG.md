@@ -355,7 +355,11 @@ observe does not need an entry.
   messages apply. If the app is not in the channel, the answer is shown only
   to the person who ran it. Requires adding `/claw` under **Slash Commands**
   in the Slack app and reinstalling it (`commands` scope); see the Slack page
-  of the manual. Typing ` /model` (leading space) or `!model` still works.
+  of the manual. A slash command registered under a ClawEh command's own
+  name (`/model`, `/status`) runs that command with its text as arguments, so
+  `/model 0` is `/model 0`; under any other name, text that does not start
+  with a command reaches the agent as an ordinary message. Typing ` /model`
+  (leading space) or `!model` still works.
 
 - **May message on the Agents page.** Each agent card has a **May message**
   checklist of the other agents, plus **All agents** (`"*"`), saved to the

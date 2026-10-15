@@ -17,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/internal/clock"
@@ -651,20 +652,39 @@ type slashResponse struct {
 	at  time.Time
 }
 
-// slashCommandText turns a slash command into the ClawEh command it runs:
-// "/claw model gpt" is "/model gpt" and a bare "/claw" is "/help". Every
-// command the app registers is read this way, whatever its name.
-func slashCommandText(text string) string {
+// builtinCommands is ClawEh's command registry, used to tell a Slack slash
+// command that is a ClawEh command ("/model") from a launcher ("/claw").
+var builtinCommands = commands.NewRegistry(commands.BuiltinDefinitions())
+
+// isBuiltinCommand reports whether name ("model", "/model") is a ClawEh
+// command or one of its aliases.
+func isBuiltinCommand(name string) bool {
+	_, ok := builtinCommands.Lookup(strings.TrimLeft(name, "/!"))
+	return ok
+}
+
+// slashCommandText turns a Slack slash command into the text ClawEh handles.
+// A command named after a ClawEh command runs it with its text as arguments:
+// "/model 0" is "/model 0". Any other name ("/claw") is a launcher: its first
+// word is the command ("/claw model 0" is "/model 0", with or without a "/"
+// or "!" typed before it), a bare launcher is "/help", and text that does not
+// start with a command reaches the agent as an ordinary message.
+func slashCommandText(command, text string) string {
 	text = strings.TrimSpace(text)
-	if after, ok := strings.CutPrefix(text, "/"); ok {
-		text = after
-	} else if after, ok := strings.CutPrefix(text, "!"); ok {
-		text = after
+	if name := strings.TrimPrefix(strings.TrimSpace(command), "/"); isBuiltinCommand(name) {
+		if text == "" {
+			return "/" + name
+		}
+		return "/" + name + " " + text
 	}
-	if strings.TrimSpace(text) == "" {
+	if text == "" {
 		return "/help"
 	}
-	return "/" + text
+	body := strings.TrimLeft(text, "/!")
+	if first, _, _ := strings.Cut(body, " "); isBuiltinCommand(first) {
+		return "/" + body
+	}
+	return text
 }
 
 // slackPeer is the routing peer of a conversation: a DM is the sender's
@@ -702,7 +722,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 
 	senderID := cmd.UserID
 	channelID := cmd.ChannelID
-	content := slashCommandText(cmd.Text)
+	content := slashCommandText(cmd.Command, cmd.Text)
 
 	// The trigger id names this command's turn: replies carry it back as
 	// OriginalMessageID, which finds the response_url when the app cannot

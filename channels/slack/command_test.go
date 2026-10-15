@@ -87,7 +87,12 @@ func TestHandleSlashCommand_RunsClawCommand(t *testing.T) {
 		{"command in a DM", "/claw", "model", "D1", "/model", bus.Peer{Kind: "direct", ID: "U1"}},
 		{"prefix already typed", "/claw", "/model", "C1", "/model", bus.Peer{Kind: "channel", ID: "C1"}},
 		{"bang prefix already typed", "/claw", "!model", "C1", "/model", bus.Peer{Kind: "channel", ID: "C1"}},
-		{"another registered name", "/alice", "status", "C1", "/status", bus.Peer{Kind: "channel", ID: "C1"}},
+		{"another launcher name", "/alice", "status", "C1", "/status", bus.Peer{Kind: "channel", ID: "C1"}},
+		{"command registered by its own name", "/model", "0", "C1", "/model 0", bus.Peer{Kind: "channel", ID: "C1"}},
+		{"own-name command without arguments", "/status", "", "C1", "/status", bus.Peer{Kind: "channel", ID: "C1"}},
+		{"own-name command in a DM", "/model", "gpt-5", "D1", "/model gpt-5", bus.Peer{Kind: "direct", ID: "U1"}},
+		{"alias registered by its own name", "/reset", "", "C1", "/reset", bus.Peer{Kind: "channel", ID: "C1"}},
+		{"launcher with a message, not a command", "/claw", "hello there", "C1", "hello there", bus.Peer{Kind: "channel", ID: "C1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

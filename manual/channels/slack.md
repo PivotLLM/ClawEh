@@ -99,16 +99,24 @@ or `"group_trigger": { "prefixes": ["!ask"] }`.
 
 ## Commands in Slack
 
-ClawEh commands such as `/model` can be run three ways:
+ClawEh commands such as `/model` can be run these ways:
 
 - **`/claw model`**: the `/claw` slash command runs the command after it;
   `/claw` alone shows the help. It needs step 6 above.
+- **`/model 0`**: a Slack slash command with the same name as a ClawEh
+  command runs that command. Add it the way step 6 adds `/claw`, once for each
+  command you want (for example `/model` or `/cancel`).
 - **` /model`** with a leading space: Slack only treats a message as a slash
   command when `/` is its first character, so the space sends it as a message.
 - **`!model`**: `!` works like `/` and needs no space.
 
 The answer appears where the command was typed. If the app is not in that
-channel, only you see the answer to `/claw`; invite the app to answer there.
+channel, only you see the answer to a slash command; invite the app to
+answer there.
+
+A slash command under any other name, such as `/claw`, treats its first word as
+the command. If that word is not a ClawEh command, the text goes to the agent as
+an ordinary message.
 
 ## When something goes wrong
 
