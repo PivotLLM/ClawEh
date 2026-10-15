@@ -131,6 +131,33 @@ describe("ReportPage", () => {
     expect(screen.getAllByTestId("report-row-link")).toHaveLength(1)
   })
 
+  it("opens a manual link in a new tab", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ...sample,
+          assessment: [
+            {
+              action: true,
+              item: "Encrypted Matrix rooms",
+              status:
+                "ClawEh can't read these encrypted rooms: !alice:example.org.",
+              link: "/manual/channels/matrix.html#encryption",
+            },
+          ],
+        }),
+      }),
+    )
+    renderPage()
+    const link = await screen.findByTestId("report-row-link")
+    expect(link.getAttribute("href")).toBe(
+      "/manual/channels/matrix.html#encryption",
+    )
+    expect(link.getAttribute("target")).toBe("_blank")
+  })
+
   it("omits the build segment when the binary is unstamped", async () => {
     vi.stubGlobal(
       "fetch",

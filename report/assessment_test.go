@@ -693,3 +693,38 @@ func TestAssessment_BehindProxy(t *testing.T) {
 		t.Errorf("proxy row = %q", r)
 	}
 }
+
+// TestAssessment_EncryptedMatrixRooms: a marked row naming the encrypted rooms
+// the Matrix channel has seen, linked to the manual; none without such rooms
+// or with the channel off.
+func TestAssessment_EncryptedMatrixRooms(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Channels.Matrix.Enabled = true
+	noRow := func(why string) {
+		t.Helper()
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == itemEncryptedMatrix {
+				t.Errorf("%s: row present: %v", why, row)
+			}
+		}
+	}
+	noRow("nothing seen")
+
+	env.EncryptedMatrixRooms = []string{`"Alice's room" (!alice:example.org)`, "!bob:example.org"}
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemEncryptedMatrix)
+	if r[0] != "*" || r[2] != `ClawEh can't read these encrypted rooms: "Alice's room" (!alice:example.org), !bob:example.org.` {
+		t.Errorf("row = %v", r)
+	}
+	var link string
+	for _, a := range Assess(t.Context(), cfg, env).Assessment {
+		if a.Item == itemEncryptedMatrix {
+			link = a.Link
+		}
+	}
+	if link != "/manual/channels/matrix.html#encryption" {
+		t.Errorf("link = %q", link)
+	}
+
+	cfg.Channels.Matrix.Enabled = false
+	noRow("channel off")
+}

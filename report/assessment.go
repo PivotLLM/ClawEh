@@ -43,6 +43,11 @@ const itemProxy = "Proxy"
 // list; the WebUI links it to the field that fixes it (assessmentLinks).
 const itemUntrustedProxy = "Reverse proxy"
 
+// itemEncryptedMatrix is the row naming the Matrix rooms seen to be end-to-end
+// encrypted, which ClawEh can't read; the WebUI links it to the manual's
+// encryption section (assessmentLinks).
+const itemEncryptedMatrix = "Encrypted Matrix rooms"
+
 // Status phrases of the per-listener rows, written for a reader who does not
 // know what a bind address is.
 const (
@@ -197,6 +202,9 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 	if cfg.ProxyNotTrusted(env.ForwardedPeer) {
 		add(true, itemUntrustedProxy, untrustedProxyStatus(env))
+	}
+	if cfg.Channels.Matrix.Enabled && len(env.EncryptedMatrixRooms) > 0 {
+		add(true, itemEncryptedMatrix, "ClawEh can't read these encrypted rooms: "+strings.Join(env.EncryptedMatrixRooms, ", ")+".")
 	}
 	dd := dataDir(cfg, env)
 

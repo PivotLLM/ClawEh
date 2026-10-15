@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/channels/matrix"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/report"
 )
@@ -57,10 +58,12 @@ func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 }
 
 // runningEnvironment is reportEnvironment plus what the running listener has
-// observed: the last forwarded request from a proxy that is not trusted.
+// observed: the last forwarded request from a proxy that is not trusted, and
+// the Matrix rooms seen to be encrypted.
 func (h *Handler) runningEnvironment(dataDir string, now time.Time) report.Environment {
 	env := reportEnvironment(h.configPath, dataDir, now)
 	env.ForwardedPeer, env.ForwardedSeen = h.untrustedProxySeen()
+	env.EncryptedMatrixRooms = matrix.EncryptedRooms()
 	return env
 }
 

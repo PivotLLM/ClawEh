@@ -33,6 +33,9 @@ type Environment struct {
 	// there was none.
 	ForwardedPeer string
 	ForwardedSeen time.Time
+	// EncryptedMatrixRooms names the Matrix rooms seen since ClawEh started to
+	// be end-to-end encrypted, which it can't read; empty when there were none.
+	EncryptedMatrixRooms []string
 }
 
 // Report is the collected report: identity, then one Section per area.

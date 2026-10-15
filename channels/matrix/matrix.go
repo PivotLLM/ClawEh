@@ -187,6 +187,10 @@ type MatrixChannel struct {
 
 	roomKindCache     *roomKindCache
 	localpartMentionR *regexp.Regexp
+
+	// roomName looks up a room's name for the encrypted-room warning; tests
+	// replace it.
+	roomName func(ctx context.Context, roomID id.RoomID) string
 }
 
 func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*MatrixChannel, error) {
@@ -237,6 +241,7 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 		localpartMentionR: localpartMentionRegexp(matrixLocalpart(client.UserID)),
 		typingMu:          sync.Mutex{},
 	}
+	ch.roomName = ch.lookupRoomName
 	client.Syncer = healthSyncer{DefaultSyncer: syncer, ch: ch}
 	return ch, nil
 }
@@ -314,6 +319,8 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 
 	c.syncer.OnEventType(event.EventMessage, c.handleMessageEvent)
 	c.syncer.OnEventType(event.StateMember, c.handleMemberEvent)
+	c.syncer.OnEventType(event.EventEncrypted, c.handleEncryptedEvent)
+	c.syncer.OnEventType(event.StateEncryption, c.handleEncryptedEvent)
 
 	c.SetRunning(true)
 	go c.runRoomKindCacheJanitor(runCtx)

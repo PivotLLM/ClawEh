@@ -34,7 +34,8 @@ type AssessmentRow struct {
 
 // assessmentLinks maps a row's item to the WebUI location that fixes it.
 var assessmentLinks = map[string]string{
-	itemUntrustedProxy: "/network#trusted-proxies",
+	itemUntrustedProxy:  "/network#trusted-proxies",
+	itemEncryptedMatrix: "/manual/channels/matrix.html#encryption",
 }
 
 // Assessment is the identity and the security assessment table as data, for

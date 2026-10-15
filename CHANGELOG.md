@@ -349,6 +349,9 @@ observe does not need an entry.
 
 ### Added
 
+- **Encrypted Matrix rooms are reported.** ClawEh can't read end-to-end
+  encrypted rooms; it now logs one warning per room and Check Up lists them
+  under **Encrypted Matrix rooms** instead of ignoring them silently.
 - **Slack `/claw` slash command runs ClawEh commands.** `/claw model` runs
   `/model`, and `/claw` alone shows the help. It is routed like a message from
   the same conversation, so bindings for a channel or a person's direct

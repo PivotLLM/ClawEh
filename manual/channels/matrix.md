@@ -142,7 +142,10 @@ chat ID, also for a direct chat.
 ## Encryption
 
 ClawEh does not support Matrix end-to-end encryption. In an encrypted room it
-cannot read the messages, so it never answers there, and nothing is logged.
+cannot read the messages, so it never answers there. The first time it sees an
+encrypted room it logs a warning naming the room, and
+[Check Up](../admin/checkup.md) lists it under **Encrypted Matrix rooms** until
+ClawEh restarts.
 
 - Create the chat or room with encryption turned off. Many Matrix apps turn
   encryption on for new direct chats by default, and once a room is encrypted
