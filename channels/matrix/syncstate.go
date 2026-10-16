@@ -12,19 +12,24 @@ import (
 // remembers, oldest dropped first.
 const seenEventsMax = 1024
 
-// accountState is what one Matrix account keeps across channel rebuilds in
+// accountState is what the Matrix account keeps across channel rebuilds in
 // this process: a configuration save that changes the Matrix settings builds a
 // new channel, and without this the new one would either drop what arrived
 // while it was being rebuilt or handle it twice.
 //
 //   - firstStart is when a channel for the account first started. Events older
-//     than that predate ClawEh and are never handled.
+//     than that predate the channel and are never handled.
 //   - resumeFrom is the next_batch token of the last sync whose events were all
 //     handled. A rebuilt channel syncs from there, so what arrived during the
 //     rebuild is fetched, not skipped.
 //   - seen holds the ids of message events already handled, so a batch the
 //     previous channel was stopped in the middle of is not handled twice.
+//
+// Only one account is kept: a channel for another account (or one built after
+// the channel was turned off or removed, see MatrixChannel.Removed) starts
+// fresh.
 type accountState struct {
+	key        string
 	mu         sync.Mutex
 	firstStart time.Time
 	filterID   string
@@ -33,23 +38,35 @@ type accountState struct {
 	order      []id.EventID
 }
 
-// accounts maps "<homeserver> <user id>" to its state for the process.
-var accounts = struct {
+// current is the account state of the process, nil until a channel is built.
+var current = struct {
 	sync.Mutex
-	m map[string]*accountState
-}{m: map[string]*accountState{}}
+	st *accountState
+}{}
 
-// accountStateFor returns the process-wide state of the account.
+// accountKey identifies an account: "<homeserver> <user id>".
+func accountKey(homeserver, userID string) string { return homeserver + " " + userID }
+
+// accountStateFor returns the state of the account, fresh unless it is the
+// account the previous channel served.
 func accountStateFor(homeserver, userID string) *accountState {
-	key := homeserver + " " + userID
-	accounts.Lock()
-	defer accounts.Unlock()
-	st, ok := accounts.m[key]
-	if !ok {
-		st = &accountState{seen: map[id.EventID]struct{}{}}
-		accounts.m[key] = st
+	key := accountKey(homeserver, userID)
+	current.Lock()
+	defer current.Unlock()
+	if current.st == nil || current.st.key != key {
+		current.st = &accountState{key: key, seen: map[id.EventID]struct{}{}}
 	}
-	return st
+	return current.st
+}
+
+// forgetAccount drops st, so the next channel starts fresh. A newer state
+// (another account's) is left alone.
+func forgetAccount(st *accountState) {
+	current.Lock()
+	defer current.Unlock()
+	if current.st == st {
+		current.st = nil
+	}
 }
 
 // started records now as the first start unless one is recorded, and returns
@@ -84,6 +101,28 @@ func (s *accountState) claim(eventID id.EventID) bool {
 		s.order = s.order[1:]
 	}
 	return true
+}
+
+// handled reports whether eventID has been claimed.
+func (s *accountState) handled(eventID id.EventID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.seen[eventID]
+	return ok
+}
+
+// release undoes a claim whose event could not be handed on, so the channel
+// that fetches it again handles it.
+func (s *accountState) release(eventID id.EventID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.seen, eventID)
+	for i, e := range s.order {
+		if e == eventID {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
+		}
+	}
 }
 
 // accountSyncStore is the mautrix.SyncStore of a channel: it resumes from the

@@ -41,6 +41,9 @@ const (
 	roomKindCacheMaxEntries    = 2048
 
 	matrixMediaTempDirName = "claw_media"
+
+	// syncStopWait bounds how long Stop waits for the sync to end.
+	syncStopWait = 10 * time.Second
 )
 
 var matrixMentionHrefRegexp = regexp.MustCompile(`(?i)<a[^>]+href=["']([^"']+)["']`)
@@ -186,6 +189,8 @@ type MatrixChannel struct {
 	// account is the account's state shared with the channels that replace
 	// this one on a configuration save.
 	account *accountState
+	// syncDone is closed when runSync has returned.
+	syncDone chan struct{}
 
 	typingMu       sync.Mutex
 	typingSessions map[string]*typingSession // roomID -> session
@@ -266,7 +271,11 @@ func (s healthSyncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync
 	if err := s.DefaultSyncer.ProcessResponse(ctx, res, since); err != nil {
 		return err
 	}
-	s.ch.account.processed(res.NextBatch)
+	// A channel stopped while handling the batch skipped the rest of it: its
+	// successor fetches the batch again (what was handled is claimed).
+	if ctx.Err() == nil {
+		s.ch.account.processed(res.NextBatch)
+	}
 	return nil
 }
 
@@ -283,6 +292,7 @@ func (s healthSyncer) OnFailedSync(res *mautrix.RespSync, err error) (time.Durat
 // retrying: it alerts at once, and the loop keeps retrying at its slowest rate
 // in case the token is restored.
 func (c *MatrixChannel) runSync() {
+	defer close(c.syncDone)
 	var backoff time.Duration
 	for {
 		err := c.client.SyncWithContext(c.ctx)
@@ -336,6 +346,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 	c.SetRunning(true)
 	go c.runRoomKindCacheJanitor(runCtx)
 
+	c.syncDone = make(chan struct{})
 	go c.runSync()
 
 	logger.InfoC("matrix", "Matrix channel started")
@@ -349,10 +360,29 @@ func (c *MatrixChannel) Stop(ctx context.Context) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	// Wait for the sync to end, so a batch it was handling is either finished
+	// or left for the next channel, never half recorded (healthSyncer).
+	if c.syncDone != nil {
+		select {
+		case <-c.syncDone:
+		case <-ctx.Done():
+			logger.WarnC("matrix", "Matrix sync did not end before the stop deadline")
+		case <-time.After(syncStopWait):
+			logger.WarnC("matrix", "Matrix sync did not end within "+syncStopWait.String())
+		}
+	}
 	c.stopTypingSessions(ctx)
 
 	logger.InfoC("matrix", "Matrix channel stopped")
 	return nil
+}
+
+// Removed forgets the account's sync position and handled events once the
+// configuration no longer asks for this channel (turned off or removed), so a
+// channel turned on again starts fresh instead of catching up. The channel
+// manager calls it after Stop.
+func (c *MatrixChannel) Removed() {
+	forgetAccount(c.account)
 }
 
 func markdownToHTML(md string) string {
@@ -626,12 +656,9 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		return
 	}
 
-	// Ignore events from before ClawEh started, and events a previous
-	// channel for this account already handled.
-	if time.UnixMilli(evt.Timestamp).Before(c.startTime) {
-		return
-	}
-	if !c.account.claim(evt.ID) {
+	// Ignore events from before the channel first started, and events a
+	// previous channel for this account already handled.
+	if time.UnixMilli(evt.Timestamp).Before(c.startTime) || c.account.handled(evt.ID) {
 		return
 	}
 
@@ -716,7 +743,13 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		metadata["reply_to_msg_id"] = replyTo.String()
 	}
 
-	c.HandleMessage(
+	// A channel being stopped hands nothing on: its successor fetches the
+	// event again. Otherwise the event is claimed, and released if it could
+	// not be published, for the same reason.
+	if ctx.Err() != nil || !c.account.claim(evt.ID) {
+		return
+	}
+	if err := c.DeliverMessage(
 		ctx,
 		bus.Peer{Kind: peerKind, ID: peerID},
 		evt.ID.String(),
@@ -726,7 +759,14 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		mediaPaths,
 		metadata,
 		sender,
-	)
+	); err != nil {
+		c.account.release(evt.ID)
+		logger.WarnCF("matrix", "Message not handed on; it is fetched again when the channel restarts", map[string]any{
+			"room_id":  roomID,
+			"event_id": evt.ID.String(),
+			"error":    err.Error(),
+		})
+	}
 }
 
 func (c *MatrixChannel) extractInboundContent(
