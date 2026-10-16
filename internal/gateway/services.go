@@ -39,10 +39,15 @@ import (
 
 // gatewayServices holds references to all running services
 type gatewayServices struct {
-	CronService    *cron.CronService
-	CronTool       *toolschedule.CronTool
-	MountWatcher   *mountwatch.Watcher
-	MediaStore     media.MediaStore
+	CronService  *cron.CronService
+	CronTool     *toolschedule.CronTool
+	MountWatcher *mountwatch.Watcher
+	MediaStore   media.MediaStore
+	// mediaCleanup is what MediaStore was started with; a reload replaces
+	// the store only when it changes, since every channel holds the store.
+	mediaCleanup media.MediaCleanerConfig
+	// ChannelManager lives for the whole process: a reload rebuilds only the
+	// channels whose settings changed (channels.Manager.Reload).
 	ChannelManager *channels.Manager
 	DeviceService  *devices.Service
 	HealthServer   *health.Server
@@ -105,7 +110,8 @@ func setupAndStartServices(
 	// /opt/claw/media) rather than shared /tmp, so files stay app-owned and two
 	// instances on one host can't collide on a single dir.
 	utils.SetMediaStagingDir(filepath.Join(cfg.DataDir(), "media"))
-	services.MediaStore = startMediaStore(cfg)
+	services.mediaCleanup = mediaCleanerConfig(cfg)
+	services.MediaStore = startMediaStore(services.mediaCleanup)
 	// Stopped here if setup fails before the channel manager takes it over.
 	mediaOwned := true
 	defer func() {
@@ -127,7 +133,8 @@ func setupAndStartServices(
 	}
 
 	var err error
-	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore)
+	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore,
+		channels.WithBuildHook(channelBuildHook(agentLoop, services.TLSCerts)))
 	if err != nil {
 		return nil, fmt.Errorf("error creating channel manager: %w", err)
 	}
@@ -240,14 +247,19 @@ func startCron(services *gatewayServices, agentLoop *agent.AgentLoop, msgBus *bu
 	return nil
 }
 
-// startMediaStore creates the media store for file lifecycle management and
-// starts its TTL cleanup.
-func startMediaStore(cfg *config.Config) media.MediaStore {
-	store := media.NewFileMediaStoreWithCleanup(media.MediaCleanerConfig{
+// mediaCleanerConfig is the media store's TTL cleanup per cfg.
+func mediaCleanerConfig(cfg *config.Config) media.MediaCleanerConfig {
+	return media.MediaCleanerConfig{
 		Enabled:  cfg.Tools.MediaCleanup.Enabled,
 		MaxAge:   time.Duration(cfg.Tools.MediaCleanup.MaxAge) * time.Minute,
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
-	})
+	}
+}
+
+// startMediaStore creates the media store for file lifecycle management and
+// starts its TTL cleanup.
+func startMediaStore(cleanup media.MediaCleanerConfig) media.MediaStore {
+	store := media.NewFileMediaStoreWithCleanup(cleanup)
 	store.Start()
 	return store
 }
@@ -259,16 +271,27 @@ func stopMediaStore(store media.MediaStore) {
 	}
 }
 
-// wireChannelManager hands the new channel manager to the agent loop and
-// to the device channel's agent querier and TLS. Every reload rebuilds the
-// manager, so this runs each time.
+// wireChannelManager hands the channel manager to the agent loop and its
+// alerter to the channels. The manager lives for the whole process, so this
+// runs once.
 func wireChannelManager(services *gatewayServices, agentLoop *agent.AgentLoop) {
 	services.ChannelManager.SetAlerter(agentLoop.Alerter())
 	agentLoop.SetChannelManager(services.ChannelManager)
-	// Let the device gateway answer operator-client reads (agents.list, chat.history).
-	injectDeviceAgentQuerier(services.ChannelManager, agentLoop)
-	// Let channels.device.tls serve the HTTPS listener's certificate.
-	injectDeviceTLS(services.ChannelManager, services.TLSCerts)
+}
+
+// channelBuildHook wires what the gateway provides into each channel the
+// manager builds, at start and whenever a reload rebuilds it: the device
+// channel's agent querier (agents.list, chat.history for operator clients)
+// and the HTTPS listener's certificate for channels.device.tls. Both live for
+// the whole process, so a kept channel keeps what it was given.
+func channelBuildHook(al *agent.AgentLoop, certs *tlscert.Manager) func(name string, ch channels.Channel) {
+	return func(name string, ch channels.Channel) {
+		if name != "device" {
+			return
+		}
+		injectDeviceAgentQuerier(ch, al)
+		injectDeviceTLS(ch, certs)
+	}
 }
 
 // logEnabledChannels logs the channels the manager runs.
@@ -427,12 +450,15 @@ func newDeviceService(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bu
 // stopAndCleanupServices stops all services and cleans up resources. The agent
 // loop (nil when there is none) is unhooked from the MCP host it stops, so a
 // tool refresh between here and the host's restart is a no-op. phases, when
-// not nil, logs how long each step took.
+// not nil, logs how long each step took. With keepChannels (a reload) the
+// channels and the media store they hold keep running: restartServices
+// reloads them in place.
 func stopAndCleanupServices(
 	services *gatewayServices,
 	agentLoop *agent.AgentLoop,
 	shutdownTimeout time.Duration,
 	phases *phaseTimer,
+	keepChannels bool,
 ) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
@@ -451,7 +477,7 @@ func stopAndCleanupServices(
 		phases.done("MCP host stopped")
 	}
 	markReady(services, false)
-	if services.ChannelManager != nil {
+	if services.ChannelManager != nil && !keepChannels {
 		if stopErr := services.ChannelManager.StopAll(shutdownCtx); stopErr != nil {
 			logger.WarnCF("channels", "Channel manager shutdown error", map[string]any{"error": stopErr.Error()})
 		}
@@ -471,11 +497,8 @@ func stopAndCleanupServices(
 		services.CronService.Stop()
 		phases.done("cron stopped")
 	}
-	if services.MediaStore != nil {
-		// Stop the media store if it's a FileMediaStore with cleanup
-		if fms, ok := services.MediaStore.(*media.FileMediaStore); ok {
-			fms.Stop()
-		}
+	if services.MediaStore != nil && !keepChannels {
+		stopMediaStore(services.MediaStore)
 	}
 }
 
@@ -504,7 +527,7 @@ func shutdownGateway(
 		phases.done("provider closed")
 	}
 
-	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout, phases)
+	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout, phases, false)
 	agentLoop.Stop()
 
 	if services.stopTLSWatch != nil {
@@ -540,8 +563,10 @@ func shutdownGateway(
 	}
 }
 
-// handleConfigReload handles config file reload by stopping all services,
-// reloading the provider and config, and restarting services with the new config.
+// handleConfigReload handles config file reload by stopping the services
+// (the channels keep running), reloading the provider and config, and
+// restarting the services with the new config; the channels whose settings
+// changed are rebuilt then.
 func handleConfigReload(
 	ctx context.Context,
 	al *agent.AgentLoop,
@@ -557,8 +582,8 @@ func handleConfigReload(
 	logger.Infof(" New model is '%s', recreating provider...", newModel)
 
 	// Stop all services before reloading
-	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(services, al, serviceShutdownTimeout, nil) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
+	logger.Info("  Stopping services (channels keep running)...")
+	stopAndCleanupServices(services, al, serviceShutdownTimeout, nil, true) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
 
 	// Create new provider from updated config first to ensure validity
 	// This will use the correct API key and settings from newCfg.Models
@@ -629,27 +654,20 @@ func restartServices(
 	services.MountWatcher.Start() //nolint:contextcheck,nolintlint // background poller whose lifetime is Stop(), not the run context
 	logger.InfoC("mountwatch", "Mount watcher restarted")
 
-	stopMediaStore(services.MediaStore)
-	services.MediaStore = startMediaStore(cfg)
-	al.SetMediaStore(services.MediaStore)
-	// Stopped here if the channel manager cannot be built to take it over.
-	mediaOwned := true
-	defer func() {
-		if mediaOwned {
-			stopMediaStore(services.MediaStore)
-		}
-	}()
-
-	var err error
-	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore) //nolint:contextcheck // manager construction runs SecMsg account discovery on its own context; the initial setup path builds it the same way with no context in scope
-	if err != nil {
-		return fmt.Errorf("error recreating channel manager: %w", err)
+	// The channels keep running through a reload; only those whose settings
+	// changed are rebuilt. The media store is replaced only when its cleanup
+	// settings change, and then every channel is rebuilt with the new one.
+	var oldStore media.MediaStore
+	if cleanup := mediaCleanerConfig(cfg); cleanup != services.mediaCleanup {
+		oldStore = services.MediaStore
+		services.mediaCleanup = cleanup
+		services.MediaStore = startMediaStore(cleanup)
 	}
-	mediaOwned = false
-	// The device channel is rebuilt with the manager, so without its querier
-	// sessionScopeKeyFor falls back to a bogus "main" agent id after the first
-	// reload, breaking device/ACP turn routing.
-	wireChannelManager(services, al)
+	al.SetMediaStore(services.MediaStore)
+	services.ChannelManager.Reload(runCtx, cfg, services.MediaStore)
+	if oldStore != nil {
+		stopMediaStore(oldStore)
+	}
 	logEnabledChannels(services.ChannelManager)
 
 	// Rebuild the shared mux (channel webhooks, WebUI routes, callback route)
@@ -666,13 +684,11 @@ func restartServices(
 	}
 	reapplyListenerPolicy(services, cfg)
 
-	if err := services.ChannelManager.StartAll(runCtx); err != nil {
-		return fmt.Errorf("error restarting channels: %w", err)
-	}
 	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
-	// not-ready, so readiness is re-asserted after every reload.
+	// not-ready, so readiness is re-asserted after every reload, once the
+	// rebuilt channels have started (Reload returns then).
 	markReady(services, true)
-	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
+	logger.InfoCF("channels", "Channels ready after reload", map[string]any{"health": "http://" + services.HTTPHost.LoopbackAddr() + "/health"})
 
 	services.DeviceService = newDeviceService(cfg, al, msgBus)
 	if err := services.DeviceService.Start(runCtx); err != nil {
@@ -750,8 +766,8 @@ func reapplyListenerPolicy(services *gatewayServices, cfg *config.Config) {
 		}
 	}
 	// The login limiter outlives the reload like the listener, so the lockout
-	// exemption list is swapped into it here. The device channel is rebuilt
-	// with the manager and reads the list from the new config itself.
+	// exemption list is swapped into it here. The device channel reads the
+	// list itself, and a change to it rebuilds that channel (its inputs).
 	if services.WebServer != nil {
 		if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
 			logger.WarnF("Invalid lockout exemption list in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
@@ -864,7 +880,8 @@ func tlsOptions(cfg *config.Config, a alerter.Alerter) tlscert.Options {
 // startTLSWatch logs the certificate in use and starts the manager's file
 // watcher (poll every minute, expiry check daily). A swapped-in certificate
 // re-applies the Host policy so the new names are answered to; the device
-// gateway's own Host allowlist follows on the next config reload.
+// gateway's own Host allowlist follows on the next config reload (the names
+// are among its inputs, so that reload rebuilds it).
 func startTLSWatch(services *gatewayServices, agentLoop *agent.AgentLoop) {
 	info := services.TLSCerts.Info()
 	logger.InfoCF("gateway", "HTTPS listener certificate", map[string]any{

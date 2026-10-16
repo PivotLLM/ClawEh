@@ -88,29 +88,21 @@ func agentForSessionKey(reg *agent.AgentRegistry, sessionKey string) *agent.Agen
 	return inst
 }
 
-// injectDeviceAgentQuerier wires the agent loop into the device channel (if
-// enabled) so it can serve agents.list / chat.history to operator clients.
-func injectDeviceAgentQuerier(cm *channels.Manager, al *agent.AgentLoop) {
-	ch, ok := cm.Channel("device")
-	if !ok {
-		return
-	}
+// injectDeviceAgentQuerier wires the agent loop into the device channel ch
+// so it can serve agents.list / chat.history to operator clients.
+func injectDeviceAgentQuerier(ch channels.Channel, al *agent.AgentLoop) {
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
 	}
 }
 
 // injectDeviceTLS lends the gateway certificate manager to the device channel
-// (if enabled), so channels.device.tls serves the WebUI HTTPS certificate and
-// follows its reloads. certs is nil when HTTPS was off at start; the channel
-// then refuses to start with channels.device.tls on. Like the querier, it is
-// re-injected after every channel manager rebuild.
-func injectDeviceTLS(cm *channels.Manager, certs *tlscert.Manager) {
+// ch, so channels.device.tls serves the WebUI HTTPS certificate and follows
+// its reloads. certs is nil when HTTPS was off at start; the channel then
+// refuses to start with channels.device.tls on. Like the querier, it is
+// injected into every device channel the manager builds (channelBuildHook).
+func injectDeviceTLS(ch channels.Channel, certs *tlscert.Manager) {
 	if certs == nil {
-		return
-	}
-	ch, ok := cm.Channel("device")
-	if !ok {
 		return
 	}
 	if setter, ok := ch.(interface{ SetTLSConfig(cfg *tls.Config) }); ok {

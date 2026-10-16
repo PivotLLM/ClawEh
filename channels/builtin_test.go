@@ -39,7 +39,7 @@ func registerTestBuiltin(t *testing.T, name string, f ChannelFactory) {
 }
 
 // TestBuiltin_BuiltOnEveryManager: a registered built-in is part of every
-// manager built (a reload builds a new one) with no configuration for it, is
+// manager built with no configuration for it, is
 // started with a worker, and receives its outbound messages, outcome
 // included.
 func TestBuiltin_BuiltOnEveryManager(t *testing.T) {
@@ -52,7 +52,7 @@ func TestBuiltin_BuiltOnEveryManager(t *testing.T) {
 	})
 
 	cfg := &config.Config{}
-	for i := range 2 { // initial build, then a reload's rebuild
+	for i := range 2 { // two managers, each builds it
 		msgBus := bus.NewMessageBus()
 		m, err := NewManager(cfg, msgBus, nil)
 		if err != nil {
@@ -112,15 +112,16 @@ func TestBuiltin_SkippedOrFailed(t *testing.T) {
 		t.Fatalf("enabled channels = %v, want none", m.GetEnabledChannels())
 	}
 
-	configured := &builtinFake{BaseChannel: NewBaseChannel("dup", nil, nil, nil)}
 	registerTestBuiltin(t, "dup", func(*config.Config, *bus.MessageBus) (Channel, error) {
 		t.Fatal("built-in factory ran for a name a configured channel holds")
 		return nil, nil
 	})
-	m = &Manager{channels: map[string]Channel{"dup": configured}, workers: map[string]*channelWorker{}, config: &config.Config{}}
-	m.initBuiltins()
-	if ch, _ := m.GetChannel("dup"); ch != configured {
-		t.Fatal("configured channel replaced by the built-in")
+	configured := channelSpec{name: "dup"}
+	specs := withBuiltins([]channelSpec{configured}, &config.Config{}, newTestManager())
+	for _, s := range specs {
+		if s.name == "dup" && s.build != nil {
+			t.Fatal("configured channel replaced by the built-in")
+		}
 	}
 }
 

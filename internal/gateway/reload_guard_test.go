@@ -104,10 +104,10 @@ func TestReloadRebuildsTheMountWatcher(t *testing.T) {
 func TestReloadRebuildsTheServicesItStops(t *testing.T) {
 	body := restartServicesBody(t)
 	for _, want := range []string{
-		"mountwatch.New",      // mount watcher
-		"channels.NewManager", // channel manager
-		"devices.NewService",  // device service
-		"setupCronTool",       // cron
+		"mountwatch.New",        // mount watcher
+		"ChannelManager.Reload", // channels (kept running; reloaded in place)
+		"devices.NewService",    // device service
+		"setupCronTool",         // cron
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("restartServices does not call %s; stopAndCleanupServices stops that service on every reload", want)

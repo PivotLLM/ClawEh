@@ -122,7 +122,11 @@ func TestRebuiltChannel_ResumesWithoutLossOrDuplicates(t *testing.T) {
 	if err := c2.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c2.Stop(context.Background()) })
+	t.Cleanup(func() {
+		if err := c2.Stop(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	if !c2.startTime.Equal(*first.Load()) {
 		t.Errorf("rebuilt channel start = %v, want the first start %v", c2.startTime, *first.Load())
 	}

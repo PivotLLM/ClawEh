@@ -84,6 +84,34 @@ func RegisterFactory(name string, f ChannelFactory) {
 	factories[name] = f
 }
 
+// FactoryInputs returns what a channel factory reads from the configuration,
+// in any form encoding/json can marshal. A reload rebuilds the channel only
+// when this changes, so it must cover everything the factory and the channel
+// it builds read from cfg (or from anything cfg names, such as a file).
+type FactoryInputs func(cfg *config.Config) any
+
+var (
+	factoryInputsMu sync.RWMutex
+	factoryInputs   = map[string]FactoryInputs{}
+)
+
+// RegisterFactoryInputs registers what the factory registered under name
+// reads. A channel whose factory registers none is rebuilt on every reload.
+// Called from subpackage init() functions next to RegisterFactory.
+func RegisterFactoryInputs(name string, f FactoryInputs) {
+	factoryInputsMu.Lock()
+	defer factoryInputsMu.Unlock()
+	factoryInputs[name] = f
+}
+
+// getFactoryInputs looks up the inputs of a channel factory by name.
+func getFactoryInputs(name string) (FactoryInputs, bool) {
+	factoryInputsMu.RLock()
+	defer factoryInputsMu.RUnlock()
+	f, ok := factoryInputs[name]
+	return f, ok
+}
+
 // getFactory looks up a channel factory by name.
 func getFactory(name string) (ChannelFactory, bool) {
 	factoriesMu.RLock()
@@ -112,8 +140,8 @@ var (
 	builtins   = map[string]ChannelFactory{}
 )
 
-// RegisterBuiltin registers a channel that every channel manager builds, on
-// every (re)build, regardless of the configuration: it is started with
+// RegisterBuiltin registers a channel that every channel manager builds, and
+// rebuilds on every reload, regardless of the configuration: it is started with
 // workers and receives outbound messages like a configured channel. The
 // factory may return a nil channel to skip it for a given configuration. A
 // configured channel of the same name wins. Called from init() by the package

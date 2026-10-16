@@ -49,6 +49,9 @@ func newTestManager() *Manager {
 	return &Manager{
 		channels: make(map[string]Channel),
 		workers:  make(map[string]*channelWorker),
+		inputs:   make(map[string]string),
+		cancels:  make(map[string]context.CancelFunc),
+		held:     make(map[string]*heldOutbound),
 		clock:    newRecordingClock(true),
 	}
 }
