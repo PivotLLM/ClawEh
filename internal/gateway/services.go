@@ -662,8 +662,11 @@ func restartServices(
 		services.mediaCleanup = cleanup
 		services.MediaStore = startMediaStore(cleanup)
 	}
-	al.SetMediaStore(services.MediaStore)
 	services.ChannelManager.Reload(runCtx, cfg, services.MediaStore)
+	// After the reload, so the agent loop moves to a new store only once the
+	// channels still holding the old one have stopped. Set on every reload:
+	// the rebuilt agent registry needs it.
+	al.SetMediaStore(services.MediaStore)
 	if oldStore != nil {
 		stopMediaStore(oldStore)
 	}

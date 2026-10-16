@@ -40,7 +40,7 @@ func TestResolveSecMsgAccounts_Discovery(t *testing.T) {
 		AllowFrom: config.FlexibleStringSlice{"+15551112222"},
 	}
 
-	got := m.resolveSecMsgAccounts(cfg)
+	got, _ := m.resolveSecMsgAccounts(cfg)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 discovered accounts, got %d: %+v", len(got), got)
 	}
@@ -54,7 +54,7 @@ func TestResolveSecMsgAccounts_Discovery(t *testing.T) {
 	}
 }
 
-func TestResolveSecMsgAccounts_DiscoveryFailureBindsNothing(t *testing.T) {
+func TestResolveSecMsgAccounts_DiscoveryFailureAlertsOncePerStreak(t *testing.T) {
 	withDiscovery(t, func(_ context.Context, _ string) ([]string, error) {
 		return nil, errors.New("dial: connection refused")
 	})
@@ -62,15 +62,28 @@ func TestResolveSecMsgAccounts_DiscoveryFailureBindsNothing(t *testing.T) {
 	m := &Manager{}
 	rec := &alertRecorder{}
 	m.SetAlerter(rec)
-	got := m.resolveSecMsgAccounts(config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"})
-	if got != nil {
-		t.Fatalf("discovery failure should bind no accounts, got %+v", got)
+	daemon := config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"}
+	for range 2 {
+		if got, ok := m.resolveSecMsgAccounts(daemon); ok || got != nil {
+			t.Fatalf("discovery failure: got %+v ok=%v, want none and not ok", got, ok)
+		}
 	}
 	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal ||
 		rec.alerts[0].Title != "SecMsg account discovery failed" ||
 		rec.alerts[0].EventID != "SecMsg (signal)" ||
 		rec.alerts[0].Details != "dial: connection refused" {
-		t.Fatalf("discovery failure must raise one high alert, got %+v", rec.alerts)
+		t.Fatalf("a streak of discovery failures must raise one alert, got %+v", rec.alerts)
+	}
+
+	// A success ends the streak; the next failure alerts again.
+	withDiscovery(t, func(context.Context, string) ([]string, error) { return []string{"droid1"}, nil })
+	if _, ok := m.resolveSecMsgAccounts(daemon); !ok {
+		t.Fatal("discovery succeeded but reported failure")
+	}
+	withDiscovery(t, func(context.Context, string) ([]string, error) { return nil, errors.New("down") })
+	m.resolveSecMsgAccounts(daemon)
+	if len(rec.alerts) != 2 {
+		t.Fatalf("a new streak must alert again, got %d alerts", len(rec.alerts))
 	}
 }
 
@@ -82,8 +95,8 @@ func TestResolveSecMsgAccounts_NoLinkedAccountsBindsNothing(t *testing.T) {
 	m := &Manager{}
 	rec := &alertRecorder{}
 	m.SetAlerter(rec)
-	got := m.resolveSecMsgAccounts(config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"})
-	if got != nil {
+	got, ok := m.resolveSecMsgAccounts(config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"})
+	if !ok || got != nil {
 		t.Fatalf("no linked accounts should bind nothing, got %+v", got)
 	}
 	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal ||
@@ -110,7 +123,7 @@ func TestResolveSecMsgAccounts_ExplicitAccountsSkipDiscovery(t *testing.T) {
 		},
 	}
 
-	got := m.resolveSecMsgAccounts(cfg)
+	got, _ := m.resolveSecMsgAccounts(cfg)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 pinned accounts, got %d", len(got))
 	}

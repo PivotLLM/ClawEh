@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -42,6 +44,12 @@ type channelSpec struct {
 	// a reload always rebuilds the channel.
 	inputs string
 	build  func() (Channel, error)
+	// allowFrom is warned about when empty and checkAllowFrom is set, once
+	// the channel is built.
+	allowFrom      []string
+	checkAllowFrom bool
+	// daemon fingerprints the SecMsg daemon entry of an account channel.
+	daemon string
 }
 
 // fingerprint is a digest of v's JSON form, or "" when it has none (the
@@ -75,7 +83,6 @@ func (m *Manager) plan(cfg *config.Config) []channelSpec {
 
 	for _, bot := range cfg.Channels.Telegram {
 		if bot.Enabled && bot.Token != "" {
-			warnEmptyAllowFrom("Telegram ("+bot.ID+")", bot.AllowFrom)
 			if s, ok := telegramSpec(bot, m); ok {
 				add(s)
 			}
@@ -91,15 +98,13 @@ func (m *Manager) plan(cfg *config.Config) []channelSpec {
 	}
 
 	if cfg.Channels.Discord.Enabled && cfg.Channels.Discord.Token != "" {
-		warnEmptyAllowFrom("Discord", cfg.Channels.Discord.AllowFrom)
-		if s, ok := factorySpec(cfg, m, "discord", "Discord"); ok {
+		if s, ok := factorySpec(cfg, m, "discord", "Discord", cfg.Channels.Discord.AllowFrom); ok {
 			add(s)
 		}
 	}
 
 	if cfg.Channels.Slack.Enabled && cfg.Channels.Slack.BotToken != "" {
-		warnEmptyAllowFrom("Slack", cfg.Channels.Slack.AllowFrom)
-		if s, ok := factorySpec(cfg, m, "slack", "Slack"); ok {
+		if s, ok := factorySpec(cfg, m, "slack", "Slack", cfg.Channels.Slack.AllowFrom); ok {
 			add(s)
 		}
 	}
@@ -108,22 +113,19 @@ func (m *Manager) plan(cfg *config.Config) []channelSpec {
 		cfg.Channels.Matrix.Homeserver != "" &&
 		cfg.Channels.Matrix.UserID != "" &&
 		cfg.Channels.Matrix.AccessToken != "" {
-		warnEmptyAllowFrom("Matrix", cfg.Channels.Matrix.AllowFrom)
-		if s, ok := factorySpec(cfg, m, "matrix", "Matrix"); ok {
+		if s, ok := factorySpec(cfg, m, "matrix", "Matrix", cfg.Channels.Matrix.AllowFrom); ok {
 			add(s)
 		}
 	}
 
 	if cfg.Channels.WebUI.Enabled && cfg.Channels.WebUI.Token != "" {
-		warnEmptyAllowFrom("WebUI", cfg.Channels.WebUI.AllowFrom)
-		if s, ok := factorySpec(cfg, m, "webui", "WebUI"); ok {
+		if s, ok := factorySpec(cfg, m, "webui", "WebUI", cfg.Channels.WebUI.AllowFrom); ok {
 			add(s)
 		}
 	}
 
 	if cfg.Channels.Device.Enabled {
-		warnEmptyAllowFrom("Device", cfg.Channels.Device.AllowFrom)
-		if s, ok := factorySpec(cfg, m, "device", "Device"); ok {
+		if s, ok := factorySpec(cfg, m, "device", "Device", cfg.Channels.Device.AllowFrom); ok {
 			add(s)
 		}
 	}
@@ -161,7 +163,7 @@ func withBuiltins(specs []channelSpec, cfg *config.Config, m *Manager) []channel
 
 // factorySpec is the spec of a channel built by a factory registered with
 // RegisterFactory, or false when none is.
-func factorySpec(cfg *config.Config, m *Manager, name, display string) (channelSpec, bool) {
+func factorySpec(cfg *config.Config, m *Manager, name, display string, allowFrom []string) (channelSpec, bool) {
 	f, ok := getFactory(name)
 	if !ok {
 		logger.WarnCF("channels", "Factory not registered", map[string]any{"channel": display})
@@ -177,6 +179,9 @@ func factorySpec(cfg *config.Config, m *Manager, name, display string) (channelS
 		platform: name,
 		inputs:   inputs,
 		build:    func() (Channel, error) { return f(cfg, m.bus) },
+
+		allowFrom:      allowFrom,
+		checkAllowFrom: true,
 	}, true
 }
 
@@ -197,12 +202,16 @@ func telegramSpec(bot config.TelegramBotConfig, m *Manager) (channelSpec, bool) 
 		platform: "telegram",
 		inputs:   fingerprint(bot),
 		build:    func() (Channel, error) { return f(bot, m.bus) },
+
+		allowFrom:      bot.AllowFrom,
+		checkAllowFrom: true,
 	}, true
 }
 
 // secmsgSpecs are the specs of a secure-messaging daemon's accounts: the
 // pinned ones, or the ones discovery finds, each inheriting the daemon-level
-// allow_from / group_trigger defaults.
+// allow_from / group_trigger defaults. When discovery fails, the accounts of
+// this daemon entry that are running are kept as they are.
 func (m *Manager) secmsgSpecs(cfg config.SecMsgConfig) []channelSpec {
 	f, ok := getSecMsgFactory()
 	if !ok {
@@ -211,21 +220,42 @@ func (m *Manager) secmsgSpecs(cfg config.SecMsgConfig) []channelSpec {
 		})
 		return nil
 	}
+	daemon := fingerprint(cfg)
+	accounts, ok := m.resolveSecMsgAccounts(cfg)
+	if !ok {
+		return m.runningSpecs(daemon)
+	}
 	var specs []channelSpec
-	for _, account := range m.resolveSecMsgAccounts(cfg) {
+	for _, account := range accounts {
 		name := account.ChannelName(cfg)
-		display := "SecMsg (" + name + ")"
-		warnEmptyAllowFrom(display, account.AllowFrom)
 		specs = append(specs, channelSpec{
 			name:     name,
-			display:  display,
+			display:  "SecMsg (" + name + ")",
 			platform: "secmsg",
 			inputs: fingerprint(struct {
 				Daemon  config.SecMsgConfig
 				Account config.SecMsgAccountConfig
 			}{cfg, account}),
-			build: func() (Channel, error) { return f(cfg, account, m.bus) },
+			build:          func() (Channel, error) { return f(cfg, account, m.bus) },
+			allowFrom:      account.AllowFrom,
+			checkAllowFrom: true,
+			daemon:         daemon,
 		})
 	}
+	return specs
+}
+
+// runningSpecs are the specs of the running channels built for the SecMsg
+// daemon entry daemon (a fingerprint), sorted by name.
+func (m *Manager) runningSpecs(daemon string) []channelSpec {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var specs []channelSpec
+	for _, s := range m.specs {
+		if s.daemon == daemon {
+			specs = append(specs, s)
+		}
+	}
+	slices.SortFunc(specs, func(a, b channelSpec) int { return strings.Compare(a.name, b.name) })
 	return specs
 }

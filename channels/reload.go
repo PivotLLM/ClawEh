@@ -28,6 +28,17 @@ type detached struct {
 	channel Channel
 	worker  *channelWorker
 	cancel  context.CancelFunc
+	// removed is set when the configuration no longer asks for the channel
+	// (as opposed to a rebuild).
+	removed bool
+}
+
+// RemovalAware is a channel that keeps state beyond its own life (Matrix
+// keeps its sync position for the channel that replaces it) and must forget
+// it once the configuration no longer asks for the channel. The manager
+// calls Removed after stopping it.
+type RemovalAware interface {
+	Removed()
 }
 
 // Reload applies cfg (and the media store, which a configuration save may
@@ -42,7 +53,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 
-	// Outside the lock: SecMsg discovery may block on a daemon.
+	// Outside m.mu: SecMsg discovery may block on a daemon.
 	specs := m.plan(cfg) //nolint:contextcheck // SecMsg account discovery runs on its own context, as when the manager is built
 
 	var (
@@ -52,7 +63,6 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 	build := make([]channelSpec, 0, len(specs))
 	m.mu.Lock()
 	storeChanged := store != m.mediaStore
-	m.config = cfg
 	m.mediaStore = store
 	running := m.dispatchCtx != nil
 	wanted := make(map[string]bool, len(specs))
@@ -62,6 +72,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 		switch {
 		case exists && !storeChanged && s.inputs != "" && s.inputs == m.inputs[s.name]:
 			res.Kept = append(res.Kept, s.name)
+			m.specs[s.name] = s
 			continue
 		case exists:
 			res.Restarted = append(res.Restarted, s.name)
@@ -79,9 +90,12 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 			continue
 		}
 		res.Stopped = append(res.Stopped, name)
-		stopped = append(stopped, m.detachLocked(name))
+		d := m.detachLocked(name)
+		d.removed = true
+		stopped = append(stopped, d)
 		delete(m.channels, name)
 		delete(m.inputs, name)
+		delete(m.specs, name)
 	}
 	m.mu.Unlock()
 
@@ -91,19 +105,20 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 	for _, s := range build {
 		ch := m.buildChannel(s)
 		m.mu.Lock()
-		h := m.held[s.name]
 		if ch == nil {
 			delete(m.channels, s.name)
 			delete(m.inputs, s.name)
-		} else {
-			m.channels[s.name] = ch
-			m.inputs[s.name] = s.inputs
-			toStart[s.name] = ch
+			delete(m.specs, s.name)
+			text, media := m.takeHeldLocked(s.name)
+			m.mu.Unlock()
+			dropHeld(s.name, text, media, "could not be built")
+			continue
 		}
+		m.channels[s.name] = ch
+		m.inputs[s.name] = s.inputs
+		m.specs[s.name] = s
+		toStart[s.name] = ch
 		m.mu.Unlock()
-		if ch == nil && h != nil {
-			m.releaseHold(ctx, s.name, h, nil)
-		}
 	}
 	if running {
 		m.startChannels(ctx, toStart)
@@ -123,13 +138,19 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config, store media.Me
 
 // detachLocked takes channel name out of service: its worker and context are
 // removed from the maps (so nothing new is queued on it) and returned to be
-// stopped. The channel itself stays in m.channels. m.mu must be held.
+// stopped. A channel without a worker (still retrying its start) has its
+// context cancelled here, under m.mu, so a retry that succeeds from now on
+// sees it is no longer current. The channel itself stays in m.channels.
+// m.mu must be held.
 func (m *Manager) detachLocked(name string) detached {
 	d := detached{
 		name:    name,
 		channel: m.channels[name],
 		worker:  m.workers[name],
 		cancel:  m.cancels[name],
+	}
+	if d.worker == nil && d.cancel != nil {
+		d.cancel()
 	}
 	delete(m.workers, name)
 	delete(m.cancels, name)
@@ -138,7 +159,8 @@ func (m *Manager) detachLocked(name string) detached {
 
 // stopDetached stops the detached channels in parallel: what their workers
 // have queued is sent first (until stopAllTimeout, after which it is
-// abandoned), then the channel is stopped and its context cancelled.
+// abandoned, see waitWorker), then the channel is stopped, its context
+// cancelled, and a removed one told so (RemovalAware).
 func (m *Manager) stopDetached(ctx context.Context, ds []detached) {
 	if len(ds) == 0 {
 		return
@@ -149,30 +171,18 @@ func (m *Manager) stopDetached(ctx context.Context, ds []detached) {
 	var wg sync.WaitGroup
 	for _, d := range ds {
 		wg.Go(func() {
-			cancel := d.cancel
-			if cancel == nil {
-				cancel = func() {}
+			if d.cancel != nil {
+				defer d.cancel()
 			}
-			defer cancel()
-			if d.worker == nil {
-				// Not running (or still retrying its start): end the retries.
-				cancel()
-			} else {
-				drained := make(chan struct{})
-				go func() {
-					d.worker.closeQueues()
-					<-d.worker.done
-					<-d.worker.mediaDone
-					close(drained)
-				}()
-				select {
-				case <-drained:
-				case <-stopCtx.Done():
-					cancel()
-					<-drained
-				}
+			if d.worker != nil {
+				d.worker.closeQueues()
+				waitWorker(stopCtx, d.name, d.worker, d.cancel)
 			}
-			if err := stopOne(stopCtx, d.name, d.channel); err != nil {
+			err := stopOne(stopCtx, d.name, d.channel)
+			if r, ok := d.channel.(RemovalAware); ok && d.removed {
+				r.Removed()
+			}
+			if err != nil {
 				return // logged by stopOne; the channel is replaced or gone either way
 			}
 		})

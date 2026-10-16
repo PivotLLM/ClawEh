@@ -209,9 +209,9 @@ Commands such as `/status` work here. Start them with `/` or `!`. See
 - **SecMsg has no linked accounts**: the daemon answered but holds no linked
   account, so no channel was started. Link one as above.
 - **SecMsg account discovery failed**: ClawEh could not reach the daemon when
-  it started or the configuration was saved, so no channel was started. Start
-  the daemon, then save any setting or restart ClawEh; it does not retry on
-  its own.
+  it started or the configuration was saved. Accounts already running keep
+  running; no new account is started. Start the daemon, then save any setting
+  or restart ClawEh; it does not retry on its own.
 - **SecMsg down: signal-alice**: the account's channel has had no working
   connection to the daemon for ten minutes. ClawEh keeps reconnecting and
   raises **SecMsg up: signal-alice** when it is back.

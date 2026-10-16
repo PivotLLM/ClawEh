@@ -83,6 +83,10 @@ type channelWorker struct {
 	done       chan struct{}
 	mediaDone  chan struct{}
 	limiter    *rate.Limiter
+	// backlog and mediaBacklog are what was held for the channel while it
+	// started; the worker sends them before anything queued.
+	backlog      []bus.OutboundMessage
+	mediaBacklog []bus.OutboundMediaMessage
 	// closeMu guards closed: an enqueue holds it for reading and closeQueues
 	// for writing, so nothing is ever sent on a closed queue.
 	closeMu sync.RWMutex
@@ -137,11 +141,16 @@ type Manager struct {
 	held map[string]*heldOutbound
 	// dispatchCtx is the dispatchers' context, set by StartAll; every
 	// channel's context derives from it.
-	dispatchCtx  context.Context
-	bus          *bus.MessageBus
-	config       *config.Config
-	mediaStore   media.MediaStore
-	dispatchTask *asyncTask
+	dispatchCtx context.Context
+	// specs is the spec each channel was last built or kept from.
+	specs      map[string]channelSpec
+	bus        *bus.MessageBus
+	mediaStore media.MediaStore
+	// discoveryFailing names the SecMsg daemons whose account discovery is
+	// failing, so the alert is raised once per streak.
+	discoveryMu      sync.Mutex
+	discoveryFailing map[string]bool
+	dispatchTask     *asyncTask
 	// onBuild, when set, is handed every channel the manager builds, before
 	// it starts (see WithBuildHook).
 	onBuild func(name string, ch Channel)
@@ -414,8 +423,8 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 		inputs:     make(map[string]string),
 		cancels:    make(map[string]context.CancelFunc),
 		held:       make(map[string]*heldOutbound),
+		specs:      make(map[string]channelSpec),
 		bus:        messageBus,
-		config:     cfg,
 		mediaStore: store,
 	}
 	for _, opt := range opts {
@@ -427,6 +436,7 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 		if ch := m.buildChannel(s); ch != nil {
 			m.channels[s.name] = ch
 			m.inputs[s.name] = s.inputs
+			m.specs[s.name] = s
 		}
 	}
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
@@ -439,6 +449,9 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 // returns nil when the build fails or (a built-in) declines.
 func (m *Manager) buildChannel(s channelSpec) Channel {
 	logger.DebugCF("channels", "Attempting to initialize channel", map[string]any{"channel": s.display})
+	if s.checkAllowFrom {
+		warnEmptyAllowFrom(s.display, s.allowFrom)
+	}
 	ch, err := s.build()
 	if err != nil {
 		logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
@@ -488,38 +501,43 @@ func (m *Manager) injectChannelDependencies(ch Channel, platform string) {
 
 // resolveSecMsgAccounts returns the accounts to bind for a daemon, applying
 // daemon-level defaults. Pinned accounts are honored as-is; otherwise ClawEh
-// discovers the daemon's linked accounts. A discovery failure (daemon down)
-// binds nothing — the accounts are picked up on the next reload once reachable.
-func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsgAccountConfig {
+// discovers the daemon's linked accounts. ok is false when discovery failed
+// (daemon down): the accounts already running for the daemon are then kept,
+// and new ones are picked up on a later reload once it is reachable. The
+// failure alert is raised once per streak of failures.
+func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) (accounts []config.SecMsgAccountConfig, ok bool) {
 	if len(cfg.Accounts) > 0 {
 		out := make([]config.SecMsgAccountConfig, len(cfg.Accounts))
 		for i, a := range cfg.Accounts {
 			out[i] = cfg.WithDefaults(a)
 		}
-		return out
+		return out, true
 	}
 
-	discover, ok := getSecMsgDiscovery()
-	if !ok {
+	discover, found := getSecMsgDiscovery()
+	if !found {
 		// No discovery registered: fall back to a single auto-selecting channel.
-		return []config.SecMsgAccountConfig{cfg.WithDefaults(config.SecMsgAccountConfig{})}
+		return []config.SecMsgAccountConfig{cfg.WithDefaults(config.SecMsgAccountConfig{})}, true
 	}
 
 	ids, err := discover(context.Background(), cfg.Address)
 	if err != nil {
-		logger.WarnCF("channels", "SecMsg account discovery failed — binding no accounts (will retry on reload)", map[string]any{
+		logger.WarnCF("channels", "SecMsg account discovery failed — running accounts kept, no new ones bound (will retry on reload)", map[string]any{
 			"channel": "SecMsg (" + cfg.Name + ")",
 			"address": cfg.Address,
 			"error":   err.Error(),
 		})
-		m.alert(alerter.Alert{
-			Title:       "SecMsg account discovery failed",
-			Description: "SecMsg (" + cfg.Name + ") at " + cfg.Address + ": no accounts bound until the next config reload",
-			Details:     err.Error(),
-			EventID:     "SecMsg (" + cfg.Name + ")",
-		})
-		return nil
+		if m.discoveryFailed(cfg.Name, true) {
+			m.alert(alerter.Alert{
+				Title:       "SecMsg account discovery failed",
+				Description: "SecMsg (" + cfg.Name + ") at " + cfg.Address + ": accounts already running keep running; others are bound at the next config save",
+				Details:     err.Error(),
+				EventID:     "SecMsg (" + cfg.Name + ")",
+			})
+		}
+		return nil, false
 	}
+	m.discoveryFailed(cfg.Name, false)
 	if len(ids) == 0 {
 		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
 			"channel": "SecMsg (" + cfg.Name + ")",
@@ -530,7 +548,7 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 			Description: "SecMsg (" + cfg.Name + "): link an account in the WebUI",
 			EventID:     "SecMsg (" + cfg.Name + ")",
 		})
-		return nil
+		return nil, true
 	}
 
 	out := make([]config.SecMsgAccountConfig, len(ids))
@@ -542,7 +560,24 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 		"address":  cfg.Address,
 		"accounts": ids,
 	})
-	return out
+	return out, true
+}
+
+// discoveryFailed records whether discovery for daemon name is failing and
+// reports whether this starts a streak of failures.
+func (m *Manager) discoveryFailed(name string, failing bool) bool {
+	m.discoveryMu.Lock()
+	defer m.discoveryMu.Unlock()
+	if m.discoveryFailing == nil {
+		m.discoveryFailing = map[string]bool{}
+	}
+	was := m.discoveryFailing[name]
+	if failing {
+		m.discoveryFailing[name] = true
+	} else {
+		delete(m.discoveryFailing, name)
+	}
+	return failing && !was
 }
 
 // warnEmptyAllowFrom logs a warning when a channel is enabled with an empty allow_from list.
@@ -565,6 +600,9 @@ func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Serv
 		healthServer.RegisterOnMux(mux)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for name, ch := range m.channels {
 		if wh, ok := ch.(WebhookHandler); ok {
 			mux.Handle(wh.WebhookPath(), wh)
@@ -581,242 +619,6 @@ func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Serv
 			})
 		}
 	}
-}
-
-// StartAll starts the dispatchers and every channel, each in its own
-// goroutine so a slow one delays no other, and returns once every channel has
-// started or failed its first attempt (a failed one keeps retrying in the
-// background, see retryChannelStart). Outbound messages to a channel still
-// starting are held and delivered, in order, once it has.
-func (m *Manager) StartAll(ctx context.Context) error {
-	m.mu.Lock()
-	if len(m.channels) == 0 {
-		m.mu.Unlock()
-		logger.WarnC("channels", "No channels enabled")
-		return errors.New("no channels enabled")
-	}
-
-	logger.InfoC("channels", "Starting all channels")
-
-	dispatchCtx, cancel := context.WithCancel(ctx)
-	m.dispatchTask = &asyncTask{cancel: cancel}
-	m.dispatchCtx = dispatchCtx
-	toStart := make(map[string]Channel, len(m.channels))
-	for name, ch := range m.channels {
-		toStart[name] = ch
-		m.held[name] = &heldOutbound{}
-	}
-	m.mu.Unlock()
-
-	// Start the dispatchers that read from the bus and route to workers
-	go m.dispatchOutbound(dispatchCtx)
-	go m.dispatchOutboundMedia(dispatchCtx)
-
-	// Start the TTL janitor that cleans up stale typing/placeholder entries
-	go m.runTTLJanitor(dispatchCtx)
-
-	m.startChannels(ctx, toStart)
-
-	logger.InfoC("channels", "All channels started")
-	return nil
-}
-
-// startChannels starts chs concurrently and returns once each has started or
-// failed its first attempt.
-func (m *Manager) startChannels(ctx context.Context, chs map[string]Channel) {
-	var wg sync.WaitGroup
-	for name, ch := range chs {
-		wg.Go(func() { m.startChannel(ctx, name, ch) })
-	}
-	wg.Wait()
-}
-
-// startChannel starts one channel with its workers, or hands it to
-// retryChannelStart when the first attempt fails, then releases the outbound
-// messages held for it. ctx is the channel's own (Start's argument); its
-// workers and retries run on a context derived from the dispatchers'.
-func (m *Manager) startChannel(ctx context.Context, name string, channel Channel) {
-	logger.InfoCF("channels", "Starting channel", map[string]any{
-		"channel": name,
-	})
-	m.started(name, channel, channel.Start(ctx)) //nolint:contextcheck // the channel's workers and retries live as long as the dispatchers, not this call
-}
-
-// started follows a channel's first Start (err its result): it gives the
-// channel workers, or hands it to retryChannelStart, then releases what was
-// held for it. Both run on a context of the channel's own, derived from the
-// dispatchers' and cancelled when the channel is stopped.
-func (m *Manager) started(name string, channel Channel, err error) {
-	m.mu.Lock()
-	chanCtx, cancel := context.WithCancel(m.dispatchCtx)
-	m.cancels[name] = cancel
-	h := m.held[name]
-	m.mu.Unlock()
-
-	var w *channelWorker
-	if err != nil {
-		logger.ErrorCF("channels", "Failed to start channel — will retry in background", map[string]any{
-			"channel": name,
-			"error":   err.Error(),
-		})
-		go m.retryChannelStart(chanCtx, name, channel)
-	} else {
-		// Lazily create worker only after channel starts successfully
-		w = newChannelWorker(name, channel)
-		go m.runWorker(chanCtx, name, w)
-		go m.runMediaWorker(chanCtx, name, w)
-	}
-	m.releaseHold(chanCtx, name, h, w)
-}
-
-// retryChannelStart retries channel.Start in the background with exponential
-// backoff (StartRetryMin doubling to StartRetryMax) until it succeeds or
-// chanCtx is cancelled. A "Channel failed to start" alert is raised once,
-// on the StartRetryAlertAfter-th failure; retries continue at the ceiling.
-// On success it creates a worker and starts runWorker/runMediaWorker goroutines.
-// chanCtx is the channel's context made by startChannel.
-func (m *Manager) retryChannelStart(chanCtx context.Context, name string, channel Channel) {
-	backoff := StartRetryMin
-	for attempt := 1; ; attempt++ {
-		select {
-		case <-chanCtx.Done():
-			return
-		case <-m.clk().After(jitter(backoff)):
-		}
-
-		logger.InfoCF("channels", "Retrying channel start", map[string]any{
-			"channel": name,
-			"attempt": attempt,
-		})
-
-		err := channel.Start(chanCtx)
-		if err == nil {
-			// Channel started — create and register the worker, unless it was
-			// stopped or replaced meanwhile.
-			w := newChannelWorker(name, channel)
-			m.mu.Lock()
-			current := chanCtx.Err() == nil && m.channels[name] == channel
-			if current {
-				m.workers[name] = w
-			}
-			m.mu.Unlock()
-			if !current {
-				// Stopped or replaced while this attempt ran: undo it.
-				if stopErr := channel.Stop(context.WithoutCancel(chanCtx)); stopErr != nil {
-					logger.WarnCF("channels", "Error stopping a channel started after it was removed", map[string]any{
-						"channel": name,
-						"error":   stopErr.Error(),
-					})
-				}
-				return
-			}
-
-			go m.runWorker(chanCtx, name, w)
-			go m.runMediaWorker(chanCtx, name, w)
-
-			logger.InfoCF("channels", "Channel started after retries", map[string]any{
-				"channel":  name,
-				"attempts": attempt,
-			})
-			return
-		}
-		if chanCtx.Err() != nil {
-			// Start failed because we are shutting down; not a fault.
-			return
-		}
-
-		backoff = min(backoff*2, StartRetryMax)
-		fields := map[string]any{
-			"channel":  name,
-			"attempt":  attempt,
-			"error":    err.Error(),
-			"retry_in": backoff.String(),
-		}
-		if attempt == StartRetryAlertAfter {
-			logger.ErrorCF("channels", "Channel still failing to start; alerting and continuing to retry", fields)
-			m.alert(alerter.Alert{
-				Title:       "Channel failed to start",
-				Description: name + " has failed to start " + strconv.Itoa(attempt) + " times; retrying every " + StartRetryMax.String() + " until it starts",
-				Details:     err.Error(),
-				EventID:     name,
-			})
-			continue
-		}
-		logger.WarnCF("channels", "Channel start retry failed", fields)
-	}
-}
-
-func (m *Manager) StopAll(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	logger.InfoC("channels", "Stopping all channels")
-
-	// Cancel dispatcher, and with it every channel's workers and retries.
-	if m.dispatchTask != nil {
-		m.dispatchTask.cancel()
-		m.dispatchTask = nil
-	}
-	m.dispatchCtx = nil
-	clear(m.cancels)
-	clear(m.held)
-
-	// Close all worker queues and wait for them to drain
-	for _, w := range m.workers {
-		if w != nil {
-			w.closeQueues()
-		}
-	}
-	for _, w := range m.workers {
-		if w != nil {
-			<-w.done
-			<-w.mediaDone
-		}
-	}
-
-	// Stop all channels in parallel under a single deadline. Telegram's Stop
-	// can block up to its pollExitTimeout; running stops sequentially would
-	// make total elapsed time the sum of every channel's worst case, which
-	// stalls config reloads (see investigation 7a5377d9).
-	stopCtx, cancel := context.WithTimeout(ctx, stopAllTimeout)
-	defer cancel()
-
-	var wg sync.WaitGroup
-	var errMu sync.Mutex
-	var stopErrs []error
-	for name, channel := range m.channels {
-		wg.Add(1)
-		go func(name string, channel Channel) {
-			defer wg.Done()
-			if err := stopOne(stopCtx, name, channel); err != nil {
-				errMu.Lock()
-				stopErrs = append(stopErrs, err)
-				errMu.Unlock()
-			}
-		}(name, channel)
-	}
-	wg.Wait()
-
-	logger.InfoC("channels", "All channels stopped")
-	if len(stopErrs) > 0 {
-		return errors.Join(stopErrs...)
-	}
-	return nil
-}
-
-// stopOne stops one channel, logging the outcome.
-func stopOne(ctx context.Context, name string, channel Channel) error {
-	logger.InfoCF("channels", "Stopping channel", map[string]any{
-		"channel": name,
-	})
-	if err := channel.Stop(ctx); err != nil {
-		logger.ErrorCF("channels", "Error stopping channel", map[string]any{
-			"channel": name,
-			"error":   err.Error(),
-		})
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	return nil
 }
 
 // newChannelWorker creates a channelWorker with a rate limiter configured
@@ -850,6 +652,15 @@ func newChannelWorker(name string, ch Channel) *channelWorker {
 // messages that exceed the channel's maximum message length.
 func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) {
 	defer close(w.done)
+	backlog := w.backlog
+	w.backlog = nil
+	for _, msg := range backlog {
+		if err := ctx.Err(); err != nil {
+			reportDelivery(msg, err)
+			continue
+		}
+		reportDelivery(msg, m.sendSplit(ctx, name, w, msg))
+	}
 	for {
 		select {
 		case msg, ok := <-w.queue:
@@ -1052,7 +863,7 @@ func dispatchLoop[M any](
 	getChannel func(M) string,
 	queueOf func(*channelWorker) chan M,
 	exitedOf func(*channelWorker) <-chan struct{},
-	hold func(*heldOutbound, M),
+	hold func(*heldOutbound, M) (held, firstOverflow bool),
 	drop func(M, error),
 	startMsg, stopMsg, unknownMsg, noWorkerMsg string,
 ) {
@@ -1087,7 +898,7 @@ func routeOutbound[M any](
 	msg M,
 	queueOf func(*channelWorker) chan M,
 	exitedOf func(*channelWorker) <-chan struct{},
-	hold func(*heldOutbound, M),
+	hold func(*heldOutbound, M) (held, firstOverflow bool),
 	drop func(M, error),
 	unknownMsg, noWorkerMsg string,
 ) bool {
@@ -1101,15 +912,25 @@ func routeOutbound[M any](
 		_, exists := m.channels[channel]
 		w := m.workers[channel]
 		h := m.held[channel]
+		var held, firstOverflow bool
 		if h != nil {
-			// Under the read lock, so releaseHold (which takes the write
-			// lock) sees it.
-			hold(h, msg)
+			// Under the read lock, so takeHeldLocked (which runs under the
+			// write lock) sees it.
+			held, firstOverflow = hold(h, msg)
 		}
 		m.mu.RUnlock()
 
 		switch {
+		case h != nil && held:
+			return true
 		case h != nil:
+			if firstOverflow {
+				logger.WarnCF("channels", "Too many messages for a channel that is starting; dropping the rest until it has started", map[string]any{
+					"channel": channel,
+					"held":    maxHeldPerChannel,
+				})
+			}
+			drop(msg, fmt.Errorf("%w: %s is starting and %d messages are already waiting", ErrNotRunning, channel, maxHeldPerChannel))
 			return true
 		case !exists:
 			logger.WarnCF("channels", unknownMsg, map[string]any{"channel": channel})
@@ -1132,80 +953,6 @@ func routeOutbound[M any](
 		default:
 			drop(msg, err)
 			return false
-		}
-	}
-}
-
-// heldOutbound collects the outbound messages for a channel that is starting.
-type heldOutbound struct {
-	mu    sync.Mutex
-	text  []bus.OutboundMessage
-	media []bus.OutboundMediaMessage
-}
-
-func holdText(h *heldOutbound, msg bus.OutboundMessage) {
-	h.mu.Lock()
-	h.text = append(h.text, msg)
-	h.mu.Unlock()
-}
-
-func holdMedia(h *heldOutbound, msg bus.OutboundMediaMessage) {
-	h.mu.Lock()
-	h.media = append(h.media, msg)
-	h.mu.Unlock()
-}
-
-// releaseHold delivers what h holds for channel name to w, in order, or drops
-// it when w is nil (the channel did not start), then registers w as the
-// channel's worker and ends the hold in one step, so no later message
-// overtakes a held one. h may be nil (nothing was held).
-func (m *Manager) releaseHold(ctx context.Context, name string, h *heldOutbound, w *channelWorker) {
-	for {
-		m.mu.Lock()
-		var text []bus.OutboundMessage
-		var media []bus.OutboundMediaMessage
-		if h != nil {
-			h.mu.Lock()
-			text, media = h.text, h.media
-			h.text, h.media = nil, nil
-			h.mu.Unlock()
-		}
-		done := len(text) == 0 && len(media) == 0
-		if done {
-			if h != nil && m.held[name] == h {
-				delete(m.held, name)
-			}
-			if w != nil && ctx.Err() == nil {
-				m.workers[name] = w
-			}
-		}
-		m.mu.Unlock()
-		if done {
-			return
-		}
-
-		for _, msg := range text {
-			if w == nil {
-				reportDelivery(msg, fmt.Errorf("%w: %s did not start", ErrNotRunning, name))
-				continue
-			}
-			if err := enqueueOn(ctx, w, w.queue, w.done, msg); err != nil {
-				reportDelivery(msg, err)
-			}
-		}
-		for _, msg := range media {
-			if w == nil {
-				continue
-			}
-			if err := enqueueOn(ctx, w, w.mediaQueue, w.mediaDone, msg); err != nil {
-				logger.WarnCF("channels", "Held file not sent", map[string]any{"channel": name, "error": err.Error()})
-			}
-		}
-		if w == nil {
-			logger.WarnCF("channels", "Channel did not start; dropped the messages held for it", map[string]any{
-				"channel":  name,
-				"messages": len(text) + len(media),
-			})
 		}
 	}
 }
@@ -1245,6 +992,14 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 // runMediaWorker processes outbound media messages for a single channel.
 func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWorker) {
 	defer close(w.mediaDone)
+	backlog := w.mediaBacklog
+	w.mediaBacklog = nil
+	for _, msg := range backlog {
+		if ctx.Err() != nil {
+			break
+		}
+		m.sendMediaWithRetry(ctx, name, w, msg)
+	}
 	for {
 		select {
 		case msg, ok := <-w.mediaQueue:
@@ -1380,6 +1135,9 @@ func (m *Manager) UnregisterChannel(name string) {
 	delete(m.workers, name)
 	delete(m.channels, name)
 	delete(m.inputs, name)
+	delete(m.specs, name)
+	text, media := m.takeHeldLocked(name)
+	defer dropHeld(name, text, media, "was removed")
 	if cancel := m.cancels[name]; cancel != nil {
 		defer cancel()
 		delete(m.cancels, name)
@@ -1442,6 +1200,11 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 	}
 
 	// Fallback: direct send (no worker yet, or it is being replaced)
-	channel, _ := m.channels[channelName]
+	m.mu.RLock()
+	channel := m.channels[channelName]
+	m.mu.RUnlock()
+	if channel == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownChannel, channelName)
+	}
 	return channel.Send(ctx, msg)
 }

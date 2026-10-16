@@ -889,7 +889,10 @@ observe does not need an entry.
   and channels start in parallel**, so one slow channel no longer delays the
   others (an unreachable Telegram bot used to hold up every channel started
   after it). Matrix no longer drops messages sent during a restart of its
-  channel.
+  channel. When a save cannot reach a SecMsg daemon to list its accounts, the
+  accounts already running keep running instead of being stopped, and the
+  "SecMsg account discovery failed" alert is raised once until discovery
+  works again.
 
 - **The "<Platform> down" and "<Platform> up" alerts name the channels in
   their title**, for example "Telegram down: telegram-alice" (up to three, then
