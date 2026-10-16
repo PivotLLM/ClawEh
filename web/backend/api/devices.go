@@ -40,7 +40,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 
 // SetDeviceDisconnector wires the running device channel's DisconnectDevice,
 // so removing a device ends its open connections at once. The gateway resolves
-// the channel per call, which survives a channel manager rebuild.
+// the channel per call, so it finds a device channel a reload rebuilt.
 func (h *Handler) SetDeviceDisconnector(fn func(deviceID string)) {
 	h.reloadMu.Lock()
 	h.deviceDisconnect = fn

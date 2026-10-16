@@ -165,8 +165,8 @@ in the room.
 
 ClawEh ignores message edits and other kinds of events (reactions, locations,
 polls). Messages sent while ClawEh was stopped are not answered when it
-starts. Saving any settings in the WebUI restarts the channel, and messages
-sent during that moment are not answered either.
+starts. Saving the Matrix settings restarts the channel; messages sent while
+it restarts are answered once it is back.
 
 ## Commands
 

@@ -132,8 +132,8 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
 - **Writes have a deadline.** Frames to a device go through a per-connection queue
   and each write must finish within 5 seconds; a device that stops reading (or
   whose queue fills) is disconnected, and nothing else waits for it.
-- **Stop and reload close connections.** When the device channel stops (a config
-  reload rebuilds it), every connection is closed with `1001` (going away), so
+- **Stop and reload close connections.** When the device channel stops (at shutdown,
+  or when a config reload changes its settings and rebuilds it), every connection is closed with `1001` (going away), so
   clients reconnect to the new listener straight away.
 
 ## Methods (post-handshake requests)

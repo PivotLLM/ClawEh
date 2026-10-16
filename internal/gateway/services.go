@@ -153,7 +153,7 @@ func setupAndStartServices(
 	// default) and HTTPS where gateway.tls.mode places it. They are owned by
 	// httpHost and stay up across config reloads; only the handler mux is
 	// swapped on reload, so WebUI WebSocket connections and channel webhooks
-	// survive a Manager rebuild. See rebuildSharedHTTPServer for the swap seam.
+	// survive a reload. See rebuildSharedHTTPServer for the swap seam.
 	services.WebServer = newMergedWebServer(store, cfg)
 	wireWebServer(services, agentLoop)
 	if err := startHTTPHost(services, cfg, agentLoop, fatal); err != nil {
@@ -305,8 +305,7 @@ func logEnabledChannels(mgr *channels.Manager) {
 }
 
 // wireWebServer hands the WebUI API the live objects it drives. Channels are
-// resolved per call, so a lookup survives a channel manager rebuild on
-// reload.
+// resolved per call, so a lookup finds a channel a reload rebuilt.
 func wireWebServer(services *gatewayServices, agentLoop *agent.AgentLoop) {
 	api := services.WebServer.APIHandler()
 	// Share the agent loop's named message-token store with the WebUI API so

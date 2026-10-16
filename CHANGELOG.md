@@ -885,6 +885,12 @@ observe does not need an entry.
 
 ### Changed
 
+- **A configuration save restarts only the channels whose settings changed,
+  and channels start in parallel**, so one slow channel no longer delays the
+  others (an unreachable Telegram bot used to hold up every channel started
+  after it). Matrix no longer drops messages sent during a restart of its
+  channel.
+
 - **The "<Platform> down" and "<Platform> up" alerts name the channels in
   their title**, for example "Telegram down: telegram-alice" (up to three, then
   "+N more"). Before, the title said only "Telegram down" and the bot was

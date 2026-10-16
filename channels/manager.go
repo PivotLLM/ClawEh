@@ -90,11 +90,12 @@ type channelWorker struct {
 }
 
 // errWorkerClosed is returned by enqueueOn for a worker whose channel is being
-// stopped or rebuilt; the caller looks the channel up again.
-var errWorkerClosed = errors.New("channel worker closed")
+// stopped or rebuilt; the dispatcher looks the channel up again.
+var errWorkerClosed = fmt.Errorf("%w: its worker is closed", ErrNotRunning)
 
-// enqueueOn queues msg on q, one of w's queues, unless w is closed or ctx ends.
-func enqueueOn[M any](ctx context.Context, w *channelWorker, q chan M, msg M) error {
+// enqueueOn queues msg on q, one of w's queues, unless w is closed, the
+// goroutine reading q has exited (exited, its done channel), or ctx ends.
+func enqueueOn[M any](ctx context.Context, w *channelWorker, q chan M, exited <-chan struct{}, msg M) error {
 	w.closeMu.RLock()
 	defer w.closeMu.RUnlock()
 	if w.closed {
@@ -103,6 +104,8 @@ func enqueueOn[M any](ctx context.Context, w *channelWorker, q chan M, msg M) er
 	select {
 	case q <- msg:
 		return nil
+	case <-exited:
+		return errWorkerClosed
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -556,7 +559,7 @@ func warnEmptyAllowFrom(displayName string, allowFrom []string) {
 // the given mux. The Manager does NOT own the listener: the gateway-level
 // httpHost owns the listener and swaps mux instances across config reloads, so
 // in-flight WebUI WebSocket connections and other long-lived HTTP traffic
-// survive a Manager rebuild.
+// survive a reload.
 func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Server) {
 	if healthServer != nil {
 		healthServer.RegisterOnMux(mux)
@@ -1048,6 +1051,7 @@ func dispatchLoop[M any](
 	subscribe func(context.Context) (M, bool),
 	getChannel func(M) string,
 	queueOf func(*channelWorker) chan M,
+	exitedOf func(*channelWorker) <-chan struct{},
 	hold func(*heldOutbound, M),
 	drop func(M, error),
 	startMsg, stopMsg, unknownMsg, noWorkerMsg string,
@@ -1068,7 +1072,7 @@ func dispatchLoop[M any](
 			continue
 		}
 
-		if !routeOutbound(ctx, m, channel, msg, queueOf, hold, drop, unknownMsg, noWorkerMsg) {
+		if !routeOutbound(ctx, m, channel, msg, queueOf, exitedOf, hold, drop, unknownMsg, noWorkerMsg) {
 			return
 		}
 	}
@@ -1082,6 +1086,7 @@ func routeOutbound[M any](
 	channel string,
 	msg M,
 	queueOf func(*channelWorker) chan M,
+	exitedOf func(*channelWorker) <-chan struct{},
 	hold func(*heldOutbound, M),
 	drop func(M, error),
 	unknownMsg, noWorkerMsg string,
@@ -1116,7 +1121,7 @@ func routeOutbound[M any](
 			return true
 		}
 
-		err := enqueueOn(ctx, w, queueOf(w), msg)
+		err := enqueueOn(ctx, w, queueOf(w), exitedOf(w), msg)
 		switch {
 		case err == nil:
 			return true
@@ -1184,7 +1189,7 @@ func (m *Manager) releaseHold(ctx context.Context, name string, h *heldOutbound,
 				reportDelivery(msg, fmt.Errorf("%w: %s did not start", ErrNotRunning, name))
 				continue
 			}
-			if err := enqueueOn(ctx, w, w.queue, msg); err != nil {
+			if err := enqueueOn(ctx, w, w.queue, w.done, msg); err != nil {
 				reportDelivery(msg, err)
 			}
 		}
@@ -1192,7 +1197,7 @@ func (m *Manager) releaseHold(ctx context.Context, name string, h *heldOutbound,
 			if w == nil {
 				continue
 			}
-			if err := enqueueOn(ctx, w, w.mediaQueue, msg); err != nil {
+			if err := enqueueOn(ctx, w, w.mediaQueue, w.mediaDone, msg); err != nil {
 				logger.WarnCF("channels", "Held file not sent", map[string]any{"channel": name, "error": err.Error()})
 			}
 		}
@@ -1211,6 +1216,7 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 		m.bus.SubscribeOutbound,
 		func(msg bus.OutboundMessage) string { return msg.Channel },
 		func(w *channelWorker) chan bus.OutboundMessage { return w.queue },
+		func(w *channelWorker) <-chan struct{} { return w.done },
 		holdText,
 		reportDelivery,
 		"Outbound dispatcher started",
@@ -1226,6 +1232,7 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 		m.bus.SubscribeOutboundMedia,
 		func(msg bus.OutboundMediaMessage) string { return msg.Channel },
 		func(w *channelWorker) chan bus.OutboundMediaMessage { return w.mediaQueue },
+		func(w *channelWorker) <-chan struct{} { return w.mediaDone },
 		holdMedia,
 		func(bus.OutboundMediaMessage, error) {},
 		"Outbound media dispatcher started",
@@ -1428,7 +1435,7 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 	}
 
 	if wExists && w != nil {
-		err := enqueueOn(ctx, w, w.queue, msg)
+		err := enqueueOn(ctx, w, w.queue, w.done, msg)
 		if !errors.Is(err, errWorkerClosed) {
 			return err
 		}

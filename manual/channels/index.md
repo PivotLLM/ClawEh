@@ -31,9 +31,9 @@ channel is handed to one agent, and the agent's reply goes back the same way.
 | SecMsg (Signal and similar, through a separate daemon) | **Channels → SecMsg** | `<daemon name>-<account>` | [SecMsg (Signal)](./secmsg.md) |
 | Devices (Rabbit R1, voice apps) | **Services → Devices** | — (each device picks its agent) | [Devices](./devices.md) |
 
-Channel settings save as you type. Saving reloads the configuration and
-restarts the affected channel, so an open chat on that channel may be
-interrupted briefly.
+Channel settings save as you type. Saving restarts only the channels whose
+settings changed, so an open chat on such a channel may be interrupted
+briefly; the other channels keep running.
 
 ## When a message cannot be delivered
 
