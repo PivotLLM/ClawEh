@@ -19,7 +19,7 @@ const roomNameTimeout = 5 * time.Second
 
 // encryptedRooms is the process-wide record of the Matrix rooms seen to be
 // end-to-end encrypted, which ClawEh cannot read. It outlives the channel,
-// which every config reload rebuilds, so each room is logged once per
+// which a save of its settings rebuilds, so each room is logged once per
 // process and Check Up lists it until ClawEh restarts.
 var encryptedRooms = encryptedRecord{names: map[id.RoomID]string{}}
 

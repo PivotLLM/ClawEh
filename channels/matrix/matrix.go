@@ -178,9 +178,14 @@ type MatrixChannel struct {
 	config config.MatrixConfig
 	syncer *mautrix.DefaultSyncer
 
-	ctx       context.Context
-	cancel    context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	// startTime is when a channel for this account first started in this
+	// process (accountState.firstStart): older events are not handled.
 	startTime time.Time
+	// account is the account's state shared with the channels that replace
+	// this one on a configuration save.
+	account *accountState
 
 	typingMu       sync.Mutex
 	typingSessions map[string]*typingSession // roomID -> session
@@ -237,11 +242,13 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 		syncer:            syncer,
 		typingSessions:    make(map[string]*typingSession),
 		startTime:         time.Now(),
+		account:           accountStateFor(homeserver, userID),
 		roomKindCache:     newRoomKindCache(roomKindCacheMaxEntries, roomKindCacheTTL),
 		localpartMentionR: localpartMentionRegexp(matrixLocalpart(client.UserID)),
 		typingMu:          sync.Mutex{},
 	}
 	ch.roomName = ch.lookupRoomName
+	client.Store = accountSyncStore{st: ch.account}
 	client.Syncer = healthSyncer{DefaultSyncer: syncer, ch: ch}
 	return ch, nil
 }
@@ -256,7 +263,11 @@ type healthSyncer struct {
 
 func (s healthSyncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, since string) error {
 	s.ch.ReportConnected()
-	return s.DefaultSyncer.ProcessResponse(ctx, res, since)
+	if err := s.DefaultSyncer.ProcessResponse(ctx, res, since); err != nil {
+		return err
+	}
+	s.ch.account.processed(res.NextBatch)
+	return nil
 }
 
 func (s healthSyncer) OnFailedSync(res *mautrix.RespSync, err error) (time.Duration, error) {
@@ -315,7 +326,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	c.ctx, c.cancel = runCtx, cancel
-	c.startTime = time.Now()
+	c.startTime = c.account.started(time.Now())
 
 	c.syncer.OnEventType(event.EventMessage, c.handleMessageEvent)
 	c.syncer.OnEventType(event.StateMember, c.handleMemberEvent)
@@ -615,8 +626,12 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		return
 	}
 
-	// Ignore historical events on first sync.
+	// Ignore events from before ClawEh started, and events a previous
+	// channel for this account already handled.
 	if time.UnixMilli(evt.Timestamp).Before(c.startTime) {
+		return
+	}
+	if !c.account.claim(evt.ID) {
 		return
 	}
 
