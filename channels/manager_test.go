@@ -52,7 +52,9 @@ func newTestManager() *Manager {
 		inputs:   make(map[string]string),
 		cancels:  make(map[string]context.CancelFunc),
 		held:     make(map[string]*heldOutbound),
-		clock:    newRecordingClock(true),
+
+		startCancels: make(map[string]context.CancelFunc),
+		clock:        newRecordingClock(true),
 	}
 }
 

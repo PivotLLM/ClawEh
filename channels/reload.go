@@ -28,6 +28,8 @@ type detached struct {
 	channel Channel
 	worker  *channelWorker
 	cancel  context.CancelFunc
+	// cancelStart cancels the context the channel was started with.
+	cancelStart context.CancelFunc
 	// removed is set when the configuration no longer asks for the channel
 	// (as opposed to a rebuild).
 	removed bool
@@ -148,12 +150,15 @@ func (m *Manager) detachLocked(name string) detached {
 		channel: m.channels[name],
 		worker:  m.workers[name],
 		cancel:  m.cancels[name],
+
+		cancelStart: m.startCancels[name],
 	}
 	if d.worker == nil && d.cancel != nil {
 		d.cancel()
 	}
 	delete(m.workers, name)
 	delete(m.cancels, name)
+	delete(m.startCancels, name)
 	return d
 }
 
@@ -173,6 +178,9 @@ func (m *Manager) stopDetached(ctx context.Context, ds []detached) {
 		wg.Go(func() {
 			if d.cancel != nil {
 				defer d.cancel()
+			}
+			if d.cancelStart != nil {
+				defer d.cancelStart() // after Stop: it is the channel's running context
 			}
 			if d.worker != nil {
 				d.worker.closeQueues()

@@ -88,7 +88,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
 	// Get bot user ID before opening session to avoid race condition
-	botUser, err := c.session.User("@me")
+	botUser, err := c.session.User("@me", discordgo.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to get bot user: %w", err)
 	}
@@ -100,8 +100,25 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	c.session.AddHandler(c.onConnect)
 	c.session.AddHandler(c.onDisconnect)
 
-	if err := c.session.Open(); err != nil {
-		return fmt.Errorf("failed to open discord session: %w", err)
+	// Open takes no context (its dial is bounded by the dialer's handshake
+	// timeout): wait for it or for ctx, and close a session that opens after
+	// the start was abandoned.
+	opened := make(chan error, 1)
+	go func() { opened <- c.session.Open() }()
+	select {
+	case err := <-opened:
+		if err != nil {
+			return fmt.Errorf("failed to open discord session: %w", err)
+		}
+	case <-ctx.Done():
+		go func() {
+			if <-opened == nil {
+				if err := c.session.Close(); err != nil {
+					logger.WarnCF("discord", "Closing a session opened after its start was abandoned", map[string]any{"error": err.Error()})
+				}
+			}
+		}()
+		return ctx.Err()
 	}
 
 	c.SetRunning(true)

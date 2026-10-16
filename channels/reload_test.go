@@ -33,9 +33,12 @@ type lifecycleFake struct {
 	entered    chan struct{}
 	stopped    chan struct{}
 	failStarts int32
-	starts     atomic.Int32
-	stops      atomic.Int32
-	sent       chan bus.OutboundMessage
+	// ignoreCtx makes a gated Start wait for the gate alone, like a library
+	// call that does not honour its context.
+	ignoreCtx bool
+	starts    atomic.Int32
+	stops     atomic.Int32
+	sent      chan bus.OutboundMessage
 }
 
 func newLifecycleFake(name string, b *bus.MessageBus) *lifecycleFake {
@@ -47,11 +50,19 @@ func newLifecycleFake(name string, b *bus.MessageBus) *lifecycleFake {
 	}
 }
 
-func (f *lifecycleFake) Start(context.Context) error {
+func (f *lifecycleFake) Start(ctx context.Context) error {
 	n := f.starts.Add(1)
 	f.entered <- struct{}{}
 	if f.gate != nil {
-		<-f.gate
+		if f.ignoreCtx {
+			<-f.gate
+		} else {
+			select {
+			case <-f.gate:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 	if n <= f.failStarts {
 		return errors.New("service unreachable")
@@ -460,8 +471,8 @@ func TestReload_ChannelStillRetryingItsStart(t *testing.T) {
 	})
 	await(t, old.entered, "the first start")
 
-	// Let the retry begin and hold it inside Start.
-	old.gate = gate
+	// Let the retry begin and hold it inside Start, past its cancellation.
+	old.gate, old.ignoreCtx = gate, true
 	if err := clk.BlockUntil(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -487,15 +498,16 @@ func TestReload_ChannelStillRetryingItsStart(t *testing.T) {
 	}
 }
 
-// StopAll while a channel's first Start is blocked waits for the start to
-// finish, then stops everything; nothing is left running.
-func TestStopAll_WhileStartBlocked(t *testing.T) {
+// StopAll while a channel's first Start is blocked cancels that start rather
+// than waiting for it: StopAll and StartAll return, the channel gets no
+// worker, and what was held for it is dropped as not running.
+func TestStopAll_CancelsBlockedStart(t *testing.T) {
 	mb := bus.NewMessageBus()
 	defer mb.Close()
 	m := newTestManager()
 	m.bus = mb
 	slow := newLifecycleFake("slow", mb)
-	slow.gate = make(chan struct{})
+	slow.gate = make(chan struct{}) // never opened
 	m.RegisterChannel("slow", slow)
 
 	started := make(chan struct{})
@@ -506,6 +518,11 @@ func TestStopAll_WhileStartBlocked(t *testing.T) {
 		close(started)
 	}()
 	await(t, slow.entered, "the slow channel's Start")
+	var dropped []error
+	routeText(m, bus.OutboundMessage{
+		Channel: "slow", ChatID: "c", Content: "held",
+		OnDelivery: func(err error) { dropped = append(dropped, err) },
+	})
 
 	stopped := make(chan struct{})
 	go func() {
@@ -514,11 +531,17 @@ func TestStopAll_WhileStartBlocked(t *testing.T) {
 		}
 		close(stopped)
 	}()
-	close(slow.gate)
-	await(t, started, "StartAll")
 	await(t, stopped, "StopAll")
-	if slow.IsRunning() || slow.stops.Load() != 1 {
-		t.Fatalf("running=%v stops=%d after StopAll", slow.IsRunning(), slow.stops.Load())
+	await(t, started, "StartAll")
+
+	m.mu.RLock()
+	w := m.workers["slow"]
+	m.mu.RUnlock()
+	if w != nil || slow.IsRunning() || slow.stops.Load() != 1 {
+		t.Fatalf("worker=%v running=%v stops=%d after StopAll", w != nil, slow.IsRunning(), slow.stops.Load())
+	}
+	if len(dropped) != 1 || !errors.Is(dropped[0], ErrNotRunning) {
+		t.Fatalf("held message reported %v, want ErrNotRunning", dropped)
 	}
 }
 

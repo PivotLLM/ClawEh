@@ -307,9 +307,14 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}, th.AnyMessage())
 
 	c.SetRunning(true)
-	logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
-		"username": c.bot.Username(),
-	})
+	// Username fetches getMe once, on a context of telego's own that nothing
+	// cancels, so it runs off the start path: an unreachable API must not
+	// hold up Start (or a shutdown waiting for it).
+	go func() {
+		logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
+			"username": c.bot.Username(),
+		})
+	}()
 
 	c.startCommandRegistration(pollCtx, commands.BuiltinDefinitions())
 

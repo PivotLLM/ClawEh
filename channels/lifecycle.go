@@ -83,7 +83,46 @@ func (m *Manager) startChannel(ctx context.Context, name string, channel Channel
 	logger.InfoCF("channels", "Starting channel", map[string]any{
 		"channel": name,
 	})
-	m.started(name, channel, channel.Start(ctx)) //nolint:contextcheck // the channel's workers and retries live as long as the dispatchers, not this call
+	startCtx, cancel := m.startContext(ctx)
+	m.mu.Lock()
+	m.startCancels[name] = cancel
+	m.mu.Unlock()
+	err := channel.Start(startCtx)
+	if startCtx.Err() != nil {
+		// Stopped while starting (StopAll): register nothing.
+		m.abandonStart(name)
+		return
+	}
+	m.started(name, channel, err) //nolint:contextcheck // the channel's workers and retries live as long as the dispatchers, not this call
+}
+
+// startContext is the context a channel is started with: parent, also
+// cancelled when StopAll cancels the starts (startCtx), or by the returned
+// cancel once the channel is taken out of service. Channels keep it as their
+// running context.
+func (m *Manager) startContext(parent context.Context) (context.Context, context.CancelFunc) {
+	m.startMu.Lock()
+	if m.startCtx == nil {
+		m.startCtx, m.cancelStarts = context.WithCancel(context.Background())
+	}
+	all := m.startCtx
+	m.startMu.Unlock()
+	ctx, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(all, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// abandonStart ends a start cancelled by StopAll: nothing is registered and
+// what was held for the channel is dropped as not running. StopAll stops the
+// channel itself.
+func (m *Manager) abandonStart(name string) {
+	m.mu.Lock()
+	text, media := m.takeHeldLocked(name)
+	m.mu.Unlock()
+	dropHeld(name, text, media, "was stopped while starting")
 }
 
 // started follows a channel's first Start (err its result): a started channel
@@ -203,8 +242,16 @@ func (m *Manager) retryChannelStart(chanCtx context.Context, name string, channe
 	}
 }
 
-// StopAll stops the dispatchers and every channel.
+// StopAll stops the dispatchers and every channel. It first cancels the
+// starts in progress, so it does not wait for a slow one.
 func (m *Manager) StopAll(ctx context.Context) error {
+	m.startMu.Lock()
+	if m.cancelStarts != nil {
+		m.cancelStarts()
+		m.startCtx, m.cancelStarts = nil, nil
+	}
+	m.startMu.Unlock()
+
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 	m.mu.Lock()
@@ -219,6 +266,7 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	}
 	m.dispatchCtx = nil
 	clear(m.cancels)
+	clear(m.startCancels)
 	for name := range m.held {
 		text, media := m.takeHeldLocked(name)
 		dropHeld(name, text, media, "was stopped")

@@ -136,6 +136,15 @@ type Manager struct {
 	inputs map[string]string
 	// cancels ends each started channel's workers and start retries.
 	cancels map[string]context.CancelFunc
+	// startCancels cancels the context each channel was started with (see
+	// startContext).
+	startCancels map[string]context.CancelFunc
+	// startCtx is cancelled by StopAll before it waits for the starts in
+	// progress, so a slow Start (an unreachable API) does not hold up a
+	// shutdown; every Start's context ends with it. startMu guards it.
+	startMu      sync.Mutex
+	startCtx     context.Context
+	cancelStarts context.CancelFunc
 	// held collects outbound messages for channels being started, delivered
 	// in order once the start has finished (see releaseHold).
 	held map[string]*heldOutbound
@@ -418,14 +427,15 @@ func WithBuildHook(f func(name string, ch Channel)) ManagerOption {
 // NewManager builds the channels cfg asks for. Nothing starts until StartAll.
 func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.MediaStore, opts ...ManagerOption) (*Manager, error) {
 	m := &Manager{
-		channels:   make(map[string]Channel),
-		workers:    make(map[string]*channelWorker),
-		inputs:     make(map[string]string),
-		cancels:    make(map[string]context.CancelFunc),
-		held:       make(map[string]*heldOutbound),
-		specs:      make(map[string]channelSpec),
-		bus:        messageBus,
-		mediaStore: store,
+		channels:     make(map[string]Channel),
+		workers:      make(map[string]*channelWorker),
+		inputs:       make(map[string]string),
+		cancels:      make(map[string]context.CancelFunc),
+		held:         make(map[string]*heldOutbound),
+		startCancels: make(map[string]context.CancelFunc),
+		specs:        make(map[string]channelSpec),
+		bus:          messageBus,
+		mediaStore:   store,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -1136,6 +1146,10 @@ func (m *Manager) UnregisterChannel(name string) {
 	delete(m.channels, name)
 	delete(m.inputs, name)
 	delete(m.specs, name)
+	if cancel := m.startCancels[name]; cancel != nil {
+		defer cancel()
+		delete(m.startCancels, name)
+	}
 	text, media := m.takeHeldLocked(name)
 	defer dropHeld(name, text, media, "was removed")
 	if cancel := m.cancels[name]; cancel != nil {
