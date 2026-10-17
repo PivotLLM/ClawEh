@@ -348,12 +348,21 @@ func TestResolveRoute_PeerKindBeatsGuildTeamAccount(t *testing.T) {
 		bindings []config.AgentBinding
 		input    RouteInput
 	}{
-		{"guild binding listed first", []config.AgentBinding{guild, dmBinding("discord")},
-			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}},
-		{"team binding listed first", []config.AgentBinding{team, dmBinding("slack")},
-			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}},
-		{"account binding listed first", []config.AgentBinding{account, {AgentID: "alice", Match: config.BindingMatch{Channel: "discord", AccountID: "acct1", Peer: &config.PeerMatch{Kind: "direct"}}}},
-			RouteInput{Channel: "discord", AccountID: "acct1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}},
+		{
+			"guild binding listed first",
+			[]config.AgentBinding{guild, dmBinding("discord")},
+			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
+		{
+			"team binding listed first",
+			[]config.AgentBinding{team, dmBinding("slack")},
+			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
+		{
+			"account binding listed first",
+			[]config.AgentBinding{account, {AgentID: "alice", Match: config.BindingMatch{Channel: "discord", AccountID: "acct1", Peer: &config.PeerMatch{Kind: "direct"}}}},
+			RouteInput{Channel: "discord", AccountID: "acct1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
@@ -370,10 +379,18 @@ func TestResolveRoute_PeerKindBeatsGuildTeamAccount(t *testing.T) {
 		input     RouteInput
 		matchedBy string
 	}{
-		{"guild message", []config.AgentBinding{dmBinding("discord"), guild},
-			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}}, "binding.guild"},
-		{"team message", []config.AgentBinding{dmBinding("slack"), team},
-			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}}, "binding.team"},
+		{
+			"guild message",
+			[]config.AgentBinding{dmBinding("discord"), guild},
+			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}},
+			"binding.guild",
+		},
+		{
+			"team message",
+			[]config.AgentBinding{dmBinding("slack"), team},
+			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}},
+			"binding.team",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
