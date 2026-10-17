@@ -19,7 +19,9 @@ func TestStart_DoesNotWaitForGetMe(t *testing.T) {
 	getMe := make(chan struct{}, 1)
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read request: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/getMe"):
@@ -34,7 +36,9 @@ func TestStart_DoesNotWaitForGetMe(t *testing.T) {
 			case <-release:
 			}
 		default:
-			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			if _, err := w.Write([]byte(`{"ok":true,"result":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 		}
 	}))
 	t.Cleanup(func() {

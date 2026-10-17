@@ -20,7 +20,9 @@ import (
 func TestStart_BotUserLookupHonoursContext(t *testing.T) {
 	asked := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read request: %v", err)
+		}
 		select {
 		case asked <- struct{}{}:
 		default:

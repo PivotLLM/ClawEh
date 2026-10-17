@@ -146,7 +146,7 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 		t.Fatalf("listener address %T", ln.Addr())
 	}
 	port := addr.Port
-	if err := ln.Close(); err != nil {
+	if err = ln.Close(); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Channels.Device = config.DeviceChannelConfig{

@@ -23,7 +23,9 @@ func TestStart_HonoursContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		// Read the form first: only then does the server notice the client
 		// going away and end the request's context.
-		_, _ = io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read request: %v", err)
+		}
 		if strings.HasSuffix(r.URL.Path, "/auth.test") {
 			asked <- struct{}{}
 		}

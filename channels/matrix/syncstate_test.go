@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"maunium.net/go/mautrix/id"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
-
-	"maunium.net/go/mautrix/id"
 )
 
 // failAfter bounds a wait for something the test expects to happen; it is a
@@ -338,7 +338,7 @@ func TestHandOffFailure_RebuiltChannelDeliversOnce(t *testing.T) {
 	if c1.account.handled("$x") {
 		t.Fatal("an event that was not handed on is still recorded as handled")
 	}
-	if from, _ := (accountSyncStore{c1.account}).LoadNextBatch(context.Background(), ""); from != "" {
+	if from, err := (accountSyncStore{c1.account}).LoadNextBatch(context.Background(), ""); err != nil || from != "" {
 		t.Fatalf("resume point = %q, want the unfinished batch fetched again", from)
 	}
 	for range fillers {
