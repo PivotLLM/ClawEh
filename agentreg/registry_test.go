@@ -26,9 +26,19 @@ import (
 type fakeInst struct {
 	spec   Spec
 	closes atomic.Int32
+	// done is closed on the first Close (nil for an instance a test made
+	// by hand), so a test can wait for a close on another goroutine.
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
-func (f *fakeInst) Close() error { f.closes.Add(1); return nil }
+func (f *fakeInst) Close() error {
+	f.closes.Add(1)
+	if f.done != nil {
+		f.doneOnce.Do(func() { close(f.done) })
+	}
+	return nil
+}
 
 func (f *fakeInst) closed() bool { return f.closes.Load() > 0 }
 
@@ -57,7 +67,7 @@ func (h *fakeHost) build(_ *config.Config, spec Spec) (*fakeInst, error) {
 		return nil, errors.New("build refused")
 	}
 	h.builds[spec.ID]++
-	inst := &fakeInst{spec: spec}
+	inst := &fakeInst{spec: spec, done: make(chan struct{})}
 	h.built = append(h.built, inst)
 	return inst, nil
 }
@@ -873,6 +883,7 @@ func TestCloseWaitsForDeferredDelete(t *testing.T) {
 	r := mustNew(t, testConfig(t), h)
 	id := mustFresh(t, r, config.AgentConfig{})
 	inst := mustGet(t, r, id)
+	alice, bob := mustGet(t, r, "alice"), mustGet(t, r, "bob")
 	end, _ := r.BeginTurn(id, inst)
 	if err := r.DeleteWhenIdle(id); !errors.Is(err, ErrDeletePending) {
 		t.Fatalf("DeleteWhenIdle mid-turn = %v, want ErrDeletePending", err)
@@ -880,10 +891,14 @@ func TestCloseWaitsForDeferredDelete(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	h.onRetire = func(Spec) { close(entered); <-release }
 	end()
-	<-entered // the deferred deletion is under way
+	<-entered // the deferred deletion is under way, blocked in the hook
 
 	closed := make(chan struct{})
 	go func() { r.Close(); close(closed) }()
+	// Close has begun: it has closed the config agents' instances, and the
+	// deferred deletion it must wait for is still held in the hook.
+	<-alice.done
+	<-bob.done
 	select {
 	case <-closed:
 		t.Fatal("Close returned while the deferred deletion was running")
