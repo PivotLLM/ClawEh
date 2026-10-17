@@ -857,7 +857,75 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(10, "delete the agent and confirm it is gone", async () => {
+  await check(10, "Cancel in the delete confirmation keeps the agent", async () => {
+    if (!created) return "skipped, never created"
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
+    await page.getByRole("button", { name: new RegExp(`Delete agent ${PROBE}`, "i") }).click()
+    const dialog = page.getByRole("alertdialog")
+    await dialog.waitFor({ timeout: 5000 })
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden", timeout: 5000 })
+    // Long enough for any save the dialog might have started to land.
+    await page.waitForTimeout(1500)
+    const rail = await page.getByRole("button", { name: PROBE, exact: true }).count()
+    await close()
+    const a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert(a, `${PROBE} is gone from the config after Cancel`)
+    assert(a.temperature === 0.77, `temperature = ${a.temperature} after Cancel; the agent changed`)
+    assert(rail > 0, `${PROBE} is gone from the rail after Cancel`)
+  })
+
+  await check(11, "May message: ticking an agent saves subagents.allow_agents and keeps subagents.models", async () => {
+    const ID = "e2e-msg"
+    const before = await config()
+    const others = (before.agents.list ?? []).filter((a) => a.id !== ID && a.id !== PROBE)
+    if (others.length === 0) return "skipped, no other agent to tick"
+    const model = (before.models ?? []).find((m) => m.enabled)?.model_name
+    if (!model) return "skipped, no enabled model for subagents.models"
+    const target = others[0]
+    const label = target.name || target.id
+    const subagents = { models: [model] }
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [], subagents }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      const box = page.getByRole("checkbox", { name: label, exact: true }).first()
+      assert((await box.count()) > 0, `no "${label}" box under May message`)
+      assert((await box.getAttribute("aria-checked")) === "false", `"${label}" already ticked on a new agent`)
+      await box.click()
+      await page.waitForTimeout(2000)
+      await close()
+      const a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(
+        JSON.stringify(a?.subagents?.allow_agents) === JSON.stringify([target.id]),
+        `subagents.allow_agents = ${JSON.stringify(a?.subagents?.allow_agents)}; expected ${JSON.stringify([target.id])}`,
+      )
+      assert(
+        JSON.stringify(a?.subagents?.models) === JSON.stringify(subagents.models),
+        `subagents.models = ${JSON.stringify(a?.subagents?.models)}; the save dropped it`,
+      )
+      return `${ID} may message ${target.id}`
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
+
+  await check(12, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
@@ -1606,6 +1674,58 @@ if (useGroup("I", "Models and providers")) {
     await close()
     return seen.join(", ")
   })
+
+  await check(12, "a model whose Request timeout exceeds the Turn timeout links to it", async () => {
+    // The note sits at the model's Request timeout field and links to the
+    // System page field that decides. Read-only when the instance has such a
+    // model; otherwise a temporary one is added and removed again.
+    const listed = (await api("/api/models")).json ?? {}
+    const turn = listed.turn_timeout ?? 0
+    if (turn <= 0) return "skipped, the server reports no turn timeout"
+    let model = (listed.models ?? []).find((m) => (m.request_timeout ?? 0) > turn)
+    let origModels
+    if (!model) {
+      const c = await config()
+      origModels = c.models ?? []
+      const base = origModels[0]
+      if (!base) return "skipped, no model to clone"
+      const probe = { ...base, model_name: "zz-e2e-turn-timeout", enabled: false, request_timeout: turn + 60 }
+      const r = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: [...origModels, probe] }) })
+      assert(r.status === 200, `adding the probe model = ${r.status}`)
+      model = probe
+    }
+    try {
+      const { close, page, problems } = await open("/models")
+      const card = page
+        .getByText(model.model_name, { exact: true })
+        .first()
+        .locator("xpath=ancestor::div[contains(@class,'group/card')][1]")
+      await card.getByTitle("Edit model").click()
+      // Request timeout is under the sheet's advanced options.
+      await page.getByRole("button", { name: "Advanced options" }).click()
+      const note = page.getByText(/Limited to .* by the/)
+      await note.waitFor({ timeout: 5000 })
+      await page.getByRole("link", { name: "Turn timeout", exact: true }).click()
+      await page.waitForURL(/\/system#turn-timeout$/, { timeout: 10000 })
+      const field = page.locator("#turn-timeout")
+      await field.waitFor({ timeout: 10000 })
+      await page.waitForTimeout(700)
+      const inView = await field.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
+      const value = await field.inputValue()
+      await close()
+      assert(problems.length === 0, `console errors: ${problems[0]}`)
+      assert(inView, "the Turn timeout field is not scrolled into view")
+      assert(value === String(turn), `the Turn timeout field shows ${value}, the server ${turn}`)
+      return `${model.model_name}: ${model.request_timeout}s > ${turn}s${origModels ? " (temporary model)" : ""}`
+    } finally {
+      if (origModels) {
+        await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: origModels }) })
+      }
+    }
+  })
 }
 
 // J. Devices — the store-open regression
@@ -1744,7 +1864,8 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     // Before any click. The page used to seed its rows from an empty list when
     // the query was already cached, said nothing was configured, and the first
     // "Add backend" then saved that empty list over the real configuration.
-    const stt = (await api("/api/voice/stt")).json?.stt ?? []
+    const voice = (await api("/api/voice/stt")).json ?? {}
+    const stt = voice.stt ?? []
     const { close, page, problems } = await open("/voice")
     await page.getByText("Transcription backends").waitFor({ timeout: 10000 })
     const selects = page.locator("select[id^=stt-provider-]")
@@ -1753,6 +1874,15 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     }
     const rows = await selects.count()
     const providers = rows ? await selects.evaluateAll((els) => els.map((e) => e.value)) : []
+    // The label each row carries: Primary, Fallback, Not used, or none.
+    const labels = rows
+      ? await selects.evaluateAll((els) =>
+          els.map((e) => {
+            const text = e.closest("div.rounded-md.border")?.textContent ?? ""
+            return /Not used/.test(text) ? "Not used" : /Primary/.test(text) ? "Primary" : /Fallback/.test(text) ? "Fallback" : ""
+          }),
+        )
+      : []
     const empty = await page.getByText(/No transcription backends configured/).count()
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
@@ -1761,7 +1891,23 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     for (let i = 0; i < stt.length; i++) {
       assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
     }
-    return rows ? providers.join(", ") : "none configured — empty state shown"
+    // Enabled backends are tried in order: the first usable one is Primary,
+    // the others Fallback; one with no preset and no endpoint or model is
+    // Not used; a disabled one carries no label.
+    const presets = voice.presets ?? []
+    let primarySeen = false
+    for (let i = 0; i < stt.length; i++) {
+      const b = stt[i]
+      const usable = presets.some((p) => p.provider === b.provider) || (b.base_url?.trim() && b.model?.trim())
+      let want = ""
+      if (b.enabled && !usable) want = "Not used"
+      else if (b.enabled) {
+        want = primarySeen ? "Fallback" : "Primary"
+        primarySeen = true
+      }
+      assert(labels[i] === want, `row ${i} (${b.provider}) is labelled "${labels[i]}", expected "${want}"`)
+    }
+    return rows ? stt.map((b, i) => `${providers[i]} ${labels[i] || "disabled"}`).join(", ") : "none configured — empty state shown"
   })
 
   await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {

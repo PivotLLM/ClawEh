@@ -609,13 +609,15 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 144 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 147 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
-- **Dev only.** Groups F, G, N and S write (F creates an agent, G edits a config
-  field, N creates a memory domain and curates inside it, S5 creates a
-  throwaway agent and toggles one of its tools). All four revert what they
+- **Dev only.** Groups F, G, N and S write (F creates an agent and, in F11, a
+  throwaway agent whose May message it ticks, G edits a config field, N
+  creates a memory domain and curates inside it, S5 creates a throwaway agent
+  and toggles one of its tools; I12 adds a temporary model only when no model's
+  request timeout exceeds the turn timeout). All of them revert what they
   change. The runner refuses port 18790 unless `--allow-prod` is given.
   Never point it at production.
 - **Wait for `/ready`, not `/health`.** `/health` answers as soon as the port

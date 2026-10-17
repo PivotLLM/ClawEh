@@ -195,10 +195,10 @@ describe("VoicePage", () => {
       "Not used: needs an endpoint and model.",
     )
     // The custom row is the one marked; the groq row after it is Primary.
-    const customRow = notUsed.closest(".rounded-md.border")
+    const customRow = notUsed.closest("div.rounded-md.border")
     expect(customRow?.querySelector("select")?.value).toBe("custom")
     expect(customRow?.textContent).not.toMatch(/Primary|Fallback/)
-    const primary = screen.getByText("Primary").closest(".rounded-md.border")
+    const primary = screen.getByText("Primary").closest("div.rounded-md.border")
     expect(primary?.querySelector("select")?.value).toBe("groq")
     expect(screen.queryByText("Fallback")).toBeNull()
   })
