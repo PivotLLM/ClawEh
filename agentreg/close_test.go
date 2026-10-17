@@ -78,6 +78,11 @@ func TestDeferredDeleteDroppedAfterClose(t *testing.T) {
 	r.Close()
 	end() // would start the deferred delete; Close has begun, so it is dropped
 
+	// Barrier: end() hands the delete to goBackground before it returns, so
+	// a delete that was (wrongly) tracked has been added to the background
+	// group by now; waiting on the group lets it finish before the checks.
+	// (A second Close is no barrier: it returns at once.)
+	r.background.Wait()
 	select {
 	case got := <-retired:
 		t.Fatalf("%s was released after Close", got)

@@ -139,7 +139,7 @@ func waitToRetry(ctx context.Context, clk clock.Clock, err error, retry int) err
 	}
 	backoff := withJitter(time.Duration(retry+1) * timeoutRetryBackoff)
 	logger.WarnCF("agent", "Timeout error, retrying after backoff", map[string]any{
-		"error":   err.Error(),
+		"error":   redactedError(err),
 		"retry":   retry,
 		"backoff": backoff.String(),
 	})
@@ -163,7 +163,7 @@ func (t *llmTurn) compressForRetry(ctx context.Context, d *llmDispatch, err erro
 		"agent",
 		"Context window error detected, attempting compression",
 		map[string]any{
-			"error": err.Error(),
+			"error": redactedError(err),
 			"retry": retry,
 		},
 	)
@@ -228,7 +228,7 @@ func (t *llmTurn) dispatchFailed(ctx context.Context, err error) error {
 			"agent_id":  t.agent.ID,
 			"iteration": t.iteration,
 			"model":     t.model,
-			"error":     err.Error(),
+			"error":     redactedError(err),
 		})
 	return fmt.Errorf("LLM call failed after retries: %w", err)
 }

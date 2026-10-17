@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -101,7 +104,8 @@ var secretBodies = map[string]string{
 	"YWxpY2U6c2VjcmV0cGFzc3dvcmQ=":                 `{"error":{"message":"rejected Basic YWxpY2U6c2VjcmV0cGFzc3dvcmQ="}}`,
 	"hunter2secret":                                `{"error":{"message":"GET /v1?api_key=hunter2secret failed"}}`,
 	"tok-short-9":                                  `{"error":{"message":"bad token=tok-short-9 in request"}}`,
-	"plainkey":                                     `{"error":{"message":"bad key=plainkey"}}`,
+	"abcd1234efgh5678ijkl":                         `{"error":{"message":"Incorrect API key provided: abcd1234efgh5678ijkl. You can find your API key at https://platform.openai.com/account/api-keys."}}`,
+	"AKIAABCDEFGHIJKLMNOP":                         `{"message":"The security token AKIAABCDEFGHIJKLMNOP is invalid"}`,
 	"0123456789abcdef0123456789abcdef":             `{"error":{"message":"session 0123456789abcdef0123456789abcdef expired"}}`,
 	"QWxpY2VBbmRCb2JTaGFyZWRTZWNyZXQxMjM0NTY3OA==": `{"error":{"message":"signature QWxpY2VBbmRCb2JTaGFyZWRTZWNyZXQxMjM0NTY3OA== mismatch"}}`,
 }
@@ -151,8 +155,41 @@ func TestProviderMessageRedactsSecrets(t *testing.T) {
 	}
 }
 
+// Each case's text carries the secret in one of the forms providers and
+// proxies use; the secret must not survive and the rest of the text must.
+func TestRedactSecretsForms(t *testing.T) {
+	for _, tc := range []struct{ text, secret, keep string }{
+		{"Incorrect API key provided: abcd1234efgh5678ijkl", "abcd1234efgh5678ijkl", "Incorrect API key provided: "},
+		{"header x-api-key: abcd1234efgh5678 rejected", "abcd1234efgh5678", "header x-api-key: "},
+		{`{"api_key": "abcd1234efgh", "model": "gpt-4o"}`, "abcd1234efgh", `"model": "gpt-4o"`},
+		{`{"apikey":"abcd1234efgh"}`, "abcd1234efgh", `{"apikey":"`},
+		{"GET /v1/models?key=AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q", "AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q", "GET /v1/models?key="},
+		{"client_secret=s3cr3tValue99 rejected", "s3cr3tValue99", "client_secret="},
+		{"auth_token: tok3nValue42", "tok3nValue42", "auth_token: "},
+		{"password=Passw0rdAlice", "Passw0rdAlice", "password="},
+		{"access key AKIAABCDEFGHIJKLMNOP denied", "AKIAABCDEFGHIJKLMNOP", "access key "},
+		{"Authorization: Bearer abcdefghijklmnop1234", "abcdefghijklmnop1234", "Authorization: Bearer "},
+		{"Authorization: Basic YWxpY2U6c2VjcmV0cGFzcw==", "YWxpY2U6c2VjcmV0cGFzcw==", "Authorization: Basic "},
+		{"key sk-ant-api03-Zx9Yw8Vu7Ts6Rq5Po4 revoked", "sk-ant-api03-Zx9Yw8Vu7Ts6Rq5Po4", " revoked"},
+		{"session 0123456789abcdef0123456789abcdef expired", "0123456789abcdef0123456789abcdef", "session "},
+	} {
+		got := redactSecrets(tc.text)
+		if strings.Contains(got, tc.secret) || !strings.Contains(got, secretRedaction) || !strings.Contains(got, tc.keep) {
+			t.Errorf("redactSecrets(%q) = %q, want %q redacted and %q kept", tc.text, got, tc.secret, tc.keep)
+		}
+	}
+}
+
 func TestRedactSecretsLeavesOrdinaryText(t *testing.T) {
 	for _, s := range []string{
+		"model anthropic/claude-3-5-sonnet-20241022 is overloaded",
+		"qwen/qwen3-235b-a22b-thinking-2507 does not support tools",
+		"deepseek/deepseek-r1-distill-llama-70b: context length exceeded",
+		"request 3f2b8c1e-9a4d-4e7f-b6c2-1d0e5a7f9b3c failed",
+		"request_id req_0123456789abcdef0123456789abcdef",
+		"duplicate value violates primary key=user_id constraint",
+		"Invalid token: expired",
+		"password: required",
 		"thinking.type: adaptive is required for this model.",
 		"Invalid value for tools.",
 		"basic validation failed for field messages",
@@ -165,5 +202,73 @@ func TestRedactSecretsLeavesOrdinaryText(t *testing.T) {
 		if got := redactSecrets(s); got != s {
 			t.Errorf("redactSecrets(%q) = %q, want it unchanged", s, got)
 		}
+	}
+}
+
+// providerErrorWithKey is a provider error whose text carries an API key, as
+// an unclassified error or one a provider echoes back.
+const leakedKey = "sk-proj-Ab12Cd34Ef56Gh78Ij90"
+
+func providerErrorWithKey() error {
+	return errors.New(`API request failed: Status: 401 Body: {"error":{"message":"Incorrect API key provided: ` + leakedKey + `"}}`)
+}
+
+// Every log line that carries a provider's error redacts its secrets: the
+// dispatch that failed for good, the timeout retry and the compression chain.
+func TestProviderErrorLogsRedactSecrets(t *testing.T) {
+	assertRedacted := func(t *testing.T, buf *bytes.Buffer) {
+		t.Helper()
+		if strings.Contains(buf.String(), leakedKey) || !strings.Contains(buf.String(), secretRedaction) {
+			t.Fatalf("log carries the key or no redaction:\n%s", buf.String())
+		}
+	}
+
+	t.Run("LLM call failed", func(t *testing.T) {
+		var buf bytes.Buffer
+		restore := logger.RedirectForTest(&buf)
+		defer restore()
+		turn := &llmTurn{agent: &AgentInstance{ID: "alice"}, model: "gpt-4o"}
+		if err := turn.dispatchFailed(context.Background(), providerErrorWithKey()); err == nil {
+			t.Fatal("dispatchFailed returned nil")
+		}
+		assertRedacted(t, &buf)
+	})
+
+	t.Run("timeout retry", func(t *testing.T) {
+		var buf bytes.Buffer
+		restore := logger.RedirectForTest(&buf)
+		defer restore()
+		clk := clock.NewFake(time.Unix(0, 0))
+		done := make(chan error, 1)
+		go func() { done <- waitToRetry(context.Background(), clk, providerErrorWithKey(), 0) }()
+		if err := clk.BlockUntil(context.Background(), 1); err != nil {
+			t.Fatal(err)
+		}
+		clk.Advance(time.Hour)
+		if err := <-done; err != nil {
+			t.Fatalf("waitToRetry: %v", err)
+		}
+		assertRedacted(t, &buf)
+	})
+
+	t.Run("compression model", func(t *testing.T) {
+		var buf bytes.Buffer
+		restore := logger.RedirectForTest(&buf)
+		defer restore()
+		c := &compressModelCaller{agentID: "alice", clients: []*providerLLMClient{
+			compressClient(&scriptedProvider{err: providerErrorWithKey()}, "p1", "model-a"),
+		}}
+		if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{System: "s", User: "u"}); err == nil {
+			t.Fatal("Complete succeeded with a failing model")
+		}
+		assertRedacted(t, &buf)
+	})
+}
+
+// An error with no failover classification is shown as is, minus its secrets.
+func TestRenderTurnErrorRedactsUnclassifiedError(t *testing.T) {
+	got := renderTurnError(context.Background(), time.Minute, providerErrorWithKey())
+	if strings.Contains(got, leakedKey) || !strings.HasPrefix(got, "Error processing message: API request failed") {
+		t.Fatalf("reply = %q, want the error without the key", got)
 	}
 }

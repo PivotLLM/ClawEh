@@ -71,7 +71,7 @@ func renderTurnErrorText(turnCtx context.Context, budget time.Duration, err erro
 	if friendly := renderFailoverError(err); friendly != "" {
 		return friendly
 	}
-	return fmt.Sprintf("Error processing message: %v", err)
+	return "Error processing message: " + redactSecrets(err.Error())
 }
 
 // fallbackNotifier returns a providers.FallbackNotify that posts a short,

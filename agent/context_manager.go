@@ -120,7 +120,7 @@ func (c *compressModelCaller) complete(ctx context.Context, system, user string,
 				"agent_id": c.agentID,
 				"session":  c.sessionKey,
 				"model":    cl.model,
-				"error":    chatErr.Error(),
+				"error":    redactedError(chatErr),
 			})
 			continue
 		}

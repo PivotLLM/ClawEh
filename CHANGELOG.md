@@ -14,10 +14,12 @@ observe does not need an entry.
 
 ### Security
 
-- A provider's error message shown in a chat reply or fallback notice, and the
-  failed-model error in the log, no longer carry API keys, Bearer/Basic
-  credentials, `key=`/`token=` values or long key-like strings from the
-  provider's response; they are replaced by `[REDACTED]`.
+- A provider's error shown in a chat reply or fallback notice, and in the log
+  lines for failed model and compression calls, no longer carries API keys
+  (including AWS access key ids), Bearer/Basic credentials, the values of
+  `api_key`, `x-api-key`, `token`, `secret` or `password` fields, or long
+  key-like strings; they are replaced by `[REDACTED]`. Model ids, UUIDs and
+  request ids (`req_…`) are kept.
 - **BREAKING: `tools.exec.allow_remote` is removed; `shell_exec` is only the
   agent's own permission.** Whether an agent may run shell commands is now one
   per-agent switch, off by default: *Allow shell commands* on the Agents page,
