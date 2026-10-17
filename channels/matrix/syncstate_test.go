@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+
+	"maunium.net/go/mautrix/id"
 )
 
 // failAfter bounds a wait for something the test expects to happen; it is a
@@ -292,5 +295,148 @@ func TestRemovedChannel_StartsFresh(t *testing.T) {
 	hs.awaitSync(t, "t1") // a fresh sync (since ""), not a resume from s1
 	if got := drainInbound(t, mb); len(got) != 0 {
 		t.Fatalf("channel turned on again delivered %q, want nothing", got)
+	}
+}
+
+// A message that could not be handed on (the bus is full and the channel is
+// stopped meanwhile) is released, not recorded as handled, and the batch is
+// not marked done: the rebuilt channel fetches it again and delivers it
+// exactly once.
+func TestHandOffFailure_RebuiltChannelDeliversOnce(t *testing.T) {
+	resetAccounts(t)
+	hs := newFakeHomeserver(t, func(since string, _ int) string {
+		if since == "" {
+			return syncBody("s1", textEvent("$x", "hello", firstStart().Add(time.Millisecond)))
+		}
+		return ""
+	})
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	// Fill the bus, so the first channel's hand-off blocks.
+	const filler = "\x00filler"
+	fillers := 0
+	for {
+		// Nothing consumes, so a publish times out only once the bus is full.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		err := mb.PublishInbound(ctx, bus.InboundMessage{Content: filler})
+		cancel()
+		if err != nil {
+			break
+		}
+		fillers++
+	}
+
+	c1 := hs.channel(t, mb)
+	deadline := time.Now().Add(failAfter)
+	for !c1.account.handled("$x") {
+		if time.Now().After(deadline) {
+			t.Fatal("the first channel never claimed the event")
+		}
+		runtime.Gosched()
+	}
+	stopChannel(t, c1)
+	if c1.account.handled("$x") {
+		t.Fatal("an event that was not handed on is still recorded as handled")
+	}
+	if from, _ := (accountSyncStore{c1.account}).LoadNextBatch(context.Background(), ""); from != "" {
+		t.Fatalf("resume point = %q, want the unfinished batch fetched again", from)
+	}
+	for range fillers {
+		ctx, cancel := context.WithTimeout(context.Background(), failAfter)
+		msg, ok := mb.ConsumeInbound(ctx)
+		cancel()
+		if !ok || msg.Content != filler {
+			t.Fatalf("bus held %q, want only the fillers", msg.Content)
+		}
+	}
+
+	c2 := hs.channel(t, mb)
+	defer stopChannel(t, c2)
+	hs.awaitSync(t, "s1")
+	if got := drainInbound(t, mb); !slices.Equal(got, []string{"hello"}) {
+		t.Fatalf("rebuilt channel delivered %q, want [hello] once", got)
+	}
+}
+
+func eventIDs(ids ...string) []id.EventID {
+	out := make([]id.EventID, len(ids))
+	for i, s := range ids {
+		out[i] = id.EventID(s)
+	}
+	return out
+}
+
+// release takes the event out of both the set and the order, so eviction
+// later drops the right events.
+func TestAccountState_ReleaseKeepsOrder(t *testing.T) {
+	st := &accountState{seen: map[id.EventID]struct{}{}}
+	for _, e := range eventIDs("$a", "$b", "$c") {
+		st.claim(e)
+	}
+	st.release("$b")
+	st.release("$unknown")
+	if !slices.Equal(st.order, eventIDs("$a", "$c")) || len(st.seen) != 2 || st.handled("$b") {
+		t.Fatalf("after release: order %v, seen %d, $b handled %v", st.order, len(st.seen), st.handled("$b"))
+	}
+	if !st.claim("$b") {
+		t.Fatal("a released event cannot be claimed again")
+	}
+	if !slices.Equal(st.order, eventIDs("$a", "$c", "$b")) {
+		t.Fatalf("order = %v, want [$a $c $b]", st.order)
+	}
+}
+
+// Above seenEventsMax handled events, the oldest is forgotten first.
+func TestAccountState_EvictsOldest(t *testing.T) {
+	st := &accountState{seen: map[id.EventID]struct{}{}}
+	for i := range seenEventsMax + 1 {
+		if !st.claim(id.EventID(fmt.Sprintf("$%d", i))) {
+			t.Fatalf("event %d claimed twice", i)
+		}
+	}
+	if len(st.seen) != seenEventsMax || len(st.order) != seenEventsMax {
+		t.Fatalf("remembers %d (order %d), want %d", len(st.seen), len(st.order), seenEventsMax)
+	}
+	if st.handled("$0") {
+		t.Fatal("the oldest event was not forgotten")
+	}
+	if !st.handled("$1") || !st.handled(id.EventID(fmt.Sprintf("$%d", seenEventsMax))) {
+		t.Fatal("a recent event was forgotten")
+	}
+}
+
+// A channel for another account starts fresh, and so does the first account
+// again afterwards: only one account is kept.
+func TestAccountStateFor_SwitchingAccountStartsFresh(t *testing.T) {
+	resetAccounts(t)
+	alice := accountStateFor("https://hs.example", "@alice:example.org")
+	alice.started(time.Unix(100, 0))
+	alice.processed("s1")
+	alice.claim("$a")
+	if accountStateFor("https://hs.example", "@alice:example.org") != alice {
+		t.Fatal("the same account did not keep its state")
+	}
+
+	bob := accountStateFor("https://hs.example", "@bob:example.org")
+	if bob == alice || bob.resumeFrom != "" || !bob.firstStart.IsZero() || bob.handled("$a") {
+		t.Fatal("switching account kept the previous account's state")
+	}
+	if again := accountStateFor("https://hs.example", "@alice:example.org"); again == alice || again.resumeFrom != "" {
+		t.Fatal("switching back resumed state that was replaced")
+	}
+}
+
+// forgetAccount of a state that has been replaced leaves the newer one alone.
+func TestForgetAccount_OlderStateLeavesNewer(t *testing.T) {
+	resetAccounts(t)
+	alice := accountStateFor("https://hs.example", "@alice:example.org")
+	bob := accountStateFor("https://hs.example", "@bob:example.org")
+	forgetAccount(alice)
+	if accountStateFor("https://hs.example", "@bob:example.org") != bob {
+		t.Fatal("forgetting an older account dropped the current one")
+	}
+	forgetAccount(bob)
+	if accountStateFor("https://hs.example", "@bob:example.org") == bob {
+		t.Fatal("forgetting the current account kept it")
 	}
 }
