@@ -63,7 +63,11 @@ func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) runningEnvironment(dataDir string, now time.Time) report.Environment {
 	env := reportEnvironment(h.configPath, dataDir, now)
 	env.ForwardedPeer, env.ForwardedSeen = h.untrustedProxySeen()
-	env.EncryptedMatrixRooms = matrix.EncryptedRooms()
+	rooms := matrix.EncryptedRooms
+	if h.encryptedMatrixRooms != nil {
+		rooms = h.encryptedMatrixRooms
+	}
+	env.EncryptedMatrixRooms = rooms()
 	return env
 }
 

@@ -33,6 +33,10 @@ type Handler struct {
 	// code; nil means device.LANIPv4s (tests set it).
 	lanIPv4s func() []string
 
+	// encryptedMatrixRooms lists the Matrix rooms seen to be encrypted for
+	// Check Up; nil means matrix.EncryptedRooms (tests set it).
+	encryptedMatrixRooms func() []string
+
 	// reloadTrigger, when set by the gateway, forces an immediate config reload
 	// (bypassing the mtime-debounce). Guarded because it's set at startup on one
 	// goroutine and read on HTTP-handler goroutines.
