@@ -1068,8 +1068,9 @@ func TestHold_MediaCountsTowardBound(t *testing.T) {
 	}
 }
 
-// What was held while a channel started is sent before a message that
-// arrives as the start completes.
+// What was held while a channel started is sent before a message queued
+// while that backlog is being sent: "three" is routed from the delivery of
+// "one", when the worker is running and "two" is still in its backlog.
 func TestHold_BacklogBeforeLaterMessages(t *testing.T) {
 	mb := bus.NewMessageBus()
 	defer mb.Close()
@@ -1085,16 +1086,27 @@ func TestHold_BacklogBeforeLaterMessages(t *testing.T) {
 		}
 	}()
 
-	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "one"})
+	queued := make(chan bool, 1) // whether "three" went to the worker, not the hold
+	routeText(m, bus.OutboundMessage{
+		Channel: "slow", ChatID: "c", Content: "one",
+		OnDelivery: func(error) {
+			m.mu.RLock()
+			_, held := m.held["slow"]
+			m.mu.RUnlock()
+			routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "three"})
+			queued <- !held
+		},
+	})
 	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "two"})
 	close(slow.gate)
-	// Racing the end of the start: held, or queued behind the backlog.
-	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "three"})
 	await(t, started, "StartAll")
 	for _, want := range []string{"one", "two", "three"} {
 		if got := slow.receive(t); got.Content != want {
 			t.Fatalf("channel got %q, want %q", got.Content, want)
 		}
+	}
+	if !<-queued {
+		t.Fatal(`"three" was held, not queued behind the backlog`)
 	}
 }
 

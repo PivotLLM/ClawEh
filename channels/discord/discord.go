@@ -48,6 +48,25 @@ type DiscordChannel struct {
 	typingMu   sync.Mutex
 	typingStop map[string]chan struct{} // chatID → stop signal
 	botUserID  string                   // stored for mention checking
+	// openSession and closeLate open the gateway session in Start and close
+	// one that opened after its start was abandoned; nil means the session's
+	// Open and Close (tests replace them).
+	openSession func() error
+	closeLate   func() error
+}
+
+func (c *DiscordChannel) open() error {
+	if c.openSession != nil {
+		return c.openSession()
+	}
+	return c.session.Open()
+}
+
+func (c *DiscordChannel) closeLateSession() error {
+	if c.closeLate != nil {
+		return c.closeLate()
+	}
+	return c.session.Close()
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -104,7 +123,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	// timeout): wait for it or for ctx, and close a session that opens after
 	// the start was abandoned.
 	opened := make(chan error, 1)
-	go func() { opened <- c.session.Open() }()
+	go func() { opened <- c.open() }()
 	select {
 	case err := <-opened:
 		if err != nil {
@@ -113,7 +132,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		go func() {
 			if <-opened == nil {
-				if err := c.session.Close(); err != nil {
+				if err := c.closeLateSession(); err != nil {
 					logger.WarnCF("discord", "Closing a session opened after its start was abandoned", map[string]any{"error": err.Error()})
 				}
 			}
