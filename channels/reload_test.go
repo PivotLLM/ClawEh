@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1094,5 +1095,130 @@ func TestHold_BacklogBeforeLaterMessages(t *testing.T) {
 		if got := slow.receive(t); got.Content != want {
 			t.Fatalf("channel got %q, want %q", got.Content, want)
 		}
+	}
+}
+
+// registerFakeTelegram registers a Telegram bot factory building lifecycle
+// fakes and returns them by channel name, the latest last.
+func registerFakeTelegram(t *testing.T) func(name string) []*lifecycleFake {
+	t.Helper()
+	telegramBotFactoryMu.Lock()
+	prev := telegramBotFactory
+	telegramBotFactoryMu.Unlock()
+	var mu sync.Mutex
+	built := map[string][]*lifecycleFake{}
+	RegisterTelegramBotFactory(func(bot config.TelegramBotConfig, b *bus.MessageBus) (Channel, error) {
+		ch := newLifecycleFake(bot.ChannelName(), b)
+		mu.Lock()
+		built[bot.ChannelName()] = append(built[bot.ChannelName()], ch)
+		mu.Unlock()
+		return ch, nil
+	})
+	t.Cleanup(func() {
+		telegramBotFactoryMu.Lock()
+		telegramBotFactory = prev
+		telegramBotFactoryMu.Unlock()
+	})
+	return func(name string) []*lifecycleFake {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(built[name])
+	}
+}
+
+func twoTelegramBots() *config.Config {
+	cfg := &config.Config{}
+	cfg.Channels.Telegram = []config.TelegramBotConfig{
+		{ID: "alice", Enabled: true, Token: "1:a", AllowFrom: config.FlexibleStringSlice{"*"}},
+		{ID: "bob", Enabled: true, Token: "2:b", AllowFrom: config.FlexibleStringSlice{"*"}},
+	}
+	return cfg
+}
+
+// Each Telegram bot's input is its own entry: changing one bot rebuilds only
+// that bot, and removing one stops only it.
+func TestReload_TelegramBotsAreIndependent(t *testing.T) {
+	built := registerFakeTelegram(t)
+	m, _ := startedManager(t, twoTelegramBots(), nil)
+	bob := built("telegram-bob")[0]
+
+	changed := twoTelegramBots()
+	changed.Channels.Telegram[0].Token = "1:a2"
+	res := m.Reload(context.Background(), changed, nil)
+	if !slices.Equal(res.Restarted, []string{"telegram-alice"}) || !slices.Equal(res.Kept, []string{"telegram-bob"}) {
+		t.Fatalf("changing Alice's bot: %+v, want only telegram-alice restarted", res)
+	}
+	if n := len(built("telegram-alice")); n != 2 {
+		t.Fatalf("Alice's bot built %d times, want 2", n)
+	}
+	if len(built("telegram-bob")) != 1 || bob.stops.Load() != 0 || bob.starts.Load() != 1 {
+		t.Fatal("Bob's bot was touched by a change to Alice's")
+	}
+
+	removed := twoTelegramBots()
+	removed.Channels.Telegram = removed.Channels.Telegram[1:]
+	res = m.Reload(context.Background(), removed, nil)
+	if !slices.Equal(res.Stopped, []string{"telegram-alice"}) || !slices.Equal(res.Kept, []string{"telegram-bob"}) {
+		t.Fatalf("removing Alice's bot: %+v, want only telegram-alice stopped", res)
+	}
+	alice := built("telegram-alice")[1]
+	if alice.stops.Load() != 1 || bob.stops.Load() != 0 || !bob.IsRunning() {
+		t.Fatal("removing Alice's bot did not stop only hers")
+	}
+	if _, ok := m.GetChannel("telegram-alice"); ok {
+		t.Fatal("removed bot still registered")
+	}
+}
+
+// When discovery finds a different set of accounts, a new one is started and
+// one no longer found is stopped; one still found is kept.
+func TestReload_SecMsgDiscoveryChangesAccounts(t *testing.T) {
+	accounts := []string{"alice", "bob"}
+	registerFakeSecMsg(t, &accounts)
+	cfg := &config.Config{}
+	cfg.Channels.SecMsg = []config.SecMsgConfig{{Name: "signal", Enabled: true, Address: "127.0.0.1:9600", AllowFrom: config.FlexibleStringSlice{"*"}}}
+	m, _ := startedManager(t, cfg, nil)
+	alice, _ := m.GetChannel("signal-alice")
+	bob, _ := m.GetChannel("signal-bob")
+
+	accounts = []string{"alice", "carol"}
+	res := m.Reload(context.Background(), cfg, nil)
+	if !slices.Equal(res.Kept, []string{"signal-alice"}) || !slices.Equal(res.Started, []string{"signal-carol"}) ||
+		!slices.Equal(res.Stopped, []string{"signal-bob"}) || len(res.Restarted) != 0 {
+		t.Fatalf("reload = %+v, want alice kept, carol started, bob stopped", res)
+	}
+	if ch, _ := m.GetChannel("signal-alice"); ch != alice || !alice.IsRunning() {
+		t.Fatal("an account still found was replaced or stopped")
+	}
+	if bob.IsRunning() {
+		t.Fatal("an account no longer found is still running")
+	}
+	if carol, ok := m.GetChannel("signal-carol"); !ok || !carol.IsRunning() {
+		t.Fatal("a newly found account was not started")
+	}
+}
+
+// When discovery fails and none of the daemon's accounts is running, nothing
+// is started for it.
+func TestReload_SecMsgDiscoveryFailureWithNothingRunning(t *testing.T) {
+	var accounts []string // discovery fails throughout
+	registerFakeSecMsg(t, &accounts)
+	ff := registerFakeFactories(t)
+	cfg := discordAndSlack()
+	m, _ := startedManager(t, cfg, nil)
+
+	withSecMsg := discordAndSlack()
+	withSecMsg.Channels.SecMsg = []config.SecMsgConfig{{Name: "signal", Enabled: true, Address: "127.0.0.1:9600", AllowFrom: config.FlexibleStringSlice{"*"}}}
+	res := m.Reload(context.Background(), withSecMsg, nil)
+	if len(res.Started)+len(res.Restarted)+len(res.Stopped) != 0 || !slices.Equal(res.Kept, []string{"discord", "slack"}) {
+		t.Fatalf("reload = %+v, want nothing started for the unreachable daemon", res)
+	}
+	for _, name := range m.GetEnabledChannels() {
+		if strings.HasPrefix(name, "signal") {
+			t.Fatalf("channel %s registered although discovery failed", name)
+		}
+	}
+	if ff.builds("discord") != 1 || ff.builds("slack") != 1 {
+		t.Fatal("other channels were rebuilt")
 	}
 }

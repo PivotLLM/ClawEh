@@ -224,6 +224,9 @@ func extForMIME(mime string) string {
 // internal/gateway (which owns the agent loop) after the channel is built.
 func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q) }
 
+// AgentQuerier returns the accessor SetAgentQuerier installed, or nil.
+func (c *DeviceChannel) AgentQuerier() AgentQuerier { return c.server.querier }
+
 // errNoCertificate is Start's refusal when channels.device.tls is on but the
 // gateway has no certificate manager to lend (HTTPS was off at start).
 var errNoCertificate = errors.New("device: channels.device.tls is on but there is no TLS certificate " +
