@@ -102,3 +102,30 @@ func TestReaches_PeerKindBinding(t *testing.T) {
 		})
 	}
 }
+
+// A kind-only direct binding matches on the message's own peer only: a
+// message in a group whose parent peer is a direct chat does not reach the
+// agent of that binding (unlike a binding with an id, which also matches the
+// parent peer).
+func TestReaches_PeerKindIgnoresParentPeer(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}}
+	bindings := []config.AgentBinding{
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "discord", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct"}}},
+	}
+	r := NewRouteResolver(testConfig(agents, bindings))
+	input := RouteInput{
+		Channel:    "discord",
+		Peer:       &RoutePeer{Kind: "group", ID: "G1"},
+		ParentPeer: &RoutePeer{Kind: "direct", ID: "U1"},
+	}
+	if r.Reaches(input, "alice") {
+		t.Fatal("Reaches = true for a non-direct peer with a direct parent peer, want false")
+	}
+	if route := r.ResolveRoute(input); route.AgentID != "main" {
+		t.Fatalf("ResolveRoute = %s by %s, want main by default", route.AgentID, route.MatchedBy)
+	}
+	// The same binding still reaches alice from a direct message.
+	if !r.Reaches(RouteInput{Channel: "discord", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}, "alice") {
+		t.Fatal("Reaches = false for a direct message, want true")
+	}
+}

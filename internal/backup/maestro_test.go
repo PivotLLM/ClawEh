@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,5 +215,56 @@ func TestRunArchivesExternalAgentMaestro(t *testing.T) {
 		if err != nil || string(got) != f.content {
 			t.Errorf("restored %s = %q err=%v, want %q", rel, got, err, f.content)
 		}
+	}
+}
+
+// A Maestro database backed up while its rows are still in the WAL comes back
+// from a restore with those rows.
+func TestRestoreMaestroDatabaseRows(t *testing.T) {
+	src := fixture(t)
+	rel := filepath.Join("agents", "main", "maestro", "projects", "audit", "state.db")
+	openWAL(t, filepath.Join(src.Home, rel), 5) // rows stay in the WAL while the connection is open
+
+	res, err := Run(src, filepath.Join(t.TempDir(), "out"), time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	plan, err := PlanRestore(res.Archive, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plan.Apply(time.Now()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	db, err := openReadOnly(filepath.Join(target, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close restored database: %v", err)
+		}
+	}()
+	rows, err := db.QueryContext(context.Background(), `SELECT v FROM t ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query restored database: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"row-0", "row-1", "row-2", "row-3", "row-4"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("restored rows = %v, want %v", got, want)
 	}
 }

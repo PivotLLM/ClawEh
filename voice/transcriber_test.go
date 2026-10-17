@@ -280,3 +280,62 @@ func TestTranscribe(t *testing.T) {
 		}
 	})
 }
+
+// An incomplete custom entry (no endpoint, no model or no key) listed before a
+// valid groq entry is skipped: groq alone is chosen, not a chain that starts
+// with a custom transcriber pointed at Groq.
+func TestDetectTranscriber_IncompleteCustomBeforeGroq(t *testing.T) {
+	groq := config.STTProvider{Provider: "groq", Enabled: true, APIKey: "sk-groq"}
+	for _, tc := range []struct {
+		name   string
+		custom config.STTProvider
+	}{
+		{"custom without endpoint", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"}},
+		{"custom without model", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"}},
+		{"custom without key", config.STTProvider{Provider: "custom", Enabled: true, BaseURL: "https://stt.example.com/v1", Model: "whisper-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Voice: config.VoiceConfig{STT: []config.STTProvider{tc.custom, groq}}}
+			tr := DetectTranscriber(cfg)
+			w, ok := tr.(*whisperTranscriber)
+			if !ok {
+				t.Fatalf("DetectTranscriber() = %T (%v), want the groq *whisperTranscriber alone", tr, tr)
+			}
+			if w.name != "groq" || w.apiBase != "https://api.groq.com/openai/v1" || w.model != "whisper-large-v3" || w.apiKey != "sk-groq" {
+				t.Fatalf("transcriber = %s %s %s, want groq at the Groq preset", w.name, w.apiBase, w.model)
+			}
+		})
+	}
+}
+
+// A custom entry never takes Groq's (or any preset's) endpoint or model: its
+// blanks resolve to blanks, and the constructor leaves them blank too.
+func TestCustomTranscriber_NeverInheritsGroqDefaults(t *testing.T) {
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq"},
+		},
+	}
+	for _, tc := range []struct {
+		name      string
+		entry     config.STTProvider
+		wantBase  string
+		wantModel string
+	}{
+		{"missing endpoint", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"}, "", "whisper-1"},
+		{"missing model", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"}, "https://stt.example.com/v1", ""},
+		{"missing both", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c"}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, base, model := resolveSTTCredentials(cfg, &tc.entry)
+			if base != tc.wantBase || model != tc.wantModel {
+				t.Fatalf("resolveSTTCredentials = %q, %q; want %q, %q", base, model, tc.wantBase, tc.wantModel)
+			}
+		})
+	}
+
+	w := NewWhisperTranscriber("custom", "sk-c", "", "", nil)
+	if w.apiBase != "" || w.model != "" {
+		t.Fatalf("NewWhisperTranscriber(custom) = base %q, model %q; want both blank", w.apiBase, w.model)
+	}
+}

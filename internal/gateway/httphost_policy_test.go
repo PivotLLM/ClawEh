@@ -216,3 +216,39 @@ func TestHTTPHostChainOrder(t *testing.T) {
 		t.Fatalf("off-list peer with bad Host: status = %d, want %d (IP allowlist first)", rec.Code, http.StatusForbidden)
 	}
 }
+
+// TestHTTPHostCrossOrigin_WebhookNotExempt: /webhook/* has no cross-origin
+// bypass (only the token-gated message route does), so a browser POST from
+// another site is refused. The status is 403, from the cross-origin layer: it
+// runs before the login check, so the request never gets as far as the 401 a
+// missing session would draw. A logged-in browser is refused the same way.
+func TestHTTPHostCrossOrigin_WebhookNotExempt(t *testing.T) {
+	h := newPolicyHost(t, config.GatewayConfig{Host: "127.0.0.1", Port: 18790})
+	cookie := loginCookie(t, h)
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		cookie  *http.Cookie
+	}{
+		{"Sec-Fetch-Site cross-site", map[string]string{"Sec-Fetch-Site": "cross-site"}, nil},
+		{"Origin of another site", map[string]string{"Origin": "https://attacker.example"}, nil},
+		{"both, with a login session", map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://attacker.example"}, cookie},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/webhook/line", nil)
+			req.RemoteAddr = "127.0.0.1:5000"
+			req.Host = "127.0.0.1:18790"
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			h.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d (cross-origin refusal)", rec.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
