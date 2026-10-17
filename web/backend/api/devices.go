@@ -285,7 +285,11 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	}
 	token := dev.Token
 
-	lanIPs := device.LANIPv4s()
+	listLAN := h.lanIPv4s
+	if listLAN == nil {
+		listLAN = device.LANIPv4s
+	}
+	lanIPs := listLAN()
 	payload, perr := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, lanIPs, devicePort, token, dev.TLS)
 	badAddress := perr != nil // only the external address can make it fail
 	encoded := ""

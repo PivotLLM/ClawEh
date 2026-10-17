@@ -29,6 +29,10 @@ type Handler struct {
 	storeMu sync.Mutex
 	store   *config.Store
 
+	// lanIPv4s lists this machine's LAN addresses for the device pairing
+	// code; nil means device.LANIPv4s (tests set it).
+	lanIPv4s func() []string
+
 	// reloadTrigger, when set by the gateway, forces an immediate config reload
 	// (bypassing the mtime-debounce). Guarded because it's set at startup on one
 	// goroutine and read on HTTP-handler goroutines.
