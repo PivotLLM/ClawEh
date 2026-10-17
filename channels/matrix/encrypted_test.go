@@ -113,6 +113,7 @@ func TestSync_RecordsEncryptedRoomOnly(t *testing.T) {
 }}}`
 
 	var syncs atomic.Int32
+	secondSync := make(chan struct{}, 1)
 	startSyncAgainst(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/filter"):
@@ -122,8 +123,12 @@ func TestSync_RecordsEncryptedRoomOnly(t *testing.T) {
 				reply(t, w, firstSync)
 				return
 			}
-			time.Sleep(20 * time.Millisecond) // stand in for the long poll
-			reply(t, w, `{"next_batch":"s2"}`)
+			// The long poll: parked until the channel stops.
+			select {
+			case secondSync <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
 		case strings.Contains(r.URL.Path, "/rooms/!enc:example.org/state/m.room.name"):
 			reply(t, w, `{"name":"Alice's room"}`)
 		default:
@@ -133,7 +138,11 @@ func TestSync_RecordsEncryptedRoomOnly(t *testing.T) {
 	})
 
 	// The first sync is fully processed once the second one is requested.
-	waitFor(t, "second sync", 5*time.Second, func() bool { return syncs.Load() >= 2 })
+	select {
+	case <-secondSync:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no second sync")
+	}
 
 	want := []string{`"Alice's room" (!enc:example.org)`}
 	if got := EncryptedRooms(); !slices.Equal(got, want) {

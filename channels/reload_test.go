@@ -240,6 +240,36 @@ func publish(t *testing.T, mb *bus.MessageBus, channel, content string) {
 	}
 }
 
+// eventLog records events from several goroutines in the order they happen.
+type eventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *eventLog) add(e string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, e)
+}
+
+func (l *eventLog) get() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.events)
+}
+
+// loggedStart is a lifecycleFake that logs when its Start returns.
+type loggedStart struct {
+	*lifecycleFake
+	log *eventLog
+}
+
+func (f loggedStart) Start(ctx context.Context) error {
+	err := f.lifecycleFake.Start(ctx)
+	f.log.add(f.Name() + " started")
+	return err
+}
+
 // A channel whose Start blocks delays no other channel: the others start and
 // deliver while it is still starting, StartAll (and with it readiness) waits
 // for it, and what was sent to it meanwhile is delivered, in order, once it
@@ -249,10 +279,11 @@ func TestStartAll_SlowChannelDelaysNoOther(t *testing.T) {
 	defer mb.Close()
 	m := newTestManager()
 	m.bus = mb
+	log := &eventLog{}
 	slow := newLifecycleFake("slow", mb)
 	slow.gate = make(chan struct{})
 	fast := newLifecycleFake("fast", mb)
-	m.RegisterChannel("slow", slow)
+	m.RegisterChannel("slow", loggedStart{slow, log})
 	m.RegisterChannel("fast", fast)
 
 	started := make(chan struct{})
@@ -260,6 +291,7 @@ func TestStartAll_SlowChannelDelaysNoOther(t *testing.T) {
 		if err := m.StartAll(context.Background()); err != nil {
 			t.Errorf("StartAll: %v", err)
 		}
+		log.add("StartAll returned")
 		close(started)
 	}()
 	defer func() {
@@ -275,17 +307,14 @@ func TestStartAll_SlowChannelDelaysNoOther(t *testing.T) {
 	if got := fast.receive(t); got.Content != "hello" {
 		t.Fatalf("fast channel got %q", got.Content)
 	}
-	select {
-	case <-started:
-		t.Fatal("StartAll returned while a channel was still starting")
-	default:
-	}
 
+	log.add("gate opened")
 	close(slow.gate)
-	select {
-	case <-started:
-	case <-time.After(failAfter):
-		t.Fatal("StartAll did not return once the slow channel started")
+	await(t, started, "StartAll")
+	// StartAll returned only after the slow channel had started, which it
+	// could do only once the gate was open.
+	if got, want := log.get(), []string{"gate opened", "slow started", "StartAll returned"}; !slices.Equal(got, want) {
+		t.Fatalf("events = %q, want %q", got, want)
 	}
 	for _, want := range []string{"one", "two"} {
 		if got := slow.receive(t); got.Content != want {
@@ -688,5 +717,382 @@ func TestReload_SecMsgDiscoveryFailureKeepsRunningAccounts(t *testing.T) {
 	moved.Channels.SecMsg = []config.SecMsgConfig{{Name: "signal", Enabled: true, Address: "127.0.0.1:9700", AllowFrom: config.FlexibleStringSlice{"*"}}}
 	if res := m.Reload(context.Background(), moved, nil); !slices.Equal(res.Stopped, []string{"signal-alice"}) {
 		t.Fatalf("daemon changed while discovery fails: %+v, want signal-alice stopped", res)
+	}
+}
+
+// StopAll during a Reload whose rebuilt channel is still starting cancels
+// that start instead of waiting for it: both return, the rebuilt channel gets
+// no worker, what was held for it is dropped as not running, and a later
+// Reload of the stopped manager builds without starting anything.
+func TestReload_StopAllCancelsRebuildingStart(t *testing.T) {
+	ff := registerFakeFactories(t)
+	mb := bus.NewMessageBus()
+	t.Cleanup(mb.Close)
+	m, err := NewManager(discordAndSlack(), mb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	builtCh := make(chan *lifecycleFake, 1)
+	ff.onBuild = func(name string, n int, ch *lifecycleFake) error {
+		if name == "discord" && n == 2 {
+			ch.gate = make(chan struct{}) // never opened
+			builtCh <- ch
+		}
+		return nil
+	}
+	next := discordAndSlack()
+	next.Channels.Discord.Token = "d2"
+	reloaded := make(chan ReloadResult, 1)
+	go func() { reloaded <- m.Reload(context.Background(), next, nil) }()
+	var rebuilt *lifecycleFake
+	select {
+	case rebuilt = <-builtCh:
+	case <-time.After(failAfter):
+		t.Fatal("discord was not rebuilt")
+	}
+	await(t, rebuilt.entered, "the rebuilt channel's Start")
+	dropped := make(chan error, 1)
+	routeText(m, bus.OutboundMessage{
+		Channel: "discord", ChatID: "c", Content: "held",
+		OnDelivery: func(err error) { dropped <- err },
+	})
+
+	stopped := make(chan struct{})
+	go func() {
+		if err := m.StopAll(context.Background()); err != nil {
+			t.Errorf("StopAll: %v", err)
+		}
+		close(stopped)
+	}()
+	await(t, stopped, "StopAll")
+	var res ReloadResult
+	select {
+	case res = <-reloaded:
+	case <-time.After(failAfter):
+		t.Fatal("Reload did not return")
+	}
+	if !slices.Equal(res.Restarted, []string{"discord"}) {
+		t.Fatalf("reload = %+v, want discord restarted", res)
+	}
+	m.mu.RLock()
+	w := m.workers["discord"]
+	_, held := m.held["discord"]
+	m.mu.RUnlock()
+	if w != nil || held || rebuilt.IsRunning() {
+		t.Fatalf("worker=%v hold=%v running=%v after StopAll", w != nil, held, rebuilt.IsRunning())
+	}
+	select {
+	case err := <-dropped:
+		if !errors.Is(err, ErrNotRunning) {
+			t.Fatalf("held message reported %v, want ErrNotRunning", err)
+		}
+	default:
+		t.Fatal("held message was not reported")
+	}
+
+	// The manager is stopped: a reload rebuilds the changed channel but does
+	// not start it.
+	ff.onBuild = nil
+	next.Channels.Discord.Token = "d3"
+	if res := m.Reload(context.Background(), next, nil); !slices.Equal(res.Restarted, []string{"discord"}) {
+		t.Fatalf("reload after StopAll = %+v, want discord restarted", res)
+	}
+	third := ff.last("discord")
+	m.mu.RLock()
+	ch := m.channels["discord"]
+	w = m.workers["discord"]
+	m.mu.RUnlock()
+	if ch != third || w != nil || third.starts.Load() != 0 {
+		t.Fatalf("after reload of a stopped manager: registered=%v worker=%v starts=%d", ch == third, w != nil, third.starts.Load())
+	}
+}
+
+// Two Reloads never overlap: the second builds nothing until the first,
+// whose rebuilt channel is still starting, has returned; the channel then
+// ends up as the second built it.
+func TestReload_SerializedWithReload(t *testing.T) {
+	ff := registerFakeFactories(t)
+	m, _ := startedManager(t, discordAndSlack(), nil)
+
+	gate := make(chan struct{})
+	builtCh := make(chan *lifecycleFake, 1)
+	var overlapped atomic.Bool
+	ff.onBuild = func(name string, n int, ch *lifecycleFake) error {
+		if name != "discord" {
+			return nil
+		}
+		switch n {
+		case 2:
+			ch.gate = gate
+			builtCh <- ch
+		case 3:
+			select {
+			case <-gate:
+			default:
+				overlapped.Store(true) // built while the first reload was starting
+			}
+		}
+		return nil
+	}
+
+	first := discordAndSlack()
+	first.Channels.Discord.Token = "d2"
+	second := discordAndSlack()
+	second.Channels.Discord.Token = "d3"
+	r1 := make(chan ReloadResult, 1)
+	go func() { r1 <- m.Reload(context.Background(), first, nil) }()
+	var rebuilt *lifecycleFake
+	select {
+	case rebuilt = <-builtCh:
+	case <-time.After(failAfter):
+		t.Fatal("discord was not rebuilt")
+	}
+	await(t, rebuilt.entered, "the first rebuild's Start")
+	r2 := make(chan ReloadResult, 1)
+	go func() { r2 <- m.Reload(context.Background(), second, nil) }()
+
+	close(gate)
+	for i, r := range []chan ReloadResult{r1, r2} {
+		select {
+		case res := <-r:
+			if !slices.Equal(res.Restarted, []string{"discord"}) {
+				t.Fatalf("reload %d = %+v, want discord restarted", i+1, res)
+			}
+		case <-time.After(failAfter):
+			t.Fatalf("reload %d did not return", i+1)
+		}
+	}
+	if overlapped.Load() {
+		t.Fatal("the second reload built while the first was still starting its channel")
+	}
+	final := ff.last("discord")
+	m.mu.RLock()
+	w := m.workers["discord"]
+	m.mu.RUnlock()
+	if final == rebuilt || w == nil || w.ch != final || rebuilt.stops.Load() != 1 {
+		t.Fatal("the channel is not the second reload's, or the first's was not stopped")
+	}
+}
+
+// mediaFake is a lifecycleFake that also sends media.
+type mediaFake struct {
+	*lifecycleFake
+	media chan bus.OutboundMediaMessage
+}
+
+func newMediaFake(name string, b *bus.MessageBus) mediaFake {
+	return mediaFake{lifecycleFake: newLifecycleFake(name, b), media: make(chan bus.OutboundMediaMessage, 16)}
+}
+
+func (f mediaFake) SendMedia(_ context.Context, msg bus.OutboundMediaMessage) error {
+	f.media <- msg
+	return nil
+}
+
+// routeMedia routes msg as the outbound media dispatcher does, synchronously.
+func routeMedia(m *Manager, msg bus.OutboundMediaMessage) {
+	routeOutbound(context.Background(), m, msg.Channel, msg,
+		func(w *channelWorker) chan bus.OutboundMediaMessage { return w.mediaQueue },
+		func(w *channelWorker) <-chan struct{} { return w.mediaDone },
+		holdMedia, func(bus.OutboundMediaMessage, error) {}, "unknown", "no worker")
+}
+
+// heldMedia is how many media messages are held for channel name.
+func heldMedia(m *Manager, name string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	h := m.held[name]
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.media)
+}
+
+// startGated starts m in the background with ch's Start held at its gate,
+// and returns once it is; the returned channel closes when StartAll returns.
+func startGated(t *testing.T, m *Manager, ch *lifecycleFake) <-chan struct{} {
+	t.Helper()
+	started := make(chan struct{})
+	go func() {
+		if err := m.StartAll(context.Background()); err != nil {
+			t.Errorf("StartAll: %v", err)
+		}
+		close(started)
+	}()
+	await(t, ch.entered, "the channel's Start")
+	return started
+}
+
+// Media sent to a channel while it starts is held and reaches its SendMedia
+// once it has started.
+func TestHold_MediaReachesChannelAfterStart(t *testing.T) {
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	m := newTestManager()
+	m.bus = mb
+	slow := newMediaFake("slow", mb)
+	slow.gate = make(chan struct{})
+	m.RegisterChannel("slow", slow)
+	started := startGated(t, m, slow.lifecycleFake)
+	defer func() {
+		if err := m.StopAll(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	routeMedia(m, bus.OutboundMediaMessage{Channel: "slow", ChatID: "c", Parts: []bus.MediaPart{{Ref: "media://1"}}})
+	if n := heldMedia(m, "slow"); n != 1 {
+		t.Fatalf("held media = %d, want 1", n)
+	}
+	close(slow.gate)
+	await(t, started, "StartAll")
+	select {
+	case got := <-slow.media:
+		if len(got.Parts) != 1 || got.Parts[0].Ref != "media://1" {
+			t.Fatalf("SendMedia got %+v", got)
+		}
+	case <-time.After(failAfter):
+		t.Fatal("held media never reached SendMedia")
+	}
+}
+
+// Media held for a channel whose start StopAll cancels is dropped: the hold
+// is gone and nothing reaches the channel.
+func TestHold_MediaDroppedOnStopAll(t *testing.T) {
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	m := newTestManager()
+	m.bus = mb
+	slow := newMediaFake("slow", mb)
+	slow.gate = make(chan struct{}) // never opened
+	m.RegisterChannel("slow", slow)
+	started := startGated(t, m, slow.lifecycleFake)
+
+	routeMedia(m, bus.OutboundMediaMessage{Channel: "slow", ChatID: "c"})
+	if err := m.StopAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	await(t, started, "StartAll")
+	m.mu.RLock()
+	_, held := m.held["slow"]
+	w := m.workers["slow"]
+	m.mu.RUnlock()
+	if held || w != nil {
+		t.Fatalf("hold=%v worker=%v after StopAll", held, w != nil)
+	}
+	select {
+	case msg := <-slow.media:
+		t.Fatalf("dropped media was sent: %+v", msg)
+	default:
+	}
+}
+
+// abandonStart ends the hold: text is reported as not running, media is
+// dropped with it.
+func TestAbandonStart_DropsHeldTextAndMedia(t *testing.T) {
+	m := newTestManager()
+	var reported []error
+	m.held["slow"] = &heldOutbound{
+		text:  []bus.OutboundMessage{{Channel: "slow", Content: "hi", OnDelivery: func(err error) { reported = append(reported, err) }}},
+		media: []bus.OutboundMediaMessage{{Channel: "slow", ChatID: "c"}},
+	}
+	m.abandonStart("slow")
+	if _, held := m.held["slow"]; held {
+		t.Fatal("hold kept after abandonStart")
+	}
+	if len(reported) != 1 || !errors.Is(reported[0], ErrNotRunning) {
+		t.Fatalf("held text reported %v, want ErrNotRunning", reported)
+	}
+}
+
+// A rebuild whose build fails drops held media with the hold.
+func TestReload_FailedRebuildDropsHeldMedia(t *testing.T) {
+	ff := registerFakeFactories(t)
+	m, _ := startedManager(t, discordAndSlack(), nil)
+	var heldDuringBuild int
+	ff.onBuild = func(name string, n int, _ *lifecycleFake) error {
+		if name != "discord" || n != 2 {
+			return nil
+		}
+		routeMedia(m, bus.OutboundMediaMessage{Channel: "discord", ChatID: "c"})
+		heldDuringBuild = heldMedia(m, "discord")
+		return errors.New("bad token")
+	}
+	next := discordAndSlack()
+	next.Channels.Discord.Token = "d2"
+	m.Reload(context.Background(), next, nil)
+
+	if heldDuringBuild != 1 {
+		t.Fatalf("media held during the rebuild = %d, want 1", heldDuringBuild)
+	}
+	m.mu.RLock()
+	_, held := m.held["discord"]
+	_, ch := m.channels["discord"]
+	m.mu.RUnlock()
+	if held || ch {
+		t.Fatalf("failed rebuild left hold=%v channel=%v", held, ch)
+	}
+}
+
+// Held media counts toward maxHeldPerChannel together with text.
+func TestHold_MediaCountsTowardBound(t *testing.T) {
+	m := newTestManager()
+	m.RegisterChannel("slow", newLifecycleFake("slow", nil))
+	m.held["slow"] = &heldOutbound{}
+	for i := range maxHeldPerChannel - 1 {
+		routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "m" + strconv.Itoa(i)})
+	}
+	routeMedia(m, bus.OutboundMediaMessage{Channel: "slow", ChatID: "c"})
+	if n := heldMedia(m, "slow"); n != 1 {
+		t.Fatalf("held media = %d, want 1", n)
+	}
+
+	var dropped []error
+	routeText(m, bus.OutboundMessage{
+		Channel: "slow", ChatID: "c", Content: "one too many",
+		OnDelivery: func(err error) { dropped = append(dropped, err) },
+	})
+	routeMedia(m, bus.OutboundMediaMessage{Channel: "slow", ChatID: "c"})
+	if len(dropped) != 1 || !errors.Is(dropped[0], ErrNotRunning) {
+		t.Fatalf("text past the bound reported %v, want ErrNotRunning", dropped)
+	}
+	if n, texts := heldMedia(m, "slow"), len(heldTexts(m, "slow")); n != 1 || texts != maxHeldPerChannel-1 {
+		t.Fatalf("held %d texts and %d media, want %d and 1", texts, n, maxHeldPerChannel-1)
+	}
+}
+
+// What was held while a channel started is sent before a message that
+// arrives as the start completes.
+func TestHold_BacklogBeforeLaterMessages(t *testing.T) {
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	m := newTestManager()
+	m.bus = mb
+	slow := newLifecycleFake("slow", mb)
+	slow.gate = make(chan struct{})
+	m.RegisterChannel("slow", slow)
+	started := startGated(t, m, slow)
+	defer func() {
+		if err := m.StopAll(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "one"})
+	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "two"})
+	close(slow.gate)
+	// Racing the end of the start: held, or queued behind the backlog.
+	routeText(m, bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "three"})
+	await(t, started, "StartAll")
+	for _, want := range []string{"one", "two", "three"} {
+		if got := slow.receive(t); got.Content != want {
+			t.Fatalf("channel got %q, want %q", got.Content, want)
+		}
 	}
 }

@@ -145,8 +145,18 @@ func TestTelegramDelivery_ThroughManager(t *testing.T) {
 			if tt.replies[0] == parseErr {
 				wantWaits = 0
 			}
-			if waits := channels.ManagerWaits(m); len(waits) != wantWaits {
+			waits := channels.ManagerWaits(m)
+			if len(waits) != wantWaits {
 				t.Fatalf("retry waits = %v, want %d", waits, wantWaits)
+			}
+			// A rate limit waits Telegram's retry_after (5 s) plus the padding,
+			// every time.
+			if tt.replies[0] == rateLimit {
+				for i, w := range waits {
+					if want := 5*time.Second + channels.RetryAfterPadding; w != want {
+						t.Fatalf("retry wait %d = %v, want %v", i, w, want)
+					}
+				}
 			}
 
 			alerts := rec.snapshot()

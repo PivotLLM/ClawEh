@@ -159,3 +159,119 @@ func TestStopTyping_Unregistered(t *testing.T) {
 	m := newTestManager()
 	m.StopTyping("nope", "0") // must not panic
 }
+
+// exitedWorker is a worker whose goroutines have exited while its queues are
+// full: nothing will ever read them again. closed also marks the queues
+// closed, as a stop does.
+func exitedWorker(closed bool) *channelWorker {
+	w := &channelWorker{
+		queue:      make(chan bus.OutboundMessage, 1),
+		mediaQueue: make(chan bus.OutboundMediaMessage, 1),
+		done:       make(chan struct{}),
+		mediaDone:  make(chan struct{}),
+		limiter:    rate.NewLimiter(rate.Inf, 1),
+	}
+	w.queue <- bus.OutboundMessage{Content: "full"}
+	w.mediaQueue <- bus.OutboundMediaMessage{ChatID: "full"}
+	close(w.done)
+	close(w.mediaDone)
+	if closed {
+		w.closeQueues()
+	}
+	return w
+}
+
+// awaitErr returns what f returns, failing the test if it blocks.
+func awaitErr(t *testing.T, what string, f func() error) error {
+	t.Helper()
+	got := make(chan error, 1)
+	go func() { got <- f() }()
+	select {
+	case err := <-got:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s blocked on a worker that is gone", what)
+		return nil
+	}
+}
+
+// Enqueueing on a worker that is gone (its goroutines exited with the queue
+// full, or its queues closed) returns at once with ErrNotRunning, for text and
+// media alike, instead of waiting for a reader that never comes.
+func TestEnqueueOn_WorkerGone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		closed bool
+	}{
+		{"goroutines exited", false},
+		{"queues closed", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := exitedWorker(tc.closed)
+			err := awaitErr(t, "text enqueue", func() error {
+				return enqueueOn(context.Background(), w, w.queue, w.done, bus.OutboundMessage{Content: "hi"})
+			})
+			if !errors.Is(err, ErrNotRunning) {
+				t.Fatalf("text enqueue = %v, want ErrNotRunning", err)
+			}
+			err = awaitErr(t, "media enqueue", func() error {
+				return enqueueOn(context.Background(), w, w.mediaQueue, w.mediaDone, bus.OutboundMediaMessage{ChatID: "c"})
+			})
+			if !errors.Is(err, ErrNotRunning) {
+				t.Fatalf("media enqueue = %v, want ErrNotRunning", err)
+			}
+		})
+	}
+}
+
+// A message routed to a worker that turns out to be gone (taken out of
+// service between the lookup and the enqueue) is looked up again and, with
+// no worker left, reported to its sender as not running; media likewise.
+func TestRouteOutbound_WorkerGoneReportsNotRunning(t *testing.T) {
+	m := newTestManager()
+	m.channels["slow"] = &mockChannel{}
+	// gone stands in for a concurrent detach: the worker leaves the maps
+	// after routeOutbound has looked it up.
+	gone := func(exited <-chan struct{}) <-chan struct{} {
+		m.mu.Lock()
+		delete(m.workers, "slow")
+		m.mu.Unlock()
+		return exited
+	}
+
+	m.workers["slow"] = exitedWorker(false)
+	delivered := make(chan error, 1)
+	msg := bus.OutboundMessage{Channel: "slow", ChatID: "c", Content: "hi", OnDelivery: func(err error) { delivered <- err }}
+	if err := awaitErr(t, "text route", func() error {
+		routeOutbound(context.Background(), m, "slow", msg,
+			func(w *channelWorker) chan bus.OutboundMessage { return w.queue },
+			func(w *channelWorker) <-chan struct{} { return gone(w.done) },
+			holdText, reportDelivery, "unknown", "no worker")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-delivered:
+		if !errors.Is(err, ErrNotRunning) {
+			t.Fatalf("OnDelivery = %v, want ErrNotRunning", err)
+		}
+	default:
+		t.Fatal("OnDelivery was not called")
+	}
+
+	m.workers["slow"] = exitedWorker(false)
+	var mediaErr error
+	if err := awaitErr(t, "media route", func() error {
+		routeOutbound(context.Background(), m, "slow", bus.OutboundMediaMessage{Channel: "slow", ChatID: "c"},
+			func(w *channelWorker) chan bus.OutboundMediaMessage { return w.mediaQueue },
+			func(w *channelWorker) <-chan struct{} { return gone(w.mediaDone) },
+			holdMedia, func(_ bus.OutboundMediaMessage, err error) { mediaErr = err }, "unknown", "no worker")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(mediaErr, ErrNotRunning) {
+		t.Fatalf("media dropped with %v, want ErrNotRunning", mediaErr)
+	}
+}
