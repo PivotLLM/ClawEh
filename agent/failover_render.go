@@ -286,8 +286,9 @@ var providerMessageRe = regexp.MustCompile(`"message"\s*:\s*("(?:[^"\\]|\\.)*")`
 
 // providerMessage returns the one-line message a provider gave with a failed
 // request (the "message" of its JSON error body, e.g. Anthropic's
-// {"type":"error","error":{"message":"..."}}), trimmed to
-// maxProviderMessageRunes, or "" when the error carries none.
+// {"type":"error","error":{"message":"..."}}), with secret-looking text
+// redacted (redactSecrets) and trimmed to maxProviderMessageRunes, or "" when
+// the error carries none.
 func providerMessage(err error) string {
 	fe, ok := errors.AsType[*providers.FailoverError](err)
 	if !ok || fe == nil || fe.Wrapped == nil {
@@ -306,7 +307,7 @@ func providerMessage(err error) string {
 			}
 		}
 	}
-	msg = strings.TrimRight(strings.Join(strings.Fields(msg), " "), ".")
+	msg = strings.TrimRight(strings.Join(strings.Fields(redactSecrets(msg)), " "), ".")
 	if r := []rune(msg); len(r) > maxProviderMessageRunes {
 		msg = strings.TrimSpace(string(r[:maxProviderMessageRunes])) + "…"
 	}

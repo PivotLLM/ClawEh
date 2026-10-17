@@ -14,6 +14,10 @@ observe does not need an entry.
 
 ### Security
 
+- A provider's error message shown in a chat reply or fallback notice, and the
+  failed-model error in the log, no longer carry API keys, Bearer/Basic
+  credentials, `key=`/`token=` values or long key-like strings from the
+  provider's response; they are replaced by `[REDACTED]`.
 - **BREAKING: `tools.exec.allow_remote` is removed; `shell_exec` is only the
   agent's own permission.** Whether an agent may run shell commands is now one
   per-agent switch, off by default: *Allow shell commands* on the Agents page,

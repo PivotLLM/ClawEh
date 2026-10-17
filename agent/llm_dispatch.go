@@ -305,7 +305,7 @@ func (t *llmTurn) logFallbackAttempts(fbResult *providers.FallbackResult) {
 					"model":     attempt.Model,
 					"reason":    attempt.Reason,
 					"remaining": attempt.Remaining.Round(time.Second),
-					"error":     attempt.Error,
+					"error":     redactedError(attempt.Error),
 				})
 			continue
 		}
@@ -316,7 +316,7 @@ func (t *llmTurn) logFallbackAttempts(fbResult *providers.FallbackResult) {
 				"model":    attempt.Model,
 				"reason":   attempt.Reason,
 				"duration": attempt.Duration.Round(time.Millisecond),
-				"error":    attempt.Error,
+				"error":    redactedError(attempt.Error),
 			})
 	}
 }
