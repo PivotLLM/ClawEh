@@ -261,7 +261,7 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 		return nil
 	}
 	delete(p.affected, c)
-	if recovered {
+	if recovered && !slices.Contains(p.recovered, c.name) {
 		p.recovered = append(p.recovered, c.name)
 	}
 	if len(p.affected) > 0 {

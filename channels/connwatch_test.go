@@ -225,6 +225,30 @@ func TestConnWatch_StoppedChannelLeavesPlatformOutage(t *testing.T) {
 	}
 }
 
+// A channel that recovers, drops again long enough to rejoin the outage and
+// recovers again is named once in the up alert.
+func TestConnWatch_RecoveredTwiceNamedOnce(t *testing.T) {
+	g, rec, fc := newConnAggregator(), &alertRecorder{}, clock.NewFake(time.Now())
+	a := newPlatformChannel(t, "telegram-a", g, rec, fc)
+	b := newPlatformChannel(t, "telegram-b", g, rec, fc)
+	a.ReportConnFailure(errors.New("down"))
+	b.ReportConnFailure(errors.New("down"))
+	waitPastAlert(fc)
+
+	a.ReportConnected()
+	a.ReportConnFailure(errors.New("down again"))
+	waitPastAlert(fc) // a rejoins the outage silently
+	a.ReportConnected()
+	if n := recorded(rec); n != 1 {
+		t.Fatalf("want only the down alert while b is down, got %d", n)
+	}
+	b.ReportConnected()
+	alerts := snapshot(rec)
+	if len(alerts) != 2 || alerts[1].Title != "Telegram up: telegram-a, telegram-b" {
+		t.Fatalf("want one up alert naming each bot once, got %+v", alerts)
+	}
+}
+
 // An outage whose channels all stop ends without an up alert, and the next
 // outage alerts afresh.
 func TestConnWatch_AllStoppedEndsOutageSilently(t *testing.T) {
