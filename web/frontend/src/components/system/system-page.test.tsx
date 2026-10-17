@@ -247,3 +247,41 @@ describe("SystemPage refused save", () => {
     ).toBeTruthy()
   })
 })
+
+describe("SystemPage link to a field", () => {
+  // The Models page links /system#turn-timeout. The link lands before the
+  // form has loaded, so the page scrolls to the field itself once it is there.
+  it("scrolls to #turn-timeout once the form has loaded", async () => {
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    window.history.replaceState(null, "", "/system#turn-timeout")
+    try {
+      renderPage()
+      await screen.findByTestId("backup-dest")
+      const field = document.getElementById("turn-timeout")
+      expect(field).not.toBeNull()
+      expect(field?.tagName).toBe("INPUT")
+      await waitFor(() => expect(scrolled).toEqual([field]))
+    } finally {
+      window.history.replaceState(null, "", "/")
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
+  it("does not scroll without a hash", async () => {
+    const scroll = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scroll
+    try {
+      renderPage()
+      await screen.findByTestId("backup-dest")
+      expect(document.getElementById("turn-timeout")).not.toBeNull()
+      expect(scroll).not.toHaveBeenCalled()
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+})

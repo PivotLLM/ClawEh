@@ -9,6 +9,7 @@ import {
   cliBypassWarnings,
   fusionAccessView,
   internalToolsSummary,
+  mayMessageRows,
   mcpAccessEntries,
   mcpAccessView,
   parseAgentsConfig,
@@ -16,8 +17,12 @@ import {
   shellDenied,
   skillsSummary,
   toggleAccessEntry,
+  toggleAllowAgent,
+  toolGranted,
+  withAllAgents,
   withShellAllowed,
 } from "./agent-model"
+import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 
 describe("maestro block", () => {
   it("parses the object form and drops invalid values", () => {
@@ -556,4 +561,88 @@ describe("agentsPayload", () => {
     ])
     expect(out).not.toHaveProperty("agents.defaults")
   })
+})
+
+describe("agent temperature", () => {
+  const payload = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+    (agentsPayload(cfg) as { agents: { list: Record<string, unknown>[] } })
+      .agents.list[0]
+
+  it("leaves an unset temperature out of the saved payload", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    expect(cfg.list?.[0].temperature).toBeUndefined()
+    expect(payload(cfg)).not.toHaveProperty("temperature")
+  })
+
+  it("removes a cleared temperature rather than keeping the loaded one", () => {
+    const cfg = parseAgentsConfig({
+      agents: { list: [{ id: "alice", temperature: 0.4 }] },
+    })
+    expect(payload(cfg).temperature).toBe(0.4)
+    const cleared = {
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({ ...a, temperature: undefined })),
+    }
+    expect(payload(cleared)).not.toHaveProperty("temperature")
+  })
+})
+
+describe("May message", () => {
+  const agents = [
+    { id: "alice", name: "Alice" },
+    { id: "bob", name: "Bob" },
+  ]
+
+  it("lists the other agents and leaves the agent itself out", () => {
+    expect(mayMessageRows([], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: false, configured: true },
+    ])
+  })
+
+  it("shows an entry naming the agent itself as a not-configured row", () => {
+    expect(mayMessageRows(["Alice", "bob"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+      { id: "Alice", label: "Alice", checked: true, configured: false },
+    ])
+  })
+
+  it("collapses entries that differ only in case", () => {
+    expect(mayMessageRows(["Bob", "bob"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+    ])
+    expect(mayMessageRows(["Ghost", "ghost"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: false, configured: true },
+      { id: "Ghost", label: "Ghost", checked: true, configured: false },
+    ])
+  })
+
+  it('"*" checks every other agent and keeps named entries visible', () => {
+    expect(mayMessageRows(["*", "bob", "ghost"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+      { id: "ghost", label: "ghost", checked: true, configured: false },
+    ])
+  })
+
+  it("All agents writes only \"*\" and turning it off keeps named entries", () => {
+    expect(withAllAgents(["bob"], true)).toEqual(["*"])
+    expect(withAllAgents(["*", "bob"], false)).toEqual(["bob"])
+    expect(withAllAgents(["*"], false)).toEqual([])
+  })
+
+  it("toggling removes every case variant and adds the id once", () => {
+    expect(toggleAllowAgent(["Bob", "alice", "bob"], "BOB")).toEqual(["alice"])
+    expect(toggleAllowAgent(["alice"], "bob")).toEqual(["alice", "bob"])
+    expect(toggleAllowAgent([], "Bob")).toEqual(["Bob"])
+  })
+})
+
+describe("toolGranted", () => {
+  // The table config.AgentConfig.IsToolAllowed is checked against
+  // (config/tool_grant_cases_test.go).
+  it.each(toolGrantCases)(
+    "tools $tools, deny_tools $deny_tools: $tool -> $allowed",
+    ({ tools, deny_tools, tool, allowed }) => {
+      expect(toolGranted(tools, deny_tools, tool)).toBe(allowed)
+    },
+  )
 })

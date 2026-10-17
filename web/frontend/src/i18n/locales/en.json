@@ -270,7 +270,9 @@
       "saveError": "Failed to save channel configuration",
       "enabled": "enabled",
       "docLink": "Documentation",
-      "enableLabel": "Enable channel"
+      "enableLabel": "Enable channel",
+      "deleteSecmsgDaemon": "Delete {{name}}",
+      "removeSecmsgAccount": "Remove account {{name}}"
     },
     "form": {
       "desc": {

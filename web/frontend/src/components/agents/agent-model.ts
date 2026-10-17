@@ -282,18 +282,22 @@ export const SPAWN_TOOL = "agent_spawn"
 
 // toolGranted reports whether the agent has the internal tool, under the
 // backend's rule (AgentConfig.IsToolAllowed): the tools list admits it and
-// deny_tools does not name it. Not for shell_exec, which is granted only by
-// name (shellAllowed).
+// deny_tools does not name it; shell_exec is admitted only by naming it
+// (shellAllowed). Both are checked against
+// config/testdata/tool_grant_cases.json. Not for mcp_ tools.
 export function toolGranted(
   tools: string[],
   denyTools: string[],
   name: string,
 ): boolean {
+  const n = name.toLowerCase()
   const denied = denyTools.some((raw) => {
     const d = norm(raw)
-    return d.endsWith("*") ? name.startsWith(d.slice(0, -1)) : d === name
+    return d.endsWith("*") ? n.startsWith(d.slice(0, -1)) : d === n
   })
-  return !denied && tools.some((e) => toolPatternMatches(e, name))
+  if (denied) return false
+  if (n === SHELL_TOOL) return shellAllowed(tools)
+  return tools.some((e) => toolPatternMatches(e, name))
 }
 
 // MayMessageRow is one box of the "May message" checklist.
