@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -231,5 +232,78 @@ func TestReactToMessage_SkipsSlashCommand(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 0 {
 		t.Fatalf("reaction API called %d times for a slash command", calls)
+	}
+}
+
+// slashCommandTo runs a slash command whose response_url is url and
+// returns the inbound message it produced.
+func slashCommandTo(t *testing.T, c *SlackChannel, mb *bus.MessageBus, url string) bus.InboundMessage {
+	t.Helper()
+	ev := slashEvent("/claw", "model", "C1")
+	cmd, ok := ev.Data.(slack.SlashCommand)
+	if !ok {
+		t.Fatal("slash event carries no SlashCommand")
+	}
+	cmd.ResponseURL = url
+	ev.Data = cmd
+	c.handleSlashCommand(ev)
+	return nextInbound(t, mb)
+}
+
+// When the response_url fails too, the reply fails with the original reason
+// (not found), not the response_url's.
+func TestSend_ResponseURLFailureKeepsNotFound(t *testing.T) {
+	c, mb := newCommandChannel(t, `{"ok":false,"error":"not_in_channel"}`)
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+	in := slashCommandTo(t, c, mb, failing.URL)
+
+	err := c.Send(context.Background(), bus.OutboundMessage{Channel: "slack", ChatID: in.ChatID, Content: "Model: gpt-5", OriginalMessageID: in.MessageID})
+	if !errors.Is(err, channels.ErrRecipientNotFound) || !strings.Contains(err.Error(), "not_in_channel") {
+		t.Fatalf("Send = %v, want the original ErrRecipientNotFound (not_in_channel)", err)
+	}
+}
+
+// A reply the app can post in the conversation does not use the response_url.
+func TestSend_PostedReplySkipsResponseURL(t *testing.T) {
+	c, mb := newCommandChannel(t, `{"ok":true,"channel":"C1","ts":"1700000000.000200"}`)
+	rec := &responseURLRecorder{}
+	srv := rec.serve(t)
+	in := slashCommandTo(t, c, mb, srv.URL)
+
+	if err := c.Send(context.Background(), bus.OutboundMessage{Channel: "slack", ChatID: in.ChatID, Content: "Model: gpt-5", OriginalMessageID: in.MessageID}); err != nil {
+		t.Fatalf("Send = %v", err)
+	}
+	if got := rec.got(); len(got) != 0 {
+		t.Fatalf("response_url posts = %+v, want none", got)
+	}
+}
+
+// Remembering a slash command drops those whose response_url has expired.
+func TestRememberSlashResponse_PrunesExpired(t *testing.T) {
+	c, _ := newCommandChannel(t, `{"ok":true}`)
+	fake := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	c.clock = fake
+	size := func() int {
+		n := 0
+		c.slashResponses.Range(func(any, any) bool { n++; return true })
+		return n
+	}
+
+	c.rememberSlashResponse("trigger-1", "https://hooks.slack.invalid/1")
+	fake.Advance(slashResponseTTL - time.Second)
+	c.rememberSlashResponse("trigger-2", "https://hooks.slack.invalid/2")
+	if n := size(); n != 2 {
+		t.Fatalf("remembered %d, want 2 while both are live", n)
+	}
+	fake.Advance(time.Second)
+	c.rememberSlashResponse("trigger-3", "https://hooks.slack.invalid/3")
+	if n := size(); n != 2 {
+		t.Fatalf("remembered %d, want 2 once the first expired", n)
+	}
+	if _, ok := c.slashResponses.Load("trigger-1"); ok {
+		t.Fatal("the expired response_url was kept")
 	}
 }
