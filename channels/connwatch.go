@@ -169,10 +169,10 @@ type platformOutage struct {
 	affected map[*BaseChannel]struct{}       // channels counted in the active alert
 	alerted  bool
 	since    time.Time // start of the earliest affected outage
-	// recovered is set once an affected channel reconnects; an outage whose
-	// channels all stopped instead ends without an "up" alert.
-	recovered bool
-	names     []string // channels named in the active alert's title
+	// recovered names the affected channels that reconnected, for the "up"
+	// alert's title; an outage whose channels all stopped instead (none
+	// recovered) ends without an "up" alert.
+	recovered []string
 }
 
 type channelOutage struct {
@@ -230,7 +230,6 @@ func (g *connAggregator) expired(c *BaseChannel, after time.Duration) *alerter.A
 		}
 	}
 	slices.Sort(names)
-	p.names = names
 	return &alerter.Alert{
 		Title:       platformDisplayName(id) + " down: " + nameList(names),
 		Description: fmt.Sprintf("%s, no working connection for %s", countNoun(id, len(names)), shortDuration(after)),
@@ -263,20 +262,21 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 	}
 	delete(p.affected, c)
 	if recovered {
-		p.recovered = true
+		p.recovered = append(p.recovered, c.name)
 	}
 	if len(p.affected) > 0 {
 		return nil
 	}
 	var up *alerter.Alert
-	if p.recovered {
+	if len(p.recovered) > 0 {
+		slices.Sort(p.recovered)
 		up = &alerter.Alert{
-			Title:       platformDisplayName(id) + " up: " + nameList(p.names),
+			Title:       platformDisplayName(id) + " up: " + nameList(p.recovered),
 			Description: "back after " + shortDuration(c.conn.clk().Since(p.since)),
 			EventID:     id + "-up",
 		}
 	}
-	p.alerted, p.recovered, p.since, p.names = false, false, time.Time{}, nil
+	p.alerted, p.recovered, p.since = false, nil, time.Time{}
 	return up
 }
 

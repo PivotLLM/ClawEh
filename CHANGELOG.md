@@ -900,8 +900,9 @@ observe does not need an entry.
 
 - **The "<Platform> down" and "<Platform> up" alerts name the channels in
   their title**, for example "Telegram down: telegram-alice" (up to three, then
-  "+N more"). Before, the title said only "Telegram down" and the bot was
-  named in the details.
+  "+N more"); the up alert names the channels that reconnected, not ones
+  that stopped during the outage. Before, the title said only "Telegram down"
+  and the bot was named in the details.
 
 - **The built-in Anthropic models are Claude Sonnet 5.5, Claude Opus 5.5 and
   Claude Fable 5.1** (`claude-sonnet-5-5`, `claude-opus-5-5`,

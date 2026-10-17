@@ -220,8 +220,8 @@ func TestConnWatch_StoppedChannelLeavesPlatformOutage(t *testing.T) {
 	}
 	a.ReportConnected()
 	alerts := snapshot(rec)
-	if len(alerts) != 2 || alerts[1].Title != "Telegram up: telegram-a, telegram-b" {
-		t.Fatalf("want up alert once the remaining bot reconnects, got %+v", alerts)
+	if len(alerts) != 2 || alerts[1].Title != "Telegram up: telegram-a" {
+		t.Fatalf("want an up alert naming only the bot that reconnected, got %+v", alerts)
 	}
 }
 
