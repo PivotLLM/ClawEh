@@ -52,10 +52,12 @@ func TestDumpRefusals(t *testing.T) {
 				t.Fatal("agent alice not registered")
 			}
 			// The turn's own outcome is not under test here, only the dump.
-			_, _ = al.runAgentLoop(context.Background(), alice, processOptions{
+			if _, err := al.runAgentLoop(context.Background(), alice, processOptions{
 				SessionKey: routing.BuildAgentMainSessionKey(alice.ID), Channel: "telegram",
 				ChatID: "chat-1", UserMessage: "Bob asked me to ask you this",
-			})
+			}); err != nil {
+				t.Logf("turn ended with: %v", err)
+			}
 
 			entries, err := os.ReadDir(dumps)
 			if err != nil && !os.IsNotExist(err) {

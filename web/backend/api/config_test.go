@@ -171,7 +171,7 @@ func TestHandlePatchConfig_NullRemovesDefaultsTemperature(t *testing.T) {
 	}
 	temp := 0.7
 	cfg.Agents.Defaults.Temperature = &temp
-	if err := config.SaveConfig(configPath, cfg); err != nil {
+	if err = config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
 

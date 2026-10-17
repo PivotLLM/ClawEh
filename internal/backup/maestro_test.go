@@ -234,7 +234,7 @@ func TestRestoreMaestroDatabaseRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plan.Apply(time.Now()); err != nil {
+	if _, err = plan.Apply(time.Now()); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -243,15 +243,19 @@ func TestRestoreMaestroDatabaseRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close restored database: %v", err)
+		if cerr := db.Close(); cerr != nil {
+			t.Errorf("close restored database: %v", cerr)
 		}
 	}()
 	rows, err := db.QueryContext(context.Background(), `SELECT v FROM t ORDER BY id`)
 	if err != nil {
 		t.Fatalf("query restored database: %v", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Errorf("close rows: %v", cerr)
+		}
+	}()
 	var got []string
 	for rows.Next() {
 		var v string

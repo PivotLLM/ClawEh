@@ -194,7 +194,11 @@ func withEchoChannel(t *testing.T, al *AgentLoop, msgBus *bus.MessageBus) *echoC
 	if err := cm.StartAll(context.Background()); err != nil {
 		t.Fatalf("StartAll: %v", err)
 	}
-	t.Cleanup(func() { _ = cm.StopAll(context.Background()) })
+	t.Cleanup(func() {
+		if err := cm.StopAll(context.Background()); err != nil {
+			t.Errorf("StopAll: %v", err)
+		}
+	})
 	al.SetChannelManager(cm)
 	return ch
 }
