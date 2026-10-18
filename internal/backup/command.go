@@ -26,8 +26,8 @@ func NewBackupCommand() *cobra.Command {
 		Use:   "backup",
 		Short: "Write a backup archive of the ClawEh install",
 		Long: "Writes claw-backup-<timestamp>.tar.gz containing config.json, the cron jobs\n" +
-			"file, internal/ (tokens and the device pairing database), credentials.json and\n" +
-			"tls/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
+			"file, internal/ (tokens and the device pairing database), credentials.json,\n" +
+			"tls/ and cards/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
 			"cognitive memory, the fusion OAuth store), each checked with quick_check and\n" +
 			"copied with VACUUM INTO, and the agents' forums. Safe to run while claw is up.\n" +
 			"An agent with its own workspace outside agents.base_dir is not fully covered\n" +

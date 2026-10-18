@@ -53,6 +53,7 @@ Each archive is complete on its own.
 | `cron/jobs.json` | [Scheduled jobs](../agents/scheduling.md). |
 | `credentials.json` | The admin account. |
 | `tls/` | The HTTPS certificate and key. |
+| `cards/` | The [character cards](../agents/character-cards.md). |
 | `internal/` | ClawEh's own state: tokens, paired devices, Google/Microsoft sign-ins, the [audit log](./audit.md). |
 | `agents/<agent>/sessions/` | Conversations. |
 | `agents/<agent>/cogmem/` | Memory. |

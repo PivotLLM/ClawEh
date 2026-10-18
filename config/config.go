@@ -270,6 +270,16 @@ func (c *Config) SkillsPath() string {
 	return filepath.Join(c.dataDir, "skills")
 }
 
+// CardsDirName is the character-card library's folder under the data
+// directory.
+const CardsDirName = "cards"
+
+// CardsPath returns the character-card library (~/.claw/cards): one
+// <id>.json per card, shared by every agent that is given one.
+func (c *Config) CardsPath() string {
+	return filepath.Join(c.dataDir, CardsDirName)
+}
+
 // CronPath returns the cron store directory (~/.claw/cron).
 func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")

@@ -89,6 +89,7 @@ func fixture(t *testing.T) Source {
 	writeFileT(t, filepath.Join(home, "cron", "jobs.json"), `[]`, 0o644)
 	writeFileT(t, filepath.Join(home, "credentials.json"), `{"k":"v"}`, 0o600)
 	writeFileT(t, filepath.Join(home, "tls", "server.key"), "KEY", 0o600)
+	writeFileT(t, filepath.Join(home, "cards", "bob.json"), `{"spec":"chara_card_v3"}`, 0o600)
 	writeFileT(t, filepath.Join(home, "internal", "tokens.json"), `{"t":1}`, 0o600)
 	writeFileT(t, filepath.Join(home, "internal", "claw.pid"), "123\n", 0o600)
 	writeFileT(t, filepath.Join(home, "internal", "claw.lock"), "123\n", 0o600)
@@ -185,7 +186,7 @@ func TestRunArchivesLiveWALDatabases(t *testing.T) {
 
 	m, entries := readTar(t, res.Archive)
 	want := []string{
-		"config.json", "cron/jobs.json", "credentials.json", "tls/server.key",
+		"config.json", "cron/jobs.json", "credentials.json", "tls/server.key", "cards/bob.json",
 		"internal/gateway.db", "internal/tokens.json",
 		"agents/main/cogmem/memory.sqlite", "agents/main/sessions/s1.archive.db",
 	}

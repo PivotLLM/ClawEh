@@ -3,8 +3,8 @@
 
 // Package backup writes a dated tarball of everything ClawEh needs to come back
 // on a new host — config.json, the cron jobs file, internal/ (tokens and the device
-// pairing database), credentials.json and tls/ when present, each agent's
-// forums and Maestro data, and every SQLite
+// pairing database), credentials.json, tls/ and cards/ (the character-card
+// library) when present, each agent's forums and Maestro data, and every SQLite
 // database under CLAW_HOME (session archives, cognitive memory, the fusion
 // OAuth store) — and restores one. It is driven on a nightly schedule by the
 // gateway, on demand from the WebUI, and by `claw backup` / `claw restore`.
@@ -74,6 +74,7 @@ const (
 
 	credentialsFile = "credentials.json"
 	tlsDir          = "tls"
+	cardsDir        = config.CardsDirName
 	internalDir     = global.InternalDir
 	configFile      = "config.json"
 	cronJobsFile    = "jobs.json"
@@ -325,7 +326,7 @@ func addFile(tw *tar.Writer, readPath, orig, name string) error {
 }
 
 // collect lists what to archive, in a stable order: config.json, cron/jobs.json,
-// credentials.json, tls/, internal/, then every database found walking Home (and
+// credentials.json, tls/, cards/, internal/, then every database found walking Home (and
 // AgentsDir when it lies outside Home, reported by the second result). Missing
 // optional files are silently absent. dest is excluded from the walk when it is
 // under Home, so a backup never archives older backups.
@@ -367,7 +368,7 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	// and a byte copy of a live -wal is the torn copy this package exists to
 	// avoid. The running process's PID and lock files are skipped too: they
 	// describe this host's process, not state to restore.
-	for _, d := range []string{tlsDir, internalDir} {
+	for _, d := range []string{tlsDir, cardsDir, internalDir} {
 		if err := walk(filepath.Join(src.Home, d), d+"/", dest, func(path, name string) {
 			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName ||
 				isTempAgentPath(name) {

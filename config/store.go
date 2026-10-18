@@ -134,6 +134,8 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	refusals = append(refusals, newHumanProblems(s.cur, next)...)
 	// So is a mount named after a workspace folder (mount_names.go).
 	refusals = append(refusals, newReservedMounts(s.cur, next)...)
+	// And a character card on a human agent (character_card.go).
+	refusals = append(refusals, newCardsOnHumanAgents(s.cur, next)...)
 
 	resolved, err := resolveConfigSecrets(next)
 	if err != nil {

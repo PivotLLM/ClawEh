@@ -89,6 +89,17 @@ type AgentConfig struct {
 	// tools; forums already running continue.
 	Forum bool `json:"forum,omitempty"`
 
+	// CCv3 lets the agent manage the character-card library through the one
+	// `ccv3` tool (the ccv3 package), gated as a unit. Off by default; the
+	// WebUI checkbox is "Allow character card tools".
+	CCv3 bool `json:"ccv3,omitempty"`
+
+	// CharacterCard names a card in the character-card library
+	// (<CLAW_HOME>/cards/<id>.json, Config.CardsPath) that is rendered into
+	// the agent's system prompt. Empty: none. Clones inherit it. A human agent
+	// never has one (Store.Update refuses it).
+	CharacterCard string `json:"character_card,omitempty"`
+
 	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
 	// subsystem (prompt injection, archive hook, consolidation). It is an optional
 	// bool so the default is ON: nil (key absent) or true ⇒ enabled; false ⇒
@@ -652,6 +663,8 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 				return a.Fusion
 			case "forum":
 				return a.Forum
+			case "ccv3":
+				return a.CCv3
 			case "cogmem":
 				return a.CognitiveMemoryEnabled()
 			default:

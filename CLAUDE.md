@@ -113,7 +113,7 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   start, `internal/gateway/fatal.go` alerts, shuts down cleanly and exits 3 so systemd
   restarts the process.
 - **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
-  DB via `VACUUM INTO`, `internal/`, credentials, TLS, every agent's `forums/` without
+  DB via `VACUUM INTO`, `internal/`, credentials, TLS, `cards/`, every agent's `forums/` without
   `.locks/` and `.tmp-*`, `collectForums`; every agent's `maestro/` without
   `*.lock`/`*.tmp`, databases there via `VACUUM INTO`, `collectMaestro`; both
   through `collectAgentFolder`, which never follows a symlink); `claw backup` / `claw restore`. See
@@ -126,7 +126,8 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   their list `internal/temp_agents.json`, both left out of backups;
   `config.InternalPath()`,
   `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
-  workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `common/` the
+  workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `cards/` the
+  character-card library (`config.CardsPath()`), `common/` the
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve
   against `CLAW_HOME`. There is no `agents/default` pseudo-agent. `internal/layout.Prepare`
   creates these directories at every start; it does not migrate an older layout.

@@ -88,6 +88,8 @@
         },
         "fusion": true,
         "forum": true,
+        "ccv3": true,
+        "character_card": "x",
         "cogmem": true,
         "share_common": true,
         "memory": {

@@ -23,15 +23,15 @@ import (
 
 const dirMode = 0o700
 
-// Prepare creates internal/, cli/, skills/ and the common directory under the
-// data directory when they are missing. It runs at every start, before
+// Prepare creates internal/, cli/, skills/, cards/ and the common directory
+// under the data directory when they are missing. It runs at every start, before
 // anything opens the files they hold. Problems are logged; none stops the
 // start.
 func Prepare(cfg *config.Config) {
 	if cfg.DataDir() == "" {
 		return
 	}
-	for _, dir := range []string{cfg.InternalPath(), cfg.CLIPath(), cfg.SkillsPath(), cfg.ResolveCommonDir()} {
+	for _, dir := range []string{cfg.InternalPath(), cfg.CLIPath(), cfg.SkillsPath(), cfg.CardsPath(), cfg.ResolveCommonDir()} {
 		if err := os.MkdirAll(dir, dirMode); err != nil {
 			logger.WarnCF("layout", "Cannot create a data directory", map[string]any{"path": dir, "error": err.Error()})
 		}

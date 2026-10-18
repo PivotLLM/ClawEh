@@ -70,6 +70,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `agents/<id>/maestro/` | claw | The agent's Maestro projects and playbooks. |
 | `common/` | You and the agents | A shared folder agents with access can exchange files through (`agents.common_dir` moves it). |
 | `skills/` | You | Shared skills; an agent uses only the ones it is granted. |
+| `cards/` | You and the agents you allow | Character cards; an agent uses only the one attached to it. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
 | `internal/` | claw | claw's own state: service and message tokens, the device pairing database and Fusion's OAuth tokens. |
 | `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
