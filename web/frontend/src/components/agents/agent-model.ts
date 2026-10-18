@@ -33,6 +33,11 @@ export interface AgentEntry {
   maestro?: MaestroSettings
   fusion?: boolean
   forum?: boolean
+  /** The character card (cards/<id>.json) rendered into the system prompt;
+   *  absent or "" = none. */
+  character_card?: string
+  /** The ccv3 suite: the card-library tool. */
+  ccv3?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]
@@ -429,6 +434,8 @@ export function parseAgent(value: unknown): AgentEntry {
     maestro: maestroFromRaw(r.maestro),
     fusion: r.fusion === true,
     forum: r.forum === true,
+    character_card: asString(r.character_card) || undefined,
+    ccv3: r.ccv3 === true,
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
       const mr = asRecord(m)
@@ -629,6 +636,8 @@ const AGENT_PAGE_KEYS = [
   "maestro",
   "fusion",
   "forum",
+  "character_card",
+  "ccv3",
   "cogmem",
   "mcp_tools",
   "deny_tools",
@@ -698,6 +707,8 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
       : {}),
     ...(a.fusion ? { fusion: true } : {}),
     ...(a.forum ? { forum: true } : {}),
+    ...(a.character_card ? { character_card: a.character_card } : {}),
+    ...(a.ccv3 ? { ccv3: true } : {}),
     ...(a.cogmem === false ? { cogmem: false } : {}),
     // Always sent (like tools/mounts) so clearing the box persists; the
     // backend drops an empty slice on save (omitempty).

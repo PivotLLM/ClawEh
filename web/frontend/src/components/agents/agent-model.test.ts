@@ -372,6 +372,81 @@ describe("agentsPayload", () => {
     expect(kept.agents.list[0].forum).toBe(true)
   })
 
+  it("toggling Allow character card tools on Alice writes ccv3 and keeps everything else", () => {
+    const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+      // As handleToggleCCv3 applies it: only Alice's ccv3 flag flips.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, ccv3: !a.ccv3 } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const on = Object.fromEntries(
+      toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
+    )
+    expect(on.alice.ccv3).toBe(true)
+    expect(on.bob).not.toHaveProperty("ccv3")
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+      expect(on[id].workspace).toBe(`/srv/${id}`)
+    }
+    expect(on.alice.models).toEqual(["fast", "slow"])
+
+    // Loaded with ccv3 on, the switch reads it and turning it off removes it.
+    const withCCv3 = structuredClone(loaded)
+    Object.assign(withCCv3.agents.list[0], { ccv3: true })
+    const cfgOn = parseAgentsConfig(withCCv3)
+    expect(cfgOn.list?.[0].ccv3).toBe(true)
+    const off = Object.fromEntries(toggle(cfgOn).map((a) => [a.id, a]))
+    expect(off.alice).not.toHaveProperty("ccv3")
+    expect(off.alice).toMatchObject(unedited("alice"))
+
+    // A save that does not touch ccv3 keeps it on.
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].ccv3).toBe(true)
+  })
+
+  it("setting a character card on Alice writes it and clearing it omits the key", () => {
+    const setCard = (
+      cfg: ReturnType<typeof parseAgentsConfig>,
+      id: string | undefined,
+    ) =>
+      // As handleCharacterCardChange applies it: "" becomes undefined.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, character_card: id || undefined } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const set = Object.fromEntries(
+      setCard(parseAgentsConfig(loaded), "sage").map((a) => [a.id, a]),
+    )
+    expect(set.alice.character_card).toBe("sage")
+    expect(set.bob).not.toHaveProperty("character_card")
+    expect(set.alice).toMatchObject(unedited("alice"))
+    expect(set.bob).toMatchObject(unedited("bob"))
+
+    // Loaded with a card, the select reads it; clearing removes the key, and
+    // a save that does not touch it keeps it.
+    const withCard = structuredClone(loaded)
+    Object.assign(withCard.agents.list[0], { character_card: "sage" })
+    const cfgOn = parseAgentsConfig(withCard)
+    expect(cfgOn.list?.[0].character_card).toBe("sage")
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].character_card).toBe("sage")
+    const cleared = Object.fromEntries(
+      setCard(cfgOn, "").map((a) => [a.id, a]),
+    )
+    expect(cleared.alice).not.toHaveProperty("character_card")
+    expect(cleared.alice).toMatchObject(unedited("alice"))
+  })
+
   it("keeps a human agent's hidden settings on save", () => {
     // The card hides skills, tools, summarization and cogmem for a human
     // agent; a save of what it does show must not lose them.

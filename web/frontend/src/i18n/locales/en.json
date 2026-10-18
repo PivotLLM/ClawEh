@@ -41,6 +41,13 @@
     "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
     "forum": "Allow forum",
     "forumHint": "Lets this agent hold forums with the other agents it may message.",
+    "characterCard": "Character card",
+    "characterCardNone": "None",
+    "characterCardMissingOption": "{{id}} (missing)",
+    "characterCardMissing": "This card does not exist in the library.",
+    "characterCardLibrary": "Character cards",
+    "ccv3": "Allow character card tools",
+    "ccv3Hint": "Lets the agent create, edit and delete cards in the library.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",
@@ -68,6 +75,7 @@
     "agent_group": "Agents",
     "agents": "Agents",
     "skills": "Skills",
+    "cards": "Character cards",
     "bindings": "Bindings",
     "services": "Services",
     "channels_group": "Channels",
@@ -625,7 +633,9 @@
         "tool_call": "Tool call",
         "config_write": "Config write",
         "auth": "Auth",
-        "restart": "Restart"
+        "restart": "Restart",
+        "card_import": "Card import",
+        "card_delete": "Card delete"
       },
       "col": {
         "time": "Time",
@@ -969,5 +979,34 @@
       "retry": "Check again"
     },
     "logout": "Sign out"
+  },
+  "cards": {
+    "hint": "A card's author instructions are used as written.",
+    "empty": "No character cards yet.",
+    "import": "Import",
+    "importTitle": "Import a character card",
+    "importDescription": "A V2 or V3 card as .json or .png.",
+    "file": "File",
+    "chooseFile": "Choose file…",
+    "id": "Card ID",
+    "idPlaceholder": "card id (e.g. alice)",
+    "replace": "Replace existing",
+    "importConfirm": "Import",
+    "importSuccess": "Card \"{{id}}\" imported.",
+    "importExists": "A card with this id exists. Tick Replace existing to overwrite it.",
+    "name": "Name",
+    "tags": "Tags",
+    "modified": "Last modified",
+    "usedBy": "Used by",
+    "actions": "Actions",
+    "download": "Download",
+    "delete": "Delete",
+    "deleteTitle": "Delete {{name}}?",
+    "deleteDescription": "The card \"{{id}}\" is removed from the library.",
+    "deleteConfirm": "Delete",
+    "deleteSuccess": "Card deleted.",
+    "invalidTitle": "Files that are not valid cards",
+    "invalidFile": "{{file}}: {{reason}}",
+    "loadError": "Failed to load character cards."
   }
 }

@@ -78,6 +78,8 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
   onMaestroChange: () => {},
   onFusionChange: () => {},
   onForumChange: () => {},
+  onCharacterCardChange: () => {},
+  onCCv3Change: () => {},
   onCogmemChange: () => {},
   onSummarizationModelsChange: () => {},
   onSetDefaultBinding: () => {},
@@ -86,6 +88,8 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
 // Settings that do nothing for an agent that represents a person.
 const personIgnores = [
   "Allow forum",
+  "Allow character card tools",
+  "Character card",
   "Fusion (REST-API tools)",
   "Maestro",
   "Global cron",
@@ -110,6 +114,37 @@ describe("AgentCard mounts", () => {
   it("shows no note when no mount is ignored", () => {
     renderCard([])
     expect(screen.queryAllByTestId("ignored-mount")).toHaveLength(0)
+  })
+})
+
+describe("AgentCard character card", () => {
+  it("warns when the saved card is not in the library", () => {
+    renderCard([], {
+      ...allSettings,
+      characterCard: "ghost",
+      availableCards: [{ id: "alice", name: "Alice" }],
+    })
+    const note = screen.getByTestId("character-card-missing")
+    expect(note.textContent).toContain(
+      "This card does not exist in the library.",
+    )
+    expect(note.querySelector("a")?.getAttribute("href")).toBe("/agent/cards")
+    expect(screen.queryByText("ghost (missing)")).not.toBeNull()
+  })
+
+  it("shows no warning for a card the library has", () => {
+    renderCard([], {
+      ...allSettings,
+      characterCard: "alice",
+      availableCards: [{ id: "alice", name: "Alice" }],
+    })
+    expect(screen.queryByTestId("character-card-missing")).toBeNull()
+    expect(screen.queryByText("Alice (alice)")).not.toBeNull()
+  })
+
+  it("shows no warning when no card is set", () => {
+    renderCard([], { ...allSettings, characterCard: "" })
+    expect(screen.queryByTestId("character-card-missing")).toBeNull()
   })
 })
 

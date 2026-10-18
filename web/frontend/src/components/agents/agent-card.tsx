@@ -7,6 +7,7 @@ import {
   type AgentToolCatalogResponse,
   type HumanAgentProblem,
 } from "@/api/channels"
+import { type CardSummary } from "@/api/cards"
 import { type ModelInfo } from "@/api/models"
 import {
   type AgentBindingView,
@@ -50,6 +51,13 @@ import {
 } from "@/components/human-setting-notes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
 export interface AgentCardProps {
@@ -77,6 +85,14 @@ export interface AgentCardProps {
   onMaestroSettingsChange?: (v: MaestroRunnerEdits) => void
   fusion?: boolean
   forum?: boolean
+  /** The agent's character_card ("" = none). */
+  characterCard?: string
+  /** The library (GET /api/cards) for the Character card select. */
+  availableCards?: Pick<CardSummary, "id" | "name">[]
+  onCharacterCardChange?: (id: string) => void
+  /** The ccv3 switch: the card-library tool. */
+  ccv3?: boolean
+  onCCv3Change?: (v: boolean) => void
   cogmem?: boolean
   mounts?: MountEntry[]
   onMountsChange?: (mounts: MountEntry[]) => void
@@ -141,6 +157,11 @@ export function AgentCard({
   onMaestroSettingsChange = undefined,
   fusion = false,
   forum = false,
+  characterCard = "",
+  availableCards = [],
+  onCharacterCardChange = undefined,
+  ccv3 = false,
+  onCCv3Change = undefined,
   cogmem = true,
   mounts = [],
   onMountsChange = undefined,
@@ -187,6 +208,10 @@ export function AgentCard({
   const mcpServers = availableTools.mcp_servers ?? []
   // The trash button only opens this; the agent is deleted on confirm.
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // A saved card the library no longer has stays selectable, marked, so the
+  // operator sees the value where it lives rather than in a log.
+  const cardMissing =
+    characterCard !== "" && !availableCards.some((c) => c.id === characterCard)
 
   return (
     <div className="space-y-4">
@@ -772,6 +797,73 @@ export function AgentCard({
             </div>
             <p className="text-muted-foreground text-xs">
               {t("agents.forumHint")}
+            </p>
+          </div>
+        )}
+
+        {!human && onCharacterCardChange !== undefined && (
+          <div className="space-y-1.5">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.characterCard")}
+            </p>
+            <Select
+              value={characterCard || "__none__"}
+              onValueChange={(v) =>
+                onCharacterCardChange(v === "__none__" ? "" : v)
+              }
+            >
+              <SelectTrigger
+                className="w-full"
+                aria-label={t("agents.characterCard")}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">
+                  {t("agents.characterCardNone")}
+                </SelectItem>
+                {availableCards.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name} ({c.id})
+                  </SelectItem>
+                ))}
+                {cardMissing && (
+                  <SelectItem value={characterCard}>
+                    {t("agents.characterCardMissingOption", {
+                      id: characterCard,
+                    })}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {cardMissing && (
+              <p
+                data-testid="character-card-missing"
+                className="text-xs text-amber-600 dark:text-amber-400"
+              >
+                {t("agents.characterCardMissing")}{" "}
+                <Link to="/agent/cards" className="underline">
+                  {t("agents.characterCardLibrary")}
+                </Link>
+              </p>
+            )}
+          </div>
+        )}
+
+        {!human && onCCv3Change !== undefined && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-foreground text-sm font-semibold">
+                {t("agents.ccv3")}
+              </p>
+              <Switch
+                checked={ccv3}
+                onCheckedChange={onCCv3Change}
+                aria-label={t("agents.ccv3")}
+              />
+            </div>
+            <p className="text-muted-foreground text-xs">
+              {t("agents.ccv3Hint")}
             </p>
           </div>
         )}

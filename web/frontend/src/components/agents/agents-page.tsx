@@ -13,6 +13,7 @@ import {
   getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
+import { CARDS_QUERY_KEY, getCards } from "@/api/cards"
 import { type ModelInfo, getModels } from "@/api/models"
 import { listCLIs } from "@/api/system"
 import { AgentCard } from "@/components/agents/agent-card"
@@ -117,6 +118,11 @@ export function AgentsPage() {
   const { data: ignoredMounts } = useQuery({
     queryKey: ["agents-ignored-mounts"],
     queryFn: getIgnoredMounts,
+  })
+  // The character-card library, for each card's Character card select.
+  const { data: cardsData } = useQuery({
+    queryKey: CARDS_QUERY_KEY,
+    queryFn: getCards,
   })
   const refreshAgentNotes = () =>
     Promise.all([
@@ -265,6 +271,16 @@ export function AgentsPage() {
     toggleFlag(index, "fusion", (a) => ({ ...a, fusion: !a.fusion }))
   const handleToggleForum = (index: number) =>
     toggleFlag(index, "forum", (a) => ({ ...a, forum: !a.forum }))
+  const handleToggleCCv3 = (index: number) =>
+    toggleFlag(index, "ccv3", (a) => ({ ...a, ccv3: !a.ccv3 }))
+  // "" = none; the Cards page's "Used by" column reads the same config.
+  const handleCharacterCardChange = async (index: number, id: string) => {
+    await toggleFlag(index, "card", (a) => ({
+      ...a,
+      character_card: id || undefined,
+    }))
+    void queryClient.invalidateQueries({ queryKey: CARDS_QUERY_KEY })
+  }
   // Cognitive memory is on unless set to false.
   const handleToggleCogmem = (index: number) =>
     toggleFlag(index, "cogmem", (a) => ({ ...a, cogmem: a.cogmem === false }))
@@ -517,6 +533,13 @@ export function AgentsPage() {
                       onFusionChange={() => handleToggleFusion(i)}
                       forum={agent.forum === true}
                       onForumChange={() => handleToggleForum(i)}
+                      characterCard={agent.character_card ?? ""}
+                      availableCards={cardsData?.cards ?? []}
+                      onCharacterCardChange={(id) =>
+                        handleCharacterCardChange(i, id)
+                      }
+                      ccv3={agent.ccv3 === true}
+                      onCCv3Change={() => handleToggleCCv3(i)}
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
                       mounts={e.mounts}
