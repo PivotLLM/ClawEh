@@ -1021,6 +1021,56 @@ else
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 
+    #---------------------------------------------------------------------------
+    # Section 4h: the character-card tool (ccv3). The test config switches
+    # `ccv3` on for main and attaches the card "probe-attached" to bob. Every
+    # action is probed hermetically: list, create, get, update (and an invalid
+    # patch, nothing written), copy, rename, delete, an unknown action, a
+    # missing argument, an unknown field, and rename/delete refused while bob
+    # uses the card.
+    #---------------------------------------------------------------------------
+
+    if echo "$LIST_OUT" | grep -qw "ccv3"; then
+        print_section "4h. Character cards (ccv3)"
+        CARD_ID="probe-$(printf '%06d' "$$")"
+
+        run_test_ok_auth "4h.1 ccv3 list shows the attached card and who uses it" \
+            "ccv3" '{"action":"list"}' "probe-attached"
+        run_test_ok_auth "4h.2 ccv3 create writes a card" \
+            "ccv3" "{\"action\":\"create\",\"id\":\"$CARD_ID\",\"card\":{\"name\":\"Probe Two\",\"description\":\"{{char}} probes.\"}}" "Probe Two"
+        run_test_ok_auth "4h.3 ccv3 get returns the envelope" \
+            "ccv3" "{\"action\":\"get\",\"id\":\"$CARD_ID\"}" "chara_card_v3"
+        run_test_ok_auth "4h.4 ccv3 update applies a merge patch" \
+            "ccv3" "{\"action\":\"update\",\"id\":\"$CARD_ID\",\"changes\":{\"personality\":\"Curious.\"}}" "Curious."
+        run_test_err_msg_auth "4h.5 ccv3 update refuses an unknown field" \
+            "ccv3" "{\"action\":\"update\",\"id\":\"$CARD_ID\",\"changes\":{\"nosuch\":1}}" "not valid"
+        run_test_err_msg_auth "4h.6 ccv3 create refuses an existing id" \
+            "ccv3" "{\"action\":\"create\",\"id\":\"$CARD_ID\",\"card\":{\"name\":\"Again\"}}" "already exists"
+        run_test_ok_auth "4h.7 ccv3 copy makes a second card" \
+            "ccv3" "{\"action\":\"copy\",\"id\":\"$CARD_ID\",\"new_id\":\"$CARD_ID-copy\"}" "copied_from"
+        run_test_ok_auth "4h.8 ccv3 rename changes the id" \
+            "ccv3" "{\"action\":\"rename\",\"id\":\"$CARD_ID-copy\",\"new_id\":\"$CARD_ID-renamed\"}" "previous_id"
+        run_test_err_msg_auth "4h.9 ccv3 rename refuses a card an agent uses" \
+            "ccv3" "{\"action\":\"rename\",\"id\":\"probe-attached\",\"new_id\":\"probe-free\"}" "is attached to agent Bob"
+        run_test_err_msg_auth "4h.10 ccv3 delete refuses a card an agent uses" \
+            "ccv3" '{"action":"delete","id":"probe-attached"}' "is attached to agent Bob"
+        run_test_err_msg_auth "4h.11 ccv3 refuses an unknown action" \
+            "ccv3" '{"action":"explode"}' "list, get, create, update, rename, copy or delete"
+        run_test_err_msg_auth "4h.12 ccv3 get refuses a call without an id" \
+            "ccv3" '{"action":"get"}' "id"
+        run_test_ok_auth "4h.13 ccv3 delete removes a card" \
+            "ccv3" "{\"action\":\"delete\",\"id\":\"$CARD_ID\"}" "deleted"
+        run_test_ok_auth "4h.14 ccv3 delete removes the renamed copy" \
+            "ccv3" "{\"action\":\"delete\",\"id\":\"$CARD_ID-renamed\"}" "deleted"
+        run_test_err_msg_auth "4h.15 ccv3 get refuses a deleted card" \
+            "ccv3" "{\"action\":\"get\",\"id\":\"$CARD_ID\"}" "does not exist"
+    else
+        echo "  4h. Character cards"
+        echo "    ${RED}FAIL${NC}: ccv3 is not in the catalogue although main has ccv3 on"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
 fi  # end SESSION_TOKEN block
 
 ################################################################################

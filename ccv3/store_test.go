@@ -362,6 +362,17 @@ func TestStoreRender(t *testing.T) {
 	if want := "# Character\n\nYou are Bob.\n\n## Description\nBob is here."; got != want {
 		t.Errorf("Render = %q, want %q", got, want)
 	}
+	// The file keeps "<" as written, so <START> reads as written by hand.
+	if _, uerr := s.Update("bob", json.RawMessage(`{"mes_example":"<START>\n{{char}}: Hi."}`)); uerr != nil {
+		t.Fatal(uerr)
+	}
+	raw, rerr := os.ReadFile(s.path("bob"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Contains(raw, []byte("<START>")) || bytes.Contains(raw, []byte(`\u003c`)) {
+		t.Errorf("stored file escapes HTML: %s", raw)
+	}
 	_, err = s.Render("nobody")
 	wantRefusal(t, err, ErrNotFound)
 }

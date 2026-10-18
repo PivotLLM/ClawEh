@@ -58,6 +58,7 @@ func collectData(_ context.Context, cfg *config.Config, env Environment) Section
 				days(mem.EffectiveRetiredDays(), "forever")+"; export "+onOff(d.Memory.Export.Enabled)),
 		row("Shared common directory", cfg.ResolveCommonDir(), "readable and writable by every agent that shares it"),
 		row("Skills", cfg.SkillsPath(), ""),
+		row("Character cards", cfg.CardsPath(), cardCount(cfg)),
 		row("Cron store", filepath.Join(cfg.CronPath(), "jobs.json"), ""),
 		row("Internal state", cfg.InternalPath(), "claw's own state: service tokens, integration tokens, device pairing database, audit log"),
 		row("Fusion", cfg.FusionPath(), "REST-API tool definitions; OAuth tokens in "+cfg.FusionTokensPath()),

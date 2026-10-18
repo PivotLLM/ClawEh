@@ -355,6 +355,24 @@ observe does not need an entry.
 
 ### Added
 
+- **Character cards.** An agent can be given a character to play from a
+  library of Character Card V3 documents (the format SillyTavern and RisuAI
+  use), kept in `<CLAW_HOME>/cards/` and included in the backup. The new
+  **Character cards** page (Agents group) imports V2/V3 cards as JSON or PNG,
+  downloads and deletes them; a card an agent uses cannot be deleted. On the
+  Agents page, **Character card** attaches one (`agents.list[].character_card`):
+  it is rendered into the agent's instructions after its rules and before
+  `SOUL.md`, and an edit to the card reaches the agent on its next message. A
+  card that no longer exists is marked **(missing)** and the agent runs
+  without it. `agent_spawn` takes an optional `character_card` so a sub-agent
+  can run as a different character, and a forum participant of the `clone`
+  or `model` form takes `character_card` too (a fresh participant's
+  `system_prompt` then follows the card as instructions). **Allow character
+  card tools** (`agents.list[].ccv3`, off by default) grants the one `ccv3`
+  tool (list, get, create, update, rename, copy, delete), which validates
+  every write against the card format. Imports and deletions from the page
+  are recorded in the audit log as **Card import** and **Card delete**. See
+  the Character cards page of the manual.
 - **Encrypted Matrix rooms are reported.** ClawEh can't read end-to-end
   encrypted rooms; it now logs one warning per room and Check Up lists them
   under **Encrypted Matrix rooms** instead of ignoring them silently.

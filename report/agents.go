@@ -10,10 +10,34 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
+
+// cardExists reports whether the character-card library has card id.
+func cardExists(cfg *config.Config, id string) bool {
+	store, err := ccv3.Open(cfg.CardsPath())
+	return err == nil && store.Exists(id)
+}
+
+// cardCount describes the character-card library for the Data section.
+func cardCount(cfg *config.Config) string {
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	cards, invalid, err := store.List()
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	out := itoa(len(cards)) + " cards"
+	if len(invalid) > 0 {
+		out += ", " + itoa(len(invalid)) + " invalid files"
+	}
+	return out
+}
 
 // sensitiveTools are the internal tools that reach beyond the agent's own
 // workspace read: run programs, change files, send messages, install code,
@@ -242,6 +266,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		sub = "agents " + joinOr(a.Subagents.AllowAgents, none) + "; models " + joinOr(a.Subagents.Models, "(agent's own)")
 	}
 	sub += "; max depth " + itoa(d.GetMaxSubagentDepth())
+	_, human := cfg.HumanModelOf(a)
 	memory := onOff(a.CognitiveMemoryEnabled())
 	if a.Memory != nil {
 		memory += " (per-agent memory block)"
@@ -249,6 +274,16 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	title := a.ID
 	if a.Name != "" && a.Name != a.ID {
 		title += " (" + a.Name + ")"
+	}
+	card := none
+	if a.CharacterCard != "" {
+		card = a.CharacterCard
+		switch {
+		case human:
+			card += " (ignored: the agent represents a person)"
+		case !cardExists(cfg, a.CharacterCard):
+			card += " (missing: no such card in the library)"
+		}
 	}
 	settings := pairs("Settings",
 		row("Enabled", yesNo(a.IsEnabled())),
@@ -260,6 +295,8 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		row("Sub-agents", sub),
 		row("Suites", "Maestro "+onOff(a.MaestroEnabled())+", Fusion "+onOff(a.Fusion)),
 		row("Forum (sets up forums with other agents)", onOff(a.Forum)),
+		row("Character card", card),
+		row("Character card tools (edits the card library)", onOff(a.CCv3)),
 		row("Shared common directory", onOff(a.SharesCommon())),
 		row("Global cron (schedules for other agents)", onOff(a.GlobalCron)),
 	)

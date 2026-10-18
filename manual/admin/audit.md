@@ -10,6 +10,7 @@ The audit log records every tool an agent runs, every configuration save, every 
 | **Config write** | A setting is saved from the WebUI (any settings page or the raw config editor). | The WebUI username and client address. |
 | **Auth** | A sign-in, sign-out, lockout, or attempt refused during a lockout. | The username and client address. |
 | **Restart** | ClawEh is restarted from the WebUI. | The WebUI username and client address. |
+| **Card import**, **Card delete** | A [character card](../agents/character-cards.md) is imported, replaced or deleted on the Cards page. Edits an agent makes with the `ccv3` tool are tool calls. | The WebUI username and client address. |
 
 What is kept, and what is not:
 
@@ -21,7 +22,7 @@ What is kept, and what is not:
 ## Read it in the WebUI
 
 1. Open **Audit** in the **Services** group.
-2. Narrow the list with **Kind** (**Tool call**, **Config write**, **Auth**, **Restart**) and **Agent**.
+2. Narrow the list with **Kind** (**Tool call**, **Config write**, **Auth**, **Restart**, **Card import**, **Card delete**) and **Agent**.
 3. Newest events are at the top. Click **Load more** to page back, and **Refresh** to fetch new events.
 
 Columns: **Time**, **Kind**, **Actor / agent**, **Channel**, **Tool / summary**, **Outcome**, **Duration**.

@@ -551,6 +551,7 @@ PY
         "tools": ["*", "cogmem_*", "shell_exec"],
         "fusion": true,
         "forum": true,
+        "ccv3": true,
         "mcp_tools": ["wxca"]
       },
       {
@@ -562,7 +563,8 @@ PY
       {
         "id": "bob",
         "name": "Bob",
-        "tools": ["file_*"]
+        "tools": ["file_*"],
+        "character_card": "probe-attached"
       }
     ]
   },
@@ -658,6 +660,7 @@ PY
       "common_put",
       "common_delete",
       "time_now",
+      "ccv3",
       "forum_readme",
       "forum_models",
       "forum_new",
@@ -680,6 +683,12 @@ PY
 EOF
                 # The gateway refuses a config.json readable by other users.
                 chmod 600 "$INTEG_HOME/config.json"
+
+                # A character card attached to bob, so the ccv3 probes can see a
+                # rename and a delete refused while a card is in use.
+                mkdir -p "$INTEG_HOME/cards"
+                printf '{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Probe","description":"A probe.","tags":[],"alternate_greetings":[],"group_only_greetings":[],"creation_date":1,"modification_date":1}}\n' > "$INTEG_HOME/cards/probe-attached.json"
+                chmod 600 "$INTEG_HOME/cards/probe-attached.json"
 
                 # Pre-seed a long-lived service token for the default agent so the
                 # gateway loads it at boot (exercises loadServiceTokens + the

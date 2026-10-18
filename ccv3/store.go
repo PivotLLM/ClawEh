@@ -375,14 +375,20 @@ func (s *Store) write(id string, data json.RawMessage, mode stampMode) (*Card, e
 		return nil, fmt.Errorf("stamp card %q: %w", id, err)
 	}
 	card := &Card{Spec: SpecV3, SpecVersion: SpecVersionV3, Data: stamped}
-	out, err := json.MarshalIndent(card, "", "  ")
-	if err != nil {
+	// Indented and without HTML escaping, so "<START>" in mes_example reads
+	// as written when the file is opened by hand.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(card); err != nil {
 		return nil, fmt.Errorf("encode card %q: %w", id, err)
 	}
+	out := buf.Bytes() // Encode ends with a newline
 	if len(out) > MaxCardBytes {
 		return nil, refuse(ErrTooLarge, "The card is larger than %d MiB.", MaxCardBytes>>20)
 	}
-	if err := atomicWrite(s.dir, s.path(id), append(out, '\n')); err != nil {
+	if err := atomicWrite(s.dir, s.path(id), out); err != nil {
 		return nil, fmt.Errorf("write card %q: %w", id, err)
 	}
 	return readCard(s.path(id))

@@ -121,7 +121,7 @@ func TestDispatch_AgentSpawnRefusedAtDepthLimit(t *testing.T) {
 	mgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 		Workspace: t.TempDir(),
 		Live:      toolsagents.NewLiveSet(),
-		RunFull: func(_ context.Context, _, task, _ string, _ []string) (*global.SyncResult, func(), error) {
+		RunFull: func(_ context.Context, _, task, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 			return &global.SyncResult{Content: task, Iterations: 1}, func() {}, nil
 		},
 	})

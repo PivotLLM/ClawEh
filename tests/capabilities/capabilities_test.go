@@ -35,6 +35,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsccv3 "github.com/PivotLLM/ClawEh/tools/ccv3"
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
 	"github.com/PivotLLM/ClawEh/tools/fusion"
 )
@@ -93,9 +94,10 @@ func render(t *testing.T, cfg *config.Config) string {
 	for i := range agents {
 		a := &agents[i]
 		w("agent %s\n", a.ID)
-		w("  suites: cogmem=%s maestro=%s fusion=%s forum=%s\n",
+		w("  suites: cogmem=%s maestro=%s fusion=%s forum=%s ccv3=%s\n",
 			onOff(cfg.AgentSuiteEnabled(a.ID, "cogmem")), onOff(cfg.AgentSuiteEnabled(a.ID, "maestro")), onOff(cfg.AgentSuiteEnabled(a.ID, "fusion")),
-			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")))
+			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")), onOff(cfg.AgentSuiteEnabled(a.ID, "ccv3")))
+		w("  character card: %s\n", orNone(a.CharacterCard))
 
 		var native []string
 		for _, name := range catalog {
@@ -130,6 +132,20 @@ func render(t *testing.T, cfg *config.Config) string {
 		}
 		sort.Strings(forumTools)
 		w("  forum tools: %s\n", list(forumTools))
+
+		cardDefs := toolsccv3.GlobalProvider.RegisterTools(global.Deps{
+			Cfg: cfg, AgentID: a.ID, Host: tools.ToolDeps{Cfg: cfg, AgentID: a.ID, Workspace: t.TempDir()},
+		})
+		cardTools := make([]string, 0, len(cardDefs))
+		for _, d := range cardDefs {
+			name := d.Name
+			if a.IsToolDenied(name) {
+				name += " (denied)"
+			}
+			cardTools = append(cardTools, name)
+		}
+		sort.Strings(cardTools)
+		w("  ccv3 tool: %s\n", list(cardTools))
 
 		mcp := make([]string, 0, len(servers))
 		for _, s := range servers {
@@ -184,6 +200,14 @@ func list(items []string) string {
 		return "(none)"
 	}
 	return strings.Join(items, ", ")
+}
+
+// orNone is s, or "(none)" when empty.
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 func onOff(b bool) string {

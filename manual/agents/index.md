@@ -25,5 +25,6 @@ An agent with no tools at all is told so in its instructions, and asks the perso
 | [Files and mounts](./files-and-mounts.md) | The agent's folders, what it may read and write, external folders, the common folder |
 | [Messages between agents](./messaging.md) | `agent_message`, `/ask` and `/whisper` |
 | [Human agents](./human-agents.md) | An agent that is a person, answering by hand |
+| [Character cards](./character-cards.md) | Giving an agent a character to play, the card library and the `ccv3` tool |
 | [Sub-agents](./subagents.md) | `agent_spawn`, the depth limit, temporary agents and clones |
 | [Scheduled jobs](./scheduling.md) | Reminders, recurring jobs, watches and listeners |

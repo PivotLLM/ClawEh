@@ -227,7 +227,7 @@ production instance directly; test against a dev instance.
   implicit default set and no install-wide per-tool switch (no Tools page).
   `tools.DefaultEnabledToolNames()` (each tool's `DefaultAllow`) is only what the Agents
   page's "Default tools" button writes into a list (`GET /api/agents/tools`
-  `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`) and
+  `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`, `ccv3`) and
   `mcp_tools` have their own switches. Check Up lists each enabled agent with no
   tools. An agent whose registry is empty (no native, suite or MCP tool) gets
   `noToolsNotice` in its dynamic prompt layer (`ContextBuilder.WithToolsGranted`,
@@ -274,7 +274,20 @@ production instance directly; test against a dev instance.
   `TaskRecord.CharacterCard`, `RunFunc`'s card parameter; the spawner refuses a
   missing card by name through `SetCardChecker`; `agent.ErrCardNotFound`).
   Per-agent switch `ccv3` (`AgentSuiteEnabled` case "ccv3", default off, WebUI
-  "Allow character card tools") gates the one bare-named `ccv3` tool.
+  "Allow character card tools") gates the one bare-named `ccv3` tool
+  (`tools/ccv3`, actions list/get/create/update/rename/copy/delete; `RawSchema`
+  from `ccv3.CardSchema`/`PatchSchema`, generated from the validator's field
+  tables plus docs, a test keeps them in step; rename and delete are refused
+  while a configured agent's `character_card` names the card). Forum
+  participants: `Participant.CharacterCard` (clone or `model` form; `Host.Cards`
+  renders it in preflight, `forum.CardInfo`, kept in `resolvedConfig.Cards` and
+  the run's `participants.json`; `forum.ErrCardNotFound`). WebUI: the Cards page
+  (`/agent/cards`, `GET/DELETE /api/cards/{id}`, `POST /api/cards/import` with
+  `ccv3.MaxImportBytes`), the Agents page selector and switch; the agents API
+  refuses a save that attaches a missing card (`missingCardsIntroduced`); API
+  imports and deletes are audited as `card_import`/`card_delete`. Check Up:
+  per-agent "Character card" (missing/ignored marked) and "Character card tools"
+  rows, a "Character cards" Data row.
 - **Forum** (`forum/`, design in `forum/DESIGN.md`, operator guide `docs/forum.md`):
   an agent with the per-agent `forum` switch (default off, `Config.AgentSuiteEnabled`
   case "forum", WebUI "Allow forum") gets the fifteen `forum_*` tools from

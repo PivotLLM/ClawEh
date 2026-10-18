@@ -3,6 +3,7 @@ package gateway
 import (
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/tools/agents"
+	ccv3tools "github.com/PivotLLM/ClawEh/tools/ccv3"
 	cogmem "github.com/PivotLLM/ClawEh/tools/cogmem"
 	common "github.com/PivotLLM/ClawEh/tools/common"
 	"github.com/PivotLLM/ClawEh/tools/files"
@@ -38,6 +39,7 @@ func registerToolProviders() {
 	// "fusion" still identifies the per-agent suite toggle. Service configs must
 	// keep their tool names globally unique.
 	tools.RegisterProvider(tools.BareNamespacedProvider("fusion", fusion.GlobalProvider))
+	tools.RegisterProvider(tools.BareNamespacedProvider(ccv3tools.Suite, ccv3tools.GlobalProvider))
 	// schedule stays catalogue-only: the cron tool is a runtime tool registered
 	// directly via agentLoop.RegisterTool (renamed to cron_schedule).
 	tools.RegisterProvider(schedule.Provider)

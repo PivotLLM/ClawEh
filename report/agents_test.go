@@ -4,9 +4,13 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/ccv3"
 )
 
 func agentSub(t *testing.T, s Section, id string) Section {
@@ -251,5 +255,64 @@ func TestCollectAgents_MCPAccess_Fusion(t *testing.T) {
 	mcp = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "MCP access")
 	if len(mcp.Rows) != 1 || !strings.Contains(mcp.Rows[0][1], "no Fusion tools") {
 		t.Errorf("empty list with Fusion on = %v", mcp.Rows)
+	}
+}
+
+// The character card rows: the card id, marked when it is missing from the
+// library or ignored on a human agent, and the tool switch.
+func TestCollectAgents_CharacterCard(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("watson", json.RawMessage(`{"name":"Watson"}`)); err != nil {
+		t.Fatal(err)
+	}
+	bob := &cfg.Agents.List[1]
+	bob.CharacterCard, bob.CCv3 = "Watson", true
+	cfg.Agents.List[0].CharacterCard = "nobody"
+
+	s := collectAgents(t.Context(), cfg, env)
+	if _, r := findRow(t, findTable(t, agentSub(t, s, "bob"), "Settings"), "Character card tools"); r[1] != "on" {
+		t.Errorf("bob card tools = %q, want on", r[1])
+	}
+	if _, r := findRow(t, findTable(t, agentSub(t, s, "bob"), "Settings"), "Character card"); r[1] != "Watson" {
+		t.Errorf("bob card = %q, want Watson", r[1])
+	}
+	alice := findTable(t, agentSub(t, s, "alice"), "Settings")
+	if _, r := findRow(t, alice, "Character card"); r[1] != "nobody (missing: no such card in the library)" {
+		t.Errorf("alice card = %q", r[1])
+	}
+	if _, r := findRow(t, alice, "Character card tools"); r[1] != "off" {
+		t.Errorf("alice card tools = %q, want off", r[1])
+	}
+
+	bob.CharacterCard = ""
+	if _, r := findRow(t, findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Settings"), "Character card"); r[1] != none {
+		t.Errorf("bob without a card = %q", r[1])
+	}
+}
+
+func TestCollectData_CharacterCards(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	tb := findTable(t, collectData(t.Context(), cfg, env), "Storage")
+	_, r := findRow(t, tb, "Character cards")
+	if r[1] != cfg.CardsPath() || r[2] != "0 cards" {
+		t.Errorf("cards row = %v", r)
+	}
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("watson", json.RawMessage(`{"name":"Watson"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.CardsPath(), "junk.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, r = findRow(t, findTable(t, collectData(t.Context(), cfg, env), "Storage"), "Character cards")
+	if r[2] != "1 cards, 1 invalid files" {
+		t.Errorf("cards row = %v", r)
 	}
 }

@@ -40,6 +40,11 @@ const (
 	KindAuth = "auth"
 	// KindRestart is a gateway restart requested through the API.
 	KindRestart = "restart"
+	// KindCardImport is a character card created or replaced through the
+	// API (the Cards page); edits through the ccv3 tool are tool calls.
+	KindCardImport = "card_import"
+	// KindCardDelete is a character card deleted through the API.
+	KindCardDelete = "card_delete"
 )
 
 // Outcome values.
