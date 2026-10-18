@@ -63,6 +63,10 @@ func spawnToolSchema() map[string]any {
 				"items":       map[string]any{"type": "string"},
 				"description": "Optional media:// refs (from '[attachment ref(s): …]' markers in the conversation) to attach to the subagent's initial message. Use with a vision-capable agent_id/model to have an image you cannot view analyzed for you.",
 			},
+			"character_card": map[string]any{
+				"type":        "string",
+				"description": "Optional character card id from the library: the subagent runs as that character instead of with the agent's own card. The card must exist.",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -118,6 +122,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				agentID := strArg(call.Args, "agent_id")
 				modeStr := strArg(call.Args, "mode")
 				model := strArg(call.Args, "model")
+				characterCard := strArg(call.Args, "character_card")
 				media, badMedia := parseMediaArg(call.Args["media"])
 				if badMedia != "" {
 					return &global.Result{IsError: true, ForLLM: badMedia}, nil
@@ -131,6 +136,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					Label:         name,
 					TargetAgentID: agentID,
 					Model:         model,
+					CharacterCard: characterCard,
 					Media:         media,
 					Channel:       call.Channel,
 					ChatID:        call.ChatID,

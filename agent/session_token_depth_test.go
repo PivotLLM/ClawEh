@@ -58,7 +58,7 @@ func TestRunSubagentTask_CloneTokenCarriesParentDepthPlusOne(t *testing.T) {
 	rec := &recordingSTI{}
 	al.SetSessionTokenIssuer(rec)
 
-	res, release, err := al.runSubagentTask(toolsagents.WithSpawnDepth(context.Background(), 1), "main", "do it", "", nil)
+	res, release, err := al.runSubagentTask(toolsagents.WithSpawnDepth(context.Background(), 1), "main", "do it", "", "", nil)
 	defer release()
 	if err != nil {
 		t.Fatalf("runSubagentTask: %v", err)

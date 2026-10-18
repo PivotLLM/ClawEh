@@ -73,7 +73,7 @@ func TestRunSubagentTask_CarriesToolTally(t *testing.T) {
 	al.RegisterTool(&noopWriteFile{})
 	al.RegisterTool(&panickingTool{})
 
-	res, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", nil)
+	res, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", "", nil)
 	defer release()
 	if err != nil {
 		t.Fatalf("runSubagentTask: %v", err)
@@ -112,7 +112,7 @@ func TestRunSubagentTask_ErrorPathRemovesTally(t *testing.T) {
 	al := newSubagentTestLoop(t, provider)
 	al.RegisterTool(&noopWriteFile{})
 
-	_, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", nil)
+	_, release, err := al.runSubagentTask(context.Background(), "main", "do the work", "", "", nil)
 	if err == nil {
 		t.Fatal("runSubagentTask succeeded; want the provider error")
 	}

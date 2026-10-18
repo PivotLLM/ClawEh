@@ -629,7 +629,7 @@ func TestHumanAgent_NeverClonedOrSpawned(t *testing.T) {
 	if _, err := newAgentServices(al, "bob").CreateFresh("Bob (human)"); !errors.Is(err, agentreg.ErrHuman) {
 		t.Errorf("CreateFresh on Bob's model: err = %v, want ErrHuman", err)
 	}
-	_, release, err := al.runSubagentTask(context.Background(), "bob", "do it", "", nil)
+	_, release, err := al.runSubagentTask(context.Background(), "bob", "do it", "", "", nil)
 	release()
 	if err == nil || !strings.Contains(err.Error(), "represents a person and cannot be spawned") {
 		t.Errorf("spawn of bob: err = %v", err)

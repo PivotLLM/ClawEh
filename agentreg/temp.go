@@ -65,6 +65,8 @@ type createOptions struct {
 	purpose   string
 	// cloneModel replaces a clone's model list with this one model.
 	cloneModel string
+	// cardPrompt is a clone's own rendered character card (Spec.CardPrompt).
+	cardPrompt string
 	// The fresh-agent options.
 	systemPrompt    string
 	hasSystemPrompt bool
@@ -99,6 +101,13 @@ func WithPurpose(purpose string) Option { return func(o *createOptions) { o.purp
 // of its source's list.
 func CloneModel(model string) CloneOption {
 	return cloneOnly(func(o *createOptions) { o.cloneModel = strings.TrimSpace(model) })
+}
+
+// WithCardPrompt gives a clone its own character card: text, the card
+// rendered by the host, replaces whatever card its source has in the clone's
+// prompt (Spec.CardPrompt). Blank text is ignored.
+func WithCardPrompt(text string) CloneOption {
+	return cloneOnly(func(o *createOptions) { o.cardPrompt = strings.TrimSpace(text) })
 }
 
 // Temp sets how long the agent may sit idle before the sweep deletes it
@@ -268,6 +277,7 @@ func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *
 		if err != nil {
 			return Spec{}, err
 		}
+		spec.CardPrompt = o.cardPrompt
 		if o.cloneModel != "" {
 			// The caller checks the model is one of the source's; create
 			// checks it is configured.

@@ -141,6 +141,11 @@ type Spec struct {
 	// CloneModel is the one model a clone runs on instead of its source's
 	// list (see CloneModel); empty keeps the source's. Saved across restarts.
 	CloneModel string
+	// CardPrompt is the rendered character card a clone was created with
+	// (see WithCardPrompt), used in place of its source's card; empty keeps
+	// the source's. Captured at creation, so a later change to the card does
+	// not reach the clone. Saved across restarts.
+	CardPrompt string
 }
 
 // SingleShot reports whether the spec is a single-shot fresh agent: every
@@ -902,7 +907,7 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 			return spec, "", err
 		}
 		cs.Owner, cs.Purpose = spec.Owner, spec.Purpose
-		cs.CloneModel = spec.CloneModel
+		cs.CloneModel, cs.CardPrompt = spec.CloneModel, spec.CardPrompt
 		cs.Config.Models = cloneModels(cs.Config.Models, spec.CloneModel)
 		spec = cs
 	}

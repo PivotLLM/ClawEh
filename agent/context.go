@@ -41,6 +41,16 @@ type ContextBuilder struct {
 	// temporary agent's prompt (see WithFixedPrompt).
 	fixedPrompt string
 
+	// cardPath is the configured agent's character card file
+	// (<CLAW_HOME>/cards/<id>.json, WithCharacterCard), tracked for cache
+	// invalidation like a bootstrap file, and renderCard renders it into the
+	// static prompt after the identity rules. Empty: no card.
+	cardPath   string
+	renderCard func() (string, error)
+	// cardPrompt is a clone's own rendered character card (WithCardPrompt);
+	// when set it is used instead of cardPath.
+	cardPrompt string
+
 	// memoryGuidance is the operating rule contributed by the memory subsystem
 	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
 	// numbered rule in the identity section.
@@ -137,6 +147,45 @@ func (cb *ContextBuilder) accessibleFolders() string {
 	return strings.Join(parts, ", ")
 }
 
+// WithCharacterCard gives the agent the character card at path, rendered by
+// render whenever the static prompt is built (see cardSection). An empty path
+// means no card.
+func (cb *ContextBuilder) WithCharacterCard(path string, render func() (string, error)) *ContextBuilder {
+	cb.cardPath, cb.renderCard = path, render
+	return cb
+}
+
+// WithCardPrompt gives the agent an already rendered character card (a clone
+// created with its own card), used instead of the card file.
+func (cb *ContextBuilder) WithCardPrompt(text string) *ContextBuilder {
+	cb.cardPrompt = strings.TrimSpace(text)
+	return cb
+}
+
+// hasCard reports whether a character card takes part in the prompt.
+func (cb *ContextBuilder) hasCard() bool { return cb.cardPrompt != "" || cb.cardPath != "" }
+
+// cardSection is the character card's block of the static prompt: the
+// clone's rendered text, or the card rendered now from the library. A
+// card that cannot be read or parsed yields no block and one WARN; the
+// agent runs without it (the Agents page and Check Up show the missing card).
+func (cb *ContextBuilder) cardSection() string {
+	if cb.cardPrompt != "" {
+		return cb.cardPrompt
+	}
+	if cb.cardPath == "" || cb.renderCard == nil {
+		return ""
+	}
+	text, err := cb.renderCard()
+	if err != nil {
+		logger.WarnCF("agent", "Character card not rendered; the agent runs without it",
+			map[string]any{"card": cb.cardPath, "error": err.Error()})
+		return ""
+	}
+	logger.DebugCF("agent", "Character card rendered", map[string]any{"card": cb.cardPath, "chars": len(text)})
+	return text
+}
+
 // WithFixedPrompt makes text the agent's whole system prompt: PromptLayers
 // returns it alone, and nothing is read from the workspace. It also leaves the
 // agent no skills.
@@ -228,10 +277,16 @@ func (cb *ContextBuilder) getIdentity() string {
 		rules = append(rules, discoveryRule)
 	}
 
+	// With a character card the card says who the agent is (cardSection);
+	// without one it is the plain assistant.
+	identity := "You are a helpful AI assistant."
+	if cb.hasCard() {
+		identity = "You are the character described below."
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `# claw (%s)
 
-You are a helpful AI assistant.
+%s
 
 ## Workspace
 Your working area is %s/files — write drafts and outputs there. Your configuration
@@ -240,7 +295,7 @@ Folders your file tools can reach: %s.
 
 ## Important Rules
 
-`, version, workspacePath, cb.accessibleFolders())
+`, version, identity, workspacePath, cb.accessibleFolders())
 	for i, r := range rules {
 		if i > 0 {
 			b.WriteString("\n\n")
@@ -268,6 +323,12 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 
 	// Core identity section
 	parts = append(parts, cb.getIdentity())
+
+	// The character card, before the workspace files so SOUL.md and
+	// IDENTITY.md still apply on top of it.
+	if card := cb.cardSection(); card != "" {
+		parts = append(parts, card)
+	}
 
 	// Bootstrap files
 	bootstrapContent := cb.LoadBootstrapFiles()
@@ -365,11 +426,11 @@ func (cb *ContextBuilder) InvalidateCache() {
 	logger.DebugCF("agent", "System prompt cache invalidated", nil)
 }
 
-// sourcePaths returns non-skill workspace source files tracked for cache
-// invalidation (bootstrap files + memory). Skill roots are handled separately
+// sourcePaths returns the non-skill source files tracked for cache
+// invalidation (bootstrap files, memory, the character card). Skill roots are handled separately
 // because they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
-	return []string{
+	paths := []string{
 		filepath.Join(cb.workspace, "AGENTS.md"),
 		filepath.Join(cb.workspace, "SOUL.md"),
 		filepath.Join(cb.workspace, "USER.md"),
@@ -377,6 +438,12 @@ func (cb *ContextBuilder) sourcePaths() []string {
 		filepath.Join(cb.workspace, "MEMORY.md"),
 		filepath.Join(cb.workspace, "state", "message-tokens.json"),
 	}
+	if cb.cardPath != "" && cb.cardPrompt == "" {
+		// The character card is a prompt source too: an edit through the
+		// ccv3 tool or an import reaches the agent on its next turn.
+		paths = append(paths, cb.cardPath)
+	}
+	return paths
 }
 
 // skillRoots returns all skill root directories that can affect

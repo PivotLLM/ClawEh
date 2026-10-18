@@ -6,6 +6,7 @@ package agent
 import (
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -291,4 +292,78 @@ func (depsCaptureProvider) Build(d tools.ToolDeps) []tools.Tool {
 		depsCaptured.byAgent[d.AgentID] = d.Agents
 	}
 	return nil
+}
+
+// agentServicesCardsLoop is agentServicesLoop with a data directory holding
+// the card "watson" (cardsConfig).
+func agentServicesCardsLoop(t *testing.T) *AgentLoop {
+	t.Helper()
+	cfg := cardsConfig(t)
+	cfg.Providers = []config.Provider{{Name: "p", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"}}
+	cfg.Models = []config.ModelConfig{{ModelName: "alpha", Model: "alpha-wire", Provider: "p", Enabled: true}}
+	cfg.Agents.Defaults.Models = []string{"alpha"}
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "alice", Default: true, Models: []string{"alpha"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
+		{ID: "bob", Models: []string{"alpha"}},
+	}
+	return mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+}
+
+// A fresh agent on a card gets the rendered card as its prompt, with any
+// system prompt appended as instructions; a clone on a card carries the
+// rendered card; a missing card is refused by name and creates nothing.
+func TestAgentServices_CharacterCard(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al := agentServicesCardsLoop(t)
+	reg := al.GetRegistry()
+	alice := newAgentServices(al, "alice")
+
+	id, err := alice.CreateFresh("alpha", tools.WithCharacterCard("watson"))
+	if err != nil {
+		t.Fatalf("CreateFresh with card: %v", err)
+	}
+	fresh, _ := reg.Get(id)
+	if !strings.HasPrefix(fresh.Spec.SystemPrompt, "# Character\n") || !strings.Contains(fresh.Spec.SystemPrompt, "You are Watson.") || strings.Contains(fresh.Spec.SystemPrompt, "# Instructions") {
+		t.Errorf("card-only prompt:\n%s", fresh.Spec.SystemPrompt)
+	}
+
+	id, err = alice.CreateFresh("alpha", tools.WithCharacterCard("watson"), tools.WithSystemPrompt(" Review the plan. "))
+	if err != nil {
+		t.Fatalf("CreateFresh with card and prompt: %v", err)
+	}
+	fresh, _ = reg.Get(id)
+	if !strings.HasPrefix(fresh.Spec.SystemPrompt, "# Character\n") || !strings.HasSuffix(fresh.Spec.SystemPrompt, "\n\n# Instructions\n\nReview the plan.") {
+		t.Errorf("card and prompt:\n%s", fresh.Spec.SystemPrompt)
+	}
+	if _, blankErr := alice.CreateFresh("alpha", tools.WithCharacterCard("watson"), tools.WithSystemPrompt("  ")); blankErr == nil {
+		t.Error("a blank system prompt with a card was accepted")
+	}
+
+	cloneID, err := alice.CreateClone("bob", tools.WithCharacterCard("watson"))
+	if err != nil {
+		t.Fatalf("CreateClone with card: %v", err)
+	}
+	clone, _ := reg.Get(cloneID)
+	if !strings.Contains(clone.Spec.CardPrompt, "You are Watson.") {
+		t.Errorf("clone card prompt = %q", clone.Spec.CardPrompt)
+	}
+	plain, err := alice.CreateClone("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := reg.Get(plain); p.Spec.CardPrompt != "" {
+		t.Error("a plain clone carries a card prompt")
+	}
+
+	before := len(reg.ListTemp())
+	if _, err := alice.CreateFresh("alpha", tools.WithCharacterCard("nobody")); !errors.Is(err, ErrCardNotFound) {
+		t.Errorf("fresh on a missing card: %v", err)
+	}
+	if _, err := alice.CreateClone("bob", tools.WithCharacterCard("nobody")); !errors.Is(err, ErrCardNotFound) {
+		t.Errorf("clone on a missing card: %v", err)
+	}
+	if got := len(reg.ListTemp()); got != before {
+		t.Errorf("refused creations left %d new temporary agents", got-before)
+	}
 }

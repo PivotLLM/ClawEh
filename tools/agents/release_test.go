@@ -31,7 +31,7 @@ func TestSpawnCallback_ReleasesAfterDelivery(t *testing.T) {
 				Workspace:     t.TempDir(),
 				Live:          NewLiveSet(),
 				CallerAgentID: "alice",
-				RunFull: func(_ context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
+				RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 					release := func() {
 						mu.Lock()
 						order = append(order, "released")
@@ -49,7 +49,7 @@ func TestSpawnCallback_ReleasesAfterDelivery(t *testing.T) {
 				order = append(order, "delivered")
 				mu.Unlock()
 			}
-			if _, err := mgr.SpawnCallback("t", "n", "", "cli", "direct", "", nil, cb, 0); err != nil {
+			if _, err := mgr.SpawnCallback("t", "n", "", "cli", "direct", "", "", nil, cb, 0); err != nil {
 				t.Fatalf("SpawnCallback: %v", err)
 			}
 			select {
@@ -74,7 +74,7 @@ func TestRunSync_ReleasesWorker(t *testing.T) {
 		mgr := NewSubagentManager(SubagentManagerConfig{
 			Workspace: t.TempDir(),
 			Live:      NewLiveSet(),
-			RunFull: func(_ context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
+			RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 				if runErr != nil {
 					return nil, func() { released++ }, runErr
 				}

@@ -34,7 +34,7 @@ import (
 // Output is captured (SendResponse:false) and returned to the caller (the
 // SubagentManager stores it to a result file / fires the callback), which
 // calls release to delete the clone once the result has been delivered.
-func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model string, media []string) (*global.SyncResult, func(), error) {
+func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model, characterCard string, media []string) (*global.SyncResult, func(), error) {
 	noop := func() {}
 	registry := al.GetRegistry()
 	target, ok := registry.GetConfigured(agentID)
@@ -61,6 +61,15 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 	// that one model. A model that does not match is an error rather than a
 	// silent run on the default model.
 	opts := []agentreg.CloneOption{agentreg.EphemeralMemory()}
+	// A character card of the worker's own replaces the agent's in its prompt;
+	// it is rendered now, so the worker runs on the card as it is at launch.
+	if strings.TrimSpace(characterCard) != "" {
+		text, err := renderCard(al.GetConfig(), strings.TrimSpace(characterCard))
+		if err != nil {
+			return nil, noop, fmt.Errorf("subagent: %w", err)
+		}
+		opts = append(opts, agentreg.WithCardPrompt(text))
+	}
 	if strings.TrimSpace(model) != "" {
 		matched, found := toolsagents.MatchCandidate(target.Candidates, model)
 		if !found {
@@ -95,7 +104,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model s
 
 	logger.InfoCF("agent", "subagent.run.start", map[string]any{
 		"agent": clone.Label(), "agent_id": clone.ID, "session_key": sessionKey, "model": model,
-		"task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
+		"character_card": characterCard, "task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
 	// Tally the worker's tool calls (in the loop and over MCP) under its session

@@ -30,6 +30,7 @@ The `agent_spawn` tool takes:
 | `name` | A short label for the task; required in `callback` mode. |
 | `agent_id` | Another agent to copy instead of itself; needs `allow_agents`. |
 | `model` | One of the copied agent's models to run instead of its first one. |
+| `character_card` | A [character card](./character-cards.md) the sub-agent runs as, instead of the copied agent's own. The card must exist. |
 
 In `callback` mode the result is written to the agent's `tasks/` folder and the agent is told where; `agent_status` and `agent_list` show progress.
 

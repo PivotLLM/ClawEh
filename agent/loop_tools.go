@@ -215,6 +215,7 @@ func (al *AgentLoop) newSpawner(
 	spawner.SetAllowlistChecker(func(targetID string) bool {
 		return spawnAllowlist(currentAgentID, targetID)
 	})
+	spawner.SetCardChecker(func(id string) bool { return cardExists(al.GetConfig(), id) })
 	return spawner
 }
 

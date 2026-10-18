@@ -14,7 +14,7 @@ import (
 
 // echoRunFull is a fake full-pipeline runner that returns the task text as the
 // worker's output, so results reference the task.
-func echoRunFull(_ context.Context, _, task, _ string, _ []string) (*global.SyncResult, func(), error) {
+func echoRunFull(_ context.Context, _, task, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 	return &global.SyncResult{Content: task, Iterations: 1}, func() {}, nil
 }
 
@@ -39,7 +39,7 @@ func TestSpawn_NoRunnerIsUnavailable(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{Workspace: ws, Live: NewLiveSet()})
 	wantErr := global.ErrSpawnUnavailable.Error()
 
-	res, err := mgr.Run(context.Background(), "work", "job", "", "cli", "direct", "", nil)
+	res, err := mgr.Run(context.Background(), "work", "job", "", "cli", "direct", "", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestSpawn_NoRunnerIsUnavailable(t *testing.T) {
 	}
 
 	done := make(chan *tools.ToolResult, 1)
-	id, err := mgr.SpawnCallback("work", "job", "", "cli", "direct", "", nil,
+	id, err := mgr.SpawnCallback("work", "job", "", "cli", "direct", "", "", nil,
 		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0)
 	if err != nil {
 		t.Fatalf("SpawnCallback: %v", err)
@@ -78,7 +78,7 @@ func TestSpawnCallback_Lifecycle(t *testing.T) {
 	dir := filepath.Join(ws, "tasks")
 
 	done := make(chan *tools.ToolResult, 1)
-	id, err := mgr.SpawnCallback("the work", "job1", "", "cli", "direct", "", nil,
+	id, err := mgr.SpawnCallback("the work", "job1", "", "cli", "direct", "", "", nil,
 		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0)
 	if err != nil {
 		t.Fatalf("SpawnCallback error: %v", err)
@@ -129,7 +129,7 @@ func TestTaskStatus_Unknown(t *testing.T) {
 func TestTaskList_ReturnsTasks(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	done := make(chan *tools.ToolResult, 1)
-	if _, err := mgr.SpawnCallback("w", "listed", "", "cli", "direct", "", nil,
+	if _, err := mgr.SpawnCallback("w", "listed", "", "cli", "direct", "", "", nil,
 		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}

@@ -32,7 +32,8 @@ type stateFile struct {
 // tempRecord is one temporary agent that survives a restart. Its directories
 // derive from its id. A clone stores only its source: its configuration is
 // always its source's current one. A fresh agent stores the configuration it
-// was created with, its mode and its system prompt.
+// was created with, its mode and its system prompt; a clone with a character
+// card of its own stores the rendered card.
 type tempRecord struct {
 	ID           string              `json:"id"`
 	SourceID     string              `json:"source_id,omitempty"`
@@ -43,6 +44,7 @@ type tempRecord struct {
 	Owner        string              `json:"owner,omitempty"`
 	Purpose      string              `json:"purpose,omitempty"`
 	CloneModel   string              `json:"clone_model,omitempty"`
+	CardPrompt   string              `json:"card_prompt,omitempty"`
 	Mode         Mode                `json:"mode,omitempty"`
 	SystemPrompt string              `json:"system_prompt,omitempty"`
 }
@@ -74,6 +76,7 @@ func (r *Registry[T]) persist() {
 			Owner:      e.spec.Owner,
 			Purpose:    e.spec.Purpose,
 			CloneModel: e.spec.CloneModel,
+			CardPrompt: e.spec.CardPrompt,
 		}
 		if !e.spec.IsClone() {
 			rec.Config, rec.Mode, rec.SystemPrompt = e.spec.Config, e.spec.Mode, e.spec.SystemPrompt
@@ -143,7 +146,7 @@ func (r *Registry[T]) restore() {
 		if fresh {
 			spec = freshSpec(*rec.Config, id, spec.StateDir, rec.Mode, rec.SystemPrompt, false)
 		}
-		spec.Owner, spec.Purpose, spec.CloneModel = rec.Owner, rec.Purpose, rec.CloneModel
+		spec.Owner, spec.Purpose, spec.CloneModel, spec.CardPrompt = rec.Owner, rec.Purpose, rec.CloneModel, rec.CardPrompt
 		spec, gone, err := r.respec(r.cfg, spec, r.entries)
 		if gone != "" {
 			removeDir(spec.StateDir)

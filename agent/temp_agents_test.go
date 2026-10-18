@@ -228,7 +228,7 @@ func TestSubagentSpawn_CreatesAndDeletesClone(t *testing.T) {
 	}
 
 	t.Run("agent_spawn wait", func(t *testing.T) {
-		res, err := main.spawnMgr.Run(context.Background(), "do it", "job", "", "cli", "direct", "", nil)
+		res, err := main.spawnMgr.Run(context.Background(), "do it", "job", "", "cli", "direct", "", "", nil)
 		if err != nil || res.IsError {
 			t.Fatalf("Run: %v %+v", err, res)
 		}
@@ -237,7 +237,7 @@ func TestSubagentSpawn_CreatesAndDeletesClone(t *testing.T) {
 
 	t.Run("agent_spawn background", func(t *testing.T) {
 		done := make(chan *tools.ToolResult, 1)
-		if _, err := main.spawnMgr.SpawnCallback("do it", "job", "", "cli", "direct", "", nil,
+		if _, err := main.spawnMgr.SpawnCallback("do it", "job", "", "cli", "direct", "", "", nil,
 			func(_ context.Context, r *tools.ToolResult) { done <- r }, 0); err != nil {
 			t.Fatalf("SpawnCallback: %v", err)
 		}
@@ -270,7 +270,7 @@ func TestSubagentSpawn_UnknownModelCreatesNoClone(t *testing.T) {
 	defer restore()
 
 	al := newTestAgentLoop(t).al
-	_, release, err := al.runSubagentTask(context.Background(), "main", "do it", "no-such-model", nil)
+	_, release, err := al.runSubagentTask(context.Background(), "main", "do it", "no-such-model", "", nil)
 	release()
 	if !errors.Is(err, global.ErrModelNotAvailable) {
 		t.Fatalf("err = %v, want ErrModelNotAvailable", err)
@@ -357,7 +357,7 @@ func TestSubagentSpawn_ModelNarrowsClone(t *testing.T) {
 			candidates = len(inst.Candidates)
 		}
 	}}
-	_, release, err := al.runSubagentTask(context.Background(), "main", "do it", "two", nil)
+	_, release, err := al.runSubagentTask(context.Background(), "main", "do it", "two", "", nil)
 	release()
 	if err != nil {
 		t.Fatalf("runSubagentTask: %v", err)

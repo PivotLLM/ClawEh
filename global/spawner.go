@@ -45,6 +45,7 @@ type SpawnRequest struct {
 	Label         string   // optional display label (used by wait mode)
 	TargetAgentID string   // "" ⇒ self-spawn (caller's own agent)
 	Model         string   // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
+	CharacterCard string   // optional character card (an id in the library) the sub-agent runs with instead of the agent's own; "" ⇒ the agent's.
 	Media         []string // optional media:// refs attached to the worker's initial message (e.g. hand an image to a vision-capable agent)
 	Channel       string   // originating channel (for attribution / callback routing)
 	ChatID        string   // originating chat id

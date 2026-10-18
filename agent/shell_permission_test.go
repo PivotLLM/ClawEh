@@ -222,7 +222,7 @@ func TestShell_ActingAsTheAgent(t *testing.T) {
 			t.Fatalf("%s has no sub-agent manager", a.id)
 		}
 
-		res, err := inst.spawnMgr.Run(ctx, "run it", "job", "", "cli", "direct", "", nil)
+		res, err := inst.spawnMgr.Run(ctx, "run it", "job", "", "cli", "direct", "", "", nil)
 		if err != nil {
 			t.Fatalf("%s agent_spawn wait: %v", a.id, err)
 		}
@@ -232,7 +232,7 @@ func TestShell_ActingAsTheAgent(t *testing.T) {
 		checkOneResult(t, a.id+" agent_spawn wait", model, a.allowed)
 
 		done := make(chan *tools.ToolResult, 1)
-		if _, err = inst.spawnMgr.SpawnCallback("run it", "job", "", "cli", "direct", "", nil,
+		if _, err = inst.spawnMgr.SpawnCallback("run it", "job", "", "cli", "direct", "", "", nil,
 			func(_ context.Context, r *tools.ToolResult) { done <- r }, 0); err != nil {
 			t.Fatalf("%s agent_spawn background: %v", a.id, err)
 		}

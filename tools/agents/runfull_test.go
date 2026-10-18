@@ -20,12 +20,12 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 		Workspace:     ws,
 		Live:          NewLiveSet(),
 		CallerAgentID: "alice",
-		RunFull: func(_ context.Context, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
+		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
 			return &global.SyncResult{Content: "SENSITIVE WORKER OUTPUT", Iterations: 2}, func() {}, nil
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "", nil)
+	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRun_UsesRunFull(t *testing.T) {
 		Workspace:     ws,
 		Live:          NewLiveSet(),
 		CallerAgentID: "alice",
-		RunFull: func(_ context.Context, agentID, task, model string, _ []string) (*global.SyncResult, func(), error) {
+		RunFull: func(_ context.Context, agentID, task, model, _ string, _ []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()
 			callCount++
@@ -93,7 +93,7 @@ func TestRun_UsesRunFull(t *testing.T) {
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro", nil)
+	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRun_PassesMediaToRunFull(t *testing.T) {
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
 		CallerAgentID: "alice",
-		RunFull: func(_ context.Context, _, _, _ string, media []string) (*global.SyncResult, func(), error) {
+		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()
 			gotMedia = media
@@ -146,7 +146,7 @@ func TestRun_PassesMediaToRunFull(t *testing.T) {
 	})
 
 	refs := []string{"media://11111111-1111-1111-1111-111111111111"}
-	if _, err := mgr.Run(context.Background(), "describe the image", "img", "", "cli", "direct", "", refs); err != nil {
+	if _, err := mgr.Run(context.Background(), "describe the image", "img", "", "cli", "direct", "", "", refs); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	mu.Lock()

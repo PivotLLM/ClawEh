@@ -20,7 +20,7 @@ func TestPurposeAndCloneModel_SurviveReloadAndRestart(t *testing.T) {
 	cfg.Agents.List[0].Models = []string{"m1", "m2"}
 	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "m2", Model: "model-two", Provider: "p", Enabled: true})
 	r := mustNew(t, cfg, newFakeHost())
-	clone := mustClone(t, r, "alice", CloneModel("m2"), WithPurpose("forum"), OwnedBy("alice"))
+	clone := mustClone(t, r, "alice", CloneModel("m2"), WithPurpose("forum"), OwnedBy("alice"), WithCardPrompt(" # Character\nYou are Bob. "))
 	fresh := mustFresh(t, r, config.AgentConfig{Models: []string{"m1"}}, WithPurpose("forum"))
 	plain := mustClone(t, r, "alice")
 
@@ -31,10 +31,13 @@ func TestPurposeAndCloneModel_SurviveReloadAndRestart(t *testing.T) {
 			t.Errorf("%s: clone spec = purpose %q model %q models %v owner %q, want forum/m2/[m2]/alice",
 				when, c.Purpose, c.CloneModel, c.Config.Models, c.Owner)
 		}
+		if c.CardPrompt != "# Character\nYou are Bob." {
+			t.Errorf("%s: clone card prompt = %q, want the trimmed card", when, c.CardPrompt)
+		}
 		if f := mustGet(t, r, fresh).spec; f.Purpose != "forum" {
 			t.Errorf("%s: fresh purpose = %q, want forum", when, f.Purpose)
 		}
-		if p := mustGet(t, r, plain).spec; p.Purpose != "" || p.CloneModel != "" || !slices.Equal(p.Config.Models, []string{"m1", "m2"}) {
+		if p := mustGet(t, r, plain).spec; p.Purpose != "" || p.CloneModel != "" || p.CardPrompt != "" || !slices.Equal(p.Config.Models, []string{"m1", "m2"}) {
 			t.Errorf("%s: plain clone = purpose %q model %q models %v, want alice's list", when, p.Purpose, p.CloneModel, p.Config.Models)
 		}
 	}
@@ -52,6 +55,9 @@ func TestCloneModel_CloneOnly(t *testing.T) {
 	r := mustNew(t, testConfig(t), newFakeHost())
 	if _, ok := CloneModel("m1").(FreshOption); ok {
 		t.Fatal("CloneModel is a FreshOption")
+	}
+	if _, ok := WithCardPrompt("x").(FreshOption); ok {
+		t.Fatal("WithCardPrompt is a FreshOption")
 	}
 	if _, err := r.CreateClone("alice", CloneModel("nope")); err == nil {
 		t.Fatal("a clone on an unconfigured model was created")

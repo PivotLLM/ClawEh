@@ -355,6 +355,9 @@ func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cf
 		}
 		contextBuilder = contextBuilder.WithMaestro(agentCfg.MaestroEnabled())
 	}
+	if !spec.Fresh {
+		contextBuilder = withCharacterCard(contextBuilder, spec, agentCfg, cfg)
+	}
 	return contextBuilder
 }
 

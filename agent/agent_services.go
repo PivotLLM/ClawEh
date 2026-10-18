@@ -75,11 +75,19 @@ func (s *agentServices) AllowedModels() []string {
 	return names
 }
 
-func (s *agentServices) CreateClone(agentID string) (string, error) {
+func (s *agentServices) CreateClone(agentID string, opts ...tools.CloneOption) (string, error) {
 	if !s.CanTarget(agentID) {
 		return "", fmt.Errorf("agent %q may not target agent %q (subagents.allow_agents)", s.callerID, agentID)
 	}
-	return s.al.GetRegistry().CreateClone(agentID, agentreg.OwnedBy(s.callerID))
+	regOpts := []agentreg.CloneOption{agentreg.OwnedBy(s.callerID)}
+	if card := tools.NewCloneOptions(opts...).CharacterCard; card != "" {
+		text, err := renderCard(s.al.GetConfig(), card)
+		if err != nil {
+			return "", err
+		}
+		regOpts = append(regOpts, agentreg.WithCardPrompt(text))
+	}
+	return s.al.GetRegistry().CreateClone(agentID, regOpts...)
 }
 
 func (s *agentServices) CreateFresh(model string, opts ...tools.FreshOption) (string, error) {
@@ -102,8 +110,12 @@ func (s *agentServices) createFresh(model string, o tools.FreshOptions, extra ..
 	}
 	modelName := candidateName(matched)
 	regOpts := append([]agentreg.FreshOption{agentreg.OwnedBy(s.callerID)}, extra...)
-	if o.SystemPromptSet {
-		regOpts = append(regOpts, agentreg.WithSystemPrompt(o.SystemPrompt))
+	prompt, set, err := composeFreshPrompt(s.al.GetConfig(), o)
+	if err != nil {
+		return "", err
+	}
+	if set {
+		regOpts = append(regOpts, agentreg.WithSystemPrompt(prompt))
 	}
 	if o.NoMemory {
 		regOpts = append(regOpts, agentreg.WithoutMemory())
@@ -129,4 +141,27 @@ func (s *agentServices) Delete(agentID string) error {
 		return fmt.Errorf("%w: %s", errNotOwner, agentID)
 	}
 	return registry.Delete(info.Spec.ID)
+}
+
+// composeFreshPrompt is a fresh agent's system prompt from its options: the
+// rendered character card, the WithSystemPrompt text, or the card followed by
+// the text under an Instructions heading. set is false when neither was
+// given, so the default applies. A blank WithSystemPrompt text is passed on
+// as it is, so agentreg refuses it.
+func composeFreshPrompt(cfg *config.Config, o tools.FreshOptions) (prompt string, set bool, err error) {
+	if o.CharacterCard == "" {
+		return o.SystemPrompt, o.SystemPromptSet, nil
+	}
+	card, err := renderCard(cfg, o.CharacterCard)
+	if err != nil {
+		return "", false, err
+	}
+	switch {
+	case !o.SystemPromptSet:
+		return card, true, nil
+	case strings.TrimSpace(o.SystemPrompt) == "":
+		return o.SystemPrompt, true, nil
+	default:
+		return card + "\n\n# Instructions\n\n" + strings.TrimSpace(o.SystemPrompt), true, nil
+	}
 }

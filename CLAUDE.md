@@ -245,6 +245,36 @@ production instance directly; test against a dev instance.
   it missing like any other tool the agent lacks; nothing refuses it by name at call
   time (`agent/shell_permission_test.go`).
 - **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `manual/agents/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting and never outlasts the asker's deadline (`askRegistry.wait`), a request whose asker stops waiting is withdrawn in the chat and an answer that reaches no asker is acknowledged (`humanAnswerUnused`), while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → `tools.OutcomePersonCancelled`, a request the channel could not post ends at once with `tools.OutcomePersonUnreachable` and a line from the channel's reason (`humanUnreachableError`: "Bob's chat is not set up." / "is unavailable." / "Bob's device is offline." / "Bob's chat can't be reached." / "Couldn't reach Bob's chat."), shutdown → cancelled and withdrawn, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "That request was withdrawn.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/vision/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
+- **Character cards** (`ccv3/`, design in `private/ccv3.md`; `manual/agents/character-cards.md`):
+  Character Card V3 documents in one library, `<CLAW_HOME>/cards/<id>.json`
+  (`config.CardsPath()`, created by `internal/layout`, in the backup; ids follow
+  the agent-id rule, `ccv3.ValidID`/`NormalizeID`, files in lower case). `ccv3`
+  is a stdlib-only leaf (plus `internal/mergepatch`; `ccv3/imports_test.go`):
+  `Store` (`Open(dir)` returns one handle per directory; `List`/`Get`/`Create`/
+  `Update` (RFC 7386 over `data`)/`Rename`/`Copy`/`Delete`/`Import` (V2/V3 JSON
+  or PNG `ccv3`/`chara` chunk; V1 refused; null-valued known fields dropped;
+  `MaxImportBytes` 8 MiB, `MaxCardBytes` 1 MiB), strict `Validate` (unknown
+  keys refused on create/update, preserved on import; ClawEh owns the dates)
+  and one `Render` (`# Character`: `system_prompt` verbatim, "You are
+  <nickname or name>.", Description, Personality, Scenario, "How <name>
+  speaks" from `mes_example`, Background from enabled constant lorebook
+  entries; `{{char}}`, `{{user}}` → "the user", `{{// }}` removed; greetings,
+  `post_history_instructions`, keyed entries and metadata never rendered).
+  Attachment: `agents.list[].character_card` (a configured agent; the
+  context builder renders it after the identity rules and before the
+  bootstrap files, swaps the identity sentence for "You are the character
+  described below.", and tracks the file for cache invalidation,
+  `agent/character_card.go`; a missing card is one WARN at build and the
+  agent runs without it; `Store.Update` refuses one on a human agent,
+  `config.CardsOnHumanAgents`), `agentreg.WithCardPrompt` (a clone's own
+  rendered card, `Spec.CardPrompt`, captured at creation and persisted),
+  `tools.WithCharacterCard` (fresh: the rendered card, then any
+  `WithSystemPrompt` text under `# Instructions`; clone: `WithCardPrompt`),
+  `agent_spawn`'s `character_card` argument (`SpawnRequest.CharacterCard`,
+  `TaskRecord.CharacterCard`, `RunFunc`'s card parameter; the spawner refuses a
+  missing card by name through `SetCardChecker`; `agent.ErrCardNotFound`).
+  Per-agent switch `ccv3` (`AgentSuiteEnabled` case "ccv3", default off, WebUI
+  "Allow character card tools") gates the one bare-named `ccv3` tool.
 - **Forum** (`forum/`, design in `forum/DESIGN.md`, operator guide `docs/forum.md`):
   an agent with the per-agent `forum` switch (default off, `Config.AgentSuiteEnabled`
   case "forum", WebUI "Allow forum") gets the fifteen `forum_*` tools from
@@ -291,7 +321,7 @@ production instance directly; test against a dev instance.
   call timeout, run deadline, cancel), and a timeout the run deadline cut ends
   the run `incomplete (deadline)`;
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
-  `tools.TempPurposeForum`, and a clone's `CloneModel`, both persisted; `Touch`;
+  `tools.TempPurposeForum`, and a clone's `CloneModel` and `CardPrompt`, all persisted; `Touch`;
   `Delete` of one still in a turn deletes it when the turn ends,
   `DeleteWhenIdle`, `forum.ErrDeletePending`, kept in the cleanup marker);
   the completion notice (status and end reason) as a `system` inbound to the
@@ -412,9 +442,11 @@ production instance directly; test against a dev instance.
   are created at run time (`CreateClone(sourceID, ...CloneOption)`, or
   `CreateCloneInTurn` which begins a turn atomically with insertion, and
   `CreateFresh(cfg, ...FreshOption)`; the shared options `EphemeralMemory`,
-  `Temp(ttl)`, `OwnedBy`, `WithPurpose` are both kinds, `CloneModel` is a
-  `CloneOption` only and `WithSystemPrompt`, `WithoutMemory`, `SingleShot` are
-  `FreshOption`s only, so a wrong combination does not compile; UUID ids), kept across reloads (rebuilt; a clone always from its source's
+  `Temp(ttl)`, `OwnedBy`, `WithPurpose` are both kinds, `CloneModel` and
+  `WithCardPrompt` (a rendered character card of the clone's own,
+  `Spec.CardPrompt`) are `CloneOption`s only and `WithSystemPrompt`,
+  `WithoutMemory`, `SingleShot` are `FreshOption`s only, so a wrong combination
+  does not compile; UUID ids), kept across reloads (rebuilt; a clone always from its source's
   CURRENT config, never a stored copy; deleted only when the config can no longer
   build it (model or clone source gone, human), never on a build error; left alone
   while in a turn) and, unless ephemeral, across restarts
@@ -462,7 +494,9 @@ production instance directly; test against a dev instance.
   each turn sees only the prompt and the new message, and the conversation is
   deleted after the turn, `discardConversation`). Tools create one through
   `AgentServices.CreateFresh(model, opts...)` (`tools.WithName`,
-  `WithSystemPrompt`, `WithoutMemory`, `SingleShot`). A single-shot agent's
+  `WithSystemPrompt`, `WithoutMemory`, `SingleShot`, `WithCharacterCard`; the
+  last is also the one `tools.CloneOption` of `CreateClone(agentID, opts...)`,
+  see **Character cards**). A single-shot agent's
   queued messages are never merged (each gets its own blank turn), and its
   conversation is discarded after every turn and command, even one shutdown
   interrupted. An interrupted turn of any temporary agent is not replayed after

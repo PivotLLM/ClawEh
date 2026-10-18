@@ -82,10 +82,11 @@ func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
 }
 
 // RunFunc runs task as a temporary clone of agentID (fresh conversation, a
-// snapshot of the agent's memory, an optional model) and returns the worker's
-// result. release deletes the clone; it is never nil, and the caller calls it
-// once the result has been delivered, also when err is not nil.
-type RunFunc func(ctx context.Context, agentID, task, model string, media []string) (res *global.SyncResult, release func(), err error)
+// snapshot of the agent's memory, an optional model, an optional character
+// card of its own) and returns the worker's result. release deletes the
+// clone; it is never nil, and the caller calls it once the result has been
+// delivered, also when err is not nil.
+type RunFunc func(ctx context.Context, agentID, task, model, characterCard string, media []string) (res *global.SyncResult, release func(), err error)
 
 // targetAgent resolves the agent a spawn runs as: the explicit target, or the
 // owner for a self-spawn (empty agentID).
@@ -174,7 +175,7 @@ func candidateNames(candidates []providers.FallbackCandidate) string {
 // parentDepth is the spawning turn's sub-agent depth, restored on the
 // worker's context. Returns the task uuid.
 func (sm *SubagentManager) SpawnCallback(
-	task, name, agentID, originChannel, originChatID, model string,
+	task, name, agentID, originChannel, originChatID, model, characterCard string,
 	media []string,
 	cb tools.AsyncCallback,
 	parentDepth int,
@@ -185,21 +186,22 @@ func (sm *SubagentManager) SpawnCallback(
 	id := uuid.NewString()
 	now := nowEpoch()
 	rec := &TaskRecord{
-		UUID:         id,
-		Name:         name,
-		OwnerAgentID: sm.ownerAgentID,
-		AgentID:      agentID,
-		Mode:         "callback",
-		Task:         task,
-		Model:        model,
-		Media:        media,
-		Channel:      originChannel,
-		ChatID:       originChatID,
-		Status:       StatusRunning,
-		CreatedAt:    nowRFC(),
-		RetryAfter:   now + retryDelaySecs(),
-		ResultsPath:  relResultsPath(id),
-		SpawnDepth:   parentDepth,
+		UUID:          id,
+		Name:          name,
+		OwnerAgentID:  sm.ownerAgentID,
+		AgentID:       agentID,
+		Mode:          "callback",
+		Task:          task,
+		Model:         model,
+		CharacterCard: characterCard,
+		Media:         media,
+		Channel:       originChannel,
+		ChatID:        originChatID,
+		Status:        StatusRunning,
+		CreatedAt:     nowRFC(),
+		RetryAfter:    now + retryDelaySecs(),
+		ResultsPath:   relResultsPath(id),
+		SpawnDepth:    parentDepth,
 	}
 	dir := sm.tasksDir()
 	if err := writeStatus(dir, rec); err != nil {
@@ -251,7 +253,7 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	// Restore the spawning agent's depth onto the detached context so the
 	// worker (and any layer it spawns) stays within MaxSpawnDepth.
 	runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
-	fr, release, err := sm.runFull(runCtx, target, taskText, rec.Model, rec.Media)
+	fr, release, err := sm.runFull(runCtx, target, taskText, rec.Model, rec.CharacterCard, rec.Media)
 	defer release()
 	if err != nil {
 		sm.finalize(rec, "", 0, err, cb)
@@ -508,7 +510,7 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 	logger.InfoCF("subagent", "subagent.runsync.launched", map[string]any{
 		"uuid": id, "agent": target, "owner": sm.ownerAgentID, "model": model, "task_len": len(task),
 	})
-	fr, release, err := sm.runFull(ctx, target, task, model, nil)
+	fr, release, err := sm.runFull(ctx, target, task, model, "", nil)
 	defer release()
 	if err != nil {
 		logger.WarnCF("subagent", "subagent.runsync.failed", map[string]any{
@@ -531,7 +533,7 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 // and tool context.
 func (sm *SubagentManager) Run(
 	ctx context.Context,
-	task, label, agentID, channel, chatID, model string,
+	task, label, agentID, channel, chatID, model, characterCard string,
 	media []string,
 ) (*tools.ToolResult, error) {
 	if strings.TrimSpace(task) == "" {
@@ -548,19 +550,20 @@ func (sm *SubagentManager) Run(
 
 	id := uuid.NewString()
 	rec := &TaskRecord{
-		UUID:         id,
-		Name:         labelStr,
-		OwnerAgentID: sm.ownerAgentID,
-		AgentID:      agentID,
-		Mode:         "wait",
-		Task:         task,
-		Model:        model,
-		Media:        media,
-		Channel:      channel,
-		ChatID:       chatID,
-		Status:       StatusRunning,
-		CreatedAt:    nowRFC(),
-		ResultsPath:  relResultsPath(id),
+		UUID:          id,
+		Name:          labelStr,
+		OwnerAgentID:  sm.ownerAgentID,
+		AgentID:       agentID,
+		Mode:          "wait",
+		Task:          task,
+		Model:         model,
+		CharacterCard: characterCard,
+		Media:         media,
+		Channel:       channel,
+		ChatID:        chatID,
+		Status:        StatusRunning,
+		CreatedAt:     nowRFC(),
+		ResultsPath:   relResultsPath(id),
 	}
 
 	if sm.runFull == nil {
@@ -574,7 +577,7 @@ func (sm *SubagentManager) Run(
 		"uuid": id, "label": labelStr, "agent": target,
 		"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
 	})
-	fr, release, err := sm.runFull(ctx, target, task, model, media)
+	fr, release, err := sm.runFull(ctx, target, task, model, characterCard, media)
 	defer release()
 	var content string
 	var iterations int

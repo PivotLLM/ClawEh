@@ -40,7 +40,7 @@ func TestToolCall_AuditCloneUnderSource(t *testing.T) {
 	al := newSubagentTestLoop(t, provider)
 	al.RegisterTool(&noopWriteFile{})
 
-	res, release, err := al.runSubagentTask(context.Background(), "main", "write it", "", nil)
+	res, release, err := al.runSubagentTask(context.Background(), "main", "write it", "", "", nil)
 	defer release()
 	if err != nil {
 		t.Fatalf("runSubagentTask: %v", err)
