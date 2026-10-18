@@ -539,9 +539,33 @@ PY
                     integ_fail "MCPFusion sample service not found at $FUSION_SAMPLE; Fusion gating checks cannot run"
                 fi
 
+                # With CLAW_TEST_CLI=1 and a Claude CLI on PATH, the config also
+                # gets a Claude CLI provider and model and an agent "cli" on it
+                # (with ccv3), which main may spawn: tests/test_cli_ccv3.sh has the
+                # probe spawn it so a real CLI turn calls the ccv3 tool over this
+                # gateway's own MCP host. The CLI is pointed at that host alone
+                # by its mcp.json and allowed only that tool; "Allow CLI to bypass
+                # restrictions" stays off. Nothing else in the config changes, so
+                # the probe suite's expectations hold either way.
+                CLI_LIVE_JSON=""
+                CLI_LIVE_AGENT=""
+                CLI_LIVE_ALLOW=""
+                CLI_LIVE_CMD="${CLAW_TEST_CLI_COMMAND:-claude}"
+                if [ "${CLAW_TEST_CLI:-}" = "1" ] && command -v "$CLI_LIVE_CMD" >/dev/null 2>&1; then
+                    printf '{"mcpServers":{"claw":{"type":"http","url":"http://127.0.0.1:%s/internal"}}}\n' "$MCP_PORT" > "$INTEG_HOME/mcp.json"
+                    chmod 600 "$INTEG_HOME/mcp.json"
+                    CLI_LIVE_JSON="\"providers\": [{\"name\": \"Claude CLI\", \"protocol\": \"claude-cli\", \"command\": \"$(command -v "$CLI_LIVE_CMD")\"}],
+  \"models\": [{\"model_name\": \"Claude CLI\", \"model\": \"claude-cli\", \"provider\": \"Claude CLI\", \"enabled\": true, \"request_timeout\": 180,
+    \"extra_args\": [\"--mcp-config\", \"$INTEG_HOME/mcp.json\", \"--strict-mcp-config\", \"--allowedTools\", \"mcp__claw__ccv3\"]}],"
+                    CLI_LIVE_AGENT=",
+      {\"id\": \"cli\", \"name\": \"cli\", \"models\": [\"Claude CLI\"], \"ccv3\": true}"
+                    CLI_LIVE_ALLOW="\"subagents\": {\"allow_agents\": [\"cli\"]},"
+                fi
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
+  $CLI_LIVE_JSON
   "agents": {
     "list": [
       {
@@ -552,6 +576,7 @@ PY
         "fusion": true,
         "forum": true,
         "ccv3": true,
+        $CLI_LIVE_ALLOW
         "mcp_tools": ["wxca"]
       },
       {
@@ -565,7 +590,7 @@ PY
         "name": "Bob",
         "tools": ["file_*"],
         "character_card": "probe-attached"
-      }
+      }$CLI_LIVE_AGENT
     ]
   },
   "bindings": [
@@ -809,6 +834,23 @@ EOF
                             CLI_SMOKE_STATUS="failed"
                             CLI_SMOKE_PASSED=false
                             integ_fail "CLI provider smoke (tests/test_cli_provider.sh) failed; see its output above"
+                        fi
+                        echo ""
+                        echo "${BOLD}--- CLI tool call over MCP (opt-in) ---${NC}"
+                        echo ""
+                        if [ -z "$CLI_LIVE_JSON" ]; then
+                            echo "  skipped: CLI '$CLI_LIVE_CMD' not on PATH (set CLAW_TEST_CLI_COMMAND)"
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI tool call over MCP: no CLI on PATH"
+                        elif PROBE_PATH="$PROBE_BIN" MCP_URL="http://127.0.0.1:$MCP_PORT/internal" \
+                             SESSION_TOKEN="$TEST_SESSION_TOKEN" CLAW_HOME="$INTEG_HOME" GATEWAY_LOG="$INTEG_LOG" \
+                             bash "$SCRIPT_DIR/tests/test_cli_ccv3.sh"; then
+                            :
+                        else
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI tool call over MCP (tests/test_cli_ccv3.sh) failed; see its output above"
                         fi
                     fi
                     echo ""

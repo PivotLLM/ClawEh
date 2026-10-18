@@ -632,7 +632,11 @@ gating disappearing when MCPFusion was folded in.
 - The MCP integration test (`tests/test_mcpserver.sh`, section 8) checks the
   Fusion gating on the running binary; the opt-in CLI smoke test
   (`CLAW_TEST_CLI=1`, `tests/test_cli_provider.sh`) exercises a real CLI's
-  permission path. Extend them when a new kind of grant appears.
+  permission path, and `tests/test_cli_ccv3.sh` (same switch, run by `test.sh`
+  against the live integration gateway) has a real CLI model call the `ccv3`
+  tool over the gateway's MCP host through `agent_spawn`, checking the card
+  file and the log rather than the reply. Extend them when a new kind of
+  grant appears.
 
 ### WebUI regression suite — run it for any significant frontend change
 
