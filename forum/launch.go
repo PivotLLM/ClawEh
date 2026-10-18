@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -61,6 +62,7 @@ func (s *Service) check(ctx context.Context, scope Scope, raw []byte, opts Launc
 		Ceilings:    s.Ceilings(),
 		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,
+		Cards:       s.host.Cards,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -338,9 +340,10 @@ func (s *Service) createParticipants(ctx context.Context, store *forumStore, cfg
 	}
 	for _, id := range used {
 		part := cfg.Participants[id]
-		rec := ParticipantRecord{ID: id, Form: part.Form(), Name: part.Name}
-		if rec.Name == "" {
-			rec.Name = id
+		card, hasCard := resolved.Cards[id]
+		rec := ParticipantRecord{ID: id, Form: part.Form(), Name: participantName(cfg, resolved, id)}
+		if hasCard {
+			rec.CharacterCard, rec.CardPrompt = part.CharacterCard, card.Prompt
 		}
 		var err error
 		switch rec.Form {
@@ -348,7 +351,7 @@ func (s *Service) createParticipants(ctx context.Context, store *forumStore, cfg
 			rec.AgentID = part.Agent
 		case FormClone:
 			rec.Model = resolved.Models[id]
-			rec.AgentID, err = s.host.Agents.CreateClone(ctx, CloneSpec{Source: part.Clone, Model: rec.Model, Owner: launcher})
+			rec.AgentID, err = s.host.Agents.CreateClone(ctx, CloneSpec{Source: part.Clone, Model: rec.Model, CardPrompt: rec.CardPrompt, Owner: launcher})
 			if err != nil {
 				return nil, fmt.Errorf("participant %q: could not clone agent %q: %w", id, part.Clone, err)
 			}
@@ -359,7 +362,7 @@ func (s *Service) createParticipants(ctx context.Context, store *forumStore, cfg
 				rec.Mode = FreshModeMemory
 			}
 			rec.AgentID, err = s.host.Agents.CreateFresh(ctx, FreshSpec{
-				Model: rec.Model, SystemPrompt: part.SystemPrompt, Mode: rec.Mode, Owner: launcher,
+				Model: rec.Model, SystemPrompt: freshPrompt(rec.CardPrompt, part.SystemPrompt), Mode: rec.Mode, Owner: launcher,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("participant %q: could not create a temporary agent on model %q: %w", id, rec.Model, err)
@@ -375,4 +378,18 @@ func (s *Service) createParticipants(ctx context.Context, store *forumStore, cfg
 		out.Participants[id] = rec
 	}
 	return out, nil
+}
+
+// freshPrompt is a fresh participant's system prompt: its system_prompt;
+// with a character card, the rendered card followed by the system_prompt
+// under an Instructions heading when one is given (DESIGN.md §7).
+func freshPrompt(card, systemPrompt string) string {
+	switch {
+	case card == "":
+		return systemPrompt
+	case strings.TrimSpace(systemPrompt) == "":
+		return card
+	default:
+		return card + "\n\n# Instructions\n\n" + strings.TrimSpace(systemPrompt)
+	}
 }

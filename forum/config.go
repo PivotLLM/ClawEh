@@ -113,8 +113,15 @@ type Participant struct {
 	// published. Optional.
 	Instructions string `json:"instructions,omitempty"`
 	// Name is how the participant is attributed in the transcript; the
-	// participant ID when empty.
+	// character card's name when empty and a card is set, else the
+	// participant ID.
 	Name string `json:"name,omitempty"`
+	// CharacterCard is a card ID from the host's character-card library
+	// (Host.Cards), fresh and clone forms only. A fresh participant's
+	// prompt is the rendered card, followed by its SystemPrompt as
+	// instructions when both are set; a clone runs with it instead of its
+	// source's card.
+	CharacterCard string `json:"character_card,omitempty"`
 }
 
 // Form returns the participant's form. It does not validate: an entry

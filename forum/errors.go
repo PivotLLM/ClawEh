@@ -40,4 +40,8 @@ var (
 	// marker and retries, so a restart before the turn ends still cleans
 	// it up, but it is not a failure.
 	ErrDeletePending = errors.New("the agent is deleted when its turn ends")
+	// ErrCardNotFound: Cards.Render was asked for a character card that
+	// does not exist. Preflight reports it as an issue at the
+	// participant's character_card.
+	ErrCardNotFound = errors.New("character card does not exist")
 )

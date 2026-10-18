@@ -28,6 +28,7 @@ func newForumService(host *agent.ForumHost) *forum.Service {
 		Agents:    host,
 		Notifier:  host,
 		Logger:    logger.NewLogger("forum"),
+		Cards:     host,
 		OnStuck:   host.OnStuck,
 		Cooldown:  host.Cooldown,
 	}, forum.WithCeilings(host.Ceilings))

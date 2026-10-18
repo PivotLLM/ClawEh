@@ -483,6 +483,22 @@ message.
     `forum-meta.json` or `forum.json` is not a forum: it is not listed or
     opened, and recovery removes it. There is no template store:
     configurations move between forums by export and import.
+22. **Character cards.** A fresh or clone participant may name a card from
+    the host's character-card library (`character_card`); an existing
+    agent may not (it uses its own card). Preflight renders the card
+    through `Host.Cards` (`ErrCardNotFound` is an issue at the
+    participant's `character_card`; a host without `Cards` fails every
+    configuration naming one) and keeps the text in
+    `resolvedConfig.Cards`, so the run uses exactly what was checked. A
+    fresh participant's prompt is the card alone, or the card followed by
+    its `system_prompt` as `card + "\n\n# Instructions\n\n" +
+    strings.TrimSpace(system_prompt)` (`freshPrompt`); a clone gets the
+    card through `CloneSpec.CardPrompt` in place of its source's. An
+    unnamed participant is called by the card's nickname, else its name,
+    and preflight refuses two used participants that end up with one name
+    ignoring case. `participants.json` records the card ID and the
+    rendered text for each participant with a card, so a later edit,
+    rename or delete of the card does not change what a run was told.
 
 ## 8. Readings the implementation takes
 

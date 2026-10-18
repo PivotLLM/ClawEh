@@ -38,6 +38,14 @@ cleaned up, whether the switch is on or off.
 | A clone | `"clone": "bob"` | A temporary copy of Bob: his prompt, tools and models, a copy of his memory, a fresh conversation. Deleted when the forum ends. |
 | A fresh agent | `"model": "<name>"` | A temporary agent with no tools and no workspace files, on one of the launching agent's models (`forum_models` lists them). Optional `system_prompt` and `mode` (`memory`, `no_memory`, `single_shot`). Deleted when the forum ends. |
 
+A clone or fresh participant may add `character_card` (a card ID from
+`<CLAW_HOME>/cards/`; see `manual/agents/character-cards.md`); an existing
+agent may not, since it uses its own card. A clone runs with that card
+instead of Bob's; a fresh participant's prompt is the card, followed by its
+`system_prompt` under `# Instructions` when both are given. Without `name`,
+the participant is called by the card's nickname, else its name. The run's
+`participants.json` records the card ID and the rendered text.
+
 Alice can name Bob (as himself or as a clone) only when Bob is in her
 `subagents.allow_agents`. A human agent (see `manual/agents/human-agents.md`) can take part
 as an existing agent; it is never cloned.

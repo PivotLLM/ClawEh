@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/forum"
@@ -28,10 +30,10 @@ import (
 
 // ForumHost is ClawEh's side of the forum package's host contract over one
 // agent loop: forum.Messenger (the core Ask), forum.Agents (the agent
-// registry), forum.Notifier (the completion notice) and OnStuck (an operator
-// alert). The gateway creates it before the loop, because the forum service
-// must exist when the loop builds the agents' tools, and binds it once the
-// loop exists.
+// registry), forum.Notifier (the completion notice), forum.Cards (the
+// character-card library) and OnStuck (an operator alert). The gateway
+// creates it before the loop, because the forum service must exist when the
+// loop builds the agents' tools, and binds it once the loop exists.
 type ForumHost struct {
 	loop atomic.Pointer[AgentLoop]
 }
@@ -40,6 +42,7 @@ var (
 	_ forum.Messenger = (*ForumHost)(nil)
 	_ forum.Agents    = (*ForumHost)(nil)
 	_ forum.Notifier  = (*ForumHost)(nil)
+	_ forum.Cards     = (*ForumHost)(nil)
 )
 
 // forumNoticeSender is the sender id of a forum's completion notice, as the
@@ -334,7 +337,44 @@ func (h *ForumHost) CreateClone(_ context.Context, spec forum.CloneSpec) (string
 		}
 		opts = append(opts, agentreg.CloneModel(candidateName(m)))
 	}
+	if spec.CardPrompt != "" {
+		opts = append(opts, agentreg.WithCardPrompt(spec.CardPrompt))
+	}
 	return r.CreateClone(spec.Source, opts...)
+}
+
+// Render implements forum.Cards: card id from the library of the loop's
+// current configuration, rendered, with the name its character goes by
+// (the nickname, else the name). A card that does not exist, or an id
+// that cannot name one, wraps forum.ErrCardNotFound.
+func (h *ForumHost) Render(_ context.Context, id string) (forum.CardInfo, error) {
+	al, err := h.bound()
+	if err != nil {
+		return forum.CardInfo{}, err
+	}
+	store, err := cardStore(al.GetConfig())
+	if err != nil {
+		return forum.CardInfo{}, err
+	}
+	card, err := store.Get(id)
+	if errors.Is(err, ccv3.ErrNotFound) || errors.Is(err, ccv3.ErrInvalidID) {
+		return forum.CardInfo{}, fmt.Errorf("%w: %q", forum.ErrCardNotFound, id)
+	}
+	if err != nil {
+		return forum.CardInfo{}, err
+	}
+	var names struct {
+		Name     string `json:"name"`
+		Nickname string `json:"nickname"`
+	}
+	if err := json.Unmarshal(card.Data, &names); err != nil {
+		return forum.CardInfo{}, fmt.Errorf("character card %q: %w", id, err)
+	}
+	name := strings.TrimSpace(names.Nickname)
+	if name == "" {
+		name = strings.TrimSpace(names.Name)
+	}
+	return forum.CardInfo{Name: name, Prompt: ccv3.Render(card)}, nil
 }
 
 // CreateFresh implements forum.Agents: a fresh temporary agent on one of the

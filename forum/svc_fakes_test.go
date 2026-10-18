@@ -551,6 +551,7 @@ type svcEnv struct {
 	workspace string
 	scope     Scope
 	stuck     *svcStuck
+	cards     Cards // Host.Cards of the services newService builds; nil when unset
 }
 
 // ref is how messages name forum id: Ref with the name in its current
@@ -619,6 +620,7 @@ func (e *svcEnv) newService() *Service {
 		Notifier:  e.notifier,
 		Logger:    e.logger,
 		OnStuck:   e.stuck.record,
+		Cards:     e.cards,
 	})
 	svc.openCtrl = e.ctrls.open
 	e.t.Cleanup(func() { svcClose(e.t, svc) })

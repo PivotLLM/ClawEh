@@ -35,6 +35,13 @@ that list when it is sent: if Bob has been removed from it, the forum stops
 rather than asking him. A [human agent](#a-person-in-a-forum) can take part as
 an existing agent; it is never cloned.
 
+A clone or a fresh participant can be given a
+[character card](../agents/character-cards.md). A clone of Bob then plays that
+character instead of his own; a fresh participant plays the character, and
+any instructions Alice writes for it follow the card. Unless Alice names the
+participant, the transcript uses the character's name. Bob taking part as
+himself keeps his own card.
+
 Fresh participants can only use the models Alice herself can run (her model
 and its fallbacks). To give a forum more models to choose from, add them to
 Alice's model list first.

@@ -76,6 +76,7 @@ func (e *ValidationError) Error() string {
 //   - exactly one form: agent, clone, or model without agent/clone;
 //   - `model` is rejected on the agent form (an existing agent always runs
 //     on its own model); on the clone form it is an optional override;
+//   - character_card only on the fresh and clone forms;
 //   - system_prompt and mode only on the fresh form; mode is one of
 //     FreshMode's values; a fresh participant has a nonempty model;
 //   - instructions and name are optional; names (a participant's name,
@@ -306,6 +307,9 @@ func (v *staticValidator) participants() {
 			v.addf(path+".model", "participant %q: an existing agent always runs on its own model; use clone to choose a model", id)
 		case p.Agent == "" && p.Clone == "" && p.Model == "":
 			v.addf(path, "participant %q needs exactly one of agent, clone or model", id)
+		}
+		if p.Form() == FormExisting && p.CharacterCard != "" {
+			v.addf(path+".character_card", "participant %q: character_card applies only to a fresh or clone participant; an existing agent uses its own card", id)
 		}
 		if p.Form() != FormFresh {
 			if p.SystemPrompt != "" {

@@ -24,13 +24,17 @@ import (
 type router struct {
 	cfg  *Config
 	snap *Snapshot
+	// parts is the run's participants.json, whose names (a character card's
+	// included) win over the configuration's; nil uses the configuration.
+	parts *Participants
 	// read returns a root-relative file (forumStore.ReadFile).
 	read func(rel string) ([]byte, error)
 }
 
-// newRouter builds a router over one forum's configuration and snapshot.
-func newRouter(cfg *Config, snap *Snapshot, read func(rel string) ([]byte, error)) *router {
-	return &router{cfg: cfg, snap: snap, read: read}
+// newRouter builds a router over one forum's configuration, snapshot and
+// participant records.
+func newRouter(cfg *Config, snap *Snapshot, parts *Participants, read func(rel string) ([]byte, error)) *router {
+	return &router{cfg: cfg, snap: snap, parts: parts, read: read}
 }
 
 // Resolve builds LayerInputs for layer from the outputs of earlier layers
@@ -350,9 +354,14 @@ func withoutOwn(route Route, dealt map[string][]InputItem, recipients []string) 
 	return nil
 }
 
-// participantName is the participant's transcript name: its configured
-// name, else its ID.
+// participantName is the participant's transcript name: participants.json,
+// then the configuration, then the ID.
 func (r *router) participantName(id string) string {
+	if r.parts != nil {
+		if p, ok := r.parts.Participants[id]; ok && p.Name != "" {
+			return p.Name
+		}
+	}
 	if p, ok := r.cfg.Participants[id]; ok && p.Name != "" {
 		return p.Name
 	}

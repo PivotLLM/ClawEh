@@ -25,6 +25,12 @@ Each entry of `participants` takes one of three forms:
 Any entry may add private `instructions` and a display `name`. You can name
 an agent (as itself or as a clone) only if it is in your allowed agents.
 
+A clone or fresh entry may add `character_card` (a card ID from the
+character-card library): a clone runs as that character instead of its
+source's, and a fresh participant's prompt is the card, followed by its
+`system_prompt` as instructions when both are given. Without `name`, the
+participant is called by the card's name.
+
 ## Layers
 
 `layers` run in order. Each has `participants` (also the turn order),

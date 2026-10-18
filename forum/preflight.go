@@ -41,6 +41,9 @@ type preflightEnv struct {
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path; a nil func allows nothing (every file source fails).
 	ReadAllowed func(absPath string) error
+	// Cards renders the character cards participants name (Host.Cards);
+	// nil fails every participant that names one.
+	Cards Cards
 }
 
 // resolvedConfig is what runPreflight establishes and Launch records in the snapshot.
@@ -59,6 +62,10 @@ type resolvedConfig struct {
 	// (once, from the path it checked); Launch materialises exactly these
 	// bytes and never reopens the file by path.
 	SourceContents map[string][]byte
+	// Cards maps a participant ID to the character card rendered for it,
+	// for every used fresh or clone participant with character_card; Launch
+	// creates the participant with exactly this text and records it.
+	Cards map[string]CardInfo
 }
 
 // runPreflight checks the configuration against the host without creating
@@ -71,6 +78,10 @@ type resolvedConfig struct {
 //     true and Agents.Exists(id) is true;
 //   - a clone's `model` override is in Agents.Models(source);
 //   - a fresh participant's model is in Agents.Models(launcher);
+//   - a fresh or clone participant's character_card renders (Cards.Render)
+//     into resolvedConfig.Cards, and no two participants share a
+//     transcript name once card names are applied (participantNames
+//     checks the configured names only);
 //   - neither the launcher nor a clone of it takes part in a forum with an
 //     anonymous input (it could read the forum's files and so the authors);
 //   - every named schema compiles, and every enabled layer's effective
@@ -90,10 +101,12 @@ func runPreflight(ctx context.Context, cfg *Config, env preflightEnv) (*resolved
 		Schemas:          map[string]*compiledSchema{},
 		ModeratorSchemas: map[string]json.RawMessage{},
 		SourceContents:   map[string][]byte{},
+		Cards:            map[string]CardInfo{},
 	}}
 	if err := p.participants(ctx); err != nil {
 		return nil, err
 	}
+	p.cardNames()
 	p.launcherClones()
 	p.schemas()
 	if err := p.sources(); err != nil {
@@ -142,6 +155,11 @@ func (p *preflight) participants(ctx context.Context) error {
 			continue // reported by validateStatic
 		}
 		path := "participants." + id
+		if part.Form() != FormExisting && part.CharacterCard != "" {
+			if err := p.card(ctx, id, part.CharacterCard); err != nil {
+				return err
+			}
+		}
 		switch part.Form() {
 		case FormExisting:
 			if _, err := p.target(ctx, path+".agent", part.Agent); err != nil {
@@ -176,6 +194,71 @@ func (p *preflight) participants(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// card renders participant id's character card into resolvedConfig.Cards,
+// or reports why it cannot be used.
+func (p *preflight) card(ctx context.Context, id, cardID string) error {
+	path := "participants." + id + ".character_card"
+	if p.env.Cards == nil {
+		p.addf(path, "character cards are not available on this host")
+		return nil
+	}
+	info, err := p.env.Cards.Render(ctx, cardID)
+	switch {
+	case errors.Is(err, ErrCardNotFound):
+		p.addf(path, "character card %q does not exist", cardID)
+		return nil
+	case err != nil:
+		return fmt.Errorf("preflight: participant %q: character card %q: %w", id, cardID, err)
+	}
+	p.res.Cards[id] = info
+	return nil
+}
+
+// cardNames reports two used participants whose transcript names
+// (participantName) are equal ignoring case when at least one of them
+// comes from a character card; collisions of configured names and IDs
+// alone are validateStatic's.
+func (p *preflight) cardNames() {
+	type named struct{ id, name string }
+	seen := map[string]named{} // lower-cased name -> first participant
+	for _, id := range p.usedParticipants() {
+		if _, ok := p.cfg.Participants[id]; !ok {
+			continue
+		}
+		name := participantName(p.cfg, p.res, id)
+		key := strings.ToLower(name)
+		prev, dup := seen[key]
+		if !dup {
+			seen[key] = named{id, name}
+			continue
+		}
+		fromCard := func(pid string) bool {
+			_, ok := p.res.Cards[pid]
+			return ok && p.cfg.Participants[pid].Name == ""
+		}
+		if !fromCard(id) && !fromCard(prev.id) {
+			continue
+		}
+		at := "participants." + id + ".name"
+		if fromCard(id) {
+			at = "participants." + id + ".character_card"
+		}
+		p.addf(at, "participants %q and %q are both named %q (names must differ, ignoring case); set name on one of them", prev.id, id, name)
+	}
+}
+
+// participantName is participant id's transcript name: its configured
+// name, else the name of the character card rendered for it, else its ID.
+func participantName(cfg *Config, res *resolvedConfig, id string) string {
+	if part := cfg.Participants[id]; part.Name != "" {
+		return part.Name
+	}
+	if card, ok := res.Cards[id]; ok && card.Name != "" {
+		return card.Name
+	}
+	return id
 }
 
 // target checks that the launcher may name agentID and that it exists.

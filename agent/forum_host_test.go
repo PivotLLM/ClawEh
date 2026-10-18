@@ -19,6 +19,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum"
@@ -938,5 +939,69 @@ func TestForumHost_Ceilings(t *testing.T) {
 	}
 	if res := call("forum_validate", map[string]any{"id": id}); res.IsError {
 		t.Errorf("forum_validate at the ceiling after reload = %+v", res)
+	}
+}
+
+// TestForumHost_Cards: Render returns a library card rendered with the
+// name its character goes by (nickname, else name); a missing card, or an
+// id that cannot name one, wraps forum.ErrCardNotFound; a clone created
+// with a rendered card carries it.
+func TestForumHost_Cards(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	cfg := forumConfig(t, true, false)
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Create("bob-card", json.RawMessage(`{"name":"Robert","nickname":"Bob","description":"A builder."}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Create("alice-card", json.RawMessage(`{"name":"Alice","description":"A reviewer."}`)); err != nil {
+		t.Fatal(err)
+	}
+	r := newForumRig(t, cfg, &forumModel{})
+	ctx := context.Background()
+
+	for id, wantName := range map[string]string{"bob-card": "Bob", "Alice-Card": "Alice"} {
+		info, renderErr := r.host.Render(ctx, id)
+		if renderErr != nil {
+			t.Fatalf("Render(%s): %v", id, renderErr)
+		}
+		want, renderErr := renderCard(cfg, id)
+		if renderErr != nil {
+			t.Fatal(renderErr)
+		}
+		if info.Name != wantName || info.Prompt != want {
+			t.Errorf("Render(%s) = %+v, want name %q and the rendered card", id, info, wantName)
+		}
+	}
+	for _, id := range []string{"nobody", "../x"} {
+		if _, renderErr := r.host.Render(ctx, id); !errors.Is(renderErr, forum.ErrCardNotFound) || !strings.Contains(renderErr.Error(), strconv.Quote(id)) {
+			t.Errorf("Render(%q) = %v, want forum.ErrCardNotFound naming it", id, renderErr)
+		}
+	}
+
+	info, err := r.host.Render(ctx, "bob-card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := r.host.CreateClone(ctx, forum.CloneSpec{Source: "bob", CardPrompt: info.Prompt, Owner: "alice"})
+	if err != nil {
+		t.Fatalf("CreateClone: %v", err)
+	}
+	if a, ok := r.al.GetRegistry().Get(clone); !ok || a.Spec.CardPrompt != info.Prompt {
+		t.Errorf("clone spec card prompt = %q, want the rendered card", a.Spec.CardPrompt)
+	}
+	plain, err := r.host.CreateClone(ctx, forum.CloneSpec{Source: "bob", Owner: "alice"})
+	if err != nil {
+		t.Fatalf("CreateClone: %v", err)
+	}
+	if a, ok := r.al.GetRegistry().Get(plain); !ok || a.Spec.CardPrompt != "" {
+		t.Errorf("clone without a card has card prompt %q", a.Spec.CardPrompt)
+	}
+	for _, id := range []string{clone, plain} {
+		if err := r.host.Delete(ctx, "alice", id); err != nil {
+			t.Errorf("Delete(%s): %v", id, err)
+		}
 	}
 }

@@ -112,7 +112,7 @@ func (f *routerFixture) routerRead(rel string) ([]byte, error) {
 }
 
 func (f *routerFixture) routerResolve(layer Layer) (*LayerInputs, error) {
-	return newRouter(f.cfg, f.snap, f.routerRead).Resolve(layer, f.produced)
+	return newRouter(f.cfg, f.snap, nil, f.routerRead).Resolve(layer, f.produced)
 }
 
 // routerIDs lists each item as "<source or output id>" for compact

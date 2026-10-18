@@ -171,6 +171,11 @@ type ParticipantRecord struct {
 	// Mode is the fresh participant's mode; FreshModeSingleShot changes what
 	// the controller sends it.
 	Mode FreshMode `json:"mode,omitempty"`
+	// CharacterCard is the card ID a fresh or clone participant was created
+	// with, and CardPrompt the rendered text it got, so a run records what
+	// its participants were told even after the card changes.
+	CharacterCard string `json:"character_card,omitempty"`
+	CardPrompt    string `json:"card_prompt,omitempty"`
 }
 
 // Participants is participants.json: records keyed by participant ID.

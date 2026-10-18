@@ -108,6 +108,9 @@ type CloneSpec struct {
 	// Model, when set, is one of Source's models and is the model the clone
 	// runs on for this forum. Empty keeps the source's default.
 	Model string
+	// CardPrompt, when set, is the rendered character card the clone runs
+	// with instead of its source's. Empty keeps the source's card.
+	CardPrompt string
 	// Owner is the launching agent; the host records it as the temporary
 	// agent's owner.
 	Owner string
@@ -159,6 +162,22 @@ type Agents interface {
 	// launched by launcherID created, so a paused forum keeps its
 	// participants alive past the idle TTL. The same refusal applies.
 	Touch(ctx context.Context, launcherID, agentID string) error
+}
+
+// CardInfo is a rendered character card.
+type CardInfo struct {
+	// Name is the card's nickname, else its name: a participant's default
+	// transcript name.
+	Name string
+	// Prompt is the rendered card, as an agent's prompt carries it.
+	Prompt string
+}
+
+// Cards is the host's character-card library as the forum needs it.
+type Cards interface {
+	// Render returns card id rendered. A card that does not exist is an
+	// error wrapping ErrCardNotFound; any other error is a host failure.
+	Render(ctx context.Context, id string) (CardInfo, error)
 }
 
 // Origin identifies the launching agent and the message that launched the
@@ -241,13 +260,16 @@ type systemClock struct{}
 func (systemClock) Now() time.Time                         { return time.Now() }
 func (systemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
-// Host bundles the host-provided dependencies the service needs. OnStuck,
-// Cooldown and Clock may be nil; the others are required.
+// Host bundles the host-provided dependencies the service needs. Cards,
+// OnStuck, Cooldown and Clock may be nil; the others are required.
 type Host struct {
 	Messenger Messenger
 	Agents    Agents
 	Notifier  Notifier
 	Logger    Logger
+	// Cards, when set, renders the character cards participants name. A
+	// configuration naming a card on a host without it fails preflight.
+	Cards Cards
 	// OnStuck, when set, is called once per run and process when a
 	// forum's run stops on an error it does not recover from by itself (a
 	// store write that fails during a run, a forum Recover cannot reopen):
