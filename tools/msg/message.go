@@ -72,6 +72,11 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	if !ok {
 		return &tools.ToolResult{ForLLM: "content is required", IsError: true}
 	}
+	// An empty message reaches nobody, and a platform such as Slack rejects
+	// it (no_text); the model is told before anything is sent.
+	if strings.TrimSpace(content) == "" {
+		return &tools.ToolResult{ForLLM: "content is empty: nothing to send", IsError: true}
+	}
 
 	// Security: the target is always the session's own source channel/chat. The
 	// model cannot choose where a message goes — any channel/chat_id in args is

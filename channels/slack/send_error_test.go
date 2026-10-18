@@ -16,7 +16,9 @@ import (
 )
 
 // Send says why Slack refused a message: a conversation the app cannot post
-// to is ErrRecipientNotFound; any other API error stays ErrTemporary.
+// to is ErrRecipientNotFound, a request Slack rejects as invalid (empty text,
+// too long, bad blocks) is ErrSendFailed so it is not retried; any other API
+// error stays ErrTemporary.
 func TestSend_ClassifiesAPIErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -26,6 +28,10 @@ func TestSend_ClassifiesAPIErrors(t *testing.T) {
 		{"channel not found", `{"ok":false,"error":"channel_not_found"}`, channels.ErrRecipientNotFound},
 		{"not in channel", `{"ok":false,"error":"not_in_channel"}`, channels.ErrRecipientNotFound},
 		{"archived", `{"ok":false,"error":"is_archived"}`, channels.ErrRecipientNotFound},
+		{"no text", `{"ok":false,"error":"no_text"}`, channels.ErrSendFailed},
+		{"too long", `{"ok":false,"error":"msg_too_long"}`, channels.ErrSendFailed},
+		{"invalid blocks", `{"ok":false,"error":"invalid_blocks"}`, channels.ErrSendFailed},
+		{"invalid arguments", `{"ok":false,"error":"invalid_arguments"}`, channels.ErrSendFailed},
 		{"internal error", `{"ok":false,"error":"internal_error"}`, channels.ErrTemporary},
 	}
 	for _, tt := range tests {

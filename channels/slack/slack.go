@@ -361,14 +361,30 @@ var recipientNotFoundErrors = map[string]bool{
 	"user_not_found":    true,
 }
 
+// invalidRequestErrors are Slack API errors that say the request itself was
+// wrong (empty text, a message too long, bad blocks or arguments): the same
+// message fails the same way on every attempt, so it is not retried and not
+// an outage.
+var invalidRequestErrors = map[string]bool{
+	"no_text":           true,
+	"msg_too_long":      true,
+	"invalid_blocks":    true,
+	"invalid_arguments": true,
+}
+
 // classifySendErr maps a failed Slack send to a channel sentinel: a
-// conversation the app cannot post to is ErrRecipientNotFound, anything else
+// conversation the app cannot post to is ErrRecipientNotFound, a request
+// Slack rejects as invalid is ErrSendFailed (permanent), anything else
 // ErrTemporary (retried). The error is kept so logs and alerts say why; Slack
 // errors carry no token (it travels in a header).
 func classifySendErr(op string, err error) error {
-	var apiErr slack.SlackErrorResponse
-	if errors.As(err, &apiErr) && recipientNotFoundErrors[apiErr.Err] {
-		return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
+	if apiErr, ok := errors.AsType[slack.SlackErrorResponse](err); ok {
+		switch {
+		case recipientNotFoundErrors[apiErr.Err]:
+			return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
+		case invalidRequestErrors[apiErr.Err]:
+			return fmt.Errorf("%s: %w: %w", op, channels.ErrSendFailed, err)
+		}
 	}
 	return fmt.Errorf("%s: %w: %w", op, channels.ErrTemporary, err)
 }

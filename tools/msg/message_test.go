@@ -196,6 +196,34 @@ func TestMessageTool_Execute_MissingContent(t *testing.T) {
 	}
 }
 
+// An empty or whitespace-only content is refused before anything is sent:
+// Slack rejects it (no_text) and nobody would receive it anyway.
+func TestMessageTool_Execute_EmptyContent(t *testing.T) {
+	for _, content := range []string{"", "   ", "\n\t"} {
+		t.Run(fmt.Sprintf("%q", content), func(t *testing.T) {
+			tool := NewMessageTool()
+			sent := false
+			tool.SetSendCallback(func(_ context.Context, _, _, _ string) error {
+				sent = true
+				return nil
+			})
+
+			ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+			result := tool.Execute(ctx, map[string]any{"content": content})
+
+			if sent {
+				t.Error("Expected no send for empty content")
+			}
+			if !result.IsError {
+				t.Error("Expected IsError=true for empty content")
+			}
+			if result.ForLLM != "content is empty: nothing to send" {
+				t.Errorf("Expected ForLLM 'content is empty: nothing to send', got '%s'", result.ForLLM)
+			}
+		})
+	}
+}
+
 func TestMessageTool_Execute_NoTargetChannel(t *testing.T) {
 	tool := NewMessageTool()
 	// No WithToolContext — channel/chatID are empty
