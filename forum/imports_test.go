@@ -14,13 +14,13 @@ import (
 	"testing"
 )
 
-// The forum package imports no ClawEh package but its own forumfs, and
-// forumfs imports nothing, so config can name the forum's folders without
-// depending on the forum.
+// The forum package imports no ClawEh package but its own forumfs and the
+// stdlib-only internal/mergepatch, and forumfs imports nothing, so config can
+// name the forum's folders without depending on the forum.
 func TestForumImportsNoClawEhPackage(t *testing.T) {
 	const module = "github.com/PivotLLM/ClawEh/"
 	for dir, allowed := range map[string]map[string]bool{
-		".":       {module + "forum/forumfs": true},
+		".":       {module + "forum/forumfs": true, module + "internal/mergepatch": true},
 		"forumfs": {},
 	} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))

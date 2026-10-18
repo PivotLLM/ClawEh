@@ -258,7 +258,7 @@ production instance directly; test against a dev instance.
   owner, checked on every operation like a run snapshot's launcher),
   `forums/<id>/forum.json` (the current
   config, edited by `_template`/`_import`/`_update`, the last an RFC 7386
-  merge patch, `forum/mergepatch.go`, whenever the latest run is not running)
+  merge patch, `internal/mergepatch`, whenever the latest run is not running)
   and `forums/<id>/runs/<n>/` (everything a run produces; earlier runs are
   never touched). Each `forum_launch {id}` validates the current config and
   starts run n+1 from the beginning (a paused latest run is cancelled first,

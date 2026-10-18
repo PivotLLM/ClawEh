@@ -3,7 +3,7 @@
 //
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
-package forum
+package mergepatch
 
 import (
 	"encoding/json"
@@ -35,7 +35,7 @@ func TestMergePatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := mergePatch(json.RawMessage(tt.target), json.RawMessage(tt.patch))
+			got, err := Apply(json.RawMessage(tt.target), json.RawMessage(tt.patch))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -47,7 +47,7 @@ func TestMergePatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(g, w) {
-				t.Errorf("mergePatch(%s, %s) = %s, want %s", tt.target, tt.patch, got, tt.want)
+				t.Errorf("Apply(%s, %s) = %s, want %s", tt.target, tt.patch, got, tt.want)
 			}
 		})
 	}
@@ -56,21 +56,39 @@ func TestMergePatch(t *testing.T) {
 // Members keep their order, new ones are appended, and untouched values
 // keep their bytes (a large integer is not rounded).
 func TestMergePatchKeepsTheDocument(t *testing.T) {
-	got, err := mergePatch(json.RawMessage(`{"version":1,"name":"a","seed":9007199254740993,"layers":[{"id":"x"}]}`),
+	got, err := Apply(json.RawMessage(`{"version":1,"name":"a","seed":9007199254740993,"layers":[{"id":"x"}]}`),
 		json.RawMessage(`{"name":"b","limits":{"max_calls":3}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := `{"version":1,"name":"b","seed":9007199254740993,"layers":[{"id":"x"}],"limits":{"max_calls":3}}`
 	if string(got) != want {
-		t.Errorf("mergePatch = %s, want %s", got, want)
+		t.Errorf("Apply = %s, want %s", got, want)
 	}
 }
 
 func TestMergePatchRefusesMalformedJSON(t *testing.T) {
 	for _, tc := range []struct{ target, patch string }{{`{}`, `{"a":`}, {`{"a":`, `{"a":1}`}} {
-		if _, err := mergePatch(json.RawMessage(tc.target), json.RawMessage(tc.patch)); err == nil {
-			t.Errorf("mergePatch(%s, %s) succeeded", tc.target, tc.patch)
+		if _, err := Apply(json.RawMessage(tc.target), json.RawMessage(tc.patch)); err == nil {
+			t.Errorf("Apply(%s, %s) succeeded", tc.target, tc.patch)
 		}
+	}
+}
+
+func TestIsObject(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{{`{}`, true}, {` {"a":1}`, true}, {`[]`, false}, {`"x"`, false}, {`null`, false}} {
+		got, err := IsObject(json.RawMessage(tc.raw))
+		if err != nil {
+			t.Fatalf("IsObject(%s): %v", tc.raw, err)
+		}
+		if got != tc.want {
+			t.Errorf("IsObject(%s) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+	if _, err := IsObject(json.RawMessage(`{"a":`)); err == nil {
+		t.Error("IsObject accepted malformed JSON")
 	}
 }

@@ -3,7 +3,11 @@
 //
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
-package forum
+// Package mergepatch applies RFC 7386 JSON merge patches while keeping the
+// target document's member order and untouched bytes. It imports only the
+// standard library, so packages that must stay free of ClawEh imports (the
+// forum, the character-card library) can share it.
+package mergepatch
 
 import (
 	"bytes"
@@ -18,13 +22,13 @@ type member struct {
 	value json.RawMessage
 }
 
-// mergePatch applies patch to target as an RFC 7386 JSON merge patch: a
+// Apply applies patch to target as an RFC 7386 JSON merge patch: a
 // patch that is not an object replaces the target; an object patch merges
 // member by member, a null member deletes that key, and any other member is
 // merged into the target's value recursively (so arrays are replaced whole).
 // A nil target is absent. Object members keep their order, new ones are
 // appended, and values the patch does not touch are kept byte for byte.
-func mergePatch(target, patch json.RawMessage) (json.RawMessage, error) {
+func Apply(target, patch json.RawMessage) (json.RawMessage, error) {
 	patchMembers, isObject, err := objectMembers(patch)
 	if err != nil {
 		return nil, err
@@ -52,7 +56,7 @@ func mergePatch(target, patch json.RawMessage) (json.RawMessage, error) {
 		if i >= 0 {
 			current = members[i].value
 		}
-		merged, err := mergePatch(current, p.value)
+		merged, err := Apply(current, p.value)
 		if err != nil {
 			return nil, err
 		}
@@ -63,6 +67,12 @@ func mergePatch(target, patch json.RawMessage) (json.RawMessage, error) {
 		}
 	}
 	return encodeMembers(members)
+}
+
+// IsObject reports whether raw is a JSON object. Malformed JSON is an error.
+func IsObject(raw json.RawMessage) (bool, error) {
+	_, isObject, err := objectMembers(raw)
+	return isObject, err
 }
 
 // objectMembers returns the members of raw in order when it is a JSON
@@ -118,4 +128,15 @@ func encodeMembers(members []member) (json.RawMessage, error) {
 	}
 	b.WriteByte('}')
 	return b.Bytes(), nil
+}
+
+// marshalCompact is json.Marshal without HTML escaping.
+func marshalCompact(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }

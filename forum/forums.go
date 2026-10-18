@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/PivotLLM/ClawEh/internal/mergepatch"
 )
 
 // Forums and runs (DESIGN.md §7.21). A forum is a directory under the
@@ -74,11 +76,11 @@ func (s *Service) SetConfig(ctx context.Context, scope Scope, id string, raw []b
 // UpdateConfig applies patch, an RFC 7386 JSON merge patch that must be a
 // JSON object, to a forum's configuration.
 func (s *Service) UpdateConfig(ctx context.Context, scope Scope, id string, patch []byte) error {
-	if _, isObject, err := objectMembers(patch); err != nil || !isObject {
+	if isObject, err := mergepatch.IsObject(patch); err != nil || !isObject {
 		return argIssue("the changes must be a JSON object")
 	}
 	return s.editConfig(ctx, scope, id, func(current []byte) ([]byte, error) {
-		return mergePatch(current, patch)
+		return mergepatch.Apply(current, patch)
 	})
 }
 
