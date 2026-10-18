@@ -209,7 +209,7 @@ async function config() {
   return json
 }
 
-// Groups F, G and R write configuration, which the gateway picks up on a debounced
+// Groups F, G, R and T write configuration, which the gateway picks up on a debounced
 // reload (~15s later) that briefly stops the channels. Anything loading a page
 // during that window sees the chat WebSocket handshake fail with 503 and logs a
 // console error — a real effect of a reload, not a defect, but it makes later
@@ -255,6 +255,7 @@ const ROUTES = [
   "/audit",
   "/agent/bindings",
   "/agent/skills",
+  "/agent/cards",
   "/channels",
   "/config",
   "/config/raw",
@@ -2592,6 +2593,149 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
     )
     assert(leaked.length === 0, `unmasked credential in /api/config: ${leaked[0]}`)
   })
+}
+
+// ------------------------------------------------------- character cards ---
+
+if (useGroup("T", "Character cards")) {
+  const CARD = "e2e-card"
+  const AGENT = "e2e-card-agent"
+  const cardJSON = JSON.stringify({
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: { name: "E2E Card", description: "A probe card.", tags: [] },
+  })
+  const cards = async () => (await api("/api/cards")).json?.cards ?? []
+  const agentOf = async () => ((await config()).agents.list ?? []).find((a) => a.id === AGENT)
+  const saveAgents = (list) =>
+    api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agents: { list } }) })
+  const auditHas = async (kind) => {
+    const { json } = await api(`/api/audit?kind=${kind}&limit=20`)
+    return (json?.events ?? []).some((e) => e.summary === CARD)
+  }
+  // Open the Character card selector of AGENT on /agents and pick an option.
+  const pickCard = async (optionText) => {
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: AGENT, exact: true }).click()
+    await page.waitForTimeout(400)
+    await page.locator('button[role=combobox][aria-label="Character card"]').click()
+    await page.locator(`[role=option]:has-text("${optionText}")`).first().click()
+    await page.waitForTimeout(2000)
+    await close()
+  }
+
+  await check(1, "the sidebar links to the Character cards page under Agents", async () => {
+    const { close, page, problems } = await open("/agents")
+    let link = page.locator('a[href="/agent/cards"]')
+    if ((await link.count()) === 0) {
+      await page.getByRole("button", { name: "Agents", exact: true }).first().click()
+      await page.waitForTimeout(400)
+      link = page.locator('a[href="/agent/cards"]')
+    }
+    assert((await link.count()) > 0, "no Character cards entry in the sidebar")
+    await link.first().click()
+    await page.waitForURL(/\/agent\/cards$/, { timeout: 10000 })
+    await page.waitForTimeout(800)
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/agent/cards", `clicking Character cards went to ${path}`)
+  })
+
+  await check(2, "import a V3 card through the dialog", async () => {
+    const { close, page, problems } = await open("/agent/cards")
+    await page.getByRole("button", { name: "Import", exact: true }).first().click()
+    const dialog = page.getByRole("alertdialog")
+    await dialog.waitFor({ timeout: 5000 })
+    await page.locator("#card-import-file").setInputFiles({
+      name: `${CARD}.json`,
+      mimeType: "application/json",
+      buffer: Buffer.from(cardJSON),
+    })
+    await page.waitForTimeout(300)
+    const id = await page.locator("#card-import-id").inputValue()
+    assert(id === CARD, `the id field was prefilled with ${JSON.stringify(id)}, want ${CARD} (from the file name)`)
+    await dialog.getByRole("button", { name: "Import", exact: true }).click()
+    await page.waitForTimeout(1500)
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    assert((await row.count()) === 1, "the imported card is not listed")
+    assert((await row.innerText()).includes("E2E Card"), "the row does not show the card's name")
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const c = (await cards()).find((x) => x.id === CARD)
+    assert(c, `${CARD} not in GET /api/cards`)
+    assert(Array.isArray(c.attached_to) && c.attached_to.length === 0, `attached_to = ${JSON.stringify(c.attached_to)}`)
+    assert(await auditHas("card_import"), "no card_import audit event for the import")
+  })
+
+  await check(3, "attach the card to an agent from the Agents page", async () => {
+    const before = await config()
+    const r = await saveAgents([...(before.agents.list ?? []), { id: AGENT, name: AGENT, tools: [] }])
+    assert(r.status === 200, `creating ${AGENT} = ${r.status}: ${r.text}`)
+    await pickCard("E2E Card")
+    const a = await agentOf()
+    assert(a?.character_card === CARD, `character_card = ${JSON.stringify(a?.character_card)}, want ${CARD}`)
+    const c = (await cards()).find((x) => x.id === CARD)
+    assert(c?.attached_to.includes(AGENT), `attached_to = ${JSON.stringify(c?.attached_to)} lacks ${AGENT}`)
+  })
+
+  await check(4, "deleting a card an agent uses is refused with the server's sentence", async () => {
+    const { close, page } = await open("/agent/cards")
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    await row.getByRole("button", { name: "Delete", exact: true }).click()
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+    const want = `Card "${CARD}" is attached to agent ${AGENT}; detach it first.`
+    await page.getByText(want).first().waitFor({ timeout: 5000 })
+    await page.waitForTimeout(500)
+    const still = await page.locator("[data-testid=card-row]").filter({ hasText: CARD }).count()
+    await close()
+    assert(still === 1, "the attached card disappeared from the list")
+    assert((await cards()).some((x) => x.id === CARD), "the attached card was deleted")
+  })
+
+  await check(5, "detach the card, then delete it", async () => {
+    await pickCard("None")
+    const a = await agentOf()
+    assert(a && a.character_card === undefined, `character_card = ${JSON.stringify(a?.character_card)}, want absent`)
+    const { close, page } = await open("/agent/cards")
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    await row.getByRole("button", { name: "Delete", exact: true }).click()
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+    await page.waitForTimeout(1500)
+    const left = await page.locator("[data-testid=card-row]").filter({ hasText: CARD }).count()
+    await close()
+    assert(left === 0, "the detached card is still listed after Delete")
+    assert(!(await cards()).some((x) => x.id === CARD), `${CARD} still in GET /api/cards`)
+    assert(await auditHas("card_delete"), "no card_delete audit event for the delete")
+  })
+
+  await check(6, "Allow character card tools writes and clears ccv3", async () => {
+    const before = await agentOf()
+    assert(before, `${AGENT} is gone`)
+    const toggle = async () => {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: AGENT, exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("switch", { name: "Allow character card tools", exact: true }).click()
+      await page.waitForTimeout(2000)
+      await close()
+    }
+    await toggle()
+    let a = await agentOf()
+    assert(a?.ccv3 === true, `ccv3 = ${JSON.stringify(a?.ccv3)} after turning it on`)
+    assert(a.name === before.name && JSON.stringify(a.tools) === JSON.stringify(before.tools), "other fields changed with the toggle")
+    await toggle()
+    a = await agentOf()
+    assert(a && a.ccv3 === undefined, `ccv3 = ${JSON.stringify(a?.ccv3)} after turning it off, want absent`)
+  })
+
+  // Leave nothing behind, whatever the checks above reached.
+  if ((await cards()).some((x) => x.id === CARD)) {
+    await saveAgents(((await config()).agents.list ?? []).filter((a) => a.id !== AGENT))
+    await api(`/api/cards/${CARD}`, { method: "DELETE" })
+  } else {
+    await saveAgents(((await config()).agents.list ?? []).filter((a) => a.id !== AGENT))
+  }
 }
 
 // ----------------------------------------------------------------- report ---

@@ -48,7 +48,13 @@ You are <nickname, or name>.
 ## Background             (lorebook entries marked constant)
 ```
 
-Empty fields are left out. `{{char}}` becomes the character's name, `{{user}}` becomes "the user" and `{{// notes}}` are removed. Greetings, `post_history_instructions`, keyword-triggered lorebook entries, creator notes, tags and images are kept in the card and exported with it, but never shown to the agent.
+<div v-pre>
+
+Empty fields are left out. `{{char}}` becomes the character's name, `{{user}}` becomes "the user" and `{{// notes}}` are removed.
+
+</div>
+
+Greetings, `post_history_instructions`, keyword-triggered lorebook entries, creator notes, tags and images are kept in the card and exported with it, but never shown to the agent.
 
 ## Let an agent manage cards
 

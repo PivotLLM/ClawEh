@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-147 checks in all; the runner prints the same tally at the end.
+154 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -14,10 +14,11 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 ## Before you start
 
-**Run it against a dev instance, never production.** Groups F, G, N and R
-write. All four revert what they change — the agent created in F is deleted, the
+**Run it against a dev instance, never production.** Groups F, G, N, R and T
+write. All five revert what they change — the agent created in F is deleted, the
 field edited in G and the HTTPS port edited in R are restored to the values read
-beforehand, and the memory domain N creates is deleted at the end — but a crash
+beforehand, the memory domain N creates is deleted at the end, and the card and
+agent T creates are removed — but a crash
 mid-run would leave the change behind. I12 adds and removes a disabled temporary model only when no model's request timeout exceeds the turn timeout. N only ever touches the `e2e-probe`
 domain it created, so an agent's real memory is not at risk, but it is still a
 write. R8 regenerates the self-signed certificate (a new self-signed one takes
@@ -74,8 +75,8 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 21 routes in a browser with the console open:
-`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/skills`,
+**Process.** Load each of the 22 routes in a browser with the console open:
+`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/skills`, `/agent/cards`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
 `/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/report`,
 `/system`, `/voice`, `/setup`, `/status`.
@@ -96,7 +97,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 21 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 22 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 
 ## E. Chat and WebSocket auth
 
@@ -319,6 +320,19 @@ a time.
 | Q4 | `curl -b jar '$BASE/api/audit?limit=100'`, then load `/audit` | **Load more** is shown when, and only when, the API returned 100 events **and** `next_before_id > 0`. On a fresh instance it is 0 and the button is absent; either way the page and the API must agree |
 
 ---
+
+## T. Character cards
+
+Creates a card `e2e-card` and a throwaway agent `e2e-card-agent` through the UI and the API, and removes both at the end.
+
+| ID | Process | Expected |
+|---|---|---|
+| T1 | Open the **Agents** group in the sidebar, click **Character cards** | The browser is at `/agent/cards` with no console errors |
+| T2 | On `/agent/cards`, choose a V3 card file named `e2e-card.json` in **Import** and import it | The row **E2E Card** (`e2e-card`) appears; `GET /api/cards` lists it with `attached_to: []`; the audit log has a **Card import** event |
+| T3 | Create `e2e-card-agent` through the API; on `/agents` select it and pick **E2E Card** under **Character card**, wait ~2s | `character_card: "e2e-card"` is in `GET /api/config` for that agent; the Cards page shows the agent under **Used by** |
+| T4 | On `/agent/cards`, click **Delete** on `e2e-card` and confirm | The card is still listed and the page shows the server's sentence: `Card "e2e-card" is attached to agent e2e-card-agent; detach it first.` |
+| T5 | On `/agents` set the agent's **Character card** back to **None**, wait ~2s; on `/agent/cards` delete `e2e-card` and confirm | `character_card` is gone from the agent, the card is gone from `GET /api/cards`, and the audit log has a **Card delete** event |
+| T6 | On `/agents` with `e2e-card-agent` selected, turn on **Allow character card tools**, wait ~2s; turn it off, wait ~2s; remove the agent through the API | `ccv3: true` is written on the first toggle and the key is absent after the second; every other field of the agent is unchanged |
 
 ## S. Keyboard
 
