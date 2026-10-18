@@ -125,13 +125,15 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mutate func(*config.Config)) bool {
 	err := h.updateConfig(r, func(c *config.Config) error {
 		before := c.Gateway.Listeners()
-		cardsBefore := agentCards(c)
+		// mutate may replace the whole struct with the request body, which
+		// carries no data directory: take what depends on it first.
+		cardsBefore, cardsDir := agentCards(c), c.CardsPath()
 		mutate(c)
 		errs := validateConfig(c)
 		if msg := validateCertificateChange(before, c.Gateway.Listeners()); msg != "" {
 			errs = append(errs, msg)
 		}
-		errs = append(errs, missingCardsIntroduced(cardsBefore, c)...)
+		errs = append(errs, missingCardsIntroduced(cardsBefore, cardsDir, c)...)
 		if len(errs) == 0 {
 			return nil
 		}

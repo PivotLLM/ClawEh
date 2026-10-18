@@ -268,10 +268,11 @@ func agentCards(cfg *config.Config) map[string]string {
 }
 
 // missingCardsIntroduced lists, for a save of the configuration, each agent
-// whose character_card the save sets or changes to a card the library does
-// not have. A card already missing in the file does not block an unrelated
-// save (the Agents page and Check Up show it), like a dangling model.
-func missingCardsIntroduced(before map[string]string, next *config.Config) []string {
+// whose character_card the save sets or changes to a card the library
+// (cardsDir) does not have. A card already missing in the file does not block
+// an unrelated save (the Agents page and Check Up show it), like a dangling
+// model.
+func missingCardsIntroduced(before map[string]string, cardsDir string, next *config.Config) []string {
 	var out []string
 	var store *ccv3.Store
 	for i := range next.Agents.List {
@@ -284,7 +285,7 @@ func missingCardsIntroduced(before map[string]string, next *config.Config) []str
 			continue
 		}
 		if store == nil {
-			s, err := ccv3.Open(next.CardsPath())
+			s, err := ccv3.Open(cardsDir)
 			if err != nil {
 				out = append(out, fmt.Sprintf("%s: the character card library cannot be opened: %v", a.DisplayName(), err))
 				return out

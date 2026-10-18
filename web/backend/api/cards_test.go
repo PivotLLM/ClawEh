@@ -207,12 +207,18 @@ func TestConfigSave_RefusesNewMissingCard(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		return rec
 	}
-	rec := patch(`{"agents":{"list":[{"id":"main","name":"Main","default":true,"character_card":"nobody"}]}}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `Main: character card \"nobody\" does not exist.`) {
+	// Bob has no card yet: both saves introduce an attachment. Main keeps
+	// its own, which proves an unchanged reference is not re-checked.
+	const main = `{"id":"main","name":"Main","default":true,"character_card":"Watson"}`
+	rec := patch(`{"agents":{"list":[` + main + `,{"id":"bob","name":"Bob","character_card":"nobody"}]}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `Bob: character card \"nobody\" does not exist.`) {
 		t.Errorf("attach missing = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec = patch(`{"agents":{"list":[{"id":"main","name":"Main","default":true,"character_card":"watson"}]}}`); rec.Code != http.StatusOK {
+	if rec = patch(`{"agents":{"list":[` + main + `,{"id":"bob","name":"Bob","character_card":"watson"}]}}`); rec.Code != http.StatusOK {
 		t.Errorf("attach existing = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat("cards"); !os.IsNotExist(err) {
+		t.Error("the handler opened a card library relative to the working directory")
 	}
 	// Remove the card behind the agent's back; an unrelated save still works.
 	store, err := ccv3.Open(filepath.Join(os.Getenv("CLAW_HOME"), "cards"))
