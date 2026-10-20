@@ -120,7 +120,8 @@ func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *Agen
 		return ""
 	}
 	tmpDir := filepath.Join(agent.Workspace, "tmp")
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+	modes := agentModes(al.GetConfig(), tmpDir)
+	if err := os.MkdirAll(tmpDir, modes.Dir); err != nil {
 		logger.WarnCF("agent", "received media: create tmp dir failed", map[string]any{"error": err.Error()})
 		return ""
 	}
@@ -133,7 +134,7 @@ func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *Agen
 			continue
 		}
 		name := receivedFileName(ref, meta.Filename)
-		if err := copyFileContents(src, filepath.Join(tmpDir, name)); err != nil {
+		if err := copyFileContents(src, filepath.Join(tmpDir, name), modes.File); err != nil {
 			logger.WarnCF("agent", "received media: copy failed", map[string]any{"ref": ref, "error": err.Error()})
 			continue
 		}
@@ -194,14 +195,14 @@ func receivedFileName(ref, filename string) string {
 	return id + "_" + base
 }
 
-// copyFileContents streams src to dst, creating/truncating dst.
-func copyFileContents(src, dst string) error {
+// copyFileContents streams src to dst, creating (with mode) or truncating dst.
+func copyFileContents(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src) //nolint:gosec // src is a media store path (ResolveWithMeta)
 	if err != nil {
 		return err
 	}
 	defer utils.CloseQuietly(in)
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
 	if err != nil {
 		return err
 	}

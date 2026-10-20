@@ -44,14 +44,15 @@ type Manager struct {
 	stateFile string
 }
 
-// NewManager creates a new state manager for the given workspace.
-func NewManager(workspace string) *Manager {
+// NewManager creates a new state manager for the given workspace. The state
+// directory is created with dirMode (the agents area's mode).
+func NewManager(workspace string, dirMode os.FileMode) *Manager {
 	stateDir := filepath.Join(workspace, "state")
 	stateFile := filepath.Join(stateDir, "state.json")
 	oldStateFile := filepath.Join(workspace, "state.json")
 
 	// Create state directory if it doesn't exist
-	if err := os.MkdirAll(stateDir, 0o700); err != nil { //nolint:gosec // workspace path from agent config
+	if err := os.MkdirAll(stateDir, dirMode); err != nil { //nolint:gosec // workspace path from agent config
 		logger.WarnCF("state", "failed to create state directory",
 			map[string]any{"path": stateDir, "error": err.Error()})
 	}

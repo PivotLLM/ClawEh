@@ -21,18 +21,25 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-const dirMode = 0o700
-
 // Prepare creates internal/, cli/, skills/, cards/ and the common directory
 // under the data directory when they are missing. It runs at every start, before
-// anything opens the files they hold. Problems are logged; none stops the
-// start.
+// anything opens the files they hold. internal/ holds secrets and is always
+// owner-only; cli/, skills/ and cards/ take the default directory mode and the
+// common directory the common area's (security.permissions). Problems are
+// logged; none stops the start.
 func Prepare(cfg *config.Config) {
 	if cfg.DataDir() == "" {
 		return
 	}
-	for _, dir := range []string{cfg.InternalPath(), cfg.CLIPath(), cfg.SkillsPath(), cfg.CardsPath(), cfg.ResolveCommonDir()} {
-		if err := os.MkdirAll(dir, dirMode); err != nil {
+	dirMode := cfg.PermissionModes("").Dir
+	for dir, mode := range map[string]os.FileMode{
+		cfg.InternalPath():     config.DefaultDirMode,
+		cfg.CLIPath():          dirMode,
+		cfg.SkillsPath():       dirMode,
+		cfg.CardsPath():        dirMode,
+		cfg.ResolveCommonDir(): cfg.PermissionModes(config.AreaCommon).Dir,
+	} {
+		if err := os.MkdirAll(dir, mode); err != nil {
 			logger.WarnCF("layout", "Cannot create a data directory", map[string]any{"path": dir, "error": err.Error()})
 		}
 	}

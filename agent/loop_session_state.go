@@ -253,7 +253,7 @@ func (al *AgentLoop) cogmemSessionStatus(ctx context.Context, agent *AgentInstan
 	if _, err := os.Stat(path); err != nil {
 		return "No cognitive-memory database for this assistant yet."
 	}
-	s, err := cogmemstore.Open(path)
+	s, err := cogmemstore.Open(path, cogmemhost.StoreOptions(agentModes(al.GetConfig(), path))...)
 	if err != nil {
 		return "Cognitive memory unavailable: " + err.Error()
 	}

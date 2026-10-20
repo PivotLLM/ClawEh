@@ -171,7 +171,7 @@ func newAgentInstance(
 
 	humanModel, agentCfg := humanAgentConfig(cfg, agentCfg)
 
-	if err := prepareWorkspace(spec); err != nil {
+	if err := prepareWorkspace(spec, cfg); err != nil {
 		return nil, err
 	}
 
@@ -183,8 +183,8 @@ func newAgentInstance(
 		fallbacks = models[1:]
 	}
 
-	migrateCognitiveMemory(spec, agentCfg)
-	sessions, err := initSessionStore(filepath.Join(stateDir, sessionsDirName))
+	migrateCognitiveMemory(spec, agentCfg, agentModes(cfg, stateDir))
+	sessions, err := initSessionStore(filepath.Join(stateDir, sessionsDirName), agentModes(cfg, stateDir))
 	if err != nil {
 		return nil, err
 	}
@@ -294,15 +294,27 @@ func resolveAgentCandidates(cfg *config.Config, models []string, agentID string)
 	return candidates
 }
 
+// agentModes returns the modes for path among an agent's directories: the
+// agents area's for a configured agent, owner-only for a temporary agent's
+// state (see config.Config.AgentModes), and the defaults without a config.
+func agentModes(cfg *config.Config, path string) config.Modes {
+	if cfg == nil {
+		return config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	}
+	return cfg.AgentModes(path)
+}
+
 // prepareWorkspace makes the agent's workspace ready: seeded with the prompt
 // files and skills, except for a fresh temporary agent, whose prompt is
-// entirely its creator's and whose workspace is only created.
-func prepareWorkspace(spec agentreg.Spec) error {
+// entirely its creator's and whose workspace is only created. Both take the
+// workspace's modes (agentModes).
+func prepareWorkspace(spec agentreg.Spec, cfg *config.Config) error {
+	m := agentModes(cfg, spec.Workspace)
 	if !spec.Fresh {
-		agentws.Populate(spec.Workspace)
+		agentws.Populate(spec.Workspace, m.Dir, m.File)
 		return nil
 	}
-	if err := os.MkdirAll(spec.Workspace, 0o700); err != nil {
+	if err := os.MkdirAll(spec.Workspace, m.Dir); err != nil {
 		return fmt.Errorf("create workspace %s: %w", spec.Workspace, err)
 	}
 	return nil
@@ -314,7 +326,7 @@ func prepareWorkspace(spec agentreg.Spec) error {
 // no point an operator can call it done, and leaves the store of an agent
 // nobody talks to that day on the old schema indefinitely. A fresh agent
 // without memory never gets a memory directory.
-func migrateCognitiveMemory(spec agentreg.Spec, agentCfg *config.AgentConfig) {
+func migrateCognitiveMemory(spec agentreg.Spec, agentCfg *config.AgentConfig, modes config.Modes) {
 	migrateID := routing.DefaultAgentID
 	if agentCfg != nil && agentCfg.ID != "" {
 		migrateID = agentCfg.ID
@@ -323,7 +335,7 @@ func migrateCognitiveMemory(spec agentreg.Spec, agentCfg *config.AgentConfig) {
 		migrateID = spec.Label()
 	}
 	if !spec.Fresh || agentCfg.CognitiveMemoryEnabled() {
-		cogmemhost.Migrate(migrateID, spec.StateDir)
+		cogmemhost.Migrate(migrateID, spec.StateDir, modes)
 	}
 }
 
@@ -493,15 +505,16 @@ func (a *AgentInstance) Close() error {
 	return nil
 }
 
-// initSessionStore opens the per-session SQLite store under dir. The live
-// window and the session state live in each session's archive DB alongside
-// the archived messages, so there is one store, one seq space, and one place
-// recovery reads.
-func initSessionStore(dir string) (session.SessionStore, error) {
+// initSessionStore opens the per-session SQLite store under dir, creating
+// what it needs with modes. The live window and the session state live in
+// each session's archive DB alongside the archived messages, so there is one
+// store, one seq space, and one place recovery reads.
+func initSessionStore(dir string, modes config.Modes) (session.SessionStore, error) {
 	if err := refuseUnmigratedSessions(dir); err != nil {
 		return nil, err
 	}
-	store, err := session.NewSQLiteStore(dir)
+	store, err := session.NewSQLiteStore(dir,
+		session.WithFolderPermissions(modes.Dir), session.WithFilePermissions(modes.File))
 	if err != nil {
 		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}

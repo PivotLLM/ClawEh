@@ -33,14 +33,17 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 		if !ok || inst == nil || inst.Config == nil || !inst.Config.CognitiveMemoryEnabled() {
 			return nil, fmt.Errorf("cogmem: agent %q not cognitive", j.ID)
 		}
-		st, err := store.Open(store.DBPath(j.Dir))
+		modes := cfg.AgentModes(j.Dir)
+		st, err := store.Open(store.DBPath(j.Dir), cogmemhost.StoreOptions(modes)...)
 		if err != nil {
 			return nil, fmt.Errorf("cogmem: open store: %w", err)
 		}
 
 		settings := cogmemhost.Settings(cfg.Agents.Defaults.EffectiveMemory(inst.Config))
 		caller := agentLoop.NewMemoryModelCaller(inst)
-		return consolidate.NewWorker(st, caller, settings.WorkerOptions(j.Workspace)...), nil
+		opts := append(settings.WorkerOptions(j.Workspace),
+			consolidate.WithFolderPermissions(modes.Dir), consolidate.WithFilePermissions(modes.File))
+		return consolidate.NewWorker(st, caller, opts...), nil
 	}
 
 	// Thresholds from the default agent's effective memory config. (Triggers are

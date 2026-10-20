@@ -413,7 +413,7 @@ func TestRecordPendingTurnSource_AgentAddedByReload(t *testing.T) {
 		processOptions{SessionKey: key, Channel: "webui", ChatID: "x", ReplyRequired: true})
 
 	// What the next process reads at startup.
-	pt, ok := state.NewManager(bob.Workspace).GetPendingTurn(key)
+	pt, ok := state.NewManager(bob.Workspace, 0o700).GetPendingTurn(key)
 	if !ok || pt.Channel != "webui" || pt.ChatID != "x" || !pt.ReplyRequired {
 		t.Fatalf("recorded source = %+v (ok=%v), want webui/x, reply required", pt, ok)
 	}

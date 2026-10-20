@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -45,7 +46,7 @@ func TestDumpRefusals(t *testing.T) {
 			cfg.Logging.DumpAll = false
 			al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), refusingProvider{}, nil, OwnsDataDir())
 			dumps := filepath.Join(t.TempDir(), "dumps")
-			al.SetDumpsDir(dumps)
+			al.SetDumpsDir(dump.Dir{Path: dumps})
 
 			alice, ok := al.GetRegistry().Get("alice")
 			if !ok {

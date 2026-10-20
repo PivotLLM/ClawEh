@@ -102,11 +102,18 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   Handlers must not call `config.LoadConfig` themselves. Secret fields may hold
   `env:NAME` / `file:/path` references (`config/secrets.go`), resolved at load and written
   back on save; unknown keys are warned at load (`config/unknown_keys.go`).
-- **Startup guards:** `internal/perms.Enforce` runs before the config loads — `CLAW_HOME`
-  and every folder under it become 0700, secrets/DBs 0600, and a group/other-readable `config.json` aborts startup
-  with the `chmod 600` to run. Everything ClawEh creates under `CLAW_HOME` is 0700/0600;
-  ctxengine and cogmem create the session archives and memory stores (with their -wal/-shm)
-  owner-only themselves, so ClawEh has no pre-step for them.
+- **Startup guards:** a group/other-readable `config.json` aborts startup before the config
+  is read (`perms.CheckConfig`), with the `chmod 600` to run; then, with the config loaded,
+  `internal/perms.Enforce` holds `CLAW_HOME` to `perms.PolicyFor(cfg)`: every folder to its
+  area's `security.permissions` mode (default 0700; `internal/`, `tls/`, `tokens/` always
+  0700), secrets/DBs 0600 except the agents area's databases, which follow its file mode.
+  It only ever removes group/other bits; ctxengine and cogmem, by contrast, set an agent's
+  databases (with -wal/-shm and snapshots) to exactly the configured mode on every open, so
+  existing ones gain access when the agents mode allows it. What ClawEh creates takes the same modes
+  (`config.PermissionModes(area)`, `cfg.AgentModes(path)` for agent state: the agents
+  area for configured agents, 0700/0600 for temporary ones); ctxengine and cogmem get them
+  through their permission options, and every opener of an agent's cogmem store passes
+  `cogmemhost.StoreOptions`, since opening resets the database files to the given mode.
 - **Audit log:** `internal/audit` (`<CLAW_HOME>/internal/audit.db`) records tool calls, config
   writes and logins; every turn carries a `turn_id` on its log lines. See `manual/admin/audit.md`.
 - **Fail fast:** if the HTTP listener, the MCP host server or the agent loop dies after

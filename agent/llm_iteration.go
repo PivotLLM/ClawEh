@@ -307,7 +307,7 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 // the session asked for it, and logs the response.
 func (t *llmTurn) recordResponse(ctx context.Context, response *providers.LLMResponse) {
 	al := t.al
-	if cfg := al.GetConfig(); al.dumpsDir != "" && cfg != nil {
+	if cfg := al.GetConfig(); al.dumpsDir.Path != "" && cfg != nil {
 		isRefusal := response.FinishReason == "refusal"
 		if isRefusal && cfg.Logging.DumpRefusals {
 			al.dumpRefusal(t.agent, t.messages, response, t.opts, t.model, t.iteration)

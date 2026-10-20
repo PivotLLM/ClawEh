@@ -224,7 +224,7 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := collectAssessment(t.Context(), cfg, env)
-	if r := assessmentRow(t, s, "Data directory permissions"); r[0] != "" || r[2] != "CLAW_HOME and its secrets are owner-only." {
+	if r := assessmentRow(t, s, "Data directory permissions"); r[0] != "" || r[2] != "Within the configured modes (folders 0700, secrets 0600)." {
 		t.Errorf("tight permissions row = %v", r)
 	}
 
@@ -240,8 +240,8 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 	if r[0] != "*" {
 		t.Errorf("loose permissions mark = %q, want *", r[0])
 	}
-	contains(t, r[2], "1 file under CLAW_HOME is readable by other users (first: "+loosePath+" 0644)", "loose status")
-	contains(t, r[2], "ClawEh tightens them at start", "loose fix")
+	contains(t, r[2], "1 file under CLAW_HOME is more open than the configured modes (first: "+loosePath+" 0644)", "loose status")
+	contains(t, r[2], "ClawEh tightens them at start — run it, or chmod it to 0600.", "loose fix")
 
 	// A loose data directory itself counts too and comes first.
 	if err := os.Chmod(env.DataDir, 0o755); err != nil {
@@ -249,21 +249,39 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 	}
 	s = collectAssessment(t.Context(), cfg, env)
 	r = assessmentRow(t, s, "Data directory permissions")
-	contains(t, r[2], "2 files under CLAW_HOME are readable by other users (first: "+env.DataDir+" 0755)", "loose dir status")
+	contains(t, r[2], "2 files under CLAW_HOME are more open than the configured modes (first: "+env.DataDir+" 0755)", "loose dir status")
+
+	// With the data directory allowed 0750, a 0750 one is fine and only the
+	// secret is reported, against its fixed 0600; the summary names the modes.
+	if err := os.Chmod(env.DataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loosePath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Security.Permissions = config.PermissionsConfig{
+		DirMode: "0750",
+		Agents:  config.AreaPermissions{DirMode: "0750", FileMode: "0640"},
+	}
+	s = collectAssessment(t.Context(), cfg, env)
+	r = assessmentRow(t, s, "Data directory permissions")
+	if r[0] != "" || r[2] != "Within the configured modes (folders 0750, secrets 0600; agents 0750/0640)." {
+		t.Errorf("configured modes row = %v", r)
+	}
 }
 
 // TestPermsStatus_TruncatedAndError: a truncated walk keeps its findings and
 // says it stopped; any other error is reported as such.
 func TestPermsStatus_TruncatedAndError(t *testing.T) {
-	got := permsStatus(nil, perms.ErrTruncated)
-	contains(t, got, "CLAW_HOME and its secrets are owner-only.", "truncated, no findings")
+	got := permsStatus(nil, perms.ErrTruncated, "folders 0700, secrets 0600")
+	contains(t, got, "Within the configured modes (folders 0700, secrets 0600).", "truncated, no findings")
 	contains(t, got, "The check was truncated at the entry cap", "truncated note")
 
-	got = permsStatus([]perms.Finding{{Path: "/x/tokens.json", Mode: 0o644, Want: 0o600}}, perms.ErrTruncated)
-	contains(t, got, "1 file under CLAW_HOME is readable by other users (first: /x/tokens.json 0644)", "truncated with findings")
+	got = permsStatus([]perms.Finding{{Path: "/x/tokens.json", Mode: 0o644, Want: 0o600}}, perms.ErrTruncated, "")
+	contains(t, got, "1 file under CLAW_HOME is more open than the configured modes (first: /x/tokens.json 0644)", "truncated with findings")
 	contains(t, got, "truncated at the entry cap", "truncated note with findings")
 
-	got = permsStatus(nil, errors.New("boom"))
+	got = permsStatus(nil, errors.New("boom"), "")
 	if got != "Permission check failed: boom." {
 		t.Errorf("error status = %q", got)
 	}

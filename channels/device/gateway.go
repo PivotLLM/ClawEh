@@ -162,7 +162,8 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 		return nil
 	}
 	mediaDir := utils.MediaTempDir()
-	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+	dirMode, fileMode := utils.MediaModes()
+	if err := os.MkdirAll(mediaDir, dirMode); err != nil {
 		logger.WarnCF("device", "create media dir failed; dropping attachments", map[string]any{"dir": mediaDir, "error": err.Error()})
 		return nil
 	}
@@ -176,6 +177,9 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 			continue
 		}
 		_, werr := f.Write(a.Data)
+		if werr == nil && fileMode != 0o600 { // CreateTemp makes it 0600
+			werr = f.Chmod(fileMode)
+		}
 		if closeErr := f.Close(); closeErr != nil && werr == nil {
 			werr = closeErr
 		}

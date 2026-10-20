@@ -466,7 +466,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	var failureDump ctxengine.FailureDumpFunc
 	if cfg := al.GetConfig(); cfg != nil {
 		debugCapture = cfg.Summarization.DebugCapture
-		if cfg.Logging.DumpFailedCompressions && al.dumpsDir != "" {
+		if cfg.Logging.DumpFailedCompressions && al.dumpsDir.Path != "" {
 			dumpsDir := al.dumpsDir
 			failureDump = func(kind string, meta map[string]any, input, output string) error {
 				_, err := dump.Write(dumpsDir, kind, meta, json.RawMessage(input), json.RawMessage(output))
@@ -502,12 +502,15 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	// archive note in the system message names those tools). Its conversation
 	// window and summary are still kept by the session store.
 	engineArchiveDir := archiveDir
+	stateModes := agentModes(al.GetConfig(), agent.StateDir)
 	if agent.Spec.Fresh {
 		engineArchiveDir = ""
 	}
 	opts := append([]ctxengine.Option{
 		ctxengine.WithContextWindow(agent.ContextWindow),
 		ctxengine.WithArchiveDir(engineArchiveDir),
+		ctxengine.WithFolderPermissions(stateModes.Dir),
+		ctxengine.WithFilePermissions(stateModes.File),
 		ctxengine.WithModelCaller(caller),
 		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
 		ctxengine.WithCompressionProfileDir(agent.StateDir),

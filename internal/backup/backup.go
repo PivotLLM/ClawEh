@@ -115,6 +115,9 @@ type Source struct {
 	ConfigPath string // config.json (normally <Home>/config.json)
 	CronDir    string // holds jobs.json
 	AgentsDir  string // agent workspaces; walked separately only when outside Home
+	// Modes are the destination directory's and the archive's modes
+	// (security.permissions.backup); a zero field means 0700 or 0600.
+	Modes config.Modes
 }
 
 // Options tune a run. The zero value is what the nightly scheduler uses.
@@ -161,19 +164,27 @@ type entry struct {
 	db   bool   // copy with VACUUM INTO rather than plain read
 }
 
-// Run writes <dest>/claw-backup-<stamp>.tar.gz from src. dest is created 0700
-// when missing; the archive is 0600. Databases that fail quick_check are
+// Run writes <dest>/claw-backup-<stamp>.tar.gz from src. dest is created and
+// set to src.Modes.Dir (default 0700); the archive is src.Modes.File (default
+// 0600). Databases that fail quick_check are
 // skipped (recorded in Result.Skipped and alerted), never fatal: one bad file
 // must not cost the operator the rest of the backup.
 func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, error) {
 	if a == nil {
 		a = alerts.Default()
 	}
-	if err := os.MkdirAll(dest, 0o700); err != nil {
+	dirMode, fileMode := src.Modes.Dir, src.Modes.File
+	if dirMode == 0 {
+		dirMode = config.DefaultDirMode
+	}
+	if fileMode == 0 {
+		fileMode = config.DefaultFileMode
+	}
+	if err := os.MkdirAll(dest, dirMode); err != nil {
 		return nil, fmt.Errorf("backup: create %s: %w", dest, err)
 	}
-	if err := os.Chmod(dest, 0o700); err != nil {
-		// A network mount may not honour it; the archive itself is still 0600.
+	if err := tightenDir(dest, dirMode); err != nil {
+		// A network mount may not honour it; the archive itself keeps its mode.
 		logger.WarnCF("backup", "could not restrict backup directory", map[string]any{"dir": dest, "error": err.Error()})
 	}
 
@@ -235,7 +246,7 @@ func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, er
 	}
 
 	tmpArchive := filepath.Join(tmpDir, "archive.tar.gz")
-	if wErr := writeArchive(tmpArchive, m, func(tw *tar.Writer) error {
+	if wErr := writeArchive(tmpArchive, fileMode, m, func(tw *tar.Writer) error {
 		for _, f := range files {
 			if addErr := addFile(tw, f.path, f.src, f.name); addErr != nil {
 				return addErr
@@ -258,10 +269,25 @@ func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, er
 	return res, nil
 }
 
-// writeArchive creates path (0600) as a gzip tarball whose first entry is the
-// manifest, then hands the writer to body for the files.
-func writeArchive(path string, m Manifest, body func(*tar.Writer) error) (err error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // path is inside the temp dir this package created
+// tightenDir clears the group/other bits of dir that mode does not grant. It
+// never adds access: an operator's tighter destination stays as it is.
+func tightenDir(dir string, mode fs.FileMode) error {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	cur := fi.Mode().Perm()
+	want := cur &^ (0o077 &^ mode)
+	if want == cur {
+		return nil
+	}
+	return os.Chmod(dir, want)
+}
+
+// writeArchive creates path (with mode) as a gzip tarball whose first entry is
+// the manifest, then hands the writer to body for the files.
+func writeArchive(path string, mode fs.FileMode, m Manifest, body func(*tar.Writer) error) (err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode) //nolint:gosec // path is inside the temp dir this package created
 	if err != nil {
 		return fmt.Errorf("backup: create %s: %w", path, err)
 	}
@@ -630,10 +656,7 @@ func DestFor(cfg *config.Config, override string) string {
 	if override != "" {
 		return override
 	}
-	if d := strings.TrimSpace(cfg.Backup.Dest); d != "" {
-		return d
-	}
-	return filepath.Join(cfg.DataDir(), "backup")
+	return cfg.BackupDir()
 }
 
 // RunForConfig backs up the install described by cfg (config.json at
@@ -647,6 +670,7 @@ func RunForConfig(cfg *config.Config, configPath string, now time.Time, opts Opt
 		ConfigPath: configPath,
 		CronDir:    cfg.CronPath(),
 		AgentsDir:  cfg.BaseDir(),
+		Modes:      cfg.PermissionModes(config.AreaBackup),
 	}
 	res, err := Run(src, dest, now, opts.Alerter)
 	if err != nil {

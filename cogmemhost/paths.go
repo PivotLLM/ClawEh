@@ -11,6 +11,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -29,16 +30,24 @@ func Dir(stateDir string) string {
 	return filepath.Join(stateDir, DirName)
 }
 
+// StoreOptions are the store options that give a memory's directory and files
+// modes; every opener of an agent's store passes them, since opening sets the
+// database files to the configured mode.
+func StoreOptions(modes config.Modes) []store.Option {
+	return []store.Option{store.WithFolderPermissions(modes.Dir), store.WithFilePermissions(modes.File)}
+}
+
 // Migrate opens the agent's memory once at load so any pending schema
 // migration runs now rather than mid-conversation, and logs what changed.
+// The store is opened with modes (see StoreOptions).
 // The layout itself is not migrated here: moving a pre-0.5.2 per-session file
 // into the cogmem directory is a one-time operator step (see the changelog).
-func Migrate(agentID, workspace string) {
+func Migrate(agentID, workspace string, modes config.Modes) {
 	dir := Dir(workspace)
 	if dir == "" {
 		return
 	}
-	r := store.Migrate(dir)
+	r := store.Migrate(dir, StoreOptions(modes)...)
 	switch {
 	case r.Err != nil:
 		logger.ErrorCF("cogmem", "Failed to migrate cognitive-memory database",

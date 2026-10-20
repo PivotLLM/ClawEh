@@ -54,7 +54,7 @@ The reference is written back unchanged when the configuration is saved. A refer
 | `devices` | Hardware device events, such as USB plug and unplug. Not the paired devices. | **System** page, **Devices**. |
 | `voice` | Speech-to-text for voice messages. | **Speech** page. |
 | `logging` | Log level, log files, retention, and whether message content is logged. | **System** page, **Runtime** (retention); `config.json`. See [Logs](../admin/logs.md). |
-| `security` | `message_prefix`: text put in front of messages that arrive through an agent's external message endpoint. | `config.json` only. |
+| `security` | `message_prefix`: text put in front of messages that arrive through an agent's external message endpoint. `permissions`: the modes of the folders and files ClawEh creates in the data directory (see [Logs](../admin/logs.md#letting-another-user-read-logs-or-agents)). | `config.json` only. |
 | `mcp_host` | ClawEh's own MCP server, which the CLI providers use to call ClawEh's tools. It must listen on a loopback address. | **MCP** › **Config**. See [MCP](../mcp.md). |
 | `cooldown` | How long a failing model is paused ([Cooldowns](../providers/concepts.md#cooldowns)), in minutes, per kind of failure: `billing_auth_minutes` (default 30), `rate_limit_minutes` (10), `client_error_minutes` (10), `server_error_minutes` (10), `bad_request_minutes` (0). | `config.json` only. |
 | `backup` | The nightly backup: `enabled` (default on), `at` (default `03:00`), `retain_days` (default 30) and `dest` (default `backup/` in the data directory). | **System** page, **Backup**. See [Backup and restore](../admin/backup.md). |

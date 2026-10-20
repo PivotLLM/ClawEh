@@ -109,7 +109,8 @@ func setupAndStartServices(
 	// Stage downloaded media under the instance data dir (e.g. ~/.claw/media,
 	// /opt/claw/media) rather than shared /tmp, so files stay app-owned and two
 	// instances on one host can't collide on a single dir.
-	utils.SetMediaStagingDir(filepath.Join(cfg.DataDir(), "media"))
+	mediaModes := cfg.PermissionModes(config.AreaMedia)
+	utils.SetMediaStagingDir(filepath.Join(cfg.DataDir(), "media"), mediaModes.Dir, mediaModes.File)
 	services.mediaCleanup = mediaCleanerConfig(cfg)
 	services.MediaStore = startMediaStore(services.mediaCleanup)
 	// Stopped here if setup fails before the channel manager takes it over.
@@ -222,7 +223,7 @@ func startAgentServices(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *
 // tools have a place to read and write. Idempotent.
 func ensureCommonDir(cfg *config.Config) {
 	if commonDir := cfg.ResolveCommonDir(); commonDir != "" {
-		if err := os.MkdirAll(commonDir, 0o700); err != nil {
+		if err := os.MkdirAll(commonDir, cfg.PermissionModes(config.AreaCommon).Dir); err != nil {
 			logger.WarnCF("gateway", "Failed to create common directory", map[string]any{"path": commonDir, "error": err.Error()})
 		}
 	}

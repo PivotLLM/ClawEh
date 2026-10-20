@@ -24,7 +24,7 @@ const alertsFileName = "alerts.log"
 // module's own precedence applies. A log that cannot be opened disables
 // alerting (with a warning) rather than stopping the gateway. The path
 // returned is the one alerts are written to, for the WebUI to read.
-func newAlerter(baseDir string) (alerter.Alerter, string) {
+func newAlerter(baseDir string, fileMode os.FileMode) (alerter.Alerter, string) {
 	opts := []alerter.Option{
 		alerter.WithAppName(app.Name()),
 		alerter.WithInstanceName(shortHostname()),
@@ -33,11 +33,12 @@ func newAlerter(baseDir string) (alerter.Alerter, string) {
 	if path == "" {
 		path = filepath.Join(baseDir, "logs", alertsFileName)
 		opts = append(opts, alerter.WithLogFile(path))
-		// The alerter would create the log 0644; created first, it is 0600. A
-		// missing logs directory is left to alerter.New to report.
+		// The alerter would create the log 0644; created first, it has the
+		// logs file mode (0600 by default). A missing logs directory is left
+		// to alerter.New to report.
 		if _, err := os.Stat(filepath.Dir(path)); err == nil {
-			if err := perms.EnsurePrivateFile(path); err != nil {
-				logger.WarnCF("gateway", "Failed to create the alerts log privately", map[string]any{"path": path, "error": err.Error()})
+			if err := perms.EnsureFileMode(path, fileMode); err != nil {
+				logger.WarnCF("gateway", "Failed to create the alerts log with its mode", map[string]any{"path": path, "error": err.Error()})
 			}
 		}
 	}

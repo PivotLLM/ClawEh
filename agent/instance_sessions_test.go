@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // A sessions directory that still holds a JSONL-layout session must stop the
@@ -19,7 +21,7 @@ func TestInitSessionStore_RefusesUnmigratedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := initSessionStore(dir)
+	store, err := initSessionStore(dir, config.Modes{Dir: 0o700, File: 0o600})
 	if err == nil {
 		closeT(t, store)
 		t.Fatal("expected an error for an unmigrated sessions directory")
@@ -38,7 +40,7 @@ func TestInitSessionStore_IgnoresMigratedSources(t *testing.T) {
 		}
 	}
 
-	store, err := initSessionStore(dir)
+	store, err := initSessionStore(dir, config.Modes{Dir: 0o700, File: 0o600})
 	if err != nil {
 		t.Fatalf("initSessionStore: %v", err)
 	}
@@ -47,7 +49,7 @@ func TestInitSessionStore_IgnoresMigratedSources(t *testing.T) {
 
 // A workspace with no sessions directory yet is the normal first start.
 func TestInitSessionStore_MissingDirIsFine(t *testing.T) {
-	store, err := initSessionStore(filepath.Join(t.TempDir(), "sessions"))
+	store, err := initSessionStore(filepath.Join(t.TempDir(), "sessions"), config.Modes{Dir: 0o700, File: 0o600})
 	if err != nil {
 		t.Fatalf("initSessionStore: %v", err)
 	}

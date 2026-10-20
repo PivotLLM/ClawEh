@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -178,6 +179,18 @@ func (h *Handler) findMemoryDB(id string) (path, agent string, ok bool) {
 	return "", "", false
 }
 
+// openMemoryStore opens the memory database at path with its configured
+// modes. Opening sets the database files to the mode it is given, so without
+// the config it refuses rather than open with the default and flip the mode
+// the gateway set.
+func (h *Handler) openMemoryStore(path string) (*cogmemstore.Store, error) {
+	cfg, err := h.currentConfig()
+	if err != nil {
+		return nil, fmt.Errorf("memory store %s: no configuration to take its modes from: %w", path, err)
+	}
+	return cogmemstore.Open(path, cogmemhost.StoreOptions(cfg.AgentModes(path))...)
+}
+
 func toMemoryMemory(m cogmemstore.Memory) memoryMemory {
 	return memoryMemory{
 		ID:         m.ID,
@@ -218,7 +231,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s, err := cogmemstore.Open(path)
+	s, err := h.openMemoryStore(path)
 	if err != nil {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return
@@ -306,7 +319,7 @@ func (h *Handler) openMemoryForWrite(w http.ResponseWriter, r *http.Request) (*c
 		http.Error(w, "memory store not found", http.StatusNotFound)
 		return nil, false
 	}
-	s, err := cogmemstore.Open(path)
+	s, err := h.openMemoryStore(path)
 	if err != nil {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return nil, false

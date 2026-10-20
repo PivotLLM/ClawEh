@@ -35,6 +35,7 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
 	perMessageChars := mem.Consolidation.PerMessageChars
 	dir := cogmemhost.Dir(agent.StateDir)
+	modes := agentModes(cfg, agent.StateDir)
 	// One memory per agent, in its state directory. A sub-agent clone's is a
 	// snapshot of its source's, ephemeral: recalled from, never observed into.
 	return cogmem.NewSession(cogmem.SessionOptions{
@@ -45,6 +46,8 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 		Settings:  cogmemhost.Settings(mem),
 		Loader:    cogmemhost.NewLoader(cfg, agent.Label(), agent.Workspace),
 		Manager:   cogMgr,
+		// The store's directory and files take the agents area's modes.
+		StoreOptions: cogmemhost.StoreOptions(modes),
 		OnOpen: func(ctx context.Context, st *store.Store) {
 			backfillInbox(ctx, st, agent.Label(), agent.StateDir, sessionKey, perMessageChars)
 		},

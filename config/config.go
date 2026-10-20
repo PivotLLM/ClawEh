@@ -78,6 +78,9 @@ type SecurityConfig struct {
 	// endpoint before they reach the LLM. When empty, the global
 	// DefaultMessagePrefix constant is used.
 	MessagePrefix string `json:"message_prefix,omitempty"`
+	// Permissions sets the modes of what ClawEh creates under the data
+	// directory (see PermissionsConfig).
+	Permissions PermissionsConfig `json:"permissions,omitzero"`
 }
 
 type Config struct {

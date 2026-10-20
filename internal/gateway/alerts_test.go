@@ -35,7 +35,7 @@ func TestNewAlerter(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(base, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a, path := newAlerter(base)
+	a, path := newAlerter(base, 0o600)
 	if path != filepath.Join(base, "logs", alertsFileName) {
 		t.Errorf("path = %q", path)
 	}
@@ -50,7 +50,7 @@ func TestNewAlerter(t *testing.T) {
 
 	envPath := filepath.Join(base, "env-alerts.log")
 	t.Setenv(alerter.EnvLogFile, envPath)
-	a, path = newAlerter(base)
+	a, path = newAlerter(base, 0o600)
 	if path != envPath {
 		t.Errorf("ALERTER_LOG not honoured: path = %q", path)
 	}
@@ -59,7 +59,7 @@ func TestNewAlerter(t *testing.T) {
 	}
 
 	t.Setenv(alerter.EnvLogFile, "")
-	a, path = newAlerter(filepath.Join(base, "missing"))
+	a, path = newAlerter(filepath.Join(base, "missing"), 0o600)
 	if _, ok := a.(alerter.Nop); !ok || path != "" {
 		t.Errorf("unwritable default must disable alerting: %T %q", a, path)
 	}

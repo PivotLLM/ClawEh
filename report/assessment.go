@@ -208,8 +208,8 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 	dd := dataDir(cfg, env)
 
-	findings, permErr := perms.Check(dd, env.ConfigPath)
-	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr))
+	findings, permErr := perms.Check(dd, env.ConfigPath, perms.PolicyFor(cfg))
+	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr, cfg.Security.Permissions.Summary()))
 
 	wu := cfg.Channels.WebUI
 	add(wu.Enabled && wu.Token == "", "WebUI chat token",
@@ -399,23 +399,24 @@ func channelSetUp(cfg *config.Config, name string) bool {
 	return false
 }
 
-// permsStatus describes what perms.Check found under CLAW_HOME. A truncated
+// permsStatus describes what perms.Check found under CLAW_HOME against the
+// configured modes (summary, from PermissionsConfig.Summary). A truncated
 // walk still reports the findings it collected, and says it stopped early.
-func permsStatus(findings []perms.Finding, err error) string {
+func permsStatus(findings []perms.Finding, err error, summary string) string {
 	if err != nil && !errors.Is(err, perms.ErrTruncated) {
 		return "Permission check failed: " + err.Error() + "."
 	}
 	var s string
 	if len(findings) == 0 {
-		s = "CLAW_HOME and its secrets are owner-only."
+		s = "Within the configured modes (" + summary + ")."
 	} else {
 		f := findings[0]
 		noun := "files under CLAW_HOME are"
 		if len(findings) == 1 {
 			noun = "file under CLAW_HOME is"
 		}
-		s = fmt.Sprintf("%d %s readable by other users (first: %s %04o); "+
-			"ClawEh tightens them at start — run it, or chmod 700/600.", len(findings), noun, f.Path, f.Mode)
+		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o); "+
+			"ClawEh tightens them at start — run it, or chmod it to %04o.", len(findings), noun, f.Path, f.Mode, f.Want)
 	}
 	if errors.Is(err, perms.ErrTruncated) {
 		s += " The check was truncated at the entry cap, so files beyond it were not examined."

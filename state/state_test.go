@@ -11,7 +11,7 @@ import (
 
 func TestAtomicSave(t *testing.T) {
 	tmpDir := t.TempDir()
-	sm := NewManager(tmpDir)
+	sm := NewManager(tmpDir, 0o700)
 
 	want := PendingTurn{Channel: "telegram", ChatID: "123"}
 	if err := sm.SetPendingTurn("agent:alice:main", want); err != nil {
@@ -30,14 +30,14 @@ func TestAtomicSave(t *testing.T) {
 	}
 
 	// A new manager on the same workspace reads the saved state back.
-	if got, ok := NewManager(tmpDir).GetPendingTurn("agent:alice:main"); !ok || got != want {
+	if got, ok := NewManager(tmpDir, 0o700).GetPendingTurn("agent:alice:main"); !ok || got != want {
 		t.Errorf("reloaded GetPendingTurn = %+v, %v; want %+v", got, ok, want)
 	}
 }
 
 func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 	tmpDir := t.TempDir()
-	sm := NewManager(tmpDir)
+	sm := NewManager(tmpDir, 0o700)
 
 	if err := sm.SetPendingTurn("k", PendingTurn{Channel: "initial"}); err != nil {
 		t.Fatalf("SetPendingTurn failed: %v", err)
@@ -50,7 +50,7 @@ func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 	}
 
 	// The original state is still intact.
-	if got, _ := NewManager(tmpDir).GetPendingTurn("k"); got.Channel != "initial" {
+	if got, _ := NewManager(tmpDir, 0o700).GetPendingTurn("k"); got.Channel != "initial" {
 		t.Errorf("Expected channel 'initial' after corrupted temp file, got %q", got.Channel)
 	}
 
@@ -68,7 +68,7 @@ func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	tmpDir := t.TempDir()
-	sm := NewManager(tmpDir)
+	sm := NewManager(tmpDir, 0o700)
 
 	done := make(chan bool, 10)
 	for i := range 10 {
@@ -102,7 +102,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestNewManager_EmptyWorkspace(t *testing.T) {
-	sm := NewManager(t.TempDir())
+	sm := NewManager(t.TempDir(), 0o700)
 	if _, ok := sm.GetPendingTurn("agent:alice:main"); ok {
 		t.Error("Expected no pending turn in a new state")
 	}
@@ -121,7 +121,7 @@ func TestNewManager_MkdirFailureDoesNotCrash(t *testing.T) {
 			os.Exit(0)
 		}
 
-		NewManager(tmpDir)
+		NewManager(tmpDir, 0o700)
 		os.Exit(0)
 	}
 

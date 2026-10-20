@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -166,7 +167,7 @@ func TestCooldownHooks_RaceWithReload(t *testing.T) {
 // when it records a response and takes a direct answer (race detector).
 func TestTurnConfigReads_RaceWithReload(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
-	al := &AgentLoop{cfg: &config.Config{}, dumpsDir: t.TempDir()}
+	al := &AgentLoop{cfg: &config.Config{}, dumpsDir: dump.Dir{Path: t.TempDir()}}
 	agent := &AgentInstance{ID: "alice"}
 	al.exposeReasoningCache = map[string]bool{activeModelCacheKey(agent.ID, "s"): false}
 	turn := &llmTurn{al: al, agent: agent, opts: processOptions{SessionKey: "s"}}

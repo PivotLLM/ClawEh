@@ -243,7 +243,7 @@ func (al *AgentLoop) stateManager(agentID string) (*state.Manager, bool) {
 	defer al.agentStatesMu.Unlock()
 	sm, ok := al.agentStates[agent.Workspace]
 	if !ok {
-		sm = state.NewManager(agent.Workspace)
+		sm = state.NewManager(agent.Workspace, agentModes(al.GetConfig(), agent.Workspace).Dir)
 		al.agentStates[agent.Workspace] = sm
 	}
 	return sm, true

@@ -674,7 +674,31 @@
     "dump_failed_compressions": true
   },
   "security": {
-    "message_prefix": "x"
+    "message_prefix": "x",
+    "permissions": {
+      "dir_mode": "x",
+      "file_mode": "x",
+      "logs": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "agents": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "media": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "common": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "backup": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      }
+    }
   },
   "mcp_host": {
     "enabled": true,

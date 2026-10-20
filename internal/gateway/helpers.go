@@ -143,11 +143,12 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 	return mux
 }
 
-// enforceDataDirPerms makes CLAW_HOME private before anything in it is read:
-// the directory and its secret-bearing files are tightened, and a config file
-// other users can read is a refusal to start, with the chmod that fixes it.
-func enforceDataDirPerms(baseDir, configPath string) error {
-	if err := perms.Enforce(baseDir, configPath, func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) }); err != nil {
+// enforceDataDirPerms holds CLAW_HOME to policy (the configured modes) before
+// anything else in it is read: the directory, its folders and its
+// secret-bearing files are tightened, and a config file other users can read
+// is a refusal to start, with the chmod that fixes it.
+func enforceDataDirPerms(baseDir, configPath string, policy perms.Policy) error {
+	if err := perms.Enforce(baseDir, configPath, policy, func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) }); err != nil {
 		return fmt.Errorf("startup aborted: %w", err)
 	}
 	return nil

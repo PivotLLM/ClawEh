@@ -355,6 +355,26 @@ observe does not need an entry.
 
 ### Added
 
+- **`security.permissions`: modes for what ClawEh creates in the data
+  directory.** `dir_mode` and `file_mode` set the default (still `0700` and
+  `0600`), and `logs`, `agents`, `media`, `common` and `backup` can each set
+  their own pair, as 3 or 4 octal digits; the top-level `dir_mode` also sets
+  the data directory itself. For example `"dir_mode": "0750"` with
+  `"logs": {"dir_mode": "0750", "file_mode": "0640"}` and the same for
+  `agents` lets a second user in ClawEh's group read the logs and the agents'
+  folders, including their session archives and memory databases. Folders
+  must give the owner `7`, files `6`, and other users may never write; a
+  wrong value stops the start, naming the key. Secrets stay `600` whatever is
+  set: `config.json`, the credentials file, TLS keys, `internal/`, and files
+  named for a token or secret. The startup permission check now holds each
+  folder to its configured mode instead of owner-only; it still only removes
+  access, so after allowing more run `chmod -R g+rX` on the area once (the
+  agents' session archives and memory databases take the new mode when next
+  opened; see
+  *Startup permission checks* in the manual). Check Up's **Data directory
+  permissions** row now names the modes in force. With the block left out
+  nothing changes.
+
 - **Character cards.** An agent can be given a character to play from a
   library of Character Card V3 documents (the format SillyTavern and RisuAI
   use), kept in `<CLAW_HOME>/cards/` and included in the backup. The new

@@ -120,7 +120,7 @@ func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
 	dir, config := fixture(t)
 	var rec logRec
 
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("Enforce: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
 
 	// Second run: nothing left to do, nothing logged.
 	rec.msgs = nil
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("second Enforce: %v", err)
 	}
 	if len(rec.msgs) != 0 {
@@ -176,7 +176,7 @@ func TestEnforceRefusesLooseConfig(t *testing.T) {
 			if err := os.Chmod(config, m); err != nil {
 				t.Fatal(err)
 			}
-			err := Enforce(dir, config, nil)
+			err := Enforce(dir, config, Policy{}, nil)
 			if err == nil {
 				t.Fatalf("Enforce accepted a %04o config", m)
 			}
@@ -198,7 +198,7 @@ func TestEnforceRefusesLooseConfig(t *testing.T) {
 
 func TestEnforceMissingConfigAndDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "fresh")
-	if err := Enforce(dir, filepath.Join(dir, "config.json"), nil); err != nil {
+	if err := Enforce(dir, filepath.Join(dir, "config.json"), Policy{}, nil); err != nil {
 		t.Fatalf("Enforce on a fresh install: %v", err)
 	}
 	if got := mode(t, dir); got != 0o700 {
@@ -212,7 +212,7 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -255,10 +255,10 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 
 func TestCheckCleanInstall(t *testing.T) {
 	dir, config := fixture(t)
-	if err := Enforce(dir, config, nil); err != nil {
+	if err := Enforce(dir, config, Policy{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestWalkCap(t *testing.T) {
 	walkLimit = 3
 	t.Cleanup(func() { walkLimit = old })
 
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if !errors.Is(err, ErrTruncated) {
 		t.Fatalf("Check err = %v, want ErrTruncated", err)
 	}
@@ -283,7 +283,7 @@ func TestWalkCap(t *testing.T) {
 	}
 
 	var rec logRec
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("Enforce under cap: %v", err)
 	}
 	if !strings.Contains(strings.Join(rec.msgs, "\n"), "entry cap") {

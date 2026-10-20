@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
@@ -88,7 +89,7 @@ type AgentLoop struct {
 	// spend sums dispatch cost per UTC day for the daily-spend alert.
 	spend         dailySpend
 	lastSelfClear sync.Map // session key → time.Time, rate-limits session_clear
-	dumpsDir      string
+	dumpsDir      dump.Dir
 	startedAt     time.Time
 
 	// activeModelIdx caches the per-session active model index (write-through to
@@ -819,8 +820,8 @@ func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 }
 
 // SetDumpsDir configures the directory where diagnostic dump files are written.
-// An empty string disables dumping.
-func (al *AgentLoop) SetDumpsDir(dir string) { al.dumpsDir = dir }
+// An empty Path disables dumping.
+func (al *AgentLoop) SetDumpsDir(dir dump.Dir) { al.dumpsDir = dir }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
 func (al *AgentLoop) GetStartupInfo() map[string]any {

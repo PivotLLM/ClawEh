@@ -23,18 +23,35 @@ type dumpDoc struct {
 	Output   json.RawMessage `json:"output"`
 }
 
-// Write creates a .json and .txt dump file pair in dumpsDir and returns the
-// base filename (without extension). Returns ("", nil) if dumpsDir is empty.
-// The dumps directory is created if it does not exist.
+// Dir is where dumps are written and the modes they are created with
+// (security.permissions.logs). A zero mode means 0700 for the directory and
+// 0600 for the files.
+type Dir struct {
+	Path     string
+	DirMode  os.FileMode
+	FileMode os.FileMode
+}
+
+// Write creates a .json and .txt dump file pair in dir and returns the base
+// filename (without extension). Returns ("", nil) if dir.Path is empty. The
+// dumps directory is created if it does not exist.
 //
 // metadata must not include a "reason" key — reason is added automatically.
 // input and output must be valid JSON (typically from json.Marshal).
-func Write(dumpsDir, reason string, metadata map[string]any, input, output json.RawMessage) (string, error) {
-	if dumpsDir == "" {
+func Write(dir Dir, reason string, metadata map[string]any, input, output json.RawMessage) (string, error) {
+	if dir.Path == "" {
 		return "", nil
 	}
+	dumpsDir := dir.Path
+	dirMode, fileMode := dir.DirMode, dir.FileMode
+	if dirMode == 0 {
+		dirMode = 0o700
+	}
+	if fileMode == 0 {
+		fileMode = 0o600
+	}
 
-	if err := os.MkdirAll(dumpsDir, 0o700); err != nil {
+	if err := os.MkdirAll(dumpsDir, dirMode); err != nil {
 		return "", fmt.Errorf("dump: create dir: %w", err)
 	}
 
@@ -61,13 +78,13 @@ func Write(dumpsDir, reason string, metadata map[string]any, input, output json.
 	if err := enc.Encode(doc); err != nil {
 		return "", fmt.Errorf("dump: marshal json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), fileMode); err != nil {
 		return "", fmt.Errorf("dump: write json: %w", err)
 	}
 
 	// --- .txt file ---
 	txt := buildTxt(reason, meta, input, output)
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), fileMode); err != nil {
 		return "", fmt.Errorf("dump: write txt: %w", err)
 	}
 

@@ -87,11 +87,13 @@ grep 1a2b3c4d ~/.claw/logs/claw.log
 
 ## Startup permission checks
 
-The data directory holds keys and tokens, so at every start ClawEh makes it private before reading anything:
+The data directory holds keys and tokens, so at every start ClawEh checks it before using anything in it:
 
-- The data directory and every folder in it are set to owner-only (`700`).
+- The data directory and every folder in it are set to owner-only (`700`), or to the modes set under `security.permissions` (see [Letting another user read logs or agents](#letting-another-user-read-logs-or-agents)).
 - Files holding secrets (credentials, tokens, keys, databases) are set to owner-only (`600`).
 - Each change is logged as a warning naming the file.
+
+The check only removes access. It never adds any.
 
 It does not change `config.json`. If other users can read it, ClawEh refuses to start with a message like:
 
@@ -114,3 +116,32 @@ The message appears in the service's output (`systemctl status claw`, or `journa
 The same applies to the admin credentials file: if other users can read it, ClawEh refuses the account and logs the `chmod 600` to run. See [Signing in](./login.md#no-account-yet).
 
 [Check Up](./checkup.md) shows the **Data directory permissions** row for files that have become readable since the last start.
+
+### Letting another user read logs or agents
+
+`security.permissions` in `config.json` sets the modes of the folders and files ClawEh creates in the data directory. For example, to let a second user in ClawEh's group read the logs and the agents' folders:
+
+```json
+"security": {
+  "permissions": {
+    "dir_mode": "0750",
+    "logs":   { "dir_mode": "0750", "file_mode": "0640" },
+    "agents": { "dir_mode": "0750", "file_mode": "0640" }
+  }
+}
+```
+
+- `dir_mode` and `file_mode` at the top are the default for everything, `0700` and `0600` when left out. The top-level `dir_mode` also sets the data directory itself, so the group can only reach `logs` and `agents` when it grants the group access too.
+- Each area can set its own pair: `logs`, `agents` (the agents folder and any agent's own workspace), `media`, `common` and `backup`. A key left out uses the top-level value. An area is matched by the paths ClawEh is configured with, not by another spelling through a symbolic link.
+- A mode is 3 or 4 octal digits. Folders must give the owner `7` and files `6`, and other users may never write. A wrong value stops ClawEh from starting, with a message naming the key.
+- Secrets stay `600` whatever is set: `config.json`, the credentials file, TLS keys, everything in `internal/`, and any file named for a token or secret. The agents' session archives and memory databases follow the agents modes.
+- `config.json` is read before these modes apply, so its own check is unchanged.
+
+The modes apply to what ClawEh creates from the next start. The startup check only removes access, so existing folders and files keep their modes, with one exception: the agents' session archives and memory databases take the agents modes the next time they are opened, existing ones included. `logs/`, `claw.log` and `error.log` are created before the config is read, so on a first start they are `0700`/`0600` until you run the commands below. After allowing more, give the existing folders and files access once, as the user ClawEh runs as. For the example above:
+
+```
+chmod g+rX ~/.claw
+chmod -R g+rX ~/.claw/logs ~/.claw/agents
+```
+
+Any secret this makes readable is set back to `600` at the next start.

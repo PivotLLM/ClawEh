@@ -70,9 +70,15 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 		cfg = v
 	}
 
+	dir := cogmemhost.Dir(cd.EffectiveStateDir())
+	modes := config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	if cfg != nil {
+		modes = cfg.AgentModes(dir)
+	}
 	host := cogmemtools.Host{
-		Dir:       cogmemhost.Dir(cd.EffectiveStateDir()),
-		Workspace: workspace,
+		Dir:          dir,
+		Workspace:    workspace,
+		StoreOptions: cogmemhost.StoreOptions(modes),
 		CheckAttachment: func(ref string) (int64, error) {
 			return cogmemhost.Check(cfg, workspace, ref)
 		},

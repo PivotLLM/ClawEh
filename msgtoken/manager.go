@@ -35,10 +35,20 @@ type Manager struct {
 	windowMinutes int
 	windowCount   int
 	storePath     string
+	dirMode       os.FileMode // the store directory's mode when created; 0 = 0700
 	store         Store
 	mu            sync.Mutex
 	stopCh        chan struct{}
 	done          chan struct{}
+}
+
+// Option configures a Manager.
+type Option func(*Manager)
+
+// WithDirMode sets the mode the store's directory is created with (the agents
+// area's directory mode, default 0700); the token file itself stays 0600.
+func WithDirMode(mode os.FileMode) Option {
+	return func(m *Manager) { m.dirMode = mode }
 }
 
 // NewManager creates or loads a message-token Manager for the given agent.
@@ -49,7 +59,7 @@ type Manager struct {
 // If windowMinutes > 0, an existing store is loaded, stale tokens are pruned,
 // rotation is triggered if due, and a background goroutine is started to
 // handle future rotations.
-func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Manager, error) {
+func NewManager(agentID, storePath string, windowMinutes, windowCount int, opts ...Option) (*Manager, error) {
 	if windowMinutes == 0 {
 		// Disabled: clean up any leftover store file.
 		if _, err := os.Stat(storePath); err == nil {
@@ -68,6 +78,9 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 		storePath:     storePath,
 		stopCh:        make(chan struct{}),
 		done:          make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
 	}
 
 	// Load existing store if present.
@@ -164,7 +177,11 @@ func (m *Manager) pruneExpired() {
 
 // save writes the store atomically to disk. Must be called with m.mu held.
 func (m *Manager) save() error {
-	if err := os.MkdirAll(filepath.Dir(m.storePath), 0o700); err != nil {
+	dirMode := m.dirMode
+	if dirMode == 0 {
+		dirMode = 0o700
+	}
+	if err := os.MkdirAll(filepath.Dir(m.storePath), dirMode); err != nil {
 		logger.WarnCF("message", "Failed to create message-token store directory",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		return err

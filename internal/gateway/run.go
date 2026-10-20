@@ -18,10 +18,12 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/internal/layout"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -67,7 +69,7 @@ func gatewayCmd(debug bool) error {
 	// before anything that can raise one at startup: the dispatcher below
 	// alerts for a CLI provider running without its bypass flag, and an alert
 	// sent before Set reaches the no-op default and is lost.
-	operatorAlerter, alertsPath := newAlerter(baseDir)
+	operatorAlerter, alertsPath := newAlerter(baseDir, cfg.PermissionModes(config.AreaLogs).File)
 	alerts.Set(operatorAlerter)
 	refAlerts.report(operatorAlerter, bootDanglingRefs)
 
@@ -135,16 +137,17 @@ func gatewayCmd(debug bool) error {
 	return run.loop(ctx)
 }
 
-// openBootConfig makes the data directory private, then opens the config
-// store and builds the runtime copy the gateway starts on. The store is the
-// live configuration from here on, shared with the WebUI API so a save
-// through it and the gateway's own reads never disagree. The runtime works on
-// a pruned private copy; the store keeps the full on-disk config so invalid
-// entries can be repaired through the WebUI. References to models that no
-// longer exist are removed from the file.
+// openBootConfig refuses a config file other users can read, opens the config
+// store and builds the runtime copy the gateway starts on, then holds the data
+// directory to the permission modes that config sets. The store is the live
+// configuration from here on, shared with the WebUI API so a save through it
+// and the gateway's own reads never disagree. The runtime works on a pruned
+// private copy; the store keeps the full on-disk config so invalid entries can
+// be repaired through the WebUI. References to models that no longer exist
+// are removed from the file.
 func openBootConfig(baseDir, configPath string) (*config.Store, *config.Config, modelRefPrune, error) {
-	if err := enforceDataDirPerms(baseDir, configPath); err != nil {
-		return nil, nil, modelRefPrune{}, err
+	if err := perms.CheckConfig(configPath); err != nil {
+		return nil, nil, modelRefPrune{}, fmt.Errorf("startup aborted: %w", err)
 	}
 	store, err := openConfigStore(configPath)
 	if err != nil {
@@ -153,6 +156,9 @@ func openBootConfig(baseDir, configPath string) (*config.Store, *config.Config, 
 	cfg, dangling, err := runtimeConfig(store)
 	if err != nil {
 		return nil, nil, modelRefPrune{}, fmt.Errorf("error loading config: %w", err)
+	}
+	if err := enforceDataDirPerms(baseDir, configPath, perms.PolicyFor(cfg)); err != nil {
+		return nil, nil, modelRefPrune{}, err
 	}
 	return store, cfg, dangling, nil
 }
@@ -215,8 +221,10 @@ func startFileLogging(baseDir string) string {
 }
 
 // applyLoggingConfig applies the configured logging; the debug flag
-// overrides the level.
+// overrides the level. Log files created from here on take the logs modes.
 func applyLoggingConfig(cfg *config.Config, logPath string, debug bool) {
+	logModes := cfg.PermissionModes(config.AreaLogs)
+	logger.SetFileModes(logModes.Dir, logModes.File)
 	if cfg.Logging.File {
 		if logErr := logger.EnableFileLogging(logPath, cfg.Logging.JSON); logErr != nil {
 			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": logErr.Error()})
@@ -268,7 +276,12 @@ func newGatewayAgentLoop(
 	}
 	forumHost.Bind(agentLoop)
 	agentLoop.SetAlerter(operatorAlerter)
-	agentLoop.SetDumpsDir(filepath.Join(internal.GetClawHome(), "logs", "dumps"))
+	logModes := cfg.PermissionModes(config.AreaLogs)
+	agentLoop.SetDumpsDir(dump.Dir{
+		Path:     filepath.Join(internal.GetClawHome(), "logs", "dumps"),
+		DirMode:  logModes.Dir,
+		FileMode: logModes.File,
+	})
 
 	startupInfo := agentLoop.GetStartupInfo()
 	if len(startupInfo) == 0 {

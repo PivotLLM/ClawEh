@@ -190,7 +190,8 @@ func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[strin
 			windowMinutes = agentCfg.Message.WindowMinutes
 			windowCount = agentCfg.Message.WindowCount
 		}
-		mgr, err := msgtoken.NewManager(agentID, storePath, windowMinutes, windowCount)
+		mgr, err := msgtoken.NewManager(agentID, storePath, windowMinutes, windowCount,
+			msgtoken.WithDirMode(agentModes(cfg, storePath).Dir))
 		if err != nil {
 			logger.WarnCF("callback", "Failed to initialize callback manager",
 				map[string]any{"agent": agentID, "error": err.Error()})
