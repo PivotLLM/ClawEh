@@ -12,6 +12,11 @@ import (
 
 // Alert cadence and retry backoff for servers that cannot be (re)connected.
 const (
+	// downAlertAfter is how long a server may stay unreachable before the
+	// "down" alert is raised, so a server that is slow to come up after a
+	// reboot, or restarted for an upgrade, alerts nobody. The alert goes out
+	// on the first failed attempt after this much time since the first failure.
+	downAlertAfter = 5 * time.Minute
 	// alertReminderInterval is the least time between two alerts for a server
 	// that stays unreachable.
 	alertReminderInterval = time.Hour
@@ -26,8 +31,8 @@ const (
 // attempts and config reloads. Guarded by Manager.cooldownMu.
 type serverHealth struct {
 	failures  int       // consecutive failed attempts; drives the backoff
-	downSince time.Time // zero while the server is not reported down
-	lastAlert time.Time // last down alert or reminder
+	downSince time.Time // first failure of the current outage; zero while up
+	lastAlert time.Time // last down alert or reminder; zero until one is sent
 	lastErr   string    // failure message, including the stderr tail
 	lastErrAt time.Time
 }
@@ -45,8 +50,8 @@ func backoff(initial time.Duration, failures int) time.Duration {
 }
 
 // recordFailure notes a failed connect or reconnect of name: it extends the
-// backoff, stores the error for Status, and alerts when the server has just
-// become unreachable or a reminder is due.
+// backoff, stores the error for Status, and alerts once the server has been
+// unreachable for downAlertAfter, then when a reminder is due.
 func (m *Manager) recordFailure(name string, err error) {
 	now := m.now()
 	var alert *alerter.Alert
@@ -60,9 +65,12 @@ func (m *Manager) recordFailure(name string, err error) {
 	switch {
 	case h.downSince.IsZero():
 		h.downSince = now
-		h.lastAlert = now
-		a := downAlert(name, err, "")
-		alert = &a
+	case h.lastAlert.IsZero():
+		if now.Sub(h.downSince) >= downAlertAfter {
+			h.lastAlert = now
+			a := downAlert(name, err, "down since "+h.downSince.Format("15:04")+": ")
+			alert = &a
+		}
 	case now.Sub(h.lastAlert) >= alertReminderInterval:
 		h.lastAlert = now
 		a := downAlert(name, err, "still down since "+h.downSince.Format("15:04")+": ")
@@ -77,20 +85,22 @@ func (m *Manager) recordFailure(name string, err error) {
 
 // recordSuccess notes a successful connect of name: the backoff resets, the
 // stored error clears, and a server that was reported down gets one recovery
-// alert.
+// alert. An outage that ended before its down alert was due ends silently.
 func (m *Manager) recordSuccess(name string) {
 	now := m.now()
 	var downSince time.Time
+	alerted := false
 
 	m.cooldownMu.Lock()
 	delete(m.cooldownUntil, name)
 	if h, ok := m.health[name]; ok {
 		downSince = h.downSince
+		alerted = !h.lastAlert.IsZero()
 		delete(m.health, name)
 	}
 	m.cooldownMu.Unlock()
 
-	if !downSince.IsZero() {
+	if alerted {
 		m.sendAlert(alerter.Alert{
 			Title:       "MCP " + name + " up",
 			Description: "reconnected after " + formatDowntime(now.Sub(downSince)),

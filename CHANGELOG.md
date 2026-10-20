@@ -909,6 +909,13 @@ observe does not need an entry.
 
 ### Changed
 
+- **The "MCP `<name>` down" alert waits five minutes.** An MCP server that
+  fails to connect is now reported only once it has been unreachable for five
+  minutes, on the first failed attempt after that (about 7.5 minutes into an
+  outage, given the retry backoff), and "MCP `<name>` up" follows only a down
+  alert that was sent. A server that is slow to come up after a reboot, or
+  restarted for an upgrade, no longer produces a down alert at once and an
+  up alert a minute later. The hourly "still down" reminder is unchanged.
 - **A configuration save restarts only the channels whose settings changed,
   and channels start in parallel**, so one slow channel no longer delays the
   others (an unreachable Telegram bot used to hold up every channel started

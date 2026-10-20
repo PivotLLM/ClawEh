@@ -89,8 +89,8 @@ See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for whic
 
 | Alert | Raised when |
 |---|---|
-| MCP `<name>` down | An [MCP server](../mcp.md#external-mcp-servers) is unreachable; reminded at most hourly. |
-| MCP `<name>` up | That server is back. |
+| MCP `<name>` down | An [MCP server](../mcp.md#external-mcp-servers) has been unreachable for five minutes; reminded at most hourly. A server that is back sooner, say after a reboot, raises nothing. |
+| MCP `<name>` up | That server is back, after a down alert. |
 | Fusion token store unavailable | The Google/Microsoft token database could not be opened; [Fusion](../mcpfusion.md#tokens) tools are off. |
 | Maestro tools disabled | An agent's [Maestro](../maestro.md) folder could not be prepared. |
 | Forum `<id>` run `<n>` of `<agent>` stopped | A [forum](../forums/running.md#restarts) run stopped on an error it cannot recover from by itself. |

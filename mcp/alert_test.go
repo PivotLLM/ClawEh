@@ -78,16 +78,10 @@ func newAlertingManager(t *testing.T) (*Manager, *alertRecorder, *fakeClock) {
 }
 
 // TestRetryDisconnected_AlertsUnreachable: a desired server that cannot be
-// connected raises one Normal alert keyed by its name.
+// connected raises one Normal alert keyed by its name once it has been
+// unreachable for the grace period, not on its first failure.
 func TestRetryDisconnected_AlertsUnreachable(t *testing.T) {
-	mgr := NewManager()
-	defer func() {
-		if err := mgr.Close(context.Background()); err != nil {
-			t.Errorf("Close: %v", err)
-		}
-	}()
-	rec := &alertRecorder{}
-	mgr.SetAlerter(rec)
+	mgr, rec, clock := newAlertingManager(t)
 
 	down := httptest.NewServer(server.NewStreamableHTTPServer(server.NewMCPServer("down", "0.0.1")))
 	downURL := down.URL
@@ -96,33 +90,51 @@ func TestRetryDisconnected_AlertsUnreachable(t *testing.T) {
 		"down": {Enabled: true, Type: "http", URL: downURL},
 	})
 	mgr.RetryDisconnected(context.Background())
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("first failure must not alert, got %+v", got)
+	}
 
+	clock.advance(downAlertAfter + time.Minute)
+	mgr.RetryDisconnected(context.Background())
 	got := rec.take()
 	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != "down" ||
-		got[0].Title != "MCP down down" {
+		got[0].Title != "MCP down down" || !strings.HasPrefix(got[0].Description, "down since 14:05: ") {
 		t.Fatalf("expected one Normal alert for 'down', got %+v", got)
 	}
 }
 
-// TestAlertCadence: the first failure alerts, repeats within the hour do not,
-// a failure after 61 minutes reminds, and recovery alerts once.
+// TestAlertCadence: failures inside the grace period do not alert, the first
+// failure after it does, repeats within the hour do not, a failure after 61
+// minutes reminds, and recovery alerts once.
 func TestAlertCadence(t *testing.T) {
 	mgr, rec, clock := newAlertingManager(t)
 	fail := errors.New("failed to connect: transport error: transport closed")
 
 	mgr.recordFailure("www", fail)
-	got := rec.take()
-	if len(got) != 1 || got[0].Title != "MCP www down" || got[0].EventID != "www" {
-		t.Fatalf("first failure: want one down alert, got %+v", got)
-	}
-	if got[0].Description != fail.Error() {
-		t.Fatalf("down description = %q, want the error", got[0].Description)
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("first failure must not alert, got %+v", got)
 	}
 
 	clock.advance(30 * time.Second)
 	mgr.recordFailure("www", fail)
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("failure inside the grace period must not alert, got %+v", got)
+	}
+
+	clock.advance(downAlertAfter)
+	mgr.recordFailure("www", fail)
+	got := rec.take()
+	if len(got) != 1 || got[0].Title != "MCP www down" || got[0].EventID != "www" {
+		t.Fatalf("failure after the grace period: want one down alert, got %+v", got)
+	}
+	if want := "down since 14:05: " + fail.Error(); got[0].Description != want {
+		t.Fatalf("down description = %q, want %q", got[0].Description, want)
+	}
+
+	clock.advance(time.Minute)
+	mgr.recordFailure("www", fail)
 	if got = rec.take(); len(got) != 0 {
-		t.Fatalf("immediate second failure must not alert, got %+v", got)
+		t.Fatalf("failure right after the down alert must not alert, got %+v", got)
 	}
 
 	clock.advance(61 * time.Minute)
@@ -142,7 +154,7 @@ func TestAlertCadence(t *testing.T) {
 	mgr.recordSuccess("www")
 	got = rec.take()
 	if len(got) != 1 || got[0].Title != "MCP www up" || got[0].EventID != "www-up" ||
-		got[0].Description != "reconnected after 1h2m" {
+		got[0].Description != "reconnected after 1h8m" {
 		t.Fatalf("recovery: want one up alert, got %+v", got)
 	}
 	if msg, _ := mgr.lastError("www"); msg != "" {
@@ -155,10 +167,39 @@ func TestAlertCadence(t *testing.T) {
 	}
 }
 
+// TestAlertCadence_Blip: a server that comes back before its down alert is
+// due alerts nothing at all, neither down nor up, and a later outage starts
+// its grace period afresh.
+func TestAlertCadence_Blip(t *testing.T) {
+	mgr, rec, clock := newAlertingManager(t)
+	fail := errors.New("failed to connect: connection refused")
+
+	mgr.recordFailure("writer", fail)
+	clock.advance(time.Minute)
+	mgr.recordFailure("writer", fail)
+	clock.advance(time.Minute)
+	mgr.recordSuccess("writer")
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("an outage shorter than the grace period must not alert, got %+v", got)
+	}
+
+	clock.advance(time.Hour)
+	mgr.recordFailure("writer", fail)
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("a new outage must start its own grace period, got %+v", got)
+	}
+	clock.advance(downAlertAfter)
+	mgr.recordFailure("writer", fail)
+	got := rec.take()
+	if len(got) != 1 || !strings.HasPrefix(got[0].Description, "down since 15:07: ") {
+		t.Fatalf("new outage past the grace period: want one down alert, got %+v", got)
+	}
+}
+
 // TestAlertCadence_SurvivesSync: a reload that retries a server already
 // reported down does not alert it again.
 func TestAlertCadence_SurvivesSync(t *testing.T) {
-	mgr, rec, _ := newAlertingManager(t)
+	mgr, rec, clock := newAlertingManager(t)
 	cfg := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
 		"dead": {Enabled: true, Type: "http", URL: "http://127.0.0.1:1/mcp"},
 	}}
@@ -167,8 +208,15 @@ func TestAlertCadence_SurvivesSync(t *testing.T) {
 	if err := mgr.Sync(ctx, cfg, ""); err == nil {
 		t.Fatal("expected Sync to a dead address to fail")
 	}
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("first Sync: must not alert inside the grace period, got %+v", got)
+	}
+	clock.advance(downAlertAfter + time.Minute)
+	if err := mgr.Sync(ctx, cfg, ""); err == nil {
+		t.Fatal("expected Sync to a dead address to fail")
+	}
 	if got := rec.take(); len(got) != 1 {
-		t.Fatalf("first Sync: want one alert, got %+v", got)
+		t.Fatalf("Sync after the grace period: want one alert, got %+v", got)
 	}
 	if err := mgr.Sync(ctx, cfg, ""); err == nil {
 		t.Fatal("expected Sync to a dead address to fail")
@@ -236,7 +284,7 @@ func TestStdioFailure_CapturesStderr(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh")
 	}
-	mgr, rec, _ := newAlertingManager(t)
+	mgr, rec, clock := newAlertingManager(t)
 	cfg := config.MCPServerConfig{
 		Enabled: true,
 		Command: "sh",
@@ -245,6 +293,10 @@ func TestStdioFailure_CapturesStderr(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
+	// A first failure inside the grace period alerts nothing; the one after it
+	// carries the child's message.
+	mgr.recordFailure("www", errors.New("earlier failure"))
+	clock.advance(downAlertAfter + time.Minute)
 	err := mgr.ConnectServer(ctx, "www", cfg)
 	if err == nil {
 		t.Fatal("expected the connect to fail")
@@ -254,7 +306,7 @@ func TestStdioFailure_CapturesStderr(t *testing.T) {
 	}
 
 	got := rec.take()
-	if len(got) != 1 || got[0].Description != "Error: config file /tmp/missing.json not found" {
+	if len(got) != 1 || got[0].Description != "down since 14:05: Error: config file /tmp/missing.json not found" {
 		t.Fatalf("want one alert with the child's message, got %+v", got)
 	}
 
@@ -333,14 +385,19 @@ func TestBackoff(t *testing.T) {
 // background retry still waits.
 func TestReconnect_BypassesBackoff(t *testing.T) {
 	good := newTestMCPServer(t)
-	mgr, rec, _ := newAlertingManager(t)
+	mgr, rec, clock := newAlertingManager(t)
 	mgr.setDesired(map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: good.URL},
 	})
 	for range 5 {
 		mgr.recordFailure("svc", errors.New("connection refused"))
 	}
-	rec.take()
+	// Past the grace period the outage is alerted, so its end is too.
+	clock.advance(downAlertAfter)
+	mgr.recordFailure("svc", errors.New("connection refused"))
+	if got := rec.take(); len(got) != 1 {
+		t.Fatalf("want the down alert before the recovery, got %+v", got)
+	}
 
 	if got := mgr.RetryDisconnected(context.Background()); len(got) != 0 {
 		t.Fatalf("background retry must wait out the backoff, connected %v", got)
