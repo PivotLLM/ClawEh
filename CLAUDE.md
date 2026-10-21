@@ -713,4 +713,11 @@ exported; it exits 2 with a hint otherwise.
   `version = "..."` line.
 - Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. The frontend bundle lands in `web/backend/dist`, which is embedded by `web/backend/embed.go` into the merged claw binary.
 - When investigating a problem, report findings and wait for approval before implementing.
+- **Finishing a task:** the operator tests from the main checkout, `~/source/claw`
+  (always written with `~/`, never an absolute home path, so no username or
+  directory layout lands in the repository). Before reporting a task done,
+  confirm that the finished, committed work is at the tip of the current
+  branch there (not only in a worktree or on origin), build it there, and say
+  so explicitly: the branch, the commit, and that it is ready to test. If it is
+  not there yet, say that instead.
 - Use Alice and Bob as example agent names in all docs and examples.
