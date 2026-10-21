@@ -656,8 +656,10 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		return
 	}
 
-	// Ignore events from before the channel first started, and events a
-	// previous channel for this account already handled.
+	// Ignore events from before the channel first started (startTime is at
+	// the millisecond, like the event's timestamp, so an event sent in the
+	// start's own millisecond counts as after it), and events a previous
+	// channel for this account already handled.
 	if time.UnixMilli(evt.Timestamp).Before(c.startTime) || c.account.handled(evt.ID) {
 		return
 	}

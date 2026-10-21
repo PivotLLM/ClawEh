@@ -219,6 +219,35 @@ func TestRebuiltChannel_ResumesWithoutLossOrDuplicates(t *testing.T) {
 	}
 }
 
+// An event stamped in the millisecond the channel first started is handled;
+// one from the millisecond before is not. Matrix timestamps are whole
+// milliseconds, so the start is compared at that precision.
+func TestStartBoundary_SameMillisecondHandled(t *testing.T) {
+	resetAccounts(t)
+	hs := newFakeHomeserver(t, func(since string, _ int) string {
+		if since != "" {
+			return ""
+		}
+		start := firstStart()
+		return syncBody("s1",
+			textEvent("$before", "previous millisecond", start.Add(-time.Millisecond)),
+			textEvent("$same", "same millisecond", start),
+			textEvent("$after", "next millisecond", start.Add(time.Millisecond)))
+	})
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+
+	c := hs.channel(t, mb)
+	defer stopChannel(t, c)
+	if c.startTime != c.startTime.Truncate(time.Millisecond) {
+		t.Errorf("start time %v is not at the millisecond", c.startTime)
+	}
+	hs.awaitSync(t, "s1")
+	if got := drainInbound(t, mb); !slices.Equal(got, []string{"same millisecond", "next millisecond"}) {
+		t.Fatalf("delivered %q, want the events of the start's millisecond and after", got)
+	}
+}
+
 // A channel stopped in the middle of a batch hands on nothing it had not
 // finished: its successor fetches the batch again and handles the rest of it,
 // each event exactly once.

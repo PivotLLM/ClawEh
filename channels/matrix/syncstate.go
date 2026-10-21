@@ -17,8 +17,10 @@ const seenEventsMax = 1024
 // new channel, and without this the new one would either drop what arrived
 // while it was being rebuilt or handle it twice.
 //
-//   - firstStart is when a channel for the account first started. Events older
-//     than that predate the channel and are never handled.
+//   - firstStart is when a channel for the account first started, at the
+//     millisecond, the precision of a Matrix event's origin_server_ts: an
+//     event stamped in the start's own millisecond is handled, one in an
+//     earlier millisecond predates the channel and never is.
 //   - resumeFrom is the next_batch token of the last sync whose events were all
 //     handled. A rebuilt channel syncs from there, so what arrived during the
 //     rebuild is fetched, not skipped.
@@ -69,13 +71,13 @@ func forgetAccount(st *accountState) {
 	}
 }
 
-// started records now as the first start unless one is recorded, and returns
-// the first start.
+// started records now, at the millisecond, as the first start unless one is
+// recorded, and returns the first start.
 func (s *accountState) started(now time.Time) time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.firstStart.IsZero() {
-		s.firstStart = now
+		s.firstStart = now.Truncate(time.Millisecond)
 	}
 	return s.firstStart
 }
