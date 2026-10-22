@@ -23,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum"
+	"github.com/PivotLLM/ClawEh/internal/testalerts"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -885,6 +886,33 @@ func TestForumHost_NilRegistry(t *testing.T) {
 		t.Errorf("sender = %q, want Forum", got)
 	}
 	h.OnStuck("f1", 1, forum.Origin{AgentID: "alice"}, nil)
+}
+
+// TestForumHost_OnStuckAlerts: a stopped run raises the operator alert
+// keyed forum:<id>:<run>, naming the forum and its launching agent by its
+// display name, with the error in the details.
+func TestForumHost_OnStuckAlerts(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+	r := newForumRig(t, forumConfig(t, true, false), &forumModel{})
+	rec := &testalerts.Recorder{}
+	r.al.SetAlerter(rec)
+
+	r.host.OnStuck("f1", 3, forum.Origin{AgentID: "alice"}, errors.New("disk full"))
+
+	got := rec.Alerts()
+	if len(got) != 1 {
+		t.Fatalf("want 1 alert, got %+v", got)
+	}
+	a := got[0]
+	if a.EventID != "forum:f1:3" {
+		t.Errorf("EventID = %q, want forum:f1:3", a.EventID)
+	}
+	if a.Title != "Forum f1 run 3 of Alice stopped" {
+		t.Errorf("Title = %q, want it to name the forum, run and agent", a.Title)
+	}
+	if a.Description == "" || a.Details != "disk full" {
+		t.Errorf("Description = %q, Details = %q; want a description and the error", a.Description, a.Details)
+	}
 }
 
 // TestForumHost_Ceilings: the install's maximums come from forum.limits,

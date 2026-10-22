@@ -952,6 +952,67 @@ func TestSvcNotifyGivenUp(t *testing.T) {
 	}
 }
 
+// A result.json that can never be written is retried like a failed
+// notice and given up after maxNoticeTries tries: the launcher is not
+// notified, the notice marker is cleared, and the run's end state stays
+// recorded.
+func TestSvcResultWriteFailureGivenUp(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := svcSetup(t)
+	e.ctrls.mu.Lock()
+	e.ctrls.noResult = true
+	e.ctrls.mu.Unlock()
+	id, c := e.launch("")
+	runDir := c.store.Root()
+	t.Cleanup(func() {
+		if err := os.Chmod(runDir, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	// The end is committed; the run directory then refuses new files, so
+	// result.json cannot be written.
+	c.beforeReturn = func(c *svcCtrl) {
+		if err := os.Chmod(runDir, 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	c.finish <- StatusCompleted
+	e.settled(id, StatusCompleted)
+	for try := 1; try < maxNoticeTries; try++ {
+		if got := e.noticeTries(id); got != try {
+			t.Fatalf("notice tries = %d, want %d", got, try)
+		}
+		if _, ok := e.marker(id, cleanupNotice); !ok {
+			t.Fatalf("after failed try %d the notice is no longer pending", try)
+		}
+		e.svc.keepAliveTick(t.Context())
+	}
+	if !e.logger.has("completion notice given up") || !e.logger.has("writing "+fileResult) {
+		t.Error("giving up the notice after failing to write result.json was not logged")
+	}
+	if _, ok := e.marker(id, cleanupNotice); ok || e.noticeTries(id) != 0 {
+		t.Errorf("notice still pending after %d tries (tries %d)", maxNoticeTries, e.noticeTries(id))
+	}
+	if n := e.notifier.count(); n != 0 {
+		t.Errorf("notifier called %d times without result.json, want 0", n)
+	}
+	if _, err := e.store(id).ReadResult(); !errors.Is(err, ErrNotFound) {
+		t.Errorf("result.json read = %v, want not found", err)
+	}
+	if e.status(id) != StatusCompleted {
+		t.Errorf("status = %s, want completed", e.status(id))
+	}
+	if len(e.agents.deletedIDs()) != 2 {
+		t.Errorf("temporary agents not deleted: %v", e.agents.deletedIDs())
+	}
+	e.svc.keepAliveTick(t.Context())
+	if e.notifier.count() != 0 || e.noticeTries(id) != 0 {
+		t.Error("a given-up notice was tried again")
+	}
+}
+
 // A result.json that cannot be written holds the notice back; the
 // keep-alive loop writes it and notifies once it can.
 func TestSvcNoNoticeWithoutResult(t *testing.T) {
@@ -1110,6 +1171,60 @@ func TestSvcRecover(t *testing.T) {
 		}
 		if n, err := e.svc.Launch(t.Context(), e.scope, abandoned, e.opts()); err != nil || n != 1 {
 			t.Errorf("launching again = run %d, %v; want run 1", n, err)
+		}
+	})
+	t.Run("agents of a launch that did not start that cannot be deleted are retried", func(t *testing.T) {
+		e := svcSetup(t)
+		id, err := e.svc.NewForum(t.Context(), e.scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = e.svc.SetConfig(t.Context(), e.scope, id, []byte(svcSimpleJSON)); err != nil {
+			t.Fatal(err)
+		}
+		cfgBefore, _, err := e.store(id).ReadForumConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := svcUnstartedRun(t, e, id, 1)
+		e.agents.setDeleteErr("leftover", errSvcHost)
+		if err := e.svc.Recover(t.Context(), []Scope{e.scope}); err != nil {
+			t.Fatal(err)
+		}
+		if marker, ok := e.marker(id, cleanupAgents); !ok || !strings.Contains(marker, "leftover") {
+			t.Fatalf("agents marker = %q, %v; want it kept naming the agent", marker, ok)
+		}
+		if got := e.agents.deletedIDs(); len(got) != 0 {
+			t.Errorf("deleted %v, want none while Delete fails", got)
+		}
+		if _, err := os.Stat(s.Root()); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the run that did not start is still there: %v", err)
+		}
+		if ids := e.forumIDs(); !slices.Equal(ids, []string{id}) || e.status(id) != StatusNew {
+			t.Errorf("the forum is not new again: forums %v, status %s", ids, e.status(id))
+		}
+		if cfgAfter, _, err := e.store(id).ReadForumConfig(); err != nil || string(cfgAfter) != string(cfgBefore) {
+			t.Errorf("forum config changed: %v\n%s", err, cfgAfter)
+		}
+		if _, ok := e.marker(id, cleanupNotice); ok {
+			t.Error("the notice marker of the launch that did not start is still there")
+		}
+
+		// The keep-alive loop retries the deletion until it succeeds.
+		e.svc.keepAliveTick(t.Context())
+		if _, ok := e.marker(id, cleanupAgents); !ok {
+			t.Fatal("agents marker dropped while Delete still fails")
+		}
+		e.agents.setDeleteErr("leftover", nil)
+		e.svc.keepAliveTick(t.Context())
+		if !slices.Equal(e.agents.deletedIDs(), []string{"leftover"}) {
+			t.Errorf("deleted %v, want the abandoned launch's agent", e.agents.deletedIDs())
+		}
+		if _, ok := e.marker(id, cleanupAgents); ok {
+			t.Error("agents marker still there after the agent was deleted")
+		}
+		if e.svc.runState(runKey{id: id, run: 1}).cleanup != nil {
+			t.Error("the run is still pending cleanup")
 		}
 	})
 	t.Run("a second launch that did not start leaves the first run as it was", func(t *testing.T) {
