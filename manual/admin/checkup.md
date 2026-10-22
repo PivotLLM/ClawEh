@@ -74,10 +74,10 @@ The PDF has these sections, in order:
 | Providers and models | API and CLI providers, enabled models, and which model does what. |
 | Credentials and tokens | Each credential as set or not set. |
 | Channels | Enabled channels, who may message them, and which agents answer. |
-| Agents | Per agent: tools, folder access, MCP access. |
+| Agents | Per agent: its settings (models, memory, sub-agents, suites, **Forum**, **Character card** with a missing or ignored card marked, **Character card tools**), tools (with `forum_launch` listed when **Allow forum** is on), folder access, MCP access. |
 | External services | MCP servers and skills. |
 | Devices | Paired devices and pending pairings. |
-| Data | Where the config, logs, conversations, memory and other data are stored. |
+| Data | Where the config, logs, conversations, memory, character cards and other data are stored. |
 | Scheduled activity | Scheduled jobs, task orchestration, and background tasks. |
 
 A part that cannot be read shows as "unavailable" with the reason; the rest of the report is still produced.

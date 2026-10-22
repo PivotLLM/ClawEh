@@ -18,6 +18,8 @@ This page explains the terms used in ClawEh and this manual.
 
 **Channel** — A way to reach agents: the WebUI chat, Telegram, Slack, Discord, Signal, Matrix or the device listener. See [Channels](../channels/index.md).
 
+**Character card** — A character for an agent to play: a name, description, personality, scenario and example dialogue in the Character Card V3 format other tools share. Kept in the `cards/` library, attached to an agent as **Character card** on its card. See [Character cards](../agents/character-cards.md).
+
 **Check Up** — The WebUI page that lists the security-relevant settings of the install and marks those that need attention. See [Check Up and the full report](../admin/checkup.md).
 
 **CLI provider** — A provider that runs a coding CLI installed on the same machine (Claude Code, Codex, Antigravity, Cursor) instead of calling an API. See [CLI providers](../providers/cli-providers.md).

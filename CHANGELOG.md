@@ -331,7 +331,7 @@ observe does not need an entry.
   an agent without a `tools` key got the install's default tool set. This
   applies everywhere the agent acts: its own turns, clones and sub-agents,
   asks, forum turns and its MCP session and service tokens. Tool suites
-  (`cogmem`, `maestro`, `fusion`, `forum`) and `mcp_tools` keep their own
+  (`cogmem`, `maestro`, `fusion`, `forum`, `ccv3`) and `mcp_tools` keep their own
   switches. `agents.defaults.default_tools` is removed (a config that still
   has it gets an unknown-key warning at load). New agents, on the Agents page
   and in the setup wizard, start with no tools, and the card shows "No tools".
@@ -379,8 +379,12 @@ observe does not need an entry.
   library of Character Card V3 documents (the format SillyTavern and RisuAI
   use), kept in `<CLAW_HOME>/cards/` and included in the backup. The new
   **Character cards** page (Agents group) imports V2/V3 cards as JSON or PNG,
-  downloads and deletes them; a card an agent uses cannot be deleted. On the
-  Agents page, **Character card** attaches one (`agents.list[].character_card`):
+  downloads and deletes them; a card an agent uses cannot be deleted. The
+  page uses the new `GET /api/cards`, `GET /api/cards/{id}` (the card as a
+  V3 JSON document), `POST /api/cards/import` (a file of up to 8 MiB whose
+  card JSON is at most 1 MiB) and `DELETE /api/cards/{id}`. On the
+  Agents page, **Character card** attaches one (`agents.list[].character_card`);
+  a save that attaches a card the library does not have is refused:
   it is rendered into the agent's instructions after its rules and before
   `SOUL.md`, and an edit to the card reaches the agent on its next message. A
   card that no longer exists is marked **(missing)** and the agent runs
@@ -391,7 +395,9 @@ observe does not need an entry.
   card tools** (`agents.list[].ccv3`, off by default) grants the one `ccv3`
   tool (list, get, create, update, rename, copy, delete), which validates
   every write against the card format. Imports and deletions from the page
-  are recorded in the audit log as **Card import** and **Card delete**. See
+  are recorded in the audit log as **Card import** and **Card delete**. The
+  full report lists each agent's card (a missing or ignored one marked) and
+  whether it has the card tools, and the cards folder under Data. See
   the Character cards page of the manual.
 - **Encrypted Matrix rooms are reported.** ClawEh can't read end-to-end
   encrypted rooms; it now logs one warning per room and Check Up lists them

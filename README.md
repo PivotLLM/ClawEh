@@ -32,6 +32,7 @@ Version 0.6.0 represents a significant evolution toward a more secure business-c
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
 - **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**.
 - **Forums** — Structured discussions among agents, run by ClawEh from a template: independent opinions, debate, and a final report.
+- **Character cards** — Give an agent, a sub-agent or a forum participant a character to play from a library of Character Card V3 files, imported from and exported to other tools.
 - **Maestro built-in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
 - **MCP server and client** — ClawEh provides its tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
 - **Files, mounts and scheduled jobs** — Sandboxed file tools, external folders mounted per agent, and reminders and recurring jobs.

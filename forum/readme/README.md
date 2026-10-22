@@ -29,7 +29,7 @@ A clone or fresh entry may add `character_card` (a card ID from the
 character-card library): a clone runs as that character instead of its
 source's, and a fresh participant's prompt is the card, followed by its
 `system_prompt` as instructions when both are given. Without `name`, the
-participant is called by the card's name.
+participant is called by the card's nickname, else its name.
 
 ## Layers
 

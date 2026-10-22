@@ -40,11 +40,11 @@ The shared skills every agent can be granted. **Import Skill** adds one, **View*
 
 See [Tools and skills](../agents/tools-and-skills.md#grant-skills).
 
-### Tools
+### Character cards
 
-The install-wide switch for each built-in tool: **Enabled**, **Disabled** or **Blocked** (a prerequisite is missing). A Disabled tool is offered to no agent. Which agent gets which tool is set on the Agents page.
+The library of characters an agent can play. **Import** adds a card from a `.json` or `.png` file, **Download** saves one as JSON, **Delete** removes one that no agent uses. Which agent plays which card is set on the Agents page.
 
-See [Tools and skills](../agents/tools-and-skills.md) and [Web search and fetch](../agents/web-search.md).
+See [Character cards](../agents/character-cards.md).
 
 ## Models
 
