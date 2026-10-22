@@ -62,7 +62,7 @@ func (s *forumStore) Lock() error {
 	if s.lk.f != nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(s.base, forumfs.LocksDir), dirPerm); err != nil { //nolint:gosec // the lock directory under the forum base
+	if err := os.MkdirAll(filepath.Join(s.base, forumfs.LocksDir), dirPerm); err != nil { // #nosec G703 -- the lock directory under the forum base
 		return fmt.Errorf("lock forum %s: %w", s.id, err)
 	}
 	p := s.lockPath()
@@ -79,7 +79,7 @@ func (s *forumStore) Lock() error {
 			return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, closeErr))
 		}
 		held, statErr := f.Stat()
-		current, pathErr := os.Stat(p) //nolint:gosec // lock file under the forum base
+		current, pathErr := os.Stat(p) // #nosec G703 -- lock file under the forum base
 		if statErr == nil && pathErr == nil && os.SameFile(held, current) {
 			if err := writePID(f); err != nil {
 				return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, releaseFile(f)))
