@@ -221,3 +221,21 @@ func TestSchemaAcceptsCards(t *testing.T) {
 		t.Error("patch schema accepts modification_date")
 	}
 }
+
+// The schema takes what Validate takes for the members whose spec type is
+// not a single JSON type: an entry id as a number or text, source as a list.
+func TestSchemaEntryIDAndSource(t *testing.T) {
+	card := compile(t, CardSchema())
+	for _, id := range []string{`7`, `"entry-7"`} {
+		data := `{"name":"B","source":["https://example.com"],"character_book":{"entries":[{"keys":[],"content":"","enabled":true,"insertion_order":0,"id":` + id + `}]}}`
+		if err := Validate(json.RawMessage(data), false); err != nil {
+			t.Fatalf("Validate id %s: %v", id, err)
+		}
+		if err := card.Validate(instance(t, data)); err != nil {
+			t.Errorf("card schema, id %s: %v", id, err)
+		}
+	}
+	if err := card.Validate(instance(t, `{"name":"B","source":"https://example.com"}`)); err == nil {
+		t.Error("card schema accepts source as text")
+	}
+}

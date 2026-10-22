@@ -5,7 +5,10 @@
 
 package ccv3
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 // The JSON Schemas of a card's data object (CardSchema) and of a merge patch
 // over it (PatchSchema), published by the ccv3 tool for its card and changes
@@ -39,7 +42,7 @@ var fieldDocs = map[string]string{
 	"tags":                       "Labels for finding the card",
 	"creator":                    "Who made the card",
 	"character_version":          "The card's own version label",
-	"source":                     "Where the card came from, such as a URL",
+	"source":                     "Where the card came from, as a list (such as URLs)",
 	"creator_notes":              "Notes from the creator for people using the card; not shown to the model",
 	"creator_notes_multilingual": "creator_notes by language code (such as fr)",
 	"creation_date":              "Set automatically (Unix seconds); leave it out",
@@ -63,7 +66,7 @@ var fieldDocs = map[string]string{
 	"character_book.entries[].case_sensitive":  "Whether keys match case",
 	"character_book.entries[].name":            "The entry's name",
 	"character_book.entries[].priority":        "Which entries are dropped first when over budget (lower first)",
-	"character_book.entries[].id":              "The entry's number",
+	"character_book.entries[].id":              "The entry's id: a whole number or text",
 	"character_book.entries[].comment":         "A note about the entry; not shown to the model",
 	"character_book.entries[].selective":       "Whether secondary_keys must also match",
 	"character_book.entries[].secondary_keys":  "Further keys, used when selective is true",
@@ -145,6 +148,8 @@ func kindSchema(path string, k kind, patch bool) map[string]any {
 		return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
 	case kindInt:
 		return map[string]any{"type": "integer"}
+	case kindIntOrString:
+		return map[string]any{"type": []string{"integer", "string"}}
 	case kindBool:
 		return map[string]any{"type": "boolean"}
 	case kindObject:
@@ -170,8 +175,13 @@ func kindSchema(path string, k kind, patch bool) map[string]any {
 
 // allowNull adds "null" to s's type, and to its enum when it has one.
 func allowNull(s map[string]any) {
-	if typ, ok := s["type"].(string); ok {
+	switch typ := s["type"].(type) {
+	case string:
 		s["type"] = []string{typ, "null"}
+	case []string:
+		if !slices.Contains(typ, "null") {
+			s["type"] = append(typ, "null")
+		}
 	}
 	if enum, ok := s["enum"].([]any); ok {
 		s["enum"] = append(enum, nil)

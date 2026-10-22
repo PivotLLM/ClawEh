@@ -15,10 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/internal/mergepatch"
 )
 
 // The pinned clock the store tests use, and a later one for updates.
@@ -554,6 +557,92 @@ func TestImportDropsNullMembers(t *testing.T) {
 	}
 }
 
+// Known members a lorebook entry sets to null are dropped on import too,
+// keeping the entry's member order; unknown null members are kept. Create
+// still refuses a null inside an entry.
+func TestImportDropsNullEntryMembers(t *testing.T) {
+	s := newStore(t)
+	raw := `{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Bob","character_book":{"entries":[` +
+		`{"keys":["k"],"content":"c","enabled":true,"insertion_order":0,"name":null,"position":null,"x_weight":null},` +
+		`{"keys":["j"],"content":"d","enabled":true,"insertion_order":1}]}}}`
+	c, _, err := s.Import("bob", []byte(raw), false)
+	if err != nil {
+		t.Fatalf("Import = %v", err)
+	}
+	var compact bytes.Buffer
+	if err = json.Compact(&compact, c.Data); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"name":"Bob","character_book":{"entries":[` +
+		`{"keys":["k"],"content":"c","enabled":true,"insertion_order":0,"x_weight":null},` +
+		`{"keys":["j"],"content":"d","enabled":true,"insertion_order":1}]},"alternate_greetings":[],` +
+		`"group_only_greetings":[],"tags":[],"creation_date":1800000000,"modification_date":1800000000}`
+	if compact.String() != want {
+		t.Errorf("data = %s\nwant   %s", compact.String(), want)
+	}
+	_, err = s.Create("carol", json.RawMessage(`{"name":"Carol","character_book":{"entries":[`+
+		`{"keys":[],"content":"","enabled":true,"insertion_order":0,"position":null}]}}`))
+	if got := issues(t, err); !slices.Equal(got, []string{"character_book.entries[0].position must be text"}) {
+		t.Errorf("Create(null) issues = %q", got)
+	}
+}
+
+// An imported source is a list of text; one given as plain text becomes a
+// list of one. Create keeps to the spec and refuses plain text.
+func TestImportSource(t *testing.T) {
+	s := newStore(t)
+	for id, source := range map[string]string{"list": `["https://example.com/a","https://example.com/b"]`, "text": `"https://example.com/a"`, "blank": `" "`} {
+		raw := `{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Bob","source":` + source + `}}`
+		c, _, err := s.Import(id, []byte(raw), false)
+		if err != nil {
+			t.Fatalf("%s: Import = %v", id, err)
+		}
+		got, err := json.Marshal(dataOf(t, c)["source"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := source
+		switch id {
+		case "text":
+			want = "[" + source + "]"
+		case "blank":
+			want = "null"
+		}
+		if string(got) != want {
+			t.Errorf("%s: source = %s, want %s", id, got, want)
+		}
+	}
+	_, err := s.Create("alice", json.RawMessage(`{"name":"Alice","source":"https://example.com"}`))
+	if got := issues(t, err); !slices.Equal(got, []string{"source must be a list of text"}) {
+		t.Errorf("Create(source text) issues = %q", got)
+	}
+}
+
+// TestImportKeepsTextAsWritten pins that normalizing an import (here a null
+// member inside an entry, which replaces the whole entries array) never
+// HTML-escapes card text: "<START>" and "&" are stored as written.
+func TestImportKeepsTextAsWritten(t *testing.T) {
+	s := newStore(t)
+	raw := `{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Bob","mes_example":"<START>\n{{user}}: hi & bye",` +
+		`"source":"https://example.com/?a=1&b=2",` +
+		`"character_book":{"entries":[{"keys":["x"],"content":"<START> & x","enabled":true,"insertion_order":0,"position":null}]}}}`
+	if _, _, err := s.Import("bob", []byte(raw), false); err != nil {
+		t.Fatalf("Import = %v", err)
+	}
+	stored, err := os.ReadFile(filepath.Join(s.dir, "bob.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"<START>\n{{user}}: hi & bye"`, `"https://example.com/?a=1&b=2"`, `"<START> & x"`} {
+		if !strings.Contains(string(stored), want) {
+			t.Errorf("stored card lacks %s as written:\n%s", want, stored)
+		}
+	}
+	if strings.Contains(string(stored), `\u003c`) || strings.Contains(string(stored), `\u0026`) {
+		t.Errorf("stored card has HTML escapes:\n%s", stored)
+	}
+}
+
 func TestImportRefusals(t *testing.T) {
 	s := newStore(t)
 	for _, tc := range []struct {
@@ -634,4 +723,135 @@ func TestImportPNG(t *testing.T) {
 	if _, ok := dataOf(t, c)["group_only_greetings"]; !ok {
 		t.Error("V2 PNG card not converted")
 	}
+}
+
+// A card imported, read back and imported again under another id stores the
+// same data: only modification_date moves to the second import's time
+// (creation_date, set by the first import, is carried over).
+func TestImportRoundTrip(t *testing.T) {
+	s := newStore(t)
+	raw := `{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Alice",` +
+		`"source":["https://example.com/alice"],"x_editor":{"v":2},"extensions":{"depth_prompt":{"depth":4}},` +
+		`"character_book":{"entries":[{"id":"entry-1","keys":["k"],"content":"c","enabled":true,` +
+		`"insertion_order":0,"position":null,"extensions":{"probability":100}}]}}}`
+	first, _, err := s.Import("alice", []byte(raw), false)
+	if err != nil {
+		t.Fatalf("Import = %v", err)
+	}
+	got, err := s.Get("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Now = func() time.Time { return day2 }
+	second, _, err := s.Import("alice2", encoded, false)
+	if err != nil {
+		t.Fatalf("re-Import = %v", err)
+	}
+	if d := dataOf(t, second); d["modification_date"] != float64(day2.Unix()) || d["creation_date"] != float64(day1.Unix()) {
+		t.Errorf("second dates = %v %v", d["creation_date"], d["modification_date"])
+	}
+	withoutModified := func(c *Card) string {
+		out, err := mergepatch.Apply(c.Data, json.RawMessage(`{"modification_date":null}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var compact bytes.Buffer
+		if err = json.Compact(&compact, out); err != nil {
+			t.Fatal(err)
+		}
+		return compact.String()
+	}
+	a, b := withoutModified(first), withoutModified(second)
+	if a != b {
+		t.Errorf("round trip changed the data:\nfirst  %s\nsecond %s", a, b)
+	}
+	want := `{"name":"Alice","source":["https://example.com/alice"],"x_editor":{"v":2},"extensions":{"depth_prompt":{"depth":4}},` +
+		`"character_book":{"entries":[{"id":"entry-1","keys":["k"],"content":"c","enabled":true,"insertion_order":0,` +
+		`"extensions":{"probability":100}}]},"alternate_greetings":[],"group_only_greetings":[],"tags":[],"creation_date":1800000000}`
+	if a != want {
+		t.Errorf("data = %s\nwant   %s", a, want)
+	}
+}
+
+// Cards in the shape SillyTavern (V2) and RisuAI (V3) export import as V3,
+// keep extensions and members the spec does not define, and render.
+func TestImportExportedCards(t *testing.T) {
+	s := newStore(t)
+	for _, tc := range []struct {
+		file, id, name string
+		format         Format
+		keep           []string // members that must survive, as JSON paths into data
+		rendered       []string
+	}{
+		{
+			file: "alice_v2.json", id: "alice", name: "Alice", format: FormatV2JSON,
+			keep:     []string{"extensions.talkativeness", "extensions.fav", "extensions.world", "extensions.depth_prompt.depth", "character_book.entries.0.extensions.display_index"},
+			rendered: []string{"You are Alice.", "Alice is a lighthouse keeper", "forty sheep"},
+		},
+		{
+			file: "bob_v3.json", id: "bob", name: "Bob", format: FormatV3JSON,
+			keep: []string{
+				"x_import_note", "extensions.risuai.utilityBot", "creator_notes_multilingual.fr", "assets.1.uri",
+				"source.1", "nickname", "group_only_greetings.0", "character_book.entries.0.id", "character_book.entries.0.extensions.risu_case_sensitive",
+			},
+			rendered: []string{"You are Bobby.", "Bobby runs the night shift", "hand crank"},
+		},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("testdata", tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, format, err := s.Import(tc.id, raw, false)
+			if err != nil {
+				t.Fatalf("Import = %v", err)
+			}
+			d := dataOf(t, c)
+			if format != tc.format || c.Spec != SpecV3 || c.SpecVersion != SpecVersionV3 || d["name"] != tc.name {
+				t.Errorf("format %q, spec %q %q, name %v", format, c.Spec, c.SpecVersion, d["name"])
+			}
+			for _, p := range tc.keep {
+				if !hasPath(d, p) {
+					t.Errorf("%s did not survive the import", p)
+				}
+			}
+			out, err := s.Render(tc.id)
+			if err != nil {
+				t.Fatalf("Render = %v", err)
+			}
+			for _, want := range tc.rendered {
+				if !strings.Contains(out, want) {
+					t.Errorf("rendered card lacks %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+// hasPath reports whether the dotted path (object keys and array indexes)
+// exists in v.
+func hasPath(v any, path string) bool {
+	for part := range strings.SplitSeq(path, ".") {
+		switch cur := v.(type) {
+		case map[string]any:
+			next, ok := cur[part]
+			if !ok {
+				return false
+			}
+			v = next
+		case []any:
+			i, err := strconv.Atoi(part)
+			if err != nil || i < 0 || i >= len(cur) {
+				return false
+			}
+			v = cur[i]
+		default:
+			return false
+		}
+	}
+	return true
 }

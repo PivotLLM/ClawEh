@@ -23,6 +23,7 @@ const (
 	kindStringArray
 	kindStringObject
 	kindInt
+	kindIntOrString
 	kindBool
 	kindObject
 	kindAssets
@@ -54,7 +55,7 @@ var dataFields = []field{
 	{"tags", kindStringArray, false},
 	{"creator", kindString, false},
 	{"character_version", kindString, false},
-	{"source", kindString, false},
+	{"source", kindStringArray, false},
 	{"creator_notes", kindString, false},
 	{"creator_notes_multilingual", kindStringObject, false},
 	{"creation_date", kindInt, false},
@@ -84,7 +85,7 @@ var entryFields = []field{
 	{"case_sensitive", kindBool, false},
 	{"name", kindString, false},
 	{"priority", kindInt, false},
-	{"id", kindInt, false},
+	{"id", kindIntOrString, false},
 	{"comment", kindString, false},
 	{"selective", kindBool, false},
 	{"secondary_keys", kindStringArray, false},
@@ -196,6 +197,10 @@ func (c *checker) value(path string, raw json.RawMessage, k kind) {
 		if !isInt(raw) {
 			c.add(path, "must be a whole number")
 		}
+	case kindIntOrString:
+		if !isInt(raw) && !isString(raw) {
+			c.add(path, "must be a whole number or text")
+		}
 	case kindBool:
 		var b bool
 		if isNull(raw) || json.Unmarshal(raw, &b) != nil {
@@ -254,7 +259,7 @@ func (c *checker) entries(path string, raw json.RawMessage) {
 			continue
 		}
 		c.object(p+".", m, entryFields)
-		if v, ok := m["position"]; ok {
+		if v, ok := m["position"]; ok && isString(v) {
 			var pos string
 			if json.Unmarshal(v, &pos) == nil && pos != "before_char" && pos != "after_char" {
 				c.add(p+".position", "must be before_char or after_char")

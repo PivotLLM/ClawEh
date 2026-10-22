@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -103,7 +104,7 @@ func TestBodyLimit_WithinLimitReachesHandler(t *testing.T) {
 func TestBodyLimit_UploadRoutesTakeMore(t *testing.T) {
 	h, reached, readBytes, cookie := bodyHost(t)
 	twoMiB := int64(2 << 20)
-	for _, path := range []string{"/api/memory/main/import", "/api/skills/import"} {
+	for _, path := range []string{"/api/memory/main/import", "/api/skills/import", "/api/cards/import"} {
 		reached.Store(0)
 		rec := postBody(h, path, bytes.NewReader(make([]byte, twoMiB)), cookie)
 		if rec.Code != http.StatusOK {
@@ -118,6 +119,13 @@ func TestBodyLimit_UploadRoutesTakeMore(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("/api/skills/import over its cap: status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
 	}
+	// A card file at the card handler's own cap, plus form framing, reaches it.
+	full := int64(ccv3.MaxImportBytes + 64<<10)
+	reached.Store(0)
+	rec = postBody(h, "/api/cards/import", bytes.NewReader(make([]byte, full)), cookie)
+	if rec.Code != http.StatusOK || reached.Load() != 1 || readBytes.Load() != full {
+		t.Fatalf("/api/cards/import at the handler's cap: status %d, reached %d, read %d", rec.Code, reached.Load(), readBytes.Load())
+	}
 }
 
 // TestMaxBodyFor pins the route table.
@@ -128,6 +136,8 @@ func TestMaxBodyFor(t *testing.T) {
 		"/":                              defaultMaxBody,
 		"/api/skills":                    defaultMaxBody,
 		"/api/skills/import":             4 << 20,
+		"/api/cards/import":              ccv3.MaxImportBytes + 1<<20,
+		"/api/cards":                     defaultMaxBody,
 		"/api/memory/main/import":        32 << 20,
 		"/api/memory/main/bulk":          32 << 20,
 		"/api/memory":                    defaultMaxBody,

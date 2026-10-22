@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -48,6 +49,10 @@ var bodyLimits = []struct {
 	// POST /api/skills/import is a multipart upload whose file part the
 	// handler caps at 1 MiB; the rest is form framing.
 	{"/api/skills/import", 4 << 20},
+	// POST /api/cards/import is a multipart upload whose file part (a card
+	// as JSON or PNG) the handler caps at ccv3.MaxImportBytes; the rest is
+	// form framing.
+	{"/api/cards/import", ccv3.MaxImportBytes + 1<<20},
 }
 
 // maxBodyFor is the request body limit for path.

@@ -63,7 +63,7 @@ func parseImport(raw []byte) (json.RawMessage, Format, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if data, err = dropNulls(data); err != nil {
+	if data, err = normalizeImport(data); err != nil {
 		return nil, "", err
 	}
 	switch {
@@ -78,24 +78,34 @@ func parseImport(raw []byte) (json.RawMessage, Format, error) {
 	}
 }
 
-// dropNulls removes the known members of data and of character_book whose
-// value is null, as other apps write for a field they leave empty, so an
-// imported card treats them as absent. Lorebook entries are left as they
-// are (a merge patch cannot reach into an array).
-func dropNulls(data json.RawMessage) (json.RawMessage, error) {
+// normalizeImport removes the known members of data, of character_book and
+// of each lorebook entry whose value is null, as other apps write for a field
+// they leave empty, so an imported card treats them as absent. A merge patch
+// cannot reach into an array, so the entries are patched one by one and the
+// array is replaced whole. It also turns a source given as one string, as
+// some apps write it, into the list the spec defines, and drops a blank one.
+func normalizeImport(data json.RawMessage) (json.RawMessage, error) {
 	members, _ := object(data)
-	patch := map[string]any{}
-	for _, f := range dataFields {
-		if v, ok := members[f.name]; ok && isNull(v) {
-			patch[f.name] = nil
+	patch := nullPatch(members, dataFields)
+	if v, ok := members["source"]; ok && isString(v) {
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			return nil, fmt.Errorf("decode source: %w", err)
+		}
+		if isBlank(s) {
+			patch["source"] = nil
+		} else {
+			patch["source"] = []json.RawMessage{v}
 		}
 	}
 	if book, ok := object(members["character_book"]); ok {
-		bookPatch := map[string]any{}
-		for _, f := range bookFields {
-			if v, ok := book[f.name]; ok && isNull(v) {
-				bookPatch[f.name] = nil
-			}
+		bookPatch := nullPatch(book, bookFields)
+		entries, err := dropEntryNulls(book["entries"])
+		if err != nil {
+			return nil, err
+		}
+		if entries != nil {
+			bookPatch["entries"] = entries
 		}
 		if len(bookPatch) > 0 {
 			patch["character_book"] = bookPatch
@@ -104,11 +114,61 @@ func dropNulls(data json.RawMessage) (json.RawMessage, error) {
 	if len(patch) == 0 {
 		return data, nil
 	}
-	encoded, err := json.Marshal(patch)
-	if err != nil {
+	return applyPatch(data, patch)
+}
+
+// nullPatch is the merge patch removing the members of fields that are null
+// in members.
+func nullPatch(members map[string]json.RawMessage, fields []field) map[string]any {
+	patch := map[string]any{}
+	for _, f := range fields {
+		if v, ok := members[f.name]; ok && isNull(v) {
+			patch[f.name] = nil
+		}
+	}
+	return patch
+}
+
+// dropEntryNulls returns the lorebook entries with their null known members
+// removed, or nil when raw is not an array or no entry has one.
+func dropEntryNulls(raw json.RawMessage) ([]json.RawMessage, error) {
+	entries, ok := array(raw)
+	if !ok {
+		return nil, nil
+	}
+	changed := false
+	for i, e := range entries {
+		m, ok := object(e)
+		if !ok {
+			continue
+		}
+		patch := nullPatch(m, entryFields)
+		if len(patch) == 0 {
+			continue
+		}
+		out, err := applyPatch(e, patch)
+		if err != nil {
+			return nil, err
+		}
+		entries[i], changed = out, true
+	}
+	if !changed {
+		return nil, nil
+	}
+	return entries, nil
+}
+
+// applyPatch applies patch to target as a merge patch. The patch carries
+// card text (entries, source), so it is encoded without HTML escaping, as
+// the store writes it: "<START>" reads as written.
+func applyPatch(target json.RawMessage, patch map[string]any) (json.RawMessage, error) {
+	var encoded bytes.Buffer
+	enc := json.NewEncoder(&encoded)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(patch); err != nil {
 		return nil, fmt.Errorf("encode null removal: %w", err)
 	}
-	out, err := mergepatch.Apply(data, encoded)
+	out, err := mergepatch.Apply(target, bytes.TrimSuffix(encoded.Bytes(), []byte("\n")))
 	if err != nil {
 		return nil, fmt.Errorf("remove null members: %w", err)
 	}

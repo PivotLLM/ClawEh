@@ -6,7 +6,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +167,67 @@ func TestCards_ImportAndReplace(t *testing.T) {
 	if rec = importCard(t, mux, "big", "big.png", make([]byte, ccv3.MaxImportBytes+1), false); rec.Code != http.StatusBadRequest ||
 		!strings.Contains(rec.Body.String(), "larger than 8 MiB") {
 		t.Errorf("oversized import = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// cardPNG builds a PNG holding the given tEXt chunks (keyword, card JSON
+// base64-encoded), the way card apps embed a card in its picture.
+func cardPNG(texts ...[2]string) []byte {
+	chunk := func(typ string, body []byte) []byte {
+		b := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+		b = append(b, typ...)
+		b = append(b, body...)
+		return binary.BigEndian.AppendUint32(b, crc32.ChecksumIEEE(append([]byte(typ), body...)))
+	}
+	b := bytes.NewBuffer([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	b.Write(chunk("IHDR", make([]byte, 13)))
+	for _, tx := range texts {
+		b.Write(chunk("tEXt", []byte(tx[0]+"\x00"+base64.StdEncoding.EncodeToString([]byte(tx[1])))))
+	}
+	b.Write(chunk("IDAT", []byte{1, 2, 3}))
+	b.Write(chunk("IEND", nil))
+	return b.Bytes()
+}
+
+// A PNG card uploaded through the API is read from its ccv3 chunk when it
+// has one and from its chara chunk otherwise.
+func TestCards_ImportPNG(t *testing.T) {
+	mux, _ := cardsHandler(t)
+	read := func(name string) string {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "ccv3", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	v2, v3 := read("alice_v2.json"), read("bob_v3.json")
+	for _, tc := range []struct {
+		id, format, name string
+		png              []byte
+	}{
+		{"both", string(ccv3.FormatV3PNG), "Bob", cardPNG([2]string{"chara", v2}, [2]string{"ccv3", v3})},
+		{"chara", string(ccv3.FormatV2PNG), "Alice", cardPNG([2]string{"chara", v2})},
+	} {
+		rec := importCard(t, mux, tc.id, tc.id+".png", tc.png, false)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: import = %d: %s", tc.id, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Format string    `json:"format"`
+			Card   ccv3.Card `json:"card"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		var data struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(resp.Card.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Format != tc.format || resp.Card.Spec != ccv3.SpecV3 || data.Name != tc.name {
+			t.Errorf("%s: format %q, spec %q, name %q", tc.id, resp.Format, resp.Card.Spec, data.Name)
+		}
 	}
 }
 

@@ -259,7 +259,8 @@ production instance directly; test against a dev instance.
   is a stdlib-only leaf (plus `internal/mergepatch`; `ccv3/imports_test.go`):
   `Store` (`Open(dir)` returns one handle per directory; `List`/`Get`/`Create`/
   `Update` (RFC 7386 over `data`)/`Rename`/`Copy`/`Delete`/`Import` (V2/V3 JSON
-  or PNG `ccv3`/`chara` chunk; V1 refused; null-valued known fields dropped;
+  or PNG `ccv3`/`chara` chunk; V1 refused; null-valued known fields dropped,
+  inside lorebook entries too; a text `source` becomes a one-item list;
   `MaxImportBytes` 8 MiB, `MaxCardBytes` 1 MiB), strict `Validate` (unknown
   keys refused on create/update, preserved on import; ClawEh owns the dates)
   and one `Render` (`# Character`: `system_prompt` verbatim, "You are

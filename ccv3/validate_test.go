@@ -48,7 +48,7 @@ const fullData = `{
   "tags": ["detective"],
   "creator": "Alice",
   "character_version": "1.0",
-  "source": "https://example.com",
+  "source": ["https://example.com"],
   "creator_notes": "Notes.",
   "creator_notes_multilingual": {"fr": "Notes."},
   "creation_date": 1700000000,
@@ -119,7 +119,8 @@ func TestValidateRefusals(t *testing.T) {
 		{"tags", `{"name":"B","tags":[null]}`, []string{"tags must be a list of text"}},
 		{"creator", `{"name":"B","creator":1}`, []string{"creator must be text"}},
 		{"character_version", `{"name":"B","character_version":1}`, []string{"character_version must be text"}},
-		{"source", `{"name":"B","source":1}`, []string{"source must be text"}},
+		{"source", `{"name":"B","source":1}`, []string{"source must be a list of text"}},
+		{"source text", `{"name":"B","source":"https://example.com"}`, []string{"source must be a list of text"}},
 		{"creator_notes", `{"name":"B","creator_notes":1}`, []string{"creator_notes must be text"}},
 		{"creator_notes_multilingual", `{"name":"B","creator_notes_multilingual":{"fr":1}}`, []string{"creator_notes_multilingual must be an object of text values"}},
 		{"creation_date fraction", `{"name":"B","creation_date":1.5}`, []string{"creation_date must be a whole number"}},
@@ -144,7 +145,7 @@ func TestValidateRefusals(t *testing.T) {
 			"character_book.entries[0].insertion_order is required",
 		}},
 		{"entry types", `{"name":"B","character_book":{"entries":[{"keys":"k","content":1,"enabled":null,"insertion_order":"1",
-			"case_sensitive":1,"name":1,"priority":"1","id":"7","comment":1,"selective":1,"secondary_keys":[1],"constant":"yes",
+			"case_sensitive":1,"name":1,"priority":"1","id":true,"comment":1,"selective":1,"secondary_keys":[1],"constant":"yes",
 			"position":1,"extensions":[],"use_regex":0}]}}`, []string{
 			"character_book.entries[0].keys must be a list of text",
 			"character_book.entries[0].content must be text",
@@ -153,7 +154,7 @@ func TestValidateRefusals(t *testing.T) {
 			"character_book.entries[0].case_sensitive must be true or false",
 			"character_book.entries[0].name must be text",
 			"character_book.entries[0].priority must be a whole number",
-			"character_book.entries[0].id must be a whole number",
+			"character_book.entries[0].id must be a whole number or text",
 			"character_book.entries[0].comment must be text",
 			"character_book.entries[0].selective must be true or false",
 			"character_book.entries[0].secondary_keys must be a list of text",
@@ -202,5 +203,15 @@ func TestValidationErrorMessage(t *testing.T) {
 	want := "The card is not valid: name is required; tags must be a list of text."
 	if err == nil || err.Error() != want {
 		t.Errorf("Error() = %v, want %q", err, want)
+	}
+}
+
+// A lorebook entry id may be a whole number or text, as the spec allows.
+func TestValidateEntryIDNumberOrText(t *testing.T) {
+	for _, id := range []string{`7`, `"entry-7"`} {
+		data := `{"name":"B","character_book":{"entries":[{"keys":[],"content":"","enabled":true,"insertion_order":0,"id":` + id + `}]}}`
+		if err := Validate(json.RawMessage(data), false); err != nil {
+			t.Errorf("id %s: %v", id, err)
+		}
 	}
 }
