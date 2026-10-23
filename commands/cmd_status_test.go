@@ -193,7 +193,7 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 // newlines into spaces).
 func TestStatus_ExactShape(t *testing.T) {
 	rt := &Runtime{
-		AgentName: "Amber",
+		AgentName: "Alice",
 		GetModelInfo: func() (string, string, string, string) {
 			return "DeepSeek-V4-Flash", "openrouter", "openai", ""
 		},
@@ -206,13 +206,13 @@ func TestStatus_ExactShape(t *testing.T) {
 		GetEnabledChannels: func() []string {
 			// Globally enabled — must NOT appear in /status output.
 			return []string{
-				"telegram-Amber", "telegram-Dawn", "telegram-Karen",
-				"telegram-Penny", "telegram-Wendy", "slack", "webui",
+				"telegram-Alice", "telegram-Bob", "telegram-Agent3",
+				"telegram-Agent4", "telegram-Agent5", "slack", "webui",
 			}
 		},
 		GetSessionChannels: func() []string {
-			// Only the channels Amber is bound to in config.
-			return []string{"telegram-Amber"}
+			// Only the channels Alice is bound to in config.
+			return []string{"telegram-Alice"}
 		},
 		GetArchiveStats: func() (int, time.Time, time.Time) {
 			// Count present, timestamps absent → archive date lines omitted.
@@ -279,7 +279,7 @@ func TestStatus_ExactShape(t *testing.T) {
 	wantBody := []string{
 		"Version: " + app.Version(),
 		"Uptime: 59m38s",
-		"Agent: Amber",
+		"Agent: Alice",
 		"Model: DeepSeek-V4-Flash",
 		"Provider: openrouter",
 		"Protocol: openai",
@@ -288,7 +288,7 @@ func TestStatus_ExactShape(t *testing.T) {
 		"Archive messages: 12",
 		"Context tokens: ~148 (estimated)",
 		"Summary chars: 0",
-		"Agent channels: 1 (telegram-Amber)",
+		"Agent channels: 1 (telegram-Alice)",
 	}
 	body := lines[3 : len(lines)-1]
 	if len(body) != len(wantBody) {
@@ -333,8 +333,8 @@ func TestStatus_ChannelScopingDoesNotLeakGlobalChannels(t *testing.T) {
 		// Global registry — must NOT appear in the reply.
 		GetEnabledChannels: func() []string {
 			return []string{
-				"telegram-Amber", "telegram-Dawn", "telegram-Karen",
-				"telegram-Penny", "telegram-Wendy", "slack", "webui",
+				"telegram-Alice", "telegram-Bob", "telegram-Agent3",
+				"telegram-Agent4", "telegram-Agent5", "slack", "webui",
 			}
 		},
 		// Per-agent scope — single channel.
@@ -349,8 +349,8 @@ func TestStatus_ChannelScopingDoesNotLeakGlobalChannels(t *testing.T) {
 
 	// Old global-only channel names must not appear anywhere in the reply.
 	for _, leaked := range []string{
-		"telegram-Amber", "telegram-Dawn", "telegram-Karen",
-		"telegram-Penny", "telegram-Wendy", "webui",
+		"telegram-Alice", "telegram-Bob", "telegram-Agent3",
+		"telegram-Agent4", "telegram-Agent5", "webui",
 	} {
 		if strings.Contains(reply, leaked) {
 			t.Errorf("reply leaked globally-enabled channel %q:\n%s", leaked, reply)
@@ -376,7 +376,7 @@ func TestStatus_ChannelScopingFallbackToRequestChannel(t *testing.T) {
 		AgentName:          "DefaultAgent",
 		GetSessionChannels: func() []string { return nil },
 		GetEnabledChannels: func() []string {
-			return []string{"telegram-Amber", "slack", "webui"}
+			return []string{"telegram-Alice", "slack", "webui"}
 		},
 		Uptime: func() time.Duration { return time.Second },
 	}
@@ -384,7 +384,7 @@ func TestStatus_ChannelScopingFallbackToRequestChannel(t *testing.T) {
 	if !strings.Contains(reply, "Agent channels: 1 (webui)") {
 		t.Errorf("missing fallback 'Agent channels: 1 (webui)':\n%s", reply)
 	}
-	if strings.Contains(reply, "telegram-Amber") || strings.Contains(reply, "slack") {
+	if strings.Contains(reply, "telegram-Alice") || strings.Contains(reply, "slack") {
 		t.Errorf("reply leaked other channels in fallback case:\n%s", reply)
 	}
 }

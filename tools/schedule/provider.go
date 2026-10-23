@@ -27,12 +27,12 @@ func (p scheduleProvider) Available(cfg *config.Config) (bool, string) {
 
 func (p scheduleProvider) Describe() []tools.ToolDescriptor {
 	return []tools.ToolDescriptor{
-		{Name: "cron_schedule", Description: "Schedule one-time or recurring reminders, jobs, and shell commands.", Category: "automation", ConfigKey: "cron_schedule", DefaultEnabled: true},
+		{Name: "cron_schedule", Description: "Schedule one-time or recurring reminders, jobs, and shell commands.", DefaultEnabled: true},
 	}
 }
 
 func (p scheduleProvider) Build(deps tools.ToolDeps) []tools.Tool {
-	// The cron tool is created externally (in gateway/helpers.go) due to its
+	// The cron tool is created externally (in gateway/services.go) due to its
 	// dependency on CronService and AgentLoop, then registered via
 	// agentLoop.RegisterTool(). This provider intentionally returns nil —
 	// the gateway wiring handles cron tool construction and registration.

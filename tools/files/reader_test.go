@@ -155,3 +155,70 @@ func TestReadFileLimitRespectsPermissions(t *testing.T) {
 		t.Fatal("limited read must enforce the same scope as ReadFile")
 	}
 }
+
+// Resolve gives the host path of what the agent may read (a workspace path or
+// a mount path) and refuses the rest; Allowed checks a host path the same way,
+// inside a mount as that mount's path.
+func TestReaderResolveAndAllowed(t *testing.T) {
+	ws := t.TempDir()
+	mountDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	writeFile(t, filepath.Join(ws, "files", "forum.json"), "{}")
+	writeFile(t, filepath.Join(ws, "secrets", "keys.md"), "nope")
+	writeFile(t, filepath.Join(mountDir, "refs", "brief.md"), "brief")
+	writeFile(t, outside, "{}")
+	SetReadScopeSubdirs([]string{"files"})
+	defer SetReadScopeSubdirs(nil)
+	SetMountsForWorkspace(ws, []MountSpec{{Name: "library", Path: mountDir}})
+	defer SetMountsForWorkspace(ws, nil)
+	r := NewReader(readerConfig(), ws)
+
+	for ref, want := range map[string]string{
+		"files/forum.json":      filepath.Join(ws, "files", "forum.json"),
+		"library/refs/brief.md": filepath.Join(mountDir, "refs", "brief.md"),
+	} {
+		got, err := r.Resolve(ref)
+		if err != nil || got != want {
+			t.Errorf("Resolve(%q) = %q, %v; want %q", ref, got, err, want)
+		}
+		if err := r.Allowed(want); err != nil {
+			t.Errorf("Allowed(%q) = %v, want nil", want, err)
+		}
+	}
+	for _, ref := range []string{"secrets/keys.md", "../outside.json", outside, "files/missing.json"} {
+		if got, err := r.Resolve(ref); err == nil {
+			t.Errorf("Resolve(%q) = %q, want a refusal", ref, got)
+		}
+	}
+	for _, abs := range []string{filepath.Join(ws, "secrets", "keys.md"), outside} {
+		if err := r.Allowed(abs); err == nil {
+			t.Errorf("Allowed(%q) = nil, want a refusal", abs)
+		}
+	}
+}
+
+// A workspace reached through a symbolic link: a path given by its resolved
+// target is still the workspace's, and is checked as such.
+func TestReaderAllowedThroughSymlinkedWorkspace(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "ws")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(target, "files", "brief.md"), "brief")
+	writeFile(t, filepath.Join(target, "secrets", "keys.md"), "nope")
+	SetReadScopeSubdirs([]string{"files"})
+	defer SetReadScopeSubdirs(nil)
+	r := NewReader(readerConfig(), link)
+	for _, p := range []string{filepath.Join(target, "files", "brief.md"), filepath.Join(link, "files", "brief.md")} {
+		if err := r.Allowed(p); err != nil {
+			t.Errorf("Allowed(%q) = %v, want nil", p, err)
+		}
+	}
+	if err := r.Allowed(filepath.Join(target, "secrets", "keys.md")); err == nil {
+		t.Error("Allowed accepted a file outside the read scope through the resolved workspace")
+	}
+	if got, err := r.Resolve("files/brief.md"); err != nil || got != filepath.Join(link, "files", "brief.md") {
+		t.Errorf("Resolve = %q, %v", got, err)
+	}
+}

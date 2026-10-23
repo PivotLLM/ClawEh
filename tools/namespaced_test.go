@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 )
 
@@ -132,5 +133,38 @@ func TestNamespacedProvider_Describe(t *testing.T) {
 	}
 	if readDesc == nil || !readDesc.DefaultEnabled {
 		t.Fatalf("expected file_read descriptor with DefaultEnabled, got %+v", descs)
+	}
+}
+
+// denyByDefaultProvider returns one tool that explicitly does not default to
+// allowed, and one that leaves DefaultAllow unset.
+type denyByDefaultProvider struct{}
+
+func (denyByDefaultProvider) RegisterTools(global.Deps) []global.ToolDefinition {
+	handler := func(*global.ToolCall) (*global.Result, error) { return &global.Result{ForLLM: "ok"}, nil }
+	return []global.ToolDefinition{
+		{Name: "purge", Description: "purge a thing", DefaultAllow: global.Allow(false), Handler: handler},
+		{Name: "probe", Description: "probe a thing", Handler: handler},
+	}
+}
+
+// A namespaced tool whose DefaultAllow is false is still built when deps.Cfg
+// is set: DefaultAllow only feeds the "Default tools" list, and which tools an
+// agent gets is decided by its own tools list when they are registered, not
+// by a per-tool filter at build time.
+func TestNamespacedProvider_BuildIgnoresDefaultAllow(t *testing.T) {
+	p := NamespacedProvider("thing", denyByDefaultProvider{})
+	for _, d := range p.Describe() {
+		if d.DefaultEnabled {
+			t.Fatalf("descriptor %s DefaultEnabled = true, want false", d.Name)
+		}
+	}
+	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{{ID: "alice", Default: true}}}}
+	got := map[string]bool{}
+	for _, tl := range p.Build(ToolDeps{Cfg: cfg, AgentID: "alice"}) {
+		got[tl.Name()] = true
+	}
+	if !got["thing_purge"] || !got["thing_probe"] || len(got) != 2 {
+		t.Fatalf("built = %v, want thing_purge and thing_probe", got)
 	}
 }

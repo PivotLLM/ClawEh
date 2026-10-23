@@ -16,9 +16,6 @@ func testConfig(agents []config.AgentConfig, bindings []config.AgentBinding) *co
 			List: agents,
 		},
 		Bindings: bindings,
-		Session: config.SessionConfig{
-			Mode: "per-user",
-		},
 	}
 }
 
@@ -293,5 +290,142 @@ func TestResolveRoute_NoDefaultUsesFirst(t *testing.T) {
 
 	if route.AgentID != "alpha" {
 		t.Errorf("AgentID = %q, want 'alpha' (first in list)", route.AgentID)
+	}
+}
+
+// A peer binding with a kind and no id (the Bindings page's "Direct
+// messages") matches every peer of that kind on its channel, below a binding
+// naming the peer itself and above channel-wide bindings and the default.
+func TestResolveRoute_PeerKindBinding(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}, {ID: "bob"}}
+	dmBinding := config.AgentBinding{AgentID: "alice", Match: config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct", ID: ""}}}
+	specific := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "slack", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct", ID: "U2"}}}
+	wholeChannel := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "slack", AccountID: "*"}}
+	dm := func(id string) RouteInput {
+		return RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "direct", ID: id}}
+	}
+	channelMsg := RouteInput{Channel: "slack", Peer: &RoutePeer{Kind: "channel", ID: "C1"}}
+
+	for _, tc := range []struct {
+		name      string
+		bindings  []config.AgentBinding
+		input     RouteInput
+		agent     string
+		matchedBy string
+	}{
+		{"direct message routes to the kind binding", []config.AgentBinding{dmBinding}, dm("U1"), "alice", "binding.peer.kind"},
+		{"specific peer binding wins", []config.AgentBinding{dmBinding, specific}, dm("U2"), "bob", "binding.peer"},
+		{"other direct message still to the kind binding", []config.AgentBinding{dmBinding, specific}, dm("U1"), "alice", "binding.peer.kind"},
+		{"kind binding beats a whole-channel binding", []config.AgentBinding{wholeChannel, dmBinding}, dm("U1"), "alice", "binding.peer.kind"},
+		{"channel message unaffected, falls to default", []config.AgentBinding{dmBinding}, channelMsg, "main", "default"},
+		{"channel message unaffected, whole-channel binding", []config.AgentBinding{dmBinding, wholeChannel}, channelMsg, "bob", "binding.channel"},
+		{"other channel unaffected", []config.AgentBinding{dmBinding}, RouteInput{Channel: "telegram", Peer: &RoutePeer{Kind: "direct", ID: "U1"}}, "main", "default"},
+		{"no binding goes to default", nil, dm("U1"), "main", "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
+			if route.AgentID != tc.agent || route.MatchedBy != tc.matchedBy {
+				t.Fatalf("route = %s by %s, want %s by %s", route.AgentID, route.MatchedBy, tc.agent, tc.matchedBy)
+			}
+		})
+	}
+}
+
+// A kind-only direct binding outranks a guild, team or account binding: a
+// Discord DM sent where a guild binding also applies goes to the DM binding,
+// whatever order the bindings are listed in.
+func TestResolveRoute_PeerKindBeatsGuildTeamAccount(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}, {ID: "bob"}}
+	dmBinding := func(ch string) config.AgentBinding {
+		return config.AgentBinding{AgentID: "alice", Match: config.BindingMatch{Channel: ch, AccountID: "*", Peer: &config.PeerMatch{Kind: "direct"}}}
+	}
+	guild := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "discord", AccountID: "*", GuildID: "guild1"}}
+	team := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "slack", AccountID: "*", TeamID: "team1"}}
+	account := config.AgentBinding{AgentID: "bob", Match: config.BindingMatch{Channel: "discord", AccountID: "acct1"}}
+
+	for _, tc := range []struct {
+		name     string
+		bindings []config.AgentBinding
+		input    RouteInput
+	}{
+		{
+			"guild binding listed first",
+			[]config.AgentBinding{guild, dmBinding("discord")},
+			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
+		{
+			"team binding listed first",
+			[]config.AgentBinding{team, dmBinding("slack")},
+			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
+		{
+			"account binding listed first",
+			[]config.AgentBinding{account, {AgentID: "alice", Match: config.BindingMatch{Channel: "discord", AccountID: "acct1", Peer: &config.PeerMatch{Kind: "direct"}}}},
+			RouteInput{Channel: "discord", AccountID: "acct1", Peer: &RoutePeer{Kind: "direct", ID: "U1"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
+			if route.AgentID != "alice" || route.MatchedBy != "binding.peer.kind" {
+				t.Fatalf("route = %s by %s, want alice by binding.peer.kind", route.AgentID, route.MatchedBy)
+			}
+		})
+	}
+
+	// The guild, team and account bindings still take a non-direct message.
+	for _, tc := range []struct {
+		name      string
+		bindings  []config.AgentBinding
+		input     RouteInput
+		matchedBy string
+	}{
+		{
+			"guild message",
+			[]config.AgentBinding{dmBinding("discord"), guild},
+			RouteInput{Channel: "discord", GuildID: "guild1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}},
+			"binding.guild",
+		},
+		{
+			"team message",
+			[]config.AgentBinding{dmBinding("slack"), team},
+			RouteInput{Channel: "slack", TeamID: "team1", Peer: &RoutePeer{Kind: "channel", ID: "C1"}},
+			"binding.team",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := NewRouteResolver(testConfig(agents, tc.bindings)).ResolveRoute(tc.input)
+			if route.AgentID != "bob" || route.MatchedBy != tc.matchedBy {
+				t.Fatalf("route = %s by %s, want bob by %s", route.AgentID, route.MatchedBy, tc.matchedBy)
+			}
+		})
+	}
+}
+
+// Peer kinds are compared case-insensitively (both sides are lower-cased, as
+// for a peer binding with an id): a "Direct" binding matches a "direct" peer
+// and a "direct" binding matches a "DIRECT" peer.
+func TestResolveRoute_PeerKindCaseInsensitive(t *testing.T) {
+	agents := []config.AgentConfig{{ID: "main", Default: true}, {ID: "alice"}}
+	for _, tc := range []struct {
+		name        string
+		bindingKind string
+		peerKind    string
+	}{
+		{"binding kind capitalised", "Direct", "direct"},
+		{"peer kind upper case", "direct", "DIRECT"},
+		{"binding kind padded", " direct ", "direct"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bindings := []config.AgentBinding{{AgentID: "alice", Match: config.BindingMatch{Channel: "discord", AccountID: "*", Peer: &config.PeerMatch{Kind: tc.bindingKind}}}}
+			r := NewRouteResolver(testConfig(agents, bindings))
+			input := RouteInput{Channel: "discord", Peer: &RoutePeer{Kind: tc.peerKind, ID: "U1"}}
+			route := r.ResolveRoute(input)
+			if route.AgentID != "alice" || route.MatchedBy != "binding.peer.kind" {
+				t.Fatalf("route = %s by %s, want alice by binding.peer.kind", route.AgentID, route.MatchedBy)
+			}
+			if !r.Reaches(input, "alice") {
+				t.Fatal("Reaches = false, want true")
+			}
+		})
 	}
 }

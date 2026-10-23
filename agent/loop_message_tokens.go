@@ -11,7 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/msgtoken"
-	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // ValidateMessageToken resolves an external-message token to its owning agent. It
@@ -158,6 +157,11 @@ func (al *AgentLoop) UpdateMessageToken(agentID, id string, ratePerMin, blockMin
 // Callers can errors.Is against it to report a precondition failure (4xx).
 var ErrNoDefaultChannel = errors.New("agent has no default channel")
 
+// ErrHumanAgent is returned (wrapped) by HandleExternalMessage for a human
+// agent: a person takes work only from agents' questions, never from an
+// external event. Callers report it as a precondition failure (4xx).
+var ErrHumanAgent = errors.New("agent is a person")
+
 // buildMessageManagers constructs per-agent message-token managers from cfg and
 // wires each onto its agent's ContextBuilder. An agent whose message-token window is
 // not > 0 gets no manager — no token is ever issued, injected, or validated for
@@ -167,15 +171,15 @@ var ErrNoDefaultChannel = errors.New("agent has no default channel")
 // would keep validating against a stale manager.
 func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[string]*msgtoken.Manager {
 	managers := make(map[string]*msgtoken.Manager)
-	for _, agentID := range registry.ListAgentIDs() {
-		agentInstance, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		agentInstance, ok := registry.Get(agentID)
 		if !ok {
 			continue
 		}
 		// Find the matching AgentConfig for callback settings.
 		var agentCfg *config.AgentConfig
 		for i := range cfg.Agents.List {
-			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
+			if config.SameAgentID(cfg.Agents.List[i].ID, agentID) {
 				agentCfg = &cfg.Agents.List[i]
 				break
 			}
@@ -186,7 +190,8 @@ func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[strin
 			windowMinutes = agentCfg.Message.WindowMinutes
 			windowCount = agentCfg.Message.WindowCount
 		}
-		mgr, err := msgtoken.NewManager(agentID, storePath, windowMinutes, windowCount)
+		mgr, err := msgtoken.NewManager(agentID, storePath, windowMinutes, windowCount,
+			msgtoken.WithDirMode(agentModes(cfg, storePath).Dir))
 		if err != nil {
 			logger.WarnCF("callback", "Failed to initialize callback manager",
 				map[string]any{"agent": agentID, "error": err.Error()})

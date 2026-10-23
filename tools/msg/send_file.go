@@ -86,7 +86,7 @@ func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		chatID = t.defaultChatID
 	}
 	if channel == "" || chatID == "" {
-		return tools.ErrorResult("no target channel/chat available")
+		return refused("no target channel/chat available")
 	}
 
 	if t.mediaStore == nil {

@@ -28,7 +28,7 @@ func rateLimited(retryAfter int) error {
 func TestPollRetryWait(t *testing.T) {
 	wait, next := pollRetryWait(rateLimited(5), 0)
 	require.Equal(t, 5*time.Second+channels.RetryAfterPadding, wait)
-	require.Equal(t, 6*time.Second, wait, "retry after 5 must wait 6s")
+	require.Equal(t, 10*time.Second, wait, "retry after 5 must wait 10s")
 	require.Zero(t, next, "retry_after must not advance the backoff")
 
 	boom := errors.New("request call: internal server error: 502")
@@ -126,4 +126,18 @@ func TestPollUpdates_RetriesDeliversAndStops(t *testing.T) {
 
 	_, open := <-updates
 	require.False(t, open, "updates must be closed when the loop exits")
+}
+
+// A refused send carries Telegram's retry_after for the manager to honour,
+// and is still ErrRateLimit; a 429 without one carries none.
+func TestClassifySendErr_RetryAfter(t *testing.T) {
+	err := classifySendErr("send message", rateLimited(10))
+	require.ErrorIs(t, err, channels.ErrRateLimit)
+	var ra *channels.RetryAfterError
+	require.ErrorAs(t, err, &ra)
+	require.Equal(t, 10*time.Second, ra.After)
+
+	err = classifySendErr("send message", &ta.Error{ErrorCode: 429, Description: "Too Many Requests"})
+	require.ErrorIs(t, err, channels.ErrRateLimit)
+	require.False(t, errors.As(err, &ra), "a 429 without retry_after must carry none")
 }

@@ -2,10 +2,12 @@ package channels
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
 )
 
 // ChannelFactory is a constructor function that creates a Channel from config and message bus.
@@ -82,6 +84,34 @@ func RegisterFactory(name string, f ChannelFactory) {
 	factories[name] = f
 }
 
+// FactoryInputs returns what a channel factory reads from the configuration,
+// in any form encoding/json can marshal. A reload rebuilds the channel only
+// when this changes, so it must cover everything the factory and the channel
+// it builds read from cfg (or from anything cfg names, such as a file).
+type FactoryInputs func(cfg *config.Config) any
+
+var (
+	factoryInputsMu sync.RWMutex
+	factoryInputs   = map[string]FactoryInputs{}
+)
+
+// RegisterFactoryInputs registers what the factory registered under name
+// reads. A channel whose factory registers none is rebuilt on every reload.
+// Called from subpackage init() functions next to RegisterFactory.
+func RegisterFactoryInputs(name string, f FactoryInputs) {
+	factoryInputsMu.Lock()
+	defer factoryInputsMu.Unlock()
+	factoryInputs[name] = f
+}
+
+// getFactoryInputs looks up the inputs of a channel factory by name.
+func getFactoryInputs(name string) (FactoryInputs, bool) {
+	factoryInputsMu.RLock()
+	defer factoryInputsMu.RUnlock()
+	f, ok := factoryInputs[name]
+	return f, ok
+}
+
 // getFactory looks up a channel factory by name.
 func getFactory(name string) (ChannelFactory, bool) {
 	factoriesMu.RLock()
@@ -103,4 +133,48 @@ func getTelegramBotFactory() (TelegramBotFactory, bool) {
 	telegramBotFactoryMu.RLock()
 	defer telegramBotFactoryMu.RUnlock()
 	return telegramBotFactory, telegramBotFactory != nil
+}
+
+var (
+	builtinsMu sync.RWMutex
+	builtins   = map[string]ChannelFactory{}
+)
+
+// RegisterBuiltin registers a channel that every channel manager builds, and
+// rebuilds on every reload, regardless of the configuration: it is started with
+// workers and receives outbound messages like a configured channel. The
+// factory may return a nil channel to skip it for a given configuration. A
+// configured channel of the same name wins. Called from init() by the package
+// that provides the channel.
+//
+// It panics on an empty name, a nil factory, or an internal channel name
+// (outbound messages to those are dropped, so the channel could never reply).
+func RegisterBuiltin(name string, f ChannelFactory) {
+	if name == "" || f == nil || constants.IsInternalChannel(name) {
+		panic("channels: invalid built-in channel registration: " + name)
+	}
+	builtinsMu.Lock()
+	defer builtinsMu.Unlock()
+	builtins[name] = f
+}
+
+// builtinNames returns the registered built-in channel names, sorted so the
+// build order is stable.
+func builtinNames() []string {
+	builtinsMu.RLock()
+	defer builtinsMu.RUnlock()
+	names := make([]string, 0, len(builtins))
+	for name := range builtins {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// getBuiltin looks up a built-in channel factory by name.
+func getBuiltin(name string) (ChannelFactory, bool) {
+	builtinsMu.RLock()
+	defer builtinsMu.RUnlock()
+	f, ok := builtins[name]
+	return f, ok
 }

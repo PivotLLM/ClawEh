@@ -74,22 +74,17 @@ func presetFor(provider string) STTPreset {
 }
 
 // NewWhisperTranscriber builds a transcriber for an OpenAI-compatible endpoint.
-// Blank baseURL/model fall back to the provider preset (else groq defaults).
+// Blank baseURL/model fall back to the provider preset; a provider with no
+// preset (custom) must set both.
 // a receives the alert raised when the API rejects the key or account; nil
 // means none.
 func NewWhisperTranscriber(name, apiKey, baseURL, model string, a alerter.Alerter) *whisperTranscriber {
 	preset := presetFor(name)
 	if baseURL == "" {
 		baseURL = preset.BaseURL
-		if baseURL == "" {
-			baseURL = presetFor("groq").BaseURL
-		}
 	}
 	if model == "" {
 		model = preset.Model
-		if model == "" {
-			model = presetFor("groq").Model
-		}
 	}
 	logger.DebugCF("voice", "Creating transcriber", map[string]any{
 		"provider": name, "base_url": baseURL, "model": model, "has_api_key": apiKey != "",
@@ -475,6 +470,14 @@ func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcr
 		}
 		apiKey, baseURL, model := resolveSTTCredentials(cfg, s)
 		if apiKey == "" {
+			continue
+		}
+		// A provider with no preset (custom) has no default endpoint or model;
+		// it is never silently sent to another provider's.
+		if baseURL == "" || model == "" {
+			logger.WarnCF("voice", "Speech backend skipped: no endpoint or model", map[string]any{
+				"provider": s.Provider, "has_base_url": baseURL != "", "has_model": model != "",
+			})
 			continue
 		}
 		chain = append(chain, NewTranscriber(s.Provider, apiKey, baseURL, model, a))

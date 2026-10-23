@@ -1,9 +1,8 @@
 # External message endpoint
 
 The external message endpoint lets an outside process deliver a message into an
-agent's active conversation without a persistent channel connection. The agent
-receives the message on its last active channel and responds normally, as if the
-user had sent it.
+agent without a persistent channel connection. The agent handles it like a
+scheduled job firing and replies on its default channel.
 
 > **Status / scope.** This endpoint is **not advertised to the agent** — the
 > rotating token is no longer injected into the system prompt. It is retained for
@@ -22,7 +21,9 @@ POST http://localhost:18790/api/message/{token}
 
 - **Body:** plain text — the message to deliver to the agent.
 - **Response:** `202 Accepted` on success, `401 Unauthorized` for an
-  invalid/expired token, `400 Bad Request` for an empty body.
+  invalid/expired token, `400 Bad Request` for an empty body, `422 Unprocessable
+  Entity` when the agent has no default channel or is a human agent, `429 Too
+  Many Requests` (with `Retry-After`) when the token is rate-limited.
 
 ```bash
 curl -X POST http://localhost:18790/api/message/YOUR_TOKEN \
@@ -87,14 +88,15 @@ configured security marker and treated as untrusted (it must not be obeyed as
 instructions).
 
 For long-lived, named, per-agent tokens managed in the Web UI, see
-[message-api.md](message-api.md).
+[Message API](../manual/channels/message-api.md).
 
 ---
 
 ## Security
 
-- Served over **plain HTTP**, bound to **`127.0.0.1` only**. Do not expose it
-  externally or place it behind a proxy that allows outside access.
+- Served on the same listeners as the WebUI: plain HTTP (loopback by default)
+  and HTTPS (`gateway.tls.mode`, every interface by default). The token travels
+  in the URL, so use HTTPS from another machine.
 - The rotating token is basic access control, not a substitute for
   network-level security.
 - Token-shaped values (`AGT`/`SST`) are redacted from logs and tool output.
@@ -105,7 +107,7 @@ For long-lived, named, per-agent tokens managed in the Web UI, see
 
 - **`401 Unauthorized`** — token invalid or rotated beyond `window_count`
   windows. Re-read the current token from the agent's `message-tokens.json`.
-- **`202` but no response** — the agent's last active channel is stale or on a
-  different platform; send it a message on the intended channel first, then retry.
+- **`202` but no response** — check the agent's default channel (the binding
+  marked default) and the channel's delivery errors in the log.
 - **Response goes to the wrong agent** — tokens are per-agent and not
   interchangeable; verify you are using the right agent's token.

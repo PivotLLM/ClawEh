@@ -67,15 +67,33 @@ type DownloadOptions struct {
 var (
 	mediaStagingMu  sync.RWMutex
 	mediaStagingDir string
+	mediaDirMode    os.FileMode = 0o700
+	mediaFileMode   os.FileMode = 0o600
 )
 
 // SetMediaStagingDir points downloaded media at a directory under the instance
-// data dir (e.g. ~/.claw/media or /opt/claw/media) instead of shared /tmp. The
-// gateway sets this at startup from cfg.DataDir(); empty restores the fallback.
-func SetMediaStagingDir(dir string) {
+// data dir (e.g. ~/.claw/media or /opt/claw/media) instead of shared /tmp,
+// created with dirMode, its files with fileMode (security.permissions.media; a
+// zero mode means 0700 or 0600). The gateway sets this at startup from
+// cfg.DataDir(); empty restores the fallback.
+func SetMediaStagingDir(dir string, dirMode, fileMode os.FileMode) {
+	if dirMode == 0 {
+		dirMode = 0o700
+	}
+	if fileMode == 0 {
+		fileMode = 0o600
+	}
 	mediaStagingMu.Lock()
-	mediaStagingDir = dir
+	mediaStagingDir, mediaDirMode, mediaFileMode = dir, dirMode, fileMode
 	mediaStagingMu.Unlock()
+}
+
+// MediaModes returns the modes media is staged with: the directory's and the
+// files'.
+func MediaModes() (dirMode, fileMode os.FileMode) {
+	mediaStagingMu.RLock()
+	defer mediaStagingMu.RUnlock()
+	return mediaDirMode, mediaFileMode
 }
 
 // MediaTempDir is the scratch directory for downloaded media. It uses the
@@ -112,7 +130,8 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	}
 
 	mediaDir := MediaTempDir()
-	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+	dirMode, fileMode := MediaModes()
+	if err := os.MkdirAll(mediaDir, dirMode); err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create media directory", map[string]any{
 			"error": err.Error(),
 		})
@@ -222,7 +241,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 
-	out, err := os.Create(localPath) //nolint:gosec // path is MediaTempDir plus a UUID and SanitizeFilename output
+	out, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileMode) //nolint:gosec // path is MediaTempDir plus a UUID and SanitizeFilename output
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create local file", map[string]any{
 			"error": err.Error(),

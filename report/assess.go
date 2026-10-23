@@ -27,6 +27,15 @@ type AssessmentRow struct {
 	Action bool   `json:"action"`
 	Item   string `json:"item"`
 	Status string `json:"status"`
+	// Link is the WebUI page (and field) where the row is acted on; empty
+	// for most rows.
+	Link string `json:"link,omitempty"`
+}
+
+// assessmentLinks maps a row's item to the WebUI location that fixes it.
+var assessmentLinks = map[string]string{
+	itemUntrustedProxy:  "/network#trusted-proxies",
+	itemEncryptedMatrix: "/manual/channels/matrix.html#encryption",
 }
 
 // Assessment is the identity and the security assessment table as data, for
@@ -45,7 +54,7 @@ func Assess(ctx context.Context, cfg *config.Config, env Environment) Assessment
 	var rows []AssessmentRow
 	for _, t := range s.Tables {
 		for _, r := range t.Rows {
-			rows = append(rows, AssessmentRow{Action: r[0] == actionMark, Item: r[1], Status: r[2]})
+			rows = append(rows, AssessmentRow{Action: r[0] == actionMark, Item: r[1], Status: r[2], Link: assessmentLinks[r[1]]})
 		}
 	}
 	return Assessment{

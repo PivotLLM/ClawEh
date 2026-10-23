@@ -76,7 +76,7 @@ func runPurge(confirm bool) error {
 	ctx := context.Background()
 	var totMem, totDom int64
 	for _, path := range dbs {
-		s, err := store.Open(path)
+		s, err := store.Open(path, cogmemhost.StoreOptions(cfg.AgentModes(path))...)
 		if err != nil {
 			fmt.Printf("  %s: open error: %v\n", path, err)
 			continue

@@ -15,12 +15,14 @@ package session
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
 
 	sessiontools "github.com/PivotLLM/ctxengine/tools"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -53,8 +55,8 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		Clear:   cd.ClearFn,
 		Log:     logToClaw,
 	}
-	if cd.Workspace != "" {
-		host.SessionsDir = filepath.Join(cd.Workspace, "sessions")
+	if dir := cd.EffectiveStateDir(); dir != "" {
+		host.SessionsDir = filepath.Join(dir, "sessions")
 	}
 	if cd.SessionInfoFn != nil {
 		host.SessionInfo = func(ctx context.Context, sessionKey string) (*sessiontools.SessionInfo, error) {
@@ -68,7 +70,31 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 			return info, nil
 		}
 	}
-	return sessiontools.Definitions(host)
+	return refuseClearInAsk(sessiontools.Definitions(host))
+}
+
+// errClearInAsk refuses session_clear in an asked turn: the conversation is
+// the agent's one conversation, and clearing it would hand the asker's message
+// to a fresh turn the asker is not waiting for.
+var errClearInAsk = errors.New("session_clear is not available while answering another agent's message")
+
+// refuseClearInAsk wraps the clear tool's handler so it is refused, as an
+// expected refusal, in an asked turn (its tool channel is the ask),
+// in-process and over MCP alike.
+func refuseClearInAsk(defs []global.ToolDefinition) []global.ToolDefinition {
+	for i := range defs {
+		if defs[i].Name != "clear" || defs[i].Handler == nil {
+			continue
+		}
+		next := defs[i].Handler
+		defs[i].Handler = func(call *global.ToolCall) (*global.Result, error) {
+			if tools.ToolChannel(call.Ctx) == constants.AgentMessageChannel {
+				return &global.Result{IsError: true, ForLLM: errClearInAsk.Error(), Err: tools.Refusal(errClearInAsk)}, nil
+			}
+			return next(call)
+		}
+	}
+	return defs
 }
 
 // logToClaw routes sessiontools diagnostics into ClawEh's logger.

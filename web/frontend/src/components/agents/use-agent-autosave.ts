@@ -19,7 +19,9 @@ import {
 // enforced that but care.
 export interface AgentEdits {
   models: string[]
+  /** The skills the agent may use ("*" = every skill); [] = none. */
   skills: string[]
+  /** The native tools the agent may call; [] = none. */
   tools: string[]
   message: { mins: number; count: number }
   temperature: number | undefined
@@ -30,6 +32,8 @@ export interface AgentEdits {
   mounts: MountEntry[]
   mcpTools: string[]
   denyTools: string[]
+  /** subagents.allow_agents ("May message"); [] = none. */
+  allowAgents: string[]
   maestro: MaestroRunnerEdits
 }
 
@@ -53,6 +57,7 @@ export function editsFromAgent(a: AgentEntry): AgentEdits {
     mounts: a.mounts ?? [],
     mcpTools: a.mcp_tools ?? [],
     denyTools: a.deny_tools ?? [],
+    allowAgents: a.allow_agents ?? [],
     maestro: maestroEditsFromAgent(a),
   }
 }

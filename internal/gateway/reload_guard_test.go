@@ -1,41 +1,69 @@
 package gateway
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/tlscert"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 // restartServices is the reload path. It rebuilds every service from the new
 // config, and it is not unit-testable end to end without standing up an agent
 // loop, a channel manager, cron, media and MCP — so these guards assert on the
 // source instead. Each one exists because dropping the call is silent: the
-// gateway keeps running and the loss only shows up in production.
+// gateway keeps running and the loss only shows up in production. The calls
+// of restartServices include those of the services.go functions it calls,
+// so a step moved into a helper still counts.
 func restartServicesBody(t *testing.T) string {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "helpers.go", nil, 0)
+	file, err := parser.ParseFile(fset, "services.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parsing helpers.go: %v", err)
+		t.Fatalf("parsing services.go: %v", err)
 	}
+	funcs := map[string]*ast.FuncDecl{}
 	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "restartServices" || fn.Body == nil {
-			continue
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Body != nil {
+			funcs[fn.Name.Name] = fn
 		}
-		var sb strings.Builder
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
+	}
+	if funcs["restartServices"] == nil {
+		t.Fatal("restartServices not found in services.go — this guard needs updating")
+	}
+	var sb strings.Builder
+	seen := map[string]bool{}
+	var walk func(name string)
+	walk = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		ast.Inspect(funcs[name].Body, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
-				sb.WriteString(dottedName(call.Fun) + "\n")
+				callee := dottedName(call.Fun)
+				sb.WriteString(callee + "\n")
+				if funcs[callee] != nil {
+					walk(callee)
+				}
 			}
 			return true
 		})
-		return sb.String()
 	}
-	t.Fatal("restartServices not found in helpers.go — this guard needs updating")
-	return ""
+	walk("restartServices")
+	return sb.String()
 }
 
 // dottedName renders a call target as source text ("services.MountWatcher.Start"),
@@ -88,13 +116,83 @@ func TestReloadRebuildsTheMountWatcher(t *testing.T) {
 func TestReloadRebuildsTheServicesItStops(t *testing.T) {
 	body := restartServicesBody(t)
 	for _, want := range []string{
-		"mountwatch.New",      // mount watcher
-		"channels.NewManager", // channel manager
-		"devices.NewService",  // device service
-		"setupCronTool",       // cron
+		"mountwatch.New",        // mount watcher
+		"ChannelManager.Reload", // channels (kept running; reloaded in place)
+		"devices.NewService",    // device service
+		"setupCronTool",         // cron
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("restartServices does not call %s; stopAndCleanupServices stops that service on every reload", want)
 		}
+	}
+}
+
+// A device channel rebuilt by a reload gets what the gateway's build hook
+// provides, as the first one did: the agent querier (agents.list and
+// chat.history for operator clients) and the HTTPS certificate, without which
+// a channel with channels.device.tls on refuses to start.
+func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
+	t.Setenv(global.EnvVarHome, t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.Agents.BaseDir = t.TempDir()
+	cfg.Agents.Defaults.Models = []string{"test-model"}
+	cfg.Agents.List = []config.AgentConfig{{ID: "alice", Name: "Alice", Default: true}}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %T", ln.Addr())
+	}
+	port := addr.Port
+	if err = ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Channels.Device = config.DeviceChannelConfig{
+		Enabled: true, Token: "tok", Host: "127.0.0.1", Port: port, TLS: true,
+		AllowFrom: config.FlexibleStringSlice{"*"},
+	}
+
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	al, err := agent.NewAgentLoop(cfg, mb, providers.NewUnconfiguredProvider(), nil)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
+	certs, err := tlscert.Load(tlscert.OptionsFromConfig(cfg))
+	if err != nil {
+		t.Fatalf("tlscert.Load: %v", err)
+	}
+	m, err := channels.NewManager(cfg, mb, nil, channels.WithBuildHook(channelBuildHook(al, certs)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := m.StopAll(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	first, _ := m.GetChannel("device")
+
+	changed := *cfg
+	changed.Gateway.TrustedProxies = []string{"192.0.2.2"}
+	if res := m.Reload(context.Background(), &changed, nil); !slices.Equal(res.Restarted, []string{"device"}) {
+		t.Fatalf("reload = %+v, want device restarted", res)
+	}
+	ch, _ := m.GetChannel("device")
+	rebuilt, ok := ch.(*device.DeviceChannel)
+	if !ok || ch == first {
+		t.Fatalf("device channel not rebuilt: %T", ch)
+	}
+	if !rebuilt.IsRunning() {
+		t.Fatal("the rebuilt device channel did not start: it was not given the HTTPS certificate")
+	}
+	q, ok := rebuilt.AgentQuerier().(deviceAgentQuerier)
+	if !ok || q.al != al {
+		t.Fatalf("the rebuilt device channel's agent querier = %T, want the agent loop's", rebuilt.AgentQuerier())
 	}
 }

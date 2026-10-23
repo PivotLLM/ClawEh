@@ -11,6 +11,7 @@ import (
 	mconfig "github.com/PivotLLM/Maestro/config"
 	mlogging "github.com/PivotLLM/Maestro/logging"
 	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
+	"github.com/PivotLLM/Maestro/runner"
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
@@ -49,8 +50,11 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
-	// Drop the idle runners of agents the config no longer has.
-	pruneRunners(c)
+	// Drop the idle runners of agents the config no longer has. A temporary
+	// agent (a sub-agent clone) leaves the runners alone.
+	if !cd.TempAgent {
+		pruneRunners(c)
+	}
 
 	// Gate on the per-agent Maestro flag.
 	if !c.AgentHasMaestro(deps.AgentID) {
@@ -122,8 +126,19 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	// The runner is built here and injected, one per agent for the life of the
 	// process, so a run in progress survives a config reload; this
 	// registration's dispatcher is swapped into it (see runnerFor).
-	run, swap := runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
-		disp, mcfg, mlog)
+	// A temporary agent (a sub-agent clone acting as its source) uses the
+	// source's runner as it is, without pointing it at its own dispatcher, so
+	// creating, rebuilding or deleting a clone changes nothing about it.
+	var (
+		run  *runner.Runner
+		swap *swapDispatcher
+	)
+	if cd.TempAgent {
+		run, swap = sharedRunner(deps.AgentID, disp, mcfg, mlog)
+	} else {
+		run, swap = runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
+			disp, mcfg, mlog)
+	}
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,

@@ -55,19 +55,19 @@ func TestHandleListSkills(t *testing.T) {
 		t.Fatalf("WriteFile(global skill) error = %v", err)
 	}
 
-	builtinRoot := filepath.Join(t.TempDir(), "builtin-skills")
-	t.Setenv("CLAW_BUILTIN_SKILLS", builtinRoot)
-
-	builtinSkillDir := filepath.Join(builtinRoot, "builtin-skill")
-	if err := os.MkdirAll(builtinSkillDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll(builtin skill) error = %v", err)
+	// A skills/ folder in the working directory is not a skill source.
+	wd := t.TempDir()
+	t.Chdir(wd)
+	cwdSkillDir := filepath.Join(wd, "skills", "cwd-skill")
+	if err := os.MkdirAll(cwdSkillDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(cwd skill) error = %v", err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(builtinSkillDir, "SKILL.md"),
-		[]byte("---\nname: builtin-skill\ndescription: Builtin skill\n---\n"),
+		filepath.Join(cwdSkillDir, "SKILL.md"),
+		[]byte("---\nname: cwd-skill\ndescription: Working directory skill\n---\n"),
 		0o644,
 	); err != nil {
-		t.Fatalf("WriteFile(builtin skill) error = %v", err)
+		t.Fatalf("WriteFile(cwd skill) error = %v", err)
 	}
 
 	h := NewHandler(configPath)
@@ -86,8 +86,8 @@ func TestHandleListSkills(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if len(resp.Skills) != 2 {
-		t.Fatalf("skills count = %d, want 2: %#v", len(resp.Skills), resp.Skills)
+	if len(resp.Skills) != 1 {
+		t.Fatalf("skills count = %d, want 1: %#v", len(resp.Skills), resp.Skills)
 	}
 
 	gotSkills := make(map[string]string, len(resp.Skills))
@@ -100,8 +100,8 @@ func TestHandleListSkills(t *testing.T) {
 	if gotSkills["global-skill"] != "global" {
 		t.Fatalf("global-skill source = %q, want global", gotSkills["global-skill"])
 	}
-	if gotSkills["builtin-skill"] != "builtin" {
-		t.Fatalf("builtin-skill source = %q, want builtin", gotSkills["builtin-skill"])
+	if _, ok := gotSkills["cwd-skill"]; ok {
+		t.Fatal("cwd-skill from the working directory must not be listed")
 	}
 }
 

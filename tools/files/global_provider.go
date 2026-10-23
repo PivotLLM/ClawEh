@@ -63,7 +63,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	if c != nil {
 		// Mirror filesProvider.Build's construction logic exactly so behaviour
 		// is preserved. The bridge + agent allowlist handle gating, so we
-		// construct ALL six tools here (no IsToolEnabled / isToolAllowed gate).
+		// construct ALL six tools here (no isToolAllowed gate).
 		workspace := cd.Workspace
 		restrict := c.Agents.Defaults.RestrictToWorkspace
 		// Shared with tools/files.Reader (cogmem attachments) so tools and
@@ -94,16 +94,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// configured read subdirs (read-only; writes stay confined to the write
 		// subdir, so the agent cannot tamper with task state).
 		if readRestrict {
-			subdirs := c.Agents.Defaults.WorkspaceReadSubdirs
-			if len(subdirs) > 0 {
-				subdirs = appendIfMissing(subdirs, "tasks")
-				// Inbound attachments are materialized into tmp/ (materializeInboundMedia),
-				// so it must be readable regardless of the configured read subdirs.
-				// Read-only: writes stay confined to the write subdir, so the agent
-				// cannot tamper with received files.
-				subdirs = appendIfMissing(subdirs, "tmp")
-			}
-			SetReadScopeSubdirs(subdirs)
+			SetReadScopeSubdirs(effectiveReadSubdirs(c.Agents.Defaults.WorkspaceReadSubdirs))
 		}
 
 		// External mounts (per agent) plus auto maestro/ when the suite is on:
@@ -377,9 +368,14 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 	seen := map[string]bool{}
 	for _, mc := range mounts {
 		name := strings.TrimSpace(mc.Name)
-		if err := config.ValidateMountName(name); err != nil {
-			logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
-			continue
+		// EffectiveMounts has already set aside configured mounts with a
+		// reserved name, so a "maestro" here is the automatic one, which
+		// alone may use that name: only the configured mounts are validated.
+		if name != config.MaestroMountName {
+			if err := config.ValidateMountName(name); err != nil {
+				logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
+				continue
+			}
 		}
 		key := strings.ToLower(name)
 		if seen[key] {
@@ -400,6 +396,21 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 		specs = append(specs, MountSpec{Name: name, Path: abs, Writable: mc.Writable})
 	}
 	return specs
+}
+
+// effectiveReadSubdirs returns the read scope for the configured subdirs: the
+// configured list plus config.AlwaysReadableWorkspaceDirs (read-only: writes
+// stay confined to the write subdir). An empty list stays empty (reads
+// are workspace-wide, so nothing needs adding).
+func effectiveReadSubdirs(configured []string) []string {
+	if len(configured) == 0 {
+		return configured
+	}
+	subdirs := configured
+	for _, name := range config.AlwaysReadableWorkspaceDirs {
+		subdirs = appendIfMissing(subdirs, name)
+	}
+	return subdirs
 }
 
 // appendIfMissing returns subdirs with name appended if not already present.

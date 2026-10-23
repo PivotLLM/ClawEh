@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -121,7 +120,7 @@ func (c *compressModelCaller) complete(ctx context.Context, system, user string,
 				"agent_id": c.agentID,
 				"session":  c.sessionKey,
 				"model":    cl.model,
-				"error":    chatErr.Error(),
+				"error":    redactedError(chatErr),
 			})
 			continue
 		}
@@ -219,7 +218,7 @@ func (al *AgentLoop) resolveCompressClient(agent *AgentInstance, compressModelNa
 	if ok && al.dispatcher != nil {
 		// The dispatcher keys on the model_name alias and resolves the provider
 		// from the model's provider reference.
-		if p, err := al.dispatcher.Get(alias); err == nil {
+		if p, err := al.dispatchProvider(agent, alias); err == nil {
 			logger.DebugCF("llmcontext", "compression model resolved", map[string]any{
 				"agent_id":  agent.ID,
 				"requested": compressModelName,
@@ -259,7 +258,7 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 	primary := strings.TrimSpace(agent.Model)
 	if primary != "" && al.dispatcher != nil {
 		if alias, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
-			if p, err := al.dispatcher.Get(alias); err == nil {
+			if p, err := al.dispatchProvider(agent, alias); err == nil {
 				logger.DebugCF("llmcontext", "compression: agent primary appended as final fallback", map[string]any{
 					"agent_id": agent.ID,
 					"alias":    alias,
@@ -290,6 +289,12 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 // so a model parked by either path (e.g. an out-of-credits 402) is skipped by
 // both. Also returns the effective (first) model name for the summary stamp.
 func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey string) (*compressModelCaller, string) {
+	if agent.HumanModel != "" {
+		// A person's conversation is never given to a model: no
+		// summarization chain at all, so compaction and consolidation find
+		// no model (and the person is never asked to summarize).
+		return &compressModelCaller{agentID: agent.ID, sessionKey: sessionKey}, ""
+	}
 	var agentModels, globalModels []string
 	if agent.Config != nil {
 		agentModels = agent.Config.SummarizationModels
@@ -461,7 +466,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	var failureDump ctxengine.FailureDumpFunc
 	if cfg := al.GetConfig(); cfg != nil {
 		debugCapture = cfg.Summarization.DebugCapture
-		if cfg.Logging.DumpFailedCompressions && al.dumpsDir != "" {
+		if cfg.Logging.DumpFailedCompressions && al.dumpsDir.Path != "" {
 			dumpsDir := al.dumpsDir
 			failureDump = func(kind string, meta map[string]any, input, output string) error {
 				_, err := dump.Write(dumpsDir, kind, meta, json.RawMessage(input), json.RawMessage(output))
@@ -489,15 +494,26 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		}
 	}
 
-	// The archive directory is the sessions directory within the agent workspace.
-	// We derive it from the workspace the same way initSessionStore does.
-	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	// The archive directory is the sessions directory within the agent's state
+	// directory, derived the same way initSessionStore does.
+	archiveDir := agent.SessionsDir()
+	// A fresh temporary agent keeps no engine archive: it has no session tools
+	// to read one with, so the engine must not point it at one either (the
+	// archive note in the system message names those tools). Its conversation
+	// window and summary are still kept by the session store.
+	engineArchiveDir := archiveDir
+	stateModes := agentModes(al.GetConfig(), agent.StateDir)
+	if agent.Spec.Fresh {
+		engineArchiveDir = ""
+	}
 	opts := append([]ctxengine.Option{
 		ctxengine.WithContextWindow(agent.ContextWindow),
-		ctxengine.WithArchiveDir(archiveDir),
+		ctxengine.WithArchiveDir(engineArchiveDir),
+		ctxengine.WithFolderPermissions(stateModes.Dir),
+		ctxengine.WithFilePermissions(stateModes.File),
 		ctxengine.WithModelCaller(caller),
 		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
-		ctxengine.WithCompressionProfileDir(agent.Workspace),
+		ctxengine.WithCompressionProfileDir(agent.StateDir),
 		ctxengine.WithCompactDebug(debugCapture),
 		ctxengine.WithFailureDump(failureDump),
 		ctxengine.WithCompactionReporter(reporter),
@@ -521,7 +537,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	sti := al.sessionTokenIssuer
 	al.mu.RUnlock()
 	token := ""
-	if sti != nil {
+	if sti != nil && !agent.Spec.Fresh { // a fresh temporary agent has no tools to call with it
 		token = sti.Issue(agent.ID, sessionKey, archiveDir)
 	}
 

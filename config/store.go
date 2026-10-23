@@ -25,14 +25,35 @@ type Store struct {
 
 // ValidationError is returned by Update when the mutated config would be
 // refused by LoadConfig, or would add a reference to a model that does not
-// exist. Callers use errors.As to report it as a client
-// error rather than a failure to save.
+// exist, joining every refusal. An Update callback may return one for
+// refusals of its own; Update adds its own to them. Callers use errors.As to
+// report it as a client error rather than a failure to save.
 type ValidationError struct {
 	Err error
 }
 
 func (e *ValidationError) Error() string { return e.Err.Error() }
 func (e *ValidationError) Unwrap() error { return e.Err }
+
+// Messages returns one sentence per refusal: each error joined into Err
+// (errors.Join) on its own, or Err's text when it is a single error.
+func (e *ValidationError) Messages() []string {
+	return errorMessages(e.Err)
+}
+
+func errorMessages(err error) []string {
+	if err == nil {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var msgs []string
+		for _, inner := range joined.Unwrap() {
+			msgs = append(msgs, errorMessages(inner)...)
+		}
+		return msgs
+	}
+	return []string{err.Error()}
+}
 
 // ErrUnchanged may be returned by an Update callback that found nothing to
 // change. Update then returns nil without writing: a save that changes
@@ -65,8 +86,10 @@ func (s *Store) Current() *Config {
 // Update applies fn to a private copy of the current config, validates the
 // result, writes it to disk through SaveConfig and makes it current. Nothing
 // changes if fn returns an error (ErrUnchanged included, which Update reports
-// as success), validation fails or the write fails. Updates are serialised: a
-// concurrent Update sees this one's result.
+// as success), validation fails or the write fails. A refusal is a
+// *ValidationError naming every problem: those fn returned as one and the
+// store's own. Updates are serialised: a concurrent Update sees this one's
+// result.
 //
 // A secret reference that fn leaves in a field as a literal ("env:NAME", as
 // submitted through the WebUI) is resolved before the config becomes current,
@@ -82,11 +105,18 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if err != nil {
 		return fmt.Errorf("copy config: %w", err)
 	}
+	// A *ValidationError from fn is a refusal like the store's own: the
+	// store's checks still run, so the caller learns every problem at once.
+	var refusals []error
 	if err = fn(next); err != nil {
 		if errors.Is(err, ErrUnchanged) {
 			return nil
 		}
-		return err
+		verr, ok := errors.AsType[*ValidationError](err)
+		if !ok {
+			return err
+		}
+		refusals = append(refusals, verr.Err)
 	}
 	// fn may have replaced the whole struct (PUT /api/config does); the
 	// runtime-only fields belong to this process, not to the request.
@@ -98,16 +128,23 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// A reference to a model that does not exist is refused only when this
 	// update introduces it: one already in the file (left by an older release)
 	// must not block an unrelated save, including the one that fixes it.
-	if errs := newDanglingModelReferences(s.cur, next); len(errs) > 0 {
-		return &ValidationError{Err: errors.Join(errs...)}
-	}
+	refusals = append(refusals, newDanglingModelReferences(s.cur, next)...)
+	// The human-agent rules (human.go) are enforced the same way: only a
+	// problem this update introduces is refused.
+	refusals = append(refusals, newHumanProblems(s.cur, next)...)
+	// So is a mount named after a workspace folder (mount_names.go).
+	refusals = append(refusals, newReservedMounts(s.cur, next)...)
+	// And a character card on a human agent (character_card.go).
+	refusals = append(refusals, newCardsOnHumanAgents(s.cur, next)...)
 
 	resolved, err := resolveConfigSecrets(next)
 	if err != nil {
-		return &ValidationError{Err: err}
+		refusals = append(refusals, err)
+	} else {
+		refusals = append(refusals, resolved.loadProblems()...)
 	}
-	if err := resolved.validateListeners(); err != nil {
-		return &ValidationError{Err: err}
+	if len(refusals) > 0 {
+		return &ValidationError{Err: errors.Join(refusals...)}
 	}
 	if err := SaveConfig(s.path, resolved); err != nil {
 		return err

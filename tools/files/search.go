@@ -112,7 +112,7 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 	useRegex := getBoolArg(args, "regex", false)
 	maxResults, err := getInt64Arg(args, "max_results", defaultSearchMaxResults)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	if maxResults <= 0 || maxResults > maxSearchMaxResults {
 		maxResults = maxSearchMaxResults
@@ -135,7 +135,7 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 
 	info, statErr := t.sysFs.Stat(root)
 	if statErr != nil {
-		return tools.ErrorResult(statErr.Error())
+		return errResult(statErr)
 	}
 
 	var (

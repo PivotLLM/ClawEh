@@ -74,6 +74,10 @@ export default defineConfig({
         target: "http://localhost:18790",
         changeOrigin: true,
       },
+      "/manual": {
+        target: "http://localhost:18790",
+        changeOrigin: true,
+      },
       "/webui": {
         target: "ws://localhost:18790",
         ws: true,

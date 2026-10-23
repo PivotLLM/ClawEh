@@ -40,7 +40,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 
 // SetDeviceDisconnector wires the running device channel's DisconnectDevice,
 // so removing a device ends its open connections at once. The gateway resolves
-// the channel per call, which survives a channel manager rebuild.
+// the channel per call, so it finds a device channel a reload rebuilt.
 func (h *Handler) SetDeviceDisconnector(fn func(deviceID string)) {
 	h.reloadMu.Lock()
 	h.deviceDisconnect = fn
@@ -146,7 +146,7 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
@@ -211,7 +211,7 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
@@ -243,7 +243,7 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, r *http
 		return nil
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		writeUpdateError(w, err)
 		return
 	}
 	cfg, err := h.currentConfig()
@@ -285,22 +285,34 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	}
 	token := dev.Token
 
-	lanIPs := device.LANIPv4s()
+	listLAN := h.lanIPv4s
+	if listLAN == nil {
+		listLAN = device.LANIPv4s
+	}
+	lanIPs := listLAN()
 	payload, perr := device.BuildSetupPayload(dev.ExternalURL, cfg.Gateway.ExternalURL, lanIPs, devicePort, token, dev.TLS)
+	badAddress := perr != nil // only the external address can make it fail
 	encoded := ""
 	if perr == nil {
 		encoded, perr = payload.Encode()
 	}
 
+	// Warnings are short hover text beside the access label on the Devices
+	// page, which links to the Network page where each is fixed.
 	warnings := []string{}
 	if device.IsLoopbackHost(host) {
-		warnings = append(warnings, "The device listener is on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
+		warnings = append(warnings, "Devices on your network can't connect.")
 	}
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
-		warnings = append(warnings, "No routable LAN IPv4 address detected; set an External URL.")
+		warnings = append(warnings, "No network address found; set an external address.")
 	}
 	if perr != nil {
-		warnings = append(warnings, perr.Error())
+		logger.WarnCF("api", "Device pairing payload unavailable", map[string]any{"error": perr.Error()})
+		if badAddress {
+			warnings = append(warnings, "The external address is not valid.")
+		} else {
+			warnings = append(warnings, "The pairing code could not be made.")
+		}
 	}
 
 	out := map[string]any{
@@ -403,15 +415,25 @@ func (h *Handler) resolvePending(w http.ResponseWriter, r *http.Request, approve
 }
 
 type pairedDeviceView struct {
-	DeviceID     string   `json:"device_id"`
-	DisplayName  string   `json:"display_name"`
-	Platform     string   `json:"platform"`
-	ClientMode   string   `json:"client_mode"`
-	Roles        []string `json:"roles"`
-	Scopes       []string `json:"scopes"`
-	AgentID      string   `json:"agent_id"` // per-device assigned agent ("" = default)
-	ApprovedAtMs int64    `json:"approved_at_ms"`
-	LastSeenAtMs int64    `json:"last_seen_at_ms"`
+	DeviceID    string   `json:"device_id"`
+	DisplayName string   `json:"display_name"`
+	Platform    string   `json:"platform"`
+	ClientMode  string   `json:"client_mode"`
+	Roles       []string `json:"roles"`
+	Scopes      []string `json:"scopes"`
+	AgentID     string   `json:"agent_id"` // per-device assigned agent ("" = default)
+	// AgentRef is agent_id normalized: the id agents[] lists it under.
+	AgentRef string `json:"agent_ref,omitempty"`
+	// AgentName is the assigned agent's display name while it is configured.
+	AgentName string `json:"agent_name,omitempty"`
+	// AgentMissing is true when agent_id names an agent the service does not
+	// run; the device then talks to the default agent. AgentState says why:
+	// "not_found" (no longer configured), "disabled", or "set_aside" (a
+	// human agent breaking the human-agent rules).
+	AgentMissing bool   `json:"agent_missing"`
+	AgentState   string `json:"agent_state,omitempty"`
+	ApprovedAtMs int64  `json:"approved_at_ms"`
+	LastSeenAtMs int64  `json:"last_seen_at_ms"`
 }
 
 // agentOption is a selectable agent for the per-device assistant dropdown.
@@ -435,6 +457,35 @@ func configuredAgents(cfg *config.Config) []agentOption {
 	return out
 }
 
+// assignedAgentState returns the display name of the agent a device is
+// assigned to (normalized id ref) and, when the service does not run it, why:
+// "not_found", "disabled", or "set_aside" for a human agent breaking the
+// human-agent rules. It is the rule the running service applies (the device
+// channel honours an assignment only to an agent the loop runs; the loop's
+// configuration disables the set-aside agents, config.PruneHumanProblems).
+// Human agents that follow the rules count as running.
+func assignedAgentState(cfg *config.Config, ref string) (name, state string) {
+	var ac *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if config.SameAgentID(cfg.Agents.List[i].ID, ref) {
+			ac = &cfg.Agents.List[i]
+			break
+		}
+	}
+	switch {
+	case ac == nil:
+		return "", "not_found"
+	case !ac.IsEnabled():
+		return ac.DisplayName(), "disabled"
+	}
+	for _, p := range cfg.HumanProblems() {
+		if p.SetsAgentAside() && config.SameAgentID(p.Agent, ref) {
+			return ac.DisplayName(), "set_aside"
+		}
+	}
+	return ac.DisplayName(), ""
+}
+
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	store, cfg, err := h.openDeviceStore(r.Context())
 	if err != nil {
@@ -446,15 +497,22 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
 		return
 	}
+	agents := configuredAgents(cfg)
 	views := make([]pairedDeviceView, 0, len(paired))
 	for _, d := range paired {
-		views = append(views, pairedDeviceView{
+		v := pairedDeviceView{
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
 			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
 			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
-		})
+		}
+		if d.AgentID != "" {
+			v.AgentRef = routing.NormalizeAgentID(d.AgentID)
+			v.AgentName, v.AgentState = assignedAgentState(cfg, v.AgentRef)
+			v.AgentMissing = v.AgentState != ""
+		}
+		views = append(views, v)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": configuredAgents(cfg)})
+	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": agents})
 }
 
 // handleDeviceAgent assigns (or clears) the agent a paired device routes to. Body:

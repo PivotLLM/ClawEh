@@ -1,0 +1,953 @@
+// ClawEh
+// License: MIT
+
+package agent
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
+)
+
+// chatFunc is a model whose answer a test scripts.
+type chatFunc func(ctx context.Context, messages []providers.Message) (*providers.LLMResponse, error)
+
+func (f chatFunc) Chat(ctx context.Context, messages []providers.Message, _ []providers.ToolDefinition, _ string, _ map[string]any) (*providers.LLMResponse, error) {
+	return f(ctx, messages)
+}
+
+func (f chatFunc) GetDefaultModel() string { return "mock-model" }
+
+// lastUser is the content of the last user message sent to the model.
+func lastUser(messages []providers.Message) string {
+	for _, m := range slices.Backward(messages) {
+		if m.Role == "user" {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// messagingConfig has Alice (the default agent, allowed to target Bob), Bob
+// (bound to the telegram user u1, allowed nothing) and Helper (allowed "*"),
+// with agent_message switched on. Each lists every tool ("*").
+func messagingConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := newTestConfig(t)
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "alice", Name: "Alice", Default: true, Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"bob"}}},
+		{ID: "bob", Name: "Bob", Tools: []string{"*"}},
+		{ID: "helper", Name: "Helper", Tools: []string{"*"}, Subagents: &config.SubagentsConfig{AllowAgents: []string{"*"}}},
+	}
+	cfg.Bindings = []config.AgentBinding{{
+		AgentID: "bob",
+		Match:   config.BindingMatch{Channel: "telegram", AccountID: "*", Peer: &config.PeerMatch{Kind: "direct", ID: "u1"}},
+	}}
+	return cfg
+}
+
+// messagingLoop builds a running loop over cfg whose agents answer with
+// model: inbound messages on the bus are dispatched as Run does.
+func messagingLoop(t *testing.T, cfg *config.Config, model providers.LLMProvider) (*AgentLoop, *bus.MessageBus) {
+	t.Helper()
+	return messagingLoopWith(t, cfg, model, nil)
+}
+
+// messagingLoopWith is messagingLoop with a provider dispatcher (a human
+// agent's turn dispatches its person's model through it).
+func messagingLoopWith(t *testing.T, cfg *config.Config, model providers.LLMProvider, dispatcher *providers.ProviderDispatcher) (*AgentLoop, *bus.MessageBus) {
+	t.Helper()
+	tools.RegisterProvider(tools.NamespacedProvider("agent", toolsagents.GlobalProvider))
+	msgBus := bus.NewMessageBus()
+	al := mustNewAgentLoop(t, cfg, msgBus, model, dispatcher)
+	// Asks and requests to people time out only when a test moves the
+	// clock, however slow the machine.
+	fakeClock(al)
+	for _, id := range al.GetRegistry().List() {
+		if a, ok := al.GetRegistry().Get(id); ok {
+			a.Provider = model
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	al.running.Store(true)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			msg, ok := msgBus.ConsumeInbound(ctx)
+			if !ok {
+				return
+			}
+			al.dispatchInbound(ctx, msg)
+		}
+	})
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+		// Turns still running (a late reply, a background result) finish
+		// before the test's directories and logger go away.
+		al.activeRequests.Wait()
+	})
+	return al, msgBus
+}
+
+// probeTool records the context of each call.
+type probeTool struct {
+	mu      sync.Mutex
+	depths  []int
+	channel []string
+	chains  [][]string
+}
+
+func (p *probeTool) Name() string               { return "probe_tool" }
+func (p *probeTool) Description() string        { return "test probe" }
+func (p *probeTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *probeTool) Execute(ctx context.Context, _ map[string]any) *tools.ToolResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.depths = append(p.depths, toolsagents.SpawnDepth(ctx))
+	p.channel = append(p.channel, tools.ToolChannel(ctx))
+	p.chains = append(p.chains, tools.AskChain(ctx))
+	return tools.NewToolResult("probe ok")
+}
+
+// toolThenText calls probe_tool once, then replies with the tool's result.
+func toolThenText() chatFunc {
+	return callThenText("probe_tool", "{}")
+}
+
+// callThenText calls tool with args once, then replies with its result.
+func callThenText(tool, args string) chatFunc {
+	return func(_ context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+		last := messages[len(messages)-1]
+		if last.Role == "tool" {
+			return &providers.LLMResponse{Content: "done: " + last.Content}, nil
+		}
+		return &providers.LLMResponse{ToolCalls: []providers.ToolCall{{
+			ID: "tc-1", Type: "function", Name: tool,
+			Function: &providers.FunctionCall{Name: tool, Arguments: args},
+		}}}, nil
+	}
+}
+
+// setModel gives agent id its own model.
+func setModel(t *testing.T, al *AgentLoop, id string, model providers.LLMProvider) {
+	t.Helper()
+	a, ok := al.GetRegistry().Get(id)
+	if !ok {
+		t.Fatalf("no agent %s", id)
+	}
+	a.Provider = model
+}
+
+// TestAsk_ReturnsReplyAndOutcome: the target gets a normal turn headed with
+// the sender's name, and Ask returns its final reply with the turn's outcome.
+// Nothing is published to any channel.
+func TestAsk_ReturnsReplyAndOutcome(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	for _, tc := range []struct {
+		name        string
+		resp        *providers.LLMResponse
+		err         error
+		wantOutcome string
+		wantText    string
+	}{
+		{name: "ok", resp: &providers.LLMResponse{Content: "pong"}, wantOutcome: bus.OutcomeOK, wantText: "pong"},
+		{name: "empty", resp: &providers.LLMResponse{FinishReason: "stop", Normal: true}, wantOutcome: bus.OutcomeEmpty},
+		{name: "error", err: errors.New("boom"), wantOutcome: bus.OutcomeError, wantText: "boom"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen string
+			model := chatFunc(func(_ context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+				seen = lastUser(messages)
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				r := *tc.resp
+				return &r, nil
+			})
+			al, msgBus := messagingLoop(t, messagingConfig(t), model)
+
+			reply, err := al.Ask(context.Background(), "Alice", "bob", "ping", 5*time.Second)
+			if err != nil {
+				t.Fatalf("Ask: %v", err)
+			}
+			if reply.Outcome != tc.wantOutcome || !strings.Contains(reply.Text, tc.wantText) {
+				t.Fatalf("reply = %+v, want outcome %q text containing %q", reply, tc.wantOutcome, tc.wantText)
+			}
+			if tc.wantText == "" && reply.Text != "" {
+				t.Fatalf("empty reply carried text %q", reply.Text)
+			}
+			if want := "[Message from Alice — Alice is waiting for your reply]\nping"; !strings.HasSuffix(seen, want) {
+				t.Fatalf("Bob was sent %q, want it to end with %q", seen, want)
+			}
+			al.activeRequests.Wait() // Bob's turn has ended
+			noOutbound(t, msgBus)
+		})
+	}
+}
+
+// TestAsk_TurnRunsTools: the asked turn is a full agent turn: its tool calls
+// run, on the ask channel, one sub-agent level deeper than the asker, with
+// the asker in the ask chain.
+func TestAsk_TurnRunsTools(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	al, msgBus := messagingLoop(t, messagingConfig(t), toolThenText())
+	probe := &probeTool{}
+	al.RegisterTool(probe)
+
+	ctx := tools.WithAskChain(toolsagents.WithSpawnDepth(context.Background(), 1), []string{"alice"})
+	reply, err := al.Ask(ctx, "Alice", "bob", "use the probe", 5*time.Second)
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if reply.Outcome != bus.OutcomeOK || reply.Text != "done: probe ok" {
+		t.Fatalf("reply = %+v, want ok %q", reply, "done: probe ok")
+	}
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if len(probe.depths) != 1 || probe.depths[0] != 2 {
+		t.Fatalf("tool ran at depths %v, want one call at depth 2", probe.depths)
+	}
+	if probe.channel[0] != constants.AgentMessageChannel {
+		t.Fatalf("tool channel = %q, want %q", probe.channel[0], constants.AgentMessageChannel)
+	}
+	if got := strings.Join(probe.chains[0], ","); got != "alice,bob" {
+		t.Fatalf("ask chain in Bob's turn = %q, want alice,bob", got)
+	}
+	al.activeRequests.Wait() // Bob's turn has ended
+	noOutbound(t, msgBus)
+}
+
+// asyncTool finishes in the background once release is closed, then reports
+// "background done".
+type asyncTool struct{ release <-chan struct{} }
+
+func (asyncTool) Name() string               { return "async_tool" }
+func (asyncTool) Description() string        { return "test background work" }
+func (asyncTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (asyncTool) Execute(context.Context, map[string]any) *tools.ToolResult {
+	return tools.ErrorResult("async only")
+}
+
+func (a asyncTool) ExecuteAsync(ctx context.Context, _ map[string]any, cb tools.AsyncCallback) *tools.ToolResult {
+	go func() {
+		<-a.release
+		cb(ctx, &tools.ToolResult{ForLLM: "background done"})
+	}()
+	return tools.AsyncResult("started")
+}
+
+// TestAsk_BackgroundResultReachesMainConversation: background work an asked
+// turn starts reports to the asked agent's own main conversation once the ask
+// is over, and nothing reaches a chat.
+func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	// Bob has a default chat: the result must not go there either.
+	cfg := messagingConfig(t)
+	cfg.Bindings[0].Default = true
+	var al *AgentLoop
+	results := make(chan string, 1)
+	pending := make(chan bool, 1)
+	model := chatFunc(func(ctx context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+		if u := lastUser(messages); strings.Contains(u, "[System: async:async_tool]") {
+			_, rec := testStateManager(t, al, "bob").GetPendingTurn("agent:bob:main")
+			pending <- rec
+			results <- u
+			return &providers.LLMResponse{Content: "noted"}, nil
+		}
+		return callThenText("async_tool", "{}")(ctx, messages)
+	})
+	al, msgBus := messagingLoop(t, cfg, model)
+	release := make(chan struct{})
+	al.RegisterTool(asyncTool{release: release})
+	sti := &scopeSTI{}
+	sti.SetSource("agent:bob:main", "telegram", "chat-1")
+	al.SetSessionTokenIssuer(sti)
+
+	reply, err := al.Ask(context.Background(), "Alice", "bob", "start it", 5*time.Second)
+	if err != nil || reply.Outcome != bus.OutcomeOK {
+		t.Fatalf("Ask = %+v, %v", reply, err)
+	}
+	close(release) // the background work ends once the ask is over
+	select {
+	case u := <-results:
+		if !strings.Contains(u, "background done") {
+			t.Fatalf("result message = %q", u)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the background result never reached Bob")
+	}
+	if <-pending {
+		t.Fatal("the background result's turn kept a recovery record")
+	}
+	al.activeRequests.Wait() // the result's turn has ended
+	bob, _ := al.GetRegistry().Get("bob")
+	found := false
+	for _, m := range bob.Sessions.GetHistory("agent:bob:main") {
+		if strings.Contains(m.Content, "background done") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the background result is not in Bob's main conversation")
+	}
+	noOutbound(t, msgBus)
+	for _, c := range sti.calls() {
+		if c.sessionKey == "agent:bob:main" && !constants.IsInternalChannel(c.channel) && (c.channel != "telegram" || c.chatID != "chat-1") {
+			t.Fatalf("the session source was moved to a chat: %+v", c)
+		}
+	}
+	if ch, chat := sti.Source("agent:bob:main"); ch != "telegram" || chat != "chat-1" {
+		t.Fatalf("source after = %s/%s, want telegram/chat-1 unchanged", ch, chat)
+	}
+}
+
+// TestAsk_SlotLentWhileWaiting: with max_concurrent_turns 1, Alice's turn
+// lends its slot while it waits on Bob, so a message queued for Bob ahead of
+// the ask can run, and the ask completes.
+func TestAsk_SlotLentWhileWaiting(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	cfg := messagingConfig(t)
+	cfg.Agents.Defaults.MaxConcurrentTurns = 1
+	al, msgBus := messagingLoop(t, cfg, &recordingProvider{})
+	var slotWait <-chan struct{}
+	al.onWait, slotWait = waitSignals(waitTurnSlot)
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	ask := callThenText("agent_message", `{"agent":"bob","message":"hi","wait_seconds":10}`)
+	setModel(t, al, "alice", chatFunc(func(ctx context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+		if messages[len(messages)-1].Role != "tool" {
+			started <- struct{}{}
+			<-release
+		}
+		return ask(ctx, messages)
+	}))
+	setModel(t, al, "bob", chatFunc(func(_ context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+		return &providers.LLMResponse{Content: "bob: " + lastUser(messages)[:4]}, nil
+	}))
+
+	msgBus.PublishInbound(context.Background(), inbound("c1", "m1", "ask bob")) //nolint:errcheck // test
+	<-started
+	// Queued for Bob while Alice holds the only slot.
+	forBob := inbound("c2", "m2", "plain")
+	forBob.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "bob"}
+	msgBus.PublishInbound(context.Background(), forBob) //nolint:errcheck // test
+	awaitSignal(t, slotWait, "Bob's message to wait for the slot")
+	close(release)
+
+	got := map[string]string{}
+	for range 2 {
+		out := nextOutbound(t, msgBus)
+		got[out.ChatID] = out.Content
+	}
+	if !strings.HasPrefix(got["c1"], "done: bob: ") || got["c2"] == "" {
+		t.Fatalf("replies = %v, want Bob's plain reply and Alice relaying Bob's answer", got)
+	}
+}
+
+// TestAsk_RefusesCrossExchangeCycle: while Alice waits on Bob, Bob (in
+// another turn) cannot ask Alice; Bob can still ask an agent not waiting on
+// him.
+func TestAsk_RefusesCrossExchangeCycle(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	model := newGatedRecorder()
+	al, _ := messagingLoop(t, messagingConfig(t), model)
+	done := make(chan error, 1)
+	go func() {
+		_, err := al.Ask(tools.WithAskChain(context.Background(), []string{"alice"}), "Alice", "bob", "hi", 5*time.Second)
+		done <- err
+	}()
+	model.waitStarted(t)
+
+	bobsTurn := tools.WithAskChain(context.Background(), []string{"bob"})
+	if _, err := al.Ask(bobsTurn, "Bob", "alice", "hi", time.Second); !errors.Is(err, tools.ErrAskLoop) {
+		t.Fatalf("Bob asking Alice while she waits on him: err = %v, want ErrAskLoop", err)
+	}
+	close(model.gate)
+	if err := <-done; err != nil {
+		t.Fatalf("Alice's ask: %v", err)
+	}
+	// The wait is over: Bob may ask Alice now.
+	if reply, err := al.Ask(bobsTurn, "Bob", "alice", "hi", 5*time.Second); err != nil || reply.Outcome != bus.OutcomeOK {
+		t.Fatalf("Bob asking Alice afterwards = %+v, %v", reply, err)
+	}
+}
+
+// TestAsk_StaleAskNotRun: an ask whose asker stopped waiting before Bob got
+// to it runs no model turn.
+func TestAsk_StaleAskNotRun(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	model := newGatedRecorder()
+	al, msgBus := messagingLoop(t, messagingConfig(t), model)
+	busy := inbound("c1", "m1", "busy")
+	busy.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "bob"}
+	msgBus.PublishInbound(context.Background(), busy) //nolint:errcheck // test
+	model.waitStarted(t)
+
+	asked := make(chan tools.AgentReply, 1)
+	go func() {
+		reply, err := al.Ask(context.Background(), "Alice", "bob", "late", 100*time.Millisecond)
+		if err != nil {
+			t.Errorf("Ask: %v", err)
+		}
+		asked <- reply
+	}()
+	// The busy turn's budget and the asker's timer.
+	advanceWhenWaiting(t, loopClock(t, al), 2, 100*time.Millisecond)
+	if reply := <-asked; reply.Outcome != tools.OutcomeTimeout {
+		t.Fatalf("Ask = %+v; want a timeout", reply)
+	}
+	close(model.gate)
+	nextOutbound(t, msgBus)
+	al.activeRequests.Wait() // Bob's session has worked through the stale ask
+	if n := model.count(); n != 1 {
+		t.Fatalf("model calls = %d, want only the busy turn", n)
+	}
+}
+
+// TestAsk_WithOneTurnSlot: with max_concurrent_turns 1, a turn that asks
+// another agent still gets its reply: the asked turn takes no slot.
+func TestAsk_WithOneTurnSlot(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	cfg := messagingConfig(t)
+	cfg.Agents.Defaults.MaxConcurrentTurns = 1
+	al, msgBus := messagingLoop(t, cfg, &recordingProvider{})
+	setModel(t, al, "alice", callThenText("agent_message", `{"agent":"bob","message":"hi","wait_seconds":5}`))
+	setModel(t, al, "bob", chatFunc(func(context.Context, []providers.Message) (*providers.LLMResponse, error) {
+		return &providers.LLMResponse{Content: "bob says hi"}, nil
+	}))
+
+	dispatch(al, inbound("c1", "m1", "ask bob"))
+	if out := nextOutbound(t, msgBus); out.Content != "done: bob says hi" {
+		t.Fatalf("reply = %q, want Alice to relay Bob's answer", out.Content)
+	}
+}
+
+// scopeSTI records the turn scope and sources the loop sets on the token.
+type scopeSTI struct {
+	recordingSTI
+	scopeMu sync.Mutex
+	scopes  map[string][]string
+}
+
+func (s *scopeSTI) SetTurnScope(sessionKey string, chain []string) {
+	s.scopeMu.Lock()
+	defer s.scopeMu.Unlock()
+	if s.scopes == nil {
+		s.scopes = map[string][]string{}
+	}
+	s.scopes[sessionKey] = chain
+}
+
+// TestAsk_SessionTokenScope: an asked turn points its session token's source
+// at the ask while it runs and restores the chat it had after, and records
+// the ask chain on the token for a CLI agent's MCP calls.
+func TestAsk_SessionTokenScope(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	al, _ := messagingLoop(t, messagingConfig(t), &recordingProvider{})
+	sti := &scopeSTI{}
+	sti.SetSource("agent:bob:main", "telegram", "chat-1")
+	al.SetSessionTokenIssuer(sti)
+
+	if _, err := al.Ask(tools.WithAskChain(context.Background(), []string{"alice"}), "Alice", "bob", "hi", 5*time.Second); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	var bobSources []sourceCall
+	for _, c := range sti.calls() {
+		if c.sessionKey == "agent:bob:main" {
+			bobSources = append(bobSources, c)
+		}
+	}
+	if len(bobSources) != 3 || bobSources[1].channel != constants.AgentMessageChannel ||
+		bobSources[2].channel != "telegram" || bobSources[2].chatID != "chat-1" {
+		t.Fatalf("bob's sources = %+v, want telegram, the ask, then telegram again", bobSources)
+	}
+	sti.scopeMu.Lock()
+	defer sti.scopeMu.Unlock()
+	if got := sti.scopes["agent:bob:main"]; !slices.Equal(got, []string{"alice", "bob"}) {
+		t.Fatalf("token ask chain = %v, want [alice bob]", got)
+	}
+}
+
+// TestAsk_Timeout: an ask the target does not answer in time returns the
+// timeout outcome; the turn finishes later and its reply is discarded, not
+// published. The target's request_timeout caps a longer wait.
+func TestAsk_Timeout(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	t.Run("wait elapses", func(t *testing.T) {
+		model := newGatedRecorder()
+		al, msgBus := messagingLoop(t, messagingConfig(t), model)
+
+		asked := askInBackground(context.Background(), al, "slow", 200*time.Millisecond)
+		model.waitStarted(t)
+		// Bob's turn budget and the asker's timer.
+		advanceWhenWaiting(t, loopClock(t, al), 2, 200*time.Millisecond)
+		reply := <-asked
+		if reply.Outcome != tools.OutcomeTimeout || reply.Text != "Bob did not reply within 1 second." {
+			t.Fatalf("reply = %+v, want the timeout outcome", reply)
+		}
+		close(model.gate)
+		al.activeRequests.Wait() // Bob's turn has ended
+		noOutbound(t, msgBus)
+	})
+
+	t.Run("request_timeout caps the wait", func(t *testing.T) {
+		cfg := messagingConfig(t)
+		cfg.Agents.Defaults.RequestTimeout = 1
+		model := newGatedRecorder()
+		al, _ := messagingLoop(t, cfg, model)
+		defer close(model.gate)
+
+		fc := loopClock(t, al)
+		asked := askInBackground(context.Background(), al, "slow", time.Hour)
+		model.waitStarted(t)
+		// Bob's turn budget and the asker's timer.
+		advanceWhenWaiting(t, fc, 2, time.Second-time.Nanosecond)
+		select {
+		case reply := <-asked:
+			t.Fatalf("reply = %+v before the request_timeout", reply)
+		default:
+		}
+		fc.Advance(time.Nanosecond)
+		if reply := <-asked; reply.Outcome != tools.OutcomeTimeout {
+			t.Fatalf("reply = %+v, want a timeout at the request_timeout", reply)
+		}
+	})
+}
+
+// TestAsk_Refusals: an ask is refused at the depth limit, to an agent already
+// waiting in the exchange, and to an unknown agent; no turn starts.
+func TestAsk_Refusals(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	model := &recordingProvider{}
+	al, _ := messagingLoop(t, messagingConfig(t), model)
+	limit := config.DefaultMaxSubagentDepth
+
+	for _, tc := range []struct {
+		name  string
+		ctx   context.Context
+		agent string
+		want  error
+	}{
+		{"at the depth limit", toolsagents.WithSpawnDepth(context.Background(), limit), "bob", tools.ErrMaxDepth},
+		{"target waiting in the exchange", tools.WithAskChain(context.Background(), []string{"bob", "alice"}), "bob", tools.ErrAskLoop},
+		{"unknown agent", context.Background(), "zed", tools.ErrNoSuchAgent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := al.Ask(tc.ctx, "Alice", tc.agent, "hi", time.Second)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+
+	// No time left: a timeout at once, and no turn.
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if reply, err := al.Ask(expired, "Alice", "bob", "hi", time.Second); err != nil || reply.Outcome != tools.OutcomeTimeout {
+		t.Fatalf("ask with no time left = %+v, %v; want a timeout", reply, err)
+	}
+
+	// One below the limit is allowed.
+	reply, err := al.Ask(toolsagents.WithSpawnDepth(context.Background(), limit-1), "Alice", "bob", "hi", 5*time.Second)
+	if err != nil || reply.Outcome != bus.OutcomeOK {
+		t.Fatalf("ask below the limit = %+v, %v; want ok", reply, err)
+	}
+	if model.count() != 1 {
+		t.Fatalf("model calls = %d, want only the allowed ask", model.count())
+	}
+}
+
+// TestWhisper_DeliveredOnceAtStartOfNextMessage: a whisper starts no turn;
+// it opens the target's next message, from any source, exactly once. The
+// hint on answering is given only to an agent that can answer: it has
+// agent_message and the sender is in its subagents.allow_agents.
+func TestWhisper_DeliveredOnceAtStartOfNextMessage(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	const (
+		noHint   = "[Private whisper from Alice — no reply expected.] psst\n\n"
+		withHint = "[Private whisper from Alice — no reply expected. To answer privately, use agent_message with wait_seconds 0.] psst\n\n"
+	)
+	for _, tc := range []struct {
+		name     string
+		denied   bool
+		allow    []string
+		wantHead string
+	}{
+		{"without the tool", true, []string{"alice"}, noHint},
+		{"with the tool, sender not allowed", false, nil, noHint},
+		{"with the tool, sender allowed", false, []string{"alice"}, withHint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := messagingConfig(t)
+			if tc.denied {
+				cfg.Agents.List[1].DenyTools = []string{"agent_message"}
+			}
+			if tc.allow != nil {
+				cfg.Agents.List[1].Subagents = &config.SubagentsConfig{AllowAgents: tc.allow}
+			}
+			model := &recordingProvider{}
+			al, msgBus := messagingLoop(t, cfg, model)
+
+			if err := al.Whisper(context.Background(), "alice", "Alice", "bob", "psst"); err != nil {
+				t.Fatalf("Whisper: %v", err)
+			}
+			noOutbound(t, msgBus)
+			if model.count() != 0 {
+				t.Fatalf("a whisper started a turn (%d model calls)", model.count())
+			}
+
+			for i, text := range []string{"first", "second"} {
+				msg := inbound("c1", text, text)
+				msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "bob"}
+				dispatch(al, msg)
+				nextOutbound(t, msgBus)
+				got := lastUser(model.call(i).messages)
+				hasWhisper := strings.Contains(got, "psst")
+				switch {
+				case i == 0 && !strings.HasPrefix(got, tc.wantHead):
+					t.Fatalf("first message = %q, want it to start with %q", got, tc.wantHead)
+				case i == 1 && hasWhisper:
+					t.Fatalf("the whisper was delivered twice: %q", got)
+				}
+			}
+		})
+	}
+}
+
+// callMessageTool runs callerID's agent_message tool.
+func callMessageTool(t *testing.T, al *AgentLoop, callerID, target string, wait any) *tools.ToolResult {
+	t.Helper()
+	caller, ok := al.GetRegistry().Get(callerID)
+	if !ok {
+		t.Fatalf("no agent %s", callerID)
+	}
+	tool, ok := caller.Tools.Get("agent_message")
+	if !ok {
+		t.Fatalf("%s has no agent_message", callerID)
+	}
+	return tool.Execute(context.Background(), map[string]any{"agent": target, "message": "hello", "wait_seconds": wait})
+}
+
+// TestAgentMessageTool_AllowAgents: agent_message reaches only agents in the
+// caller's subagents.allow_agents ("*" for all), whispers with wait_seconds
+// 0 and asks otherwise.
+func TestAgentMessageTool_AllowAgents(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	for _, tc := range []struct {
+		name, caller, target string
+		wait                 any
+		wantErr              bool
+		want                 string
+	}{
+		{"listed target, whisper", "alice", "bob", float64(0), false, "Whispered to Bob."},
+		{"listed target by name, ask", "alice", "Bob", float64(5), false, "reply 1"},
+		{"huge wait is clamped", "alice", "bob", float64(1e300), false, "reply 1"},
+		{"unlisted target", "alice", "helper", float64(0), true, "You may not message Helper"},
+		{"empty allow list", "bob", "alice", float64(0), true, "You may not message Alice"},
+		{"wildcard", "helper", "alice", float64(0), false, "Whispered to Alice."},
+		{"unknown agent", "helper", "zed", float64(0), true, "There is no agent named zed."},
+		{"missing wait", "alice", "bob", nil, true, "wait_seconds is required"},
+		{"negative wait", "alice", "bob", float64(-1), true, "wait_seconds is required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			al, _ := messagingLoop(t, messagingConfig(t), &recordingProvider{})
+			res := callMessageTool(t, al, tc.caller, tc.target, tc.wait)
+			if res.IsError != tc.wantErr || !strings.Contains(res.ForLLM, tc.want) {
+				t.Fatalf("result = %+v, want error=%v containing %q", res, tc.wantErr, tc.want)
+			}
+			// A permission refusal or an unknown agent is expected, logged as
+			// a warning.
+			refusal := strings.HasPrefix(tc.want, "You may not message") || strings.HasPrefix(tc.want, "There is no agent")
+			if tools.IsExpectedRefusal(res.Err) != refusal {
+				t.Fatalf("IsExpectedRefusal = %v, want %v for %+v", !refusal, refusal, res)
+			}
+		})
+	}
+}
+
+// TestAgentMessageTool_CloneUsesSourceList: a clone of Alice messages with
+// Alice's allow list, as Alice.
+func TestAgentMessageTool_CloneUsesSourceList(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	al, _ := messagingLoop(t, messagingConfig(t), &recordingProvider{})
+	cloneID, err := al.GetRegistry().CreateClone("alice")
+	if err != nil {
+		t.Fatalf("clone alice: %v", err)
+	}
+	if res := callMessageTool(t, al, cloneID, "bob", float64(0)); res.IsError || res.ForLLM != "Whispered to Bob." {
+		t.Fatalf("clone of alice -> bob = %+v, want the whisper sent", res)
+	}
+	if res := callMessageTool(t, al, cloneID, "helper", float64(0)); !res.IsError {
+		t.Fatalf("clone of alice -> helper = %+v, want refused", res)
+	}
+	if ws := al.whispers.take("bob"); len(ws) != 1 || ws[0].from != "Alice" {
+		t.Fatalf("bob's whispers = %+v, want one from Alice", ws)
+	}
+}
+
+// TestWhispers_KeptAcrossRebuildDroppedOnRemoval: a reload that rebuilds a
+// temporary agent keeps its held whispers; deleting it, or removing a config
+// agent, drops them.
+func TestWhispers_KeptAcrossRebuildDroppedOnRemoval(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	cfg := messagingConfig(t)
+	model := &recordingProvider{}
+	al, _ := messagingLoop(t, cfg, model)
+	reg := al.GetRegistry()
+	cloneID, err := reg.CreateClone("alice")
+	if err != nil {
+		t.Fatalf("clone alice: %v", err)
+	}
+	for _, id := range []string{cloneID, "helper"} {
+		if err := al.Whisper(context.Background(), "alice", "Alice", id, "psst"); err != nil {
+			t.Fatalf("Whisper %s: %v", id, err)
+		}
+	}
+
+	before, _ := reg.Get(cloneID)
+	next := messagingConfig(t)
+	next.Agents.BaseDir = cfg.Agents.BaseDir
+	next.Agents.List = next.Agents.List[:2] // helper removed
+	if err := al.ReloadProviderAndConfig(context.Background(), model, next); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if after, ok := reg.Get(cloneID); !ok || after == before {
+		t.Fatal("the reload did not rebuild the clone")
+	}
+	if ws := al.whispers.take("helper"); len(ws) != 0 {
+		t.Fatalf("a removed agent kept its whispers: %+v", ws)
+	}
+	if ws := al.whispers.take(cloneID); len(ws) != 1 {
+		t.Fatalf("the rebuilt clone's whispers = %+v, want one", ws)
+	}
+
+	if err := al.Whisper(context.Background(), "alice", "Alice", cloneID, "again"); err != nil {
+		t.Fatalf("Whisper: %v", err)
+	}
+	if err := reg.Delete(cloneID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if ws := al.whispers.take(cloneID); len(ws) != 0 {
+		t.Fatalf("a deleted agent kept its whispers: %+v", ws)
+	}
+}
+
+// TestAgentMessageTool_PerAgentGrant: agent_message, which is not in the
+// default tool set, is registered for an agent whose own tools list names it
+// and for none other; there is no install-wide switch.
+func TestAgentMessageTool_PerAgentGrant(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	cfg := messagingConfig(t)
+	cfg.Agents.List[0].Tools = []string{"agent_message"}
+	cfg.Agents.List[2].Tools = []string{"msg_send"}
+	al, _ := messagingLoop(t, cfg, &recordingProvider{})
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{"alice", true},
+		{"helper", false},
+	} {
+		a, _ := al.GetRegistry().Get(tc.id)
+		if _, ok := a.Tools.Get("agent_message"); ok != tc.want {
+			t.Errorf("%s has agent_message = %v, want %v", tc.id, ok, tc.want)
+		}
+	}
+}
+
+// TestCommands_AskAndWhisper: /ask and /whisper work for a sender whose chat
+// routes to the target, and are refused, by name, for one whose does not.
+// /ask posts the target's reply to the chat, attributed to it.
+func TestCommands_AskAndWhisper(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	from := func(user, text string) bus.InboundMessage {
+		return bus.InboundMessage{
+			Channel: "telegram", ChatID: "chat-" + user, SenderID: user, MessageID: "m-" + text,
+			Content: text, Peer: bus.Peer{Kind: "direct", ID: user},
+			Sender: bus.SenderInfo{DisplayName: "User One"},
+		}
+	}
+	for _, tc := range []struct {
+		name, user, text, want string
+	}{
+		{"whisper allowed", "u1", "/whisper bob hello there", "Whispered to Bob."},
+		{"whisper refused", "u2", "/whisper bob hello", "You don't have permission to /whisper Bob."},
+		{"ask refused", "u2", "/ask Bob hello", "You don't have permission to /ask Bob."},
+		{"ask allowed", "u1", "/ask Bob hello", "Bob: reply 1"},
+		{"default agent allowed", "u2", "/ask alice hello", "Alice: reply 1"},
+		{"unknown agent", "u1", "/ask zed hello", "There is no agent named zed."},
+		{"usage", "u1", "/ask bob", "Usage: /ask <agent> <message>"},
+		{"whisper at the limit", "u1", "/whisper bob " + strings.Repeat("é", tools.MaxAgentMessageChars), "Whispered to Bob."},
+		{"whisper over the limit", "u1", "/whisper bob " + strings.Repeat("é", tools.MaxAgentMessageChars+1), "Messages to other agents are limited to 8,000 characters."},
+		{"ask over the limit", "u1", "/ask bob " + strings.Repeat("x", tools.MaxAgentMessageChars+1), "Messages to other agents are limited to 8,000 characters."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &recordingProvider{}
+			al, msgBus := messagingLoop(t, messagingConfig(t), model)
+
+			dispatch(al, from(tc.user, tc.text))
+			out := nextOutbound(t, msgBus)
+			if out.Content != tc.want || out.Channel != "telegram" || out.ChatID != "chat-"+tc.user {
+				t.Fatalf("reply = %+v, want %q in telegram/chat-%s", out, tc.want, tc.user)
+			}
+			if strings.HasPrefix(tc.text, "/ask") && strings.Contains(tc.want, ": reply") {
+				if got := lastUser(model.call(0).messages); !strings.Contains(got, "[Message from User One (a person, via /ask on telegram) — User One is waiting for your reply]\nhello") {
+					t.Fatalf("the asked agent was sent %q", got)
+				}
+			}
+			al.activeRequests.Wait() // an asked turn has ended
+			noOutbound(t, msgBus)
+		})
+	}
+}
+
+// TestCommands_WhisperMarksAPerson: a whisper sent with /whisper tells the
+// agent it is from a person, and how it came.
+func TestCommands_WhisperMarksAPerson(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	model := &recordingProvider{}
+	al, msgBus := messagingLoop(t, messagingConfig(t), model)
+	dispatch(al, bus.InboundMessage{
+		Channel: "telegram", ChatID: "chat-u1", SenderID: "u1", Content: "/whisper bob psst",
+		Peer: bus.Peer{Kind: "direct", ID: "u1"}, Sender: bus.SenderInfo{DisplayName: "Alice"},
+	})
+	nextOutbound(t, msgBus)
+
+	msg := inbound("c1", "m1", "next")
+	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "bob"}
+	dispatch(al, msg)
+	nextOutbound(t, msgBus)
+	want := "[Private whisper from Alice (a person, via /whisper on telegram) — no reply expected."
+	if got := lastUser(model.call(0).messages); !strings.HasPrefix(got, want) {
+		t.Fatalf("Bob's next message = %q, want it to start with %q", got, want)
+	}
+}
+
+// TestCommands_AskStopsWithTheService: a /ask still waiting when the service
+// stops is abandoned without posting anything.
+func TestCommands_AskStopsWithTheService(t *testing.T) {
+	logs := &safeBufLoop{}
+	t.Cleanup(logger.RedirectForTest(logs))
+
+	model := newGatedRecorder()
+	al, msgBus := messagingLoop(t, messagingConfig(t), model)
+	runCtx, stop := context.WithCancel(context.Background())
+	al.runMu.Lock()
+	al.runCtx = runCtx
+	al.runMu.Unlock()
+	defer close(model.gate)
+
+	// Sent through the bus, as Run receives it: u1's chat is Bob's main
+	// conversation, so the asked turn may queue behind the command's and run
+	// on the goroutine that dispatched the command. That must be one of the
+	// loop's, never the test's, or the test blocks in the gated model.
+	if err := msgBus.PublishInbound(context.Background(), bus.InboundMessage{
+		Channel: "telegram", ChatID: "chat-u1", SenderID: "u1", Content: "/ask bob hi",
+		Peer: bus.Peer{Kind: "direct", ID: "u1"},
+	}); err != nil {
+		t.Fatalf("PublishInbound: %v", err)
+	}
+	model.waitStarted(t)
+	stop()
+	// The ask runs on a goroutine of its own, which logs as it gives up: wait
+	// for that, so it is not still logging when the test restores the logger.
+	eventually(t, "the /ask to be abandoned", func() bool {
+		return strings.Contains(logs.String(), "/ask abandoned: the service is stopping")
+	})
+	noOutbound(t, msgBus)
+}
+
+// TestAsk_CancelledBeforeStart: an ask dropped by /cancel before its turn
+// ran gets the cancelled outcome, still not on any channel.
+func TestAsk_CancelledBeforeStart(t *testing.T) {
+	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
+
+	al := &AgentLoop{}
+	replies := al.asks.open("ask-1", "Alice", al.clk().Now().Add(time.Minute), false)
+	al.publishCancelledReplies(context.Background(), []bus.InboundMessage{{
+		Channel: constants.AgentMessageChannel, ChatID: "ask-1",
+		Metadata: map[string]string{bus.MetaReplyRequired: "1"},
+	}})
+	select {
+	case r := <-replies:
+		if r.Outcome != bus.OutcomeCancelled {
+			t.Fatalf("reply = %+v, want cancelled", r)
+		}
+	default:
+		t.Fatal("no reply delivered")
+	}
+}
+
+// TestAgentMessageTool_SizeLimit: agent_message refuses a message over
+// tools.MaxAgentMessageChars and sends one at the limit.
+func TestAgentMessageTool_SizeLimit(t *testing.T) {
+	model := &recordingProvider{}
+	al, _ := messagingLoop(t, messagingConfig(t), model)
+	alice, _ := al.GetRegistry().Get("alice")
+	tool, ok := alice.Tools.Get("agent_message")
+	if !ok {
+		t.Fatal("alice has no agent_message")
+	}
+	over := tool.Execute(context.Background(), map[string]any{
+		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars+1), "wait_seconds": 0,
+	})
+	if !over.IsError || over.ForLLM != "Messages to other agents are limited to 8,000 characters." || !tools.IsExpectedRefusal(over.Err) {
+		t.Fatalf("over the limit: %+v, want the limit refusal", over)
+	}
+	at := tool.Execute(context.Background(), map[string]any{
+		"agent": "bob", "message": strings.Repeat("ü", tools.MaxAgentMessageChars), "wait_seconds": 0,
+	})
+	if at.IsError || at.ForLLM != "Whispered to Bob." {
+		t.Fatalf("at the limit: %+v, want the whisper sent", at)
+	}
+}
+
+// TestCommandSender_Labels: a /ask or /whisper sender is named by its display
+// name; the WebUI user, which has none, is "the WebUI user", not its id.
+func TestCommandSender_Labels(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		msg  bus.InboundMessage
+		want string
+	}{
+		{"webui", bus.InboundMessage{Channel: "webui", SenderID: "webui:webui-user"}, "the WebUI user"},
+		{"telegram display name", bus.InboundMessage{Channel: "telegram", SenderID: "u1", Sender: bus.SenderInfo{DisplayName: "Alice"}}, "Alice"},
+		{"no name", bus.InboundMessage{Channel: "telegram", SenderID: "telegram:u1"}, "telegram:u1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commandSender(tc.msg); got != tc.want {
+				t.Fatalf("commandSender = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

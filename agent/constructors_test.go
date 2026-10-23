@@ -6,6 +6,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -18,21 +19,29 @@ func mustNewAgentLoop(
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
+	opts ...LoopOption,
 ) *AgentLoop {
 	t.Helper()
-	al, err := NewAgentLoop(cfg, msgBus, provider, dispatcher)
+	al, err := NewAgentLoop(cfg, msgBus, provider, dispatcher, opts...)
 	if err != nil {
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
+	// Closing the registry removes a non-owner's private temp root.
+	t.Cleanup(al.GetRegistry().Close)
 	return al
 }
 
-// mustNewAgentRegistry builds an AgentRegistry or fails the test.
+// mustNewAgentRegistry builds a registry of bare instances (no tools, no
+// loop) or fails the test.
 func mustNewAgentRegistry(t *testing.T, cfg *config.Config, provider providers.LLMProvider) *AgentRegistry {
 	t.Helper()
-	registry, err := NewAgentRegistry(cfg, provider)
+	registry, err := agentreg.New(cfg, agentreg.Hooks[*AgentInstance]{
+		Build: func(c *config.Config, spec agentreg.Spec) (*AgentInstance, error) {
+			return newAgentInstance(spec, &c.Agents.Defaults, c, provider)
+		},
+	})
 	if err != nil {
-		t.Fatalf("NewAgentRegistry: %v", err)
+		t.Fatalf("agentreg.New: %v", err)
 	}
 	return registry
 }

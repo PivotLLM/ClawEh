@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/memory"
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/logger"
@@ -92,7 +92,7 @@ func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string
 	al.mu.RLock()
 	sti := al.sessionTokenIssuer
 	al.mu.RUnlock()
-	if sti == nil {
+	if sti == nil || agent.Spec.Fresh {
 		return
 	}
 	v, _ := al.contextManagers.Load(agent.ID + ":" + sessionKey)
@@ -100,7 +100,7 @@ func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string
 	if !ok {
 		return
 	}
-	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	archiveDir := agent.SessionsDir()
 	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
 		entry.setToken(tok)
 	}
@@ -137,8 +137,8 @@ func (al *AgentLoop) evictContextManagers() {
 
 // dropContextManager force-evicts a single session's context manager (closing
 // its DB handles and revoking its token), regardless of idle time, as long as it
-// is not in use. Used to tear down an ephemeral sub-agent session right after its
-// run so its snapshot DB can be deleted, and to release a session before its
+// is not in use. Used to close a temporary agent's session before the agent
+// is deleted, and to release a session before its
 // archive is deleted. It reports whether the session has no cached manager
 // afterwards: false while the entry is referenced or its build slot is busy (the
 // idle sweep reclaims it later).
@@ -183,8 +183,9 @@ const (
 	evictReasonIdle         = "idle"          // TTL pass
 	evictReasonReload       = "reload"        // config reload found it unused
 	evictReasonStaleRebuild = "stale-rebuild" // first access after a reload-marked entry was released
-	evictReasonSubagent     = "subagent-done" // ephemeral sub-agent session torn down
+	evictReasonTempDeleted  = "temp-deleted"  // temporary agent deleted
 	evictReasonReleased     = "released"      // session released so its archive can be deleted
+	evictReasonSingleShot   = "single-shot"   // a single-shot agent's turn is over
 )
 
 // tryEvictEntry evicts entry if nobody holds it, and reports whether it did.
@@ -337,5 +338,47 @@ func (al *AgentLoop) invalidateContextManagers(ctx context.Context) {
 	if evicted > 0 || kept > 0 {
 		logger.DebugCF("agent", "config reload: invalidated cached context managers",
 			map[string]any{"evicted": evicted, "kept_stale": kept})
+	}
+}
+
+// discardConversation deletes a session's conversation from memory and disk:
+// the cached context manager, the store's handle and the archive database. A
+// single-shot agent's turn ends with it, so nothing accumulates. It holds the
+// session's build slot throughout, so no turn can open the session between
+// the eviction and the deletion. While the session is in use (its build slot
+// busy, or another turn holding the manager) nothing is deleted; that turn's
+// own discard does it, and a single-shot turn starts by clearing the context
+// anyway.
+// Skipped discard: the database stays on disk (holding at most what the
+// holder's turn wrote) until the next single-shot turn or command ends.
+func (al *AgentLoop) discardConversation(ctx context.Context, agent *AgentInstance, sessionKey string) {
+	key := agent.ID + ":" + sessionKey
+	bk := sessionBuildKey{al: al, key: key}
+	done := make(chan struct{})
+	if _, busy := sessionBuilds.LoadOrStore(bk, done); busy {
+		return
+	}
+	defer func() {
+		sessionBuilds.Delete(bk)
+		close(done)
+	}()
+
+	if v, ok := al.contextManagers.Load(key); ok {
+		entry, ok := v.(*cmEntry)
+		if !ok {
+			return
+		}
+		entry.stale.Store(true)
+		if entry.refcount.Load() > 0 {
+			return
+		}
+		al.evictEntry(ctx, key, entry, evictReasonSingleShot)
+	}
+	forgetSessionState(agent.Sessions, sessionKey)
+	al.releaseSessionPins(sessionKey)
+	if err := memory.DeleteSession(agent.SessionsDir(), sessionKey); err != nil {
+		logger.WarnCF("agent", "Failed to delete a single-shot conversation", map[string]any{
+			"agent": agent.Label(), "session_key": sessionKey, "error": err.Error(),
+		})
 	}
 }

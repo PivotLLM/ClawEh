@@ -84,7 +84,7 @@ func (t *ViewImageTool) Execute(_ context.Context, args map[string]any) *tools.T
 
 	data, err := t.sysFs.ReadFile(path)
 	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err)).WithError(err)
 	}
 	if int64(len(data)) > t.maxSize {
 		return tools.ErrorResult(fmt.Sprintf(

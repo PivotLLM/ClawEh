@@ -1,0 +1,791 @@
+// ClawEh
+// License: MIT
+//
+// Copyright (c) 2026 Tenebris Technologies Inc.
+
+package forum
+
+import (
+	"encoding/json"
+	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// Validation. validateStatic needs nothing but the configuration;
+// runPreflight additionally consults the host (agents, models, schemas, source
+// files). forum_validate runs both; forum_launch runs both and then uses the
+// resolvedConfig result. This file holds the issue types and the static
+// checks; preflight.go the host checks and anonymity.go the rules for
+// anonymous inputs, which span both.
+
+// Issue is one validation finding. Path is a dotted JSON path into the
+// configuration ("layers[2].inputs[0].to", "participants.alice.model");
+// Message says what is wrong and, where there is one, the accepted value.
+// It continues the path ("<path>: <message>"), so it starts in lower case
+// (unless it starts with a name or ID) and has no closing full stop; a
+// message shown on its own is made a sentence where it is rendered.
+// TestIssueMessageStyle holds every message in the package to this.
+type Issue struct {
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
+
+// ValidationError carries every issue found, so a caller can report them
+// all at once rather than one per round trip.
+type ValidationError struct {
+	Issues []Issue
+}
+
+// Error lists the issues, one per line, as "<path>: <message>" (just the
+// message for an issue about the whole document).
+func (e *ValidationError) Error() string {
+	lines := make([]string, 0, len(e.Issues))
+	for _, is := range e.Issues {
+		if is.Path == "" {
+			lines = append(lines, is.Message)
+			continue
+		}
+		lines = append(lines, is.Path+": "+is.Message)
+	}
+	return "invalid configuration:\n" + strings.Join(lines, "\n")
+}
+
+// validateStatic checks everything that can be checked without the host and
+// returns a *ValidationError listing every finding, or nil. The checks:
+//
+// IDs and references
+//   - every participant, source, schema and layer ID matches validID; layer
+//     IDs are unique (participant, source and schema duplicates are already
+//     rejected by decodeConfig); no two participant, source or layer IDs are
+//     equal ignoring case (strings.EqualFold), since they name files and a
+//     case-insensitive filesystem would merge them;
+//   - brief.purpose and brief.task are nonempty;
+//   - each source has a valid decode and exactly one of inline / file; for
+//     decode text or markdown, inline is a JSON string; for decode json,
+//     inline is any JSON value; file is a relative path without "..";
+//   - each schema is a JSON object;
+//   - layers is nonempty and at least one layer is enabled;
+//   - result_layers name existing, enabled, distinct layers;
+//   - every limit is positive.
+//
+// Participants
+//   - exactly one form: agent, clone, or model without agent/clone;
+//   - `model` is rejected on the agent form (an existing agent always runs
+//     on its own model); on the clone form it is an optional override;
+//   - character_card only on the fresh and clone forms;
+//   - system_prompt and mode only on the fresh form; mode is one of
+//     FreshMode's values; a fresh participant has a nonempty model;
+//   - instructions and name are optional; names (a participant's name,
+//     else its ID) are unique ignoring case, so the transcript attributes
+//     each entry to one participant;
+//   - no two `agent` entries name the same real agent, anywhere in the
+//     forum (a moderator entry included): an agent has one conversation,
+//     so it can hold only one seat. Clones of one source are separate
+//     agents and are allowed.
+//
+// Layers
+//   - participants nonempty, unique, each naming a configured participant;
+//     result_layers likewise unique;
+//   - instructions nonempty; delivery is after_round or per_turn;
+//   - max_rounds positive; max_calls, when present, positive and not above
+//     limits.max_calls;
+//   - output.format is a Format; output.schema and output.share are
+//     rejected unless format is json; output.schema names a configured
+//     schema; output.share, when present, passes checkProjection (an
+//     empty array is valid and publishes nothing).
+//
+// Routes (layer inputs and moderator inputs)
+//   - from parses (Route.Producer); a source producer exists; a layer
+//     producer exists and precedes the consuming layer in the array;
+//   - a non-optional route from a disabled layer is an error when the
+//     consuming layer is enabled;
+//   - select, view and distribute are known values or empty;
+//   - select, authors, view, same_participant and anonymous are rejected
+//     on a source route (a source contributes one record, authorless);
+//   - anonymous is rejected with same_participant (it leaves out the
+//     recipient's own outputs, the only ones same_participant gives);
+//   - an anonymous read of layer P by layer L: L is after_round with one
+//     round and no moderator; no recipient reads P by name through another
+//     route, moderates P, or takes part in P while P is per_turn or has
+//     more than one round; and every recipient has another author in P
+//     (narrowed by authors);
+//   - view full requires a nonempty to on a layer input; a moderator input
+//     may use view full without to, since the moderator is its one
+//     explicit recipient (the router applies the same rule);
+//   - authors name participants of the producing layer; to names
+//     participants of the consuming layer and is rejected on a moderator
+//     route (the moderator is the only recipient); neither repeats an ID;
+//   - a moderator route's distribute is all (one recipient);
+//   - paths passes checkProjection and is rejected unless the producer is
+//     json (a json source or a json output layer); with view published and
+//     a producer `share`, each path must lie within what share publishes
+//     (it would otherwise always resolve to nothing at run time);
+//   - same_participant requires every recipient to be a participant of the
+//     producing layer;
+//   - a random route from a source (one record) to more than one recipient
+//     must be optional (fewer records than recipients). For layer
+//     producers the record count is not known
+//     statically; the router enforces it at run time.
+//
+// Moderator
+//   - participant names a configured participant that is not one of the
+//     layer's participants;
+//   - after_round and every_rounds positive, after_round < max_rounds
+//     (checks happen only while below max_rounds);
+//   - conversation_view is a ConversationView or empty;
+//   - schema, when set, names a configured schema that is a JSON object
+//     (it becomes the required `assessment`);
+//   - allow_directed is a plain flag; nothing further to check statically.
+//
+// Placeholders
+//   - no string anywhere in the configuration (inline JSON source values
+//     included, schemas excluded) is entirely a template placeholder "<...>"
+//     (isPlaceholder).
+func validateStatic(cfg *Config) error {
+	v := &staticValidator{cfg: cfg, layerIndex: map[string]int{}}
+	v.run()
+	if len(v.issues) > 0 {
+		return &ValidationError{Issues: v.issues}
+	}
+	return nil
+}
+
+// staticValidator accumulates the issues of validateStatic.
+type staticValidator struct {
+	cfg    *Config
+	issues []Issue
+	// layerIndex maps a layer ID to its first position in cfg.Layers.
+	layerIndex map[string]int
+}
+
+func (v *staticValidator) addf(path, format string, args ...any) {
+	v.issues = append(v.issues, Issue{Path: path, Message: fmt.Sprintf(format, args...)})
+}
+
+func (v *staticValidator) run() {
+	if !validName(v.cfg.Name) {
+		v.addf("name", "must be one line of at most %d characters", MaxNameChars)
+	}
+	v.brief()
+	v.sources()
+	v.participants()
+	v.schemas()
+	v.limits()
+	v.layers()
+	v.resultLayers()
+	v.placeholders()
+}
+
+// placeholders reports every string in the configuration, at any depth
+// (inline JSON source values included; schemas excluded), that is still a
+// template placeholder (isPlaceholder). It walks the configuration's JSON
+// form, so a field added later is covered without a change here.
+func (v *staticValidator) placeholders() {
+	raw, err := json.Marshal(v.cfg)
+	if err != nil {
+		return // only an invalid inline value or schema, which decodeConfig reports
+	}
+	var doc map[string]any
+	if json.Unmarshal(raw, &doc) != nil {
+		return
+	}
+	delete(doc, "schemas") // JSON Schema strings (a pattern "<\w+>") are real data
+	v.placeholderWalk("", doc)
+}
+
+func (v *staticValidator) placeholderWalk(path string, node any) {
+	switch n := node.(type) {
+	case string:
+		if isPlaceholder(n) {
+			v.addf(path, "is still a placeholder; replace it")
+		}
+	case []any:
+		for i, e := range n {
+			v.placeholderWalk(fmt.Sprintf("%s[%d]", path, i), e)
+		}
+	case map[string]any:
+		for _, k := range sortedKeys(n) {
+			child := k
+			if path != "" {
+				child = path + "." + k
+			}
+			v.placeholderWalk(child, n[k])
+		}
+	}
+}
+
+// isPlaceholder reports whether s, trimmed of surrounding whitespace, is
+// entirely a template placeholder: "<", at least one character, ">", with
+// no other angle bracket inside ("<a model from forum_models>"). Text that
+// merely contains angle brackets ("Is a<b?", "<b>bold</b> text") is not.
+func isPlaceholder(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) <= 2 || s[0] != '<' || s[len(s)-1] != '>' {
+		return false
+	}
+	return !strings.ContainsAny(s[1:len(s)-1], "<>")
+}
+
+func (v *staticValidator) brief() {
+	if strings.TrimSpace(v.cfg.Brief.Purpose) == "" {
+		v.addf("brief.purpose", "is required")
+	}
+	if strings.TrimSpace(v.cfg.Brief.Task) == "" {
+		v.addf("brief.task", "is required")
+	}
+}
+
+func (v *staticValidator) sources() {
+	v.caseCollisions("sources", "source", sortedKeys(v.cfg.Sources))
+	for _, id := range sortedKeys(v.cfg.Sources) {
+		src := v.cfg.Sources[id]
+		path := "sources." + id
+		if !validID(id) {
+			v.addf(path, "source ID %q: %s", id, idRule)
+		}
+		if !validFormat(src.Decode) {
+			v.addf(path+".decode", "%q is not one of %s", src.Decode, valueList(formatValues))
+		}
+		hasInline, hasFile := src.Inline != nil, src.File != ""
+		switch {
+		case hasInline && hasFile:
+			v.addf(path, "source %q sets both inline and file; set exactly one", id)
+		case !hasInline && !hasFile:
+			v.addf(path, "source %q needs exactly one of inline or file", id)
+		}
+		if hasInline && (src.Decode == FormatText || src.Decode == FormatMarkdown) {
+			var text string
+			if json.Unmarshal(src.Inline, &text) != nil {
+				v.addf(path+".inline", "must be a JSON string for decode %q", src.Decode)
+			}
+		}
+		if hasFile {
+			if msg := relativePathProblem(src.File); msg != "" {
+				v.addf(path+".file", "%q %s", src.File, msg)
+			}
+		}
+	}
+}
+
+// relativePathProblem says why a source file path is not acceptable, or
+// returns "" for a relative path that stays below its base directory.
+func relativePathProblem(p string) string {
+	slashed := filepath.ToSlash(p)
+	if filepath.IsAbs(p) || strings.HasPrefix(slashed, "/") || filepath.VolumeName(p) != "" {
+		return "must be a relative path"
+	}
+	for elem := range strings.SplitSeq(slashed, "/") {
+		if elem == ".." {
+			return `must not contain ".."`
+		}
+	}
+	return ""
+}
+
+func (v *staticValidator) participants() {
+	if len(v.cfg.Participants) == 0 {
+		v.addf("participants", "at least one participant is required")
+	}
+	ids := sortedKeys(v.cfg.Participants)
+	v.caseCollisions("participants", "participant", ids)
+	v.participantNames(ids)
+	v.realAgents(ids)
+	for _, id := range ids {
+		p := v.cfg.Participants[id]
+		path := "participants." + id
+		if !validID(id) {
+			v.addf(path, "participant ID %q: %s", id, idRule)
+		}
+		switch {
+		case p.Agent != "" && p.Clone != "":
+			v.addf(path, "participant %q sets both agent and clone; set exactly one of agent, clone or model", id)
+		case p.Agent != "" && p.Model != "":
+			v.addf(path+".model", "participant %q: an existing agent always runs on its own model; use clone to choose a model", id)
+		case p.Agent == "" && p.Clone == "" && p.Model == "":
+			v.addf(path, "participant %q needs exactly one of agent, clone or model", id)
+		}
+		if p.Form() == FormExisting && p.CharacterCard != "" {
+			v.addf(path+".character_card", "participant %q: character_card applies only to a fresh or clone participant; an existing agent uses its own card", id)
+		}
+		if p.Form() != FormFresh {
+			if p.SystemPrompt != "" {
+				v.addf(path+".system_prompt", "participant %q: system_prompt applies only to a fresh participant (model)", id)
+			}
+			if p.Mode != "" {
+				v.addf(path+".mode", "participant %q: mode applies only to a fresh participant (model)", id)
+			}
+		} else if p.Mode != "" && !validMode(p.Mode) {
+			v.addf(path+".mode", "participant %q: %q is not one of %s", id, p.Mode, valueList(freshModeValues))
+		}
+	}
+}
+
+// caseCollisions reports each pair of IDs (sorted, distinct) that are
+// equal ignoring case. path is the map's path; the issue is at the later
+// ID's entry and names both.
+func (v *staticValidator) caseCollisions(path, kind string, ids []string) {
+	for i, id := range ids {
+		for _, prev := range ids[:i] {
+			if prev != id && strings.EqualFold(prev, id) {
+				v.addf(path+"."+id, "%s IDs %q and %q differ only in letter case; make them differ in more than case", kind, prev, id)
+			}
+		}
+	}
+}
+
+// participantNames reports participants whose transcript names (name,
+// else ID) are equal ignoring case. Two participants that both fall back
+// to IDs differing only in case are already reported by caseCollisions.
+func (v *staticValidator) participantNames(ids []string) {
+	seen := map[string]string{} // lower-cased name -> first participant ID
+	for _, id := range ids {
+		p := v.cfg.Participants[id]
+		name := p.Name
+		if name == "" {
+			name = id
+		}
+		key := strings.ToLower(name)
+		prev, dup := seen[key]
+		if !dup {
+			seen[key] = id
+			continue
+		}
+		if p.Name == "" && v.cfg.Participants[prev].Name == "" {
+			continue
+		}
+		v.addf("participants."+id+".name", "participants %q and %q are both named %q (names must differ, ignoring case)", prev, id, name)
+	}
+}
+
+// realAgents reports two `agent` entries naming the same real agent.
+func (v *staticValidator) realAgents(ids []string) {
+	seen := map[string]string{} // agent identity (agentKey) -> first participant ID
+	for _, id := range ids {
+		p := v.cfg.Participants[id]
+		if p.Agent == "" || p.Clone != "" {
+			continue
+		}
+		if prev, dup := seen[agentKey(p.Agent)]; dup {
+			v.addf("participants."+id+".agent", "participants %q and %q are both agent %q; an agent can take one seat in a forum (use clone for another)", prev, id, p.Agent)
+			continue
+		}
+		seen[agentKey(p.Agent)] = id
+	}
+}
+
+func (v *staticValidator) schemas() {
+	for _, id := range sortedKeys(v.cfg.Schemas) {
+		path := "schemas." + id
+		if !validID(id) {
+			v.addf(path, "schema ID %q: %s", id, idRule)
+		}
+		if !isJSONObject(v.cfg.Schemas[id]) {
+			v.addf(path, "schema %q must be a JSON object", id)
+		}
+	}
+}
+
+func (v *staticValidator) limits() {
+	l := v.cfg.Limits
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"max_calls", l.MaxCalls},
+		{"max_duration_seconds", l.MaxDurationSeconds},
+		{"call_timeout_seconds", l.CallTimeoutSeconds},
+		{"max_attempts_per_turn", l.MaxAttemptsPerTurn},
+		{"max_parallel_calls", l.MaxParallelCalls},
+	} {
+		if f.value < minPositive {
+			v.addf("limits."+f.name, "must be a positive integer, got %d", f.value)
+		}
+	}
+}
+
+func (v *staticValidator) layers() {
+	if len(v.cfg.Layers) == 0 {
+		v.addf("layers", "at least one layer is required")
+		return
+	}
+	enabled := 0
+	for i, l := range v.cfg.Layers {
+		path := layerPath(i)
+		for k, prev := range v.cfg.Layers[:i] {
+			if prev.ID != l.ID && strings.EqualFold(prev.ID, l.ID) {
+				v.addf(path+".id", "layer IDs %q (%s) and %q differ only in letter case; make them differ in more than case", prev.ID, layerPath(k), l.ID)
+			}
+		}
+		if !validID(l.ID) {
+			v.addf(path+".id", "layer ID %q: %s", l.ID, idRule)
+		}
+		if prev, dup := v.layerIndex[l.ID]; dup {
+			v.addf(path+".id", "layer ID %q is already used by %s", l.ID, layerPath(prev))
+		} else {
+			v.layerIndex[l.ID] = i
+		}
+		if l.IsEnabled() {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		v.addf("layers", "every layer is disabled; enable at least one")
+	}
+	for i, l := range v.cfg.Layers {
+		v.layer(i, l)
+	}
+}
+
+func (v *staticValidator) layer(i int, l Layer) {
+	path := layerPath(i)
+	if len(l.Participants) == 0 {
+		v.addf(path+".participants", "layer %q needs at least one participant", l.ID)
+	}
+	v.participantRefs(path+".participants", l.Participants, "layer "+strconv.Quote(l.ID))
+	if strings.TrimSpace(l.Instructions) == "" {
+		v.addf(path+".instructions", "layer %q: instructions are required", l.ID)
+	}
+	if !slices.Contains(deliveryValues, l.Delivery) {
+		v.addf(path+".delivery", "layer %q: %q is not one of %s", l.ID, l.Delivery, valueList(deliveryValues))
+	}
+	if l.MaxRounds < minPositive {
+		v.addf(path+".max_rounds", "layer %q: must be a positive integer, got %d", l.ID, l.MaxRounds)
+	}
+	switch {
+	case l.MaxCalls < 0:
+		v.addf(path+".max_calls", "layer %q: must be a positive integer, got %d", l.ID, l.MaxCalls)
+	case l.MaxCalls > 0 && v.cfg.Limits.MaxCalls > 0 && l.MaxCalls > v.cfg.Limits.MaxCalls:
+		v.addf(path+".max_calls", "layer %q: %d is above the forum's limits.max_calls (%d)", l.ID, l.MaxCalls, v.cfg.Limits.MaxCalls)
+	}
+	v.output(path+".output", l)
+	for r, route := range l.Inputs {
+		v.route(fmt.Sprintf("%s.inputs[%d]", path, r), i, l, route, false)
+	}
+	if l.Moderator != nil {
+		v.moderator(path+".moderator", i, l)
+	}
+}
+
+// participantName is a participant's configured name, else its ID.
+func (v *staticValidator) participantName(id string) string {
+	if p, ok := v.cfg.Participants[id]; ok && p.Name != "" {
+		return p.Name
+	}
+	return id
+}
+
+// participantRefs checks a list of participant IDs: each configured, none
+// repeated.
+func (v *staticValidator) participantRefs(path string, ids []string, owner string) {
+	seen := map[string]bool{}
+	for k, id := range ids {
+		if _, ok := v.cfg.Participants[id]; !ok {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%s: participant %q is not configured", owner, id)
+		}
+		if seen[id] {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%s: participant %q is listed twice", owner, id)
+		}
+		seen[id] = true
+	}
+}
+
+func (v *staticValidator) output(path string, l Layer) {
+	o := l.Output
+	if !validFormat(o.Format) {
+		v.addf(path+".format", "layer %q: %q is not one of %s", l.ID, o.Format, valueList(formatValues))
+	}
+	if o.Format != FormatJSON {
+		if o.Schema != "" {
+			v.addf(path+".schema", "layer %q: schema applies only to format json", l.ID)
+		}
+		if o.Share != nil {
+			v.addf(path+".share", "layer %q: share applies only to format json", l.ID)
+		}
+		return
+	}
+	if o.Schema != "" {
+		if _, ok := v.cfg.Schemas[o.Schema]; !ok {
+			v.addf(path+".schema", "layer %q: schema %q is not configured", l.ID, o.Schema)
+		}
+	}
+	if o.Share != nil {
+		for _, msg := range checkProjection(*o.Share) {
+			v.addf(path+".share", "layer %q: %s", l.ID, msg)
+		}
+	}
+}
+
+// route checks one input route of the layer at index li. moderator marks a
+// moderator input, whose only recipient is the moderator.
+func (v *staticValidator) route(path string, li int, l Layer, r Route, moderator bool) {
+	kind, id, err := r.Producer()
+	if err != nil {
+		v.addf(path+".from", "%v", err)
+		return
+	}
+	v.routeValues(path, r)
+	recipients := v.routeRecipients(path, l, r, moderator)
+	var (
+		known, producerJSON bool
+		share               *[]string
+	)
+	switch kind {
+	case RouteFromSource:
+		known, producerJSON = v.sourceRoute(path, id, r, recipients)
+	case RouteFromLayer:
+		known, producerJSON, share = v.layerRoute(path, li, l, id, r, recipients)
+	}
+	if len(r.Paths) > 0 && known {
+		v.routePaths(path, id, r, producerJSON, share)
+	}
+}
+
+// routeValues checks a route's enumerated members: select, view and
+// distribute.
+func (v *staticValidator) routeValues(path string, r Route) {
+	if r.Select != "" && !slices.Contains(selectValues, r.Select) {
+		v.addf(path+".select", "%q is not one of %s", r.Select, valueList(selectValues))
+	}
+	if r.View != "" && !slices.Contains(viewValues, r.View) {
+		v.addf(path+".view", "%q is not one of %s", r.View, valueList(viewValues))
+	}
+	if r.Distribute != "" && !slices.Contains(distributeValues, r.Distribute) {
+		v.addf(path+".distribute", "%q is not one of %s", r.Distribute, valueList(distributeValues))
+	}
+}
+
+// routeRecipients checks who a route goes to and returns them: the
+// moderator alone, or `to`, or the layer's participants.
+func (v *staticValidator) routeRecipients(path string, l Layer, r Route, moderator bool) []string {
+	recipients := l.Participants
+	if moderator {
+		recipients = []string{l.Moderator.Participant}
+		if len(r.To) > 0 {
+			v.addf(path+".to", "a moderator input goes to the moderator only; remove to")
+		}
+		if r.Distribute == DistributeSameParticipant || r.Distribute == DistributeRandom {
+			v.addf(path+".distribute", "a moderator input has one recipient; distribute must be all")
+		}
+	} else if len(r.To) > 0 {
+		recipients = r.To
+		v.recipientRefs(path+".to", r.To, l)
+	}
+	if r.View == ViewFull && !moderator && len(r.To) == 0 {
+		v.addf(path+".view", "view full requires the recipients to be named in to")
+	}
+	return recipients
+}
+
+// sourceRoute checks a route from source id and reports whether the
+// source is configured and whether its content is JSON.
+func (v *staticValidator) sourceRoute(path, id string, r Route, recipients []string) (known, isJSON bool) {
+	src, ok := v.cfg.Sources[id]
+	if !ok {
+		v.addf(path+".from", "source %q is not configured", id)
+	}
+	if r.Select != "" {
+		v.addf(path+".select", "select applies only to layer inputs (a source is one record)")
+	}
+	if len(r.Authors) > 0 {
+		v.addf(path+".authors", "authors applies only to layer inputs (a source has no author)")
+	}
+	if r.View != "" {
+		v.addf(path+".view", "view applies only to layer inputs")
+	}
+	if r.Distribute == DistributeSameParticipant {
+		v.addf(path+".distribute", "same_participant applies only to layer inputs (a source has no author)")
+	}
+	if r.Distribute == DistributeRandom && len(recipients) > 1 && !r.Optional {
+		v.addf(path+".distribute", "random deals source %q (one record) to %d recipients, so some get nothing; mark the input optional", id, len(recipients))
+	}
+	if r.Anonymous {
+		v.addf(path+".anonymous", "anonymous applies only to layer inputs (a source has no author)")
+	}
+	return ok, src.Decode == FormatJSON
+}
+
+// layerRoute checks a route from layer id into layer l (at index li) and
+// reports whether the producer is a known earlier layer, whether its
+// output is JSON, and the part of it the route may see (its share, nil
+// for all of it).
+func (v *staticValidator) layerRoute(path string, li int, l Layer, id string, r Route, recipients []string) (known, isJSON bool, share *[]string) {
+	pi, ok := v.layerIndex[id]
+	if !ok {
+		v.addf(path+".from", "layer %q is not configured", id)
+		return false, false, nil
+	}
+	if pi >= li {
+		v.addf(path+".from", "layer %q must come before layer %q (inputs refer backward only)", id, l.ID)
+		return false, false, nil
+	}
+	producer := v.cfg.Layers[pi]
+	if r.View != ViewFull {
+		share = producer.Output.Share
+	}
+	if !producer.IsEnabled() && !r.Optional && l.IsEnabled() {
+		v.addf(path+".from", "layer %q is disabled; enable it or mark the input optional", id)
+	}
+	v.authorRefs(path+".authors", r.Authors, producer)
+	if r.Anonymous && r.Distribute == DistributeSameParticipant {
+		v.addf(path+".anonymous", "anonymous leaves out each recipient's own outputs, so same_participant would give it nothing")
+	}
+	if r.Anonymous {
+		v.anonymous(path+".anonymous", l, r, recipients, producer)
+	}
+	if r.Distribute == DistributeSameParticipant {
+		for _, to := range recipients {
+			if !slices.Contains(producer.Participants, to) {
+				v.addf(path+".distribute", "same_participant: recipient %q is not a participant of layer %q", to, id)
+			}
+		}
+	}
+	return true, producer.Output.Format == FormatJSON, share
+}
+
+// routePaths checks a route's paths against its producer: JSON content,
+// valid projections, and within what the producer publishes (share).
+func (v *staticValidator) routePaths(path, id string, r Route, producerJSON bool, share *[]string) {
+	if !producerJSON {
+		v.addf(path+".paths", "paths apply only to JSON content; %q is not JSON", r.From)
+	}
+	for _, msg := range checkProjection(r.Paths) {
+		v.addf(path+".paths", "%s", msg)
+	}
+	if share == nil {
+		return
+	}
+	for _, p := range r.Paths {
+		if !withinShare(p, *share) {
+			v.addf(path+".paths", "path %q is outside what layer %q publishes (share); use view full or widen share", p, id)
+		}
+	}
+}
+
+// recipientRefs checks a route's `to`: participants of the consuming
+// layer, none repeated.
+func (v *staticValidator) recipientRefs(path string, to []string, l Layer) {
+	seen := map[string]bool{}
+	for k, id := range to {
+		if !slices.Contains(l.Participants, id) {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%q is not a participant of layer %q", id, l.ID)
+		}
+		if seen[id] {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%q is listed twice", id)
+		}
+		seen[id] = true
+	}
+}
+
+// authorRefs checks a route's `authors`: participants of the producing
+// layer, none repeated.
+func (v *staticValidator) authorRefs(path string, authors []string, producer Layer) {
+	seen := map[string]bool{}
+	for k, id := range authors {
+		if !slices.Contains(producer.Participants, id) {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%q is not a participant of layer %q", id, producer.ID)
+		}
+		if seen[id] {
+			v.addf(fmt.Sprintf("%s[%d]", path, k), "%q is listed twice", id)
+		}
+		seen[id] = true
+	}
+}
+
+// withinShare reports whether pointer p can resolve inside a projection
+// built from share: p equals, lies under, or encloses a shared member,
+// compared token-wise after unescaping (pointerTokens), so "/a~1b" and
+// "/a/b" differ. Invalid pointers are left to checkProjection.
+func withinShare(p string, share []string) bool {
+	pt, err := pointerTokens(p)
+	if err != nil {
+		return true
+	}
+	for _, s := range share {
+		st, err := pointerTokens(s)
+		if err != nil {
+			return true
+		}
+		if tokensPrefix(pt, st) || tokensPrefix(st, pt) {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *staticValidator) moderator(path string, li int, l Layer) {
+	m := l.Moderator
+	switch {
+	case m.Participant == "":
+		v.addf(path+".participant", "layer %q: the moderator's participant is required", l.ID)
+	case !hasKey(v.cfg.Participants, m.Participant):
+		v.addf(path+".participant", "layer %q: participant %q is not configured", l.ID, m.Participant)
+	case slices.Contains(l.Participants, m.Participant):
+		v.addf(path+".participant", "layer %q: %q is a participant of the layer and cannot also moderate it", l.ID, m.Participant)
+	}
+	if m.AfterRound < minPositive {
+		v.addf(path+".after_round", "layer %q: must be a positive integer, got %d", l.ID, m.AfterRound)
+	} else if l.MaxRounds > 0 && m.AfterRound >= l.MaxRounds {
+		v.addf(path+".after_round", "layer %q: %d must be below max_rounds (%d); the moderator is consulted only between rounds", l.ID, m.AfterRound, l.MaxRounds)
+	}
+	if m.EveryRounds < minPositive {
+		v.addf(path+".every_rounds", "layer %q: must be a positive integer, got %d", l.ID, m.EveryRounds)
+	}
+	if m.ConversationView != "" && !slices.Contains(conversationViewValues, m.ConversationView) {
+		v.addf(path+".conversation_view", "layer %q: %q is not one of %s", l.ID, m.ConversationView, valueList(conversationViewValues))
+	}
+	if m.Schema != "" && !hasKey(v.cfg.Schemas, m.Schema) {
+		v.addf(path+".schema", "layer %q: schema %q is not configured", l.ID, m.Schema)
+	}
+	if m.Participant == "" {
+		return // recipients of the moderator's inputs are unknown
+	}
+	for r, route := range m.Inputs {
+		v.route(fmt.Sprintf("%s.inputs[%d]", path, r), li, l, route, true)
+	}
+}
+
+func (v *staticValidator) resultLayers() {
+	seen := map[string]bool{}
+	for k, id := range v.cfg.ResultLayers {
+		path := fmt.Sprintf("result_layers[%d]", k)
+		i, ok := v.layerIndex[id]
+		switch {
+		case !ok:
+			v.addf(path, "layer %q is not configured", id)
+		case !v.cfg.Layers[i].IsEnabled():
+			v.addf(path, "layer %q is disabled; a result layer must be enabled", id)
+		}
+		if seen[id] {
+			v.addf(path, "layer %q is listed twice", id)
+		}
+		seen[id] = true
+	}
+}
+
+// idRule is the configuration ID syntax, for messages.
+const idRule = "use letters, digits, underscore and hyphen, not starting with a digit"
+
+func layerPath(i int) string { return fmt.Sprintf("layers[%d]", i) }
+
+func validFormat(f Format) bool { return slices.Contains(formatValues, f) }
+
+func validMode(m FreshMode) bool { return slices.Contains(freshModeValues, m) }
+
+func isJSONObject(raw json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(raw, &obj) == nil && obj != nil
+}
+
+func hasKey[V any](m map[string]V, k string) bool {
+	_, ok := m[k]
+	return ok
+}
+
+// sortedKeys returns m's keys in order, so issues come out deterministically.
+func sortedKeys[V any](m map[string]V) []string {
+	return slices.Sorted(maps.Keys(m))
+}

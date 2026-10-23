@@ -19,7 +19,7 @@ It also feeds the WebUI tool catalogue. You write a module once; all three get i
 your package (tools/<ns>/)        ← implements global.ToolProvider, BARE tool names
         │  RegisterTools(deps) []ToolDefinition
         ▼
-global  (transport-neutral, stdlib-only)
+toolspec, aliased as global  (transport-neutral, stdlib-only)
         │  ToolProvider / ToolDefinition / Parameter / ToolCall / Result / Deps
         ▼
 tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" prefix
@@ -28,7 +28,7 @@ tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" p
 tools registry  (RegisterProvider / GetProviders)
         ├──► agent loop  → per-agent *tools.ToolRegistry  → LLM tool calling
         ├──► mcpserver (WithAgentRegistries)               → MCP /mcp
-        └──► web/backend/api/tools.go (Describe)           → WebUI catalogue
+        └──► web/backend/api/agents.go (Describe)          → WebUI catalogue
 ```
 
 Key idea: a tool package is **transport-neutral and dependency-free** (it imports
@@ -58,7 +58,12 @@ To add an internal module you (a) add its import and (b) add one
 
 ---
 
-## 2. Core types (`global/tools.go`)
+## 2. Core types (`github.com/PivotLLM/toolspec`)
+
+The types live in the standalone `toolspec` module; `global/tools.go` re-exports
+them as aliases under the historical `global.*` names. Abridged below: toolspec
+also has `Group`/`RevealTogether` on `ToolDefinition` and `ConfigDir`/`DB` on
+`Deps`.
 
 ```go
 // A package implements this. deps is injected at build time.
@@ -79,9 +84,9 @@ type ToolDefinition struct {
     Async         bool          // may use ToolCall.Notify / return Result.Async
     PrimaryOnly   bool          // vestigial: declared by toolspec, not enforced
 
-    DefaultAllow *bool          // nil/false ⇒ DENY by default; Allow(true) ⇒ on
-    Category     string         // GUI grouping (defaults to namespace)
-    ConfigKey    string         // config gate key (defaults to "<ns>_<name>")
+    DefaultAllow *bool          // Allow(true) ⇒ in the "Default tools" set
+    Category     string         // declared by toolspec, not read by ClawEh
+    ConfigKey    string         // declared by toolspec, not read by ClawEh
 }
 
 type ToolHandler func(call *ToolCall) (*Result, error)
@@ -131,12 +136,13 @@ renders `[]Parameter` into a JSON Schema object; you rarely call it yourself —
 the bridge does. Use `RawSchema` only when migrating a tool that already has a
 hand-written schema.
 
-### Default-allow (security model)
+### Default-allow
 
-`DefaultAllow` defaults to **deny**. A tool is exposed to clients only if it sets
-`DefaultAllow: global.Allow(true)`, or an operator explicitly enables it via
-config (`tools.tool_overrides["<ns>_<name>"] = true`). So new tools are off by
-default until you opt in or the operator turns them on.
+An agent has only the tools its own `tools` list names; there is no install-wide
+per-tool switch. `DefaultAllow: global.Allow(true)` only puts the tool in the
+standard set the Agents page's **Default tools** button writes into a list
+(`tools.DefaultEnabledToolNames`). Omit it for tools few agents need. `shell_exec`
+is granted only by naming it: `"*"` and prefix entries never include it.
 
 ### Sub-agents and the full toolset
 
@@ -163,7 +169,7 @@ they belong:
   ones — sub-agents specifically need them. The snapshot is a throwaway copy,
   deleted with the session when the worker finishes, so anything it writes stays
   on that copy and never reaches the parent's memory. See
-  [docs/subagents.md](subagents.md).
+  [Sub-agents](../manual/agents/subagents.md).
 
 There is correspondingly no `tools.IsPrimaryOnly` helper: it was removed with
 the mechanism.
@@ -203,7 +209,7 @@ func (globalWeatherProvider) RegisterTools(deps global.Deps) []global.ToolDefini
             Name:         "forecast",                 // published as weather_forecast
             Description:  "Return the forecast for a city.",
             Category:     "weather",
-            DefaultAllow: global.Allow(true),         // omit/false ⇒ off by default
+            DefaultAllow: global.Allow(true),         // omit/false ⇒ not in Default tools
             Parameters: []global.Parameter{
                 {Name: "city", Type: "string", Required: true, Description: "City name."},
                 {Name: "days", Type: "integer", Description: "Days ahead (1-7).", Default: 1},
@@ -276,8 +282,8 @@ network/LLM tools.
 
 ## 5. Importing as an external module
 
-`global` is intentionally dependency-free (standard library + `context`
-only), so the `ToolProvider`/`ToolDefinition` contract can be vendored or
+`toolspec` (re-exported as `global`) is intentionally dependency-free
+(standard library only), so the `ToolProvider`/`ToolDefinition` contract can be vendored or
 imported by another codebase (e.g. Maestro/MCPFusion) without pulling in Claw.
 A package written against `global` alone — no `tools`, `config`, etc.
 — is portable: any host that can adapt `global.ToolProvider` into its own
@@ -323,7 +329,7 @@ host supplies the concrete implementation.
 
 | Thing | Location |
 |---|---|
-| Transport-neutral types | `global/tools.go` |
+| Transport-neutral types | `github.com/PivotLLM/toolspec` (aliases in `global/tools.go`) |
 | Namespacing bridge | `tools/namespaced.go` (`NamespacedProvider`) |
 | Registry | `tools/providers.go` (`RegisterProvider` / `GetProviders`) |
 | **Aggregator (wire new modules here)** | `internal/gateway/tool_providers.go` |
@@ -331,5 +337,5 @@ host supplies the concrete implementation.
 | Sub-agent recursion bound | `agents.defaults.max_subagent_depth` (`tools/agents/depth.go`) |
 | Host deps available to handlers | `tools` `ToolDeps` (via `deps.Host`) |
 | MCP exposure | `mcpserver` (`WithAgentRegistries`) |
-| WebUI catalogue | `web/backend/api/tools.go` (`Describe`) |
+| WebUI catalogue | `web/backend/api/agents.go` (`GET /api/agents/tools`, `Describe`) |
 | Test probes | `test.sh`, `tests/test_mcpserver.sh` |

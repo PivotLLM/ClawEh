@@ -19,8 +19,8 @@ import (
 )
 
 // eraseTestConfig is a two-agent install (Alice default, Bob) under a temp
-// base dir, in the given session mode.
-func eraseTestConfig(t *testing.T, mode string) *config.Config {
+// base dir.
+func eraseTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{
 		Agents: config.AgentsConfig{
@@ -29,10 +29,6 @@ func eraseTestConfig(t *testing.T, mode string) *config.Config {
 				{ID: "alice", Name: "Alice", Default: true},
 				{ID: "bob", Name: "Bob"},
 			},
-		},
-		Session: config.SessionConfig{
-			Mode:          mode,
-			IdentityLinks: map[string][]string{"carol": {"telegram:555", "slack:u555"}},
 		},
 	}
 }
@@ -67,16 +63,17 @@ func exists(t *testing.T, dir, key string) bool {
 	return false
 }
 
-// TestErase_ByChannelAndChat removes the sender's sessions in every agent and
-// shape (direct, per-account direct, group, identity-linked per-user) and
-// leaves other senders, other channels and the main session alone.
+// TestErase_ByChannelAndChat removes the sender's per-sender sessions left by
+// earlier releases in every agent and shape (direct, account direct, group,
+// channel-less direct) and leaves other senders, other channels and the main
+// session alone; the main session it routes to is reported as shared.
 func TestErase_ByChannelAndChat(t *testing.T) {
-	cfg := eraseTestConfig(t, "per-platform")
+	cfg := eraseTestConfig(t)
 	aliceDir := seedKeys(t, cfg, "alice",
 		"agent:alice:telegram:direct:555",
 		"agent:alice:telegram:acct1:direct:555",
 		"agent:alice:telegram:group:555",
-		"agent:alice:direct:carol", // per-user key via identity_links
+		"agent:alice:direct:555",
 		"agent:alice:telegram:direct:777",
 		"agent:alice:slack:direct:555",
 		"agent:alice:main",
@@ -89,7 +86,7 @@ func TestErase_ByChannelAndChat(t *testing.T) {
 	}
 	slices.Sort(rep.Erased)
 	want := []string{
-		"agent:alice:direct:carol",
+		"agent:alice:direct:555",
 		"agent:alice:telegram:acct1:direct:555",
 		"agent:alice:telegram:direct:555",
 		"agent:alice:telegram:group:555",
@@ -114,19 +111,18 @@ func TestErase_ByChannelAndChat(t *testing.T) {
 	if !exists(t, bobDir, "agent:bob:main") {
 		t.Error("bob's main session was deleted")
 	}
-	if rep.Shared != "" {
-		t.Errorf("Shared = %q under an isolating scope", rep.Shared)
+	if rep.Shared != "agent:alice:main" {
+		t.Errorf("Shared = %q, want agent:alice:main", rep.Shared)
 	}
 	if rep.Cogmem != CogmemNote {
 		t.Errorf("Cogmem note missing: %q", rep.Cogmem)
 	}
 }
 
-// TestErase_UnifiedSharedSession: under unified scope the sender's messages
-// are in the routed agent's main session, which is reported and kept without
-// All, and deleted with it.
-func TestErase_UnifiedSharedSession(t *testing.T) {
-	cfg := eraseTestConfig(t, "unified")
+// TestErase_SharedMainSession: the sender's messages are in the routed agent's
+// main session, which is reported and kept without All, and deleted with it.
+func TestErase_SharedMainSession(t *testing.T) {
+	cfg := eraseTestConfig(t)
 	aliceDir := seedKeys(t, cfg, "alice", "agent:alice:main")
 	bobDir := seedKeys(t, cfg, "bob", "agent:bob:main")
 
@@ -159,7 +155,7 @@ func TestErase_UnifiedSharedSession(t *testing.T) {
 // TestErase_ReleaseRefused: a session the gateway cannot release (turn in
 // flight) is reported as skipped and left on disk; the others still go.
 func TestErase_ReleaseRefused(t *testing.T) {
-	cfg := eraseTestConfig(t, "per-platform")
+	cfg := eraseTestConfig(t)
 	dir := seedKeys(t, cfg, "alice", "agent:alice:telegram:direct:555", "agent:alice:telegram:group:555")
 	release := func(key string) error {
 		if strings.Contains(key, ":group:") {
@@ -184,7 +180,7 @@ func TestErase_ReleaseRefused(t *testing.T) {
 }
 
 func TestErase_RequiresChannelAndChat(t *testing.T) {
-	cfg := eraseTestConfig(t, "unified")
+	cfg := eraseTestConfig(t)
 	if _, err := Erase(cfg, EraseRequest{Channel: "telegram"}, nil); err == nil {
 		t.Fatal("missing chat id accepted")
 	}
@@ -204,7 +200,7 @@ func TestMatchesSender(t *testing.T) {
 		{"agent:alice:telegram:acct:direct:555", "telegram", true},
 		{"agent:alice:telegram:group:555", "telegram", true},
 		{"agent:alice:slack:channel:555", "slack", true},
-		{"agent:alice:direct:555", "telegram", true}, // per-user: no channel in the key
+		{"agent:alice:direct:555", "telegram", true}, // no channel in the key
 		{"agent:alice:webui:direct:webui:abc-def", "webui", true},
 		{"agent:alice:device:555", "device", true},
 		{"agent:alice:telegram:direct:5555", "telegram", false},
@@ -233,7 +229,7 @@ func TestFormatReport(t *testing.T) {
 	for _, want := range []string{
 		"erased agent:alice:telegram:direct:555\n",
 		"skipped agent:alice:telegram:group:555: turn in flight\n",
-		"kept agent:alice:main: session mode is unified",
+		"kept agent:alice:main: shared with every other sender",
 		CogmemNote + "\n",
 		"Erased 1 session(s).\n",
 	} {

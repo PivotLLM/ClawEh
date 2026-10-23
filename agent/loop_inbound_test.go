@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -86,9 +88,12 @@ func inbound(chat, id, content string) bus.InboundMessage {
 }
 
 // nextOutbound returns the next reply the loop published, or fails the test.
+// The bound is generous: it only matters when no reply comes, and an agent's
+// first turn creates its session stores, which can take seconds on a busy
+// disk.
 func nextOutbound(t *testing.T, msgBus *bus.MessageBus) bus.OutboundMessage {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, ok := msgBus.SubscribeOutbound(ctx)
 	if !ok {
@@ -194,6 +199,8 @@ func TestInbound_MaxConcurrentTurnsLimitsConcurrency(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			al, msgBus, p := newBlockingLoop(t, twoAgentConfig(t, tc.limit))
+			var slotWait <-chan struct{}
+			al.onWait, slotWait = waitSignals(waitTurnSlot)
 
 			go dispatch(al, bus.InboundMessage{Channel: "cha", ChatID: "x", SenderID: "u", Content: "first"})
 			p.waitStarted(t)
@@ -201,7 +208,7 @@ func TestInbound_MaxConcurrentTurnsLimitsConcurrency(t *testing.T) {
 			if tc.expectAt == 2 {
 				p.waitStarted(t)
 			} else {
-				time.Sleep(100 * time.Millisecond)
+				awaitSignal(t, slotWait, "the second turn to wait for the slot")
 			}
 			if n := p.callCount(); n != tc.expectAt {
 				t.Fatalf("calls started while first turn held = %d, want %d", n, tc.expectAt)
@@ -334,5 +341,38 @@ func TestRecordSpend_RaisesNormalAlertOnce(t *testing.T) {
 	a := rec.alerts[0]
 	if a.Title != "Daily model spend over threshold" || !strings.HasPrefix(a.EventID, "spend:") || a.Priority != 0 {
 		t.Fatalf("unexpected alert %+v", a)
+	}
+}
+
+// A turn cancelled on purpose (its asker stopped waiting, or /cancel) is not a
+// failed model call: it is logged at INFO, never as "LLM call failed".
+func TestRunAgentLoop_DeliberateCancelNotLoggedAsFailure(t *testing.T) {
+	for name, cause := range map[string]error{"asker stopped": errAskerStopped, "/cancel": errCancelledByUser} {
+		t.Run(name, func(t *testing.T) {
+			logs := &safeBufLoop{}
+			t.Cleanup(logger.RedirectForTest(logs))
+			provider := newBlockingProvider()
+			cfg := newTestConfig(t)
+			al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), provider, nil)
+			agent := mustGetAgent(t, al)
+			ctx, stop := context.WithCancelCause(context.Background())
+			go func() {
+				<-provider.started
+				stop(cause)
+			}()
+			_, err := al.runAgentLoop(ctx, agent, processOptions{
+				SessionKey: "agent:main:main", Channel: "cli", ChatID: "direct", UserMessage: "hi",
+			})
+			if !errors.Is(err, cause) {
+				t.Fatalf("err = %v, want the cause %v", err, cause)
+			}
+			out := logs.String()
+			if strings.Contains(out, "LLM call failed") {
+				t.Fatalf("a deliberate cancellation was logged as a failure:\n%s", out)
+			}
+			if !strings.Contains(out, "LLM call stopped") {
+				t.Fatalf("the stop was not logged:\n%s", out)
+			}
+		})
 	}
 }

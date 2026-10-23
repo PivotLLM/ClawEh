@@ -189,10 +189,10 @@ func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Skill not found", http.StatusNotFound)
 }
 
-// newSkillsLoader lists the shared skills root (<CLAW_HOME>/skills) and the
-// builtin skills; per-agent skills are not part of this view.
+// newSkillsLoader lists the shared skills root (<CLAW_HOME>/skills);
+// per-agent skills are not part of this view.
 func newSkillsLoader(sharedSkills string) *skills.SkillsLoader {
-	return skills.NewSkillsLoader("", sharedSkills, builtinSkillsDir())
+	return skills.NewSkillsLoader("", sharedSkills)
 }
 
 func normalizeImportedSkillName(filename string, content []byte) (string, error) {
@@ -304,15 +304,4 @@ func loadSkillContent(path string) (string, error) {
 		return "", err
 	}
 	return skillFrontmatterStripper.ReplaceAllString(string(content), ""), nil
-}
-
-func builtinSkillsDir() string {
-	if path := os.Getenv("CLAW_BUILTIN_SKILLS"); path != "" {
-		return path
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(wd, "skills")
 }

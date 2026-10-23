@@ -25,12 +25,12 @@ type AgentQuerier interface {
 	// this mainKey back as chat.history/chat.send sessionKey).
 	Agents() (agents []DeviceAgentInfo, defaultID string, mainKey string)
 	// DefaultAgentID returns the id of the agent that handles turns when a client
-	// does not select one (used to build a per-device session key for node clients).
+	// does not select one (node clients join its main conversation).
 	DefaultAgentID() string
-	// SessionMode returns the configured session mode ("unified", "per-user", …).
-	// Under unified, device turns join the selected agent's main conversation
-	// instead of getting a device-scoped session of their own.
-	SessionMode() string
+	// HasAgent reports whether id names an agent the loop runs (a configured
+	// agent, human agents included), so a per-device assignment to it still
+	// reaches it.
+	HasAgent(id string) bool
 	// History returns the stored transcript for a session key, oldest first.
 	History(sessionKey string) []DeviceHistoryMessage
 }

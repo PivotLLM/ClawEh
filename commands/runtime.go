@@ -87,6 +87,14 @@ type Runtime struct {
 	// session (active domain/memory counts, pending-review count, and the last
 	// consolidation run). Returns "" when the agent has no cognitive memory.
 	GetMemoryStatus func() string
+
+	// AskAgent runs /ask for this message's sender: agent is the id or name
+	// typed, text the message. It returns the reply to give now (a refusal),
+	// or "" when the ask was sent; the agent's answer is posted to the chat
+	// when it arrives. WhisperAgent runs /whisper the same way and returns its
+	// reply. Nil when the host does not support agent messages.
+	AskAgent     func(ctx context.Context, agent, text string) string
+	WhisperAgent func(ctx context.Context, agent, text string) string
 }
 
 // ModelEntry is one configured candidate model for an agent, surfaced by

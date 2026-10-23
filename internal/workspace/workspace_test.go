@@ -18,7 +18,7 @@ func exists(t *testing.T, path string) bool {
 // brand-new workspace.
 func TestPopulate_FreshWorkspace(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws)
+	Populate(ws, 0o700, 0o600)
 
 	for _, f := range []string{"AGENTS.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
 		if !exists(t, filepath.Join(ws, f)) {
@@ -34,7 +34,7 @@ func TestPopulate_FreshWorkspace(t *testing.T) {
 // optional COMPRESSION.md profile does not get it re-added on a later startup.
 func TestPopulate_CompressionNotRecreated(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws) // fresh: seeds AGENTS.md + COMPRESSION.md
+	Populate(ws, 0o700, 0o600) // fresh: seeds AGENTS.md + COMPRESSION.md
 
 	if !exists(t, filepath.Join(ws, "COMPRESSION.md")) {
 		t.Fatal("expected COMPRESSION.md seeded into a fresh workspace")
@@ -43,7 +43,7 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 		t.Fatalf("remove COMPRESSION.md: %v", err)
 	}
 
-	Populate(ws) // restart: workspace already initialized
+	Populate(ws, 0o700, 0o600) // restart: workspace already initialized
 
 	if exists(t, filepath.Join(ws, "COMPRESSION.md")) {
 		t.Error("COMPRESSION.md must not be recreated on an initialized workspace")
@@ -56,7 +56,7 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 // onto an updated prompt: delete COGMEM.md, restart.
 func TestPopulate_CogmemRecreated(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws) // fresh: seeds AGENTS.md + COGMEM.md
+	Populate(ws, 0o700, 0o600) // fresh: seeds AGENTS.md + COGMEM.md
 
 	cogmemPath := filepath.Join(ws, "COGMEM.md")
 	if !exists(t, cogmemPath) {
@@ -66,7 +66,7 @@ func TestPopulate_CogmemRecreated(t *testing.T) {
 		t.Fatalf("remove COGMEM.md: %v", err)
 	}
 
-	Populate(ws) // restart: workspace already initialized
+	Populate(ws, 0o700, 0o600) // restart: workspace already initialized
 
 	got, err := os.ReadFile(cogmemPath)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestPopulate_CogmemRecreated(t *testing.T) {
 // directory (daily notes were removed).
 func TestPopulate_NoMemoryDir(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws)
+	Populate(ws, 0o700, 0o600)
 	if exists(t, filepath.Join(ws, "memory")) {
 		t.Error("<workspace>/memory must not be created")
 	}

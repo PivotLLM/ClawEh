@@ -14,7 +14,7 @@ func TestPopulate_OwnerOnlyModes(t *testing.T) {
 		t.Skip("file permission bits are not enforced on Windows")
 	}
 	ws := filepath.Join(t.TempDir(), "agent")
-	Populate(ws)
+	Populate(ws, 0o700, 0o600)
 
 	for _, dir := range []string{ws, filepath.Join(ws, "files")} {
 		fi, err := os.Stat(dir)

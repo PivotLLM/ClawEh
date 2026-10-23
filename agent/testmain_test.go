@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/tools"
+	toolscogmem "github.com/PivotLLM/ClawEh/tools/cogmem"
 	toolsfiles "github.com/PivotLLM/ClawEh/tools/files"
+	toolsmaestro "github.com/PivotLLM/ClawEh/tools/maestro"
 	toolssession "github.com/PivotLLM/ClawEh/tools/session"
 	toolsshell "github.com/PivotLLM/ClawEh/tools/shell"
 )
@@ -17,10 +19,13 @@ import (
 // In production, tool providers are registered by internal/gateway before
 // NewAgentLoop is called. Tests that instantiate NewAgentLoop directly
 // (e.g. TestAgentLoop_GetStartupInfo) need at least a few providers registered
-// so that registerRuntimeTools produces a non-empty tool registry.
+// so that the agent builder produces a non-empty tool registry.
 func TestMain(m *testing.M) {
 	tools.RegisterProvider(tools.NamespacedProvider("file", toolsfiles.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("shell", toolsshell.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("session", toolssession.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("cogmem", toolscogmem.GlobalProvider))
+	// Only agents with the Maestro suite switched on get its tools.
+	tools.RegisterProvider(tools.NamespacedProvider("maestro", toolsmaestro.GlobalProvider))
 	os.Exit(m.Run())
 }

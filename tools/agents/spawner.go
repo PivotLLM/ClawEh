@@ -21,6 +21,10 @@ import (
 type Spawner struct {
 	mgr            *SubagentManager
 	allowlistCheck func(targetAgentID string) bool
+	// cardExists, when set, reports whether a character card exists in the
+	// library, so a spawn on a missing card is refused with the card's name
+	// before anything is created.
+	cardExists func(id string) bool
 	// maxDepth is the sub-agent recursion bound; 0 falls back to
 	// DefaultMaxSpawnDepth (see maxSpawnDepth).
 	maxDepth int
@@ -42,6 +46,10 @@ func NewSpawner(mgr *SubagentManager) *Spawner {
 func (s *Spawner) SetAllowlistChecker(check func(targetAgentID string) bool) {
 	s.allowlistCheck = check
 }
+
+// SetCardChecker installs the character-card existence check used for
+// SpawnRequest.CharacterCard.
+func (s *Spawner) SetCardChecker(exists func(id string) bool) { s.cardExists = exists }
 
 // SetMaxDepth sets the sub-agent recursion bound (agents.defaults.max_subagent_depth).
 // A value <= 0 restores the default (DefaultMaxSpawnDepth).
@@ -89,6 +97,11 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 		}
 	}
 
+	// A character card must exist; the worker is created with it rendered.
+	if card := strings.TrimSpace(req.CharacterCard); card != "" && s.cardExists != nil && !s.cardExists(card) {
+		return &global.Result{IsError: true, ForLLM: fmt.Sprintf("Character card %q does not exist.", card)}, nil
+	}
+
 	channel := req.Channel
 	if channel == "" {
 		channel = "cli"
@@ -100,7 +113,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 
 	switch req.Mode {
 	case global.SpawnAndWait:
-		res, err := s.mgr.Run(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID, req.Model, req.Media)
+		res, err := s.mgr.Run(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID, req.Model, strings.TrimSpace(req.CharacterCard), req.Media)
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("subagent execution failed: %v", err)}, nil
 		}
@@ -121,7 +134,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 				onResult(tools.ResultToGlobal(r))
 			}
 		}
-		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, req.Media, cb, SpawnDepth(ctx)) //nolint:contextcheck // callback-mode sub-agents run detached from the spawning turn by design; their lifetime is the task record
+		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, strings.TrimSpace(req.CharacterCard), req.Media, cb, SpawnDepth(ctx)) //nolint:contextcheck // callback-mode sub-agents run detached from the spawning turn by design; their lifetime is the task record
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
 		}

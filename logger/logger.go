@@ -50,6 +50,11 @@ var (
 	logFilePath  string
 	errorLogPath string
 	logJSON      bool
+
+	// The modes the log directory and files are created with
+	// (security.permissions.logs); see SetFileModes.
+	logDirMode  os.FileMode = 0o700
+	logFileMode os.FileMode = 0o600
 )
 
 // errorLogName is the high-signal problem log written beside claw.log.
@@ -156,6 +161,20 @@ func GetLogMessageContent() bool {
 	return logMessageContent
 }
 
+// SetFileModes sets the modes the log directory and log files are created
+// with from now on (default 0700 and 0600). Existing files keep their mode.
+// A zero mode keeps the current one.
+func SetFileModes(dirMode, fileMode os.FileMode) {
+	mu.Lock()
+	defer mu.Unlock()
+	if dirMode != 0 {
+		logDirMode = dirMode
+	}
+	if fileMode != 0 {
+		logFileMode = fileMode
+	}
+}
+
 func EnableFileLogging(filePath string, jsonFormat bool) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -165,11 +184,11 @@ func EnableFileLogging(filePath string, jsonFormat bool) error {
 // enableFileLoggingLocked opens (or reopens) claw.log and its companion
 // error.log. Callers must hold mu.
 func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filePath), logDirMode); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // log path from config
+	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFileMode) //nolint:gosec // log path from config
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
@@ -183,7 +202,7 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 
 	// error.log lives beside claw.log and captures errorLogLevel and above.
 	errorPath := filepath.Join(filepath.Dir(filePath), errorLogName)
-	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // error.log beside the configured log file
+	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFileMode) //nolint:gosec // error.log beside the configured log file
 	if err != nil {
 		return fmt.Errorf("failed to open error log file: %w", err)
 	}
@@ -482,6 +501,11 @@ func appendFields(event *zerolog.Event, fields map[string]any) {
 			event.Float64(k, val)
 		case bool:
 			event.Bool(k, val)
+		case error:
+			// An error is logged by its message. Marshalled as a value, a struct
+			// error shows its exported fields and its wrapped error (usually an
+			// unexported type) as {}, losing the reason it failed.
+			event.AnErr(k, val)
 		default:
 			event.Interface(k, v) // Fallback for struct, slice and maps
 		}

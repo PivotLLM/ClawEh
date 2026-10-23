@@ -39,9 +39,6 @@ func secretFixture(t *testing.T) (string, *http.ServeMux, map[string]string) {
 		"slack_app_token": "xapp-slack-app-token-abcdefghijkl",
 		// channels.matrix.access_token
 		"matrix_access_token": "syt_matrix-access-token-abcdefghijkl",
-		// channels.line.channel_secret / channel_access_token
-		"line_secret":       "line-channel-secret-abcdefghijkl",
-		"line_access_token": "line-channel-access-token-abcdefghijkl",
 		// channels.webui.token
 		"webui_token": "webui-channel-token-abcdef",
 		// channels.device.token / word_token
@@ -91,8 +88,6 @@ func secretFixture(t *testing.T) (string, *http.ServeMux, map[string]string) {
 	cfg.Channels.Slack.BotToken = secrets["slack_bot_token"]
 	cfg.Channels.Slack.AppToken = secrets["slack_app_token"]
 	cfg.Channels.Matrix.AccessToken = secrets["matrix_access_token"]
-	cfg.Channels.LINE.ChannelSecret = secrets["line_secret"]
-	cfg.Channels.LINE.ChannelAccessToken = secrets["line_access_token"]
 	cfg.Channels.WebUI.Enabled = true
 	cfg.Channels.WebUI.Token = secrets["webui_token"]
 	cfg.Channels.Device.Token = secrets["device_token"]
@@ -424,8 +419,8 @@ func TestConfigUpdate_AcceptsNewSecret(t *testing.T) {
 func TestIsSecretKey(t *testing.T) {
 	for _, k := range []string{
 		"api_key", "brave_api_key", "token", "bot_token", "app_token",
-		"access_token", "word_token", "auth_token", "channel_access_token",
-		"secret", "client_secret", "channel_secret", "password", "password_hash",
+		"access_token", "word_token", "auth_token",
+		"secret", "client_secret", "password", "password_hash",
 	} {
 		if !config.IsSecretKey(k) {
 			t.Errorf("config.IsSecretKey(%q) = false, want true", k)

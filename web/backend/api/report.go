@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/channels/matrix"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/report"
 )
@@ -31,7 +32,7 @@ func (h *Handler) handleReportAssessment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, report.Assess(r.Context(), cfg, reportEnvironment(h.configPath, cfg.DataDir(), time.Now())))
+	writeJSON(w, http.StatusOK, report.Assess(r.Context(), cfg, h.runningEnvironment(cfg.DataDir(), time.Now())))
 }
 
 // handleReportPDF streams the configuration report for this install: the
@@ -44,7 +45,7 @@ func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	rep := report.Collect(r.Context(), cfg, reportEnvironment(h.configPath, cfg.DataDir(), now))
+	rep := report.Collect(r.Context(), cfg, h.runningEnvironment(cfg.DataDir(), now))
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
@@ -54,6 +55,20 @@ func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 		// Headers may already be out; all that is left is to record it.
 		logger.ErrorCF("api", "configuration report render failed", map[string]any{"error": err.Error()})
 	}
+}
+
+// runningEnvironment is reportEnvironment plus what the running listener has
+// observed: the last forwarded request from a proxy that is not trusted, and
+// the Matrix rooms seen to be encrypted.
+func (h *Handler) runningEnvironment(dataDir string, now time.Time) report.Environment {
+	env := reportEnvironment(h.configPath, dataDir, now)
+	env.ForwardedPeer, env.ForwardedSeen = h.untrustedProxySeen()
+	rooms := matrix.EncryptedRooms
+	if h.encryptedMatrixRooms != nil {
+		rooms = h.encryptedMatrixRooms
+	}
+	env.EncryptedMatrixRooms = rooms()
+	return env
 }
 
 // reportEnvironment gathers what the report needs to know about the process.

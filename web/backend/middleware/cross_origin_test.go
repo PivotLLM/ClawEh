@@ -15,7 +15,7 @@ import (
 func TestCrossOrigin_Policy(t *testing.T) {
 	policy, err := NewCrossOriginProtection(
 		[]string{"https://claw.example.com"},
-		[]string{"POST /api/message/{token}", "/webhook/line"},
+		[]string{"POST /api/message/{token}", "/webhook/example"},
 	)
 	if err != nil {
 		t.Fatalf("NewCrossOriginProtection() error = %v", err)
@@ -33,7 +33,7 @@ func TestCrossOrigin_Policy(t *testing.T) {
 	}{
 		{"cross-site POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"cross-site PUT", http.MethodPut, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
-		{"cross-site DELETE", http.MethodDelete, "/api/sessions/x", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		{"cross-site DELETE", http.MethodDelete, "/api/sessions?channel=telegram&chat_id=1", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"same-site POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
 		{"same-origin POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "same-origin"}, http.StatusOK},
 		{"none (typed URL) POST", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "none"}, http.StatusOK},
@@ -47,7 +47,7 @@ func TestCrossOrigin_Policy(t *testing.T) {
 		{"trusted Origin cross-site", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://claw.example.com"}, http.StatusOK},
 		{"trusted host, other scheme", http.MethodPost, "/api/config", map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "http://claw.example.com"}, http.StatusForbidden},
 		{"exempt message route", http.MethodPost, "/api/message/abc123", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusOK},
-		{"exempt webhook", http.MethodPost, "/webhook/line", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusOK},
+		{"exempt webhook", http.MethodPost, "/webhook/example", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusOK},
 		{"exempt pattern does not widen", http.MethodPost, "/api/message", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"SPA path cross-site POST", http.MethodPost, "/", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 	} {

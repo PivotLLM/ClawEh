@@ -539,17 +539,44 @@ PY
                     integ_fail "MCPFusion sample service not found at $FUSION_SAMPLE; Fusion gating checks cannot run"
                 fi
 
+                # With CLAW_TEST_CLI=1 and a Claude CLI on PATH, the config also
+                # gets a Claude CLI provider and model and an agent "cli" on it
+                # (with ccv3), which main may spawn: tests/test_cli_ccv3.sh has the
+                # probe spawn it so a real CLI turn calls the ccv3 tool over this
+                # gateway's own MCP host. The CLI is pointed at that host alone
+                # by its mcp.json and allowed only that tool; "Allow CLI to bypass
+                # restrictions" stays off. Nothing else in the config changes, so
+                # the probe suite's expectations hold either way.
+                CLI_LIVE_JSON=""
+                CLI_LIVE_AGENT=""
+                CLI_LIVE_ALLOW=""
+                CLI_LIVE_CMD="${CLAW_TEST_CLI_COMMAND:-claude}"
+                if [ "${CLAW_TEST_CLI:-}" = "1" ] && command -v "$CLI_LIVE_CMD" >/dev/null 2>&1; then
+                    printf '{"mcpServers":{"claw":{"type":"http","url":"http://127.0.0.1:%s/internal"}}}\n' "$MCP_PORT" > "$INTEG_HOME/mcp.json"
+                    chmod 600 "$INTEG_HOME/mcp.json"
+                    CLI_LIVE_JSON="\"providers\": [{\"name\": \"Claude CLI\", \"protocol\": \"claude-cli\", \"command\": \"$(command -v "$CLI_LIVE_CMD")\"}],
+  \"models\": [{\"model_name\": \"Claude CLI\", \"model\": \"claude-cli\", \"provider\": \"Claude CLI\", \"enabled\": true, \"request_timeout\": 180,
+    \"extra_args\": [\"--mcp-config\", \"$INTEG_HOME/mcp.json\", \"--strict-mcp-config\", \"--allowedTools\", \"mcp__claw__ccv3\"]}],"
+                    CLI_LIVE_AGENT=",
+      {\"id\": \"cli\", \"name\": \"cli\", \"models\": [\"Claude CLI\"], \"ccv3\": true}"
+                    CLI_LIVE_ALLOW="\"subagents\": {\"allow_agents\": [\"cli\"]},"
+                fi
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
+  $CLI_LIVE_JSON
   "agents": {
     "list": [
       {
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*", "cogmem_*"],
+        "tools": ["*", "cogmem_*", "shell_exec"],
         "fusion": true,
+        "forum": true,
+        "ccv3": true,
+        $CLI_LIVE_ALLOW
         "mcp_tools": ["wxca"]
       },
       {
@@ -557,7 +584,13 @@ PY
         "name": "alice",
         "tools": ["*", "cogmem_*"],
         "fusion": true
-      }
+      },
+      {
+        "id": "bob",
+        "name": "Bob",
+        "tools": ["file_*"],
+        "character_card": "probe-attached"
+      }$CLI_LIVE_AGENT
     ]
   },
   "bindings": [
@@ -586,38 +619,7 @@ PY
       }
     },
     "skills": { "registry": { "enabled": true } },
-    "subagent": { "enabled": true },
-    "cron": { "enabled": true },
-    "tool_overrides": {
-      "shell_exec": true,
-      "file_read_bytes": true,
-      "file_count": true,
-      "file_edit_bytes": true,
-      "file_insert_bytes": true,
-      "file_delete_bytes": true,
-      "file_search_bytes": true,
-      "skill_find": true,
-      "skill_install": true,
-      "cron_schedule": true,
-      "agent_spawn": true,
-      "agent_status": true,
-      "agent_list": true,
-      "session_clear": true,
-      "cogmem_domain_get": true,
-      "cogmem_memory_search": true,
-      "cogmem_domain_list": true,
-      "cogmem_explain": true,
-      "cogmem_memory_create": true,
-      "cogmem_domain_update": true,
-      "cogmem_memory_retire": true,
-      "cogmem_domain_create": true,
-      "cogmem_domain_archive": true,
-      "cogmem_domain_migrate": true,
-      "cogmem_memory_forget": true,
-      "cogmem_consolidate": true,
-      "cogmem_export": true,
-      "cogmem_status": true
-    }
+    "cron": { "enabled": true }
   },
   "mcp_host": {
     "enabled": true,
@@ -662,6 +664,7 @@ PY
       "agent_spawn",
       "agent_status",
       "agent_list",
+      "agent_message",
       "cogmem_domain_get",
       "cogmem_memory_search",
       "cogmem_domain_list",
@@ -682,6 +685,22 @@ PY
       "common_put",
       "common_delete",
       "time_now",
+      "ccv3",
+      "forum_readme",
+      "forum_models",
+      "forum_new",
+      "forum_config_template",
+      "forum_config_import",
+      "forum_config_update",
+      "forum_config_export",
+      "forum_validate",
+      "forum_launch",
+      "forum_status",
+      "forum_pause",
+      "forum_resume",
+      "forum_cancel",
+      "forum_results",
+      "forum_delete",
       "wxca"
     ]
   }
@@ -690,13 +709,20 @@ EOF
                 # The gateway refuses a config.json readable by other users.
                 chmod 600 "$INTEG_HOME/config.json"
 
+                # A character card attached to bob, so the ccv3 probes can see a
+                # rename and a delete refused while a card is in use.
+                mkdir -p "$INTEG_HOME/cards"
+                printf '{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Probe","description":"A probe.","tags":[],"alternate_greetings":[],"group_only_greetings":[],"creation_date":1,"modification_date":1}}\n' > "$INTEG_HOME/cards/probe-attached.json"
+                chmod 600 "$INTEG_HOME/cards/probe-attached.json"
+
                 # Pre-seed a long-lived service token for the default agent so the
                 # gateway loads it at boot (exercises loadServiceTokens + the
                 # headless service session on /mcp + /internal).
                 TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
                 ALICE_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
+                BOB_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
                 mkdir -p "$INTEG_HOME/internal"
-                printf '{"main":"%s","alice":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
+                printf '{"main":"%s","alice":"%s","bob":"%s"}\n' "$TEST_SERVICE_TOKEN" "$ALICE_SERVICE_TOKEN" "$BOB_SERVICE_TOKEN" > "$INTEG_HOME/internal/service-tokens.json"
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
@@ -784,6 +810,7 @@ EOF
                        SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
                        FUSION_SERVICE="$FUSION_SERVICE" \
                        UNGRANTED_SERVICE_TOKEN="$ALICE_SERVICE_TOKEN" \
+                       NOSHELL_SERVICE_TOKEN="$BOB_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        GATEWAY_LOG="$INTEG_LOG" \
@@ -807,6 +834,23 @@ EOF
                             CLI_SMOKE_STATUS="failed"
                             CLI_SMOKE_PASSED=false
                             integ_fail "CLI provider smoke (tests/test_cli_provider.sh) failed; see its output above"
+                        fi
+                        echo ""
+                        echo "${BOLD}--- CLI tool call over MCP (opt-in) ---${NC}"
+                        echo ""
+                        if [ -z "$CLI_LIVE_JSON" ]; then
+                            echo "  skipped: CLI '$CLI_LIVE_CMD' not on PATH (set CLAW_TEST_CLI_COMMAND)"
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI tool call over MCP: no CLI on PATH"
+                        elif PROBE_PATH="$PROBE_BIN" MCP_URL="http://127.0.0.1:$MCP_PORT/internal" \
+                             SESSION_TOKEN="$TEST_SESSION_TOKEN" CLAW_HOME="$INTEG_HOME" GATEWAY_LOG="$INTEG_LOG" \
+                             bash "$SCRIPT_DIR/tests/test_cli_ccv3.sh"; then
+                            :
+                        else
+                            CLI_SMOKE_STATUS="failed"
+                            CLI_SMOKE_PASSED=false
+                            integ_fail "CLI tool call over MCP (tests/test_cli_ccv3.sh) failed; see its output above"
                         fi
                     fi
                     echo ""

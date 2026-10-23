@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-145 checks in all; the runner prints the same tally at the end.
+154 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -14,11 +14,12 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 ## Before you start
 
-**Run it against a dev instance, never production.** Groups F, G, N and R
-write. All four revert what they change — the agent created in F is deleted, the
+**Run it against a dev instance, never production.** Groups F, G, N, R and T
+write. All five revert what they change — the agent created in F is deleted, the
 field edited in G and the HTTPS port edited in R are restored to the values read
-beforehand, and the memory domain N creates is deleted at the end — but a crash
-mid-run would leave the change behind. N only ever touches the `e2e-probe`
+beforehand, the memory domain N creates is deleted at the end, and the card and
+agent T creates are removed — but a crash
+mid-run would leave the change behind. I12 adds and removes a disabled temporary model only when no model's request timeout exceeds the turn timeout. N only ever touches the `e2e-probe`
 domain it created, so an agent's real memory is not at risk, but it is still a
 write. R8 regenerates the self-signed certificate (a new self-signed one takes
 its place; browsers that accepted the old one warn again) and is skipped with a
@@ -37,7 +38,7 @@ restart the dev instance after changing listener settings by hand.
 | A running ClawEh | `make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev` |
 | An admin account | The WebUI and `/api/*` are behind a login. Create the account on the dev instance with `claw admin`, then `export CLAW_E2E_USER=… CLAW_E2E_PASSWORD=…`. The runner signs in first and stops with that instruction if it cannot |
 | At least one agent, model and provider | The plan asserts against live data; an empty install fails A3 |
-| Playwright + Chromium | Override with `PLAYWRIGHT_MODULE` / `CHROME_PATH` |
+| Playwright + Chromium | Found in the npx cache under the home directory; override with `PLAYWRIGHT_MODULE` / `CHROME_PATH` |
 
 **Every request below carries the session.** The runner keeps one browser
 context, so the cookie from `POST /api/auth/login` goes with every page it opens
@@ -75,7 +76,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 ## B. Route smoke
 
 **Process.** Load each of the 22 routes in a browser with the console open:
-`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/tools`, `/agent/skills`,
+`/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/skills`, `/agent/cards`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
 `/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/report`,
 `/system`, `/voice`, `/setup`, `/status`.
@@ -97,7 +98,6 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 | ID | Process | Expected |
 |---|---|---|
 | D1 | Load all 22 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
-| D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
 
@@ -112,7 +112,7 @@ attaches on its own. No token is fetched or sent by the page.
 
 ## F. Agents — autosave and list realignment
 
-Creates an agent called `e2e-probe` and deletes it at the end.
+Creates an agent called `e2e-probe` and deletes it at the end; F11 creates a second one, `e2e-msg`, through the API and removes it again.
 
 | ID | Process | Expected |
 |---|---|---|
@@ -121,10 +121,13 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | F3 | Under **Internal tools**, toggle the `time_now` checkbox, wait ~2s | `tools` persisted with `time_now` added (or removed, if it was on) **and** `temperature` is still `0.77`. The second save must not clobber the first |
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | Under **Fusion services** on the `e2e-probe` card, tick the first listed service, wait ~2s; tick it again, wait ~2s | `mcp_tools` gains the service name on the first tick and loses it on the second; the earlier edits are untouched. Skipped when the instance defines no Fusion service (`GET /api/agents/tools` has no `fusion_services`) |
-| F6 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
-| F7 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** one line per CLI reads "`<CLI>` is not allowed to bypass its restrictions." followed by an **Allow it** link to the Providers page |
-| F8 | Through the API add twenty temporary enabled models; select an agent, open **Add model…**, scroll the list with the wheel twice; remove the models again | The list shows a scrollbar (Radix hides it by default, which made a long list look cut off), scrolls, does not jump back, and the popup keeps its height throughout. In Radix Select's item-aligned mode the popup grows and the scroll position is rewritten on every scroll event, which on a phone flickers and snaps back to the top on release; every select uses popper mode |
-| F9 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
+| F6 | With `e2e-probe` selected, turn on the **Allow shell commands** switch under Tools, wait ~2s; turn it off, wait ~2s | `tools` gains `shell_exec` when it is turned on and loses it when turned off; every other `tools` entry and the earlier edits are unchanged. It is the only way to grant `shell_exec`: `"*"` does not include it |
+| F7 | Open `/agents`, leave through the **Check Up** sidebar link, come back through the **Agents** sidebar link (no reload) | The rail lists the agents and the page does not say "No agents yet". A return visit mounts the page with its data already cached; it used to seed its list only when a new fetch landed, so the cached list never showed until a browser reload |
+| F8 | Through the API, set `e2e-probe`'s models to a CLI model whose `extra_args` carries the CLI's bypass flag while that provider's "Allow CLI to bypass restrictions" is off (skip with a note when no such model exists); select `e2e-probe` on `/agents` | Under **Models** one line per CLI reads "`<CLI>` is not allowed to bypass its restrictions." followed by an **Allow it** link to the Providers page |
+| F9 | Through the API add twenty temporary enabled models; select an agent, open **Add model…**, scroll the list with the wheel twice; remove the models again | The list shows a scrollbar (Radix hides it by default, which made a long list look cut off), scrolls, does not jump back, and the popup keeps its height throughout. In Radix Select's item-aligned mode the popup grows and the scroll position is rewritten on every scroll event, which on a phone flickers and snaps back to the top on release; every select uses popper mode |
+| F10 | With `e2e-probe` selected, click the trash button in the card header, then **Cancel** in the confirmation dialog, wait ~2s | The dialog closes, `e2e-probe` is still in the rail and in `GET /api/config`, with `temperature` still `0.77`. Cancel must change nothing |
+| F11 | Create a throwaway agent `e2e-msg` through the API with `subagents.models` set to an enabled model; select it on `/agents` and under **May message** tick the first other agent (by its displayed name), wait ~2s; remove `e2e-msg` through the API | `subagents.allow_agents` is exactly that agent's id and `subagents.models` is unchanged: the box writes one key of the block and keeps the rest. Skipped when there is no other agent or no enabled model |
+| F12 | With `e2e-probe` selected, click the trash button in the card header, then Delete in the confirmation dialog | The agent is gone from `GET /api/config` |
 
 ## G. System page
 
@@ -166,7 +169,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 | R6 | Click *Self-signed (default)*, then *External certificate* | Under Self-signed: no path inputs, a **Regenerate certificate** button. Under External: **Certificate file** and **Private key file** inputs and a **Save certificate** button, no Regenerate |
 | R7 | Under External, enter `/nonexistent/e2e-probe/fullchain.pem` and `/nonexistent/e2e-probe/privkey.pem`, **Save certificate** | An inline error with the server's reason (`POST /api/tls/validate` answered 400). `GET /api/config` → `gateway` is byte-for-byte what it was before: nothing was saved |
 | R8 | With a self-signed certificate and HTTPS on, click **Regenerate certificate** (skip with a note otherwise) | The fingerprint shown changes, and `GET /api/tls` reports the new one |
-| R9 | Read the **Addresses** card | Lists `urls.localhost`, every `urls.http[]` and every `urls.https[]` from `GET /api/tls` — exactly what to open. Each plain-HTTP network address, and nothing else, carries a warning triangle whose hover text is *Plain-text HTTP exposed to network.* No Docker bridge address (`172.17–31.x.0.1`) is listed. With HTTPS off it says ClawEh is reachable from this host only |
+| R9 | Read the **Addresses** card | Lists `urls.localhost`, every `urls.http[]` and every `urls.https[]` from `GET /api/tls` — exactly what to open. Each plain-HTTP network address, and nothing else, carries a warning triangle whose hover text is *Plain-text HTTP exposed to network.*, except behind a proxy (`behind_proxy` in `GET /api/tls`), where none is marked. No Docker bridge address (`172.17–31.x.0.1`) is listed. With HTTPS off it says ClawEh is reachable from this host only |
 | R10 | Note `gateway.tls_port`; set **HTTPS port** to the next free number and wait for *Saved ✓*; then set it back and wait for the save | After the first save a banner reading exactly **Restart required to apply changes.** appears with a **Restart now** button beside it (do **not** click it) and `gateway.tls_port` holds the probe value; after the second save the config holds the original again. The banner is expected to stay: the running listener still differs until a restart. The step expects no banner before it starts |
 | R11 | Compare **Allowed network CIDRs** with `gateway.allowed_cidrs` | One entry per line, in order (empty for loopback only) |
 | R12 | Compare the **Device listener** section with `channels.device` | The **Protocol** radio (*ws (unencrypted)* / *wss (HTTPS)*) is the first control of the section and shows `tls` (*wss* exactly when `true`); the scope radio matches `host` (loopback ↔ *Localhost only*), the port field shows `port` (18791 by default), the **External address** field shows `external_url` without its scheme |
@@ -200,6 +203,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 | I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
 | I10 | With a CLI provider configured (`GET /api/system/clis` has a `configured` row; skip with a note otherwise), load `/providers` and `/models` | Both render with the CLI row present, no console errors and no error boundary. A CLI row carries argument lists the server encodes as `null` when empty (`required_args`, `bypass_args`, `extra_args`); spreading one used to throw *Spread syntax requires …iterable* straight into the boundary |
 | I11 | With a CLI provider configured (skip with a note otherwise), load `/providers` and find the **Allow CLI to bypass restrictions** checkbox on every configured CLI row | The checkbox is present for each configured CLI and its state equals that provider's `bypass_restrictions` from `GET /api/system/clis` — off unless the operator ticked it. It is the only control that lets a CLI run with its permission-bypass flag, so it must never be missing or show the wrong state |
+| I12 | Find a model whose `request_timeout` is above `turn_timeout` in `GET /api/models` (or add a disabled temporary one with `turn_timeout + 60` and remove it afterwards); on `/models` click its **Edit model** button, open **Advanced options**, click the **Turn timeout** link in the note under Request timeout | The note reads *Limited to <duration> by the Turn timeout.* The link lands on `/system#turn-timeout` with the **Turn timeout** field scrolled into view and showing the server's `turn_timeout`; no console errors. The link arrives before the System page has loaded, so the page scrolls to the field itself |
 
 ## J. Devices
 
@@ -225,7 +229,7 @@ covers it.
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 | K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
-| K9 | `curl -b jar $BASE/api/voice/stt`, then load `/voice` and read it **before clicking anything** | One backend row per `stt[]` entry, each with its provider selected, and no *No transcription backends configured* line; with none configured, that line and no rows. The page used to seed its rows from an empty list when the query was already cached, said nothing was configured, and the first **Add backend** then saved that empty list over the real configuration |
+| K9 | `curl -b jar $BASE/api/voice/stt`, then load `/voice` and read it **before clicking anything** | One backend row per `stt[]` entry, each with its provider selected, and no *No transcription backends configured* line; with none configured, that line and no rows. Enabled backends are tried in order: the first usable one is labelled **Primary**, every later usable one **Fallback**; one with no preset (custom) and no endpoint or model reads *Not used: needs an endpoint and model.*; a disabled one carries no label. The page used to seed its rows from an empty list when the query was already cached, said nothing was configured, and the first **Add backend** then saved that empty list over the real configuration |
 | K10 | Open `/agent/bindings`, then click through the sidebar: **Services** → **MCP** → **Servers**, then **Config**, then **Network**, then **System**, reading each page before clicking anything on it | `/mcp/servers` lists every server in `tools.mcp.servers` (from `GET /api/config`) and shows *No external servers configured.* only when there are none; `/mcp/config` shows `mcp_host.listen` in **Listen Address** and `mcp_host.enabled` on **Enabled**; `/system` shows `backup.dest` in the backup destination and `agents.defaults.max_tokens` in **Max tokens**. Reached this way the config query is answered from the browser cache, and the three pages used to keep their empty defaults, which the next edit then saved over the real configuration |
 
 ## L. Setup wizard
@@ -316,6 +320,19 @@ a time.
 | Q4 | `curl -b jar '$BASE/api/audit?limit=100'`, then load `/audit` | **Load more** is shown when, and only when, the API returned 100 events **and** `next_before_id > 0`. On a fresh instance it is 0 and the button is absent; either way the page and the API must agree |
 
 ---
+
+## T. Character cards
+
+Creates a card `e2e-card` and a throwaway agent `e2e-card-agent` through the UI and the API, and removes both at the end.
+
+| ID | Process | Expected |
+|---|---|---|
+| T1 | Open the **Agents** group in the sidebar, click **Character cards** | The browser is at `/agent/cards` with no console errors |
+| T2 | On `/agent/cards`, choose a V3 card file named `e2e-card.json` in **Import** and import it | The row **E2E Card** (`e2e-card`) appears; `GET /api/cards` lists it with `attached_to: []`; the audit log has a **Card import** event |
+| T3 | Create `e2e-card-agent` through the API; on `/agents` select it and pick **E2E Card** under **Character card**, wait ~2s | `character_card: "e2e-card"` is in `GET /api/config` for that agent; the Cards page shows the agent under **Used by** |
+| T4 | On `/agent/cards`, click **Delete** on `e2e-card` and confirm | The card is still listed and the page shows the server's sentence: `Card "e2e-card" is attached to agent e2e-card-agent; detach it first.` |
+| T5 | On `/agents` set the agent's **Character card** back to **None**, wait ~2s; on `/agent/cards` delete `e2e-card` and confirm | `character_card` is gone from the agent, the card is gone from `GET /api/cards`, and the audit log has a **Card delete** event |
+| T6 | On `/agents` with `e2e-card-agent` selected, turn on **Allow character card tools**, wait ~2s; turn it off, wait ~2s; remove the agent through the API | `ccv3: true` is written on the first toggle and the key is absent after the second; every other field of the agent is unchanged |
 
 ## S. Keyboard
 

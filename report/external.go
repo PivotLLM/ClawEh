@@ -41,7 +41,7 @@ func mcpServerRows(cfg *config.Config) [][]string {
 }
 
 func skillRows(cfg *config.Config) [][]string {
-	loader := skills.NewSkillsLoader("", cfg.SkillsPath(), "")
+	loader := skills.NewSkillsLoader("", cfg.SkillsPath())
 	var rows [][]string
 	for _, s := range loader.ListSkills() {
 		rows = append(rows, row(s.Name, s.Source, s.Description))
@@ -67,7 +67,7 @@ func webToolRows(cfg *config.Config) [][]string {
 		tavily += ", " + w.Tavily.BaseURL
 	}
 	return [][]string{
-		row("Web tools (fetch and search)", onOff(w.Enabled)+", fetch limit "+itoa(int(w.FetchLimitBytes))+" bytes"),
+		row("Web tools (fetch and search)", "fetch limit "+itoa(int(w.FetchLimitBytes))+" bytes"),
 		row("Brave search", onOff(w.Brave.Enabled)+", "+keyCount(w.Brave.APIKey, w.Brave.APIKeys)),
 		row("Tavily search", tavily),
 		row("Perplexity search", onOff(w.Perplexity.Enabled)+", "+keyCount(w.Perplexity.APIKey, w.Perplexity.APIKeys)),
@@ -80,7 +80,6 @@ func webToolRows(cfg *config.Config) [][]string {
 func registryRows(cfg *config.Config) [][]string {
 	sk := cfg.Tools.Skills
 	return [][]string{
-		row("Local skills tool", onOff(sk.Local.Enabled)),
 		row("Skill registry tool", onOff(sk.Registry.Enabled)),
 		row("ClawHub registry", onOff(sk.Registries.ClawHub.Enabled)+", "+orValue(sk.Registries.ClawHub.BaseURL, "no base URL")+
 			", auth token "+setOrNot(sk.Registries.ClawHub.AuthToken)),

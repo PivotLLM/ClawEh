@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -556,5 +557,37 @@ func TestPendingPairingsExpire(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Fatalf("pending rows = %d, want only the fresh one", rows)
+	}
+}
+
+// Concurrent first-time pairings each read, then write, in one
+// transaction. Every one must succeed: a transaction that starts as a
+// reader cannot wait for a writer that committed after its read (SQLite
+// fails the upgrade at once with SQLITE_BUSY, whatever busy_timeout says),
+// so the store's transactions take the write lock when they begin.
+func TestStoreConcurrentPairings(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	const devices = 12
+	for round := range 5 {
+		var wg sync.WaitGroup
+		errs := make(chan error, devices)
+		for i := range devices {
+			wg.Go(func() {
+				id := fmt.Sprintf("dev-%d-%d", round, i)
+				if _, _, err := s.GetPaired(ctx, id); err != nil {
+					errs <- err
+					return
+				}
+				if _, err := s.CreatePending(ctx, PendingPairing{DeviceID: id, PublicKey: "pk-" + id}); err != nil {
+					errs <- err
+				}
+			})
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("round %d: concurrent pairing failed: %v", round, err)
+		}
 	}
 }

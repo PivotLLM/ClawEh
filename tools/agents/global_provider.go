@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 )
 
 // GlobalProvider exposes the subagent task tools through the transport-neutral
 // global layer under the "agent" namespace: bare "spawn" → "agent_spawn", bare
-// "status" → "agent_status", bare "list" → "agent_list". The spawn handler
+// "status" → "agent_status", bare "list" → "agent_list", and bare "message" →
+// "agent_message" (asks and whispers to other agents, see message.go). The spawn handler
 // launches workers through the robust global.Spawner injected via Deps.Spawn,
 // supporting two modes: callback (background, file-backed, tracked) and wait (run
 // synchronously and return). status/list query tracked callback tasks through
@@ -24,19 +24,7 @@ type globalAgentProvider struct{}
 func (globalAgentProvider) Namespace() string   { return "agent" }
 func (globalAgentProvider) Description() string { return "Subagent spawning and task tracking" }
 
-// Available gates the package on the subagent capability being enabled, matching
-// the old Build-time check. When disabled the host reports the tool as blocked
-// with reason "requires_subagent".
-func (globalAgentProvider) Available(cfg any) (bool, string) {
-	c, ok := cfg.(*config.Config)
-	if !ok || c == nil {
-		return true, ""
-	}
-	if !c.Tools.IsToolEnabled("subagent") {
-		return false, "requires_subagent"
-	}
-	return true, ""
-}
+func (globalAgentProvider) Available(cfg any) (bool, string) { return true, "" }
 
 const spawnToolDescription = "Spawn a subagent to handle a task. Use 'mode' to choose how it runs: " +
 	"'callback' (default) runs it in the background and notifies you when done with a pointer to a result file " +
@@ -74,6 +62,10 @@ func spawnToolSchema() map[string]any {
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
 				"description": "Optional media:// refs (from '[attachment ref(s): …]' markers in the conversation) to attach to the subagent's initial message. Use with a vision-capable agent_id/model to have an image you cannot view analyzed for you.",
+			},
+			"character_card": map[string]any{
+				"type":        "string",
+				"description": "Optional character card id from the library: the subagent runs as that character instead of with the agent's own card. The card must exist.",
 			},
 		},
 		"required": []string{"task"},
@@ -130,6 +122,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				agentID := strArg(call.Args, "agent_id")
 				modeStr := strArg(call.Args, "mode")
 				model := strArg(call.Args, "model")
+				characterCard := strArg(call.Args, "character_card")
 				media, badMedia := parseMediaArg(call.Args["media"])
 				if badMedia != "" {
 					return &global.Result{IsError: true, ForLLM: badMedia}, nil
@@ -143,6 +136,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					Label:         name,
 					TargetAgentID: agentID,
 					Model:         model,
+					CharacterCard: characterCard,
 					Media:         media,
 					Channel:       call.Channel,
 					ChatID:        call.ChatID,
@@ -194,6 +188,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				return &global.Result{ForLLM: string(b), Silent: true}, nil
 			},
 		},
+		messageTool(hostDeps(deps)),
 	}
 }
 

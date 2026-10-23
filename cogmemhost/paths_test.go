@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/cogmem/store"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -33,7 +34,7 @@ func TestMigrate_UpgradesSchemaInPlace(t *testing.T) {
 		t.Fatal(closeErr)
 	}
 
-	Migrate("alice", ws)
+	Migrate("alice", ws, config.Modes{Dir: 0o700, File: 0o600})
 
 	again, err := store.Open(store.DBPath(Dir(ws)))
 	if err != nil {
@@ -49,7 +50,7 @@ func TestMigrate_UpgradesSchemaInPlace(t *testing.T) {
 // first written.
 func TestMigrate_NoStoreIsNoOp(t *testing.T) {
 	ws := t.TempDir()
-	Migrate("alice", ws)
+	Migrate("alice", ws, config.Modes{Dir: 0o700, File: 0o600})
 	if _, err := os.Stat(Dir(ws)); err == nil {
 		t.Fatal("Migrate created a memory directory for an agent with no memory")
 	}
@@ -59,7 +60,7 @@ func TestDirs(t *testing.T) {
 	if Dir("") != "" {
 		t.Fatal("empty workspace must give an empty dir, so tools refuse rather than write somewhere")
 	}
-	if got := SubagentDir("/w", "agent:alice:subagent:abc"); got != "/w/cogmem/subagents/agent_alice_subagent_abc" {
-		t.Fatalf("SubagentDir = %q", got)
+	if got := Dir("/w"); got != "/w/cogmem" {
+		t.Fatalf("Dir = %q", got)
 	}
 }

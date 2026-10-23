@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -27,7 +26,6 @@ type ExecTool struct {
 	allowPatterns       []*regexp.Regexp
 	customAllowPatterns []*regexp.Regexp
 	restrictToWorkspace bool
-	allowRemote         bool
 }
 
 var (
@@ -112,14 +110,10 @@ func NewExecTool(workingDir string, restrict bool) (*ExecTool, error) {
 func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Config) (*ExecTool, error) {
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
-	// Default fallback for the nil-config path (tests only); production always
-	// passes a config whose tools.exec.allow_remote defaults to false.
-	allowRemote := true
 
 	if config != nil {
 		execConfig := config.Tools.Exec
 		enableDenyPatterns := execConfig.EnableDenyPatterns
-		allowRemote = execConfig.AllowRemote
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
@@ -159,7 +153,6 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 		allowPatterns:       nil,
 		customAllowPatterns: customAllowPatterns,
 		restrictToWorkspace: restrict,
-		allowRemote:         allowRemote,
 	}, nil
 }
 
@@ -194,27 +187,12 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		return tools.ErrorResult("command is required")
 	}
 
-	// GHSA-pv8c-p6jf-3fpp: block exec from remote channels (e.g. Telegram webhooks)
-	// unless explicitly opted-in via config. Fail-closed: empty channel = blocked.
-	if !t.allowRemote {
-		channel := tools.ToolChannel(ctx)
-		if channel == "" {
-			if v, ok := args["__channel"].(string); ok {
-				channel = v
-			}
-		}
-		channel = strings.TrimSpace(channel)
-		if channel == "" || !constants.IsInternalChannel(channel) {
-			return tools.ErrorResult("exec is restricted to internal channels")
-		}
-	}
-
 	cwd := t.workingDir
 	if wd, ok := args["working_dir"].(string); ok && wd != "" {
 		if t.restrictToWorkspace && t.workingDir != "" {
 			resolvedWD, err := validatePath(wd, t.workingDir, true)
 			if err != nil {
-				return tools.ErrorResult("Command blocked by safety guard (" + err.Error() + ")")
+				return guardRefusal("Command blocked by safety guard (" + err.Error() + ")")
 			}
 			cwd = resolvedWD
 		} else {
@@ -230,7 +208,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	}
 
 	if guardError := t.guardCommand(command, cwd); guardError != "" {
-		return tools.ErrorResult(guardError)
+		return guardRefusal(guardError)
 	}
 
 	// Re-resolve symlinks immediately before execution to shrink the TOCTOU window
@@ -250,7 +228,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		}
 		rel, err := filepath.Rel(wsResolved, resolved)
 		if err != nil || !filepath.IsLocal(rel) {
-			return tools.ErrorResult("Command blocked by safety guard (working directory escaped workspace)")
+			return guardRefusal("Command blocked by safety guard (working directory escaped workspace)")
 		}
 		cwd = resolved
 	}
@@ -479,4 +457,10 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 		t.allowPatterns = append(t.allowPatterns, re)
 	}
 	return nil
+}
+
+// guardRefusal is the result for a command the safety guard blocked: an
+// expected refusal (logged as a warning), not a failure.
+func guardRefusal(msg string) *tools.ToolResult {
+	return tools.ErrorResult(msg).WithError(tools.Refusal(errors.New(msg)))
 }

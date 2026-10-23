@@ -6,25 +6,34 @@ import { toast } from "sonner"
 
 import {
   type AgentToolCatalogResponse,
+  HUMAN_AGENTS_QUERY_KEY,
   getAgentTools,
   getAppConfig,
+  getHumanAgents,
+  getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
-import { listCLIs } from "@/api/system"
+import { CARDS_QUERY_KEY, getCards } from "@/api/cards"
 import { type ModelInfo, getModels } from "@/api/models"
+import { listCLIs } from "@/api/system"
 import { AgentCard } from "@/components/agents/agent-card"
+import { AgentIdField } from "@/components/agents/agent-id-field"
 import {
+  type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
   agentsPayload,
   applyMaestroEdits,
   asString,
   bindingViewsForAgent,
+  cliBypassWarnings,
   fetchSkills,
+  internalToolsSummary,
+  newAgentIdProblem,
   parseAgentBindings,
   parseAgentsConfig,
+  sameAgentId,
   sortAgentList,
-  cliBypassWarnings,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -60,6 +69,8 @@ export function AgentsPage() {
   const [addingId, setAddingId] = useState("")
   const [addingName, setAddingName] = useState("")
   const [addingModels, setAddingModels] = useState<string[]>([])
+  // A new agent starts with no skills and no tools; "All skills" and
+  // "Default tools" in the selectors write them into its lists.
   const [addingSkills, setAddingSkills] = useState<string[]>([])
   const [addingTools, setAddingTools] = useState<string[]>([])
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
@@ -74,13 +85,14 @@ export function AgentsPage() {
   } = useQuery({
     queryKey: ["agents-page"],
     queryFn: async () => {
-      const [appConfig, modelsData, skillsData, toolsData, clis] = await Promise.all([
-        getAppConfig(),
-        getModels(),
-        fetchSkills(),
-        getAgentTools(),
-        listCLIs(),
-      ])
+      const [appConfig, modelsData, skillsData, toolsData, clis] =
+        await Promise.all([
+          getAppConfig(),
+          getModels(),
+          fetchSkills(),
+          getAgentTools(),
+          listCLIs(),
+        ])
       return {
         agentsCfg: parseAgentsConfig(appConfig),
         bindings: parseAgentBindings(appConfig),
@@ -96,6 +108,28 @@ export function AgentsPage() {
     },
   })
 
+  // Human agents breaking their rules are not run; each card says why. Kept
+  // apart from the page query so a save can refresh it alone.
+  const { data: humanInfo } = useQuery({
+    queryKey: HUMAN_AGENTS_QUERY_KEY,
+    queryFn: getHumanAgents,
+  })
+  // Saved mounts set aside for a reserved name; each is marked in its row.
+  const { data: ignoredMounts } = useQuery({
+    queryKey: ["agents-ignored-mounts"],
+    queryFn: getIgnoredMounts,
+  })
+  // The character-card library, for each card's Character card select.
+  const { data: cardsData } = useQuery({
+    queryKey: CARDS_QUERY_KEY,
+    queryFn: getCards,
+  })
+  const refreshAgentNotes = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: ["agents-ignored-mounts"] }),
+    ])
+
   const fetchError = loadError
     ? loadError instanceof Error
       ? loadError.message
@@ -108,6 +142,7 @@ export function AgentsPage() {
   const models = loaded?.models ?? EMPTY_MODELS
   const availableSkills = loaded?.availableSkills ?? EMPTY_SKILLS
   const availableTools = loaded?.availableTools ?? EMPTY_TOOLS
+  const addingSummary = internalToolsSummary(addingTools)
   const bindings = loaded?.bindings ?? EMPTY_BINDINGS
 
   // Seed the editable config when a fetch lands. Adjusted during render rather
@@ -128,7 +163,7 @@ export function AgentsPage() {
     list[index] = {
       ...list[index],
       models: edits.models.length > 0 ? edits.models : undefined,
-      skills: edits.skills.length > 0 ? edits.skills : undefined,
+      skills: edits.skills,
       tools: edits.tools,
       message:
         edits.message.mins > 0
@@ -148,11 +183,13 @@ export function AgentsPage() {
       mounts: edits.mounts,
       mcp_tools: edits.mcpTools,
       deny_tools: edits.denyTools,
+      allow_agents: edits.allowAgents,
       maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
       await patchAppConfig(agentsPayload(next))
+      void refreshAgentNotes()
       // In-place update: no reload, so no scroll jump. The hook suppresses its
       // reseed around this write, so the saved snapshot cannot overwrite a
       // field that is still being edited.
@@ -192,30 +229,19 @@ export function AgentsPage() {
     }
   }
 
-  const handleToggleAgent = async (index: number) => {
+  // toggleFlag saves one per-agent switch on its own (not threaded through
+  // the big autosave): flip returns the agent with the switch changed. Local
+  // state is updated in place instead of reloading the whole page, which
+  // would unmount the list and scroll back to the top.
+  const toggleFlag = async (
+    index: number,
+    savingKey: string,
+    flip: (agent: AgentEntry) => AgentEntry,
+  ) => {
     const list = [...(agentsCfg.list ?? [])]
-    const current = list[index]
-    list[index] = { ...current, enabled: !current.enabled }
+    list[index] = flip(list[index])
     const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`toggle-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle (not threaded through the big autosave): flip global_cron.
-  const handleToggleGlobalCron = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], global_cron: !list[index].global_cron }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`globalcron-${index}`)
+    setSaving(`${savingKey}-${index}`)
     try {
       await patchAppConfig(agentsPayload(next))
       setAgentsCfg(next)
@@ -226,59 +252,38 @@ export function AgentsPage() {
     }
   }
 
-  // Independent toggle: flip the agent's Maestro tool suite on/off.
-  const handleToggleMaestro = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = {
-      ...list[index],
+  const handleToggleAgent = (index: number) =>
+    toggleFlag(index, "toggle", (a) => ({ ...a, enabled: !a.enabled }))
+  const handleToggleGlobalCron = (index: number) =>
+    toggleFlag(index, "globalcron", (a) => ({
+      ...a,
+      global_cron: !a.global_cron,
+    }))
+  const handleToggleMaestro = (index: number) =>
+    toggleFlag(index, "maestro", (a) => ({
+      ...a,
       maestro: {
-        ...(list[index].maestro ?? { enabled: false }),
-        enabled: list[index].maestro?.enabled !== true,
+        ...(a.maestro ?? { enabled: false }),
+        enabled: a.maestro?.enabled !== true,
       },
-    }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`maestro-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
+    }))
+  const handleToggleFusion = (index: number) =>
+    toggleFlag(index, "fusion", (a) => ({ ...a, fusion: !a.fusion }))
+  const handleToggleForum = (index: number) =>
+    toggleFlag(index, "forum", (a) => ({ ...a, forum: !a.forum }))
+  const handleToggleCCv3 = (index: number) =>
+    toggleFlag(index, "ccv3", (a) => ({ ...a, ccv3: !a.ccv3 }))
+  // "" = none; the Cards page's "Used by" column reads the same config.
+  const handleCharacterCardChange = async (index: number, id: string) => {
+    await toggleFlag(index, "card", (a) => ({
+      ...a,
+      character_card: id || undefined,
+    }))
+    void queryClient.invalidateQueries({ queryKey: CARDS_QUERY_KEY })
   }
-
-  // Independent toggle: flip the agent's Fusion tool suite on/off.
-  const handleToggleFusion = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], fusion: !list[index].fusion }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`fusion-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Independent toggle: flip the agent's cognitive-memory suite on/off (default on).
-  const handleToggleCogmem = async (index: number) => {
-    const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], cogmem: !(list[index].cogmem !== false) }
-    const next: AgentsConfig = { ...agentsCfg, list }
-    setSaving(`cogmem-${index}`)
-    try {
-      await patchAppConfig(agentsPayload(next))
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
+  // Cognitive memory is on unless set to false.
+  const handleToggleCogmem = (index: number) =>
+    toggleFlag(index, "cogmem", (a) => ({ ...a, cogmem: a.cogmem === false }))
 
   // Set the given binding (by its index in the full bindings array) as the
   // agent's default channel, clearing default on the agent's other bindings.
@@ -291,7 +296,7 @@ export function AgentsPage() {
     deliverTo?: string,
   ) => {
     const next = bindings.map((b, i) => {
-      if (asString(b.agent_id) !== agentID) return b
+      if (!sameAgentId(asString(b.agent_id), agentID)) return b
       if (i !== targetIndex) return { ...b, default: false }
       const updated: Record<string, unknown> = { ...b, default: true }
       if (deliverTo !== undefined) updated.deliver_to = deliverTo
@@ -300,6 +305,7 @@ export function AgentsPage() {
     setSaving(`binding-${targetIndex}`)
     try {
       await patchAppConfig({ bindings: next })
+      void refreshAgentNotes()
       // Optimistic cache update rather than a refetch, matching what the old
       // setBindings(next) did: the patch already succeeded, so re-reading the
       // whole page would only cost a round trip.
@@ -315,20 +321,27 @@ export function AgentsPage() {
     }
   }
 
+  const existingAgentIds = (agentsCfg.list ?? []).map((a) => a.id)
+
   const handleAddAgent = async () => {
     if (!addingId.trim()) {
       toast.error("Agent ID is required")
       return
     }
-    const newId = addingId.trim()
+    const idProblem = newAgentIdProblem(addingId, existingAgentIds)
+    if (idProblem) {
+      toast.error(idProblem)
+      return
+    }
+    const newId = addingId
     const list = sortAgentList([
       ...(agentsCfg.list ?? []),
       {
         id: newId,
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
         ...(addingModels.length > 0 ? { models: addingModels } : {}),
-        skills: addingSkills.length > 0 ? addingSkills : undefined,
-        tools: addingTools,
+        ...(addingSkills.length > 0 ? { skills: addingSkills } : {}),
+        ...(addingTools.length > 0 ? { tools: addingTools } : {}),
       },
     ])
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -387,10 +400,7 @@ export function AgentsPage() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => {
-            setAddingTools([...availableTools.default_tools])
-            setShowAdd(true)
-          }}
+          onClick={() => setShowAdd(true)}
           disabled={showAdd}
         >
           <IconPlus className="size-4" />
@@ -475,6 +485,14 @@ export function AgentsPage() {
                         loaded?.rawProviders,
                         loaded?.clis ?? [],
                       )}
+                      human={(humanInfo?.human_agents ?? []).some((id) =>
+                        sameAgentId(id, agent.id),
+                      )}
+                      humanNotes={(humanInfo?.problems ?? []).filter(
+                        (p) =>
+                          p.kind !== "setting" &&
+                          sameAgentId(p.agent ?? "", agent.id),
+                      )}
                       skills={e.skills}
                       tools={e.tools}
                       availableSkills={availableSkills}
@@ -513,14 +531,31 @@ export function AgentsPage() {
                       onMaestroSettingsChange={(ms) => edit(i, { maestro: ms })}
                       fusion={agent.fusion === true}
                       onFusionChange={() => handleToggleFusion(i)}
+                      forum={agent.forum === true}
+                      onForumChange={() => handleToggleForum(i)}
+                      characterCard={agent.character_card ?? ""}
+                      availableCards={cardsData?.cards ?? []}
+                      onCharacterCardChange={(id) =>
+                        handleCharacterCardChange(i, id)
+                      }
+                      ccv3={agent.ccv3 === true}
+                      onCCv3Change={() => handleToggleCCv3(i)}
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
                       mounts={e.mounts}
+                      ignoredMounts={(ignoredMounts ?? [])
+                        .filter((m) => sameAgentId(m.agent, agent.id))
+                        .map((m) => m.mount)}
                       onMountsChange={(ms) => edit(i, { mounts: ms })}
                       mcpTools={e.mcpTools}
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}
                       denyTools={e.denyTools}
                       onDenyToolsChange={(dt) => edit(i, { denyTools: dt })}
+                      allowAgents={e.allowAgents}
+                      configuredAgents={agentsCfg.list ?? []}
+                      onAllowAgentsChange={(aa) =>
+                        edit(i, { allowAgents: aa })
+                      }
                       agentBindings={bindingViewsForAgent(bindings, agent.id)}
                       onSetDefaultBinding={(target, deliverTo) =>
                         handleSetDefaultBinding(agent.id, target, deliverTo)
@@ -535,18 +570,11 @@ export function AgentsPage() {
                   <div className="border-border/60 bg-card space-y-3 rounded-xl border p-4">
                     <span className="text-sm font-semibold">New Agent</span>
                     <div className="space-y-2">
-                      <Input
+                      <AgentIdField
                         value={addingId}
-                        onChange={(e) => setAddingId(e.target.value)}
+                        existingIds={existingAgentIds}
+                        onChange={setAddingId}
                         onKeyDown={escapeCancelsAdd}
-                        placeholder="Agent ID (e.g. alice)"
-                        aria-label="Agent ID"
-                        // Deliberate: the form only exists because the user
-                        // just activated Add Agent, so focus belongs in its
-                        // first field; without it a keyboard user is left on
-                        // the page body and has to Tab back to find the form.
-                        // oxlint-disable-next-line no-autofocus
-                        autoFocus
                       />
                       <Input
                         value={addingName}
@@ -590,13 +618,9 @@ export function AgentsPage() {
                               className={`text-muted-foreground size-3.5 opacity-60 transition-transform duration-200 ${addingToolsExpanded ? "rotate-90" : ""}`}
                             />
                             <span
-                              className={`text-sm font-semibold ${addingTools.length === 0 ? "text-amber-400" : "text-foreground"}`}
+                              className={`text-sm font-semibold ${addingSummary.none ? "text-amber-400" : "text-foreground"}`}
                             >
-                              Internal tools (
-                              {addingTools.length === 0
-                                ? "none — no tool access"
-                                : `${addingTools.includes("*") ? "all" : addingTools.length} granted`}
-                              )
+                              Internal tools: {addingSummary.text}
                             </span>
                           </button>
                           {addingToolsExpanded && (

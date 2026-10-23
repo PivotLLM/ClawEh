@@ -1,5 +1,6 @@
 // API client for the external-device gateway (pairing). The listener settings
 // are edited on the Network page through PATCH /api/config.
+import { errorMessage } from "./error-message"
 
 export interface DeviceStatus {
   payload: string
@@ -38,6 +39,14 @@ export interface PairedDevice {
   roles: string[]
   scopes: string[]
   agent_id: string
+  // agent_id normalized: the id agents[] lists it under ("" when unassigned).
+  agent_ref?: string
+  // The assigned agent's display name while it is configured.
+  agent_name?: string
+  // The service does not run the assigned agent; the device talks to the
+  // default agent. agent_state says why.
+  agent_missing: boolean
+  agent_state?: "not_found" | "disabled" | "set_aside"
   approved_at_ms: number
   last_seen_at_ms: number
 }
@@ -50,16 +59,7 @@ export interface AgentOption {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, options)
   if (!res.ok) {
-    let message = `API error: ${res.status} ${res.statusText}`
-    try {
-      const body = (await res.json()) as { error?: string }
-      if (typeof body.error === "string" && body.error.trim() !== "") {
-        message = body.error
-      }
-    } catch {
-      // keep fallback
-    }
-    throw new Error(message)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }

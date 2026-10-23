@@ -4,6 +4,7 @@
 package faulttest
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/internal/test/stubprovider"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 const (
@@ -63,7 +65,7 @@ func TestRateLimit_PersistentFailsOverAndParks(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 429 (rate limited)" + tryingFallback
+	want := "⚠️ primary error HTTP 429 (rate limited): Rate limit reached for requests" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}
@@ -102,7 +104,7 @@ func TestServerError_FailsOver(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 503 (timeout)" + tryingFallback
+	want := "⚠️ primary error HTTP 503 (timeout): The server had an error processing your request" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}
@@ -157,38 +159,68 @@ func TestContextOverflow_400ContextLengthExceededCompactsAndRetries(t *testing.T
 // 4. A provider that never answers is cut off by the turn budget: the user
 // gets the time-limit message, nothing else, and the turn leaves no goroutine
 // behind.
+//
+// The budget is wall-clock time for the whole turn, including its session
+// writes, which can stall for seconds on a busy disk (the suite runs in
+// parallel). So the first turn, which also creates the session's stores,
+// runs under the default budget; the budget is then lowered by a reload, with
+// room for an ordinary turn's writes before the model is called. Nothing else
+// is timed: the waits are bounds on events, and the request timeout is longer
+// than all of them, so only the turn budget can end the hung request.
 func TestHang_TurnTimeoutFires(t *testing.T) {
+	const budget = 5 * time.Second
 	primary, fallback := stubprovider.New(t), stubprovider.New(t)
-	primary.Script(stubprovider.Reply("warm"))
+	primary.Script(stubprovider.Reply("warm"), stubprovider.Reply("warm again"))
 	primary.SetDefault(stubprovider.Hang(0))
 	fallback.SetDefault(stubprovider.Hang(0))
 	cfg := newConfig(t, primary, fallback)
-	cfg.Agents.Defaults.TurnTimeout = 1
+	cfg.Agents.Defaults.RequestTimeout = 600
 	l := startLoop(t, cfg, bus.NewMessageBus())
-
-	// A completed turn first, so the goroutine baseline includes the loop's
-	// steady state (idle HTTP connections, context manager).
 	if reply, _ := l.turn("warm up"); reply != "warm" {
 		t.Fatalf("warm-up reply = %q", reply)
+	}
+
+	budgeted, err := cfg.Clone()
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	budgeted.Agents.Defaults.TurnTimeout = int(budget / time.Second)
+	provider, _, err := providers.CreateProviderFromConfig(&budgeted.Models[0], &budgeted.Providers[0])
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig: %v", err)
+	}
+	if err := l.al.ReloadProviderAndConfig(context.Background(), provider, budgeted); err != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	}
+	// A completed turn on the reloaded agent first, so the goroutine baseline
+	// includes the loop's steady state (idle HTTP connections, context
+	// manager).
+	if reply, _ := l.turn("warm up again"); reply != "warm again" {
+		t.Fatalf("second warm-up reply = %q", reply)
 	}
 	base := settledGoroutines()
 
 	start := time.Now()
 	l.send("hang")
-	all := collectUntil(t, l.bus, turnWait, func(ms []bus.OutboundMessage) bool { return len(ms) > 0 })
-	elapsed := time.Since(start)
+	all := collectUntil(t, l.bus, budget+turnWait, func(ms []bus.OutboundMessage) bool { return len(ms) > 0 })
 	if len(all) != 1 {
 		t.Fatalf("got %d outbound messages, want exactly 1: %+v", len(all), all)
 	}
-	want := "⚠️ This turn ran past the 1s time limit and was stopped. Some steps may have completed — ask me to continue if needed."
+	want := "⚠️ This turn ran past the 5s time limit and was stopped. Some steps may have completed — ask me to continue if needed."
 	if all[0].Content != want {
 		t.Errorf("message = %q, want %q", all[0].Content, want)
 	}
-	if elapsed < time.Second || elapsed > 3*time.Second {
-		t.Errorf("turn ended after %v, want about the 1s budget", elapsed)
+	if elapsed := time.Since(start); elapsed < budget {
+		t.Errorf("turn ended after %v, before the %v budget", elapsed, budget)
 	}
+	if primary.Count() != 3 {
+		t.Errorf("primary saw %d requests, want 3: the hung request never reached it", primary.Count())
+	}
+	waitFor(t, turnWait, "the hung request to be cut off", func() bool {
+		return primary.Hanging() == 0 && fallback.Hanging() == 0
+	})
 
-	waitFor(t, 3*time.Second, "goroutines to return to baseline", func() bool {
+	waitFor(t, turnWait, "goroutines to return to baseline", func() bool {
 		return runtime.NumGoroutine() <= base+2
 	})
 }
@@ -262,7 +294,7 @@ func TestRestartMidTurn_ReplaysOnOriginalChannel(t *testing.T) {
 	if pt := pendingTurns(t, cfg); len(pt) != 0 {
 		t.Errorf("pending_turns after recovery = %+v, want cleared", pt)
 	}
-	agentMain, ok := second.al.GetRegistry().GetAgent("main")
+	agentMain, ok := second.al.GetRegistry().Get("main")
 	if !ok {
 		t.Fatal("agent main missing")
 	}
@@ -338,7 +370,7 @@ func TestAuthFailure_ParksAlertsAndFailsOver(t *testing.T) {
 	if reply != "fallback ok" {
 		t.Errorf("reply = %q, want the fallback's", reply)
 	}
-	want := "⚠️ primary error HTTP 401 (auth failed)" + tryingFallback
+	want := "⚠️ primary error HTTP 401 (auth failed): Incorrect API key provided" + tryingFallback
 	if len(notices) != 1 || notices[0] != want {
 		t.Errorf("notices = %q, want [%q]", notices, want)
 	}

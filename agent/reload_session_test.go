@@ -23,7 +23,7 @@ type reloadFixture struct {
 func newReloadFixture(t *testing.T) *reloadFixture {
 	t.Helper()
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

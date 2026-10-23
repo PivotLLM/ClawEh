@@ -20,28 +20,29 @@ import (
 
 // A WebUI save refuses a device listener on a network address with
 // auto_approve on or no secret, naming the setting; loopback is allowed.
-func TestValidateConfig_DeviceExposure(t *testing.T) {
+func TestPatchConfig_DeviceExposure(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		dev     config.DeviceChannelConfig
+		device  string
 		wantKey string
 	}{
-		{"auto_approve on a network address", config.DeviceChannelConfig{Enabled: true, Host: "0.0.0.0", Token: "t", AutoApprove: true}, "channels.device.auto_approve"},
-		{"no secret on a network address", config.DeviceChannelConfig{Enabled: true, Host: "0.0.0.0"}, "channels.device.token"},
-		{"loopback with auto_approve and no secret", config.DeviceChannelConfig{Enabled: true, Host: "127.0.0.1", AutoApprove: true}, ""},
+		{"auto_approve on a network address", `{"enabled":true,"host":"0.0.0.0","token":"t","auto_approve":true}`, "channels.device.auto_approve"},
+		{"no secret on a network address", `{"enabled":true,"host":"0.0.0.0","token":"","word_token":""}`, "channels.device.token"},
+		{"loopback with auto_approve and no secret", `{"enabled":true,"host":"127.0.0.1","token":"","word_token":"","auto_approve":true}`, ""},
 	} {
-		cfg := validConfigForValidation()
-		cfg.Channels.Device = tc.dev
-		errs := validateConfig(cfg)
-		if tc.wantKey == "" {
-			if anyContains(errs, "channels.device") {
-				t.Errorf("%s: refused: %v", tc.name, errs)
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serveSave(t, setupTestEnv(t), http.MethodPatch, "/api/config",
+				`{"channels":{"device":`+tc.device+`}}`)
+			if tc.wantKey == "" {
+				if rec.Code != http.StatusOK {
+					t.Fatalf("refused: %d %s", rec.Code, rec.Body.String())
+				}
+				return
 			}
-			continue
-		}
-		if !anyContains(errs, tc.wantKey) {
-			t.Errorf("%s: errs = %v, want one naming %s", tc.name, errs, tc.wantKey)
-		}
+			if rec.Code != http.StatusBadRequest || !anyContains(responseErrors(t, rec), tc.wantKey) {
+				t.Fatalf("status %d, body %s: want a refusal naming %s", rec.Code, rec.Body.String(), tc.wantKey)
+			}
+		})
 	}
 }
 
@@ -102,7 +103,7 @@ func TestAuthLogin_TrustedProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain := middleware.TrustedProxy(func() *config.TrustedProxySet { return trusted }, env.mux)
+	chain := middleware.TrustedProxy(func() *config.TrustedProxySet { return trusted }, nil, env.mux)
 	login := func(peer, realIP, user, pass string) int {
 		t.Helper()
 		body := fmt.Sprintf(`{"username":%q,"password":%q}`, user, pass)
@@ -147,5 +148,53 @@ func TestAuthLogin_TrustedProxy(t *testing.T) {
 	}
 	if senders["192.0.2.1"] {
 		t.Errorf("audit recorded the proxy address; senders = %v", senders)
+	}
+}
+
+// GET /api/devices marks a device whose assigned agent is no longer
+// configured, so the Devices page can show the stale assignment.
+func TestDeviceList_MarksMissingAgent(t *testing.T) {
+	h := NewHandler(setupTestEnv(t))
+	ctx := context.Background()
+	store, _, err := h.openDeviceStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dev := range []struct{ id, agent string }{{"dev1", "removed"}, {"dev2", "main"}, {"dev3", ""}} {
+		reqID, err := store.CreatePending(ctx, device.PendingPairing{DeviceID: dev.id, PublicKey: "pk-" + dev.id, DisplayName: "Rabbit R1", Role: "node"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.Approve(ctx, reqID, []string{"node"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeviceAgent(ctx, dev.id, dev.agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	h.registerDeviceRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Devices []pairedDeviceView `json:"devices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"dev1": true, "dev2": false, "dev3": false}
+	if len(resp.Devices) != len(want) {
+		t.Fatalf("devices = %+v, want %d", resp.Devices, len(want))
+	}
+	for _, d := range resp.Devices {
+		if d.AgentMissing != want[d.DeviceID] {
+			t.Errorf("%s: agent_missing = %v, want %v", d.DeviceID, d.AgentMissing, want[d.DeviceID])
+		}
+		if d.DeviceID == "dev1" && (d.AgentState != "not_found" || d.AgentRef != "removed") {
+			t.Errorf("dev1: agent_state %q, agent_ref %q, want not_found, removed", d.AgentState, d.AgentRef)
+		}
 	}
 }

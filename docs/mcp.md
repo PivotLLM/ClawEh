@@ -46,6 +46,10 @@ is transport-agnostic), so **the same token works on both**.
   comprehensive `probe` suite practical.
 - A missing/invalid bearer is rejected at the HTTP layer with a proper **`401`**
   (not a tool-result error), matching standard MCP client expectations.
+- `tools/list` lists only the tools the token's agent may call (its own tools,
+  under its allowlists), the same check a call goes through. On `/internal` the
+  token is a parameter of each call, so `tools/list` there is the union of every
+  agent's tools and the check happens at the call.
 
 This becomes the default, documented endpoint — what external integrators point
 at.
@@ -78,10 +82,8 @@ at.
 - Issuance: `Issue()` mints per-session tokens; `Register()` pre-mints a known
   token (used for tests); `RegisterService()` registers a long-lived per-agent
   **service token** for the `/mcp` bearer endpoint — the natural fit for "one
-  identity per connection". Its session follows `session_scope`: the agent's main
-  session under the default `unified` (one agent, one conversation, one memory —
-  so the token carries the agent's privileges), a dedicated headless
-  `agent:<id>:service` session under an isolating mode. See
+  identity per connection". It drives the agent's main session (one agent, one
+  conversation, one memory — so the token carries the agent's privileges). See
   [service-tokens.md](service-tokens.md). For a `probe` run, register a known
   token and hand it to `probe` as the bearer.
 - Cross-agent protection still applies: a token that resolves to one agent cannot
@@ -96,7 +98,8 @@ at.
   - `/mcp`: tools registered **without** the param; an `HTTPContextFunc` extracts
     the bearer into context; dispatch reads the token from context.
 - The only difference between the two registrations is *inject-param* vs
-  *read-header*, so duplication is minimal. Both mount on the existing shared mux.
+  *read-header*, so duplication is minimal. Both are served by the MCP host's own
+  listener (`mcp_host.listen`, default `127.0.0.1:5911`), not the WebUI mux.
 - `WithStateLess(true)` is retained; the context func runs per request, so each
   request's bearer routes consistently (and a single client could even drive
   multiple sessions via per-request bearers, though that is unusual).
@@ -144,9 +147,9 @@ reconnect.
 
 ## Security
 
-- Both endpoints stay bound to `127.0.0.1` (same posture as today; see
-  [external-messages.md](external-messages.md)). The bearer header is no weaker than the in-call
-  parameter over the same transport.
+- Both endpoints are bound to `127.0.0.1` by default (`mcp_host.listen`).
+  The bearer header is no weaker than the in-call parameter over the same
+  transport.
 - Exposing either endpoint beyond localhost is a separate TLS decision, out of
   scope here.
 

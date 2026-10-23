@@ -1,7 +1,7 @@
 export interface SkillSupportItem {
   name: string
   path: string
-  source: "global" | "builtin" | string
+  source: "global" | string
   description: string
 }
 

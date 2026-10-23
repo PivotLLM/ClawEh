@@ -58,7 +58,7 @@ func TestRunAgentLoop_SessionStoreWriteFailureFailsTurn(t *testing.T) {
 			rec := &alertRecorder{}
 			al.SetAlerter(rec)
 
-			agent := al.registry.GetDefaultAgent()
+			agent := al.registry.Default()
 			if agent == nil {
 				t.Fatal("no default agent")
 			}

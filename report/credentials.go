@@ -84,10 +84,6 @@ func channelCredentialRows(cfg *config.Config) [][]string {
 	if ch.Matrix.Enabled {
 		rows = append(rows, row("Matrix", "access_token "+setOrNot(ch.Matrix.AccessToken)))
 	}
-	if ch.LINE.Enabled {
-		rows = append(rows, row("LINE", "channel_secret "+setOrNot(ch.LINE.ChannelSecret)+
-			", channel_access_token "+setOrNot(ch.LINE.ChannelAccessToken)))
-	}
 	if ch.WebUI.Enabled {
 		rows = append(rows, row("WebUI", "token "+setOrNot(ch.WebUI.Token)))
 	}

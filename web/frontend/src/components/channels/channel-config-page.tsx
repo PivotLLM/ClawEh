@@ -29,8 +29,6 @@ const SECRET_FIELD_MAP: Record<string, string> = {
   app_secret: "_app_secret",
   client_secret: "_client_secret",
   corp_secret: "_corp_secret",
-  channel_secret: "_channel_secret",
-  channel_access_token: "_channel_access_token",
   access_token: "_access_token",
   bot_token: "_bot_token",
   app_token: "_app_token",
@@ -103,8 +101,6 @@ function isConfigured(
       return asString(config.token) !== ""
     case "slack":
       return asString(config.bot_token) !== ""
-    case "line":
-      return asString(config.channel_access_token) !== ""
     case "webui":
       return asString(config.token) !== ""
     case "matrix":
@@ -126,8 +122,6 @@ function getRequiredFieldKeys(channelName: string): string[] {
       return ["token"]
     case "slack":
       return ["bot_token"]
-    case "line":
-      return ["channel_secret", "channel_access_token"]
     case "webui":
       return ["token"]
     case "matrix":

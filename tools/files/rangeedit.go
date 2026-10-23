@@ -140,9 +140,13 @@ func (t *rangeEditTool) Execute(_ context.Context, args map[string]any) *tools.T
 	if !ok {
 		return tools.ErrorResult("path is required")
 	}
+	// Refused before reading or backing up, so the answer is the refusal.
+	if err := checkWrite(t.sysFs, path); err != nil {
+		return errResult(err)
+	}
 	content, err := t.sysFs.ReadFile(path)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	var newContent []byte
@@ -153,16 +157,16 @@ func (t *rangeEditTool) Execute(_ context.Context, args map[string]any) *tools.T
 		newContent, report, shown, err = t.applyBytes(content, args)
 	}
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	if getBoolArg(args, "backup", t.backupDefault()) {
 		if _, berr := backupExistingFile(t.sysFs, path); berr != nil {
-			return tools.ErrorResult(berr.Error())
+			return errResult(berr)
 		}
 	}
 	if werr := t.sysFs.WriteFile(path, newContent); werr != nil {
-		return tools.ErrorResult(werr.Error())
+		return errResult(werr)
 	}
 
 	forLLM := fmt.Sprintf("%s in %s", report, path)

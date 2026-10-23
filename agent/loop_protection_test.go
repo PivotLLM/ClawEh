@@ -10,11 +10,11 @@ import (
 
 // TestLoopProtection_BreaksOnRepeatedToolCall verifies the agent loop aborts when
 // the model requests the identical tool-call batch on consecutive iterations
-// (the degenerate memory-rewrite loop that hit Wendy).
+// (the degenerate memory-rewrite loop that hit an agent in production).
 func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}

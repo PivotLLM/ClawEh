@@ -173,7 +173,7 @@ func TestToolCall_AuditRecorded(t *testing.T) {
 	defer restore()
 
 	al := newTestAgentLoop(t).al
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -263,7 +263,7 @@ func TestToolCall_AuditOutcomeError(t *testing.T) {
 	defer restore()
 
 	al := newTestAgentLoop(t).al
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance.Config != nil {
 		agentInstance.Config.Tools = []string{"*"}
 	}

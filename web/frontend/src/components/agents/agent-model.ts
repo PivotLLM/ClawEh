@@ -16,7 +16,9 @@ export interface AgentEntry {
   enabled?: boolean
   default?: boolean
   models?: string[]
+  /** The skills the agent may use ("*" = every skill); absent or [] = none. */
   skills?: string[]
+  /** The native tools the agent may call; absent or [] = none. */
   tools?: string[]
   message?: MessageConfig | null
   temperature?: number
@@ -30,11 +32,20 @@ export interface AgentEntry {
   global_cron?: boolean
   maestro?: MaestroSettings
   fusion?: boolean
+  forum?: boolean
+  /** The character card (cards/<id>.json) rendered into the system prompt;
+   *  absent or "" = none. */
+  character_card?: string
+  /** The ccv3 suite: the card-library tool. */
+  ccv3?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]
   /** Tools the agent may never call, even when tools / mcp_tools admit them. */
   deny_tools?: string[]
+  /** subagents.allow_agents: the agents this one may message ("*" = every
+   *  agent); absent or [] = none. */
+  allow_agents?: string[]
   /** The agent exactly as loaded. A save starts from it, so every key this
    *  page does not edit (workspace, subagents, memory, compression, …) is
    *  written back unchanged. Absent for an agent added on this page. */
@@ -206,7 +217,8 @@ export function cliBypassWarnings(
     const flag = asArray(model.extra_args)
       .map(asString)
       .find((a) => cli.bypass_args.includes(a))
-    if (flag) out.push({ model: alias, provider: asString(provider.name), flag })
+    if (flag)
+      out.push({ model: alias, provider: asString(provider.name), flag })
   }
   return out
 }
@@ -218,7 +230,157 @@ export function cliBypassWarnings(
 // either checkbox toggles the same entry and both rows follow.
 export function toggleAccessEntry(entries: string[], name: string): string[] {
   const present = entries.some((e) => norm(e) === norm(name))
-  return present ? entries.filter((e) => norm(e) !== norm(name)) : [...entries, name]
+  return present
+    ? entries.filter((e) => norm(e) !== norm(name))
+    : [...entries, name]
+}
+
+// SHELL_TOOL is the one tool granted only by name: an agent runs shell
+// commands only when its tools list names shell_exec ("Allow shell commands");
+// a "*" or prefix entry never includes it.
+export const SHELL_TOOL = "shell_exec"
+
+const isShellEntry = (e: string) => norm(e) === SHELL_TOOL
+
+// shellAllowed reports whether the tools list names shell_exec explicitly.
+export function shellAllowed(tools: string[]): boolean {
+  return tools.some(isShellEntry)
+}
+
+// shellDenied reports whether deny_tools blocks shell_exec, under the backend's
+// rule: an exact entry (case-insensitive) or a prefix entry ending in "*".
+export function shellDenied(denyTools: string[]): boolean {
+  return denyTools.some((raw) => {
+    const d = norm(raw)
+    return d.endsWith("*")
+      ? SHELL_TOOL.startsWith(d.slice(0, -1))
+      : d === SHELL_TOOL
+  })
+}
+
+// withShellAllowed adds or removes the explicit shell_exec entry and leaves
+// every other entry (including "*") as it is.
+export function withShellAllowed(tools: string[], allowed: boolean): string[] {
+  const rest = tools.filter((e) => !isShellEntry(e))
+  return allowed ? [...rest, SHELL_TOOL] : rest
+}
+
+// MESSAGE_TOOL is the tool an agent messages other agents with; whom it may
+// message is subagents.allow_agents ("May message" on the Agents page).
+export const MESSAGE_TOOL = "agent_message"
+
+// ALL_AGENTS is the allow_agents entry that allows every agent.
+export const ALL_AGENTS = "*"
+
+// toolPatternMatches is config.MatchToolPattern for one entry: "*", a
+// case-insensitive prefix ending in "*", or an exact name.
+function toolPatternMatches(entry: string, name: string): boolean {
+  if (entry === "*") return true
+  if (entry.endsWith("*")) {
+    return name.toLowerCase().startsWith(entry.slice(0, -1).toLowerCase())
+  }
+  return entry.toLowerCase() === name.toLowerCase()
+}
+
+// SPAWN_TOOL also reads subagents.allow_agents: the agents it may start.
+export const SPAWN_TOOL = "agent_spawn"
+
+// toolGranted reports whether the agent has the internal tool, under the
+// backend's rule (AgentConfig.IsToolAllowed): the tools list admits it and
+// deny_tools does not name it; shell_exec is admitted only by naming it
+// (shellAllowed). Both are checked against
+// config/testdata/tool_grant_cases.json. Not for mcp_ tools.
+export function toolGranted(
+  tools: string[],
+  denyTools: string[],
+  name: string,
+): boolean {
+  const n = name.toLowerCase()
+  const denied = denyTools.some((raw) => {
+    const d = norm(raw)
+    return d.endsWith("*") ? n.startsWith(d.slice(0, -1)) : d === n
+  })
+  if (denied) return false
+  if (n === SHELL_TOOL) return shellAllowed(tools)
+  return tools.some((e) => toolPatternMatches(e, name))
+}
+
+// MayMessageRow is one box of the "May message" checklist.
+export interface MayMessageRow {
+  /** The agent id as configured, or the entry as saved for a stale row. */
+  id: string
+  label: string
+  checked: boolean
+  /** false for a saved entry that names no other configured agent (a removed
+   *  agent, or the agent itself); it is shown checked so it can be removed. */
+  configured: boolean
+}
+
+// mayMessageRows turns an agent's allow_agents into checklist rows: one per
+// other configured agent (by display name, else id), checked when an entry
+// names it or the list holds "*", then one row per entry that names no other
+// configured agent.
+export function mayMessageRows(
+  allow: string[],
+  selfId: string,
+  agents: { id: string; name?: string }[],
+): MayMessageRow[] {
+  const all = allow.includes(ALL_AGENTS)
+  const others = agents.filter((a) => !sameAgentId(a.id, selfId))
+  const rows: MayMessageRow[] = others.map((a) => ({
+    id: a.id,
+    label: a.name || a.id,
+    checked: all || allow.some((e) => sameAgentId(e, a.id)),
+    configured: true,
+  }))
+  for (const e of allow) {
+    if (e === ALL_AGENTS || others.some((a) => sameAgentId(e, a.id))) continue
+    if (rows.some((r) => !r.configured && sameAgentId(r.id, e))) continue
+    rows.push({ id: e, label: e, checked: true, configured: false })
+  }
+  return rows
+}
+
+// toggleAllowAgent adds the agent id to allow_agents when no entry names it
+// and removes every entry naming it (sameAgentId) when one does. Other
+// entries keep their order and spelling.
+export function toggleAllowAgent(allow: string[], id: string): string[] {
+  return allow.some((e) => sameAgentId(e, id))
+    ? allow.filter((e) => !sameAgentId(e, id))
+    : [...allow, id]
+}
+
+// withAllAgents writes ["*"] for "All agents", and drops "*" (keeping any
+// named entries) when it is turned off.
+export function withAllAgents(allow: string[], on: boolean): string[] {
+  return on ? [ALL_AGENTS] : allow.filter((e) => e !== ALL_AGENTS)
+}
+
+// internalToolsSummary is the label of an agent's internal tools, leaving out
+// shell_exec, which has its own switch. An agent has only the tools its list
+// names, so an empty list is "No tools".
+export function internalToolsSummary(tools: string[]): {
+  text: string
+  none: boolean
+} {
+  const list = withShellAllowed(tools, false)
+  if (list.length === 0) return { text: "No tools", none: true }
+  return {
+    text: `${list.includes("*") ? "all" : list.length} granted`,
+    none: false,
+  }
+}
+
+// ALL_SKILLS is the skills entry that grants every installed skill, including
+// ones installed later ("All skills" on the Agents page).
+export const ALL_SKILLS = "*"
+
+// skillsSummary is the label of an agent's skills list: an agent has only the
+// skills it lists, so an empty list is "No skills".
+export function skillsSummary(skills: string[]): string {
+  if (skills.length === 0) return "No skills"
+  if (skills.includes(ALL_SKILLS)) return "All skills"
+  return `${skills.length} skill${skills.length === 1 ? "" : "s"} selected`
 }
 
 // settingsCardClass groups a set of agent settings into one bordered card.
@@ -247,6 +409,7 @@ export function parseAgent(value: unknown): AgentEntry {
       .filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
+    allow_agents: asArray(asRecord(r.subagents).allow_agents).map(asString),
     message:
       cbMins > 0
         ? {
@@ -270,6 +433,9 @@ export function parseAgent(value: unknown): AgentEntry {
     global_cron: r.global_cron === true,
     maestro: maestroFromRaw(r.maestro),
     fusion: r.fusion === true,
+    forum: r.forum === true,
+    character_card: asString(r.character_card) || undefined,
+    ccv3: r.ccv3 === true,
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
       const mr = asRecord(m)
@@ -308,7 +474,7 @@ export function bindingViewsForAgent(
 ): AgentBindingView[] {
   const views: AgentBindingView[] = []
   raw.forEach((b, index) => {
-    if (asString(b.agent_id) !== agentID) return
+    if (!sameAgentId(asString(b.agent_id), agentID)) return
     const match = asRecord(b.match)
     const peer = asRecord(match.peer)
     const channel = asString(match.channel)
@@ -469,10 +635,14 @@ const AGENT_PAGE_KEYS = [
   "global_cron",
   "maestro",
   "fusion",
+  "forum",
+  "character_card",
+  "ccv3",
   "cogmem",
   "mcp_tools",
   "deny_tools",
   "mounts",
+  "subagents",
 ]
 
 // MAESTRO_PAGE_KEYS are the keys of the maestro block maestroPayload writes;
@@ -505,8 +675,9 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     ...(a.name ? { name: a.name } : {}),
     ...(a.default ? { default: true } : {}),
     ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
+    // Absent and [] both mean none for skills and tools.
     ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
-    tools: a.tools ?? [],
+    ...(a.tools && a.tools.length > 0 ? { tools: a.tools } : {}),
     message:
       a.message && a.message.window_minutes > 0
         ? {
@@ -535,6 +706,9 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
         }
       : {}),
     ...(a.fusion ? { fusion: true } : {}),
+    ...(a.forum ? { forum: true } : {}),
+    ...(a.character_card ? { character_card: a.character_card } : {}),
+    ...(a.ccv3 ? { ccv3: true } : {}),
     ...(a.cogmem === false ? { cogmem: false } : {}),
     // Always sent (like tools/mounts) so clearing the box persists; the
     // backend drops an empty slice on save (omitempty).
@@ -542,6 +716,7 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     // Always sent so clearing the list persists; blank rows (an entry being
     // typed) are dropped. The backend drops an empty slice on save.
     deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
+    ...subagentsPayload(raw, a.allow_agents),
     // Always sent (like tools) so removing all mounts persists; the backend
     // drops an empty slice on save (omitempty).
     mounts: (a.mounts ?? [])
@@ -555,9 +730,161 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
   }
 }
 
+// subagentsPayload is the subagents block as saved: the loaded block with
+// allow_agents replaced by the page's list (absent when empty), and no block
+// at all when nothing is left in it.
+function subagentsPayload(
+  raw: Record<string, unknown>,
+  allow: string[] | undefined,
+): Record<string, unknown> {
+  const loaded = asRecord(raw.subagents)
+  if (allow === undefined) {
+    return raw.subagents === undefined ? {} : { subagents: raw.subagents }
+  }
+  const block = {
+    ...withoutKeys(loaded, ["allow_agents"]),
+    ...(allow.length > 0 ? { allow_agents: allow } : {}),
+  }
+  return Object.keys(block).length > 0 ? { subagents: block } : {}
+}
+
 /** agentsPayload is the PATCH /api/config body for the agent list. It
  *  intentionally omits agents.defaults (edited on the Config page): the patch
  *  is a deep merge, so leaving it out keeps what that page last saved. */
 export function agentsPayload(cfg: AgentsConfig): Record<string, unknown> {
   return { agents: { list: (cfg.list ?? []).map(agentPayload) } }
+}
+
+// The agent id rule, identical to config/agent_id.go (both are checked against
+// config/testdata/agent_id_cases.json): 1 to 64 characters of ASCII letters
+// (either case), 0-9, '-' and '_', starting with a letter or digit. Ids are
+// case-insensitive: an agent's identity is its id in lower case
+// (normalizeAgentId), and sameAgentId compares identities. The server refuses
+// any other id with the same sentence agentIdProblem gives, quoting the id as
+// quoteAgentId does.
+const AGENT_ID_MAX = 64
+const AGENT_ID_VALID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+const AGENT_ID_INVALID_CHARS = /[^A-Za-z0-9_-]+/
+const ASCII_SPACE_EDGES = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g
+
+// asciiLower lower-cases A-Z only, as config's asciiLower does.
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase())
+}
+
+// isValidAgentId mirrors config.ValidAgentID.
+export function isValidAgentId(id: string): boolean {
+  return AGENT_ID_VALID.test(id)
+}
+
+// repairAgentId mirrors config.repairAgentID: the valid id suggested for id,
+// keeping its case, or "" when nothing usable is left.
+export function repairAgentId(id: string): string {
+  let result = id
+    .replace(new RegExp(AGENT_ID_INVALID_CHARS.source, "g"), "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+  if (result.length > AGENT_ID_MAX) {
+    result = result.slice(0, AGENT_ID_MAX).replace(/[-_]+$/, "")
+  }
+  return result
+}
+
+// normalizeAgentId mirrors config.NormalizeAgentID: an agent's identity, any
+// input turned into a valid id in lower case, or fallback (config's is
+// "main") when nothing usable is left.
+export function normalizeAgentId(id: string, fallback = "main"): string {
+  if (isValidAgentId(id)) return asciiLower(id)
+  const repaired = repairAgentId(id)
+  return repaired === "" ? fallback : asciiLower(repaired)
+}
+
+// sameAgentId mirrors config.SameAgentID: a and b name the same agent ("Bob"
+// and "bob" do).
+export function sameAgentId(a: string, b: string): boolean {
+  if (a.replace(ASCII_SPACE_EDGES, "") === "") return false
+  if (b.replace(ASCII_SPACE_EDGES, "") === "") return false
+  return normalizeAgentId(a) === normalizeAgentId(b)
+}
+
+// QUOTE_AS_CODE is what quoteAgentId writes as a code: control and format
+// characters and separators (Unicode Cc, Cf, Z), as config.quoteAgentID.
+const QUOTE_AS_CODE = /^[\p{Cc}\p{Cf}\p{Z}]$/u
+
+// quoteAgentId is config.quoteAgentID: '"' and '\' are escaped with a
+// backslash, tab, newline and carriage return are \t, \n and \r, every other
+// Cc, Cf or Z character but the ASCII space is \u and four lower-case hex
+// digits (\U and eight above U+FFFF), and the rest stands as itself.
+export function quoteAgentId(s: string): string {
+  let out = '"'
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (ch === '"' || ch === "\\") out += `\\${ch}`
+    else if (ch === "\t") out += "\\t"
+    else if (ch === "\n") out += "\\n"
+    else if (ch === "\r") out += "\\r"
+    else if (ch !== " " && QUOTE_AS_CODE.test(ch)) {
+      out +=
+        cp > 0xffff
+          ? `\\U${cp.toString(16).padStart(8, "0")}`
+          : `\\u${cp.toString(16).padStart(4, "0")}`
+    } else out += ch
+  }
+  return `${out}"`
+}
+
+// freeAgentId mirrors config.freeAgentID: id, or when another agent has it,
+// id with "-2", "-3", ... appended (shortened to keep 64 characters) until it
+// is free.
+export function freeAgentId(id: string, taken: readonly string[]): string {
+  const isTaken = (c: string) => taken.some((t) => sameAgentId(t, c))
+  if (!isTaken(id)) return id
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`
+    let base = id
+    if (base.length + suffix.length > AGENT_ID_MAX) {
+      base = base.slice(0, AGENT_ID_MAX - suffix.length).replace(/[-_]+$/, "")
+    }
+    if (!isTaken(base + suffix)) return base + suffix
+  }
+}
+
+// agentIdProblem returns why id cannot be an agent id, or null when it can.
+// taken are the ids other agents have: the suggested id is none of them.
+export function agentIdProblem(
+  id: string,
+  taken: readonly string[] = [],
+): string | null {
+  if (isValidAgentId(id)) return null
+  const trimmed = id.replace(ASCII_SPACE_EDGES, "")
+  if (trimmed === "") return 'An agent has no id; give it one, such as "alice".'
+  const repaired = repairAgentId(id)
+  const suggestion = repaired === "" ? "" : freeAgentId(repaired, taken)
+  const validChars = !AGENT_ID_INVALID_CHARS.test(trimmed)
+  let problem = "may use only letters, digits, - and _"
+  if (trimmed.length > AGENT_ID_MAX && validChars) {
+    problem = `is longer than ${AGENT_ID_MAX} characters`
+  } else if ((trimmed[0] === "-" || trimmed[0] === "_") && validChars) {
+    problem = "must start with a letter or digit"
+  }
+  const msg = `Agent id ${quoteAgentId(id)} ${problem}`
+  if (suggestion === "") return `${msg}.`
+  return `${msg}; use ${quoteAgentId(suggestion)}.`
+}
+
+// newAgentIdProblem returns why id cannot be the id of a new agent, or null
+// when it can: the agentIdProblem sentence, or the one the server gives for
+// an id that names an agent already there, ignoring case
+// (config.duplicateAgentIDError).
+export function newAgentIdProblem(
+  id: string,
+  existingIds: readonly string[],
+): string | null {
+  const problem = agentIdProblem(id, existingIds)
+  if (problem) return problem
+  const other = existingIds.find((e) => sameAgentId(e, id))
+  if (other === undefined) return null
+  if (other === id) {
+    return `Agent id ${quoteAgentId(id)} is used twice; give each agent its own id.`
+  }
+  return `Agent ids ${quoteAgentId(other)} and ${quoteAgentId(id)} name the same agent; give each agent its own id.`
 }

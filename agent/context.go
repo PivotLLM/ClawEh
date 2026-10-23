@@ -32,6 +32,25 @@ type ContextBuilder struct {
 	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
 	maestroEnabled bool
 
+	// toolsGranted, when set, reports whether the agent has any tool at all;
+	// when it has none the dynamic prompt says so (noToolsNotice).
+	toolsGranted func() bool
+
+	// fixedPrompt, when set, is the agent's whole system prompt: no identity,
+	// workspace files, skills, memory guidance, date or runtime block. A fresh
+	// temporary agent's prompt (see WithFixedPrompt).
+	fixedPrompt string
+
+	// cardPath is the configured agent's character card file
+	// (<CLAW_HOME>/cards/<id>.json, WithCharacterCard), tracked for cache
+	// invalidation like a bootstrap file, and renderCard renders it into the
+	// static prompt after the identity rules. Empty: no card.
+	cardPath   string
+	renderCard func() (string, error)
+	// cardPrompt is a clone's own rendered character card (WithCardPrompt);
+	// when set it is used instead of cardPath.
+	cardPrompt string
+
 	// memoryGuidance is the operating rule contributed by the memory subsystem
 	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
 	// numbered rule in the identity section.
@@ -72,6 +91,17 @@ func (cb *ContextBuilder) WithMaestro(enabled bool) *ContextBuilder {
 	cb.maestroEnabled = enabled
 	return cb
 }
+
+// WithToolsGranted sets the check of whether the agent has any tool. It is
+// read on every turn, so a tool registered later (an MCP server that connects)
+// removes the notice.
+func (cb *ContextBuilder) WithToolsGranted(granted func() bool) *ContextBuilder {
+	cb.toolsGranted = granted
+	return cb
+}
+
+// noToolsNotice is the line an agent with no tools at all gets in its prompt.
+const noToolsNotice = "You have not been granted any tools. If a request requires tools, please advise the user and ask them to enable the tools in the web user interface."
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
 	cb.toolDiscoveryActive = active
@@ -117,9 +147,57 @@ func (cb *ContextBuilder) accessibleFolders() string {
 	return strings.Join(parts, ", ")
 }
 
-// WithSkillsFilter restricts which skills are available to this agent.
-// An empty or nil filter means all skills are available.
-// Each pattern may use '*' as a wildcard (e.g. "fetch-*").
+// WithCharacterCard gives the agent the character card at path, rendered by
+// render whenever the static prompt is built (see cardSection). An empty path
+// means no card.
+func (cb *ContextBuilder) WithCharacterCard(path string, render func() (string, error)) *ContextBuilder {
+	cb.cardPath, cb.renderCard = path, render
+	return cb
+}
+
+// WithCardPrompt gives the agent an already rendered character card (a clone
+// created with its own card), used instead of the card file.
+func (cb *ContextBuilder) WithCardPrompt(text string) *ContextBuilder {
+	cb.cardPrompt = strings.TrimSpace(text)
+	return cb
+}
+
+// hasCard reports whether a character card takes part in the prompt.
+func (cb *ContextBuilder) hasCard() bool { return cb.cardPrompt != "" || cb.cardPath != "" }
+
+// cardSection is the character card's block of the static prompt: the
+// clone's rendered text, or the card rendered now from the library. A
+// card that cannot be read or parsed yields no block and one WARN; the
+// agent runs without it (the Agents page and Check Up show the missing card).
+func (cb *ContextBuilder) cardSection() string {
+	if cb.cardPrompt != "" {
+		return cb.cardPrompt
+	}
+	if cb.cardPath == "" || cb.renderCard == nil {
+		return ""
+	}
+	text, err := cb.renderCard()
+	if err != nil {
+		logger.WarnCF("agent", "Character card not rendered; the agent runs without it",
+			map[string]any{"card": cb.cardPath, "error": err.Error()})
+		return ""
+	}
+	logger.DebugCF("agent", "Character card rendered", map[string]any{"card": cb.cardPath, "chars": len(text)})
+	return text
+}
+
+// WithFixedPrompt makes text the agent's whole system prompt: PromptLayers
+// returns it alone, and nothing is read from the workspace. It also leaves the
+// agent no skills.
+func (cb *ContextBuilder) WithFixedPrompt(text string) *ContextBuilder {
+	cb.fixedPrompt = text
+	cb.skillsFilter = []string{}
+	return cb
+}
+
+// WithSkillsFilter sets the skills available to this agent: only those the
+// filter names. A nil or empty filter means no skills. Each pattern may use
+// '*' as a wildcard (e.g. "fetch-*"; "*" is every skill).
 func (cb *ContextBuilder) WithSkillsFilter(filter []string) *ContextBuilder {
 	cb.skillsFilter = filter
 	return cb
@@ -137,21 +215,11 @@ func getGlobalConfigDir() string {
 }
 
 func NewContextBuilder(workspace string) *ContextBuilder {
-	// builtin skills: skills directory in current project
-	// Use the skills/ directory under the current working directory
-	builtinSkillsDir := strings.TrimSpace(os.Getenv("CLAW_BUILTIN_SKILLS"))
-	if builtinSkillsDir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			logger.WarnCF("agent", "Failed to resolve working directory for builtin skills", map[string]any{"error": err.Error()})
-		}
-		builtinSkillsDir = filepath.Join(wd, "skills")
-	}
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
 	return &ContextBuilder{
 		workspace:    workspace,
-		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
+		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir),
 		memory:       NewMemoryStore(workspace),
 	}
 }
@@ -209,10 +277,16 @@ func (cb *ContextBuilder) getIdentity() string {
 		rules = append(rules, discoveryRule)
 	}
 
+	// With a character card the card says who the agent is (cardSection);
+	// without one it is the plain assistant.
+	identity := "You are a helpful AI assistant."
+	if cb.hasCard() {
+		identity = "You are the character described below."
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `# claw (%s)
 
-You are a helpful AI assistant.
+%s
 
 ## Workspace
 Your working area is %s/files — write drafts and outputs there. Your configuration
@@ -221,7 +295,7 @@ Folders your file tools can reach: %s.
 
 ## Important Rules
 
-`, version, workspacePath, cb.accessibleFolders())
+`, version, identity, workspacePath, cb.accessibleFolders())
 	for i, r := range rules {
 		if i > 0 {
 			b.WriteString("\n\n")
@@ -242,10 +316,19 @@ const discoveryRule = "**Tool Discovery** - Your visible tools are limited to sa
 	"`get_tool_details(name)`" + " on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing."
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
+	if cb.fixedPrompt != "" {
+		return cb.fixedPrompt
+	}
 	parts := []string{}
 
 	// Core identity section
 	parts = append(parts, cb.getIdentity())
+
+	// The character card, before the workspace files so SOUL.md and
+	// IDENTITY.md still apply on top of it.
+	if card := cb.cardSection(); card != "" {
+		parts = append(parts, card)
+	}
 
 	// Bootstrap files
 	bootstrapContent := cb.LoadBootstrapFiles()
@@ -343,11 +426,11 @@ func (cb *ContextBuilder) InvalidateCache() {
 	logger.DebugCF("agent", "System prompt cache invalidated", nil)
 }
 
-// sourcePaths returns non-skill workspace source files tracked for cache
-// invalidation (bootstrap files + memory). Skill roots are handled separately
+// sourcePaths returns the non-skill source files tracked for cache
+// invalidation (bootstrap files, memory, the character card). Skill roots are handled separately
 // because they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
-	return []string{
+	paths := []string{
 		filepath.Join(cb.workspace, "AGENTS.md"),
 		filepath.Join(cb.workspace, "SOUL.md"),
 		filepath.Join(cb.workspace, "USER.md"),
@@ -355,10 +438,16 @@ func (cb *ContextBuilder) sourcePaths() []string {
 		filepath.Join(cb.workspace, "MEMORY.md"),
 		filepath.Join(cb.workspace, "state", "message-tokens.json"),
 	}
+	if cb.cardPath != "" && cb.cardPrompt == "" {
+		// The character card is a prompt source too: an edit through the
+		// ccv3 tool or an import reaches the agent on its next turn.
+		paths = append(paths, cb.cardPath)
+	}
+	return paths
 }
 
 // skillRoots returns all skill root directories that can affect
-// BuildSkillsSummary output (workspace/global/builtin).
+// BuildSkillsSummary output (workspace/global).
 func (cb *ContextBuilder) skillRoots() []string {
 	if cb.skillsLoader == nil {
 		return []string{filepath.Join(cb.workspace, "skills")}
@@ -456,7 +545,7 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 		return true
 	}
 
-	// --- Skill roots (workspace/global/builtin) ---
+	// --- Skill roots (workspace/global) ---
 	//
 	// For each root:
 	// 1. Creation/deletion and root directory mtime changes are tracked by fileChangedSince.
@@ -588,7 +677,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 // caches by longest-common-prefix, and the system message precedes the entire
 // conversation history — so a single per-request byte here invalidates the cache
 // for the whole history behind it, not just for the system prompt. That is why
-// the current time is NOT in this block: see docs/context-management-plan.md.
+// the current time is NOT in this block.
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	var sb strings.Builder
@@ -604,6 +693,12 @@ func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	// because it varies by channel while the static prompt is shared per agent.
 	if extra := cb.loadChannelPrompt(channel); extra != "" {
 		fmt.Fprintf(&sb, "\n\n%s", extra)
+	}
+
+	// Here, not in the cached static prompt: the registry can gain tools
+	// between turns.
+	if cb.toolsGranted != nil && !cb.toolsGranted() {
+		sb.WriteString("\n\n" + noToolsNotice)
 	}
 
 	return sb.String()
@@ -647,6 +742,9 @@ func sanitizeChannelName(s string) string {
 // "system" parameter, Codex maps only the first system message to its
 // instructions field, and OpenAI-compat passes messages through as-is.
 func (cb *ContextBuilder) PromptLayers(channel, chatID string) []ctxengine.Layer {
+	if cb.fixedPrompt != "" {
+		return []ctxengine.Layer{{Name: "static", Text: cb.fixedPrompt}}
+	}
 	// The static part (identity, bootstrap, skills, memory) is cached locally to
 	// avoid repeated file I/O and string building on every call (fixes issue #607).
 	staticPrompt := cb.BuildSystemPromptWithCache()
@@ -713,11 +811,8 @@ func (cb *ContextBuilder) AddAssistantMessage(
 }
 
 // matchSkillFilter returns true if name matches any pattern in the filter.
-// An empty filter matches everything. '*' is a wildcard suffix/prefix/infix.
+// An empty filter matches nothing. '*' is a wildcard suffix/prefix/infix.
 func matchSkillFilter(name string, filter []string) bool {
-	if len(filter) == 0 {
-		return true
-	}
 	for _, pattern := range filter {
 		if matchGlob(pattern, name) {
 			return true
@@ -743,16 +838,13 @@ func matchGlob(pattern, name string) bool {
 	return strings.HasSuffix(name, suffix)
 }
 
-// filteredSkills returns the skills available to this agent, respecting the filter.
-// A nil filter means no restriction (all skills). An empty non-nil filter means no skills.
+// filteredSkills returns the skills the filter names. A nil or empty filter
+// means no skills.
 func (cb *ContextBuilder) filteredSkills() []skills.SkillInfo {
-	all := cb.skillsLoader.ListSkills()
-	if cb.skillsFilter == nil {
-		return all
-	}
 	if len(cb.skillsFilter) == 0 {
 		return nil
 	}
+	all := cb.skillsLoader.ListSkills()
 	result := make([]skills.SkillInfo, 0, len(all))
 	for _, s := range all {
 		if matchSkillFilter(s.Name, cb.skillsFilter) {

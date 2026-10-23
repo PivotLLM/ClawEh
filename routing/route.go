@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // RouteInput contains the routing context from an inbound message.
@@ -20,12 +19,12 @@ type RouteInput struct {
 
 // ResolvedRoute is the result of agent routing.
 type ResolvedRoute struct {
-	AgentID        string
-	Channel        string
-	AccountID      string
-	SessionKey     string
-	MainSessionKey string
-	MatchedBy      string // "binding.peer", "binding.peer.parent", "binding.guild", "binding.team", "binding.account", "binding.channel", "default"
+	AgentID   string
+	Channel   string
+	AccountID string
+	// SessionKey is the agent's one conversation, agent:<id>:main.
+	SessionKey string
+	MatchedBy  string // "binding.peer", "binding.peer.parent", "binding.peer.kind", "binding.guild", "binding.team", "binding.account", "binding.channel", "default"
 }
 
 // RouteResolver determines which agent handles a message based on config bindings.
@@ -35,57 +34,30 @@ type RouteResolver struct {
 
 // NewRouteResolver creates a new route resolver.
 func NewRouteResolver(cfg *config.Config) *RouteResolver {
-	mode := cfg.Session.Mode
-	if mode == "" {
-		mode = string(SessionScopeUnified) + " (default)"
-	} else {
-		switch SessionScope(mode) {
-		case SessionScopeUnified, SessionScopePerUser, SessionScopePerPlatform, SessionScopePerAccount:
-			// valid
-		default:
-			logger.WarnCF("routing", "Unrecognized session mode — falling back to unified",
-				map[string]any{"mode": mode})
-			mode += " (unrecognized, using unified)"
-		}
-	}
-	logger.InfoCF("routing", "Session mode active", map[string]any{"mode": mode})
 	return &RouteResolver{cfg: cfg}
 }
 
-// ResolveRoute determines which agent handles the message and constructs session keys.
-// Implements the 7-level priority cascade:
-// peer > parent_peer > guild > team > account > channel_wildcard > default
+// ResolveRoute determines which agent handles the message; the session is
+// always that agent's main conversation.
+// Implements the 8-level priority cascade:
+// peer > parent_peer > peer_kind > guild > team > account > channel_wildcard > default
+// A peer_kind binding names a peer kind but no id ("direct" with an empty id:
+// every direct message on the channel).
 func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	channel := strings.ToLower(strings.TrimSpace(input.Channel))
 	accountID := NormalizeAccountID(input.AccountID)
 	peer := input.Peer
 
-	sessionScope := SessionScope(r.cfg.Session.Mode)
-	if sessionScope == "" {
-		sessionScope = SessionScopeUnified
-	}
-	identityLinks := r.cfg.Session.IdentityLinks
-
 	bindings := r.filterBindings(channel, accountID)
 
 	choose := func(agentID string, matchedBy string) ResolvedRoute {
 		resolvedAgentID := r.pickAgentID(agentID)
-		sessionKey := strings.ToLower(BuildAgentPeerSessionKey(SessionKeyParams{
-			AgentID:       resolvedAgentID,
-			Channel:       channel,
-			AccountID:     accountID,
-			Peer:          peer,
-			SessionScope:  sessionScope,
-			IdentityLinks: identityLinks,
-		}))
-		mainSessionKey := strings.ToLower(BuildAgentMainSessionKey(resolvedAgentID))
 		return ResolvedRoute{
-			AgentID:        resolvedAgentID,
-			Channel:        channel,
-			AccountID:      accountID,
-			SessionKey:     sessionKey,
-			MainSessionKey: mainSessionKey,
-			MatchedBy:      matchedBy,
+			AgentID:    resolvedAgentID,
+			Channel:    channel,
+			AccountID:  accountID,
+			SessionKey: strings.ToLower(BuildAgentMainSessionKey(resolvedAgentID)),
+			MatchedBy:  matchedBy,
 		}
 	}
 
@@ -98,7 +70,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 					agentID = input.MentionedAgent
 					break
 				}
-				if strings.ToLower(m) == input.MentionedAgent {
+				if config.SameAgentID(m, input.MentionedAgent) {
 					agentID = m
 					break
 				}
@@ -122,7 +94,14 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 		}
 	}
 
-	// Priority 3: Guild binding
+	// Priority 3: Peer kind binding (every peer of that kind)
+	if peer != nil {
+		if match := r.findPeerKindMatch(bindings, peer); match != nil {
+			return chooseWithMention(match, "binding.peer.kind")
+		}
+	}
+
+	// Priority 4: Guild binding
 	guildID := strings.TrimSpace(input.GuildID)
 	if guildID != "" {
 		if match := r.findGuildMatch(bindings, guildID); match != nil {
@@ -130,7 +109,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 		}
 	}
 
-	// Priority 4: Team binding
+	// Priority 5: Team binding
 	teamID := strings.TrimSpace(input.TeamID)
 	if teamID != "" {
 		if match := r.findTeamMatch(bindings, teamID); match != nil {
@@ -138,17 +117,17 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 		}
 	}
 
-	// Priority 5: Account binding
+	// Priority 6: Account binding
 	if match := r.findAccountMatch(bindings); match != nil {
 		return chooseWithMention(match, "binding.account")
 	}
 
-	// Priority 6: Channel wildcard binding
+	// Priority 7: Channel wildcard binding
 	if match := r.findChannelWildcardMatch(bindings); match != nil {
 		return chooseWithMention(match, "binding.channel")
 	}
 
-	// Priority 7: Default agent
+	// Priority 8: Default agent
 	return choose(r.resolveDefaultAgentID(), "default")
 }
 
@@ -194,6 +173,27 @@ func (r *RouteResolver) findPeerMatch(bindings []config.AgentBinding, peer *Rout
 		}
 	}
 	return nil
+}
+
+// findPeerKindMatch returns the first binding naming peer's kind with no id,
+// which matches every peer of that kind.
+func (r *RouteResolver) findPeerKindMatch(bindings []config.AgentBinding, peer *RoutePeer) *config.AgentBinding {
+	for i := range bindings {
+		if peerKindOnlyMatches(bindings[i].Match.Peer, peer) {
+			return &bindings[i]
+		}
+	}
+	return nil
+}
+
+// peerKindOnlyMatches reports whether m names a peer kind but no id, and peer
+// is of that kind.
+func peerKindOnlyMatches(m *config.PeerMatch, peer *RoutePeer) bool {
+	if m == nil || peer == nil || strings.TrimSpace(m.ID) != "" {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(m.Kind))
+	return kind != "" && kind == strings.ToLower(strings.TrimSpace(peer.Kind))
 }
 
 func (r *RouteResolver) findGuildMatch(bindings []config.AgentBinding, guildID string) *config.AgentBinding {
@@ -251,7 +251,7 @@ func (r *RouteResolver) findChannelWildcardMatch(bindings []config.AgentBinding)
 func (r *RouteResolver) pickAgentID(agentID string) string {
 	trimmed := strings.TrimSpace(agentID)
 	if trimmed == "" {
-		return NormalizeAgentID(r.resolveDefaultAgentID())
+		return r.resolveDefaultAgentID()
 	}
 	normalized := NormalizeAgentID(trimmed)
 	agents := r.cfg.Agents.List
@@ -259,11 +259,11 @@ func (r *RouteResolver) pickAgentID(agentID string) string {
 		return normalized
 	}
 	for _, a := range agents {
-		if NormalizeAgentID(a.ID) == normalized {
+		if config.SameAgentID(a.ID, normalized) {
 			return normalized
 		}
 	}
-	return NormalizeAgentID(r.resolveDefaultAgentID())
+	return r.resolveDefaultAgentID()
 }
 
 func (r *RouteResolver) resolveDefaultAgentID() string {
@@ -271,16 +271,81 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 	if len(agents) == 0 {
 		return DefaultAgentID
 	}
+	// A human agent (one representing a person) is never the default: an
+	// unaddressed message must not be posted to a person.
 	for _, a := range agents {
-		if a.Default {
-			id := strings.TrimSpace(a.ID)
-			if id != "" {
-				return NormalizeAgentID(id)
+		if a.Default && !r.cfg.IsHumanAgent(a.ID) && a.ID != "" {
+			return NormalizeAgentID(a.ID)
+		}
+	}
+	for _, a := range agents {
+		if r.cfg.IsHumanAgent(a.ID) {
+			continue
+		}
+		if a.ID != "" {
+			return NormalizeAgentID(a.ID)
+		}
+		break
+	}
+	return DefaultAgentID
+}
+
+// Reaches reports whether a message with input could be handled by agentID:
+// it routes there (by a binding or as the default agent), or a binding that
+// matches it (channel and account, plus its peer, guild or team when it names
+// one) names agentID as its agent or among its agent_mentions ("*" names
+// every agent). It is the "may this sender talk to that agent" test behind
+// /ask and /whisper. input.MentionedAgent is ignored.
+func (r *RouteResolver) Reaches(input RouteInput, agentID string) bool {
+	target := NormalizeAgentID(agentID)
+	input.MentionedAgent = ""
+	if r.ResolveRoute(input).AgentID == target {
+		return true
+	}
+	channel := strings.ToLower(strings.TrimSpace(input.Channel))
+	for _, b := range r.filterBindings(channel, NormalizeAccountID(input.AccountID)) {
+		if !bindingMatches(b, input) {
+			continue
+		}
+		if r.pickAgentID(b.AgentID) == target {
+			return true
+		}
+		for _, m := range b.AgentMentions {
+			if m == "*" || config.SameAgentID(m, target) {
+				return true
 			}
 		}
 	}
-	if id := strings.TrimSpace(agents[0].ID); id != "" {
-		return NormalizeAgentID(id)
+	return false
+}
+
+// bindingMatches reports whether binding b, already matched on channel and
+// account, also matches input's peer (or parent peer), guild or team — the
+// criterion ResolveRoute would match it on. A peer binding with a kind but no
+// id matches any message whose own peer is of that kind. A binding with none
+// of them matches every message on its channel and account.
+func bindingMatches(b config.AgentBinding, input RouteInput) bool {
+	switch {
+	case b.Match.Peer != nil:
+		kind := strings.ToLower(strings.TrimSpace(b.Match.Peer.Kind))
+		id := strings.TrimSpace(b.Match.Peer.ID)
+		if kind == "" {
+			return false
+		}
+		if id == "" {
+			return peerKindOnlyMatches(b.Match.Peer, input.Peer)
+		}
+		for _, p := range []*RoutePeer{input.Peer, input.ParentPeer} {
+			if p != nil && strings.ToLower(p.Kind) == kind && p.ID == id {
+				return true
+			}
+		}
+		return false
+	case strings.TrimSpace(b.Match.GuildID) != "":
+		return strings.TrimSpace(b.Match.GuildID) == strings.TrimSpace(input.GuildID)
+	case strings.TrimSpace(b.Match.TeamID) != "":
+		return strings.TrimSpace(b.Match.TeamID) == strings.TrimSpace(input.TeamID)
+	default:
+		return true
 	}
-	return DefaultAgentID
 }

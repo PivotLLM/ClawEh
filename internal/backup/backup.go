@@ -3,7 +3,8 @@
 
 // Package backup writes a dated tarball of everything ClawEh needs to come back
 // on a new host — config.json, the cron jobs file, internal/ (tokens and the device
-// pairing database), credentials.json and tls/ when present, and every SQLite
+// pairing database), credentials.json, tls/ and cards/ (the character-card
+// library) when present, each agent's forums and Maestro data, and every SQLite
 // database under CLAW_HOME (session archives, cognitive memory, the fusion
 // OAuth store) — and restores one. It is driven on a nightly schedule by the
 // gateway, on demand from the WebUI, and by `claw backup` / `claw restore`.
@@ -31,6 +32,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -72,6 +74,7 @@ const (
 
 	credentialsFile = "credentials.json"
 	tlsDir          = "tls"
+	cardsDir        = config.CardsDirName
 	internalDir     = global.InternalDir
 	configFile      = "config.json"
 	cronJobsFile    = "jobs.json"
@@ -79,9 +82,24 @@ const (
 
 // ExcludedDirs are directory names skipped anywhere in the database walk: the
 // media staging cache, logs, the backup destination itself, per-agent scratch
-// space, and cogmem's throwaway per-sub-agent snapshots. Nothing in them is
-// needed to bring an install back.
+// space, and the per-sub-agent memory snapshots earlier versions left under
+// cogmem/. Nothing in them is needed to bring an install back.
 var ExcludedDirs = [...]string{"media", "logs", "backup", "tmp", "subagents"}
+
+// Temporary agents (sub-agent clones and the like) live under
+// internal/temp/<uuid> and are listed in internal/temp_agents.json. They are
+// run-time scratch, deleted after their run or when idle, and are never
+// archived: a restore starts without them.
+const (
+	tempAgentsDir  = internalDir + "/temp/"
+	tempAgentsList = internalDir + "/temp_agents.json"
+)
+
+// isTempAgentPath reports whether an archive name belongs to the temporary
+// agents (internal/temp/ and their list), which are never backed up.
+func isTempAgentPath(name string) bool {
+	return name == tempAgentsList || strings.HasPrefix(name, tempAgentsDir)
+}
 
 // excludedPrefixes are top-level directory name prefixes skipped in the walk:
 // what a restore leaves behind, and its own staging area.
@@ -97,6 +115,9 @@ type Source struct {
 	ConfigPath string // config.json (normally <Home>/config.json)
 	CronDir    string // holds jobs.json
 	AgentsDir  string // agent workspaces; walked separately only when outside Home
+	// Modes are the destination directory's and the archive's modes
+	// (security.permissions.backup); a zero field means 0700 or 0600.
+	Modes config.Modes
 }
 
 // Options tune a run. The zero value is what the nightly scheduler uses.
@@ -116,6 +137,10 @@ type Manifest struct {
 	Home      string    `json:"claw_home"`
 	AgentsDir string    `json:"agents_dir,omitempty"` // set only when outside claw_home
 	Files     []string  `json:"files"`                // archive paths, in archive order
+	// Plain lists the archive paths with a database extension that were
+	// copied byte for byte (forum files), so a restore does not check them
+	// as SQLite databases.
+	Plain []string `json:"plain,omitempty"`
 }
 
 // Skipped is a database left out of the archive because it failed quick_check.
@@ -139,19 +164,27 @@ type entry struct {
 	db   bool   // copy with VACUUM INTO rather than plain read
 }
 
-// Run writes <dest>/claw-backup-<stamp>.tar.gz from src. dest is created 0700
-// when missing; the archive is 0600. Databases that fail quick_check are
+// Run writes <dest>/claw-backup-<stamp>.tar.gz from src. dest is created and
+// set to src.Modes.Dir (default 0700); the archive is src.Modes.File (default
+// 0600). Databases that fail quick_check are
 // skipped (recorded in Result.Skipped and alerted), never fatal: one bad file
 // must not cost the operator the rest of the backup.
 func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, error) {
 	if a == nil {
 		a = alerts.Default()
 	}
-	if err := os.MkdirAll(dest, 0o700); err != nil {
+	dirMode, fileMode := src.Modes.Dir, src.Modes.File
+	if dirMode == 0 {
+		dirMode = config.DefaultDirMode
+	}
+	if fileMode == 0 {
+		fileMode = config.DefaultFileMode
+	}
+	if err := os.MkdirAll(dest, dirMode); err != nil {
 		return nil, fmt.Errorf("backup: create %s: %w", dest, err)
 	}
-	if err := os.Chmod(dest, 0o700); err != nil {
-		// A network mount may not honour it; the archive itself is still 0600.
+	if err := tightenDir(dest, dirMode); err != nil {
+		// A network mount may not honour it; the archive itself keeps its mode.
 		logger.WarnCF("backup", "could not restrict backup directory", map[string]any{"dir": dest, "error": err.Error()})
 	}
 
@@ -207,10 +240,13 @@ func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, er
 		}
 		files = append(files, r)
 		m.Files = append(m.Files, e.name)
+		if !e.db && isDB(e.name) {
+			m.Plain = append(m.Plain, e.name)
+		}
 	}
 
 	tmpArchive := filepath.Join(tmpDir, "archive.tar.gz")
-	if wErr := writeArchive(tmpArchive, m, func(tw *tar.Writer) error {
+	if wErr := writeArchive(tmpArchive, fileMode, m, func(tw *tar.Writer) error {
 		for _, f := range files {
 			if addErr := addFile(tw, f.path, f.src, f.name); addErr != nil {
 				return addErr
@@ -233,10 +269,25 @@ func Run(src Source, dest string, now time.Time, a alerter.Alerter) (*Result, er
 	return res, nil
 }
 
-// writeArchive creates path (0600) as a gzip tarball whose first entry is the
-// manifest, then hands the writer to body for the files.
-func writeArchive(path string, m Manifest, body func(*tar.Writer) error) (err error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // path is inside the temp dir this package created
+// tightenDir clears the group/other bits of dir that mode does not grant. It
+// never adds access: an operator's tighter destination stays as it is.
+func tightenDir(dir string, mode fs.FileMode) error {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	cur := fi.Mode().Perm()
+	want := cur &^ (0o077 &^ mode)
+	if want == cur {
+		return nil
+	}
+	return os.Chmod(dir, want)
+}
+
+// writeArchive creates path (with mode) as a gzip tarball whose first entry is
+// the manifest, then hands the writer to body for the files.
+func writeArchive(path string, mode fs.FileMode, m Manifest, body func(*tar.Writer) error) (err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode) //nolint:gosec // path is inside the temp dir this package created
 	if err != nil {
 		return fmt.Errorf("backup: create %s: %w", path, err)
 	}
@@ -301,7 +352,7 @@ func addFile(tw *tar.Writer, readPath, orig, name string) error {
 }
 
 // collect lists what to archive, in a stable order: config.json, cron/jobs.json,
-// credentials.json, tls/, internal/, then every database found walking Home (and
+// credentials.json, tls/, cards/, internal/, then every database found walking Home (and
 // AgentsDir when it lies outside Home, reported by the second result). Missing
 // optional files are silently absent. dest is excluded from the walk when it is
 // under Home, so a backup never archives older backups.
@@ -343,9 +394,10 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 	// and a byte copy of a live -wal is the torn copy this package exists to
 	// avoid. The running process's PID and lock files are skipped too: they
 	// describe this host's process, not state to restore.
-	for _, d := range []string{tlsDir, internalDir} {
+	for _, d := range []string{tlsDir, cardsDir, internalDir} {
 		if err := walk(filepath.Join(src.Home, d), d+"/", dest, func(path, name string) {
-			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName {
+			if isDBSidecar(path) || name == internalDir+"/"+pidfile.Name || name == internalDir+"/"+LockFileName ||
+				isTempAgentPath(name) {
 				return
 			}
 			add(entry{src: path, name: name, db: isDB(path)})
@@ -353,23 +405,164 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 			return nil, false, err
 		}
 	}
+	// Every agent's forums and Maestro data, before the database walk so a
+	// forum file with a database extension (a materialised source) is copied
+	// as it is.
+	external := src.AgentsDir != "" && !within(src.Home, src.AgentsDir)
+	if src.AgentsDir != "" {
+		agentsPrefix := externalAgentsPrefix
+		if !external {
+			rel, err := filepath.Rel(filepath.Clean(src.Home), filepath.Clean(src.AgentsDir))
+			if err != nil {
+				return nil, false, fmt.Errorf("backup: %w", err)
+			}
+			agentsPrefix = ""
+			if rel != "." {
+				agentsPrefix = filepath.ToSlash(rel) + "/"
+			}
+		}
+		if err := collectForums(src.AgentsDir, agentsPrefix, dest, func(path, name string) {
+			add(entry{src: path, name: name})
+		}); err != nil {
+			return nil, false, err
+		}
+		if err := collectMaestro(src.AgentsDir, agentsPrefix, dest, func(path, name string, db bool) {
+			add(entry{src: path, name: name, db: db})
+		}); err != nil {
+			return nil, false, err
+		}
+	}
 	// Databases anywhere else under Home.
 	dbOnly := func(path, name string) {
-		if isDB(path) {
+		if isDB(path) && !isTempAgentPath(name) {
 			add(entry{src: path, name: name, db: true})
 		}
 	}
 	if err := walk(src.Home, "", dest, dbOnly); err != nil {
 		return nil, false, err
 	}
-	external := false
-	if src.AgentsDir != "" && !within(src.Home, src.AgentsDir) {
-		external = true
+	if external {
 		if err := walk(src.AgentsDir, externalAgentsPrefix, dest, dbOnly); err != nil {
 			return nil, false, err
 		}
 	}
 	return out, external, nil
+}
+
+// collectForums calls fn(path, archiveName) for every file of every agent's
+// forums directory (<agentsDir>/<agent>/forums/) with archive name
+// prefix+<agent>/forums/<rel>. The forum store's lock files (.locks/) and the
+// temporary files a write in progress or a crash leaves (.tmp-*) are skipped;
+// its cleanup markers (.cleanup/) are state and are kept. Every file the store
+// publishes is written whole (a temporary file renamed or linked into place),
+// so a plain copy taken while a forum runs reads each file either before or
+// after a write, never torn. The copy is not one instant across files; a
+// restored run is recovered from its commit log like one interrupted by a
+// restart, which also rebuilds transcript.md, the one file appended in place.
+func collectForums(agentsDir, prefix, skip string, fn func(path, name string)) error {
+	return collectAgentFolder(agentsDir, prefix, forumfs.BaseDirName, skip,
+		func(rel string, d fs.DirEntry) bool {
+			if strings.HasPrefix(d.Name(), forumfs.TempPrefix) {
+				return true
+			}
+			return d.IsDir() && rel == forumfs.LocksDir
+		}, fn)
+}
+
+// Maestro's own scratch files: the flock beside a taskset being written
+// (<taskset>.lock) and the temporary file of an atomic write (<file>.tmp,
+// renamed into place).
+const (
+	maestroLockSuffix = ".lock"
+	maestroTempSuffix = ".tmp"
+)
+
+// collectMaestro calls fn(path, archiveName, db) for every file of every
+// agent's Maestro data directory (<agentsDir>/<agent>/maestro/: projects,
+// playbooks, lists and the rest) with archive name prefix+<agent>/maestro/<rel>.
+// Maestro's lock files (*.lock) and temporary files (*.tmp) are skipped, as are
+// SQLite sidecars; a file with a database extension is reported with db set so
+// it is copied with VACUUM INTO. Maestro writes its files whole (a temporary
+// file renamed into place), so a plain copy reads each one before or after a
+// write, never torn.
+func collectMaestro(agentsDir, prefix, skip string, fn func(path, name string, db bool)) error {
+	return collectAgentFolder(agentsDir, prefix, config.MaestroMountName, skip,
+		func(_ string, d fs.DirEntry) bool {
+			if d.IsDir() {
+				return false
+			}
+			n := d.Name()
+			return strings.HasSuffix(n, maestroLockSuffix) || strings.HasSuffix(n, maestroTempSuffix) || isDBSidecar(n)
+		}, func(path, name string) {
+			fn(path, name, isDB(path))
+		})
+}
+
+// collectAgentFolder calls fn(path, archiveName) for every regular file under
+// <agentsDir>/<agent>/<folder>/, for every agent, with archive name
+// prefix+<agent>/<folder>/<rel>. excluded is asked about every directory and
+// file below the folder (rel is relative to it); an excluded directory is not
+// entered. Symbolic links are never followed, at any level: an agent directory
+// or folder that is a link is skipped like any link inside. skip (the backup
+// destination) is never entered.
+func collectAgentFolder(agentsDir, prefix, folder, skip string, excluded func(rel string, d fs.DirEntry) bool, fn func(path, name string)) error {
+	agents, err := os.ReadDir(agentsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("backup: read %s: %w", agentsDir, err)
+	}
+	for _, a := range agents {
+		if !a.IsDir() { // ReadDir reports a symlink as a symlink, not a directory
+			continue
+		}
+		base := prefix + a.Name() + "/" + folder + "/"
+		// Temporary agents' workspaces live in internal/temp/, never in the
+		// agents directory; this only matters when agents.base_dir is set to
+		// CLAW_HOME's internal/ (or internal/temp/) folder, where it keeps them
+		// out like the rest of internal/temp/.
+		if isTempAgentPath(base) {
+			continue
+		}
+		root := filepath.Join(agentsDir, a.Name(), folder)
+		fi, err := os.Lstat(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("backup: stat %s: %w", root, err)
+		}
+		if !fi.IsDir() {
+			continue
+		}
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if path == root {
+				return nil
+			}
+			rel, rerr := filepath.Rel(root, path)
+			if rerr != nil {
+				return rerr
+			}
+			if d.IsDir() {
+				if path == filepath.Clean(skip) || excluded(rel, d) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() || excluded(rel, d) {
+				return nil
+			}
+			fn(path, base+filepath.ToSlash(rel))
+			return nil
+		}); err != nil {
+			return fmt.Errorf("backup: walk %s: %w", root, err)
+		}
+	}
+	return nil
 }
 
 // walk calls fn(path, archiveName) for every regular file under root, skipping
@@ -463,10 +656,7 @@ func DestFor(cfg *config.Config, override string) string {
 	if override != "" {
 		return override
 	}
-	if d := strings.TrimSpace(cfg.Backup.Dest); d != "" {
-		return d
-	}
-	return filepath.Join(cfg.DataDir(), "backup")
+	return cfg.BackupDir()
 }
 
 // RunForConfig backs up the install described by cfg (config.json at
@@ -480,6 +670,7 @@ func RunForConfig(cfg *config.Config, configPath string, now time.Time, opts Opt
 		ConfigPath: configPath,
 		CronDir:    cfg.CronPath(),
 		AgentsDir:  cfg.BaseDir(),
+		Modes:      cfg.PermissionModes(config.AreaBackup),
 	}
 	res, err := Run(src, dest, now, opts.Alerter)
 	if err != nil {

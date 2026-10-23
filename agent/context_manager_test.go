@@ -47,7 +47,7 @@ func (s *rotatingSTI) Revoke(sessionKey string) {
 // revoked by session key, leaving the winner's prompt carrying a dead token.
 func TestGetContextManager_ConcurrentFirstAccessKeepsOneLiveToken(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

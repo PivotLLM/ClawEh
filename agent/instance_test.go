@@ -29,8 +29,8 @@ func TestNewAgentInstance_UsesDefaultsTemperatureAndMaxTokens(t *testing.T) {
 	if agent.MaxTokens != 1234 {
 		t.Fatalf("MaxTokens = %d, want %d", agent.MaxTokens, 1234)
 	}
-	if agent.Temperature != 1.0 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 1.0)
+	if agent.Temperature == nil || *agent.Temperature != 1.0 {
+		t.Fatalf("Temperature = %v, want 1.0", agent.Temperature)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenZero(t *testing.T) {
 	provider := &mockProvider{}
 	agent := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider)
 
-	if agent.Temperature != 0.0 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 0.0)
+	if agent.Temperature == nil || *agent.Temperature != 0.0 {
+		t.Fatalf("Temperature = %v, want 0.0", agent.Temperature)
 	}
 }
 
@@ -76,8 +76,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenUnset(t *testing.T) {
 	provider := &mockProvider{}
 	agent := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider)
 
-	if agent.Temperature != 0.2 {
-		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 0.2)
+	if agent.Temperature != nil {
+		t.Fatalf("Temperature = %v, want nil (the model's own default)", *agent.Temperature)
 	}
 }
 
@@ -149,5 +149,23 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 				t.Fatalf("candidate model = %q, want %q", agent.Candidates[0].Model, tt.wantModel)
 			}
 		})
+	}
+}
+
+// The routing-default agent (a nil config) has no cognitive memory, so its
+// prompt carries no memory guidance; a config agent that leaves cogmem unset
+// has memory and is told how to use it.
+func TestNewAgentInstance_MemoryGuidanceFollowsTheGivenConfig(t *testing.T) {
+	cfg := &config.Config{Agents: config.AgentsConfig{
+		BaseDir:  t.TempDir(),
+		Defaults: config.AgentDefaults{Models: []string{"test-model"}},
+	}}
+	provider := &mockProvider{}
+	if g := mustNewAgentInstance(t, nil, &cfg.Agents.Defaults, cfg, provider).ContextBuilder.memoryGuidance; g != "" {
+		t.Errorf("nil config: memory guidance %q, want none", g)
+	}
+	alice := &config.AgentConfig{ID: "alice"}
+	if g := mustNewAgentInstance(t, alice, &cfg.Agents.Defaults, cfg, provider).ContextBuilder.memoryGuidance; g == "" {
+		t.Error("alice (cogmem unset): no memory guidance")
 	}
 }

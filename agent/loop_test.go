@@ -96,56 +96,15 @@ func newTestAgentLoop(t *testing.T) *testLoop {
 	}
 }
 
-func TestRecordLastChannel(t *testing.T) {
-	tl := newTestAgentLoop(t)
-	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
-
-	testChannel := "test-channel"
-	if err := al.RecordLastChannel(testChannel); err != nil {
-		t.Fatalf("RecordLastChannel failed: %v", err)
-	}
-	if got := al.state.GetLastChannel(); got != testChannel {
-		t.Errorf("Expected channel '%s', got '%s'", testChannel, got)
-	}
-	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	if got := al2.state.GetLastChannel(); got != testChannel {
-		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, got)
-	}
-}
-
-func TestRecordLastChatID(t *testing.T) {
-	tl := newTestAgentLoop(t)
-	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
-
-	testChatID := "test-chat-id-123"
-	if err := al.RecordLastChatID(testChatID); err != nil {
-		t.Fatalf("RecordLastChatID failed: %v", err)
-	}
-	if got := al.state.GetLastChatID(); got != testChatID {
-		t.Errorf("Expected chat ID '%s', got '%s'", testChatID, got)
-	}
-	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	if got := al2.state.GetLastChatID(); got != testChatID {
-		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, got)
-	}
-}
-
 func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create temp workspace
 	cfg := newTestConfig(t)
 
 	// Create agent loop
-	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
-	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
+	mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Verify state manager is initialized
-	if al.state == nil {
-		t.Error("Expected state manager to be initialized")
-	}
-
-	// Verify state directory was created. The default agent resolves to
-	// <base_dir>/default, so its state lives under tmpDir/default/state.
+	// Verify the per-agent state directory was created. The default agent
+	// resolves to <base_dir>/default, so its state lives under tmpDir/default/state.
 	stateDir := filepath.Join(cfg.Agents.BaseDir, "default", "state")
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
 		t.Error("Expected state directory to exist")
@@ -408,7 +367,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 	})
 	sessionKey := route.SessionKey
 
-	defaultAgent := al.registry.GetDefaultAgent()
+	defaultAgent := al.registry.Default()
 	if defaultAgent == nil {
 		t.Fatal("No default agent found")
 	}
@@ -425,9 +384,49 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 	}
 }
 
+// TestProcessMessage_OtherSessionKeyLandsInMain: an agent has one persistent
+// conversation. An inbound message carrying some other agent-scoped session key
+// (one an older release's session modes, a device or a service token would
+// have used) is answered in the agent's main session; no second session gets
+// any history.
+func TestProcessMessage_OtherSessionKeyLandsInMain(t *testing.T) {
+	cfg := newTestConfig(t)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &simpleMockProvider{response: "ok"}, nil)
+	agent := al.registry.Default()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+	mainKey := routing.BuildAgentMainSessionKey(agent.ID)
+	others := []string{
+		"agent:" + agent.ID + ":telegram:direct:user1",
+		"agent:" + agent.ID + ":device:dev1",
+		"agent:" + agent.ID + ":service",
+	}
+
+	helper := testHelper{al: al}
+	for _, key := range others {
+		helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+			Channel:    "telegram",
+			SenderID:   "user1",
+			ChatID:     "chat1",
+			Content:    "hello",
+			SessionKey: key,
+			Peer:       bus.Peer{Kind: "direct", ID: "user1"},
+		})
+	}
+
+	if got := len(agent.Sessions.GetHistory(mainKey)); got != 2*len(others) {
+		t.Fatalf("main session history len = %d, want %d", got, 2*len(others))
+	}
+	for _, key := range others {
+		if got := len(agent.Sessions.GetHistory(key)); got != 0 {
+			t.Errorf("session %q has %d messages, want 0", key, got)
+		}
+	}
+}
+
 func TestProcessMessage_CommandOutcomes(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.Session.Mode = "per-platform"
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
@@ -647,7 +646,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		{Role: "assistant", Content: "Old response 2"},
 		{Role: "user", Content: "Trigger message"},
 	}
-	defaultAgent := al.registry.GetDefaultAgent()
+	defaultAgent := al.registry.Default()
 	if defaultAgent == nil {
 		t.Fatal("No default agent found")
 	}
@@ -735,7 +734,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		"telegram": "rid-telegram",
 		"discord":  "rid-discord",
 		"slack":    "rid-slack",
-		"line":     "rid-line",
+		"matrix":   "rid-matrix",
 	} {
 		chManager.RegisterChannel(name, &fakeChannel{id: id})
 	}
@@ -747,7 +746,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		{channel: "telegram", wantID: "rid-telegram"},
 		{channel: "discord", wantID: "rid-discord"},
 		{channel: "slack", wantID: "rid-slack"},
-		{channel: "line", wantID: "rid-line"},
+		{channel: "matrix", wantID: "rid-matrix"},
 		{channel: "unknown", wantID: ""},
 	}
 
@@ -1195,7 +1194,7 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1249,7 +1248,7 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1314,7 +1313,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
 	// Replace the default agent's provider with one that always returns a timeout error.
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1415,7 +1414,7 @@ func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.To
 func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1455,7 +1454,7 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1509,7 +1508,7 @@ func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1564,7 +1563,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 func TestRunLLMIteration_MaxIterations(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1634,7 +1633,7 @@ func fourCandidates() []providers.FallbackCandidate {
 func TestSelectCandidates_DefaultOrder(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1658,7 +1657,7 @@ func TestSelectCandidates_DefaultOrder(t *testing.T) {
 func TestSelectCandidates_Reorder(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1698,7 +1697,7 @@ func TestSelectCandidates_Reorder(t *testing.T) {
 func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1722,7 +1721,7 @@ func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
 func TestActiveModelIndex_Persists(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -1749,16 +1748,17 @@ func TestActiveModelIndex_Persists(t *testing.T) {
 func TestProcessSystemMessage_InternalChannel(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	// ChatID format is "originChannel:originChatID".
+	// The origin chat is ChatID on the channel bus.MetaOriginChannel names.
 	// "cli" is an internal channel so no response should be sent.
 	msg := bus.InboundMessage{
 		Channel:  "system",
 		SenderID: "async:some_tool",
-		ChatID:   "cli:some-id",
+		ChatID:   "some-id",
+		Metadata: map[string]string{bus.MetaOriginChannel: "cli"},
 		Content:  "Task 'label' completed.\n\nResult:\ntool output",
 	}
 
-	got, err := al.processSystemMessage(context.Background(), msg)
+	got, err := al.processSystemMessage(context.Background(), msg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1777,7 +1777,7 @@ func TestProcessSystemMessage_WrongChannel(t *testing.T) {
 		Content: "should fail",
 	}
 
-	_, err := al.processSystemMessage(context.Background(), msg)
+	_, err := al.processSystemMessage(context.Background(), msg, nil)
 	if err == nil {
 		t.Fatal("expected error for non-system channel, got nil")
 	}
@@ -1798,36 +1798,36 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 			List: []config.AgentConfig{
-				{ID: "dawn", Name: "Dawn"},
-				{ID: "penny", Name: "Penny", Default: true},
+				{ID: "alice", Name: "Alice"},
+				{ID: "bob", Name: "Bob", Default: true},
 			},
 		},
 	}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Originator known: route to that agent (Dawn) in the carried session.
-	dawnSession := routing.BuildAgentMainSessionKey("dawn")
+	// Originator known: route to that agent (Alice) in the carried session.
+	aliceSession := routing.BuildAgentMainSessionKey("alice")
 	agent, sessionKey := al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:    "system",
-		SessionKey: dawnSession,
-		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		SessionKey: aliceSession,
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if agent == nil || agent.ID != "dawn" {
-		t.Fatalf("expected routing to dawn, got %v", agent)
+	if agent == nil || agent.ID != "alice" {
+		t.Fatalf("expected routing to alice, got %v", agent)
 	}
-	if sessionKey != dawnSession {
-		t.Errorf("session key = %q, want %q", sessionKey, dawnSession)
+	if sessionKey != aliceSession {
+		t.Errorf("session key = %q, want %q", sessionKey, aliceSession)
 	}
 
 	// Originator known but session_key absent: fall back to that agent's main session.
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:  "system",
-		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if agent == nil || agent.ID != "dawn" {
-		t.Fatalf("expected routing to dawn, got %v", agent)
+	if agent == nil || agent.ID != "alice" {
+		t.Fatalf("expected routing to alice, got %v", agent)
 	}
-	if want := routing.BuildAgentMainSessionKey("dawn"); sessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("alice"); sessionKey != want {
 		t.Errorf("session key = %q, want %q", sessionKey, want)
 	}
 
@@ -1835,28 +1835,29 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:    "system",
 		SessionKey: "slack:C9",
-		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "alice"},
 	})
-	if want := routing.BuildAgentMainSessionKey("dawn"); agent == nil || agent.ID != "dawn" || sessionKey != want {
-		t.Errorf("agent=%v session=%q, want dawn/%s", agent, sessionKey, want)
+	if want := routing.BuildAgentMainSessionKey("alice"); agent == nil || agent.ID != "alice" || sessionKey != want {
+		t.Errorf("agent=%v session=%q, want alice/%s", agent, sessionKey, want)
 	}
 
-	// No originator: fall back to the default agent (Penny) and its main session.
+	// No originator: fall back to the default agent (Bob) and its main session.
 	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{Channel: "system"})
-	if agent == nil || agent.ID != "penny" {
-		t.Fatalf("expected fallback to default (penny), got %v", agent)
+	if agent == nil || agent.ID != "bob" {
+		t.Fatalf("expected fallback to default (bob), got %v", agent)
 	}
-	if want := routing.BuildAgentMainSessionKey("penny"); sessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("bob"); sessionKey != want {
 		t.Errorf("session key = %q, want %q", sessionKey, want)
 	}
 
-	// Unknown originator: also falls back to the default agent.
+	// Unknown originator (a deleted temporary agent, say): dropped, never
+	// handed to the default agent.
 	agent, _ = al.resolveSystemMessageTarget(bus.InboundMessage{
 		Channel:  "system",
 		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "nobody"},
 	})
-	if agent == nil || agent.ID != "penny" {
-		t.Fatalf("expected fallback to default (penny) for unknown originator, got %v", agent)
+	if agent != nil {
+		t.Fatalf("a message for an unknown originator went to %s; want it dropped", agent.ID)
 	}
 }
 
@@ -1866,7 +1867,7 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -2058,7 +2059,7 @@ func TestExtractParentPeer(t *testing.T) {
 func TestProcessDirect_ReturnsResponse(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -2187,64 +2188,61 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 			List: []config.AgentConfig{
-				{ID: "dawn", Name: "Dawn"},
-				{ID: "penny", Name: "Penny", Default: true},
+				{ID: "alice", Name: "Alice"},
+				{ID: "bob", Name: "Bob", Default: true},
 			},
 		},
 		Bindings: []config.AgentBinding{
-			// Dawn owns a specific Slack channel.
-			{AgentID: "dawn", Match: config.BindingMatch{
+			// Alice owns a specific Slack channel.
+			{AgentID: "alice", Match: config.BindingMatch{
 				Channel: "slack",
-				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0AN5SN702V"},
+				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0223456789"},
 			}},
-			// Penny is the Slack-wide catch-all (binding.account match).
-			{AgentID: "penny", Match: config.BindingMatch{Channel: "slack"}},
+			// Bob is the Slack-wide catch-all (binding.account match).
+			{AgentID: "bob", Match: config.BindingMatch{Channel: "slack"}},
 		},
 	}
 
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
-	// Baseline: without preresolved metadata, a direct peer with ID "dawn"
-	// falls through to Penny's account-level binding. This is the old bug.
+	// Baseline: without preresolved metadata, a direct peer with ID "alice"
+	// falls through to Bob's account-level binding. This is the old bug.
 	msg := bus.InboundMessage{
 		Channel: "slack",
-		ChatID:  "C0AN5SN702V",
-		Peer:    bus.Peer{Kind: "direct", ID: "dawn"},
+		ChatID:  "C0223456789",
+		Peer:    bus.Peer{Kind: "direct", ID: "alice"},
 	}
 	route, agent, err := al.resolveMessageRoute(msg)
 	if err != nil {
 		t.Fatalf("baseline resolveMessageRoute: %v", err)
 	}
-	if agent.ID != "penny" {
-		t.Fatalf("baseline: expected fallthrough to penny (the bug), got %q", agent.ID)
+	if agent.ID != "bob" {
+		t.Fatalf("baseline: expected fallthrough to bob (the bug), got %q", agent.ID)
 	}
 	if route.MatchedBy != "binding.account" {
 		t.Errorf("baseline: expected matched_by=binding.account, got %q", route.MatchedBy)
 	}
 
-	// With preresolved metadata: must route to Dawn regardless of bindings.
-	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "dawn"}
+	// With preresolved metadata: must route to Alice regardless of bindings.
+	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "alice"}
 	route, agent, err = al.resolveMessageRoute(msg)
 	if err != nil {
 		t.Fatalf("preresolved resolveMessageRoute: %v", err)
 	}
-	if agent.ID != "dawn" {
-		t.Errorf("expected routing to dawn, got %q", agent.ID)
+	if agent.ID != "alice" {
+		t.Errorf("expected routing to alice, got %q", agent.ID)
 	}
 	if route.MatchedBy != "preresolved" {
 		t.Errorf("expected matched_by=preresolved, got %q", route.MatchedBy)
 	}
-	if want := routing.BuildAgentMainSessionKey("dawn"); route.SessionKey != want {
+	if want := routing.BuildAgentMainSessionKey("alice"); route.SessionKey != want {
 		t.Errorf("expected session key %q, got %q", want, route.SessionKey)
 	}
 
-	// Unknown preresolved ID falls back to binding resolution without error.
+	// Unknown preresolved ID: dropped, never handed to binding resolution.
 	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "nobody"}
 	_, agent, err = al.resolveMessageRoute(msg)
-	if err != nil {
-		t.Fatalf("unknown-preresolved resolveMessageRoute: %v", err)
-	}
-	if agent.ID != "penny" {
-		t.Errorf("expected fallback to binding resolution (penny), got %q", agent.ID)
+	if !errors.Is(err, errAgentGone) || agent != nil {
+		t.Fatalf("unknown-preresolved resolveMessageRoute = %v, %v; want errAgentGone and no agent", agent, err)
 	}
 }

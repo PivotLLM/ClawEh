@@ -11,7 +11,7 @@ import (
 func TestCollectSummary_Confined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectSummary(t.Context(), cfg, env)
-	if s.Notes[0] != "ClawEh runs as user eric, group staff on testbox." {
+	if s.Notes[0] != "ClawEh runs as user admin, group staff on testbox." {
 		t.Errorf("headline = %q", s.Notes[0])
 	}
 	tb := s.Tables[0]
@@ -21,7 +21,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 		t.Errorf("Files = %q\nwant %q", files[1], want)
 	}
 	_, shell := findRow(t, tb, "Shell")
-	if shell[1] != "shell_exec allowed for alice, bob; deny patterns on, remote commands off." {
+	if shell[1] != "Allow shell commands: Bob; deny patterns on." {
 		t.Errorf("Shell = %q", shell[1])
 	}
 	_, out := findRow(t, tb, "Outbound network")
@@ -31,7 +31,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 	contains(t, in[1], "WebUI/API on 127.0.0.1:18790 (HTTP), [::1]:18790 (HTTP), 0.0.0.0:18443 (HTTPS)", "inbound gateway")
 	contains(t, in[1], "MCP host on 127.0.0.1:5911/mcp", "inbound mcp host (auto_enable with a CLI provider)")
 	_, msg := findRow(t, tb, "Messaging")
-	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, Line, WebUI, Device" {
+	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, WebUI, Device" {
 		t.Errorf("Messaging = %q", msg[1])
 	}
 	_, dev := findRow(t, tb, "Devices")
@@ -52,8 +52,8 @@ func TestCollectSummary_Unconfined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.RestrictToWorkspace = false
 	_, files := findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Files")
-	want := "agent alice can read and write anything user eric can access; " +
-		"agent bob can read and write anything user eric can access (restrict_to_workspace is off)."
+	want := "agent alice can read and write anything user admin can access; " +
+		"agent bob can read and write anything user admin can access (restrict_to_workspace is off)."
 	if files[1] != want {
 		t.Errorf("Files = %q\nwant %q", files[1], want)
 	}
@@ -61,7 +61,7 @@ func TestCollectSummary_Unconfined(t *testing.T) {
 	cfg.Agents.Defaults.RestrictToWorkspace = true
 	cfg.Agents.Defaults.AllowReadOutsideWorkspace = true
 	_, files = findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Files")
-	if !strings.HasPrefix(files[1], "agent alice can read anything user eric can read; agent bob can read anything user eric can read;") {
+	if !strings.HasPrefix(files[1], "agent alice can read anything user admin can read; agent bob can read anything user admin can read;") {
 		t.Errorf("Files = %q", files[1])
 	}
 }
@@ -71,7 +71,7 @@ func TestCollectSummary_NoShell(t *testing.T) {
 	cfg.Agents.List[0].Tools = []string{"file_read"}
 	cfg.Agents.List[1].Tools = []string{"file_read"}
 	_, shell := findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Shell")
-	if shell[1] != "No enabled agent has shell_exec (deny patterns on, remote commands off)." {
+	if shell[1] != "No enabled agent is allowed shell commands." {
 		t.Errorf("Shell = %q", shell[1])
 	}
 }

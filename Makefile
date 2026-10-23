@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help require-golangci-lint require-govulncheck govulncheck test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt fmt-check lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all release-checksums release-sign sbom
+.PHONY: all build claw-auth install uninstall uninstall-all clean help require-golangci-lint require-govulncheck govulncheck test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt fmt-check lint fix deps update-deps check run frontend frontend-deps manual manual-deps manual-check frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all release-checksums release-sign sbom
 
 # Binary names
 BINARY_NAME=claw
@@ -176,12 +176,20 @@ FRONTEND_SOURCES=$(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/public 2>/dev/
 	$(FRONTEND_DIR)/tsconfig.app.json \
 	$(FRONTEND_DIR)/tsconfig.node.json
 
+# User manual (VitePress, its own pnpm project), embedded by web/backend/manual.go
+# and served at /manual/.
+MANUAL_DIR=manual
+MANUAL_NODE_MODULES=$(MANUAL_DIR)/node_modules
+MANUAL_EMBED_DIR=web/backend/manual
+MANUAL_INDEX=$(MANUAL_EMBED_DIR)/index.html
+MANUAL_SOURCES=$(shell find $(MANUAL_DIR) \( -path $(MANUAL_NODE_MODULES) -o -path $(MANUAL_DIR)/.vitepress/cache \) -prune -o -type f -print 2>/dev/null)
+
 # Default target
 ## all: the default — run the full test gate, then build (binaries only if tests pass).
 all: test build
 
 ## build: Build the claw and claw-auth binaries (frontend SPA embedded) for current platform.
-build: $(EMBED_INDEX) generate
+build: $(EMBED_INDEX) $(MANUAL_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@$(BUILD_ENV) $(GO) build $(BUILD_FLAGS) $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
@@ -214,6 +222,29 @@ $(FRONTEND_NODE_MODULES): $(FRONTEND_DIR)/package.json $(FRONTEND_DIR)/pnpm-lock
 $(EMBED_INDEX): $(FRONTEND_SOURCES) | $(FRONTEND_NODE_MODULES)
 	@echo "Building frontend SPA into $(EMBED_DIR)..."
 	@cd $(FRONTEND_DIR) && pnpm run build:backend
+
+## manual: Build the user manual into the Go embed source (web/backend/manual).
+manual: $(MANUAL_INDEX)
+
+## manual-deps: Install the manual's npm dependencies (VitePress).
+manual-deps: $(MANUAL_NODE_MODULES)
+
+$(MANUAL_NODE_MODULES): $(MANUAL_DIR)/package.json $(MANUAL_DIR)/pnpm-lock.yaml
+	@echo "Installing manual dependencies (pnpm install)..."
+	@cd $(MANUAL_DIR) && pnpm install
+	@touch $(MANUAL_NODE_MODULES)
+
+# A failed build removes index.html, so the next make retries instead of
+# embedding a partial manual.
+$(MANUAL_INDEX): $(MANUAL_SOURCES) | $(MANUAL_NODE_MODULES)
+	@echo "Building manual into $(MANUAL_EMBED_DIR)..."
+	@cd $(MANUAL_DIR) && pnpm run build || { rm -f $(CURDIR)/$(MANUAL_INDEX); exit 1; }
+
+## manual-check: Rebuild the manual from scratch for the test gate (a broken manual fails it). Does not install dependencies.
+manual-check:
+	@test -d $(MANUAL_NODE_MODULES) || { echo "ERROR: manual dependencies missing; run: make manual-deps (or pnpm install --frozen-lockfile in $(MANUAL_DIR))"; exit 1; }
+	@echo "Building manual into $(MANUAL_EMBED_DIR)..."
+	@cd $(MANUAL_DIR) && pnpm run build || { rm -f $(CURDIR)/$(MANUAL_INDEX); exit 1; }
 
 ## install: Build and install claw (runs 'claw install -y')
 install: build
@@ -253,21 +284,21 @@ generate:
 	@echo "Run generate complete"
 
 ## build-linux-arm: Build for Linux ARMv7 (e.g. Raspberry Pi Zero 2 W 32-bit)
-build-linux-arm: $(EMBED_INDEX) generate
+build-linux-arm: $(EMBED_INDEX) $(MANUAL_INDEX) generate
 	@echo "Building for linux/arm (GOARM=7)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm"
 
 ## build-linux-arm64: Build for Linux ARM64 (e.g. Raspberry Pi Zero 2 W 64-bit)
-build-linux-arm64: $(EMBED_INDEX) generate
+build-linux-arm64: $(EMBED_INDEX) $(MANUAL_INDEX) generate
 	@echo "Building for linux/arm64..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64"
 
 ## build-linux-mipsle: Build for Linux MIPS32 LE
-build-linux-mipsle: $(EMBED_INDEX) generate
+build-linux-mipsle: $(EMBED_INDEX) $(MANUAL_INDEX) generate
 	@echo "Building for linux/mipsle (softfloat)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
@@ -279,7 +310,7 @@ build-pi-zero: build-linux-arm build-linux-arm64
 	@echo "Pi Zero 2 W builds: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm (32-bit), $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 (64-bit)"
 
 ## build-all: Build claw for all platforms
-build-all: $(EMBED_INDEX) generate
+build-all: $(EMBED_INDEX) $(MANUAL_INDEX) generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
@@ -324,7 +355,7 @@ sbom:
 	@CGO_ENABLED=0 $(CYCLONEDX_GOMOD) app -json -licenses -output $(BUILD_DIR)/sbom.json .
 	@echo "Wrote $(BUILD_DIR)/sbom.json"
 
-## clean: Remove all build artifacts (Go binaries, frontend dist, embedded SPA)
+## clean: Remove all build artifacts (Go binaries, frontend dist, embedded SPA, built manual)
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
@@ -332,6 +363,9 @@ clean:
 	@mkdir -p $(EMBED_DIR)
 	@touch $(EMBED_DIR)/.gitkeep
 	@rm -rf $(FRONTEND_DIR)/dist
+	@rm -rf $(MANUAL_EMBED_DIR) $(MANUAL_DIR)/.vitepress/cache
+	@mkdir -p $(MANUAL_EMBED_DIR)
+	@touch $(MANUAL_EMBED_DIR)/.gitkeep
 	@echo "Clean complete (node_modules left in place)"
 
 ## vet: Run go vet for static analysis
@@ -343,8 +377,9 @@ vet: generate
 ## probe-driven MCP integration suite. Exits non-zero on any failure and ends
 ## with a pass/fail summary. Needs probe on PATH (test.sh names it if missing).
 ## test-maestro-host and check-webui stay separate: they bind ports or need a
-## running instance.
-test: generate fmt-check vet lint govulncheck
+## running instance. The manual is built first, so a broken manual fails the
+## gate and the Go test of /manual/ has it to serve.
+test: manual-check generate fmt-check vet lint govulncheck
 	@./test.sh
 
 ## govulncheck: Fail on a known vulnerability reachable from the code (golang.org/x/vuln, pinned; needs network for the vulnerability database).

@@ -85,7 +85,7 @@ func ServiceNames(c *config.Config) []string {
 	if eng == nil {
 		return nil
 	}
-	names := eng.GetServiceNames()
+	names := eng.ServiceNames()
 	sort.Strings(names)
 	return names
 }

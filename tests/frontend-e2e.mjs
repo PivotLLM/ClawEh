@@ -13,7 +13,9 @@
 // dev instance with `claw admin` and export CLAW_E2E_USER / CLAW_E2E_PASSWORD.
 //
 // Requires Playwright and a Chromium build. Both come with the playwright-mcp
-// install; override with PLAYWRIGHT_MODULE / CHROME_PATH if they live elsewhere.
+// install: Playwright is looked up in the npx cache under the home directory
+// (~/.npm/_npx/*/node_modules/playwright). Set PLAYWRIGHT_MODULE / CHROME_PATH
+// if they live elsewhere.
 //
 // SAFETY: this mutates configuration, so point it at a DEV instance. Every
 // mutation is reverted — the agent it creates is deleted, every field it edits
@@ -22,7 +24,8 @@
 // by another self-signed one. It refuses to run against the production port
 // (18790) unless --allow-prod is passed.
 
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
+import { homedir } from "node:os"
 
 const args = process.argv.slice(2)
 const arg = (name, fallback) => {
@@ -43,12 +46,33 @@ if (BASE.includes(":18790") && !args.includes("--allow-prod")) {
   process.exit(2)
 }
 
-const PW =
-  process.env.PLAYWRIGHT_MODULE ??
-  "/home/ai/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs"
+// findPlaywright returns the first Playwright module in the npx cache under
+// the home directory, or "" when there is none.
+const findPlaywright = () => {
+  const cache = `${homedir()}/.npm/_npx`
+  let entries = []
+  try {
+    entries = readdirSync(cache)
+  } catch {
+    return ""
+  }
+  for (const dir of entries) {
+    const mod = `${cache}/${dir}/node_modules/playwright/index.mjs`
+    if (existsSync(mod)) return mod
+  }
+  return ""
+}
+const PW = process.env.PLAYWRIGHT_MODULE || findPlaywright()
+if (!PW || !existsSync(PW)) {
+  console.error(
+    `Playwright not found${PW ? ` at ${PW}` : " in ~/.npm/_npx"}. ` +
+      "Set PLAYWRIGHT_MODULE to its index.mjs (for example .../node_modules/playwright/index.mjs).",
+  )
+  process.exit(2)
+}
 const CHROME =
   process.env.CHROME_PATH ??
-  "/home/eric/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome"
+  `${homedir()}/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome`
 
 if (!existsSync(CHROME)) {
   console.error(`Chromium not found at ${CHROME}. Set CHROME_PATH.`)
@@ -185,7 +209,7 @@ async function config() {
   return json
 }
 
-// Groups F, G and R write configuration, which the gateway picks up on a debounced
+// Groups F, G, R and T write configuration, which the gateway picks up on a debounced
 // reload (~15s later) that briefly stops the channels. Anything loading a page
 // during that window sees the chat WebSocket handshake fail with 503 and logs a
 // console error — a real effect of a reload, not a defect, but it makes later
@@ -230,8 +254,8 @@ const ROUTES = [
   "/agents",
   "/audit",
   "/agent/bindings",
-  "/agent/tools",
   "/agent/skills",
+  "/agent/cards",
   "/channels",
   "/config",
   "/config/raw",
@@ -551,12 +575,6 @@ if (useGroup("D", "i18n integrity")) {
     assert(leaked.length === 0, `untranslated keys — ${leaked.join(" | ")}`)
     return `${ROUTES.length} routes clean`
   })
-  await check(2, "tool categories all have labels", async () => {
-    const { close, text } = await open("/agent/tools")
-    const body = await text()
-    await close()
-    assert(!/categories\./.test(body), "a raw category key is rendered")
-  })
 }
 
 // E. Chat and the WebSocket session
@@ -655,11 +673,10 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     await close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
-    // The toggle must persist an explicit tools list (a default-only agent has
-    // none), and time_now must have flipped.
-    assert(Array.isArray(a?.tools), `tools = ${JSON.stringify(a?.tools)}; expected an explicit list after the toggle`)
-    const has = a.tools.includes("time_now")
-    assert(has === !was, `tools = ${JSON.stringify(a.tools)}; time_now should be ${was ? "removed" : "added"}`)
+    // time_now must have flipped; an absent tools list means none.
+    const tools = a?.tools ?? []
+    const has = tools.includes("time_now")
+    assert(has === !was, `tools = ${JSON.stringify(a?.tools)}; time_now should be ${was ? "removed" : "added"}`)
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the second save")
   })
 
@@ -717,7 +734,34 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
   })
 
-  await check(6, "returning to the Agents page through the sidebar shows the agents", async () => {
+  await check(6, "Allow shell commands adds and removes the explicit shell_exec entry", async () => {
+    if (!created) return "skipped, never created"
+    const before = (await config()).agents.list.find((x) => x.id === PROBE)
+    const others = (before?.tools ?? []).filter((t) => t !== "shell_exec")
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
+    const box = page.getByRole("switch", { name: "Allow shell commands", exact: true }).first()
+    assert((await box.count()) > 0, 'no "Allow shell commands" switch on the card')
+    assert(!(await box.isChecked()), '"Allow shell commands" already on for a new agent')
+    await box.click()
+    await page.waitForTimeout(2000)
+    let a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert((a?.tools ?? []).includes("shell_exec"), `tools = ${JSON.stringify(a?.tools)}; expected shell_exec`)
+    assert(
+      JSON.stringify(a.tools.filter((t) => t !== "shell_exec")) === JSON.stringify(others),
+      `tools = ${JSON.stringify(a.tools)}; the other entries changed (were ${JSON.stringify(others)})`,
+    )
+    await box.click()
+    await page.waitForTimeout(2000)
+    await close()
+    a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert(!(a?.tools ?? []).includes("shell_exec"), `tools = ${JSON.stringify(a?.tools)}; shell_exec should be gone`)
+    assert(JSON.stringify(a?.tools ?? []) === JSON.stringify(others), `tools = ${JSON.stringify(a?.tools)}; expected ${JSON.stringify(others)}`)
+    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the shell toggle")
+  })
+
+  await check(7, "returning to the Agents page through the sidebar shows the agents", async () => {
     // A return visit mounts the page with its query already cached. It used to
     // seed the editable list only when a new fetch landed, so the cached list
     // never showed and the page said "No agents yet" until a browser reload.
@@ -741,7 +785,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(shown > 0, `the rail does not list "${rail[0]}" on a return visit`)
   })
 
-  await check(7, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
+  await check(8, "a model whose bypass flag is ignored is flagged on the agent card", async () => {
     if (!created) return "skipped, never created"
     const clis = (await api("/api/system/clis")).json ?? []
     const c = await config()
@@ -766,7 +810,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(link > 0, 'the warning has no "Allow it" link to the Providers page')
   })
 
-  await check(8, "a long dropdown keeps its size and scroll position while scrolling", async () => {
+  await check(9, "a long dropdown keeps its size and scroll position while scrolling", async () => {
     // Radix Select's item-aligned mode grows the popup and rewrites the scroll
     // position on every scroll event; on a phone the list flickers and snaps
     // back to the top on release. The wheel goes through the same code, so this
@@ -814,12 +858,79 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(9, "delete the agent and confirm it is gone", async () => {
+  await check(10, "Cancel in the delete confirmation keeps the agent", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    page.on("dialog", (d) => d.accept())
+    await page.getByRole("button", { name: new RegExp(`Delete agent ${PROBE}`, "i") }).click()
+    const dialog = page.getByRole("alertdialog")
+    await dialog.waitFor({ timeout: 5000 })
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden", timeout: 5000 })
+    // Long enough for any save the dialog might have started to land.
+    await page.waitForTimeout(1500)
+    const rail = await page.getByRole("button", { name: PROBE, exact: true }).count()
+    await close()
+    const a = (await config()).agents.list.find((x) => x.id === PROBE)
+    assert(a, `${PROBE} is gone from the config after Cancel`)
+    assert(a.temperature === 0.77, `temperature = ${a.temperature} after Cancel; the agent changed`)
+    assert(rail > 0, `${PROBE} is gone from the rail after Cancel`)
+  })
+
+  await check(11, "May message: ticking an agent saves subagents.allow_agents and keeps subagents.models", async () => {
+    const ID = "e2e-msg"
+    const before = await config()
+    const others = (before.agents.list ?? []).filter((a) => a.id !== ID && a.id !== PROBE)
+    if (others.length === 0) return "skipped, no other agent to tick"
+    const model = (before.models ?? []).find((m) => m.enabled)?.model_name
+    if (!model) return "skipped, no enabled model for subagents.models"
+    const target = others[0]
+    const label = target.name || target.id
+    const subagents = { models: [model] }
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [], subagents }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      const box = page.getByRole("checkbox", { name: label, exact: true }).first()
+      assert((await box.count()) > 0, `no "${label}" box under May message`)
+      assert((await box.getAttribute("aria-checked")) === "false", `"${label}" already ticked on a new agent`)
+      await box.click()
+      await page.waitForTimeout(2000)
+      await close()
+      const a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(
+        JSON.stringify(a?.subagents?.allow_agents) === JSON.stringify([target.id]),
+        `subagents.allow_agents = ${JSON.stringify(a?.subagents?.allow_agents)}; expected ${JSON.stringify([target.id])}`,
+      )
+      assert(
+        JSON.stringify(a?.subagents?.models) === JSON.stringify(subagents.models),
+        `subagents.models = ${JSON.stringify(a?.subagents?.models)}; the save dropped it`,
+      )
+      return `${ID} may message ${target.id}`
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
+
+  await check(12, "delete the agent and confirm it is gone", async () => {
+    if (!created) return "skipped, never created"
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: PROBE, exact: true }).click()
+    await page.waitForTimeout(400)
     // By accessible name. It used to be an icon-only button with no name at
     // all, which meant a screen reader announced nothing and this step had to
     // guess at CSS classes — `[class*="destructive"]` matches every shadcn
@@ -827,6 +938,11 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const trash = page.getByRole("button", { name: new RegExp(`Delete agent ${PROBE}`, "i") })
     assert((await trash.count()) > 0, "no labelled delete control on the agent card")
     await trash.click()
+    // The trash button only opens the confirmation dialog; nothing is deleted
+    // until its Delete button is clicked.
+    const confirm = page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true })
+    await confirm.waitFor({ timeout: 5000 })
+    await confirm.click()
     await page.waitForTimeout(1500)
     await close()
     const c = await config()
@@ -1101,12 +1217,14 @@ if (useGroup("R", "Network page — listeners, HTTPS and certificate")) {
     for (const u of t.urls.http ?? []) assert(body.includes(u), `HTTP URL ${u} not listed: ${body}`)
     for (const u of t.urls.https ?? []) assert(body.includes(u), `HTTPS URL ${u} not listed: ${body}`)
     const http = t.urls.http ?? []
-    assert(marks === http.length, `${marks} warning marks for ${http.length} plain-HTTP network addresses`)
+    // Behind a proxy (TLS ends there) plain HTTP is not marked.
+    const want = t.behind_proxy ? 0 : http.length
+    assert(marks === want, `${marks} warning marks for ${http.length} plain-HTTP network addresses (behind proxy: ${!!t.behind_proxy})`)
     for (const u of [...http, ...(t.urls.https ?? [])]) {
       const host = new URL(u).hostname
       assert(!/^172\.(1[7-9]|2\d|3[01])\.0\.1$/.test(host), `Docker bridge address advertised: ${u}`)
     }
-    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked)`
+    return [t.urls.localhost, ...http, ...(t.urls.https ?? [])].join(" ") + ` (${marks} HTTP marked${t.behind_proxy ? ", behind proxy" : ""})`
   })
 
   await check(10, "changing the HTTPS port autosaves and shows the restart banner; then restore it", async () => {
@@ -1557,6 +1675,58 @@ if (useGroup("I", "Models and providers")) {
     await close()
     return seen.join(", ")
   })
+
+  await check(12, "a model whose Request timeout exceeds the Turn timeout links to it", async () => {
+    // The note sits at the model's Request timeout field and links to the
+    // System page field that decides. Read-only when the instance has such a
+    // model; otherwise a temporary one is added and removed again.
+    const listed = (await api("/api/models")).json ?? {}
+    const turn = listed.turn_timeout ?? 0
+    if (turn <= 0) return "skipped, the server reports no turn timeout"
+    let model = (listed.models ?? []).find((m) => (m.request_timeout ?? 0) > turn)
+    let origModels
+    if (!model) {
+      const c = await config()
+      origModels = c.models ?? []
+      const base = origModels[0]
+      if (!base) return "skipped, no model to clone"
+      const probe = { ...base, model_name: "zz-e2e-turn-timeout", enabled: false, request_timeout: turn + 60 }
+      const r = await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: [...origModels, probe] }) })
+      assert(r.status === 200, `adding the probe model = ${r.status}`)
+      model = probe
+    }
+    try {
+      const { close, page, problems } = await open("/models")
+      const card = page
+        .getByText(model.model_name, { exact: true })
+        .first()
+        .locator("xpath=ancestor::div[contains(@class,'group/card')][1]")
+      await card.getByTitle("Edit model").click()
+      // Request timeout is under the sheet's advanced options.
+      await page.getByRole("button", { name: "Advanced options" }).click()
+      const note = page.getByText(/Limited to .* by the/)
+      await note.waitFor({ timeout: 5000 })
+      await page.getByRole("link", { name: "Turn timeout", exact: true }).click()
+      await page.waitForURL(/\/system#turn-timeout$/, { timeout: 10000 })
+      const field = page.locator("#turn-timeout")
+      await field.waitFor({ timeout: 10000 })
+      await page.waitForTimeout(700)
+      const inView = await field.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
+      const value = await field.inputValue()
+      await close()
+      assert(problems.length === 0, `console errors: ${problems[0]}`)
+      assert(inView, "the Turn timeout field is not scrolled into view")
+      assert(value === String(turn), `the Turn timeout field shows ${value}, the server ${turn}`)
+      return `${model.model_name}: ${model.request_timeout}s > ${turn}s${origModels ? " (temporary model)" : ""}`
+    } finally {
+      if (origModels) {
+        await api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: origModels }) })
+      }
+    }
+  })
 }
 
 // J. Devices — the store-open regression
@@ -1695,7 +1865,8 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     // Before any click. The page used to seed its rows from an empty list when
     // the query was already cached, said nothing was configured, and the first
     // "Add backend" then saved that empty list over the real configuration.
-    const stt = (await api("/api/voice/stt")).json?.stt ?? []
+    const voice = (await api("/api/voice/stt")).json ?? {}
+    const stt = voice.stt ?? []
     const { close, page, problems } = await open("/voice")
     await page.getByText("Transcription backends").waitFor({ timeout: 10000 })
     const selects = page.locator("select[id^=stt-provider-]")
@@ -1704,6 +1875,15 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     }
     const rows = await selects.count()
     const providers = rows ? await selects.evaluateAll((els) => els.map((e) => e.value)) : []
+    // The label each row carries: Primary, Fallback, Not used, or none.
+    const labels = rows
+      ? await selects.evaluateAll((els) =>
+          els.map((e) => {
+            const text = e.closest("div.rounded-md.border")?.textContent ?? ""
+            return /Not used/.test(text) ? "Not used" : /Primary/.test(text) ? "Primary" : /Fallback/.test(text) ? "Fallback" : ""
+          }),
+        )
+      : []
     const empty = await page.getByText(/No transcription backends configured/).count()
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
@@ -1712,7 +1892,23 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     for (let i = 0; i < stt.length; i++) {
       assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
     }
-    return rows ? providers.join(", ") : "none configured — empty state shown"
+    // Enabled backends are tried in order: the first usable one is Primary,
+    // the others Fallback; one with no preset and no endpoint or model is
+    // Not used; a disabled one carries no label.
+    const presets = voice.presets ?? []
+    let primarySeen = false
+    for (let i = 0; i < stt.length; i++) {
+      const b = stt[i]
+      const usable = presets.some((p) => p.provider === b.provider) || (b.base_url?.trim() && b.model?.trim())
+      let want = ""
+      if (b.enabled && !usable) want = "Not used"
+      else if (b.enabled) {
+        want = primarySeen ? "Fallback" : "Primary"
+        primarySeen = true
+      }
+      assert(labels[i] === want, `row ${i} (${b.provider}) is labelled "${labels[i]}", expected "${want}"`)
+    }
+    return rows ? stt.map((b, i) => `${providers[i]} ${labels[i] || "disabled"}`).join(", ") : "none configured — empty state shown"
   })
 
   await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {
@@ -2397,6 +2593,149 @@ if (useGroup("M", "API surface (curl-equivalent)")) {
     )
     assert(leaked.length === 0, `unmasked credential in /api/config: ${leaked[0]}`)
   })
+}
+
+// ------------------------------------------------------- character cards ---
+
+if (useGroup("T", "Character cards")) {
+  const CARD = "e2e-card"
+  const AGENT = "e2e-card-agent"
+  const cardJSON = JSON.stringify({
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: { name: "E2E Card", description: "A probe card.", tags: [] },
+  })
+  const cards = async () => (await api("/api/cards")).json?.cards ?? []
+  const agentOf = async () => ((await config()).agents.list ?? []).find((a) => a.id === AGENT)
+  const saveAgents = (list) =>
+    api("/api/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agents: { list } }) })
+  const auditHas = async (kind) => {
+    const { json } = await api(`/api/audit?kind=${kind}&limit=20`)
+    return (json?.events ?? []).some((e) => e.summary === CARD)
+  }
+  // Open the Character card selector of AGENT on /agents and pick an option.
+  const pickCard = async (optionText) => {
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: AGENT, exact: true }).click()
+    await page.waitForTimeout(400)
+    await page.locator('button[role=combobox][aria-label="Character card"]').click()
+    await page.locator(`[role=option]:has-text("${optionText}")`).first().click()
+    await page.waitForTimeout(2000)
+    await close()
+  }
+
+  await check(1, "the sidebar links to the Character cards page under Agents", async () => {
+    const { close, page, problems } = await open("/agents")
+    let link = page.locator('a[href="/agent/cards"]')
+    if ((await link.count()) === 0) {
+      await page.getByRole("button", { name: "Agents", exact: true }).first().click()
+      await page.waitForTimeout(400)
+      link = page.locator('a[href="/agent/cards"]')
+    }
+    assert((await link.count()) > 0, "no Character cards entry in the sidebar")
+    await link.first().click()
+    await page.waitForURL(/\/agent\/cards$/, { timeout: 10000 })
+    await page.waitForTimeout(800)
+    const path = new URL(page.url()).pathname
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(path === "/agent/cards", `clicking Character cards went to ${path}`)
+  })
+
+  await check(2, "import a V3 card through the dialog", async () => {
+    const { close, page, problems } = await open("/agent/cards")
+    await page.getByRole("button", { name: "Import", exact: true }).first().click()
+    const dialog = page.getByRole("alertdialog")
+    await dialog.waitFor({ timeout: 5000 })
+    await page.locator("#card-import-file").setInputFiles({
+      name: `${CARD}.json`,
+      mimeType: "application/json",
+      buffer: Buffer.from(cardJSON),
+    })
+    await page.waitForTimeout(300)
+    const id = await page.locator("#card-import-id").inputValue()
+    assert(id === CARD, `the id field was prefilled with ${JSON.stringify(id)}, want ${CARD} (from the file name)`)
+    await dialog.getByRole("button", { name: "Import", exact: true }).click()
+    await page.waitForTimeout(1500)
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    assert((await row.count()) === 1, "the imported card is not listed")
+    assert((await row.innerText()).includes("E2E Card"), "the row does not show the card's name")
+    await close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const c = (await cards()).find((x) => x.id === CARD)
+    assert(c, `${CARD} not in GET /api/cards`)
+    assert(Array.isArray(c.attached_to) && c.attached_to.length === 0, `attached_to = ${JSON.stringify(c.attached_to)}`)
+    assert(await auditHas("card_import"), "no card_import audit event for the import")
+  })
+
+  await check(3, "attach the card to an agent from the Agents page", async () => {
+    const before = await config()
+    const r = await saveAgents([...(before.agents.list ?? []), { id: AGENT, name: AGENT, tools: [] }])
+    assert(r.status === 200, `creating ${AGENT} = ${r.status}: ${r.text}`)
+    await pickCard("E2E Card")
+    const a = await agentOf()
+    assert(a?.character_card === CARD, `character_card = ${JSON.stringify(a?.character_card)}, want ${CARD}`)
+    const c = (await cards()).find((x) => x.id === CARD)
+    assert(c?.attached_to.includes(AGENT), `attached_to = ${JSON.stringify(c?.attached_to)} lacks ${AGENT}`)
+  })
+
+  await check(4, "deleting a card an agent uses is refused with the server's sentence", async () => {
+    const { close, page } = await open("/agent/cards")
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    await row.getByRole("button", { name: "Delete", exact: true }).click()
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+    const want = `Card "${CARD}" is attached to agent ${AGENT}; detach it first.`
+    await page.getByText(want).first().waitFor({ timeout: 5000 })
+    await page.waitForTimeout(500)
+    const still = await page.locator("[data-testid=card-row]").filter({ hasText: CARD }).count()
+    await close()
+    assert(still === 1, "the attached card disappeared from the list")
+    assert((await cards()).some((x) => x.id === CARD), "the attached card was deleted")
+  })
+
+  await check(5, "detach the card, then delete it", async () => {
+    await pickCard("None")
+    const a = await agentOf()
+    assert(a && a.character_card === undefined, `character_card = ${JSON.stringify(a?.character_card)}, want absent`)
+    const { close, page } = await open("/agent/cards")
+    const row = page.locator("[data-testid=card-row]").filter({ hasText: CARD })
+    await row.getByRole("button", { name: "Delete", exact: true }).click()
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+    await page.waitForTimeout(1500)
+    const left = await page.locator("[data-testid=card-row]").filter({ hasText: CARD }).count()
+    await close()
+    assert(left === 0, "the detached card is still listed after Delete")
+    assert(!(await cards()).some((x) => x.id === CARD), `${CARD} still in GET /api/cards`)
+    assert(await auditHas("card_delete"), "no card_delete audit event for the delete")
+  })
+
+  await check(6, "Allow character card tools writes and clears ccv3", async () => {
+    const before = await agentOf()
+    assert(before, `${AGENT} is gone`)
+    const toggle = async () => {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: AGENT, exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("switch", { name: "Allow character card tools", exact: true }).click()
+      await page.waitForTimeout(2000)
+      await close()
+    }
+    await toggle()
+    let a = await agentOf()
+    assert(a?.ccv3 === true, `ccv3 = ${JSON.stringify(a?.ccv3)} after turning it on`)
+    assert(a.name === before.name && JSON.stringify(a.tools) === JSON.stringify(before.tools), "other fields changed with the toggle")
+    await toggle()
+    a = await agentOf()
+    assert(a && a.ccv3 === undefined, `ccv3 = ${JSON.stringify(a?.ccv3)} after turning it off, want absent`)
+  })
+
+  // Leave nothing behind, whatever the checks above reached.
+  if ((await cards()).some((x) => x.id === CARD)) {
+    await saveAgents(((await config()).agents.list ?? []).filter((a) => a.id !== AGENT))
+    await api(`/api/cards/${CARD}`, { method: "DELETE" })
+  } else {
+    await saveAgents(((await config()).agents.list ?? []).filter((a) => a.id !== AGENT))
+  }
 }
 
 // ----------------------------------------------------------------- report ---

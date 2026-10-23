@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // TestRun_RoutesContentToFileWithCallbackBlock verifies the user-facing result is
@@ -20,13 +19,13 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:     ws,
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, error) {
-			return &global.SyncResult{Content: "SENSITIVE WORKER OUTPUT", Iterations: 2}, nil
+		CallerAgentID: "alice",
+		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, func(), error) {
+			return &global.SyncResult{Content: "SENSITIVE WORKER OUTPUT", Iterations: 2}, func() {}, nil
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "", nil)
+	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -62,46 +61,50 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 	}
 }
 
-// TestRun_UsesRunFullWithSubagentSession verifies the wait-mode spawn routes
-// through the injected full-pipeline runner with an isolated sub-agent session
-// (self-spawn → owner id) and passes the model through.
-func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
+// TestRun_UsesRunFull verifies the wait-mode spawn routes through the injected
+// full-pipeline runner (self-spawn → owner id), passes the task and model
+// through, and releases the worker once its result is recorded.
+func TestRun_UsesRunFull(t *testing.T) {
 	var (
 		mu        sync.Mutex
 		gotAgent  string
-		gotKey    string
 		gotTask   string
 		gotModel  string
 		callCount int
+		released  int
 	)
+	ws := t.TempDir()
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Workspace:     t.TempDir(),
+		Workspace:     ws,
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, agentID, sessionKey, task, model string, _ []string) (*global.SyncResult, error) {
+		CallerAgentID: "alice",
+		RunFull: func(_ context.Context, agentID, task, model, _ string, _ []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()
 			callCount++
-			gotAgent, gotKey, gotTask, gotModel = agentID, sessionKey, task, model
-			return &global.SyncResult{Content: "chapter drafted", Iterations: 3}, nil
+			gotAgent, gotTask, gotModel = agentID, task, model
+			return &global.SyncResult{Content: "chapter drafted", Iterations: 3}, func() {
+				// The result file is written before the worker is released.
+				if recs := listStatusRecords(tasksDirFor(ws)); len(recs) != 1 || recs[0].Status != StatusDone {
+					t.Errorf("worker released before its result was recorded: %+v", recs)
+				}
+				released++
+			}, nil
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro", nil)
+	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if callCount != 1 {
 		t.Fatalf("runFull called %d times, want 1", callCount)
 	}
-	if gotAgent != "penny" {
-		t.Errorf("self-spawn should target owner 'penny', got %q", gotAgent)
+	if gotAgent != "alice" {
+		t.Errorf("self-spawn should target owner 'alice', got %q", gotAgent)
 	}
-	if !routing.IsSubagentSessionKey(gotKey) {
-		t.Errorf("session %q should be a sub-agent session", gotKey)
-	}
-	if !strings.Contains(gotKey, "penny") {
-		t.Errorf("session %q should be scoped to the target agent", gotKey)
+	if released != 1 {
+		t.Errorf("worker released %d times, want 1", released)
 	}
 	if gotTask != "write chapter 4" || gotModel != "Pro" {
 		t.Errorf("task/model not passed through: %q / %q", gotTask, gotModel)
@@ -133,17 +136,17 @@ func TestRun_PassesMediaToRunFull(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
-		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (*global.SyncResult, error) {
+		CallerAgentID: "alice",
+		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (*global.SyncResult, func(), error) {
 			mu.Lock()
 			defer mu.Unlock()
 			gotMedia = media
-			return &global.SyncResult{Content: "looked at it", Iterations: 1}, nil
+			return &global.SyncResult{Content: "looked at it", Iterations: 1}, func() {}, nil
 		},
 	})
 
 	refs := []string{"media://11111111-1111-1111-1111-111111111111"}
-	if _, err := mgr.Run(context.Background(), "describe the image", "img", "", "cli", "direct", "", refs); err != nil {
+	if _, err := mgr.Run(context.Background(), "describe the image", "img", "", "cli", "direct", "", "", refs); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	mu.Lock()

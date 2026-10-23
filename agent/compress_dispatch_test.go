@@ -150,7 +150,7 @@ func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 }
 
 // TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary is the
-// regression test for the wendy compress-routing defect: when no
+// regression test for a compress-routing defect: when no
 // compress_model is configured, the compression LLM client must be built
 // against the agent's primary model via the per-model dispatcher, not the
 // shared agent.Provider. Before this fix, an agent with

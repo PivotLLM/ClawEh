@@ -24,9 +24,33 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		// Built afresh on every config reload, so a changed list applies then.
+		// Rebuilt by a config reload that changes any of factoryInputs, so a
+		// changed list applies then.
 		dc.server.SetLockoutExempt(exempt)
 		dc.SetTrustedProxies(trusted)
 		return dc, nil
 	})
+	channels.RegisterFactoryInputs("device", factoryInputs)
+}
+
+// factoryInputs is everything the device factory above reads. Keep the two in
+// step: a value read there but missing here is not applied by a reload.
+func factoryInputs(cfg *config.Config) any {
+	return struct {
+		Device            config.DeviceChannelConfig
+		DataDir           string
+		LogMessageContent bool
+		ExternalURL       string
+		LockoutExempt     []string
+		TrustedProxies    []string
+		CertificateNames  []string
+	}{
+		Device:            cfg.Channels.Device,
+		DataDir:           cfg.DataDir(),
+		LogMessageContent: cfg.Logging.LogMessageContent,
+		ExternalURL:       cfg.Gateway.ExternalURL,
+		LockoutExempt:     cfg.Gateway.LockoutExempt,
+		TrustedProxies:    cfg.Gateway.TrustedProxies,
+		CertificateNames:  tlscert.NamesForConfig(cfg),
+	}
 }

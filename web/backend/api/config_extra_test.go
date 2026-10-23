@@ -346,19 +346,19 @@ func TestValidateConfig_SurfacesCIDRErrors(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_SurfacesLockoutExemptErrors checks that a WebUI save
-// with a bad gateway.lockout_exempt entry is refused.
-func TestValidateConfig_SurfacesLockoutExemptErrors(t *testing.T) {
-	cfg := validConfigForValidation()
-	cfg.Gateway.LockoutExempt = []string{"192.0.2.1", "10.0.0.0/8", "not-an-ip"}
-
-	errs := validateConfig(cfg)
-	if !anyContains(errs, "gateway.lockout_exempt") {
-		t.Fatalf("errs = %v, want an error naming gateway.lockout_exempt", errs)
+// TestPatchConfig_RefusesLockoutExemptErrors checks that a WebUI save with a
+// bad gateway.lockout_exempt entry is refused, naming the setting.
+func TestPatchConfig_RefusesLockoutExemptErrors(t *testing.T) {
+	configPath := setupTestEnv(t)
+	rec := serveSave(t, configPath, http.MethodPatch, "/api/config",
+		`{"gateway":{"lockout_exempt":["192.0.2.1","10.0.0.0/8","not-an-ip"]}}`)
+	if rec.Code != http.StatusBadRequest || !anyContains(responseErrors(t, rec), "gateway.lockout_exempt") {
+		t.Fatalf("status %d, body %s: want a refusal naming gateway.lockout_exempt", rec.Code, rec.Body.String())
 	}
-	cfg.Gateway.LockoutExempt = cfg.Gateway.LockoutExempt[:2]
-	if errs := validateConfig(cfg); anyContains(errs, "gateway.lockout_exempt") {
-		t.Fatalf("valid list rejected: %v", errs)
+	rec = serveSave(t, configPath, http.MethodPatch, "/api/config",
+		`{"gateway":{"lockout_exempt":["192.0.2.1","10.0.0.0/8"]}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid list refused: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

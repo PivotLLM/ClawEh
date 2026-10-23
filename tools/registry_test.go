@@ -419,3 +419,14 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 		t.Error("expected tools to be registered after concurrent access")
 	}
 }
+
+// A call the agent's allowlist denies is an expected refusal.
+func TestToolRegistry_AllowlistDenialIsExpectedRefusal(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(newMockTool("echo", "echoes input"))
+	ctx := WithToolAllowChecker(context.Background(), mockAllowChecker{})
+	res := r.Execute(ctx, "echo", nil)
+	if !res.IsError || !IsExpectedRefusal(res.Err) {
+		t.Fatalf("denied call = %+v, want an expected refusal", res)
+	}
+}

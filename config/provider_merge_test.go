@@ -48,9 +48,9 @@ func TestLoadConfig_DeletingAProviderDoesNotAlterTheOthers(t *testing.T) {
 	}
 }
 
-// The flags are the part that used to leak, so name them: Groq's
-// no_parallel_tool_calls and OpenRouter Strict's strict_compat belong to those
-// two providers and to nothing else.
+// The flags are the part that used to leak, so check them by name: each
+// provider loads with exactly the strict_compat, no_parallel_tool_calls and
+// require_reasoning_content it was saved with.
 func TestLoadConfig_ProviderFlagsDoNotLeakToNeighbours(t *testing.T) {
 	cfg := DefaultConfig()
 	var kept []Provider
@@ -75,12 +75,20 @@ func TestLoadConfig_ProviderFlagsDoNotLeakToNeighbours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	saved := make(map[string]Provider, len(kept))
+	for _, p := range kept {
+		saved[p.Name] = p
+	}
 	for _, p := range back.Providers {
-		if p.StrictCompat && p.Name != "OpenRouter Strict" {
-			t.Errorf("%s gained strict_compat", p.Name)
+		want := saved[p.Name]
+		if p.StrictCompat != want.StrictCompat {
+			t.Errorf("%s: strict_compat = %v, saved %v", p.Name, p.StrictCompat, want.StrictCompat)
 		}
-		if p.NoParallelToolCalls && p.Name != "Groq" {
-			t.Errorf("%s gained no_parallel_tool_calls", p.Name)
+		if p.NoParallelToolCalls != want.NoParallelToolCalls {
+			t.Errorf("%s: no_parallel_tool_calls = %v, saved %v", p.Name, p.NoParallelToolCalls, want.NoParallelToolCalls)
+		}
+		if p.RequireReasoningContent != want.RequireReasoningContent {
+			t.Errorf("%s: require_reasoning_content = %v, saved %v", p.Name, p.RequireReasoningContent, want.RequireReasoningContent)
 		}
 	}
 }

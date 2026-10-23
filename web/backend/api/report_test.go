@@ -160,3 +160,63 @@ func TestReportEnvironment(t *testing.T) {
 		t.Errorf("environment did not carry the caller's values: %+v", env)
 	}
 }
+
+// TestReportAssessment_EncryptedMatrixRooms: rooms the Matrix channel saw to
+// be encrypted reach the Check Up table through the API, naming the room, and
+// the row is absent when there are none.
+func TestReportAssessment_EncryptedMatrixRooms(t *testing.T) {
+	configPath := setupTestEnv(t)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Channels.Matrix.Enabled = true
+	cfg.Channels.Matrix.Homeserver = "https://matrix.example.org"
+	cfg.Channels.Matrix.UserID = "@alice:example.org"
+	cfg.Channels.Matrix.AccessToken = "fixture-token"
+	if err = config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		rooms []string
+	}{
+		{"one encrypted room", []string{`"Bob's room" (!abc:example.org)`}},
+		{"none", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(configPath)
+			h.encryptedMatrixRooms = func() []string { return tt.rooms }
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux)
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/report/assessment", nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body: %s", rr.Code, rr.Body.String())
+			}
+			var got report.Assessment
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			var row *report.AssessmentRow
+			for i := range got.Assessment {
+				if got.Assessment[i].Item == "Encrypted Matrix rooms" {
+					row = &got.Assessment[i]
+				}
+			}
+			if len(tt.rooms) == 0 {
+				if row != nil {
+					t.Fatalf("unexpected row %+v", *row)
+				}
+				return
+			}
+			if row == nil {
+				t.Fatal("no Encrypted Matrix rooms row")
+			}
+			if !strings.Contains(row.Status, tt.rooms[0]) || !row.Action {
+				t.Errorf("row = %+v, want the room named and marked for action", *row)
+			}
+		})
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -93,7 +92,7 @@ func TestSharedStore_TokenSurvivesRebuild(t *testing.T) {
 	regs, rf := aliceRegistry()
 
 	srv1 := rebuild(t, nil, store, regs)
-	srv2 := rebuild(t, srv1, store, regs, WithSessionMode("unified"))
+	srv2 := rebuild(t, srv1, store, regs)
 
 	rec, ok := srv2.SessionTokens().Resolve(tok)
 	if !ok {
@@ -145,52 +144,17 @@ func TestSharedStore_ConsecutiveRebuilds(t *testing.T) {
 	}
 }
 
-// TestSharedStore_SessionModeOptionOrder: the session mode reaches the shared
-// store whichever order the options come in, and a server without the option
-// gets a fresh store in the unified default.
-func TestSharedStore_SessionModeOptionOrder(t *testing.T) {
+// TestSharedStore_NoStoreOption: a server built without WithSessionTokenStore
+// gets a store of its own.
+func TestSharedStore_NoStoreOption(t *testing.T) {
 	regs, _ := aliceRegistry()
-	orders := map[string]func(*SessionTokenStore) []Option{
-		"mode first": func(s *SessionTokenStore) []Option {
-			return []Option{WithSessionMode(string(routing.SessionScopePerUser)), WithSessionTokenStore(s), WithAgentRegistries(regs)}
-		},
-		"store first": func(s *SessionTokenStore) []Option {
-			return []Option{WithSessionTokenStore(s), WithSessionMode(string(routing.SessionScopePerUser)), WithAgentRegistries(regs)}
-		},
+	srv, err := New(WithAgentRegistries(regs))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, opts := range orders {
-		t.Run(name, func(t *testing.T) {
-			store := NewSessionTokenStore()
-			srv, err := New(opts(store)...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if srv.SessionTokens() != store {
-				t.Fatal("server did not adopt the store")
-			}
-			want := routing.ResolveServiceSessionKey(routing.SessionScopePerUser, "alice")
-			if want == routing.ResolveServiceSessionKey(routing.SessionScopeUnified, "alice") {
-				t.Fatal("precondition: per-user and unified must bind different service sessions")
-			}
-			if got := store.serviceSessionKey("alice"); got != want {
-				t.Fatalf("service session = %q, want %q (per-user)", got, want)
-			}
-		})
+	if srv.SessionTokens() == nil {
+		t.Fatal("server without the option must get a store of its own")
 	}
-
-	t.Run("no store option", func(t *testing.T) {
-		srv, err := New(WithAgentRegistries(regs))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if srv.SessionTokens() == nil {
-			t.Fatal("server without the option must get a store of its own")
-		}
-		want := routing.ResolveServiceSessionKey(routing.SessionScopeUnified, "alice")
-		if got := srv.SessionTokens().serviceSessionKey("alice"); got != want {
-			t.Fatalf("service session = %q, want %q (unified)", got, want)
-		}
-	})
 }
 
 // TestSharedStore_ServiceTokensAcrossRebuild: after a rebuild, the service-token

@@ -14,6 +14,8 @@ func TestParseThinkingLevel(t *testing.T) {
 		{"medium", "medium", ThinkingMedium},
 		{"high", "high", ThinkingHigh},
 		{"xhigh", "xhigh", ThinkingXHigh},
+		{"max", "max", ThinkingMax},
+		{"upper_MAX", " MAX ", ThinkingMax},
 		{"adaptive", "adaptive", ThinkingAdaptive},
 		{"unknown", "unknown", ThinkingOff},
 		// Case-insensitive and whitespace-tolerant

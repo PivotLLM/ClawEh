@@ -103,7 +103,6 @@ func TestCollectProviders_CLILaunchLine(t *testing.T) {
 
 func TestCollectProviders_ModelRoles(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	cfg.Agents.Defaults.ImageModel = "GPT"
 	cfg.Summarization.Models = []string{"GPT Old"}
 	s := collectProviders(t.Context(), cfg, env)
 	var roles Table
@@ -122,8 +121,4 @@ func TestCollectProviders_ModelRoles(t *testing.T) {
 	}
 	_, sum := findRow(t, roles, "Summarization")
 	contains(t, sum[1], "GPT Old", "summarization chain")
-	_, img := findRow(t, roles, "Image model")
-	if img[1] != "GPT" {
-		t.Errorf("image model = %q", img[1])
-	}
 }

@@ -6,6 +6,7 @@ package providers
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -25,14 +26,19 @@ type ProviderDispatcher struct {
 	mu    sync.RWMutex
 	cache map[string]LLMProvider
 	cfg   *config.Config
+	// bypassWarned lists the models whose ignored permission-bypass flags
+	// GetIsolated has logged for cfg, so a fresh agent's CLI calls (each
+	// building its own provider, several per turn) log them once.
+	bypassWarned map[string]bool
 }
 
 // NewProviderDispatcher creates a new dispatcher with the given config.
 func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
 	logBypassEnabled(cfg)
 	return &ProviderDispatcher{
-		cache: make(map[string]LLMProvider),
-		cfg:   cfg,
+		cache:        make(map[string]LLMProvider),
+		cfg:          cfg,
+		bypassWarned: make(map[string]bool),
 	}
 }
 
@@ -116,4 +122,86 @@ func (d *ProviderDispatcher) Flush(cfg *config.Config) {
 	defer d.mu.Unlock()
 	d.cache = make(map[string]LLMProvider)
 	d.cfg = cfg
+	d.bypassWarned = make(map[string]bool)
+}
+
+// withoutBypassArgs returns model's extra_args without the CLI's
+// permission-bypass flags. When prov's bypass_restrictions is off, the
+// flags are also logged, once per model and configuration (cfg).
+func (d *ProviderDispatcher) withoutBypassArgs(cfg *config.Config, model *config.ModelConfig, prov *config.Provider) []string {
+	agent := config.CLIAgentByProtocol(prov.Protocol)
+	var kept, stripped []string
+	for _, a := range model.ExtraArgs {
+		if slices.Contains(agent.BypassArgs, a) {
+			stripped = append(stripped, a)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	if len(stripped) == 0 || prov.BypassRestrictions {
+		return kept
+	}
+	d.mu.Lock()
+	warn := d.cfg == cfg && !d.bypassWarned[model.ModelName]
+	if warn {
+		d.bypassWarned[model.ModelName] = true
+	}
+	d.mu.Unlock()
+	if warn {
+		config.WarnIgnoredBypassArgs(agent.Protocol, stripped)
+	}
+	return kept
+}
+
+// GetIsolated returns the provider for alias as a fresh temporary agent uses
+// it. An HTTP model is the shared cached provider (Get). A CLI model is a
+// provider of its own, never cached: it runs in workspace (the agent's own
+// empty workspace, never the shared cli/ directory) and without the
+// provider's permission-bypass flags whatever bypass_restrictions says, since
+// a fresh agent has no tools to grant. It is not wrapped in the
+// declined-tools guard, whose message points at the bypass setting.
+func (d *ProviderDispatcher) GetIsolated(alias, workspace string) (LLMProvider, error) {
+	alias = strings.TrimSpace(alias)
+	if strings.TrimSpace(workspace) == "" {
+		return nil, errors.New("dispatcher: isolated provider needs a workspace")
+	}
+	d.mu.RLock()
+	cfgSnapshot := d.cfg
+	d.mu.RUnlock()
+	var matched *config.ModelConfig
+	for i := range cfgSnapshot.Models {
+		if cfgSnapshot.Models[i].Enabled && cfgSnapshot.Models[i].ModelName == alias {
+			cp := cfgSnapshot.Models[i]
+			matched = &cp
+			break
+		}
+	}
+	if matched == nil {
+		return nil, fmt.Errorf("dispatcher: no enabled models entry with model_name=%q", alias)
+	}
+	prov, err := cfgSnapshot.GetProvider(matched.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: resolving provider for %q: %w", alias, err)
+	}
+	if config.CLIAgentByProtocol(prov.Protocol) == nil {
+		return d.Get(alias)
+	}
+	isolated := *prov
+	isolated.BypassRestrictions = false
+	// The bypass flags are left out here, whatever the provider says, so
+	// building the provider does not log them on every call; the ones the
+	// provider's own setting ignores are logged once per configuration.
+	matched.ExtraArgs = d.withoutBypassArgs(cfgSnapshot, matched, prov)
+	matched.Workspace = workspace
+	if matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
+		matched.RequestTimeout = cfgSnapshot.Agents.Defaults.RequestTimeout
+	}
+	p, _, err := CreateProviderFromConfig(matched, &isolated)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: creating isolated provider for %q: %w", alias, err)
+	}
+	if g, ok := p.(*cliDeclinedGuard); ok {
+		p = g.LLMProvider
+	}
+	return p, nil
 }

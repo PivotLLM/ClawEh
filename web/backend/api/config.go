@@ -107,9 +107,6 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-	if execAllowRemoteOmitted(body) {
-		cfg.Tools.Exec.AllowRemote = config.DefaultConfig().Tools.Exec.AllowRemote
-	}
 
 	if !h.saveValidatedConfig(w, r, func(c *config.Config) { *c = cfg }) {
 		return
@@ -119,56 +116,38 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
-// saveValidatedConfig runs mutate on the live config under the store lock,
-// rejects the result with a validation_error response when validateConfig
-// finds fault, and saves it otherwise. It reports whether the save happened;
-// on false a response has been written.
+// saveValidatedConfig runs mutate on the live config under the store lock
+// and saves the result. validateConfig's findings are handed to the store as
+// a *config.ValidationError, which adds its own refusals (listeners, agent
+// ids, models, ...), so one validation_error response lists every problem.
+// It reports whether the save happened; on false a response has been
+// written.
 func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mutate func(*config.Config)) bool {
-	var errs []string
 	err := h.updateConfig(r, func(c *config.Config) error {
 		before := c.Gateway.Listeners()
+		// mutate may replace the whole struct with the request body, which
+		// carries no data directory: take what depends on it first.
+		cardsBefore, cardsDir := agentCards(c), c.CardsPath()
 		mutate(c)
-		errs = validateConfig(c)
+		errs := validateConfig(c)
 		if msg := validateCertificateChange(before, c.Gateway.Listeners()); msg != "" {
 			errs = append(errs, msg)
 		}
-		if len(errs) > 0 {
-			return errValidation
+		errs = append(errs, missingCardsIntroduced(cardsBefore, cardsDir, c)...)
+		if len(errs) == 0 {
+			return nil
 		}
-		return nil
+		refusals := make([]error, len(errs))
+		for i, msg := range errs {
+			refusals[i] = errors.New(msg)
+		}
+		return &config.ValidationError{Err: errors.Join(refusals...)}
 	})
-	switch {
-	case errors.Is(err, errValidation):
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		encodeJSON(w, map[string]any{
-			"status": "validation_error",
-			"errors": errs,
-		})
-		return false
-	case err != nil:
+	if err != nil {
 		writeUpdateError(w, err)
 		return false
 	}
 	return true
-}
-
-// errValidation marks an updateConfig callback that stopped on validateConfig
-// findings, which the caller reports in the validation_error shape.
-var errValidation = errors.New("config validation failed")
-
-func execAllowRemoteOmitted(body []byte) bool {
-	var raw struct {
-		Tools *struct {
-			Exec *struct {
-				AllowRemote *bool `json:"allow_remote"`
-			} `json:"exec"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return false
-	}
-	return raw.Tools == nil || raw.Tools.Exec == nil || raw.Tools.Exec.AllowRemote == nil
 }
 
 // handlePatchConfig partially updates the system configuration using JSON Merge Patch (RFC 7396).
@@ -263,22 +242,6 @@ func validateConfig(cfg *config.Config) []string {
 
 	// Validate agent bindings (default-channel constraints)
 	if err := cfg.ValidateBindings(); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Listener settings LoadConfig refuses (a port out of range, an unknown
-	// gateway.tls.mode, tls_port equal to port, a half-configured certificate,
-	// an off-box MCP host) must be refused here too, or a WebUI save could
-	// write a config the gateway then cannot start on.
-	if err := cfg.Gateway.Validate(); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := config.ValidateMCPHostListen(cfg.MCPHost.Listen); err != nil {
-		errs = append(errs, err.Error())
-	}
-	// A device gateway on a network address must not pair or admit devices
-	// without a secret; LoadConfig refuses the same.
-	if err := cfg.Channels.Device.ValidateExposure(); err != nil {
 		errs = append(errs, err.Error())
 	}
 

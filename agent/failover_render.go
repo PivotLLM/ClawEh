@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +71,7 @@ func renderTurnErrorText(turnCtx context.Context, budget time.Duration, err erro
 	if friendly := renderFailoverError(err); friendly != "" {
 		return friendly
 	}
-	return fmt.Sprintf("Error processing message: %v", err)
+	return "Error processing message: " + redactSecrets(err.Error())
 }
 
 // fallbackNotifier returns a providers.FallbackNotify that posts a short,
@@ -80,18 +83,21 @@ func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) 
 	if opts.Channel == "" || opts.Channel == "system" || opts.ChatID == "" {
 		return nil
 	}
-	// De-duplicate identical notices across the turn: a primary that fails over the
-	// same way on every tool iteration (e.g. a model that 400s each call) would
-	// otherwise repeat its heads-up per iteration. One notifier spans the turn (see
-	// runLLMIteration), so this memory suppresses the repeats.
+	// The user is told once per turn per model change: the models passed over
+	// and the one used instead. A primary that fails over on every tool
+	// iteration (a model that 400s each call, or one in cooldown, whose
+	// "retry in" time changes each step) would otherwise repeat its heads-up
+	// per iteration. One notifier spans the turn (see runLLMIteration), so this
+	// memory suppresses the repeats; a different change is still announced.
 	seen := make(map[string]bool)
 	return func(passed []providers.FallbackAttempt, next providers.FallbackCandidate) {
 		notice := formatFallbackNotice(passed, next)
-		if notice == "" || seen[notice] {
+		change := modelChange(passed, next)
+		if notice == "" || seen[change] {
 			return
 		}
-		seen[notice] = true
-		pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		seen[change] = true
+		pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 			Channel: opts.Channel,
@@ -102,6 +108,16 @@ func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) 
 				map[string]any{"channel": opts.Channel, "error": err.Error()})
 		}
 	}
+}
+
+// modelChange identifies a fallback by the models it passed over and the one
+// it uses instead, ignoring why and for how long, for fallbackNotifier.
+func modelChange(passed []providers.FallbackAttempt, next providers.FallbackCandidate) string {
+	names := make([]string, 0, len(passed)+1)
+	for _, a := range passed {
+		names = append(names, attemptName(a))
+	}
+	return strings.Join(append(names, candidateName(next)), "\x00")
 }
 
 // formatFallbackNotice builds the mid-chain heads-up for the candidates the
@@ -253,7 +269,71 @@ func attemptText(model string, err error, reason providers.FailoverReason) strin
 		}
 		return model + " error: " + declined.Error()
 	}
-	return attemptDescription(model, failoverStatus(err), reason)
+	text := attemptDescription(model, failoverStatus(err), reason)
+	if msg := providerMessage(err); msg != "" {
+		text += ": " + msg
+	}
+	return text
+}
+
+// maxProviderMessageRunes caps the provider's own message in a reply, which
+// must stay a short line in a chat.
+const maxProviderMessageRunes = 200
+
+// providerMessageRe finds a "message" string in an error body that is not
+// whole JSON (the provider's preview of the body may be cut short).
+var providerMessageRe = regexp.MustCompile(`"message"\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// providerMessage returns the one-line message a provider gave with a failed
+// request (the "message" of its JSON error body, e.g. Anthropic's
+// {"type":"error","error":{"message":"..."}}), with secret-looking text
+// redacted (redactSecrets) and trimmed to maxProviderMessageRunes, or "" when
+// the error carries none.
+func providerMessage(err error) string {
+	fe, ok := errors.AsType[*providers.FailoverError](err)
+	if !ok || fe == nil || fe.Wrapped == nil {
+		return ""
+	}
+	raw := fe.Wrapped.Error()
+	start := strings.IndexByte(raw, '{')
+	if start < 0 {
+		return ""
+	}
+	msg := jsonErrorMessage(raw[start:])
+	if msg == "" {
+		if m := providerMessageRe.FindStringSubmatch(raw[start:]); m != nil {
+			if unquoted, err := strconv.Unquote(m[1]); err == nil {
+				msg = unquoted
+			}
+		}
+	}
+	msg = strings.TrimRight(strings.Join(strings.Fields(redactSecrets(msg)), " "), ".")
+	if r := []rune(msg); len(r) > maxProviderMessageRunes {
+		msg = strings.TrimSpace(string(r[:maxProviderMessageRunes])) + "…"
+	}
+	return msg
+}
+
+// jsonErrorMessage reads the message from a JSON error body: error.message,
+// a string error, or a top-level message. It returns "" when body does not
+// start with a JSON object or has none of these.
+func jsonErrorMessage(body string) string {
+	var doc map[string]any
+	if json.NewDecoder(strings.NewReader(body)).Decode(&doc) != nil {
+		return ""
+	}
+	switch e := doc["error"].(type) {
+	case map[string]any:
+		if m, ok := e["message"].(string); ok {
+			return m
+		}
+	case string:
+		return e
+	}
+	if m, ok := doc["message"].(string); ok {
+		return m
+	}
+	return ""
 }
 
 // failoverStatus extracts the HTTP status code carried by a classified

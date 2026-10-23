@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -14,6 +15,12 @@ import (
 type recordingSTI struct {
 	mu      sync.Mutex
 	sources []sourceCall
+	depths  []depthCall
+}
+
+type depthCall struct {
+	sessionKey string
+	depth      int
 }
 
 type sourceCall struct {
@@ -41,6 +48,31 @@ func (r *recordingSTI) SetSource(sessionKey, channel, chatID string) {
 	})
 }
 
+func (r *recordingSTI) SetDepth(sessionKey string, depth int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.depths = append(r.depths, depthCall{sessionKey: sessionKey, depth: depth})
+}
+
+func (r *recordingSTI) SetTurnScope(string, []string) {}
+
+func (r *recordingSTI) Source(sessionKey string) (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range slices.Backward(r.sources) {
+		if c.sessionKey == sessionKey {
+			return c.channel, c.chatID
+		}
+	}
+	return "", ""
+}
+
+func (r *recordingSTI) depthCalls() []depthCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]depthCall(nil), r.depths...)
+}
+
 func (r *recordingSTI) calls() []sourceCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -64,7 +96,7 @@ func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
 	t.Helper()
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -99,12 +131,12 @@ func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
 }
 
 // TestRunAgentLoop_SourceOverwritesAcrossTurns confirms that a second turn on
-// the same session updates source — modelling unified-mode where a single
-// session follows the user across channels (e.g. Slack → Telegram).
+// the same session updates source — an agent's one session follows the user
+// across channels (e.g. Slack → Telegram).
 func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -171,7 +203,7 @@ func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
 		t.Run(channel, func(t *testing.T) {
 			al := newTestAgentLoop(t).al
 
-			agentInstance := al.registry.GetDefaultAgent()
+			agentInstance := al.registry.Default()
 			if agentInstance == nil {
 				t.Fatal("no default agent")
 			}

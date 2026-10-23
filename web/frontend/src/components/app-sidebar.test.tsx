@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -65,5 +65,34 @@ describe("AppSidebar", () => {
       name: "navigation.model_group",
     })
     expect(models.getAttribute("aria-expanded")).not.toBeNull()
+  })
+
+  it("links the manual in a new tab", async () => {
+    await renderSidebar()
+
+    const manual = screen.getByTestId("nav-manual")
+    expect(manual.tagName).toBe("A")
+    expect(manual.getAttribute("href")).toBe("/manual/")
+    expect(manual.getAttribute("target")).toBe("_blank")
+    expect(manual.getAttribute("rel")).toContain("noopener")
+    expect(manual.textContent).toBe("navigation.manual")
+  })
+
+  // Tools are granted per agent on the Agents page; there is no Tools page.
+  it("has no Tools entry", async () => {
+    const { container } = await renderSidebar()
+
+    // Open every group and nested group, so every link is rendered.
+    for (;;) {
+      const closed = container.querySelector('[aria-expanded="false"]')
+      if (!closed) break
+      fireEvent.click(closed)
+    }
+    expect(container.querySelector('a[href="/agents"]')).not.toBeNull()
+    expect(container.querySelector('a[href="/mcp/servers"]')).not.toBeNull()
+
+    expect(screen.queryByText("navigation.tools")).toBeNull()
+    expect(container.querySelector('a[href="/tools"]')).toBeNull()
+    expect(container.querySelector('a[href^="/agent/tools"]')).toBeNull()
   })
 })

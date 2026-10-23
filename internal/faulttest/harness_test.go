@@ -39,7 +39,11 @@ const (
 	// (agent/loop_turn.go).
 	compressionNotice = "Context window exceeded. Compressing history and retrying..."
 
-	turnWait = 5 * time.Second
+	// turnWait bounds every wait for something the loop does. A wait ends as
+	// soon as it happens, so the bound only matters when it never does; it
+	// is generous because a turn's session writes can stall for seconds on a
+	// busy disk (the whole test suite runs in parallel).
+	turnWait = 30 * time.Second
 	quiet    = 300 * time.Millisecond
 )
 
@@ -142,33 +146,47 @@ func startLoop(t *testing.T, cfg *config.Config, msgBus *bus.MessageBus, extraTo
 	return l
 }
 
-// stop ends Run (like a shutdown) and releases the loop's resources.
-// Idempotent.
+// stop ends Run (like a shutdown), waits for the turns it cancelled to
+// unwind and releases the loop's resources. Idempotent.
 func (l *loop) stop() {
 	l.once.Do(func() {
-		l.al.Stop()
-		l.cancel()
-		select {
-		case <-l.done:
-		case <-time.After(turnWait):
-			l.t.Error("AgentLoop.Run did not return after cancel")
-		}
-		l.al.Close(context.Background())
+		l.end()
+		l.release()
 	})
 }
 
 // crash ends Run without Close, the way a process kill leaves the data dir:
-// whatever is mid-turn stays flagged pending.
+// whatever is mid-turn stays flagged pending. A real kill would also stop the
+// goroutines still in that turn; here they live on (a blockingTool holds them
+// until the test releases it) and must not write to the data dir once the
+// test has removed it, so they are waited for, and the loop closed, when the
+// test ends: after its deferred releases, before its temporary directories go.
 func (l *loop) crash() {
 	l.once.Do(func() {
-		l.al.Stop()
-		l.cancel()
-		select {
-		case <-l.done:
-		case <-time.After(turnWait):
-			l.t.Error("AgentLoop.Run did not return after cancel")
-		}
+		l.end()
+		l.t.Cleanup(l.release)
 	})
+}
+
+// end stops Run and waits for it to return.
+func (l *loop) end() {
+	l.al.Stop()
+	l.cancel()
+	select {
+	case <-l.done:
+	case <-time.After(turnWait):
+		l.t.Error("AgentLoop.Run did not return after cancel")
+	}
+}
+
+// release waits for the loop's turns to return, then closes it.
+func (l *loop) release() {
+	ctx, cancel := context.WithTimeout(context.Background(), turnWait)
+	defer cancel()
+	if err := l.al.WaitTurns(ctx); err != nil {
+		l.t.Errorf("turns still running after the loop stopped: %v", err)
+	}
+	l.al.Close(context.Background())
 }
 
 // send publishes a user message on testChannel.
@@ -262,8 +280,8 @@ func (l *loop) turn(content string) (reply string, notices []string) {
 	return replies[0], notices
 }
 
-// cooldowns runs /cooldowns and returns its rendering of the process-wide
-// cooldown tracker.
+// cooldowns runs /cooldowns and returns its rendering of the loop's cooldown
+// tracker (each loop has its own).
 func (l *loop) cooldowns() string {
 	l.t.Helper()
 	reply, notices := l.turn("/cooldowns list")

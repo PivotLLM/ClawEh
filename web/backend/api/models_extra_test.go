@@ -323,10 +323,10 @@ func TestHandleDeleteModel_RefusesWhileReferenced(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	body := rec.Body.String()
+	body := strings.Join(responseErrors(t, rec), "\n")
 	for _, want := range []string{`"custom-default"`, "agents.defaults.models"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("body %q does not name %s", body, want)
+			t.Errorf("errors %q do not name %s", body, want)
 		}
 	}
 

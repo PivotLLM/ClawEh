@@ -315,7 +315,9 @@ func TestHandshakeSharedToken(t *testing.T) {
 func TestConversationEcho(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
 	srv.SetInbound(func(_, chatID, content, _, _ string, _ []InboundAttachment) {
-		srv.DeliverReply(chatID, "echo: "+content)
+		if err := srv.DeliverReply(context.Background(), chatID, "echo: "+content); err != nil {
+			t.Errorf("DeliverReply: %v", err)
+		}
 	})
 
 	em := newEmulator(t)
@@ -509,7 +511,9 @@ func TestStreamThenFinal(t *testing.T) {
 		// Stream two partial deltas, then finalize with the full reply.
 		srv.StreamDelta(chatID, "Hello ")
 		srv.StreamDelta(chatID, "world.")
-		srv.DeliverReply(chatID, "Hello world.")
+		if err := srv.DeliverReply(context.Background(), chatID, "Hello world."); err != nil {
+			t.Errorf("DeliverReply: %v", err)
+		}
 	})
 
 	em := newEmulator(t)
@@ -580,7 +584,9 @@ func TestStreamThenFinal(t *testing.T) {
 func TestNonStreamedRunUnchanged(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
 	srv.SetInbound(func(_, chatID, content, _, _ string, _ []InboundAttachment) {
-		srv.DeliverReply(chatID, "echo: "+content)
+		if err := srv.DeliverReply(context.Background(), chatID, "echo: "+content); err != nil {
+			t.Errorf("DeliverReply: %v", err)
+		}
 	})
 
 	em := newEmulator(t)

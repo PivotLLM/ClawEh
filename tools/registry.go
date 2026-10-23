@@ -172,6 +172,34 @@ func (r *ToolRegistry) RemoveByPrefix(prefix string) int {
 	return removed
 }
 
+// ReplaceByPrefix swaps every registered tool whose name starts with prefix for
+// entries, in one step: a concurrent reader (a turn listing its tools, a tool
+// call) sees the old set or the new one, never neither. An entry whose name
+// lacks the prefix is registered all the same; the caller keeps them in step.
+// Returns how many tools were removed. The version is bumped when anything was
+// removed or added.
+func (r *ToolRegistry) ReplaceByPrefix(prefix string, entries []ToolEntry) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			removed++
+		}
+	}
+	for i := range entries {
+		entry := entries[i]
+		r.tools[entry.Tool.Name()] = &entry
+	}
+	if removed > 0 || len(entries) > 0 {
+		r.version.Add(1)
+	}
+	logger.DebugCF("tools", "Replaced tools by prefix",
+		map[string]any{"prefix": prefix, "removed": removed, "added": len(entries)})
+	return removed
+}
+
 // PromoteTools atomically reveals the named non-core tools with the given TTL,
 // expands to whole reveal-together groups, then prunes the revealed set back to
 // visibleBudget by hiding the lowest-remaining-TTL tools. Holding the lock across
@@ -374,27 +402,19 @@ func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
-// resolveWith is resolve with an ignoreTTL switch. The host path passes true so a
-// discovery-hidden (TTL-expired) tool still resolves for execution — progressive
-// discovery never gates the MCP host; authorization there is the ACL policy.
-func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (*ToolEntry, string, bool) {
+// resolveWith looks name up by internal key or ExternalName, once. entry is
+// nil when no such tool is registered; callable is false when it is
+// registered but hidden by progressive discovery (TTL expired) and ignoreTTL
+// is false. The host path passes ignoreTTL true: progressive discovery never
+// gates the MCP host, where authorization is the ACL policy.
+func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (entry *ToolEntry, canonical string, callable bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if entry, ok := r.tools[name]; ok {
-		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
-			return nil, "", false
-		}
-		return entry, name, true
+	entry, canonical = r.findAnyLocked(name)
+	if entry == nil {
+		return nil, "", false
 	}
-	for internal, entry := range r.tools {
-		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
-			continue
-		}
-		if en, ok := entry.Tool.(ExternalNamer); ok && en.ExternalName() == name {
-			return entry, internal, true
-		}
-	}
-	return nil, "", false
+	return entry, canonical, ignoreTTL || entry.IsCore || entry.TTL > 0
 }
 
 // advertisedName is the model-facing name for a tool: the bare ExternalName for
@@ -527,7 +547,7 @@ func (r *ToolRegistry) executeWithContext(
 				map[string]any{
 					"tool": canonical,
 				})
-			return ErrorResult(NotEnabledMessage(name)).WithError(fmt.Errorf("tool not permitted: %s", name))
+			return ErrorResult(NotEnabledMessage(name)).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name)))
 		}
 	}
 
@@ -557,7 +577,15 @@ func (r *ToolRegistry) executeWithContext(
 	duration := time.Since(start)
 
 	// Log based on result type
-	if result.IsError {
+	if result.IsError && IsExpectedRefusal(result.Err) {
+		// A configured permission or limit said no: expected, not a fault.
+		logger.WarnCF("tool", "Tool call refused",
+			map[string]any{
+				"tool":     name,
+				"duration": duration.Milliseconds(),
+				"error":    utils.Truncate(result.ForLLM, 500),
+			})
+	} else if result.IsError {
 		logger.ErrorCF("tool", "Tool execution failed",
 			map[string]any{
 				"tool":     name,

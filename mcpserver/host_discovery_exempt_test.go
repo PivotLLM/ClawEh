@@ -22,7 +22,7 @@ func regWithHiddenSuiteTool(tool tools.Tool) *tools.ToolRegistry {
 	return r
 }
 
-// TestHost_ListsAndDispatchesTTLHiddenSuiteTool is the regression for the Penny
+// TestHost_ListsAndDispatchesTTLHiddenSuiteTool is the regression for the Alice
 // bug: a claude-cli agent reaching a maestro tool through the MCP host got
 // "tool_not_in_registry" because the tool was discovery-hidden (TTL 0). The host
 // must never apply progressive discovery — it lists the tool AND dispatches it,
@@ -40,8 +40,8 @@ func TestHost_ListsAndDispatchesTTLHiddenSuiteTool(t *testing.T) {
 		t.Fatal("GetForHost must resolve a TTL-hidden tool for the host path")
 	}
 
-	regs := map[string]*tools.ToolRegistry{"penny": reg}
-	st, tok := seedSessionToken("penny")
+	regs := map[string]*tools.ToolRegistry{"alice": reg}
+	st, tok := seedSessionToken("alice")
 	resolver := resolverFor(regs)
 
 	// (a) tools/list on the host includes the hidden suite tool.

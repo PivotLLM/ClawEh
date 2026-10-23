@@ -114,3 +114,66 @@ func TestLoadConfig_RefusesExposedOpenDeviceGateway(t *testing.T) {
 		t.Fatalf("LoadConfig error = %v, want the auto_approve refusal", err)
 	}
 }
+
+func TestProxyNotTrusted(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		external string
+		trusted  []string
+		seenPeer string
+		want     bool
+	}{
+		{name: "nothing seen"},
+		{name: "external URL alone is not a proxy", external: "https://claw.example.com"},
+		{name: "forwarded request seen", seenPeer: "127.0.0.1", want: true},
+		{name: "forwarded request seen, other proxy trusted", seenPeer: "127.0.0.1", trusted: []string{"10.0.0.5"}, want: true},
+		{name: "forwarded request seen, peer trusted", seenPeer: "127.0.0.1", trusted: []string{"127.0.0.0/8"}},
+		{name: "forwarded request seen from the other loopback", seenPeer: "::1", trusted: []string{"127.0.0.1"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Gateway.ExternalURL = tc.external
+			cfg.Gateway.TrustedProxies = tc.trusted
+			if got := cfg.ProxyNotTrusted(tc.seenPeer); got != tc.want {
+				t.Errorf("ProxyNotTrusted(%q) = %v, want %v", tc.seenPeer, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBehindProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		trusted     []string
+		external    string
+		tlsMode     string
+		devEnabled  bool
+		devTLS      bool
+		devExternal string
+		want        []string
+	}{
+		{name: "nothing set"},
+		{name: "trusted proxy", trusted: []string{"10.0.0.5", " 10.0.1.0/24 "}, want: []string{"10.0.0.5", "10.0.1.0/24"}},
+		{name: "https external URL on another port", external: "https://claw.example.com", want: []string{"https://claw.example.com"}},
+		{name: "https external URL served by ClawEh", external: "https://claw.lan:18443"},
+		{name: "https external URL with HTTPS off", external: "https://claw.lan:18443", tlsMode: TLSModeOff, want: []string{"https://claw.lan:18443"}},
+		{name: "http external URL", external: "http://claw.lan:18790"},
+		{name: "wss device URL, device plain", devEnabled: true, devExternal: "wss://dev.example.com", want: []string{"wss://dev.example.com"}},
+		{name: "wss device URL served by the device listener", devEnabled: true, devTLS: true, devExternal: "wss://claw.lan:18791"},
+		{name: "device URL, device off", devExternal: "wss://dev.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Gateway.TrustedProxies = tc.trusted
+			cfg.Gateway.ExternalURL = tc.external
+			cfg.Gateway.TLS.Mode = tc.tlsMode
+			cfg.Channels.Device.Enabled = tc.devEnabled
+			cfg.Channels.Device.TLS = tc.devTLS
+			cfg.Channels.Device.ExternalURL = tc.devExternal
+			got := cfg.BehindProxy()
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("BehindProxy() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -11,20 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// DefaultAgentTools is the baseline tool allowlist used when an agent has no
-// explicit tools list. Populated at startup from provider descriptors via
-// SetDefaultAgentTools; the value here is a safe fallback only.
-var DefaultAgentTools = []string{"*"}
-
-// SetDefaultAgentTools replaces the default tool allowlist. Called from the
-// gateway after all tool providers are registered, so each provider's
-// DefaultEnabled flag drives which tools are in every agent's baseline.
-func SetDefaultAgentTools(names []string) {
-	if len(names) > 0 {
-		DefaultAgentTools = names
-	}
-}
-
 // DefaultConfig returns the default configuration for ClawEh.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
@@ -80,16 +66,13 @@ func DefaultConfig() *Config {
 					ID:      "claw",
 					Name:    "Claw",
 					Default: true,
-					// Tools intentionally omitted (nil): the agent inherits the
-					// install default tool set (DefaultAgentTools, driven by each
-					// provider's DefaultEnabled flag). Using ["*"] here would grant
-					// every tool, exceeding the defaults.
+					// Tools omitted: an agent has only the tools its list
+					// names, so the seeded agent starts with none.
 				},
 			},
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
-			Mode:          "unified",
 			RetentionDays: 0, // keep every session; see session.retention_days
 		},
 		Channels: ChannelsConfig{
@@ -138,16 +121,6 @@ func DefaultConfig() *Config {
 					Text:    "Thinking... 💭",
 				},
 			},
-			LINE: LINEConfig{
-				Enabled:            false,
-				ChannelSecret:      "",
-				ChannelAccessToken: "",
-				WebhookHost:        "0.0.0.0",
-				WebhookPort:        18791,
-				WebhookPath:        "/webhook/line",
-				AllowFrom:          FlexibleStringSlice{},
-				GroupTrigger:       GroupTriggerConfig{MentionOnly: true},
-			},
 			WebUI: WebUIConfig{
 				Enabled:        false,
 				Token:          "",
@@ -176,7 +149,7 @@ func DefaultConfig() *Config {
 
 			{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 			{Name: "Anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
-			{Name: "DeepSeek", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1"},
+			{Name: "DeepSeek", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1", RequireReasoningContent: true},
 			{Name: "Google API", Protocol: "openai-chat", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
 			{Name: "Qwen", Protocol: "openai-chat", BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
 			{Name: "Moonshot", Protocol: "openai-chat", BaseURL: "https://api.moonshot.ai/v1"},
@@ -184,7 +157,8 @@ func DefaultConfig() *Config {
 			{Name: "OpenRouter Chat", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1"},
 			{Name: "OpenRouter Responses", Protocol: "openai-responses", BaseURL: "https://openrouter.ai/api/v1"},
 			{Name: "OpenRouter Strict", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", StrictCompat: true},
-			{Name: "NVIDIA", Protocol: "openai-chat", BaseURL: "https://integrate.api.nvidia.com/v1"},
+			{Name: "OpenRouter Chat DeepSeek", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", RequireReasoningContent: true},
+			{Name: "NVIDIA", Protocol: "openai-chat", BaseURL: "https://integrate.api.nvidia.com/v1", StrictCompat: true},
 			{Name: "Cerebras", Protocol: "openai-chat", BaseURL: "https://api.cerebras.ai/v1"},
 			{Name: "Ollama", Protocol: "openai-chat", BaseURL: "http://localhost:11434/v1"},
 			{Name: "Mistral", Protocol: "openai-chat", BaseURL: "https://api.mistral.ai/v1"},
@@ -208,7 +182,8 @@ func DefaultConfig() *Config {
 			// permission-bypass flag is passed only when the provider's
 			// bypass_restrictions is on.
 			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
-			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Claude CLI Opus", Model: "Opus", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Claude CLI Fable", Model: "Fable", Provider: "Claude CLI", RequestTimeout: 3600, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, ContextWindow: 750000, Vision: VisionToolResponse, Enabled: false},
 			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, Enabled: false},
 			// Antigravity (binary "agy") replaces the deprecated Gemini CLI. The
 			// prompt is piped on stdin and the provider never passes -p/--print:
@@ -218,38 +193,42 @@ func DefaultConfig() *Config {
 
 			// HTTP providers.
 			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},
-			{ModelName: "Claude Sonnet 4.6", Model: "claude-sonnet-4.6", Provider: "Anthropic", Enabled: false},
-			{ModelName: "DeepSeek Chat", Model: "deepseek-chat", Provider: "DeepSeek", Enabled: false},
-			{ModelName: "Gemini 3.5 Flash", Model: "gemini-3.5-flash", Provider: "Google API", Enabled: false},
+			{ModelName: "Claude Sonnet 5.5", Model: "claude-sonnet-5-5", Provider: "Anthropic", Enabled: false},
+			{ModelName: "Claude Opus 5.5", Model: "claude-opus-5-5", Provider: "Anthropic", Enabled: false},
+			{ModelName: "Claude Fable 5.1", Model: "claude-fable-5-1", Provider: "Anthropic", Enabled: false},
+			{ModelName: "DeepSeek Flash", Model: "deepseek-flash", Provider: "DeepSeek", ContextWindow: 900000, Enabled: false},
+			{ModelName: "Gemini 3.8 Flash", Model: "gemini-3.8-flash", Provider: "Google API", Enabled: false},
 			{ModelName: "Qwen Plus", Model: "qwen-plus", Provider: "Qwen", Enabled: false},
-			{ModelName: "Moonshot v1 8k", Model: "moonshot-v1-8k", Provider: "Moonshot", Enabled: false},
-			{ModelName: "Groq Llama 3.3 70b", Model: "llama-3.3-70b-versatile", Provider: "Groq", NoTools: true, Enabled: false},
 			{ModelName: "Groq GPT OSS 120b", Model: "openai/gpt-oss-120b", Provider: "Groq", Enabled: false},
 			{ModelName: "OpenRouter Auto", Model: "openrouter/auto", Provider: "OpenRouter Chat", Enabled: false},
-			{ModelName: "OpenRouter GPT 5.4", Model: "openai/gpt-5.4", Provider: "OpenRouter Strict", DropParams: []string{"temperature"}, Enabled: false},
-			{ModelName: "NVIDIA Nemotron 4 340b", Model: "nemotron-4-340b-instruct", Provider: "NVIDIA", Enabled: false},
-			{ModelName: "Cerebras Llama 3.3 70b", Model: "llama-3.3-70b", Provider: "Cerebras", Enabled: false},
 			{ModelName: "Llama 3", Model: "llama3", Provider: "Ollama", Enabled: false},
 			{ModelName: "Mistral Small", Model: "mistral-small-latest", Provider: "Mistral", Enabled: false},
 			{ModelName: "DeepSeek v3.2", Model: "deepseek/deepseek-v3.2", Provider: "Avian", Enabled: false},
-			{ModelName: "Kimi k2.5", Model: "moonshotai/kimi-k2.5", Provider: "Avian", Enabled: false},
 			{ModelName: "Local Model", Model: "custom-model", Provider: "vLLM Local", Enabled: false},
-			{ModelName: "Bedrock Opus 4.8", Model: "anthropic.claude-opus-4-8", Provider: "Bedrock Chat", Enabled: false},
-			{ModelName: "Bedrock Sonnet 4.6", Model: "anthropic.claude-sonnet-4-6", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock Opus 5.5", Model: "anthropic.claude-opus-5-5", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock Sonnet 5.5", Model: "anthropic.claude-sonnet-5-5", Provider: "Bedrock Chat", Enabled: false},
 			{ModelName: "Bedrock GPT 5.5", Model: "openai.gpt-5.5", Provider: "Bedrock Responses", DropParams: []string{"temperature"}, Enabled: false},
+			{ModelName: "Bedrock GPT 6 Astra", Model: "openai.gpt-6-astra", Provider: "Bedrock Responses", ContextWindow: 250000, Enabled: false},
 			{ModelName: "Bedrock DeepSeek 3", Model: "deepseek.v3.2", Provider: "Bedrock Chat", Enabled: false},
 			{ModelName: "Bedrock Nova 2 Lite", Model: "amazon.nova-2-lite-v1:0", Provider: "Bedrock Chat", Enabled: false},
 			{ModelName: "Bedrock Gemma 3", Model: "google.gemma-3-27b-it", Provider: "Bedrock Chat", MaxTokens: 5000, StrictAlternation: true, Enabled: false},
 			{ModelName: "Abliteration", Model: "abliterated-model", Provider: "Abliteration", Enabled: false},
-			{ModelName: "OpenRouter Elephant", Model: "elephant-alpha", Provider: "OpenRouter Chat", Enabled: false},
-			{ModelName: "Gemini 3.1 Flash Lite Preview", Model: "google/gemini-3.1-flash-lite-preview", Provider: "OpenRouter Chat", Enabled: false},
 			{ModelName: "OpenRouter Llama 4 Maverick", Model: "meta-llama/llama-4-maverick", Provider: "OpenRouter Chat", Enabled: false},
 			{ModelName: "OpenRouter Llama 4 Scout", Model: "meta-llama/llama-4-scout", Provider: "OpenRouter Chat", Enabled: false},
-			{ModelName: "OpenRouter DeepSeek V4 Flash", Model: "deepseek/deepseek-v4-flash", Provider: "OpenRouter Chat", Enabled: false},
-			{ModelName: "OpenRouter DeepSeek V4 Pro", Model: "deepseek/deepseek-v4-pro", Provider: "OpenRouter Chat", Enabled: false},
-			{ModelName: "Grok 4.3", Model: "grok-4.3", Provider: "xAI", Enabled: false},
-			{ModelName: "Grok 4.3 High", Model: "grok-4.3", Provider: "xAI", ReasoningEffort: "high", Enabled: false},
-			{ModelName: "Grok 4.3 Medium", Model: "grok-4.3", Provider: "xAI", ReasoningEffort: "medium", Enabled: false},
+			{ModelName: "OpenRouter Fable Latest", Model: "anthropic/claude-fable-latest", Provider: "OpenRouter Chat", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter Kimi Latest", Model: "moonshotai/kimi-latest", Provider: "OpenRouter Chat", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter Gemini Flash Latest", Model: "google/gemini-flash-latest", Provider: "OpenRouter Chat", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter GPT Terra Latest", Model: "openai/gpt-terra-latest", Provider: "OpenRouter Responses", ContextWindow: 750000, Vision: VisionToolResponse, Enabled: false},
+			{ModelName: "OpenRouter GPT 6 Astra", Model: "openai/gpt-6-astra", Provider: "OpenRouter Responses", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter GPT 6 Sol", Model: "openai/gpt-6-sol", Provider: "OpenRouter Responses", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter GPT 6 Luna", Model: "openai/gpt-6-luna", Provider: "OpenRouter Responses", ContextWindow: 1000000, Enabled: false},
+			{ModelName: "OpenRouter GLM Latest", Model: "z-ai/glm-latest", Provider: "OpenRouter Responses", ContextWindow: 750000, Enabled: false},
+			{ModelName: "OpenRouter DeepSeek Flash Latest", Model: "~deepseek/deepseek-flash-latest", Provider: "OpenRouter Chat DeepSeek", ContextWindow: 500000, Enabled: false},
+			{ModelName: "OpenRouter DeepSeek Pro Latest", Model: "~deepseek/deepseek-pro-latest", Provider: "OpenRouter Chat DeepSeek", ContextWindow: 500000, Enabled: false},
+			{ModelName: "Grok 4.7", Model: "grok-4.7", Provider: "xAI", ContextWindow: 500000, Vision: VisionToolResponse, Enabled: false},
+			{ModelName: "Grok 4.7 High", Model: "grok-4.7", Provider: "xAI", ReasoningEffort: "high", ContextWindow: 500000, Vision: VisionToolResponse, Enabled: false},
+			{ModelName: "Grok 4.7 Medium", Model: "grok-4.7", Provider: "xAI", ReasoningEffort: "medium", ContextWindow: 500000, Vision: VisionToolResponse, Enabled: false},
+			{ModelName: "Grok 4.7 None", Model: "grok-4.7", Provider: "xAI", ReasoningEffort: "none", ThinkingLevel: "off", ContextWindow: 500000, Vision: VisionToolResponse, Enabled: false},
 			{ModelName: "OpenRouter GPT 5.5", Model: "openai/gpt-5.5", Provider: "OpenRouter Strict", DropParams: []string{"temperature"}, Enabled: false},
 		},
 		Gateway: GatewayConfig{
@@ -265,9 +244,6 @@ func DefaultConfig() *Config {
 				Interval: 5,
 			},
 			Web: WebToolsConfig{
-				ToolConfig: ToolConfig{
-					Enabled: true,
-				},
 				Proxy:           "",
 				FetchLimitBytes: 10 * 1024 * 1024, // 10MB by default
 				Brave: BraveConfig{
@@ -312,20 +288,10 @@ func DefaultConfig() *Config {
 				ExecTimeoutMinutes: 5,
 			},
 			Exec: ExecConfig{
-				ToolConfig: ToolConfig{
-					Enabled: true,
-				},
 				EnableDenyPatterns: true,
-				// Off by default: shell_exec is restricted to internal channels
-				// (cli/system/subagent/recovery). Opt in to allow exec from remote
-				// channels such as Telegram or the WebUI chat. See GHSA-pv8c-p6jf-3fpp.
-				AllowRemote:    false,
-				TimeoutSeconds: 60,
+				TimeoutSeconds:     60,
 			},
 			Skills: SkillsToolsConfig{
-				Local: ToolConfig{
-					Enabled: true,
-				},
 				Registry: ToolConfig{
 					Enabled: false,
 				},
@@ -353,11 +319,7 @@ func DefaultConfig() *Config {
 				MaxSearchResults: DefaultDiscoveryMaxSearchHits,
 			},
 			ReadFile: ReadFileToolConfig{
-				Enabled:         true,
 				MaxReadFileSize: 32 * 1024, // 32KB (~8K tokens) per read
-			},
-			Subagent: ToolConfig{
-				Enabled: true,
 			},
 		},
 		Devices: DevicesConfig{
@@ -373,7 +335,7 @@ func DefaultConfig() *Config {
 			Level:         global.DefaultLogLevel,
 			JSON:          global.DefaultLogJSON,
 			RetentionDays: global.DefaultLogRetentionDays,
-			DumpRefusals:  true,
+			DumpRefusals:  false,
 			DumpAll:       false,
 		},
 		MCPHost: MCPHostConfig{

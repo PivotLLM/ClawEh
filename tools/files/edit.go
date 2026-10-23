@@ -88,23 +88,27 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		return tools.ErrorResult("new_text is required")
 	}
 
+	// Refused before matching or backing up, so the answer is the refusal.
+	if err := checkWrite(t.sysFs, path); err != nil {
+		return errResult(err)
+	}
 	content, err := t.sysFs.ReadFile(path)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	newContent, err := replaceEditContent(content, oldText, newText)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 
 	if getBoolArg(args, "backup", false) {
 		if _, err := backupExistingFile(t.sysFs, path); err != nil {
-			return tools.ErrorResult(err.Error())
+			return errResult(err)
 		}
 	}
 
 	if err := t.sysFs.WriteFile(path, newContent); err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	forLLM := "File edited: " + path
 	if getBoolArg(args, "display", false) {
@@ -181,14 +185,17 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *tool
 		return tools.ErrorResult("content is required")
 	}
 
+	if err := checkWrite(t.sysFs, path); err != nil {
+		return errResult(err)
+	}
 	if getBoolArg(args, "backup", false) {
 		if _, err := backupExistingFile(t.sysFs, path); err != nil {
-			return tools.ErrorResult(err.Error())
+			return errResult(err)
 		}
 	}
 
 	if err := appendFile(t.sysFs, path, content); err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err)
 	}
 	forLLM := "Appended to " + path
 	if getBoolArg(args, "display", false) {

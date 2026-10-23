@@ -73,10 +73,13 @@ func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []c
 
 	regCtx, cancel := context.WithCancel(ctx)
 	c.commandRegCancel = cancel
+	done := make(chan struct{})
+	c.commandRegDone = done
 
 	// Registration runs asynchronously so Telegram message intake is never blocked
 	// by temporary upstream API failures. Retry stops on success or channel shutdown.
 	go func() {
+		defer close(done)
 		attempt := 0
 		timer := time.NewTimer(0)
 		if !timer.Stop() {

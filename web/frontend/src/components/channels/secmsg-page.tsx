@@ -152,7 +152,10 @@ function DaemonCard({
           size="icon-sm"
           onClick={onDelete}
           className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          title={t("models.action.delete")}
+          aria-label={t("channels.page.deleteSecmsgDaemon", {
+            name: displayName,
+          })}
+          title={t("channels.page.deleteSecmsgDaemon", { name: displayName })}
         >
           <IconTrash className="size-3.5" />
         </Button>

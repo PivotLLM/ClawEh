@@ -3,6 +3,8 @@ package config
 import (
 	"net"
 	"net/netip"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -25,8 +27,8 @@ func CompileTrustedProxies(entries []string) (*TrustedProxySet, error) {
 	return &TrustedProxySet{prefixes: prefixes}, nil
 }
 
-// trusts reports whether the peer address (without a port) is a trusted proxy.
-func (s *TrustedProxySet) trusts(peer string) bool {
+// Trusts reports whether the peer address (without a port) is a trusted proxy.
+func (s *TrustedProxySet) Trusts(peer string) bool {
 	if s == nil {
 		return false
 	}
@@ -53,7 +55,7 @@ func (s *TrustedProxySet) ClientAddr(remoteAddr, realIP, forwardedFor string) st
 	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		peer = h
 	}
-	if !s.trusts(peer) {
+	if !s.Trusts(peer) {
 		return peer
 	}
 	if addr, ok := parseForwardedAddr(realIP); ok {
@@ -74,4 +76,82 @@ func parseForwardedAddr(v string) (string, bool) {
 		return "", false
 	}
 	return addr.Unmap().String(), true
+}
+
+// ProxyNotTrusted reports whether requests reach this install through a
+// reverse proxy or tunnel on this machine that gateway.trusted_proxies does not
+// list, so every request looks like loopback and the allowed networks and the
+// login lockout never apply. seenPeer is the loopback peer last seen sending
+// forwarding headers ("" when none was); it is true when that peer is not
+// trusted. Only an observed request counts: an external URL alone may be a LAN
+// address with no proxy at all.
+func (c *Config) ProxyNotTrusted(seenPeer string) bool {
+	if seenPeer == "" {
+		return false
+	}
+	set, err := CompileTrustedProxies(c.Gateway.TrustedProxies)
+	if err != nil {
+		// Refused at load and by Store.Update; nothing to judge.
+		return false
+	}
+	return !set.Trusts(seenPeer)
+}
+
+// deviceDefaultPort is the device listener's port when channels.device.port
+// is unset (device.DefaultDevicePort; config cannot import that package).
+const deviceDefaultPort = 18791
+
+// BehindProxy names the reverse proxies this install is reached through: the
+// gateway.trusted_proxies entries, then each external URL (gateway.external_url,
+// and the device listener's while it is on) that is https/wss but not served by
+// ClawEh's own TLS listener for it, which means TLS ends at a proxy. Empty when
+// there is none. Where a proxy terminates TLS, plain HTTP on the listener is
+// not a finding.
+func (c *Config) BehindProxy() []string {
+	var out []string
+	for _, p := range c.Gateway.TrustedProxies {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	gw := c.Gateway
+	gwTLS := gw.TLS.EffectiveMode() != TLSModeOff
+	if u := strings.TrimSpace(gw.ExternalURL); proxiedURL(u, gwTLS, gw.EffectiveTLSPort()) {
+		out = append(out, u)
+	}
+	dev := c.Channels.Device
+	devPort := dev.Port
+	if devPort == 0 {
+		devPort = deviceDefaultPort
+	}
+	if u := strings.TrimSpace(dev.ExternalURL); dev.Enabled && proxiedURL(u, dev.TLS, devPort) {
+		out = append(out, u)
+	}
+	return out
+}
+
+// proxiedURL reports whether raw is an https/wss URL that the listener (TLS
+// on tlsPort when hasTLS) does not serve itself.
+func proxiedURL(raw string, hasTLS bool, tlsPort int) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "https" && scheme != "wss" {
+		return false
+	}
+	if !hasTLS {
+		return true
+	}
+	port := 443
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+	return port != tlsPort
 }

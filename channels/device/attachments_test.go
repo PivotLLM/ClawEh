@@ -15,8 +15,8 @@ import (
 // TestStoreInboundAttachments verifies a decoded photo is written to the media
 // store and returned as a media:// ref the agent loop can resolve.
 func TestStoreInboundAttachments(t *testing.T) {
-	utils.SetMediaStagingDir(t.TempDir())
-	defer utils.SetMediaStagingDir("")
+	utils.SetMediaStagingDir(t.TempDir(), 0, 0)
+	defer utils.SetMediaStagingDir("", 0, 0)
 
 	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus(), "", nil)
 	if err != nil {

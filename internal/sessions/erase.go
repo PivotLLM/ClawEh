@@ -24,9 +24,9 @@ const CogmemNote = "cognitive memories untouched: cogmem records no per-sender p
 type EraseRequest struct {
 	Channel string
 	ChatID  string
-	// All also deletes the shared main session the sender's channel routes to
-	// under unified scope, which holds every sender's messages: the archive
-	// has no per-sender column, so a sender cannot be cut out of it.
+	// All also deletes the main session the sender's channel routes to, which
+	// holds every sender's messages: the archive has no per-sender column, so a
+	// sender cannot be cut out of it.
 	All bool
 }
 
@@ -34,17 +34,16 @@ type EraseRequest struct {
 type EraseReport struct {
 	Erased  []string `json:"erased"`            // session keys whose archive was deleted
 	Skipped []string `json:"skipped,omitempty"` // "<key>: <reason>" for matches left in place
-	// Shared is the unified-scope main session the sender's messages also
-	// live in, when it exists and All was not set. Empty otherwise.
+	// Shared is the main session the sender's messages live in, when it
+	// exists and All was not set. Empty otherwise.
 	Shared string `json:"shared_session,omitempty"`
 	Cogmem string `json:"cogmem"`
 }
 
 // Erase deletes, across every agent, each session archive whose key belongs
-// to the sender in req: direct sessions under the per-user, per-platform and
-// per-account scopes (identity links resolved), group and channel sessions
-// whose peer is the chat id, and device sessions keyed by the device id. The
-// shared main session is deleted only with req.All. release, when non-nil,
+// to the sender in req: the per-sender direct, group, channel and device
+// sessions earlier releases kept beside the main session. The shared main
+// session the sender routes to is deleted only with req.All. release, when non-nil,
 // is called with each key before its files go so a running gateway can close
 // its handles; an error from it leaves that session in place and reports it.
 func Erase(cfg *config.Config, req EraseRequest, release func(key string) error) (EraseReport, error) {
@@ -54,7 +53,7 @@ func Erase(cfg *config.Config, req EraseRequest, release func(key string) error)
 	if channel == "" || chatID == "" {
 		return rep, errors.New("channel and chat id are required")
 	}
-	peers := senderPeers(cfg, channel, chatID)
+	peers := map[string]bool{chatID: true}
 
 	var errs []error
 	erase := func(dir, key string) {
@@ -85,7 +84,7 @@ func Erase(cfg *config.Config, req EraseRequest, release func(key string) error)
 			switch {
 			case matchesSender(key, channel, peers):
 				erase(dir, key)
-			case key == route.MainSessionKey && routing.IsUnified(routing.SessionScope(cfg.Session.Mode)):
+			case key == route.SessionKey:
 				if req.All {
 					erase(dir, key)
 				} else {
@@ -97,32 +96,15 @@ func Erase(cfg *config.Config, req EraseRequest, release func(key string) error)
 	return rep, errors.Join(errs...)
 }
 
-// senderPeers returns the lowercased peer ids that can end the sender's
-// session keys: the chat id itself and, when identity_links map it to a
-// canonical person, that name (the per-user scope keys by it).
-func senderPeers(cfg *config.Config, channel, chatID string) map[string]bool {
-	peers := map[string]bool{chatID: true}
-	linked := routing.BuildAgentPeerSessionKey(routing.SessionKeyParams{
-		AgentID:       "x",
-		Channel:       channel,
-		Peer:          &routing.RoutePeer{Kind: "direct", ID: chatID},
-		SessionScope:  routing.SessionScopePerUser,
-		IdentityLinks: cfg.Session.IdentityLinks,
-	})
-	if canonical, ok := strings.CutPrefix(linked, "agent:x:direct:"); ok && canonical != "" {
-		peers[strings.ToLower(canonical)] = true
-	}
-	return peers
-}
-
-// matchesSender reports whether key is one of the sender's own sessions. The
-// key shapes routing builds, after the "agent:<id>:" prefix, are:
+// matchesSender reports whether key is one of the sender's own sessions. Every
+// agent now has one conversation; these are the per-sender key shapes earlier
+// releases wrote, after the "agent:<id>:" prefix, still erasable on disk:
 //
-//	<channel>:direct:<peer>             per-platform
-//	<channel>:<account>:direct:<peer>   per-account
-//	direct:<peer>                       per-user (no channel; peer is the linked identity)
-//	<channel>:group|channel:<peer>      groups and channels under any isolating scope
-//	device:<device-id>                  device gateway under an isolating scope
+//	<channel>:direct:<peer>
+//	<channel>:<account>:direct:<peer>
+//	direct:<peer>                       (no channel)
+//	<channel>:group|channel:<peer>
+//	device:<device-id>
 //
 // A peer may itself contain ':' (the WebUI's "webui:<uuid>"), so the peer is
 // matched as a suffix rather than as the last ':'-separated segment.
@@ -165,9 +147,8 @@ func FormatReport(rep EraseReport, req EraseRequest) string {
 		fmt.Fprintf(&b, "skipped %s\n", s)
 	}
 	if rep.Shared != "" {
-		fmt.Fprintf(&b, "kept %s: session mode is unified, so this sender's messages are mixed with "+
-			"every other sender's there and the archive has no per-sender column; re-run with --all "+
-			"to delete the whole shared session\n", rep.Shared)
+		fmt.Fprintf(&b, "kept %s: shared with every other sender and cannot be split; "+
+			"re-run with --all to delete the whole session\n", rep.Shared)
 	}
 	fmt.Fprintf(&b, "%s\n", rep.Cogmem)
 	if len(rep.Erased) == 0 && rep.Shared == "" && len(rep.Skipped) == 0 {

@@ -126,9 +126,10 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 			CanonicalID: identity.BuildCanonicalID("device", deviceID),
 		}
 		metadata := map[string]string{"platform": "device", "device_id": deviceID}
-		// Pin the conversation session (per-device / per-profile isolation, and the
-		// key chat.history reads). The agent is the session key's 2nd segment; the
-		// loop falls back to default routing when it's "main"/unknown.
+		// Pin the conversation session (the selected agent's main conversation,
+		// the key chat.history reads). The agent is the session key's 2nd segment,
+		// which sessionScopeKeyFor has already resolved to an existing agent; the
+		// loop drops a turn preresolved to an agent that is gone.
 		if sessionKey != "" {
 			metadata["session_key"] = sessionKey
 			if agentID := routing.AgentIDFromSessionKey(sessionKey); agentID != "" {
@@ -161,7 +162,8 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 		return nil
 	}
 	mediaDir := utils.MediaTempDir()
-	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+	dirMode, fileMode := utils.MediaModes()
+	if err := os.MkdirAll(mediaDir, dirMode); err != nil {
 		logger.WarnCF("device", "create media dir failed; dropping attachments", map[string]any{"dir": mediaDir, "error": err.Error()})
 		return nil
 	}
@@ -175,6 +177,9 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 			continue
 		}
 		_, werr := f.Write(a.Data)
+		if werr == nil && fileMode != 0o600 { // CreateTemp makes it 0600
+			werr = f.Chmod(fileMode)
+		}
 		if closeErr := f.Close(); closeErr != nil && werr == nil {
 			werr = closeErr
 		}
@@ -222,6 +227,9 @@ func extForMIME(mime string) string {
 // server so operator clients can call agents.list / chat.history. Injected from
 // internal/gateway (which owns the agent loop) after the channel is built.
 func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q) }
+
+// AgentQuerier returns the accessor SetAgentQuerier installed, or nil.
+func (c *DeviceChannel) AgentQuerier() AgentQuerier { return c.server.querier }
 
 // errNoCertificate is Start's refusal when channels.device.tls is on but the
 // gateway has no certificate manager to lend (HTTPS was off at start).
@@ -408,14 +416,17 @@ func (c *DeviceChannel) StreamDelta(_ context.Context, chatID, delta string) err
 
 // Send implements channels.Channel — routes an agent reply to the device WS as a
 // terminal chat event, keyed by the inbound chatID ("device:<deviceID>").
-func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
+// It says why a reply was not delivered (see Server.DeliverReply).
+func (c *DeviceChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	if !c.IsRunning() {
 		return channels.ErrNotRunning
 	}
-	if c.server.DeliverReply(msg.ChatID, msg.Content) {
-		return nil
+	err := c.server.DeliverReply(ctx, msg.ChatID, msg.Content)
+	if err != nil && ctx.Err() != nil {
+		// Shutting down: not a delivery fault, and never an alert.
+		return ctx.Err()
 	}
-	return channels.ErrSendFailed
+	return err
 }
 
 // trustedProxyHandler attributes a request from a trusted proxy to the client

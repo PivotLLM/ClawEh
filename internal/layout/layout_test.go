@@ -42,7 +42,7 @@ func TestPrepareFreshStartCreatesDirectories(t *testing.T) {
 	Prepare(cfg)
 
 	assertPrivateDir(t, home)
-	for _, dir := range []string{"internal", "cli", "skills", "common"} {
+	for _, dir := range []string{"internal", "cli", "skills", "cards", "common"} {
 		assertPrivateDir(t, filepath.Join(home, dir))
 	}
 }
@@ -65,7 +65,7 @@ func TestPrepareIsIdempotent(t *testing.T) {
 	if string(b) != "kept" {
 		t.Errorf("state.json = %q after a second start, want it untouched", b)
 	}
-	for _, dir := range []string{"internal", "cli", "skills", "common"} {
+	for _, dir := range []string{"internal", "cli", "skills", "cards", "common"} {
 		assertPrivateDir(t, filepath.Join(home, dir))
 	}
 }

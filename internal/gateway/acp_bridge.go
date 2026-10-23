@@ -146,9 +146,9 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 
 	logger.InfoCF("acp", "prompt → claw", map[string]any{"sessionId": sessionID, "runId": runID, "chars": len(text)})
 
-	// The gateway isolates a node client's conversation per device; sessionKey
-	// "main" is what the R1 sends. The bridge is one device, so all ACP sessions
-	// share that per-device conversation (matches the R1's own behavior today).
+	// sessionKey "main" is what the R1 sends: the gateway resolves it to the
+	// device's assigned (else the default) agent's main conversation, so all ACP
+	// sessions share that conversation (matches the R1's own behavior).
 	params := protocol.ChatSendParams{
 		SessionKey:     "main",
 		Message:        text,
@@ -316,7 +316,7 @@ func (br *acpBridge) handleChatEvent(payload json.RawMessage) {
 // The session-management probes below must return benign results, never errors:
 // clients (rabbit-agent) call session/list right after session/new and abort the
 // whole turn if it errors. Our sessions are effectively stateless on the bridge
-// (the gateway owns the per-device conversation), so we just track ids.
+// (the gateway owns the conversation), so we just track ids.
 
 func (br *acpBridge) LoadSession(_ context.Context, req acplib.LoadSessionRequest) (*acplib.LoadSessionResponse, error) {
 	br.rememberSession(req.SessionID)

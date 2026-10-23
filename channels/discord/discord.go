@@ -48,6 +48,25 @@ type DiscordChannel struct {
 	typingMu   sync.Mutex
 	typingStop map[string]chan struct{} // chatID → stop signal
 	botUserID  string                   // stored for mention checking
+	// openSession and closeLate open the gateway session in Start and close
+	// one that opened after its start was abandoned; nil means the session's
+	// Open and Close (tests replace them).
+	openSession func() error
+	closeLate   func() error
+}
+
+func (c *DiscordChannel) open() error {
+	if c.openSession != nil {
+		return c.openSession()
+	}
+	return c.session.Open()
+}
+
+func (c *DiscordChannel) closeLateSession() error {
+	if c.closeLate != nil {
+		return c.closeLate()
+	}
+	return c.session.Close()
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -88,7 +107,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
 	// Get bot user ID before opening session to avoid race condition
-	botUser, err := c.session.User("@me")
+	botUser, err := c.session.User("@me", discordgo.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to get bot user: %w", err)
 	}
@@ -100,8 +119,25 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	c.session.AddHandler(c.onConnect)
 	c.session.AddHandler(c.onDisconnect)
 
-	if err := c.session.Open(); err != nil {
-		return fmt.Errorf("failed to open discord session: %w", err)
+	// Open takes no context (its dial is bounded by the dialer's handshake
+	// timeout): wait for it or for ctx, and close a session that opens after
+	// the start was abandoned.
+	opened := make(chan error, 1)
+	go func() { opened <- c.open() }()
+	select {
+	case err := <-opened:
+		if err != nil {
+			return fmt.Errorf("failed to open discord session: %w", err)
+		}
+	case <-ctx.Done():
+		go func() {
+			if <-opened == nil {
+				if err := c.closeLateSession(); err != nil {
+					logger.WarnCF("discord", "Closing a session opened after its start was abandoned", map[string]any{"error": err.Error()})
+				}
+			}
+		}()
+		return ctx.Err()
 	}
 
 	c.SetRunning(true)
@@ -242,7 +278,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("discord send media: %w", channels.ErrTemporary)
+			return classifySendErr("discord send media", err)
 		}
 		return nil
 	case <-sendCtx.Done():
@@ -312,12 +348,29 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content, repl
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("discord send: %w", channels.ErrTemporary)
+			return classifySendErr("discord send", err)
 		}
 		return nil
 	case <-sendCtx.Done():
 		return sendCtx.Err()
 	}
+}
+
+// classifySendErr maps a failed Discord send to a channel sentinel: an
+// unknown channel or user, or a user who does not accept messages from the
+// bot, is ErrRecipientNotFound; anything else ErrTemporary (retried). The
+// error is kept so logs and alerts say why; Discord errors carry no token (it
+// travels in a header).
+func classifySendErr(op string, err error) error {
+	var restErr *discordgo.RESTError
+	if errors.As(err, &restErr) && restErr.Message != nil {
+		switch restErr.Message.Code {
+		case discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeUnknownUser,
+			discordgo.ErrCodeCannotSendMessagesToThisUser:
+			return fmt.Errorf("%s: %w: %w", op, channels.ErrRecipientNotFound, err)
+		}
+	}
+	return fmt.Errorf("%s: %w: %w", op, channels.ErrTemporary, err)
 }
 
 // appendContent safely appends content to existing text

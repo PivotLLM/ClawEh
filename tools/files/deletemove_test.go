@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 func TestFileDelete_RequiresSure(t *testing.T) {
@@ -37,11 +39,27 @@ func TestFileDelete_RefusesBackupFiles(t *testing.T) {
 	}
 	tool := NewDeleteFileToolScoped(dir, false, "")
 	res := tool.Execute(context.Background(), map[string]any{"path": bp, "sure": true})
-	if !res.IsError || !contains(res.ForLLM, "backup") {
-		t.Fatalf("should refuse to delete a backup file, got: %s", res.ForLLM)
+	if !res.IsError || !contains(res.ForLLM, "backup") || !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("should refuse to delete a backup file as an expected refusal, got: %s", res.ForLLM)
 	}
 	if _, err := os.Stat(bp); err != nil {
 		t.Fatalf("backup file must survive")
+	}
+}
+
+func TestFileDelete_RefusesDirectories(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewDeleteFileToolScoped(dir, false, "")
+	res := tool.Execute(context.Background(), map[string]any{"path": sub, "sure": true})
+	if !res.IsError || !contains(res.ForLLM, "directory") || !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("should refuse to delete a directory as an expected refusal, got: %s", res.ForLLM)
+	}
+	if _, err := os.Stat(sub); err != nil {
+		t.Fatalf("directory must survive")
 	}
 }
 

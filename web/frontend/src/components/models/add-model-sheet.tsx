@@ -34,13 +34,13 @@ import {
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 
+import { TurnTimeoutNote } from "./turn-timeout-note"
+
 interface AddForm {
   modelName: string
   model: string
   provider: string
-  connectMode: string
   workspace: string
-  rpm: string
   contextWindow: string
   maxTokensField: string
   requestTimeout: string
@@ -56,9 +56,7 @@ const EMPTY_ADD_FORM: AddForm = {
   modelName: "",
   model: "",
   provider: "",
-  connectMode: "",
   workspace: "",
-  rpm: "",
   contextWindow: "",
   maxTokensField: "",
   requestTimeout: "",
@@ -75,6 +73,8 @@ interface AddModelSheetProps {
   onClose: () => void
   onSaved: () => void
   existingModelNames: string[]
+  // The install's effective Turn timeout in seconds; 0 when unknown.
+  turnTimeout: number
 }
 
 export function AddModelSheet({
@@ -82,6 +82,7 @@ export function AddModelSheet({
   onClose,
   onSaved,
   existingModelNames,
+  turnTimeout,
 }: AddModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<AddForm>(EMPTY_ADD_FORM)
@@ -157,9 +158,7 @@ export function AddModelSheet({
         model_name: modelName,
         model: modelId,
         provider: form.provider.trim(),
-        connect_mode: form.connectMode.trim() || undefined,
         workspace: form.workspace.trim() || undefined,
-        rpm: form.rpm ? Number(form.rpm) : undefined,
         context_window: form.contextWindow
           ? Number(form.contextWindow)
           : undefined,
@@ -292,17 +291,6 @@ export function AddModelSheet({
               </Field>
 
               <Field
-                label={t("models.field.connectMode")}
-                hint={t("models.field.connectModeHint")}
-              >
-                <Input
-                  value={form.connectMode}
-                  onChange={setField("connectMode")}
-                  placeholder="stdio"
-                />
-              </Field>
-
-              <Field
                 label={t("models.field.workspace")}
                 hint={t("models.field.workspaceHint")}
               >
@@ -325,19 +313,11 @@ export function AddModelSheet({
                   min={0}
                 />
               </Field>
+              <TurnTimeoutNote
+                requestTimeout={form.requestTimeout}
+                turnTimeout={turnTimeout}
+              />
 
-              <Field
-                label={t("models.field.rpm")}
-                hint={t("models.field.rpmHint")}
-              >
-                <Input
-                  value={form.rpm}
-                  onChange={setField("rpm")}
-                  placeholder="60"
-                  type="number"
-                  min={0}
-                />
-              </Field>
 
               <Field
                 label={t("models.field.thinkingLevel")}
@@ -422,7 +402,7 @@ export function AddModelSheet({
 
               <Field
                 label="Vision (tool-result images)"
-                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Chat models need 'User message'; Responses models can use 'Tool response'."
+                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Tool response works on the OpenAI Responses API and xAI; use User message for plain OpenAI chat."
               >
                 <Select
                   value={form.vision || "off"}

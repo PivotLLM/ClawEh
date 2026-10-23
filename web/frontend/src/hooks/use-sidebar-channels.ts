@@ -1,7 +1,6 @@
 import {
   IconBrandChrome,
   IconBrandDiscord,
-  IconBrandLine,
   IconBrandMatrix,
   IconBrandSlack,
   IconBrandTelegram,
@@ -24,7 +23,6 @@ const CHANNEL_IMPORTANCE_ORDER = [
   "telegram",
   "secmsg",
   "slack",
-  "line",
   "matrix",
   "webui",
 ]
@@ -40,7 +38,6 @@ const CHANNEL_ICON_MAP: Record<
   secmsg: IconShieldLock,
   discord: IconBrandDiscord,
   slack: IconBrandSlack,
-  line: IconBrandLine,
   matrix: IconBrandMatrix,
   webui: IconBrandChrome,
 }

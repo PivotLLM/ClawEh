@@ -1,10 +1,10 @@
 import { IconCode } from "@tabler/icons-react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
-import { patchAppConfig } from "@/api/channels"
+import { HUMAN_AGENTS_QUERY_KEY, patchAppConfig } from "@/api/channels"
 import {
   type CoreConfigForm,
   EMPTY_FORM,
@@ -18,6 +18,7 @@ import { AgentModelDefaultsSection } from "@/components/config/sections/agent-mo
 import { BackupSection } from "@/components/config/sections/backup-section"
 import { ContextManagementSection } from "@/components/config/sections/context-management-section"
 import { DevicesSection } from "@/components/config/sections/devices-section"
+import { ForumSection } from "@/components/config/sections/forum-section"
 import { RuntimeSection } from "@/components/config/sections/runtime-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -25,11 +26,13 @@ import { Button } from "@/components/ui/button"
 type SaveStatus = "saving" | "saved" | "error" | null
 
 // SystemPage is everything about the running system that is not a listener:
-// agent defaults, context management, runtime, logging, backup and hardware
-// devices. Listeners (ports, HTTPS, allowlists, the device gateway) are on the
-// Network page. Fields autosave on a debounce, as a JSON merge patch.
+// agent defaults, context management, runtime, logging, backup, forum
+// maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
+// device gateway) are on the Network page. Fields autosave on a debounce, as
+// a JSON merge patch.
 export function SystemPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const { data, isLoading, error } = useQuery({
     queryKey: ["config"],
     queryFn: async () => {
@@ -88,6 +91,16 @@ export function SystemPage() {
     setBaseline(parsed)
   }
 
+  // A link to a field (the Models page links /system#turn-timeout) arrives
+  // before the form has loaded, so the router cannot scroll to it; do it
+  // once the fields are on the page.
+  const loaded = data !== undefined
+  useEffect(() => {
+    if (!loaded) return
+    const id = window.location.hash.slice(1)
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "center" })
+  }, [loaded])
+
   // Clear pending timers on unmount so a debounced save can't fire after teardown.
   useEffect(
     () => () => {
@@ -145,12 +158,6 @@ export function SystemPage() {
       {
         // base_dir may be blank — the backend then defaults to <data_dir>/agents.
         const baseDir = form.baseDir.trim()
-        const sessionMode = form.sessionMode.trim()
-
-        if (!sessionMode) {
-          throw new Error("Session mode is required.")
-        }
-
         const maxTokens = parseIntField(form.maxTokens, "Max tokens", {
           min: 1,
         })
@@ -359,14 +366,6 @@ export function SystemPage() {
             models: summarizationModels,
             debug_capture: form.summarizationDebugCapture,
           },
-          session: {
-            mode: sessionMode,
-          },
-          tools: {
-            exec: {
-              allow_remote: form.allowRemote,
-            },
-          },
           devices: {
             enabled: form.devicesEnabled,
             monitor_usb: form.monitorUSB,
@@ -388,6 +387,31 @@ export function SystemPage() {
             // and falls back to <CLAW_HOME>/backup.
             dest: form.backupDest.trim(),
           },
+          // Blank (or 0) is the default; null removes the key from the file.
+          forum: {
+            limits: nullableInts({
+              max_calls: parseOptionalIntField(
+                form.forumMaxCalls,
+                t("pages.config.forum_max_calls"),
+                { min: 0 },
+              ),
+              max_duration_seconds: parseOptionalIntField(
+                form.forumMaxDurationSeconds,
+                t("pages.config.forum_max_duration_seconds"),
+                { min: 0 },
+              ),
+              call_timeout_seconds: parseOptionalIntField(
+                form.forumCallTimeoutSeconds,
+                t("pages.config.forum_call_timeout_seconds"),
+                { min: 0 },
+              ),
+              max_parallel_calls: parseOptionalIntField(
+                form.forumMaxParallelCalls,
+                t("pages.config.forum_max_parallel_calls"),
+                { min: 0 },
+              ),
+            }),
+          },
         }
       }
     } catch (err) {
@@ -401,6 +425,8 @@ export function SystemPage() {
     setStatus("saving")
     try {
       await patchAppConfig(patch)
+      // A model named here may represent a person; refresh the notes.
+      void queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
       setBaseline(form)
       setStatus("saved")
       clearTimeout(savedTimer.current)
@@ -470,6 +496,8 @@ export function SystemPage() {
               <RuntimeSection form={form} onFieldChange={updateField} />
 
               <BackupSection form={form} onFieldChange={updateField} />
+
+              <ForumSection form={form} onFieldChange={updateField} />
 
               <DevicesSection form={form} onFieldChange={updateField} />
             </div>

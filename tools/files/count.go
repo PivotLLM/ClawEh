@@ -88,13 +88,13 @@ func (t *CountFileTool) Execute(_ context.Context, args map[string]any) *tools.T
 
 	f, err := t.sysFs.Open(path)
 	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to open %q: %v", path, err))
+		return tools.ErrorResult(fmt.Sprintf("failed to open %q: %v", path, err)).WithError(err)
 	}
 	defer utils.CloseQuietly(f)
 
 	counts, err := countReader(bufio.NewReaderSize(f, 64*1024))
 	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err))
+		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err)).WithError(err)
 	}
 	counts.Path = path
 

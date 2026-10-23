@@ -18,7 +18,7 @@ import (
 // agent's, and the head of the result plus the truncation marker reach the LLM.
 func TestProcessSystemMessage_CapsAsyncResult(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
@@ -33,9 +33,10 @@ func TestProcessSystemMessage_CapsAsyncResult(t *testing.T) {
 	_, err := al.processSystemMessage(context.Background(), bus.InboundMessage{
 		Channel:  "system",
 		SenderID: "async:agent_spawn",
-		ChatID:   "telegram:chat-1",
+		ChatID:   "chat-1",
 		Content:  big,
-	})
+		Metadata: map[string]string{bus.MetaOriginChannel: "telegram"},
+	}, nil)
 	if err != nil {
 		t.Fatalf("processSystemMessage: %v", err)
 	}

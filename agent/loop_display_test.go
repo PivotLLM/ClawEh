@@ -44,7 +44,7 @@ func TestRunLLMIteration_ToolForUser_PublishedOnInboundUserMessage(t *testing.T)
 	// ForUser is only streamed to the user when tool-activity streaming is on.
 	cfg.Agents.Defaults.StreamToolActivity = true
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -145,7 +145,7 @@ func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
 	al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 	cfg.Agents.Defaults.StreamToolActivity = false // explicit: the default
 
-	agentInstance := al.registry.GetDefaultAgent()
+	agentInstance := al.registry.Default()
 	if agentInstance == nil {
 		t.Fatal("no default agent")
 	}
@@ -204,21 +204,15 @@ func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 
-	// Drain briefly; neither the ForUser payload nor the narration must appear.
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case m := <-collected:
-			if m.Content == userPayload {
-				t.Fatalf("ForUser must not be streamed when StreamToolActivity is off; got: %q", m.Content)
-			}
-			if m.Content == "let me check that for you" {
-				t.Fatalf("inter-tool narration must not be streamed when StreamToolActivity is off")
-			}
-		case <-deadline:
-			subCancel()
-			<-done
-			return
+	// Neither the ForUser payload nor the narration must appear.
+	for _, m := range untilMarker(t, msgBus, collected) {
+		if m.Content == userPayload {
+			t.Fatalf("ForUser must not be streamed when StreamToolActivity is off; got: %q", m.Content)
+		}
+		if m.Content == "let me check that for you" {
+			t.Fatalf("inter-tool narration must not be streamed when StreamToolActivity is off")
 		}
 	}
+	subCancel()
+	<-done
 }

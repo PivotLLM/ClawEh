@@ -32,6 +32,15 @@ function presetFor(
   return presets.find((p) => p.provider === provider)
 }
 
+// missingEndpoint: a provider with no preset (custom) has no default endpoint
+// or model, so the backend is skipped until both are set.
+function missingEndpoint(presets: STTPreset[], row: STTProvider): boolean {
+  return (
+    !presetFor(presets, row.provider) &&
+    (!row.base_url?.trim() || !row.model?.trim())
+  )
+}
+
 export function VoicePage() {
   const stt = useQuery({ queryKey: ["voice-stt"], queryFn: getVoiceSTT })
 
@@ -123,8 +132,11 @@ export function VoicePage() {
     scheduleSave()
   }
 
-  // The first enabled backend with a key is the one actually used to transcribe.
-  const activeIndex = rows.findIndex((r) => r.enabled)
+  // Enabled backends are tried in list order: the first is the primary, the
+  // rest are its fallbacks.
+  const primaryIndex = rows.findIndex(
+    (r) => r.enabled && !missingEndpoint(presets, r),
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -143,17 +155,16 @@ export function VoicePage() {
       </PageHeader>
 
       <p className="text-muted-foreground px-6 text-sm">
-        Transcribe inbound voice messages before they reach the assistant. The
-        first enabled backend is used; the rest are kept for future fallback.
+        Voice messages are transcribed before they reach the assistant. Enabled
+        backends are tried in order.
       </p>
 
       <Card>
         <CardHeader>
           <CardTitle>Transcription backends</CardTitle>
           <CardDescription>
-            Any OpenAI-compatible Whisper endpoint (Groq, OpenAI, OpenRouter, or
-            a custom host). Leave the endpoint and model blank to use the
-            provider default.
+            Leave the endpoint and model blank to use the provider&apos;s
+            defaults.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -165,7 +176,7 @@ export function VoicePage() {
           ) : (
             rows.map((row, i) => {
               const preset = presetFor(presets, row.provider)
-              const isActive = i === activeIndex && row.enabled
+              const unusable = missingEndpoint(presets, row)
               return (
                 <div
                   key={i}
@@ -181,9 +192,14 @@ export function VoicePage() {
                       <span className="text-sm font-medium">
                         {row.enabled ? "Enabled" : "Disabled"}
                       </span>
-                      {isActive && (
+                      {row.enabled && !unusable && (
                         <span className="rounded bg-green-500/15 px-2 py-0.5 text-xs text-green-600">
-                          Active
+                          {i === primaryIndex ? "Primary" : "Fallback"}
+                        </span>
+                      )}
+                      {row.enabled && unusable && (
+                        <span className="text-xs text-amber-500">
+                          Not used: needs an endpoint and model.
                         </span>
                       )}
                     </div>
@@ -220,7 +236,7 @@ export function VoicePage() {
                         id={`stt-api-key-${i}`}
                         type="password"
                         value={row.api_key ?? ""}
-                        placeholder="required"
+                        placeholder="Blank uses the key from Providers"
                         onChange={(e) => update(i, { api_key: e.target.value })}
                       />
                     </div>
@@ -231,7 +247,7 @@ export function VoicePage() {
                       <Input
                         id={`stt-base-url-${i}`}
                         value={row.base_url ?? ""}
-                        placeholder={preset?.base_url ?? "https://.../v1"}
+                        placeholder={preset?.base_url ?? "Required"}
                         onChange={(e) =>
                           update(i, { base_url: e.target.value })
                         }
@@ -242,7 +258,7 @@ export function VoicePage() {
                       <Input
                         id={`stt-model-${i}`}
                         value={row.model ?? ""}
-                        placeholder={preset?.model ?? "whisper-1"}
+                        placeholder={preset?.model ?? "Required"}
                         onChange={(e) => update(i, { model: e.target.value })}
                       />
                     </div>

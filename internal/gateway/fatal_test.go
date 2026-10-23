@@ -78,8 +78,8 @@ func TestRequestRestart(t *testing.T) {
 		t.Fatal("no restart handed to the main loop")
 	}
 	select {
-	case <-f.restart:
-		t.Fatal("second request was queued; want it dropped")
+	case second := <-f.restart:
+		t.Fatalf("second request was queued; want it dropped: %+v", second)
 	default:
 	}
 	if alerts := rec.Alerts(); len(alerts) != 0 {
@@ -102,7 +102,9 @@ func TestFatalService_SecondFailureIsLoggedOnly(t *testing.T) {
 	f.fatalService("mcpserver", errors.New("127.0.0.1:18789: boom"))
 	f.fatalService("agent-loop", errors.New("loop gone"))
 
-	<-f.failed
+	if first := <-f.failed; first == nil {
+		t.Fatal("first failure handed to the main loop is nil")
+	}
 	select {
 	case failure := <-f.failed:
 		t.Fatalf("second failure handed to the main loop: %+v", failure)

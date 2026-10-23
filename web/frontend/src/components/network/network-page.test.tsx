@@ -76,6 +76,8 @@ const tls: TLSStatus = {
     self_signed: true,
   },
   restart_required: false,
+  untrusted_proxy: false,
+  behind_proxy: false,
 }
 
 interface Call {
@@ -448,6 +450,27 @@ describe("NetworkPage", () => {
     expect(screen.queryByTestId("network-restart-banner")).toBe(null)
   })
 
+  it("notes a proxy that is not trusted next to Trusted proxies", async () => {
+    stubFetch({ tlsStatus: () => ({ ...tls, untrusted_proxy: true }) })
+    renderPage()
+    const note = await screen.findByTestId("network-untrusted-proxy")
+    expect(note.textContent).toBe("pages.network.allowed.untrusted_proxy")
+  })
+
+  it("shows no proxy note when the proxy is trusted", async () => {
+    stubFetch({})
+    renderPage()
+    await screen.findByTestId("network-trusted-proxies")
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([u]) => String(u).endsWith("/api/tls")),
+      ).toBe(true),
+    )
+    expect(screen.queryByTestId("network-untrusted-proxy")).toBe(null)
+  })
+
   it("restarts the gateway, waits for /ready and reloads", async () => {
     // Down once, then back: the page must not reload from the old process.
     const calls = stubFetch({
@@ -620,6 +643,23 @@ describe("NetworkPage", () => {
     expect(marks[0].textContent).toBe("pages.network.urls.http_warning")
     expect(screen.getAllByText("pages.network.urls.http_warning").length).toBe(
       2,
+    )
+  })
+
+  it("does not flag plain HTTP behind a proxy", async () => {
+    stubFetch({
+      tlsStatus: () => ({
+        ...tls,
+        behind_proxy: true,
+        urls: { ...tls.urls, http: ["http://10.0.0.5:18790/"] },
+      }),
+    })
+    renderPage()
+
+    await screen.findByText("http://10.0.0.5:18790/")
+    expect(screen.queryByTestId("network-http-warning")).toBe(null)
+    expect(screen.queryByText("pages.network.http.scope_network_warning")).toBe(
+      null,
     )
   })
 

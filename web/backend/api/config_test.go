@@ -2,61 +2,15 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
 )
-
-func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {
-	configPath := setupTestEnv(t)
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
-		"agents": {
-			"defaults": {
-				"workspace": "~/.claw/workspace"
-			},
-			"list": [{"id": "main", "name": "Main", "default": true}]
-		},
-		"providers": [
-			{
-				"name": "openai",
-				"protocol": "openai-chat",
-				"base_url": "https://api.openai.com/v1",
-				"api_key": "sk-default"
-			}
-		],
-		"models": [
-			{
-				"model_name": "custom-default",
-				"model": "gpt-4o",
-				"provider": "openai",
-				"enabled": true
-			}
-		]
-	}`))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should take its default (false) when omitted from PUT /api/config")
-	}
-}
 
 func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	configPath := setupTestEnv(t)
@@ -100,9 +54,6 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if got := cfg.Models[0].ConnectMode; got != "" {
-		t.Fatalf("models[0].connect_mode = %q, want empty string (not inherited from default template)", got)
 	}
 	if got := cfg.Models[0].Workspace; got != "" {
 		t.Fatalf("models[0].workspace = %q, want empty string (not inherited from default template)", got)
@@ -206,5 +157,61 @@ func TestHandleUpdateConfig_KeepsPreExistingDanglingModelReference(t *testing.T)
 	}
 	if cfg.Logging.Level != "warn" {
 		t.Fatalf("logging.level = %q, want warn (the save was not applied)", cfg.Logging.Level)
+	}
+}
+
+// A JSON Merge Patch null removes the key: the stored defaults temperature
+// becomes nil and the file on disk no longer carries it.
+func TestHandlePatchConfig_NullRemovesDefaultsTemperature(t *testing.T) {
+	configPath := setupTestEnv(t)
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	temp := 0.7
+	cfg.Agents.Defaults.Temperature = &temp
+	if err = config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config",
+		bytes.NewBufferString(`{"agents":{"defaults":{"temperature":null}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	stored, err := h.currentConfig()
+	if err != nil {
+		t.Fatalf("currentConfig() error = %v", err)
+	}
+	if got := stored.Agents.Defaults.Temperature; got != nil {
+		t.Fatalf("stored agents.defaults.temperature = %v, want nil", *got)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var onDisk struct {
+		Agents struct {
+			Defaults map[string]json.RawMessage `json:"defaults"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatalf("Unmarshal(config file) error = %v", err)
+	}
+	if onDisk.Agents.Defaults == nil {
+		t.Fatalf("config file has no agents.defaults: %s", raw)
+	}
+	if v, ok := onDisk.Agents.Defaults["temperature"]; ok {
+		t.Fatalf("config file agents.defaults.temperature = %s, want no key", v)
 	}
 }

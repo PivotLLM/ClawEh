@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -52,6 +53,8 @@ func testProviderConnectivity(req providerTestRequest) providerTestResponse {
 	key := strings.TrimSpace(req.APIKey)
 
 	switch {
+	case config.IsHumanProtocol(proto):
+		return providerTestResponse{OK: true, Message: "A person answers on this provider; there is nothing to test."}
 	case strings.HasSuffix(proto, "-cli"):
 		return providerTestResponse{Message: "CLI providers are checked by detection (binary on PATH), not an API key test."}
 	case proto == "azure":

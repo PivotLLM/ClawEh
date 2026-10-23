@@ -38,11 +38,10 @@ func GetProviders() []ToolProvider {
 var StaticToolDescriptors = []ToolDescriptor{}
 
 // DefaultEnabledToolNames returns the names of every registered provider-owned
-// tool plus static tool whose descriptor is marked DefaultEnabled. It is the
-// single source of truth for "tools on by default": it drives both the default
-// per-agent allowlist and the default MCP-host allowlist, so marking a tool
-// DefaultEnabled is sufficient to expose it everywhere without touching a
-// hand-maintained list. Must be called after providers are registered.
+// tool plus static tool whose descriptor is marked DefaultEnabled: the
+// standard set the WebUI's "Default tools" button writes into an agent's tools
+// list. An agent never gets it implicitly; it has only the tools it lists.
+// Must be called after providers are registered.
 func DefaultEnabledToolNames() []string {
 	var names []string
 	for _, p := range GetProviders() {

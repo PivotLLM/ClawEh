@@ -17,7 +17,7 @@ func TestSecurityHeaders(t *testing.T) {
 		wantCache string
 	}{
 		{"/api/config", "no-store"},
-		{"/api/sessions/x", "no-store"},
+		{"/api/sessions", "no-store"},
 		{"/", ""},
 		{"/assets/app.js", ""},
 		{"/webui/ws", ""},

@@ -17,7 +17,7 @@ import (
 // session's recorded channel, so the primary LLM is notified without polling.
 func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	msgBus := bus.NewMessageBus()
-	rec := sessionRecord{agentID: "penny", sessionKey: "agent:penny:main", channel: "slack", chatID: "C9"}
+	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main", channel: "slack", chatID: "C9"}
 
 	got := make(chan bus.InboundMessage, 1)
 	go func() {
@@ -31,26 +31,30 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn",
-		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`})
+		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`}, 3)
 
 	select {
 	case m := <-got:
 		if m.Channel != "system" {
 			t.Errorf("channel = %q, want system", m.Channel)
 		}
-		if m.ChatID != "slack:C9" {
-			t.Errorf("chat_id = %q, want slack:C9", m.ChatID)
+		if m.ChatID != "C9" || m.Metadata[bus.MetaOriginChannel] != "slack" {
+			t.Errorf("chat = %q on %q, want C9 on slack", m.ChatID, m.Metadata[bus.MetaOriginChannel])
 		}
 		if m.Content == "" || m.SenderID != "async:agent_spawn" {
 			t.Errorf("unexpected message: %+v", m)
 		}
 		// The spawner's session info must travel with the completion so it routes
 		// back to the spawning agent's session (not the default agent).
-		if m.SessionKey != "agent:penny:main" {
-			t.Errorf("session_key = %q, want agent:penny:main", m.SessionKey)
+		if m.SessionKey != "agent:alice:main" {
+			t.Errorf("session_key = %q, want agent:alice:main", m.SessionKey)
 		}
-		if m.Metadata["preresolved_agent_id"] != "penny" {
-			t.Errorf("preresolved_agent_id = %q, want penny", m.Metadata["preresolved_agent_id"])
+		if m.Metadata["preresolved_agent_id"] != "alice" {
+			t.Errorf("preresolved_agent_id = %q, want alice", m.Metadata["preresolved_agent_id"])
+		}
+		// The re-entered turn keeps the spawning call's depth.
+		if m.Metadata[bus.MetaSpawnDepth] != "3" {
+			t.Errorf("spawn_depth = %q, want 3", m.Metadata[bus.MetaSpawnDepth])
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected a re-injected system inbound message")
@@ -61,7 +65,7 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 // when the session has no recorded channel (nothing to route to).
 func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
 	msgBus := bus.NewMessageBus()
-	rec := sessionRecord{agentID: "penny", sessionKey: "agent:penny:main"} // no channel/chatID
+	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main"} // no channel/chatID
 
 	published := make(chan struct{}, 1)
 	go func() {
@@ -73,7 +77,7 @@ func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
 	}()
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"})
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"}, 0)
 
 	select {
 	case <-published:

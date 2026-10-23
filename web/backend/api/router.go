@@ -29,6 +29,14 @@ type Handler struct {
 	storeMu sync.Mutex
 	store   *config.Store
 
+	// lanIPv4s lists this machine's LAN addresses for the device pairing
+	// code; nil means device.LANIPv4s (tests set it).
+	lanIPv4s func() []string
+
+	// encryptedMatrixRooms lists the Matrix rooms seen to be encrypted for
+	// Check Up; nil means matrix.EncryptedRooms (tests set it).
+	encryptedMatrixRooms func() []string
+
 	// reloadTrigger, when set by the gateway, forces an immediate config reload
 	// (bypassing the mtime-debounce). Guarded because it's set at startup on one
 	// goroutine and read on HTTP-handler goroutines.
@@ -70,6 +78,9 @@ type Handler struct {
 	// SetTLSManager; see tls.go). Guarded by reloadMu.
 	bootListeners *config.ListenerSettings
 	tlsManager    *tlscert.Manager
+	// proxyWatch records forwarded requests from a proxy that is not trusted
+	// (SetProxyWatch); nil until the gateway sets it. Guarded by reloadMu.
+	proxyWatch *middleware.ProxyWatch
 	// restartHook is the gateway's clean-shutdown-and-exit path (SetRestart);
 	// nil until the gateway sets it. serviceManagedFn overrides the
 	// service-manager check in tests; nil means the real environment check.
@@ -214,19 +225,35 @@ func conflict(format string, args ...any) error {
 	return &httpError{status: http.StatusConflict, msg: fmt.Sprintf(format, args...)}
 }
 
-// writeUpdateError reports an updateConfig failure: an *httpError carries its
-// own status, a *config.ValidationError is the client's doing (400), anything
-// else is a failed save (500).
+// writeUpdateError reports an updateConfig failure as JSON {"errors": [...]}:
+// an *httpError carries its own status, a *config.ValidationError is the
+// client's doing (400, one entry per refusal), anything else is a failed save
+// (500). Every 400 is in the validation_error shape validateConfig findings
+// use.
 func writeUpdateError(w http.ResponseWriter, err error) {
 	if herr, ok := errors.AsType[*httpError](err); ok {
-		http.Error(w, herr.msg, herr.status)
+		if herr.status == http.StatusBadRequest {
+			writeValidationErrors(w, []string{herr.msg})
+			return
+		}
+		writeJSON(w, herr.status, map[string]any{"errors": []string{herr.msg}})
 		return
 	}
 	if verr, ok := errors.AsType[*config.ValidationError](err); ok {
-		http.Error(w, fmt.Sprintf("Validation error: %v", verr), http.StatusBadRequest)
+		writeValidationErrors(w, verr.Messages())
 		return
 	}
-	http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+	writeJSON(w, http.StatusInternalServerError, map[string]any{
+		"errors": []string{fmt.Sprintf("Failed to save config: %v", err)},
+	})
+}
+
+// writeValidationErrors answers 400 with one entry per refused setting.
+func writeValidationErrors(w http.ResponseWriter, errs []string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"status": "validation_error",
+		"errors": errs,
+	})
 }
 
 // SetServerOptions stores the current backend listen options. serverPublic
@@ -251,7 +278,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Gateway process lifecycle
 	h.registerGatewayRoutes(mux)
 
-	// Session history
+	// Session erase (DELETE /api/sessions)
 	h.registerSessionRoutes(mux)
 
 	// Cognitive-memory browser (read-only)
@@ -276,7 +303,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Skills and tools support/actions
 	h.registerSkillRoutes(mux)
-	h.registerToolRoutes(mux)
+	h.registerCardRoutes(mux)
 
 	// Running ClawEh build version (shown in the WebUI sidebar footer)
 	h.registerVersionRoutes(mux)

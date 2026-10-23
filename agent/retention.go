@@ -46,14 +46,14 @@ type retentionReport struct {
 // only, like the backup scheduler: the loop outlives config reloads.
 func (al *AgentLoop) StartRetention() {
 	go func() {
-		ticker := time.NewTicker(time.Minute)
+		ticker := al.clk().NewTicker(time.Minute)
 		defer ticker.Stop()
 		lastRunDay := "" // YYYYMMDD of the last run; guards once-per-day
 		for {
 			select {
 			case <-al.evictStop:
 				return
-			case now := <-ticker.C:
+			case now := <-ticker.C():
 				if now.Hour() != retentionHour || now.Minute() != retentionMinute {
 					continue
 				}
@@ -77,19 +77,19 @@ func (al *AgentLoop) runRetentionPass(now time.Time) retentionReport {
 	}
 	var rep retentionReport
 	registry := al.GetRegistry()
-	for _, agentID := range registry.ListAgentIDs() {
-		ag, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		ag, ok := registry.Get(agentID)
 		if !ok || ag == nil {
 			continue
 		}
 		if days > 0 {
 			isOpen := func(key string) bool { return al.sessionOpen(ag.ID, key) }
-			r := pruneSessions(filepath.Join(ag.Workspace, "sessions"), ag.Sessions, now, days, isOpen)
+			r := pruneSessions(ag.SessionsDir(), ag.Sessions, now, days, isOpen)
 			rep.deleted = append(rep.deleted, r.deleted...)
 			rep.skippedOpen += r.skippedOpen
 			rep.errors = append(rep.errors, r.errors...)
 		}
-		removed, err := cogmemhost.PruneSnapshots(cogmemhost.Dir(ag.Workspace), now, cogmemhost.SnapshotMaxAge)
+		removed, err := cogmemhost.PruneSnapshots(cogmemhost.Dir(ag.StateDir), now, cogmemhost.SnapshotMaxAge)
 		rep.snapshots += len(removed)
 		if err != nil {
 			rep.errors = append(rep.errors, fmt.Errorf("agent %s: %w", ag.ID, err))
@@ -133,16 +133,15 @@ func (al *AgentLoop) sessionOpen(agentID, sessionKey string) bool {
 }
 
 // retentionExempt reports whether retention must never delete key: the
-// agent's main session (the shared conversation under unified scope, and the
-// WebUI operator's conversation there) and its headless service session, both
-// of which exist for the life of the agent and are trimmed by archive_days
-// instead. Keys of an unrecognised shape are left alone too.
+// agent's main session, its one conversation, which exists for the life of the
+// agent and is trimmed by archive_days instead. Keys of an unrecognised shape
+// are left alone too.
 func retentionExempt(key string) bool {
 	parsed := routing.ParseAgentSessionKey(key)
 	if parsed == nil {
 		return true
 	}
-	return parsed.Rest == routing.DefaultMainKey || parsed.Rest == "service"
+	return parsed.Rest == routing.DefaultMainKey
 }
 
 // pruneSessions deletes every archive in dir (one agent's sessions
@@ -209,8 +208,8 @@ func pruneSessions(dir string, store session.SessionStore, now time.Time, days i
 // It fails, deleting nothing, while a turn is in flight on the session.
 func (al *AgentLoop) ReleaseSession(sessionKey string) error {
 	registry := al.GetRegistry()
-	for _, agentID := range registry.ListAgentIDs() {
-		ag, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		ag, ok := registry.Get(agentID)
 		if !ok || ag == nil {
 			continue
 		}

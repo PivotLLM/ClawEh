@@ -36,15 +36,18 @@ func TestSaveConfig_ClearsDefaultMarker(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_DefaultAgentInheritsDefaultTools(t *testing.T) {
-	// The seeded default agent must NOT grant all tools (["*"]); leaving Tools nil
-	// makes it inherit the install default tool set, so it never exceeds defaults.
+func TestDefaultConfig_DefaultAgentHasNoTools(t *testing.T) {
+	// An agent has only the tools its list names; the seeded agent lists none.
 	cfg := DefaultConfig()
 	if len(cfg.Agents.List) == 0 {
 		t.Fatal("DefaultConfig() should seed a default agent")
 	}
-	if tools := cfg.Agents.List[0].Tools; len(tools) != 0 {
-		t.Errorf("seeded default agent should leave Tools unset (inherit defaults), got %v", tools)
+	a := &cfg.Agents.List[0]
+	if len(a.Tools) != 0 {
+		t.Errorf("seeded default agent lists tools %v, want none", a.Tools)
+	}
+	if a.IsToolAllowed("file_read_lines") {
+		t.Error("seeded default agent may call file_read_lines")
 	}
 }
 

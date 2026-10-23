@@ -1,0 +1,61 @@
+// ClawEh
+// License: MIT
+//
+// Copyright (c) 2026 Tenebris Technologies Inc.
+
+// Package forum runs a configured interaction among participants (agents,
+// clones of agents, or fresh temporary agents) in ordered layers, retains
+// every input, attempt, decision and result on disk, and exposes the
+// lifecycle as a tool suite.
+//
+// The package imports no agent-loop code. Everything it needs from the host
+// arrives through the small interfaces in host.go (Messenger, Agents,
+// Notifier, Logger); ClawEh wires them in and mounts the tools from
+// tools.go under the "forum" namespace.
+//
+// The files, by part (DESIGN.md §2):
+//
+//   - host.go, errors.go, records.go, agentid.go: what the host provides,
+//     the sentinel errors, the on-disk record types every part shares, and
+//     the comparison of agent ids (case-insensitive, sameAgent).
+//   - config.go, config_schema.go, decode.go, validate.go, preflight.go,
+//     anonymity.go, schema_jsonschema.go, jsonpointer.go, mergepatch.go:
+//     the configuration contract and its JSON Schema, strict decoding,
+//     static validation, preflight, the anonymity rules, JSON Schema
+//     compilation, `share`/`paths` projections, and the merge patch of
+//     forum_config_update.
+//   - store.go, locking.go, lock_unix.go, runfiles.go, commits.go,
+//     cleanup.go, atomicfs.go, replay.go: the store (one directory per
+//     forum, one per run: handles and layout), its lock, its records, the
+//     commit log and its index, cleanup markers and removal, the atomic
+//     file primitives, and the verification and replay of the commit log
+//     into State.
+//   - router.go: resolving a layer's routes into the inputs each
+//     participant receives.
+//   - controller.go, turn.go, moderator.go, open.go, transcript.go:
+//     executing layers, composing messages, validating and repairing
+//     output, moderation, pause/resume/cancel, opening a run (also after a
+//     restart) and the transcript.
+//   - service.go, tracking.go, launch.go, control.go, status.go,
+//     runner.go, terminal.go, keepalive.go, recovery.go, forums.go,
+//     tools.go, results_view.go, readme.go: the lifecycle service (the
+//     Service and its shared helpers; its one in-memory record per forum
+//     and run; launch; pause, resume, cancel and delete; status and
+//     results; the run goroutine; terminal work and the completion notice;
+//     the keep-alive and retry loop; restart recovery, which opens runs
+//     through open.go's openForum), forums and their runs, the tool
+//     definitions, the forum_results view, and the guide and templates
+//     (readme/).
+//
+// Invariants every part relies on (DESIGN.md §5):
+//
+//   - The commit log (commits/) is authoritative; state.json is a cache that
+//     replay rebuilds from the commits.
+//   - Exactly one output is ever committed per turn (work) ID, however many
+//     attempts were sent.
+//   - Private material (participant instructions, directed messages, failed
+//     attempts, moderator assessments) never reaches transcript.md or a
+//     published output.
+//   - The controller always starts from disk: Launch writes the run and
+//     then opens it the same way restart recovery does.
+package forum

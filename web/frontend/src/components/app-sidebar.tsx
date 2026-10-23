@@ -3,12 +3,15 @@ import {
   IconActivityHeartbeat,
   IconArrowsTransferDown,
   IconAtom,
+  IconBook,
   IconBrain,
   IconCpu,
   IconDeviceMobile,
+  IconExternalLink,
   IconHistory,
   IconListDetails,
   IconLogout,
+  IconMasksTheater,
   IconMessageCircle,
   IconMessages,
   IconMicrophone,
@@ -20,7 +23,6 @@ import {
   IconServer2,
   IconSettings,
   IconSparkles,
-  IconTools,
 } from "@tabler/icons-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
@@ -149,9 +151,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             translateTitle: true,
           },
           {
-            title: "navigation.tools",
-            url: "/agent/tools",
-            icon: IconTools,
+            title: "navigation.cards",
+            url: "/agent/cards",
+            icon: IconMasksTheater,
             translateTitle: true,
           },
         ],
@@ -432,6 +434,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <IconActivityHeartbeat className="size-4" />
                 <span>{t("navigation.status")}</span>
               </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {/* The manual is a separate site served by claw, so it opens in a
+              new tab and leaves the WebUI where it was. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip={t("navigation.manual")}>
+              <a
+                href="/manual/"
+                target="_blank"
+                rel="noopener"
+                data-testid="nav-manual"
+              >
+                <IconBook className="size-4" />
+                <span>{t("navigation.manual")}</span>
+                <IconExternalLink
+                  className="ml-auto size-3.5 opacity-50"
+                  aria-hidden="true"
+                />
+              </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

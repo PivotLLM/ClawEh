@@ -217,7 +217,7 @@ func TestDispatcher_AllToolCallsFailed(t *testing.T) {
 	runner := &stubRunner{res: &global.SyncResult{
 		Content: "I checked everything and it looks fine.", Iterations: 3,
 		Model: "claude-x", InputTokens: 900, OutputTokens: 80, CacheReadTokens: 9, CostUSD: 0.05,
-		ToolCalls: 3, ToolErrors: 3, LastToolError: lastErr, SessionKey: "agent:alice:subagent:1",
+		ToolCalls: 3, ToolErrors: 3, LastToolError: lastErr, SessionKey: "agent:clone-1:main",
 	}}
 	d := &dispatcher{run: runner, agent: "alice"}
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { VoiceSTTResponse } from "@/api/voice"
@@ -79,12 +79,18 @@ describe("VoicePage", () => {
     qc.setQueryData(["voice-stt"], configured)
     renderPage(qc)
 
-    const provider = await screen.findByLabelText("Provider")
+    // Straight away: on the first render, not after a fetch.
+    const provider = screen.getByLabelText("Provider")
     expect((provider as HTMLSelectElement).value).toBe("groq")
     expect(screen.queryByText(/No transcription backends configured/)).toBe(
       null,
     )
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled())
+    // Let the mount effects and any fetch they start run, then check that the
+    // fresh cache was not fetched again.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it("shows the empty state only when nothing is configured", async () => {
@@ -103,5 +109,97 @@ describe("VoicePage", () => {
 
     await screen.findByText(/No transcription backends configured/)
     expect(screen.queryByLabelText("Provider")).toBe(null)
+  })
+
+  it("labels the primary and fallback backends and marks a custom one with no endpoint", async () => {
+    const data: VoiceSTTResponse = {
+      stt: [
+        {
+          provider: "custom",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+        {
+          provider: "groq",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+        {
+          provider: "groq",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+      ],
+      presets: configured.presets,
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => data })),
+    )
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    renderPage(qc)
+
+    await screen.findByText("Primary")
+    expect(screen.getAllByText("Fallback")).toHaveLength(1)
+    expect(
+      screen.getByText("Not used: needs an endpoint and model."),
+    ).toBeTruthy()
+    // custom has no default endpoint or model to suggest.
+    expect(
+      (document.getElementById("stt-base-url-0") as HTMLInputElement)
+        .placeholder,
+    ).toBe("Required")
+    expect(
+      (document.getElementById("stt-model-0") as HTMLInputElement).placeholder,
+    ).toBe("Required")
+  })
+
+  it("does not use a custom backend with an endpoint but no model", async () => {
+    const data: VoiceSTTResponse = {
+      stt: [
+        {
+          provider: "custom",
+          enabled: true,
+          api_key: "",
+          base_url: "https://stt.example.com/v1",
+          model: "",
+        },
+        {
+          provider: "groq",
+          enabled: true,
+          api_key: "",
+          base_url: "",
+          model: "",
+        },
+      ],
+      presets: configured.presets,
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => data })),
+    )
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    renderPage(qc)
+
+    const notUsed = await screen.findByText(
+      "Not used: needs an endpoint and model.",
+    )
+    // The custom row is the one marked; the groq row after it is Primary.
+    const customRow = notUsed.closest("div.rounded-md.border")
+    expect(customRow?.querySelector("select")?.value).toBe("custom")
+    expect(customRow?.textContent).not.toMatch(/Primary|Fallback/)
+    const primary = screen.getByText("Primary").closest("div.rounded-md.border")
+    expect(primary?.querySelector("select")?.value).toBe("groq")
+    expect(screen.queryByText("Fallback")).toBeNull()
   })
 })

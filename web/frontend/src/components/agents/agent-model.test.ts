@@ -8,11 +8,21 @@ import {
   maestroPayload,
   cliBypassWarnings,
   fusionAccessView,
+  internalToolsSummary,
+  mayMessageRows,
   mcpAccessEntries,
   mcpAccessView,
   parseAgentsConfig,
+  shellAllowed,
+  shellDenied,
+  skillsSummary,
   toggleAccessEntry,
+  toggleAllowAgent,
+  toolGranted,
+  withAllAgents,
+  withShellAllowed,
 } from "./agent-model"
+import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 
 describe("maestro block", () => {
   it("parses the object form and drops invalid values", () => {
@@ -285,6 +295,330 @@ describe("agentsPayload", () => {
     expect(byId.bob).not.toHaveProperty("maestro")
   })
 
+  it("writes May message into subagents.allow_agents, keeping models", () => {
+    const cfg = parseAgentsConfig(loaded)
+    const edit = (allow: string[]) =>
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, allow_agents: allow } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list[0]
+    expect(edit(["*"]).subagents).toEqual({
+      allow_agents: ["*"],
+      models: ["fast"],
+    })
+    expect(edit([]).subagents).toEqual({ models: ["fast"] })
+  })
+
+  it("adds no subagents block for an agent without one", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    const list = (cfg.list ?? []).map((a) => ({ ...a, allow_agents: [] }))
+    const out = agentsPayload({ ...cfg, list }) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(out.agents.list[0]).not.toHaveProperty("subagents")
+    const bob = agentsPayload({
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({ ...a, allow_agents: ["Bob"] })),
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(bob.agents.list[0].subagents).toEqual({ allow_agents: ["Bob"] })
+  })
+
+  it("toggling Allow forum on Alice writes forum and keeps everything else", () => {
+    const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+      // As handleToggleForum applies it: only Alice's forum flag flips.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, forum: !a.forum } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const on = Object.fromEntries(
+      toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
+    )
+    expect(on.alice.forum).toBe(true)
+    expect(on.bob).not.toHaveProperty("forum")
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+      expect(on[id].subagents).toEqual({
+        allow_agents: ["alice", "bob"],
+        models: ["fast"],
+      })
+      expect(on[id].workspace).toBe(`/srv/${id}`)
+    }
+    expect(on.alice.models).toEqual(["fast", "slow"])
+    expect(on.alice.maestro).toEqual({
+      enabled: true,
+      max_concurrent: 2,
+      a_runner_key: 9,
+    })
+
+    // Loaded with forum on, the switch reads it and turning it off removes it.
+    const withForum = structuredClone(loaded)
+    Object.assign(withForum.agents.list[0], { forum: true })
+    const cfgOn = parseAgentsConfig(withForum)
+    expect(cfgOn.list?.[0].forum).toBe(true)
+    const off = Object.fromEntries(toggle(cfgOn).map((a) => [a.id, a]))
+    expect(off.alice).not.toHaveProperty("forum")
+    expect(off.alice).toMatchObject(unedited("alice"))
+    expect(off.bob).toMatchObject(unedited("bob"))
+
+    // A save that does not touch forum keeps it on.
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].forum).toBe(true)
+  })
+
+  it("toggling Allow character card tools on Alice writes ccv3 and keeps everything else", () => {
+    const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+      // As handleToggleCCv3 applies it: only Alice's ccv3 flag flips.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, ccv3: !a.ccv3 } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const on = Object.fromEntries(
+      toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
+    )
+    expect(on.alice.ccv3).toBe(true)
+    expect(on.bob).not.toHaveProperty("ccv3")
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+      expect(on[id].workspace).toBe(`/srv/${id}`)
+    }
+    expect(on.alice.models).toEqual(["fast", "slow"])
+
+    // Loaded with ccv3 on, the switch reads it and turning it off removes it.
+    const withCCv3 = structuredClone(loaded)
+    Object.assign(withCCv3.agents.list[0], { ccv3: true })
+    const cfgOn = parseAgentsConfig(withCCv3)
+    expect(cfgOn.list?.[0].ccv3).toBe(true)
+    const off = Object.fromEntries(toggle(cfgOn).map((a) => [a.id, a]))
+    expect(off.alice).not.toHaveProperty("ccv3")
+    expect(off.alice).toMatchObject(unedited("alice"))
+
+    // A save that does not touch ccv3 keeps it on.
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].ccv3).toBe(true)
+  })
+
+  it("setting a character card on Alice writes it and clearing it omits the key", () => {
+    const setCard = (
+      cfg: ReturnType<typeof parseAgentsConfig>,
+      id: string | undefined,
+    ) =>
+      // As handleCharacterCardChange applies it: "" becomes undefined.
+      (agentsPayload({
+        ...cfg,
+        list: (cfg.list ?? []).map((a) =>
+          a.id === "alice" ? { ...a, character_card: id || undefined } : a,
+        ),
+      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+
+    const set = Object.fromEntries(
+      setCard(parseAgentsConfig(loaded), "sage").map((a) => [a.id, a]),
+    )
+    expect(set.alice.character_card).toBe("sage")
+    expect(set.bob).not.toHaveProperty("character_card")
+    expect(set.alice).toMatchObject(unedited("alice"))
+    expect(set.bob).toMatchObject(unedited("bob"))
+
+    // Loaded with a card, the select reads it; clearing removes the key, and
+    // a save that does not touch it keeps it.
+    const withCard = structuredClone(loaded)
+    Object.assign(withCard.agents.list[0], { character_card: "sage" })
+    const cfgOn = parseAgentsConfig(withCard)
+    expect(cfgOn.list?.[0].character_card).toBe("sage")
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].character_card).toBe("sage")
+    const cleared = Object.fromEntries(
+      setCard(cfgOn, "").map((a) => [a.id, a]),
+    )
+    expect(cleared.alice).not.toHaveProperty("character_card")
+    expect(cleared.alice).toMatchObject(unedited("alice"))
+  })
+
+  it("keeps a human agent's hidden settings on save", () => {
+    // The card hides skills, tools, summarization and cogmem for a human
+    // agent; a save of what it does show must not lose them.
+    const hidden = {
+      skills: ["triage"],
+      tools: ["file_read"],
+      mcp_tools: ["simpledoc"],
+      deny_tools: ["shell_exec"],
+      summarization_models: ["fast"],
+      cogmem: false,
+    }
+    const cfg = parseAgentsConfig({
+      agents: {
+        list: [
+          {
+            id: "bob",
+            name: "Bob",
+            models: ["human"],
+            ...hidden,
+            ...unedited("bob"),
+          },
+        ],
+      },
+    })
+    const list = (cfg.list ?? []).map((a) => ({
+      ...a,
+      message: { window_minutes: 5, window_count: 3 },
+    }))
+    const out = agentsPayload({ ...cfg, list }) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(out.agents.list[0]).toMatchObject({
+      ...hidden,
+      ...unedited("bob"),
+      models: ["human"],
+      message: { window_minutes: 5, window_count: 3 },
+    })
+  })
+
+  it("Allow shell commands adds and removes only the explicit shell_exec entry", () => {
+    // As the card applies it: the tools list goes through withShellAllowed
+    // and the rest of the agent is the loaded entry.
+    const save = (
+      cfg: ReturnType<typeof parseAgentsConfig>,
+      id: string,
+      allowed: boolean,
+    ) =>
+      Object.fromEntries(
+        (
+          agentsPayload({
+            ...cfg,
+            list: (cfg.list ?? []).map((a) =>
+              a.id === id
+                ? { ...a, tools: withShellAllowed(a.tools ?? [], allowed) }
+                : a,
+            ),
+          }) as { agents: { list: Record<string, unknown>[] } }
+        ).agents.list.map((a) => [a.id, a]),
+      )
+
+    const cfg = parseAgentsConfig(loaded)
+    // "*" alone does not include shell_exec.
+    expect(
+      shellAllowed(cfg.list?.find((a) => a.id === "bob")?.tools ?? []),
+    ).toBe(false)
+
+    // On for Bob, whose tools are "*": the explicit entry is added beside it.
+    const on = save(cfg, "bob", true)
+    expect(on.bob.tools).toEqual(["*", "shell_exec"])
+    expect(on.alice.tools).toEqual(["file_read"])
+    for (const id of ["alice", "bob"]) {
+      expect(on[id]).toMatchObject(unedited(id))
+    }
+    expect(on.bob.name).toBe("Bob")
+    expect(on.alice.maestro).toEqual({
+      enabled: true,
+      max_concurrent: 2,
+      a_runner_key: 9,
+    })
+
+    // Reloaded, the box reads it; turning it off removes only that entry.
+    const reloaded = parseAgentsConfig({
+      agents: { list: Object.values(on) },
+    })
+    const bob = reloaded.list?.find((a) => a.id === "bob")
+    expect(shellAllowed(bob?.tools ?? [])).toBe(true)
+    const off = save(reloaded, "bob", false)
+    expect(off.bob.tools).toEqual(["*"])
+    expect(off.bob).toMatchObject(unedited("bob"))
+
+    // On for Alice, with an explicit list.
+    const aliceOn = save(cfg, "alice", true)
+    expect(aliceOn.alice.tools).toEqual(["file_read", "shell_exec"])
+    expect(aliceOn.alice).toMatchObject(unedited("alice"))
+  })
+
+  // An agent has only the tools and skills its lists name: an absent and an
+  // empty list both mean none and are saved without the key.
+  it("reads an absent tools or skills list as none", () => {
+    const cfg = parseAgentsConfig({
+      agents: {
+        list: [{ id: "alice" }, { id: "bob", tools: [], skills: [] }],
+      },
+    })
+    const [alice, bob] = cfg.list ?? []
+    expect(alice.tools).toEqual([])
+    expect(alice.skills).toEqual([])
+    expect(bob.tools).toEqual([])
+    expect(bob.skills).toEqual([])
+    const out = (
+      agentsPayload(cfg) as { agents: { list: Record<string, unknown>[] } }
+    ).agents.list
+    expect(out[0]).not.toHaveProperty("tools")
+    expect(out[0]).not.toHaveProperty("skills")
+    expect(out[1]).not.toHaveProperty("tools")
+    expect(out[1]).not.toHaveProperty("skills")
+  })
+
+  it("Allow shell commands on an agent with no tools grants only the shell", () => {
+    expect(withShellAllowed([], true)).toEqual(["shell_exec"])
+    expect(withShellAllowed(["shell_exec"], false)).toEqual([])
+  })
+
+  it("skillsSummary labels an empty list No skills", () => {
+    expect(skillsSummary([])).toBe("No skills")
+    expect(skillsSummary(["*"])).toBe("All skills")
+    expect(skillsSummary(["weather"])).toBe("1 skill selected")
+    expect(skillsSummary(["weather", "news"])).toBe("2 skills selected")
+  })
+
+  it("internalToolsSummary labels an empty list No tools", () => {
+    expect(internalToolsSummary(["file_read", "msg_send"])).toEqual({
+      text: "2 granted",
+      none: false,
+    })
+    expect(internalToolsSummary([])).toEqual({ text: "No tools", none: true })
+    expect(internalToolsSummary(["shell_exec"])).toEqual({
+      text: "No tools",
+      none: true,
+    })
+    expect(internalToolsSummary(["*"])).toEqual({
+      text: "all granted",
+      none: false,
+    })
+  })
+
+  it("shellAllowed and withShellAllowed match the entry case-insensitively", () => {
+    expect(shellAllowed(["Shell_Exec"])).toBe(true)
+    expect(shellAllowed([" shell_exec "])).toBe(true)
+    expect(shellAllowed(["*"])).toBe(false)
+    expect(shellAllowed(["shell_*"])).toBe(false)
+    expect(shellAllowed([])).toBe(false)
+    expect(withShellAllowed(["*", "SHELL_EXEC"], false)).toEqual(["*"])
+    // Turning it on twice keeps one entry.
+    expect(withShellAllowed(["*", "shell_exec"], true)).toEqual([
+      "*",
+      "shell_exec",
+    ])
+    expect(withShellAllowed([], true)).toEqual(["shell_exec"])
+    expect(withShellAllowed(["shell_*"], false)).toEqual(["shell_*"])
+  })
+
+  it("shellDenied follows the deny_tools matching rule", () => {
+    expect(shellDenied(["shell_exec"])).toBe(true)
+    expect(shellDenied(["SHELL_EXEC"])).toBe(true)
+    expect(shellDenied(["shell_*"])).toBe(true)
+    expect(shellDenied(["*"])).toBe(true)
+    expect(shellDenied(["shell"])).toBe(false)
+    expect(shellDenied(["file_*"])).toBe(false)
+    expect(shellDenied([])).toBe(false)
+  })
+
   it("writes an agent added on the page from its edited fields only", () => {
     const out = agentsPayload({
       defaults: {},
@@ -294,7 +628,6 @@ describe("agentsPayload", () => {
       {
         id: "bob",
         name: "Bob",
-        tools: [],
         message: null,
         mcp_tools: [],
         deny_tools: [],
@@ -303,4 +636,88 @@ describe("agentsPayload", () => {
     ])
     expect(out).not.toHaveProperty("agents.defaults")
   })
+})
+
+describe("agent temperature", () => {
+  const payload = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+    (agentsPayload(cfg) as { agents: { list: Record<string, unknown>[] } })
+      .agents.list[0]
+
+  it("leaves an unset temperature out of the saved payload", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    expect(cfg.list?.[0].temperature).toBeUndefined()
+    expect(payload(cfg)).not.toHaveProperty("temperature")
+  })
+
+  it("removes a cleared temperature rather than keeping the loaded one", () => {
+    const cfg = parseAgentsConfig({
+      agents: { list: [{ id: "alice", temperature: 0.4 }] },
+    })
+    expect(payload(cfg).temperature).toBe(0.4)
+    const cleared = {
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({ ...a, temperature: undefined })),
+    }
+    expect(payload(cleared)).not.toHaveProperty("temperature")
+  })
+})
+
+describe("May message", () => {
+  const agents = [
+    { id: "alice", name: "Alice" },
+    { id: "bob", name: "Bob" },
+  ]
+
+  it("lists the other agents and leaves the agent itself out", () => {
+    expect(mayMessageRows([], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: false, configured: true },
+    ])
+  })
+
+  it("shows an entry naming the agent itself as a not-configured row", () => {
+    expect(mayMessageRows(["Alice", "bob"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+      { id: "Alice", label: "Alice", checked: true, configured: false },
+    ])
+  })
+
+  it("collapses entries that differ only in case", () => {
+    expect(mayMessageRows(["Bob", "bob"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+    ])
+    expect(mayMessageRows(["Ghost", "ghost"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: false, configured: true },
+      { id: "Ghost", label: "Ghost", checked: true, configured: false },
+    ])
+  })
+
+  it('"*" checks every other agent and keeps named entries visible', () => {
+    expect(mayMessageRows(["*", "bob", "ghost"], "alice", agents)).toEqual([
+      { id: "bob", label: "Bob", checked: true, configured: true },
+      { id: "ghost", label: "ghost", checked: true, configured: false },
+    ])
+  })
+
+  it("All agents writes only \"*\" and turning it off keeps named entries", () => {
+    expect(withAllAgents(["bob"], true)).toEqual(["*"])
+    expect(withAllAgents(["*", "bob"], false)).toEqual(["bob"])
+    expect(withAllAgents(["*"], false)).toEqual([])
+  })
+
+  it("toggling removes every case variant and adds the id once", () => {
+    expect(toggleAllowAgent(["Bob", "alice", "bob"], "BOB")).toEqual(["alice"])
+    expect(toggleAllowAgent(["alice"], "bob")).toEqual(["alice", "bob"])
+    expect(toggleAllowAgent([], "Bob")).toEqual(["Bob"])
+  })
+})
+
+describe("toolGranted", () => {
+  // The table config.AgentConfig.IsToolAllowed is checked against
+  // (config/tool_grant_cases_test.go).
+  it.each(toolGrantCases)(
+    "tools $tools, deny_tools $deny_tools: $tool -> $allowed",
+    ({ tools, deny_tools, tool, allowed }) => {
+      expect(toolGranted(tools, deny_tools, tool)).toBe(allowed)
+    },
+  )
 })

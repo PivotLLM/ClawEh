@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -62,18 +63,19 @@ func strArg(args map[string]any, key string) (string, bool) {
 	return s, s != ""
 }
 
-// copyFile copies src to dst, creating intermediate directories for dst.
-func copyFile(src, dst string) error {
+// copyFile copies src to dst, creating intermediate directories for dst with
+// modes.Dir and dst with modes.File (the destination area's modes).
+func copyFile(src, dst string, modes config.Modes) error {
 	in, err := os.Open(src) //nolint:gosec // src confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
 	defer utils.CloseQuietly(in)
 
-	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o700); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(dst), modes.Dir); mkErr != nil {
 		return mkErr
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst confined to the common dir by confine()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, modes.File) //nolint:gosec // dst confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
@@ -126,8 +128,9 @@ func listCommon(commonDir string, args map[string]any) *global.Result {
 	return &global.Result{ForLLM: strings.TrimRight(b.String(), "\n")}
 }
 
-// getCommon copies commonDir/<name> into <workspace>/files/<as|basename(name)>.
-func getCommon(commonDir, workspace string, args map[string]any) *global.Result {
+// getCommon copies commonDir/<name> into <workspace>/files/<as|basename(name)>,
+// creating what it writes with the workspace's modes.
+func getCommon(commonDir, workspace string, workspaceModes config.Modes, args map[string]any) *global.Result {
 	name, ok := strArg(args, "name")
 	if !ok {
 		return errResult("common_get: 'name' is required")
@@ -152,7 +155,7 @@ func getCommon(commonDir, workspace string, args map[string]any) *global.Result 
 		return errResult("common_get: %v", err)
 	}
 
-	if err := copyFile(srcAbs, dstAbs); err != nil {
+	if err := copyFile(srcAbs, dstAbs, workspaceModes); err != nil {
 		return errResult("common_get: copy failed: %v", err)
 	}
 	rel, relErr := filepath.Rel(workspace, dstAbs)
@@ -162,8 +165,9 @@ func getCommon(commonDir, workspace string, args map[string]any) *global.Result 
 	return &global.Result{ForLLM: fmt.Sprintf("Copied %q to workspace %s", name, rel)}
 }
 
-// putCommon copies <workspace>/<path> into commonDir/<as|basename(path)>.
-func putCommon(commonDir, workspace string, args map[string]any) *global.Result {
+// putCommon copies <workspace>/<path> into commonDir/<as|basename(path)>,
+// creating what it writes with the common area's modes.
+func putCommon(commonDir, workspace string, commonModes config.Modes, args map[string]any) *global.Result {
 	path, ok := strArg(args, "path")
 	if !ok {
 		return errResult("common_put: 'path' is required")
@@ -190,10 +194,10 @@ func putCommon(commonDir, workspace string, args map[string]any) *global.Result 
 	}
 
 	// Create the common directory on first write.
-	if err := os.MkdirAll(commonDir, 0o700); err != nil {
+	if err := os.MkdirAll(commonDir, commonModes.Dir); err != nil {
 		return errResult("common_put: %v", err)
 	}
-	if err := copyFile(srcAbs, dstAbs); err != nil {
+	if err := copyFile(srcAbs, dstAbs, commonModes); err != nil {
 		return errResult("common_put: copy failed: %v", err)
 	}
 	return &global.Result{ForLLM: fmt.Sprintf("Copied workspace %q to common %s", path, dstRel)}

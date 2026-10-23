@@ -36,13 +36,13 @@ import {
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 
+import { TurnTimeoutNote } from "./turn-timeout-note"
+
 interface EditForm {
   provider: string
   name: string
   modelId: string
-  connectMode: string
   workspace: string
-  rpm: string
   maxTokens: string
   contextWindow: string
   maxTokensField: string
@@ -61,6 +61,8 @@ interface EditModelSheetProps {
   open: boolean
   onClose: () => void
   onSaved: () => void
+  // The install's effective Turn timeout in seconds; 0 when unknown.
+  turnTimeout: number
 }
 
 export function EditModelSheet({
@@ -68,15 +70,14 @@ export function EditModelSheet({
   open,
   onClose,
   onSaved,
+  turnTimeout,
 }: EditModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<EditForm>({
     name: "",
     modelId: "",
     provider: "",
-    connectMode: "",
     workspace: "",
-    rpm: "",
     maxTokens: "",
     contextWindow: "",
     maxTokensField: "",
@@ -116,9 +117,7 @@ export function EditModelSheet({
       name: model.model_name ?? "",
       modelId: model.model ?? "",
       provider: model.provider ?? "",
-      connectMode: model.connect_mode ?? "",
       workspace: model.workspace ?? "",
-      rpm: model.rpm ? String(model.rpm) : "",
       maxTokens: model.max_tokens ? String(model.max_tokens) : "",
       contextWindow: model.context_window ? String(model.context_window) : "",
       maxTokensField: model.max_tokens_field ?? "",
@@ -156,9 +155,7 @@ export function EditModelSheet({
         model_name: form.name.trim(),
         model: form.modelId.trim(),
         provider: form.provider || undefined,
-        connect_mode: form.connectMode || undefined,
         workspace: form.workspace || undefined,
-        rpm: form.rpm ? Number(form.rpm) : undefined,
         max_tokens: form.maxTokens ? Number(form.maxTokens) : undefined,
         context_window: form.contextWindow
           ? Number(form.contextWindow)
@@ -272,17 +269,6 @@ export function EditModelSheet({
               </Field>
 
               <Field
-                label={t("models.field.connectMode")}
-                hint={t("models.field.connectModeHint")}
-              >
-                <Input
-                  value={form.connectMode}
-                  onChange={setField("connectMode")}
-                  placeholder="stdio"
-                />
-              </Field>
-
-              <Field
                 label={t("models.field.workspace")}
                 hint={t("models.field.workspaceHint")}
               >
@@ -305,19 +291,11 @@ export function EditModelSheet({
                   min={0}
                 />
               </Field>
+              <TurnTimeoutNote
+                requestTimeout={form.requestTimeout}
+                turnTimeout={turnTimeout}
+              />
 
-              <Field
-                label={t("models.field.rpm")}
-                hint={t("models.field.rpmHint")}
-              >
-                <Input
-                  value={form.rpm}
-                  onChange={setField("rpm")}
-                  placeholder="60"
-                  type="number"
-                  min={0}
-                />
-              </Field>
 
               <Field
                 label={t("models.field.thinkingLevel")}
@@ -400,7 +378,7 @@ export function EditModelSheet({
 
               <Field
                 label="Vision (tool-result images)"
-                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Chat models need 'User message'; Responses models can use 'Tool response'."
+                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Tool response works on the OpenAI Responses API and xAI; use User message for plain OpenAI chat."
               >
                 <Select
                   value={form.vision || "off"}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
+	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // tlsTestHandler is a handler on a fresh test config with its routes mounted.
@@ -60,7 +61,7 @@ func TestGetTLS_Shape(t *testing.T) {
 	}
 	for _, key := range []string{
 		"mode", "source", "cert_file", "key_file", "extra_names", "tls_port",
-		"http_host", "http_port", "external_url", "urls", "certificate", "restart_required",
+		"http_host", "http_port", "external_url", "urls", "certificate", "restart_required", "untrusted_proxy", "behind_proxy",
 	} {
 		if _, ok := raw[key]; !ok {
 			t.Errorf("missing key %q", key)
@@ -124,6 +125,44 @@ func TestGetTLS_RestartRequired(t *testing.T) {
 	}
 	if got := get(); !got.RestartRequired || got.TLSPort != 19443 {
 		t.Errorf("tls_port change: restart_required=%v tls_port=%d", got.RestartRequired, got.TLSPort)
+	}
+}
+
+// TestGetTLS_UntrustedProxy: untrusted_proxy follows a forwarded request the
+// listener saw from an untrusted loopback peer, and clears once loopback is
+// trusted.
+func TestGetTLS_UntrustedProxy(t *testing.T) {
+	h, mux, _ := tlsTestHandler(t)
+	get := func() bool {
+		var got tlsStatusResponse
+		if code := serveJSON(t, mux, http.MethodGet, "/api/tls", "", &got); code != http.StatusOK {
+			t.Fatalf("status %d", code)
+		}
+		return got.UntrustedProxy
+	}
+	if get() {
+		t.Fatal("untrusted_proxy with nothing seen and no external URL")
+	}
+	watch := &middleware.ProxyWatch{}
+	h.SetProxyWatch(watch)
+	chain := middleware.TrustedProxy(func() *config.TrustedProxySet { return nil }, watch, http.NotFoundHandler())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:4000"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	chain.ServeHTTP(httptest.NewRecorder(), req)
+	if !get() {
+		t.Error("untrusted_proxy false after a forwarded request from an untrusted loopback peer")
+	}
+	if code := serveJSON(t, mux, http.MethodPatch, "/api/config", `{"gateway":{"trusted_proxies":["127.0.0.1"]}}`, nil); code != http.StatusOK {
+		t.Fatalf("patch trusted_proxies: %d", code)
+	}
+	if get() {
+		t.Error("untrusted_proxy still true with loopback trusted")
+	}
+	var got tlsStatusResponse
+	serveJSON(t, mux, http.MethodGet, "/api/tls", "", &got)
+	if !got.BehindProxy {
+		t.Error("behind_proxy false with a trusted proxy")
 	}
 }
 

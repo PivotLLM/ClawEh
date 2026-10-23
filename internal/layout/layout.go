@@ -8,7 +8,7 @@
 //
 // The layout, by purpose:
 //
-//	internal/  claw's own state nobody edits (state.json, token stores, the device database, audit.db, claw.pid, claw.lock)
+//	internal/  claw's own state nobody edits (token stores, the device database, audit.db, claw.pid, claw.lock)
 //	cli/       working directory for CLI providers whose model sets no workspace
 //	skills/    shared skills every agent can use
 //	common/    shared directory for the common_* tools (unless agents.common_dir is set)
@@ -21,18 +21,25 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-const dirMode = 0o700
-
-// Prepare creates internal/, cli/, skills/ and the common directory under the
-// data directory when they are missing. It runs at every start, before
-// anything opens the files they hold. Problems are logged; none stops the
-// start.
+// Prepare creates internal/, cli/, skills/, cards/ and the common directory
+// under the data directory when they are missing. It runs at every start, before
+// anything opens the files they hold. internal/ holds secrets and is always
+// owner-only; cli/, skills/ and cards/ take the default directory mode and the
+// common directory the common area's (security.permissions). Problems are
+// logged; none stops the start.
 func Prepare(cfg *config.Config) {
 	if cfg.DataDir() == "" {
 		return
 	}
-	for _, dir := range []string{cfg.InternalPath(), cfg.CLIPath(), cfg.SkillsPath(), cfg.ResolveCommonDir()} {
-		if err := os.MkdirAll(dir, dirMode); err != nil {
+	dirMode := cfg.PermissionModes("").Dir
+	for dir, mode := range map[string]os.FileMode{
+		cfg.InternalPath():     config.DefaultDirMode,
+		cfg.CLIPath():          dirMode,
+		cfg.SkillsPath():       dirMode,
+		cfg.CardsPath():        dirMode,
+		cfg.ResolveCommonDir(): cfg.PermissionModes(config.AreaCommon).Dir,
+	} {
+		if err := os.MkdirAll(dir, mode); err != nil {
 			logger.WarnCF("layout", "Cannot create a data directory", map[string]any{"path": dir, "error": err.Error()})
 		}
 	}

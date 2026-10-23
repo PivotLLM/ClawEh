@@ -3,7 +3,6 @@ package skills
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -38,9 +37,7 @@ func NewSkillsCommand() *cobra.Command {
 			}
 			d.installer = installer
 
-			// get builtin skills directory
-			builtinSkillsDir := filepath.Join(cfg.DataDir(), "claw", "skills")
-			d.skillsLoader = skills.NewSkillsLoader("", cfg.SkillsPath(), builtinSkillsDir)
+			d.skillsLoader = skills.NewSkillsLoader("", cfg.SkillsPath())
 
 			return nil
 		},
@@ -63,13 +60,9 @@ func NewSkillsCommand() *cobra.Command {
 		return d.skillsLoader, nil
 	}
 
-	cfgFn := internal.LoadConfig
-
 	cmd.AddCommand(
 		newListCommand(loaderFn),
 		newInstallCommand(installerFn),
-		newInstallBuiltinCommand(cfgFn),
-		newListBuiltinCommand(),
 		newRemoveCommand(installerFn),
 		newSearchCommand(),
 		newShowCommand(loaderFn),

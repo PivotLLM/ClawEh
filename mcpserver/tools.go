@@ -21,9 +21,12 @@ import (
 	"github.com/PivotLLM/ClawEh/agenttoken"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // invalidTokenMessage is what we return when the supplied session_token is
@@ -145,6 +148,9 @@ type endpointCatalogue struct {
 	// published maps external name -> registered tool. Written only by refresh,
 	// which the owner serializes (MCPServer.catalogueMu).
 	published map[string]publishedTool
+	// internalNames maps external name -> internal name, as published; it is
+	// replaced (never changed) by refresh and read by listForCaller.
+	internalNames atomic.Pointer[map[string]string]
 }
 
 func newEndpointCatalogue(srv *server.MCPServer, mode authMode, allow []string, deps dispatchDeps) *endpointCatalogue {
@@ -163,10 +169,11 @@ func newEndpointCatalogue(srv *server.MCPServer, mode authMode, allow []string, 
 //   - the call is dispatched to that agent's tool registry;
 //   - the result is scrubbed of any leaked tokens before return.
 //
-// Tool enumeration via tools/list is intentionally global — the catalogue
-// is built from the union of every per-agent registry (deduped by name).
-// tools/list never inspects the session_token. Per-agent restrictions are
-// enforced at tools/call via the supplied acl.Policy.
+// The catalogue is built from the union of every per-agent registry (deduped
+// by name). On /internal tools/list is that union: the session_token is a
+// parameter of each call, so a list has no caller. On /mcp the bearer token
+// names the agent and tools/list is narrowed to what it may call
+// (listForCaller). Per-agent restrictions are enforced at tools/call.
 //
 // It is the one-shot form of an endpoint catalogue's refresh, kept for the
 // tests; the server itself keeps the catalogue so RefreshCatalogue can diff.
@@ -237,7 +244,7 @@ func (ep *endpointCatalogue) refresh(agentRegistries map[string]*tools.ToolRegis
 		// is never applied here. An external client (a CLI provider) receives every
 		// authorized tool in tools/list and runs its own tool-handling loop; claw's
 		// discovery is an in-loop-only optimization.
-		params := tool.Parameters()
+		params := tools.OpenObjectProperties(tool.Parameters())
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
@@ -289,7 +296,60 @@ func (ep *endpointCatalogue) refresh(agentRegistries map[string]*tools.ToolRegis
 		ep.srv.AddTools(add...)
 	}
 	ep.published = want
+	names := make(map[string]string, len(want))
+	for pubName, entry := range want {
+		names[pubName] = entry.internal
+	}
+	ep.internalNames.Store(&names)
 	return len(add), len(del)
+}
+
+// agentMayCall reports whether a tools/call of the tool (internal name) by
+// the agent reaches the tool: it is in the agent's registry and the ACL
+// policy allows it. dispatchToolCall refuses a call that fails either check,
+// and listForCaller leaves such a tool out of tools/list.
+func agentMayCall(reg *tools.ToolRegistry, policy acl.Policy, agentID, toolName string) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.GetForHost(toolName); !ok {
+		return false
+	}
+	return policy.IsAllowed(agentID, toolName)
+}
+
+// listForCaller narrows a tools/list result on the bearer endpoint to the
+// tools the token's agent may call (agentMayCall), so the client is not
+// offered tools every call to which is refused. /internal cannot do this: its
+// token is a parameter of each call, so its tools/list stays the union.
+// Installed as an after-list hook rather than a mcp-go tool filter, which
+// would also refuse calls itself, before dispatch logs and answers them.
+func (ep *endpointCatalogue) listForCaller(ctx context.Context, result *mcp.ListToolsResult) {
+	if result == nil {
+		return
+	}
+	var agentID string
+	var reg *tools.ToolRegistry
+	if ep.deps.sessionTokens != nil {
+		if rec, ok := ep.deps.sessionTokens.Resolve(bearerTokenFromContext(ctx)); ok {
+			agentID = rec.agentID
+			if ep.deps.resolver != nil {
+				reg, _ = ep.deps.resolver(agentID)
+			}
+		}
+	}
+	policy := ep.deps.policy
+	var names map[string]string
+	if p := ep.internalNames.Load(); p != nil {
+		names = *p
+	}
+	kept := result.Tools[:0]
+	for _, tl := range result.Tools {
+		if internal, ok := names[tl.Name]; ok && agentMayCall(reg, policy, agentID, internal) {
+			kept = append(kept, tl)
+		}
+	}
+	result.Tools = kept
 }
 
 // handler builds the tools/call handler for the tool registered under the given
@@ -461,6 +521,14 @@ func dispatchToolCall(
 		ctx = tools.WithSessionKey(ctx, rec.sessionKey)
 	}
 
+	// Run at the sub-agent depth of the turn that holds this token, as the
+	// in-process loop does: a CLI provider's tool calls (agent_spawn, Maestro
+	// dispatch) arrive here, not through the loop, and would otherwise start at
+	// depth 0 whatever the turn's depth.
+	ctx = toolsagents.WithSpawnDepth(ctx, rec.depth)
+	// Likewise the turn's ask chain (SetTurnScope).
+	ctx = tools.WithAskChain(ctx, rec.askChain)
+
 	// Carry the session's source channel/chatID so tools that re-inject a turn
 	// (e.g. session_clear) can route the follow-up back to the originating user
 	// on the MCP path, which otherwise has no channel/chatID in context.
@@ -488,12 +556,14 @@ func dispatchToolCall(
 	// message into the agent's session — so the primary LLM is notified without
 	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
 	// handled below.)
+	// The re-entered turn runs at the dispatching call's spawn depth, never lower.
+	spawnDepth := toolsagents.SpawnDepth(ctx)
 	asyncCb := func(cbCtx context.Context, r *tools.ToolResult) {
 		// The originating request may be long gone when a background tool
 		// finishes; deliver on its values but not its cancellation.
 		deliverCtx := context.WithoutCancel(cbCtx)
 		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
-		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r, spawnDepth)
 	}
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
@@ -520,7 +590,7 @@ func dispatchToolCall(
 // (agent/loop.go). No-op when there is nothing to inject; when there is no
 // recorded channel source to route to, it logs the drop rather than failing
 // silently.
-func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult, spawnDepth int) {
 	if r == nil || msgBus == nil {
 		return
 	}
@@ -544,15 +614,24 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 			})
 		return
 	}
+	// A temporary clone's late result goes to its source's main conversation
+	// (resolved when its token was issued): the clone may be gone by now.
+	targetAgent, targetSession := rec.agentID, rec.sessionKey
+	if rec.homeID != "" {
+		targetAgent, targetSession = rec.homeID, routing.BuildAgentMainSessionKey(rec.homeID)
+	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
 		SenderID:   "async:" + toolName,
-		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
+		Internal:   true,
+		ChatID:     rec.chatID,
 		Content:    content,
-		SessionKey: rec.sessionKey,
-		Metadata:   map[string]string{"preresolved_agent_id": rec.agentID},
+		SessionKey: targetSession,
+		Metadata: bus.SetSpawnDepth(map[string]string{
+			"preresolved_agent_id": targetAgent, bus.MetaOriginChannel: rec.channel,
+		}, spawnDepth),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
 			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
@@ -572,7 +651,8 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 // user's channel/chatID over the outbound bus. No-op when the bus is absent or the
 // session has no recorded source (best-effort, like the ForUser side channel).
 func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName, line string) {
-	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" {
+	// An internal source (an asked turn's) has no chat to show it in.
+	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" || constants.IsInternalChannel(rec.channel) {
 		return
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -618,6 +698,18 @@ func publishMCPForUser(
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
 				"reason":      "no_active_channel",
+			})
+		return
+	}
+	if constants.IsInternalChannel(rec.channel) {
+		// An asked turn's source: its output goes to the asker, never a chat.
+		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"reason":      "internal_channel",
+				"channel":     rec.channel,
 			})
 		return
 	}

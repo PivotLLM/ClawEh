@@ -44,6 +44,7 @@ describe("editsFromAgent", () => {
       mounts: [],
       mcpTools: [],
       denyTools: [],
+      allowAgents: [],
       maestro: {
         maxConcurrent: undefined,
         rateLimitRequests: undefined,
@@ -51,6 +52,16 @@ describe("editsFromAgent", () => {
         allowParallel: true,
       },
     })
+  })
+
+  // No skills or tools list and an empty one both mean none.
+  it("reads an absent skills or tools list as none", () => {
+    const absent = editsFromAgent({ id: "a" })
+    expect(absent.tools).toEqual([])
+    expect(absent.skills).toEqual([])
+    const empty = editsFromAgent({ id: "a", tools: [], skills: [] })
+    expect(empty.tools).toEqual([])
+    expect(empty.skills).toEqual([])
   })
 
   // share_common is on unless explicitly false — `undefined` must not read as

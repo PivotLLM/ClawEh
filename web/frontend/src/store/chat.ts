@@ -20,7 +20,6 @@ export interface ChatStoreState {
   connectionState: ConnectionState
   isTyping: boolean
   activeSessionId: string
-  hasHydratedActiveSession: boolean
 }
 
 type ChatStorePatch = Partial<ChatStoreState>
@@ -30,7 +29,6 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
   connectionState: "disconnected",
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
-  hasHydratedActiveSession: false,
 }
 
 export const chatAtom = atom<ChatStoreState>(DEFAULT_CHAT_STATE)

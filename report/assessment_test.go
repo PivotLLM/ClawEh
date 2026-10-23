@@ -5,6 +5,7 @@ package report
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,8 +86,8 @@ func assessmentRow(t *testing.T, s Section, item string) []string {
 
 // TestAssessment_ListenerRows: one row per listener, in order, in plain
 // words. The fixture is the default install: HTTP on localhost, HTTPS on the
-// network with a self-signed certificate, the device listener and the LINE
-// webhook on the network. Only the unencrypted device listener earns a mark.
+// network with a self-signed certificate, the device listener on the
+// network. Only the unencrypted device listener earns a mark.
 func TestAssessment_ListenerRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectAssessment(t.Context(), cfg, env)
@@ -96,7 +97,6 @@ func TestAssessment_ListenerRows(t *testing.T) {
 		{"*", "Device HTTP", "Enabled for network access (unencrypted); allowed from any address."},
 		{"", "Device HTTPS", "Disabled."},
 		{"", "MCP host (local tools)", "Enabled for localhost."},
-		{"", "LINE webhook", "Enabled for network access; every request must carry LINE's signature."},
 	}
 	rows := s.Tables[0].Rows
 	if len(rows) < len(want) {
@@ -143,12 +143,11 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	}
 
 	// HTTPS on localhost only; any-address allowlists; device on loopback;
-	// MCP host and LINE off.
+	// MCP host off.
 	cfg.Gateway.TLS.Mode = config.TLSModeLocalhost
 	cfg.Gateway.AllowedCIDRs = []string{"*"}
 	cfg.Channels.Device.Host = "127.0.0.1"
 	cfg.MCPHost.Enabled, cfg.MCPHost.AutoEnable = false, false
-	cfg.Channels.LINE.Enabled = false
 	s = collectAssessment(t.Context(), cfg, env)
 	for item, status := range map[string]string{
 		"WebUI/API HTTPS":        "Enabled for localhost, self-signed certificate.",
@@ -157,11 +156,6 @@ func TestAssessment_ListenerRows(t *testing.T) {
 	} {
 		if r = assessmentRow(t, s, item); r[0] != "" || r[2] != status {
 			t.Errorf("%s = %q, want %q", item, r, status)
-		}
-	}
-	for _, row := range s.Tables[0].Rows {
-		if row[1] == "LINE webhook" {
-			t.Errorf("LINE row with the channel off: %q", row)
 		}
 	}
 	cfg.Gateway.TLS.Mode = config.TLSModeAll
@@ -202,12 +196,13 @@ func TestAssessment_Marks(t *testing.T) {
 	cfg.Tools.Exec.EnableDenyPatterns = false
 	cfg.Logging.LogMessageContent = true
 	s = collectAssessment(t.Context(), cfg, env)
-	if r := assessmentRow(t, s, "File confinement"); r[0] != "*" || !strings.Contains(r[2], "anything user eric can access") {
+	if r := assessmentRow(t, s, "File confinement"); r[0] != "*" || !strings.Contains(r[2], "anything user admin can access") {
 		t.Errorf("unconfined file row = %v", r)
 	}
 	if r := assessmentRow(t, s, "Shell access"); r[0] != "*" || !strings.Contains(r[2], "deny patterns off") {
 		t.Errorf("shell row = %v", r)
 	}
+
 	if r := assessmentRow(t, s, "Message content in logs"); r[0] != "*" || !strings.Contains(r[2], "log_message_content") {
 		t.Errorf("logging row = %v", r)
 	}
@@ -218,12 +213,18 @@ func TestAssessment_Marks(t *testing.T) {
 // first offender with its mode.
 func TestAssessment_DataDirPermissions(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	// t.TempDir follows the umask; the gateway would have made it 0700.
-	if err := os.Chmod(env.DataDir, 0o700); err != nil {
+	// t.TempDir and the fixture's folders follow the umask; the gateway would
+	// have made every directory under CLAW_HOME, and CLAW_HOME itself, 0700.
+	if err := filepath.WalkDir(env.DataDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		return os.Chmod(p, 0o700)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	s := collectAssessment(t.Context(), cfg, env)
-	if r := assessmentRow(t, s, "Data directory permissions"); r[0] != "" || r[2] != "CLAW_HOME and its secrets are owner-only." {
+	if r := assessmentRow(t, s, "Data directory permissions"); r[0] != "" || r[2] != "Within the configured modes (folders 0700, secrets 0600)." {
 		t.Errorf("tight permissions row = %v", r)
 	}
 
@@ -239,8 +240,8 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 	if r[0] != "*" {
 		t.Errorf("loose permissions mark = %q, want *", r[0])
 	}
-	contains(t, r[2], "1 file under CLAW_HOME is readable by other users (first: "+loosePath+" 0644)", "loose status")
-	contains(t, r[2], "ClawEh tightens them at start", "loose fix")
+	contains(t, r[2], "1 file under CLAW_HOME is more open than the configured modes (first: "+loosePath+" 0644)", "loose status")
+	contains(t, r[2], "ClawEh tightens them at start — run it, or chmod it to 0600.", "loose fix")
 
 	// A loose data directory itself counts too and comes first.
 	if err := os.Chmod(env.DataDir, 0o755); err != nil {
@@ -248,21 +249,39 @@ func TestAssessment_DataDirPermissions(t *testing.T) {
 	}
 	s = collectAssessment(t.Context(), cfg, env)
 	r = assessmentRow(t, s, "Data directory permissions")
-	contains(t, r[2], "2 files under CLAW_HOME are readable by other users (first: "+env.DataDir+" 0755)", "loose dir status")
+	contains(t, r[2], "2 files under CLAW_HOME are more open than the configured modes (first: "+env.DataDir+" 0755)", "loose dir status")
+
+	// With the data directory allowed 0750, a 0750 one is fine and only the
+	// secret is reported, against its fixed 0600; the summary names the modes.
+	if err := os.Chmod(env.DataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loosePath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Security.Permissions = config.PermissionsConfig{
+		DirMode: "0750",
+		Agents:  config.AreaPermissions{DirMode: "0750", FileMode: "0640"},
+	}
+	s = collectAssessment(t.Context(), cfg, env)
+	r = assessmentRow(t, s, "Data directory permissions")
+	if r[0] != "" || r[2] != "Within the configured modes (folders 0750, secrets 0600; agents 0750/0640)." {
+		t.Errorf("configured modes row = %v", r)
+	}
 }
 
 // TestPermsStatus_TruncatedAndError: a truncated walk keeps its findings and
 // says it stopped; any other error is reported as such.
 func TestPermsStatus_TruncatedAndError(t *testing.T) {
-	got := permsStatus(nil, perms.ErrTruncated)
-	contains(t, got, "CLAW_HOME and its secrets are owner-only.", "truncated, no findings")
+	got := permsStatus(nil, perms.ErrTruncated, "folders 0700, secrets 0600")
+	contains(t, got, "Within the configured modes (folders 0700, secrets 0600).", "truncated, no findings")
 	contains(t, got, "The check was truncated at the entry cap", "truncated note")
 
-	got = permsStatus([]perms.Finding{{Path: "/x/tokens.json", Mode: 0o644, Want: 0o600}}, perms.ErrTruncated)
-	contains(t, got, "1 file under CLAW_HOME is readable by other users (first: /x/tokens.json 0644)", "truncated with findings")
+	got = permsStatus([]perms.Finding{{Path: "/x/tokens.json", Mode: 0o644, Want: 0o600}}, perms.ErrTruncated, "")
+	contains(t, got, "1 file under CLAW_HOME is more open than the configured modes (first: /x/tokens.json 0644)", "truncated with findings")
 	contains(t, got, "truncated at the entry cap", "truncated note with findings")
 
-	got = permsStatus(nil, errors.New("boom"))
+	got = permsStatus(nil, errors.New("boom"), "")
 	if got != "Permission check failed: boom." {
 		t.Errorf("error status = %q", got)
 	}
@@ -301,6 +320,7 @@ func TestAssessment_DeviceAutoApprove(t *testing.T) {
 // restrict_to_workspace is off (the File confinement row covers that).
 func TestAssessment_FileConfinementVsShell(t *testing.T) {
 	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 	s := collectAssessment(t.Context(), cfg, env)
 	for _, id := range []string{"alice", "bob"} {
 		r := assessmentRow(t, s, "File confinement vs shell ("+id+")")
@@ -416,4 +436,313 @@ func TestAssessment_AuditLog(t *testing.T) {
 	if r[0] != "" || r[2] != "Audit log at "+auditPath+" (90-day retention)." {
 		t.Errorf("present audit row = %v", r)
 	}
+}
+
+// TestAssessment_ShellDelegation: the Shell access row names the agents whose
+// subagents.allow_agents reaches an agent with shell_exec, and points to the
+// CLI bypass setting, which gives a CLI model its own shell, only when a CLI
+// provider has it on.
+func TestAssessment_ShellDelegation(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Tools = []string{"file_read"} // Alice has no shell_exec
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") || strings.Contains(r[2], "allow_agents") {
+		t.Errorf("no delegation: shell row = %v", r)
+	}
+	if !strings.Contains(r[2], "Allow CLI to bypass restrictions") {
+		t.Errorf("bypass on: shell row does not name the CLI bypass setting: %v", r)
+	}
+
+	for _, allow := range [][]string{{"bob"}, {"*"}} {
+		cfg.Agents.List[0].Subagents = &config.SubagentsConfig{AllowAgents: allow}
+		r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+		if !strings.Contains(r[2], "also via allow_agents: Alice;") {
+			t.Errorf("allow_agents %v: shell row = %v", allow, r)
+		}
+	}
+
+	for i := range cfg.Providers {
+		cfg.Providers[i].BypassRestrictions = false
+	}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if strings.Contains(r[2], "bypass") {
+		t.Errorf("bypass off: shell row mentions the CLI bypass setting: %v", r)
+	}
+}
+
+// TestAssessment_ShellExplicitOnly: the Shell access row lists only the agents
+// whose tools name shell_exec ("Allow shell commands"); a "*" list does not
+// count, and deny_tools removes an agent.
+func TestAssessment_ShellExplicitOnly(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	// alice has no tools key (the "*" default), bob names shell_exec.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
+		t.Errorf("default: shell row = %v", r)
+	}
+
+	cfg.Agents.List[0].Tools = []string{"*"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
+		t.Errorf(`alice with "*": shell row = %v`, r)
+	}
+
+	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	if !strings.Contains(r[2], "Allow shell commands: Alice, Bob;") {
+		t.Errorf("alice names shell_exec: shell row = %v", r)
+	}
+
+	cfg.Agents.List[0].DenyTools = []string{"shell_exec"}
+	cfg.Agents.List[1].DenyTools = []string{"shell_exec"}
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
+	// One sentence: the CLI note follows after a semicolon.
+	if r[2] != "No enabled agent is allowed shell commands; CLI models with Allow CLI to bypass restrictions have their own shell." {
+		t.Errorf("both denied: shell row = %v", r)
+	}
+}
+
+// TestAssessment_IgnoredMount: a mount named after a workspace folder gets an
+// action row naming the agent and the mount; a normal mount gets none.
+func TestAssessment_IgnoredMount(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Agents.List[0].Mounts = []config.MountConfig{{Name: "notes", Path: t.TempDir()}}
+	for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+		if strings.HasPrefix(row[1], "Mount (") {
+			t.Errorf("row present for a normal mount: %v", row)
+		}
+	}
+	cfg.Agents.List[0].Mounts = append(cfg.Agents.List[0].Mounts, config.MountConfig{Name: "Files", Path: t.TempDir()})
+	// The row names the agent by its display name.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Mount (Alice)")
+	if r[0] == "" || r[2] != `Ignored: "Files" is a reserved name.` {
+		t.Errorf("row = %v", r)
+	}
+}
+
+// TestAssessment_PersonChatNotSetUp: a human agent whose chat is on a channel
+// the configuration does not start is marked for action; a chat on a running
+// channel, or on a secmsg daemon that discovers its accounts, is not listed.
+func TestAssessment_PersonChatNotSetUp(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Providers = append(cfg.Providers, config.Provider{Name: "People", Protocol: config.HumanProtocol})
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Bob person", Model: "bob", Provider: "People", Enabled: true})
+	cfg.Agents.List[1].Models = []string{"Bob person"}
+	const item = "Person's chat (Bob)" // by display name
+	hasRow := func() bool {
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasRow() {
+		t.Fatal("a chat on a running channel must not be listed")
+	}
+
+	// The manager looks channels up by exact name: a binding that differs
+	// only in case names no channel.
+	cfg.Bindings[0].Match.Channel = "Telegram-Bob"
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), item)
+	contains(t, r[2], "Channel Telegram-Bob is not set up", "row status")
+	cfg.Bindings[0].Match.Channel = "telegram-bob"
+
+	cfg.Channels.Telegram[0].Enabled = false
+	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), item)
+	if r[0] == "" {
+		t.Error("expected an action mark")
+	}
+	contains(t, r[2], "Channel telegram-bob is not set up", "row status")
+
+	cfg.Channels.SecMsg = []config.SecMsgConfig{{Enabled: true, Address: "127.0.0.1:1"}}
+	cfg.Bindings[0].Match.Channel = "secmsg-bob"
+	if hasRow() {
+		t.Fatal("a chat on a secmsg daemon that discovers its accounts must not be listed")
+	}
+	cfg.Bindings[0].Match.Channel = "SecMsg-bob"
+	if !hasRow() {
+		t.Fatal("a secmsg name that differs in case names no channel")
+	}
+
+	cfg.Agents.List[1].Models = nil
+	cfg.Bindings[0].Match.Channel = "nowhere"
+	if hasRow() {
+		t.Fatal("an agent that is not a person must not be listed")
+	}
+}
+
+// TestAssessment_AgentWithNoTools: an enabled agent with an empty or missing
+// tools list gets a row naming it, without an action mark; an agent that lists
+// tools, a disabled agent and a human agent get none.
+func TestAssessment_AgentWithNoTools(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	hasRow := func(item string) bool {
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	// alice has no tools key; bob lists his.
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "No tools (Alice)")
+	if r[0] != "" || r[2] != "Alice has no tools." {
+		t.Errorf("row = %v", r)
+	}
+	if hasRow("No tools (Bob)") {
+		t.Error("bob lists tools but has a no-tools row")
+	}
+
+	cfg.Agents.List[0].Tools = []string{}
+	if !hasRow("No tools (Alice)") {
+		t.Error("an empty tools list has no row")
+	}
+	cfg.Agents.List[0].Tools = []string{"file_read_lines"}
+	if hasRow("No tools (Alice)") {
+		t.Error("an agent listing a tool has a no-tools row")
+	}
+
+	off := false
+	cfg.Agents.List[1].Tools = nil
+	cfg.Agents.List[1].Enabled = &off
+	if hasRow("No tools (Bob)") {
+		t.Error("a disabled agent is listed")
+	}
+
+	cfg.Agents.List[1].Enabled = nil
+	cfg.Providers = append(cfg.Providers, config.Provider{Name: "People", Protocol: config.HumanProtocol})
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Bob person", Model: "bob", Provider: "People", Enabled: true})
+	cfg.Agents.List[1].Models = []string{"Bob person"}
+	if hasRow("No tools (Bob)") {
+		t.Error("a human agent is listed")
+	}
+}
+
+// TestAssessment_UntrustedProxy: a marked row, linked to the trusted-proxies
+// field, only when the listener saw a forwarded request from an untrusted
+// loopback peer; an external URL alone (a LAN address, say) is not enough, and
+// the row goes once loopback is trusted.
+func TestAssessment_UntrustedProxy(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Gateway.ExternalURL = ""
+	cfg.Channels.Device.ExternalURL = ""
+	cfg.Gateway.TrustedProxies = nil
+	noRow := func(why string) {
+		t.Helper()
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == itemUntrustedProxy {
+				t.Errorf("%s: row present: %v", why, row)
+			}
+		}
+	}
+	noRow("nothing seen")
+	cfg.Gateway.ExternalURL = "https://192.168.1.5:18443"
+	noRow("external URL set, nothing seen")
+
+	env.ForwardedPeer = "127.0.0.1"
+	env.ForwardedSeen = time.Date(2026, 10, 10, 14, 3, 0, 0, time.UTC)
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemUntrustedProxy)
+	if r[0] != "*" || r[2] != "Requests arrive through a proxy that is not trusted (last seen 2026-10-10 14:03); network access control and lockout don't apply." {
+		t.Errorf("runtime row = %v", r)
+	}
+	var link string
+	for _, a := range Assess(t.Context(), cfg, env).Assessment {
+		if a.Item == itemUntrustedProxy {
+			link = a.Link
+		}
+	}
+	if link != "/network#trusted-proxies" {
+		t.Errorf("link = %q", link)
+	}
+
+	cfg.Gateway.TrustedProxies = []string{"127.0.0.1"}
+	noRow("loopback trusted")
+}
+
+// TestAssessment_BehindProxy: behind a proxy, TLS ends at the proxy, so plain
+// HTTP on the WebUI/API and device listeners is not marked and a neutral row
+// names the proxy; without one, network HTTP is marked as before.
+func TestAssessment_BehindProxy(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Gateway.Host = "0.0.0.0"
+	cfg.Gateway.TLS.Mode = config.TLSModeOff
+	cfg.Gateway.TrustedProxies = nil
+	cfg.Gateway.ExternalURL = ""
+	cfg.Channels.Device.ExternalURL = ""
+	cfg.Channels.Device.Host = "0.0.0.0"
+	cfg.Channels.Device.Enabled = true
+	cfg.Channels.Device.TLS = false
+
+	marked := []string{"WebUI/API HTTP", "WebUI/API HTTPS", "Device HTTP"}
+	s := collectAssessment(t.Context(), cfg, env)
+	for _, item := range marked {
+		if r := assessmentRow(t, s, item); r[0] != "*" {
+			t.Errorf("no proxy: %s = %q, want marked", item, r)
+		}
+	}
+	for _, row := range s.Tables[0].Rows {
+		if row[1] == itemProxy {
+			t.Errorf("proxy row without a proxy: %v", row)
+		}
+	}
+
+	cfg.Gateway.TrustedProxies = []string{"10.0.0.5"}
+	s = collectAssessment(t.Context(), cfg, env)
+	for _, item := range marked {
+		if r := assessmentRow(t, s, item); r[0] != "" {
+			t.Errorf("trusted remote proxy: %s = %q, want unmarked", item, r)
+		}
+	}
+	if r := assessmentRow(t, s, itemProxy); r[0] != "" || r[2] != "Behind a proxy: 10.0.0.5." {
+		t.Errorf("proxy row = %q", r)
+	}
+
+	// An https external URL ClawEh does not serve itself is a proxy too.
+	cfg.Gateway.TrustedProxies = nil
+	cfg.Gateway.ExternalURL = "https://claw.example.com"
+	s = collectAssessment(t.Context(), cfg, env)
+	if r := assessmentRow(t, s, "WebUI/API HTTP"); r[0] != "" {
+		t.Errorf("https external URL: HTTP row = %q, want unmarked", r)
+	}
+	if r := assessmentRow(t, s, itemProxy); r[2] != "Behind a proxy: https://claw.example.com." {
+		t.Errorf("proxy row = %q", r)
+	}
+}
+
+// TestAssessment_EncryptedMatrixRooms: a marked row naming the encrypted rooms
+// the Matrix channel has seen, linked to the manual; none without such rooms
+// or with the channel off.
+func TestAssessment_EncryptedMatrixRooms(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Channels.Matrix.Enabled = true
+	noRow := func(why string) {
+		t.Helper()
+		for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+			if row[1] == itemEncryptedMatrix {
+				t.Errorf("%s: row present: %v", why, row)
+			}
+		}
+	}
+	noRow("nothing seen")
+
+	env.EncryptedMatrixRooms = []string{`"Alice's room" (!alice:example.org)`, "!bob:example.org"}
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemEncryptedMatrix)
+	if r[0] != "*" || r[2] != `ClawEh can't read these encrypted rooms: "Alice's room" (!alice:example.org), !bob:example.org.` {
+		t.Errorf("row = %v", r)
+	}
+	var link string
+	for _, a := range Assess(t.Context(), cfg, env).Assessment {
+		if a.Item == itemEncryptedMatrix {
+			link = a.Link
+		}
+	}
+	if link != "/manual/channels/matrix.html#encryption" {
+		t.Errorf("link = %q", link)
+	}
+
+	cfg.Channels.Matrix.Enabled = false
+	noRow("channel off")
 }

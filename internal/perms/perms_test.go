@@ -68,6 +68,24 @@ var sensitiveFiles = []string{
 	"agents/bob/API_TOKEN",
 }
 
+// walkedDirs are the fixture's directories the walk tightens: every one it
+// creates except the skipped media/ and logs/ trees.
+var walkedDirs = []string{
+	"internal",
+	"internal/nested",
+	"tokens",
+	"tokens/nested",
+	"tls",
+	"agents",
+	"agents/alice",
+	"agents/alice/sessions",
+	"agents/alice/workspace",
+	"agents/bob",
+}
+
+// skippedDirs are the fixture's directories inside skipped trees, left alone.
+var skippedDirs = []string{"media", "logs", "agents/alice/logs", "agents/alice/workspace/media"}
+
 var harmlessFiles = []string{
 	"media/attachment.db",    // media tree is skipped
 	"logs/token.log",         // logs tree is skipped
@@ -102,7 +120,7 @@ func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
 	dir, config := fixture(t)
 	var rec logRec
 
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("Enforce: %v", err)
 	}
 
@@ -121,19 +139,29 @@ func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
 			t.Errorf("%s mode = %04o, want untouched 0644", rel, got)
 		}
 	}
+	for _, rel := range walkedDirs {
+		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o700 {
+			t.Errorf("dir %s mode = %04o, want 0700", rel, got)
+		}
+	}
+	for _, rel := range skippedDirs {
+		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o755 {
+			t.Errorf("skipped dir %s mode = %04o, want untouched 0755", rel, got)
+		}
+	}
 	// The symlink's target is harmless and must not have been chmod'ed via the link.
 	if got := mode(t, filepath.Join(dir, "agents/alice/notes.md")); got != 0o644 {
 		t.Errorf("symlink target mode = %04o, want 0644: the walk followed link.db", got)
 	}
 
-	wantLogged := len(sensitiveFiles) + 1 // files plus the directory
+	wantLogged := len(sensitiveFiles) + len(walkedDirs) + 1 // files, subdirectories and the data directory
 	if len(rec.msgs) != wantLogged {
 		t.Errorf("logged %d changes, want %d:\n%s", len(rec.msgs), wantLogged, strings.Join(rec.msgs, "\n"))
 	}
 
 	// Second run: nothing left to do, nothing logged.
 	rec.msgs = nil
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("second Enforce: %v", err)
 	}
 	if len(rec.msgs) != 0 {
@@ -148,7 +176,7 @@ func TestEnforceRefusesLooseConfig(t *testing.T) {
 			if err := os.Chmod(config, m); err != nil {
 				t.Fatal(err)
 			}
-			err := Enforce(dir, config, nil)
+			err := Enforce(dir, config, Policy{}, nil)
 			if err == nil {
 				t.Fatalf("Enforce accepted a %04o config", m)
 			}
@@ -170,7 +198,7 @@ func TestEnforceRefusesLooseConfig(t *testing.T) {
 
 func TestEnforceMissingConfigAndDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "fresh")
-	if err := Enforce(dir, filepath.Join(dir, "config.json"), nil); err != nil {
+	if err := Enforce(dir, filepath.Join(dir, "config.json"), Policy{}, nil); err != nil {
 		t.Fatalf("Enforce on a fresh install: %v", err)
 	}
 	if got := mode(t, dir); got != 0o700 {
@@ -184,7 +212,7 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -193,9 +221,9 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 		got[f.Path] = f
 	}
 
-	want := make([]string, 0, 2+len(sensitiveFiles))
+	want := make([]string, 0, 2+len(sensitiveFiles)+len(walkedDirs))
 	want = append(want, dir, config)
-	for _, rel := range sensitiveFiles {
+	for _, rel := range append(append([]string{}, sensitiveFiles...), walkedDirs...) {
 		want = append(want, filepath.Join(dir, filepath.FromSlash(rel)))
 	}
 	for _, p := range want {
@@ -220,14 +248,17 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 	if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
 		t.Errorf("Check changed gateway.db to %04o", got)
 	}
+	if got := mode(t, filepath.Join(dir, "agents")); got != 0o755 {
+		t.Errorf("Check changed agents/ to %04o", got)
+	}
 }
 
 func TestCheckCleanInstall(t *testing.T) {
 	dir, config := fixture(t)
-	if err := Enforce(dir, config, nil); err != nil {
+	if err := Enforce(dir, config, Policy{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -242,7 +273,7 @@ func TestWalkCap(t *testing.T) {
 	walkLimit = 3
 	t.Cleanup(func() { walkLimit = old })
 
-	findings, err := Check(dir, config)
+	findings, err := Check(dir, config, Policy{})
 	if !errors.Is(err, ErrTruncated) {
 		t.Fatalf("Check err = %v, want ErrTruncated", err)
 	}
@@ -252,7 +283,7 @@ func TestWalkCap(t *testing.T) {
 	}
 
 	var rec logRec
-	if err := Enforce(dir, config, rec.log); err != nil {
+	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
 		t.Fatalf("Enforce under cap: %v", err)
 	}
 	if !strings.Contains(strings.Join(rec.msgs, "\n"), "entry cap") {
@@ -289,6 +320,39 @@ func TestEnsurePrivateFile(t *testing.T) {
 	}
 	if data, err := os.ReadFile(existing); err != nil || string(data) != "payload" {
 		t.Errorf("existing file content = %q err=%v, want untouched payload", data, err)
+	}
+}
+
+// A symbolic link is refused: its target is neither created nor tightened.
+func TestEnsurePrivateFile_RefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere.db")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateFile(link); err == nil {
+		t.Fatal("a symbolic link must be refused")
+	}
+	if got := mode(t, target); got != 0o644 {
+		t.Errorf("the link's target was changed to %04o", got)
+	}
+
+	dangling := filepath.Join(dir, "dangling.db")
+	if err := os.Symlink(filepath.Join(dir, "missing.db"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateFile(dangling); err == nil {
+		t.Fatal("a dangling symbolic link must be refused")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "missing.db")); !os.IsNotExist(err) {
+		t.Error("a file was created through a dangling link")
 	}
 }
 

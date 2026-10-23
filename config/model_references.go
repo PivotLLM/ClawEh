@@ -9,14 +9,16 @@ import (
 // slice and scalar is set.
 type modelRef struct {
 	where  string    // human label, e.g. `agents.list[alice].models`
-	agent  string    // agent ID for a per-agent site, empty otherwise
+	agent  string    // the agent's DisplayName for a per-agent site, empty otherwise
 	slice  *[]string // set for list sites
 	scalar *string   // set for scalar sites
+	own    bool      // the agent's own model list (agents.list[x].models)
+	role   string    // what a model at the site is, for messages ("a vision model")
 }
 
 // DanglingModelReference is one reference to a model that does not exist: the
 // labelled site it lives at, the alias it names and, for a per-agent site, the
-// agent's ID.
+// agent's DisplayName (what the alert names it by).
 type DanglingModelReference struct {
 	Site  string
 	Alias string
@@ -28,21 +30,19 @@ type DanglingModelReference struct {
 func (c *Config) modelRefSites() []modelRef {
 	d := &c.Agents.Defaults
 	sites := []modelRef{
-		{where: "agents.defaults.models", slice: &d.Models},
-		{where: "agents.defaults.image_model", scalar: &d.ImageModel},
-		{where: "agents.defaults.image_model_fallbacks", slice: &d.ImageModelFallbacks},
-		{where: "agents.defaults.vision_model", scalar: &d.VisionModel},
-		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks},
-		{where: "summarization.models", slice: &c.Summarization.Models},
+		{where: "agents.defaults.models", slice: &d.Models, role: "a default model"},
+		{where: "agents.defaults.vision_model", scalar: &d.VisionModel, role: "a vision model"},
+		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks, role: "a vision model"},
+		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},
 	}
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
 		sites = append(sites,
-			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.ID, slice: &a.Models},
-			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.ID, slice: &a.SummarizationModels},
+			modelRef{where: fmt.Sprintf("agents.list[%s].models", a.ID), agent: a.DisplayName(), slice: &a.Models, own: true},
+			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.DisplayName(), slice: &a.SummarizationModels, role: "a summarization model"},
 		)
 		if a.Subagents != nil {
-			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.ID, slice: &a.Subagents.Models})
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.DisplayName(), slice: &a.Subagents.Models, role: "a sub-agent model"})
 		}
 	}
 	return sites
@@ -150,15 +150,9 @@ func (c *Config) danglingModelReferences() []DanglingModelReference {
 // form ValidateModelReferences uses. A reference that was already dangling is
 // not reported, so a save that leaves an old one alone is not blocked by it.
 func newDanglingModelReferences(before, next *Config) []error {
-	had := make(map[DanglingModelReference]bool)
-	for _, ref := range before.danglingModelReferences() {
-		had[ref] = true
-	}
-	var errs []error
-	for _, ref := range next.danglingModelReferences() {
-		if !had[ref] {
-			errs = append(errs, fmt.Errorf("%s: model %q does not exist", ref.Site, ref.Alias))
-		}
-	}
-	return errs
+	return newProblems(before.danglingModelReferences(), next.danglingModelReferences(),
+		func(ref DanglingModelReference) DanglingModelReference { return ref },
+		func(ref DanglingModelReference) error {
+			return fmt.Errorf("%s: model %q does not exist", ref.Site, ref.Alias)
+		})
 }

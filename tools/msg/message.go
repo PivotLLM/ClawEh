@@ -2,13 +2,25 @@ package msg
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"strings"
 	"sync/atomic"
 
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
+// SendCallback sends content to the chat and reports what became of it:
+// nil once the channel delivered it, ErrQueued when it was queued but no
+// outcome was known in time, or why it was not sent (a channels sentinel,
+// such as channels.ErrRecipientOffline, wrapped).
 type SendCallback func(ctx context.Context, channel, chatID, content string) error
+
+// ErrQueued is a SendCallback result: the message was handed to the
+// channel, but its delivery had not been reported when the send stopped
+// waiting.
+var ErrQueued = errors.New("queued for delivery")
 
 type MessageTool struct {
 	sendCallback SendCallback
@@ -60,6 +72,11 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	if !ok {
 		return &tools.ToolResult{ForLLM: "content is required", IsError: true}
 	}
+	// An empty message reaches nobody, and a platform such as Slack rejects
+	// it (no_text); the model is told before anything is sent.
+	if strings.TrimSpace(content) == "" {
+		return &tools.ToolResult{ForLLM: "content is empty: nothing to send", IsError: true}
+	}
 
 	// Security: the target is always the session's own source channel/chat. The
 	// model cannot choose where a message goes — any channel/chat_id in args is
@@ -69,28 +86,81 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	chatID := tools.ToolChatID(ctx)
 
 	if channel == "" || chatID == "" {
-		return &tools.ToolResult{ForLLM: "No target channel/chat specified", IsError: true}
+		return refused("No target channel/chat specified")
+	}
+	// An asked turn's own "chat" is the ask, whose only output is the final
+	// reply: a message sent there would reach no one.
+	if channel == constants.AgentMessageChannel {
+		return refused("msg_send needs a target in an asked turn")
 	}
 
 	if t.sendCallback == nil {
 		return &tools.ToolResult{ForLLM: "Message sending not configured", IsError: true}
 	}
 
-	if err := t.sendCallback(ctx, channel, chatID, content); err != nil {
-		return &tools.ToolResult{
-			ForLLM:  fmt.Sprintf("sending message: %v", err),
-			IsError: true,
-			Err:     err,
-		}
+	chat := chatLabel(channel, chatID)
+	err := t.sendCallback(ctx, channel, chatID, content)
+	if err != nil && !errors.Is(err, ErrQueued) {
+		return &tools.ToolResult{ForLLM: notSentText(chat, err), IsError: true, Err: notSentError(err)}
 	}
 
 	t.sentInRound.Store(true)
 	if flag := tools.RoundSentFlagFromCtx(ctx); flag != nil {
 		flag.Store(true)
 	}
-	// Silent: user already received the message directly
-	return &tools.ToolResult{
-		ForLLM: fmt.Sprintf("Message sent to %s:%s", channel, chatID),
-		Silent: true,
+	text := "Message delivered to " + chat + "."
+	if err != nil {
+		text = "Message queued for delivery to " + chat + "."
 	}
+	// Silent: user already received the message directly
+	return &tools.ToolResult{ForLLM: text, Silent: true}
+}
+
+// refused is a send refused because the turn has no chat to send to: an
+// expected refusal (logged at WARN), not a failure.
+func refused(text string) *tools.ToolResult {
+	return &tools.ToolResult{ForLLM: text, IsError: true, Err: tools.Refusal(errors.New(text))}
+}
+
+// chatLabel names a chat as channel:chat, without repeating the channel
+// when the chat ID already starts with it ("device:<id>", "webui:<id>").
+func chatLabel(channel, chatID string) string {
+	if strings.HasPrefix(chatID, channel+":") {
+		return chatID
+	}
+	return channel + ":" + chatID
+}
+
+// notSentError marks a send the channel declined because the recipient is
+// unavailable as an expected refusal: the channel has already logged it, so
+// the tool call is not logged again as a failure. Any other error is
+// returned as is.
+func notSentError(err error) error {
+	for _, expected := range []error{
+		channels.ErrUnknownChannel, channels.ErrNotRunning, channels.ErrRecipientOffline,
+		channels.ErrRecipientNotFound, channels.ErrReceiveOnly,
+	} {
+		if errors.Is(err, expected) {
+			return tools.Refusal(err)
+		}
+	}
+	return err
+}
+
+// notSentText says why a message did not reach chat, from the channel's
+// reason.
+func notSentText(chat string, err error) string {
+	switch {
+	case errors.Is(err, channels.ErrUnknownChannel):
+		return "Not sent: " + chat + " is not set up."
+	case errors.Is(err, channels.ErrNotRunning):
+		return "Not sent: " + chat + " is unavailable."
+	case errors.Is(err, channels.ErrRecipientOffline):
+		return "Not sent: " + chat + " is offline."
+	case errors.Is(err, channels.ErrRecipientNotFound):
+		return "Not sent: " + chat + " can't be reached."
+	case errors.Is(err, channels.ErrReceiveOnly):
+		return "Not sent: " + chat + " is receive-only."
+	}
+	return "Not sent: couldn't reach " + chat + "."
 }

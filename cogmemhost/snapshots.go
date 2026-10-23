@@ -23,8 +23,8 @@ var snapshotName = regexp.MustCompile(`\.pre-v\d+\.db$`)
 
 // PruneSnapshots removes every pre-migration snapshot in dir (an agent's
 // cogmem directory) whose modification time is older than maxAge as of now,
-// and returns the paths removed. The live database, its WAL files and the
-// subagents directory are never touched. A missing dir is not an error. The
+// and returns the paths removed. The live database, its WAL files and any
+// subdirectory are never touched. A missing dir is not an error. The
 // live database is not vacuumed: cogmem exposes no maintenance hook for the
 // store the running gateway holds open, and a snapshot's removal frees its
 // own space without one.

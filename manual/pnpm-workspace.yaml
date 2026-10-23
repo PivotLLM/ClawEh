@@ -1,0 +1,6 @@
+# The manual is its own pnpm project, separate from web/frontend: VitePress 1.x
+# runs on vite 5, the WebUI on vite 8, and one lockfile would have to carry both.
+
+# Only esbuild may run install scripts; everything else is blocked by default.
+onlyBuiltDependencies:
+  - esbuild

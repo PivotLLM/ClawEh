@@ -26,11 +26,13 @@ func NewBackupCommand() *cobra.Command {
 		Use:   "backup",
 		Short: "Write a backup archive of the ClawEh install",
 		Long: "Writes claw-backup-<timestamp>.tar.gz containing config.json, the cron jobs\n" +
-			"file, internal/ (tokens and the device pairing database), credentials.json and\n" +
-			"tls/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
+			"file, internal/ (tokens and the device pairing database), credentials.json,\n" +
+			"tls/ and cards/ when present, and every SQLite database under CLAW_HOME (session archives,\n" +
 			"cognitive memory, the fusion OAuth store), each checked with quick_check and\n" +
-			"copied with VACUUM INTO. Safe to run while claw is up. Archives older\n" +
-			"than backup.retain_days are pruned from the destination.",
+			"copied with VACUUM INTO, and the agents' forums. Safe to run while claw is up.\n" +
+			"An agent with its own workspace outside agents.base_dir is not fully covered\n" +
+			"(see Backup and restore in the manual). Archives older than backup.retain_days are pruned from\n" +
+			"the destination.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runBackup(cmd, dest)
@@ -74,7 +76,9 @@ func NewRestoreCommand() *cobra.Command {
 			"claw must be stopped. Every file the archive will replace is listed and,\n" +
 			"after confirmation, moved to $CLAW_HOME/restore-backup-<timestamp>/ before the\n" +
 			"archived copy is put in place. Restored databases are checked with quick_check\n" +
-			"first; if any fails the restore aborts and nothing is changed.",
+			"first; if any fails the restore aborts and nothing is changed. An agent with\n" +
+			"its own workspace outside agents.base_dir is restored only as far as the\n" +
+			"backup covered it (see Backup and restore in the manual).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestore(cmd, args[0], yes)

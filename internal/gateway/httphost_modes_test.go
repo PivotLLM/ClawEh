@@ -117,7 +117,7 @@ func TestHTTPHostHTTPOnNetwork(t *testing.T) {
 	lan := config.GatewayConfig{Host: "127.0.0.2", TLS: off}
 	host = startHost(t, modeHostOptions(lan, noTLS), "lan")
 	// The bind address joins the accepted Host names.
-	if err = host.ApplyPolicy(lan, nil); err != nil {
+	if err = host.ApplyPolicy(lan); err != nil {
 		t.Fatal(err)
 	}
 	var sawV4Loopback, sawSpecific bool

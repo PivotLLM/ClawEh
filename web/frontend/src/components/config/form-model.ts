@@ -6,7 +6,6 @@ export interface CoreConfigForm {
   baseDir: string
   commonDir: string
   restrictToWorkspace: boolean
-  allowRemote: boolean
   streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
@@ -44,52 +43,34 @@ export interface CoreConfigForm {
   evictionEvictTurns: string
   evictionBudgetBytes: string
   logRetentionDays: string
-  sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
   backupEnabled: boolean
   backupAt: string
   backupRetainDays: string
   backupDest: string
+  // forum.limits: the install's maximums for every forum. "" means not set
+  // (the backend default, FORUM_LIMIT_DEFAULTS, applies).
+  forumMaxCalls: string
+  forumMaxDurationSeconds: string
+  forumCallTimeoutSeconds: string
+  forumMaxParallelCalls: string
 }
 
-export const SESSION_MODE_OPTIONS = [
-  {
-    value: "unified",
-    labelKey: "pages.config.session_mode_unified",
-    labelDefault: "Unified",
-    descKey: "pages.config.session_mode_unified_desc",
-    descDefault:
-      "One shared memory for the entire agent, across all users and channels.",
-  },
-  {
-    value: "per-user",
-    labelKey: "pages.config.session_mode_per_user",
-    labelDefault: "Per User",
-    descKey: "pages.config.session_mode_per_user_desc",
-    descDefault: "Each person gets their own private memory.",
-  },
-  {
-    value: "per-platform",
-    labelKey: "pages.config.session_mode_per_platform",
-    labelDefault: "Per Platform",
-    descKey: "pages.config.session_mode_per_platform_desc",
-    descDefault: "Each person has a separate memory per platform.",
-  },
-  {
-    value: "per-account",
-    labelKey: "pages.config.session_mode_per_account",
-    labelDefault: "Per Account",
-    descKey: "pages.config.session_mode_per_account_desc",
-    descDefault: "Like per-platform, but also separates by bot account.",
-  },
-] as const
+// FORUM_LIMIT_DEFAULTS mirrors config.DefaultForum* in the backend: the value
+// each forum.limits field has when it is left out or set to 0. Both are
+// checked against config/testdata/forum_limit_defaults.json.
+export const FORUM_LIMIT_DEFAULTS = {
+  max_calls: 200,
+  max_duration_seconds: 7200,
+  call_timeout_seconds: 1800,
+  max_parallel_calls: 8,
+} as const
 
 export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
   commonDir: "",
   restrictToWorkspace: true,
-  allowRemote: true,
   streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
@@ -124,13 +105,16 @@ export const EMPTY_FORM: CoreConfigForm = {
   evictionEvictTurns: "10",
   evictionBudgetBytes: "0",
   logRetentionDays: "30",
-  sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
   backupEnabled: true,
   backupAt: "03:00",
   backupRetainDays: "30",
   backupDest: "",
+  forumMaxCalls: "",
+  forumMaxDurationSeconds: "",
+  forumCallTimeoutSeconds: "",
+  forumMaxParallelCalls: "",
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -175,11 +159,9 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const compressionTrigger = asRecord(compression.trigger)
   const compressionRetain = asRecord(compression.retain)
   const summarization = asRecord(root.summarization)
-  const session = asRecord(root.session)
   const devices = asRecord(root.devices)
   const logging = asRecord(root.logging)
-  const tools = asRecord(root.tools)
-  const exec = asRecord(tools.exec)
+  const forumLimits = asRecord(asRecord(root.forum).limits)
 
   const agentList = Array.isArray(agents.list) ? agents.list : []
   const defaultAgentId = asString(
@@ -196,10 +178,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.restrict_to_workspace === undefined
         ? EMPTY_FORM.restrictToWorkspace
         : asBool(defaults.restrict_to_workspace),
-    allowRemote:
-      exec.allow_remote === undefined
-        ? EMPTY_FORM.allowRemote
-        : asBool(exec.allow_remote),
     streamToolActivity:
       defaults.stream_tool_activity === undefined
         ? EMPTY_FORM.streamToolActivity
@@ -300,7 +278,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       logging.retention_days,
       EMPTY_FORM.logRetentionDays,
     ),
-    sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:
       devices.enabled === undefined
         ? EMPTY_FORM.devicesEnabled
@@ -316,7 +293,18 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       EMPTY_FORM.backupRetainDays,
     ),
     backupDest: asString(asRecord(root.backup).dest),
+    forumMaxCalls: asLimitString(forumLimits.max_calls),
+    forumMaxDurationSeconds: asLimitString(forumLimits.max_duration_seconds),
+    forumCallTimeoutSeconds: asLimitString(forumLimits.call_timeout_seconds),
+    forumMaxParallelCalls: asLimitString(forumLimits.max_parallel_calls),
   }
+}
+
+// asLimitString shows a forum limit that is set; 0 or absent is "" (default).
+function asLimitString(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(value)
+    : ""
 }
 
 export function parseIntField(

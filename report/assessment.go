@@ -34,8 +34,19 @@ const (
 	itemDeviceHTTP  = "Device HTTP"
 	itemDeviceHTTPS = "Device HTTPS"
 	itemMCPHost     = "MCP host (local tools)"
-	itemLINE        = "LINE webhook"
 )
+
+// itemProxy is the neutral row naming the proxies the install is behind.
+const itemProxy = "Proxy"
+
+// itemUntrustedProxy is the row for a proxy gateway.trusted_proxies does not
+// list; the WebUI links it to the field that fixes it (assessmentLinks).
+const itemUntrustedProxy = "Reverse proxy"
+
+// itemEncryptedMatrix is the row naming the Matrix rooms seen to be end-to-end
+// encrypted, which ClawEh can't read; the WebUI links it to the manual's
+// encryption section (assessmentLinks).
+const itemEncryptedMatrix = "Encrypted Matrix rooms"
 
 // Status phrases of the per-listener rows, written for a reader who does not
 // know what a bind address is.
@@ -52,20 +63,23 @@ type assessRow struct {
 }
 
 // listenerRows is one row per listener, in a fixed order: the WebUI/API over
-// HTTP and HTTPS, the device listener over HTTP and HTTPS, the MCP host, and
-// the LINE webhook when that channel is on. Only unencrypted network access
+// HTTP and HTTPS, the device listener over HTTP and HTTPS, and the MCP host.
+// Only unencrypted network access
 // is marked: WebUI/API or Device HTTP open to the network, and
-// WebUI/API HTTPS off while its HTTP is. A self-signed certificate is stated,
+// WebUI/API HTTPS off while its HTTP is, unless the install is behind a
+// proxy (Config.BehindProxy), where TLS ends at the proxy and the proxy row
+// says so. A self-signed certificate is stated,
 // never marked: on a LAN there is usually no alternative. Raw bind addresses
 // are left to the Network section.
 func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	gw := cfg.Gateway
 	webAllow := webAllowPhrase(gw.EffectiveAllowedCIDRs())
+	plainIsFinding := len(cfg.BehindProxy()) == 0
 	var rows []assessRow
 
 	if gw.HTTPOnNetwork() {
 		rows = append(rows, assessRow{
-			true, itemWebHTTP,
+			plainIsFinding, itemWebHTTP,
 			enabledNetwork + " (unencrypted)" + webAllow + ".",
 		})
 	} else {
@@ -79,7 +93,7 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 		rows = append(rows, assessRow{false, itemWebHTTPS, enabledLocal + certificatePhrase(cfg, now) + "."})
 	default:
 		if gw.HTTPOnNetwork() {
-			rows = append(rows, assessRow{true, itemWebHTTPS, "Disabled, while HTTP is enabled for network access."})
+			rows = append(rows, assessRow{plainIsFinding, itemWebHTTPS, "Disabled, while HTTP is enabled for network access."})
 		} else {
 			rows = append(rows, assessRow{false, itemWebHTTPS, disabledStatus})
 		}
@@ -96,7 +110,7 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 	case devLocal:
 		rows = append(rows, assessRow{false, itemDeviceHTTP, enabledLocal + "."})
 	default:
-		rows = append(rows, assessRow{true, itemDeviceHTTP, enabledNetwork + " (unencrypted)" + devAllow + "."})
+		rows = append(rows, assessRow{plainIsFinding, itemDeviceHTTP, enabledNetwork + " (unencrypted)" + devAllow + "."})
 	}
 	switch {
 	case !dev.Enabled || !dev.TLS:
@@ -112,14 +126,6 @@ func listenerRows(cfg *config.Config, now time.Time) []assessRow {
 		rows = append(rows, assessRow{false, itemMCPHost, enabledLocal + "."})
 	} else {
 		rows = append(rows, assessRow{false, itemMCPHost, disabledStatus})
-	}
-
-	if line := cfg.Channels.LINE; line.Enabled {
-		if isLoopback(line.WebhookHost) {
-			rows = append(rows, assessRow{false, itemLINE, enabledLocal + "."})
-		} else {
-			rows = append(rows, assessRow{false, itemLINE, enabledNetwork + "; every request must carry LINE's signature."})
-		}
 	}
 	return rows
 }
@@ -191,10 +197,19 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 			add(action, item, status)
 		}
 	}
+	if proxies := cfg.BehindProxy(); len(proxies) > 0 {
+		add(false, itemProxy, "Behind a proxy: "+strings.Join(proxies, ", ")+".")
+	}
+	if cfg.ProxyNotTrusted(env.ForwardedPeer) {
+		add(true, itemUntrustedProxy, untrustedProxyStatus(env))
+	}
+	if cfg.Channels.Matrix.Enabled && len(env.EncryptedMatrixRooms) > 0 {
+		add(true, itemEncryptedMatrix, "ClawEh can't read these encrypted rooms: "+strings.Join(env.EncryptedMatrixRooms, ", ")+".")
+	}
 	dd := dataDir(cfg, env)
 
-	findings, permErr := perms.Check(dd, env.ConfigPath)
-	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr))
+	findings, permErr := perms.Check(dd, env.ConfigPath, perms.PolicyFor(cfg))
+	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr, cfg.Security.Permissions.Summary()))
 
 	wu := cfg.Channels.WebUI
 	add(wu.Enabled && wu.Token == "", "WebUI chat token",
@@ -221,14 +236,26 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 
 	var shell []string
 	for _, a := range agents {
-		if agentHasTool(a, "shell_exec") {
+		if agentHasTool(a, config.ShellExecTool) {
 			shell = append(shell, a.ID)
 		}
 	}
 	ex := cfg.Tools.Exec
-	add(len(shell) > 0 && (!ex.EnableDenyPatterns || ex.AllowRemote), "Shell access",
-		ifStr(len(shell) == 0, "No enabled agent has shell_exec.",
-			"shell_exec: "+strings.Join(shell, ", ")+"; deny patterns "+onOff(ex.EnableDenyPatterns)+", remote commands "+onOff(ex.AllowRemote)+"."))
+	shellText, _ := shellAccess(cfg)
+	if len(shell) > 0 {
+		if via := shellDelegators(agents, shell); len(via) > 0 {
+			shellText += "; also via allow_agents: " + strings.Join(agentNames(cfg, via), ", ")
+		}
+		shellText += "; deny patterns " + onOff(ex.EnableDenyPatterns)
+	}
+	if anyCLIBypass(cfg) {
+		shellText += "; CLI models with Allow CLI to bypass restrictions have their own shell"
+	}
+	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText+".")
+	// A mount named after a workspace folder is set aside at load.
+	for _, m := range cfg.IgnoredMounts() {
+		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
+	}
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell
 	// does not, so a confined agent with shell_exec is confined in name only.
@@ -262,6 +289,29 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 		if a.Fusion && len(a.MCPTools) == 0 {
 			add(true, "Fusion on with no service ("+a.ID+")",
 				"Fusion is on for "+a.ID+" but no service is listed, so it has no Fusion tools. Tick its services under Fusion services on the Agents page.")
+		}
+	}
+
+	// An agent has only the tools its list names, so one with an empty or
+	// missing list has none. Shown so an agent left without tools (an upgrade
+	// from the implicit default set) is visible. A human agent never runs
+	// tools, so it is not listed.
+	for _, a := range enabledAgents(cfg) {
+		if len(a.Tools) == 0 && !cfg.IsHumanAgent(a.ID) {
+			add(false, "No tools ("+a.DisplayName()+")", a.DisplayName()+" has no tools.")
+		}
+	}
+
+	// A person's chat on a channel that is not set up: requests to them
+	// cannot be delivered. Only the configuration is checked here; whether
+	// the chat itself exists is known only when a request is sent.
+	for _, a := range enabledAgents(cfg) {
+		if !cfg.IsHumanAgent(a.ID) {
+			continue
+		}
+		if channel, _, _, ok := cfg.CronTarget(a.ID); ok && !channelSetUp(cfg, channel) {
+			add(true, "Person's chat ("+a.DisplayName()+")",
+				"Channel "+channel+" is not set up, so requests can't reach "+a.DisplayName()+".")
 		}
 	}
 
@@ -308,7 +358,7 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	add(false, "MCP servers running local programs", joinOr(stdio, "None."))
 
 	add(false, "Sub-agent spawning",
-		"Gate "+onOff(cfg.Tools.Subagent.Enabled)+", max depth "+itoa(d.GetMaxSubagentDepth())+".")
+		"Max depth "+itoa(d.GetMaxSubagentDepth())+".")
 
 	return Section{
 		Title:  "Security assessment",
@@ -317,23 +367,56 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	}
 }
 
-// permsStatus describes what perms.Check found under CLAW_HOME. A truncated
+// untrustedProxyStatus is the status of the untrusted-proxy row, with when
+// the forwarded request was last seen.
+func untrustedProxyStatus(env Environment) string {
+	seen := ""
+	if !env.ForwardedSeen.IsZero() {
+		seen = " (last seen " + env.ForwardedSeen.Format("2006-01-02 15:04") + ")"
+	}
+	return "Requests arrive through a proxy that is not trusted" + seen + "; network access control and lockout don't apply."
+}
+
+// channelSetUp reports whether name is a channel the configuration starts.
+// Names are compared exactly, as the channel manager looks them up. A secmsg
+// daemon with no accounts listed discovers them at start, so any
+// name under its prefix may be one of them.
+func channelSetUp(cfg *config.Config, name string) bool {
+	for _, c := range enabledChannels(cfg) {
+		if c.Name == name {
+			return true
+		}
+	}
+	for _, s := range cfg.Channels.SecMsg {
+		if !s.Enabled || len(s.Accounts) > 0 {
+			continue
+		}
+		base := orValue(s.Name, "secmsg")
+		if name == base || strings.HasPrefix(name, base+"-") {
+			return true
+		}
+	}
+	return false
+}
+
+// permsStatus describes what perms.Check found under CLAW_HOME against the
+// configured modes (summary, from PermissionsConfig.Summary). A truncated
 // walk still reports the findings it collected, and says it stopped early.
-func permsStatus(findings []perms.Finding, err error) string {
+func permsStatus(findings []perms.Finding, err error, summary string) string {
 	if err != nil && !errors.Is(err, perms.ErrTruncated) {
 		return "Permission check failed: " + err.Error() + "."
 	}
 	var s string
 	if len(findings) == 0 {
-		s = "CLAW_HOME and its secrets are owner-only."
+		s = "Within the configured modes (" + summary + ")."
 	} else {
 		f := findings[0]
 		noun := "files under CLAW_HOME are"
 		if len(findings) == 1 {
 			noun = "file under CLAW_HOME is"
 		}
-		s = fmt.Sprintf("%d %s readable by other users (first: %s %04o); "+
-			"ClawEh tightens them at start — run it, or chmod 700/600.", len(findings), noun, f.Path, f.Mode)
+		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o); "+
+			"ClawEh tightens them at start — run it, or chmod it to %04o.", len(findings), noun, f.Path, f.Mode, f.Want)
 	}
 	if errors.Is(err, perms.ErrTruncated) {
 		s += " The check was truncated at the entry cap, so files beyond it were not examined."
@@ -366,6 +449,33 @@ func certificateExpiryRow(cfg *config.Config, now time.Time) (action bool, item,
 		return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expired on %s (%d days ago).", date, -daysLeft)
 	}
 	return true, "TLS certificate expiry", fmt.Sprintf("TLS certificate expires on %s (%d days).", date, daysLeft)
+}
+
+// anyCLIBypass reports whether a CLI provider has Allow CLI to bypass
+// restrictions on, the condition under which a CLI model has its own shell.
+func anyCLIBypass(cfg *config.Config) bool {
+	for i := range cfg.Providers {
+		if p := &cfg.Providers[i]; config.IsCLIProtocol(p.Protocol) && p.BypassRestrictions {
+			return true
+		}
+	}
+	return false
+}
+
+// shellDelegators are the enabled agents without shell_exec whose
+// subagents.allow_agents covers an agent that has it: a sub-agent they start
+// on that agent runs as it, shell included.
+func shellDelegators(agents []*config.AgentConfig, shell []string) []string {
+	var out []string
+	for _, a := range agents {
+		if slices.Contains(shell, a.ID) {
+			continue
+		}
+		if slices.ContainsFunc(shell, a.Subagents.Allows) {
+			out = append(out, a.ID)
+		}
+	}
+	return out
 }
 
 func ifStr(cond bool, yes, no string) string {

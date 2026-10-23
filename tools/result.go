@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -114,6 +115,11 @@ func ErrorResult(message string) *ToolResult {
 	}
 }
 
+// restrictionNotice tells a model that a refusal is configuration, not a
+// fault, so it neither retries nor improvises a workaround.
+const restrictionNotice = "This is a configured access restriction, not a bug or an outage. " +
+	"Do not retry this call, and do not attempt to work around it by other means."
+
 // NotEnabledMessage is returned when the caller is authenticated but the
 // resolved agent may not use the tool — either it is absent from that agent's
 // registry or an ACL policy refused it. The wording is deliberately
@@ -123,12 +129,9 @@ func ErrorResult(message string) *ToolResult {
 // than a fault — otherwise it retries or improvises a workaround instead of
 // telling the user. It does not disclose which of the two causes applied.
 func NotEnabledMessage(name string) string {
-	return fmt.Sprintf(
-		"Permission denied: the tool %q is not enabled for this agent. "+
-			"This is a configured access restriction, not a bug or an outage. "+
-			"Do not retry this call, and do not attempt to work around it by other means. "+
-			"If this tool is needed, tell the user it must be enabled for this agent.",
-		name)
+	return fmt.Sprintf("Permission denied: the tool %q is not enabled for this agent. ", name) +
+		restrictionNotice + " " +
+		"If this tool is needed, tell the user it must be enabled for this agent."
 }
 
 // UserResult creates a ToolResult with content for both LLM and user.
@@ -185,4 +188,24 @@ func (tr *ToolResult) MarshalJSON() ([]byte, error) {
 func (tr *ToolResult) WithError(err error) *ToolResult {
 	tr.Err = err
 	return tr
+}
+
+// refusalError marks a tool error as an expected refusal: a configured
+// permission or limit said no, nothing failed. The registry logs such a
+// result at WARN instead of ERROR.
+type refusalError struct{ err error }
+
+func (e refusalError) Error() string { return e.err.Error() }
+func (e refusalError) Unwrap() error { return e.err }
+func (refusalError) Refusal() bool   { return true }
+
+// Refusal marks err as an expected refusal (see IsExpectedRefusal).
+func Refusal(err error) error { return refusalError{err: err} }
+
+// IsExpectedRefusal reports whether err, or an error it wraps, is an expected
+// refusal: one created by Refusal, or any error with a Refusal() bool method
+// that returns true (so packages that do not import tools can mark theirs).
+func IsExpectedRefusal(err error) bool {
+	var r interface{ Refusal() bool }
+	return errors.As(err, &r) && r.Refusal()
 }

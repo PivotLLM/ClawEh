@@ -37,7 +37,7 @@ func TestCronFire_SurvivesAgeCompactionOnArrival(t *testing.T) {
 	)
 
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

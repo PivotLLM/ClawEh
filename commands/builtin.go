@@ -23,5 +23,7 @@ func BuiltinDefinitions() []Definition {
 		cooldownsCommand(),
 		quotaCommand(),
 		versionCommand(),
+		askCommand(),
+		whisperCommand(),
 	}
 }

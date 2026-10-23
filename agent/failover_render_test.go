@@ -180,10 +180,56 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 		}
 	}
 	// No third notice — the duplicates must have been suppressed.
-	select {
-	case m := <-collected:
-		t.Fatalf("dedup failed; got an extra notice: %q", m.Content)
-	case <-time.After(200 * time.Millisecond):
+	if extra := untilMarker(t, msgBus, collected); len(extra) > 0 {
+		t.Fatalf("dedup failed; got an extra notice: %q", extra[0].Content)
+	}
+}
+
+// The notice is posted once per turn per model change: a model in cooldown
+// on every step of a turn (its "retry in" time different each time), or one
+// that first failed and is then skipped, is announced once; a different
+// change still is.
+func TestFallbackNotifier_OncePerModelChange(t *testing.T) {
+	tl := newTestAgentLoop(t)
+	notifier := tl.al.fallbackNotifier(context.Background(), processOptions{Channel: "test", ChatID: "chat"})
+	collected := make(chan bus.OutboundMessage, 16)
+	go func() {
+		for {
+			msg, ok := tl.msgBus.SubscribeOutbound(t.Context())
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	luna := providers.FallbackCandidate{Model: "luna", Alias: "Luna"}
+	haikuFailed := providers.FallbackAttempt{
+		Model: "haiku", Alias: "Haiku", Reason: providers.FailoverFormat,
+		Error: &providers.FailoverError{Reason: providers.FailoverFormat, Status: 404},
+	}
+	notifier([]providers.FallbackAttempt{haikuFailed}, luna)
+	for _, left := range []time.Duration{59 * time.Second, 41 * time.Second, 17 * time.Second, 3 * time.Second} {
+		notifier([]providers.FallbackAttempt{{Model: "haiku", Alias: "Haiku", Skipped: true, Reason: providers.FailoverFormat, Remaining: left}}, luna)
+	}
+	notifier([]providers.FallbackAttempt{haikuFailed, {Model: "luna", Alias: "Luna", Reason: providers.FailoverRateLimit}},
+		providers.FallbackCandidate{Model: "scout", Alias: "Scout"})
+
+	var got []string
+	deadline := time.After(2 * time.Second)
+	for len(got) < 2 {
+		select {
+		case m := <-collected:
+			got = append(got, m.Content)
+		case <-deadline:
+			t.Fatalf("timed out; got %q, want 2 notices", got)
+		}
+	}
+	if extra := untilMarker(t, tl.msgBus, collected); len(extra) > 0 {
+		t.Fatalf("notice repeated for the same model change: %q (earlier %q)", extra[0].Content, got)
+	}
+	if !strings.Contains(got[0], "Trying Luna") || !strings.Contains(got[1], "Trying Scout") {
+		t.Errorf("notices = %q", got)
 	}
 }
 
@@ -285,15 +331,15 @@ func TestFormatRemaining(t *testing.T) {
 // shared channel shows whose CLI refused; other errors are unchanged.
 func TestRenderTurnErrorFor_NamesTheAssistant(t *testing.T) {
 	declined := &providers.CLIDeclinedError{Message: "The Claude CLI declined to use tools (Write)."}
-	got := renderTurnErrorFor("Karen", context.Background(), time.Minute, declined)
-	if got != "Karen: The Claude CLI declined to use tools (Write)." {
+	got := renderTurnErrorFor("Alice", context.Background(), time.Minute, declined)
+	if got != "Alice: The Claude CLI declined to use tools (Write)." {
 		t.Errorf("got %q", got)
 	}
 	if got := renderTurnErrorFor("", context.Background(), time.Minute, declined); got != declined.Message {
 		t.Errorf("unnamed: got %q", got)
 	}
-	plain := renderTurnErrorFor("Karen", context.Background(), 15*time.Minute, errors.New("context deadline exceeded"))
-	if strings.HasPrefix(plain, "Karen:") {
+	plain := renderTurnErrorFor("Alice", context.Background(), 15*time.Minute, errors.New("context deadline exceeded"))
+	if strings.HasPrefix(plain, "Alice:") {
 		t.Errorf("a non-declined error must not be prefixed: %q", plain)
 	}
 }

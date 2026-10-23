@@ -1,8 +1,14 @@
 import type { AgentToolCatalogResponse } from "@/api/channels"
+import {
+  SHELL_TOOL,
+  shellAllowed,
+  withShellAllowed,
+} from "@/components/agents/agent-model"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 
 export interface ToolSelectProps {
+  /** The agent's tools list; [] = none. */
   selected: string[]
   catalog: AgentToolCatalogResponse
   onChange: (tools: string[]) => void
@@ -10,12 +16,19 @@ export interface ToolSelectProps {
 
 export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   // Only per-tool (native) tools are listed here — these are the tools always in
-  // the agent's context. Suites (cogmem, maestro, fusion) are all-or-nothing and
-  // controlled by their own toggles below, so they are intentionally not shown.
-  const perToolTools = catalog.tools.filter((t) => !t.suite)
+  // the agent's context. Suites (cogmem, maestro, fusion, forum) are
+  // all-or-nothing and controlled by their own switches on the agent card, so
+  // they are intentionally not shown.
+  // shell_exec has its own "Allow shell commands" switch and is granted only by
+  // name, so it is not listed here, and every change below keeps its entry.
+  const perToolTools = catalog.tools.filter(
+    (t) => !t.suite && t.name !== SHELL_TOOL,
+  )
+  const shell = shellAllowed(selected)
+  const emit = (next: string[]) => onChange(withShellAllowed(next, shell))
 
-  // MCP-client tools are no longer part of this per-tool allowlist; they have
-  // their own per-tool mcp_tools field (see the MCP access box).
+  // MCP-client tools are not part of this per-tool allowlist; they have their
+  // own per-tool mcp_tools field (see the MCP access box).
   const allTools = perToolTools.map((t) => t.name)
 
   // When "*" is present, expand to full explicit list before applying any change.
@@ -30,16 +43,16 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
   const handleToggle = (name: string) => {
     const current = effectiveSelected()
     if (current.includes(name)) {
-      onChange(current.filter((s) => s !== name))
+      emit(current.filter((s) => s !== name))
     } else {
-      onChange([...current, name])
+      emit([...current, name])
     }
   }
 
-  const handleDefault = () => onChange([...catalog.default_tools])
-  const handleClear = () => onChange([])
-
-  const noneSelected = selected.length === 0
+  // "Default tools" writes the standard set into the list, which stays
+  // editable; shell_exec keeps its own switch's setting.
+  const handleDefault = () => emit(catalog.default_tools)
+  const handleClear = () => emit([])
 
   return (
     <div className="space-y-2">
@@ -51,7 +64,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
           onClick={handleDefault}
           className="h-6 px-2 text-xs"
         >
-          Default
+          Default tools
         </Button>
         <Button
           type="button"
@@ -63,12 +76,6 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
           Clear
         </Button>
       </div>
-
-      {noneSelected && (
-        <p className="text-xs font-medium text-amber-400">
-          No tools selected — this agent has no tool access.
-        </p>
-      )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
         {[...perToolTools]

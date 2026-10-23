@@ -1,4 +1,5 @@
 // API client for model list management.
+import { errorMessage } from "./error-message"
 
 export interface ModelInfo {
   index: number
@@ -7,9 +8,7 @@ export interface ModelInfo {
   // Name of the provider this model is reached through.
   provider: string
   // Advanced fields
-  connect_mode?: string
   workspace?: string
-  rpm?: number
   max_tokens?: number
   // Model context window size in tokens. 0/undefined → use the agent default.
   context_window?: number
@@ -19,8 +18,8 @@ export interface ModelInfo {
   no_tools?: boolean
   // Vision passthrough for MCP tool-result images: "" / "off" drops them,
   // "user_message" injects them as a follow-up user turn, "tool_response"
-  // attaches them to the tool result. Chat models need "user_message"
-  // (tool-role content is text-only); Responses models can use "tool_response".
+  // attaches them to the tool result (the OpenAI Responses API and xAI accept
+  // it; plain OpenAI chat does not, so use "user_message" there).
   vision?: string
   // Shape 3 per-LLM custom fields. extra_body accepts an explicit `null` on
   // save to clear a previously-stored value; the backend handler merge-loads
@@ -42,6 +41,9 @@ interface ModelsListResponse {
   models: ModelInfo[]
   total: number
   default_model: string
+  // The install's effective Turn timeout in seconds (the built-in default
+  // when unset); 0 from a server that does not send it.
+  turn_timeout: number
 }
 
 interface ModelActionResponse {
@@ -55,15 +57,7 @@ const BASE_URL = ""
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, options)
   if (!res.ok) {
-    // Surface the server's error body (e.g. 409 "model is still referenced
-    // by ...") so callers can show a meaningful message.
-    let detail = ""
-    try {
-      detail = (await res.text()).trim()
-    } catch {
-      // ignore
-    }
-    throw new Error(detail || `API error: ${res.status} ${res.statusText}`)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }
@@ -77,6 +71,7 @@ export async function getModels(): Promise<ModelsListResponse> {
     models,
     total: data.total ?? models.length,
     default_model: data.default_model ?? "",
+    turn_timeout: data.turn_timeout ?? 0,
   }
 }
 

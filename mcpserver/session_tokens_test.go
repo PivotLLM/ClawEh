@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
-	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -23,11 +22,11 @@ func TestSyncServiceTokens_HashedValuesResolveByPlaintext(t *testing.T) {
 	plain := "SST" + strings.Repeat("ab", 32)
 	hashed := tokenhash.Hash(plain)
 
-	s.SyncServiceTokens(map[string]string{"amber": hashed}, func(string) string { return "/ws/sessions" })
+	s.SyncServiceTokens(map[string]string{"alice": hashed}, func(string) string { return "/ws/sessions" })
 
 	rec, ok := s.Resolve(plain)
-	if !ok || rec.agentID != "amber" {
-		t.Fatalf("Resolve(plaintext) = (%+v,%v), want amber's service record", rec, ok)
+	if !ok || rec.agentID != "alice" {
+		t.Fatalf("Resolve(plaintext) = (%+v,%v), want alice's service record", rec, ok)
 	}
 	if _, ok := s.Resolve(hashed); ok {
 		t.Error("presenting the stored hash must not authenticate")
@@ -40,13 +39,12 @@ func TestSyncServiceTokens_HashedValuesResolveByPlaintext(t *testing.T) {
 	}
 }
 
-// TestRegisterService_UnifiedBindsMainSession verifies the default (unified)
-// contract: a service token drives the agent's MAIN session, so an external
-// integration reads and writes the same conversation, tools, and memory as every
-// other channel. One agent, one session — isolation is achieved with a separate
-// agent, not a separate door.
-func TestRegisterService_UnifiedBindsMainSession(t *testing.T) {
-	s := newSessionTokenStore() // zero mode == unified
+// TestRegisterService_BindsMainSession verifies that a service token drives the
+// agent's MAIN session, so an external integration reads and writes the same
+// conversation, tools, and memory as every other channel. One agent, one
+// session — isolation is achieved with a separate agent, not a separate door.
+func TestRegisterService_BindsMainSession(t *testing.T) {
+	s := newSessionTokenStore()
 
 	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
 
@@ -59,27 +57,6 @@ func TestRegisterService_UnifiedBindsMainSession(t *testing.T) {
 	}
 	if rec.sessionKey != "agent:alice:main" {
 		t.Errorf("sessionKey = %q, want agent:alice:main", rec.sessionKey)
-	}
-}
-
-// TestRegisterService_IsolatingModeKeepsHeadlessSession verifies that when
-// sessions are NOT unified, a service token keeps its dedicated headless session
-// and cannot reach the agent's conversation.
-func TestRegisterService_IsolatingModeKeepsHeadlessSession(t *testing.T) {
-	s := newSessionTokenStore()
-	s.setSessionMode(routing.SessionScopePerUser)
-
-	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
-
-	rec, ok := s.Resolve("SSTservice")
-	if !ok {
-		t.Fatal("service token did not resolve")
-	}
-	if rec.sessionKey != "agent:alice:service" {
-		t.Errorf("sessionKey = %q, want agent:alice:service", rec.sessionKey)
-	}
-	if rec.channel != "" || rec.chatID != "" {
-		t.Errorf("service session must be headless, got channel=%q chatID=%q", rec.channel, rec.chatID)
 	}
 }
 
@@ -107,7 +84,7 @@ func TestServiceAndConversationTokensCoexist(t *testing.T) {
 		t.Error("conversation token did not resolve")
 	}
 
-	// Both must land on the same session — that is the point of unified.
+	// Both must land on the same session: one agent, one conversation.
 	svc, _ := s.Resolve("SSTservice")
 	conv, _ := s.Resolve(convTok)
 	if svc.sessionKey != conv.sessionKey {
@@ -172,26 +149,26 @@ func TestSyncServiceTokens_Reconciles(t *testing.T) {
 	arch := func(string) string { return "/ws/sessions" }
 
 	// A live conversation token must survive a service-token sync.
-	convTok := s.Issue("amber", "agent:amber:main", "/ws/amber/sessions")
+	convTok := s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
-	s.SyncServiceTokens(map[string]string{"amber": "SSTamber", "dawn": "SSTdawn"}, arch)
-	if _, ok := s.Resolve("SSTamber"); !ok {
-		t.Error("amber service token not registered")
+	s.SyncServiceTokens(map[string]string{"alice": "SSTalice", "bob": "SSTbob"}, arch)
+	if _, ok := s.Resolve("SSTalice"); !ok {
+		t.Error("alice service token not registered")
 	}
-	if _, ok := s.Resolve("SSTdawn"); !ok {
-		t.Error("dawn service token not registered")
+	if _, ok := s.Resolve("SSTbob"); !ok {
+		t.Error("bob service token not registered")
 	}
 
-	// Re-sync without dawn → dawn revoked, amber rotated, conversation untouched.
-	s.SyncServiceTokens(map[string]string{"amber": "SSTamber2"}, arch)
-	if _, ok := s.Resolve("SSTdawn"); ok {
-		t.Error("dawn service token should be revoked after removal from the set")
+	// Re-sync without bob → bob revoked, alice rotated, conversation untouched.
+	s.SyncServiceTokens(map[string]string{"alice": "SSTalice2"}, arch)
+	if _, ok := s.Resolve("SSTbob"); ok {
+		t.Error("bob service token should be revoked after removal from the set")
 	}
-	if _, ok := s.Resolve("SSTamber"); ok {
-		t.Error("old amber service token should be replaced")
+	if _, ok := s.Resolve("SSTalice"); ok {
+		t.Error("old alice service token should be replaced")
 	}
-	if _, ok := s.Resolve("SSTamber2"); !ok {
-		t.Error("new amber service token should resolve")
+	if _, ok := s.Resolve("SSTalice2"); !ok {
+		t.Error("new alice service token should resolve")
 	}
 	if _, ok := s.Resolve(convTok); !ok {
 		t.Error("conversation token must not be disturbed by service-token sync")

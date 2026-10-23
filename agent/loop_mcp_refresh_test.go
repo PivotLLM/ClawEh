@@ -88,6 +88,93 @@ func TestRefreshMCPServer_ReplacesRenamedTools(t *testing.T) {
 	}
 }
 
+// A refresh swaps a server's tools in one step: a turn reading the agent's
+// tools while the server is re-registered (the tools-changed handler, which
+// can run more than once after a reconnect) always finds them. Removing the
+// old set and registering the new one as two steps left a window in which
+// mcp_svc_ping was missing.
+func TestRefreshMCPServerTools_ToolNeverMissing(t *testing.T) {
+	_, ts := newRefreshTestServer(t)
+	al := newMCPAgentLoop(t, ts.URL)
+	mgr := al.mcp.peekManager()
+	agent, ok := al.GetRegistry().Get("main")
+	if !ok {
+		t.Fatal("agent main missing")
+	}
+
+	const refreshes = 200
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range refreshes {
+			al.refreshMCPServerTools(mgr, "svc")
+		}
+	}()
+	for reads := 0; ; reads++ {
+		select {
+		case <-done:
+			if _, ok := agent.Tools.Get("mcp_svc_ping"); !ok {
+				t.Fatal("mcp_svc_ping missing after the refreshes")
+			}
+			return
+		default:
+		}
+		if _, ok := agent.Tools.Get("mcp_svc_ping"); !ok {
+			<-done
+			t.Fatalf("mcp_svc_ping missing during a refresh (read %d)", reads)
+		}
+	}
+}
+
+// A server that is gone takes only its own tools with it: another server whose
+// name extends its name ("svc" and "svc_docs") shares the tool-name prefix
+// mcp_svc_, and keeps its tools.
+func TestRefreshMCPServerTools_GoneServerKeepsLongerNamedServer(t *testing.T) {
+	_, svc := newRefreshTestServer(t)
+	docsSrv := server.NewMCPServer("docs", "0.0.1")
+	docsSrv.AddTool(mcp.NewTool("page", mcp.WithDescription("no-op")),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	docs := httptest.NewServer(server.NewStreamableHTTPServer(docsSrv))
+	t.Cleanup(docs.Close)
+
+	cfg := toolRegTestConfig(t)
+	cfg.Agents.List[0].MCPTools = []string{"svc", "svc_docs"}
+	cfg.Tools.MCP.Servers = map[string]config.MCPServerConfig{
+		"svc":      {Enabled: true, Type: "http", URL: svc.URL},
+		"svc_docs": {Enabled: true, Type: "http", URL: docs.URL},
+	}
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	t.Cleanup(func() { al.Close(context.Background()) })
+	if err := al.EnsureMCPInitialized(context.Background()); err != nil {
+		t.Fatalf("EnsureMCPInitialized: %v", err)
+	}
+	names := agentToolNames(t, al)
+	assertHasTool(t, names, "mcp_svc_ping")
+	assertHasTool(t, names, "mcp_svc_docs_page")
+
+	// svc goes away: its reconnect fails and the manager drops it. The
+	// client's open notification stream would hold Close until it ends, so
+	// the connections are cut first.
+	svc.CloseClientConnections()
+	svc.Close()
+	mgr := al.mcp.peekManager()
+	if err := mgr.Reconnect(context.Background(), "svc"); err == nil {
+		t.Fatal("Reconnect to a closed server succeeded")
+	}
+	if _, ok := mgr.GetServer("svc"); ok {
+		t.Fatal("svc still connected after a failed reconnect")
+	}
+	al.refreshMCPServerTools(mgr, "svc")
+
+	names = agentToolNames(t, al)
+	if slices.Contains(names, "mcp_svc_ping") {
+		t.Errorf("mcp_svc_ping should be gone with its server; got %v", names)
+	}
+	assertHasTool(t, names, "mcp_svc_docs_page")
+}
+
 func TestRefreshMCPServer_UnknownServer(t *testing.T) {
 	_, ts := newRefreshTestServer(t)
 	al := newMCPAgentLoop(t, ts.URL)

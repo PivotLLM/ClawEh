@@ -32,6 +32,10 @@ type CronTool struct {
 	// per run rather than captured once, so a tool revoked in config stops being
 	// probed. Nil disables watch jobs rather than failing the whole cron service.
 	agentTools func(agentID string) *tools.ToolRegistry
+	// homeAgent maps the calling agent to the config agent it acts as (a
+	// temporary clone acts as its source), so a sub-agent schedules for the
+	// agent it is a copy of. Nil keeps the caller's own id.
+	homeAgent func(agentID string) string
 
 	// Listen jobs: one goroutine per enabled job, kept in step with the store
 	// by a supervisor. See listen.go.
@@ -54,6 +58,12 @@ func (t *CronTool) SetAgentTools(fn func(agentID string) *tools.ToolRegistry) {
 	t.agentTools = fn
 }
 
+// SetHomeAgent wires the lookup from a calling agent to the config agent it
+// acts as (see homeAgent).
+func (t *CronTool) SetHomeAgent(fn func(agentID string) string) {
+	t.homeAgent = fn
+}
+
 // config returns the live config, or nil if unavailable.
 func (t *CronTool) config() *config.Config {
 	if t.getConfig == nil {
@@ -67,7 +77,7 @@ func (t *CronTool) config() *config.Config {
 func (t *CronTool) IsSessionScoped() bool { return true }
 
 // callerAgentID extracts the calling agent's ID from the session key in context
-// (e.g. "agent:amber:main" → "amber"). Empty when unavailable — callers treat
+// (e.g. "agent:alice:main" → "alice"). Empty when unavailable — callers treat
 // an empty id as "owns nothing" so cron stays fail-closed.
 func callerAgentID(ctx context.Context) string {
 	if pk := routing.ParseAgentSessionKey(tools.ToolSessionKey(ctx)); pk != nil {
@@ -161,6 +171,9 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	// (global_cron) agent may target another agent via the `agent` arg. Operators
 	// see everything via the `claw cron` CLI.
 	callerID := callerAgentID(ctx)
+	if callerID != "" && t.homeAgent != nil {
+		callerID = t.homeAgent(callerID)
+	}
 	target, errRes := t.resolveTargetAgent(args, callerID)
 	if errRes != nil {
 		return errRes
@@ -190,14 +203,14 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 func (t *CronTool) resolveTargetAgent(args map[string]any, callerID string) (string, *tools.ToolResult) {
 	target := callerID
 	if a, ok := args["agent"].(string); ok {
-		if a = strings.TrimSpace(a); a != "" && !strings.EqualFold(a, callerID) {
+		if a = strings.TrimSpace(a); a != "" && !config.SameAgentID(a, callerID) {
 			cfg := t.config()
 			if cfg == nil || !cfg.AgentHasGlobalCron(callerID) {
 				return "", tools.ErrorResult("not authorized to schedule or manage another agent's cron jobs (requires global_cron)")
 			}
-			// Normalize to the lowercased form used for session-derived agent ids,
-			// so the target agent can later see/manage the job by its own id.
-			target = strings.ToLower(a)
+			// Jobs carry the agent's identity, so the target agent can later
+			// see/manage the job by its own id.
+			target = routing.NormalizeAgentID(a)
 		}
 	}
 	if target == "" {
@@ -229,6 +242,11 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	cfg := t.config()
 	if cfg == nil {
 		return tools.ErrorResult("cron unavailable: configuration not loaded")
+	}
+	// A human agent takes work only from agents' questions: a scheduled job
+	// would post to the person with nobody waiting for the answer.
+	if cfg.IsHumanAgent(agentID) {
+		return tools.ErrorResult(fmt.Sprintf("agent %q is a person; scheduled jobs can't be sent to them", agentID))
 	}
 	if _, _, _, ok := cfg.CronTarget(agentID); !ok {
 		return tools.ErrorResult(fmt.Sprintf("agent %q has no default channel configured; set a default channel (binding) before scheduling", agentID))
@@ -508,6 +526,10 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 			logger.WarnCF("cron", "job skipped: configuration not loaded", map[string]any{"id": job.ID, "agent_id": job.AgentID})
 			return "", errors.New("configuration not loaded")
 		}
+		if cfg.IsHumanAgent(job.AgentID) {
+			logger.WarnCF("cron", "job skipped: its agent is a person", map[string]any{"id": job.ID, "agent_id": job.AgentID})
+			return "", fmt.Errorf("agent %q is a person; job skipped", job.AgentID)
+		}
 		var ok bool
 		channel, chatID, peerKind, ok = cfg.CronTarget(job.AgentID)
 		if !ok {
@@ -528,6 +550,7 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "cron",
+		Internal: true,
 		ChatID:   chatID,
 		Content:  content,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},

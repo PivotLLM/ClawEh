@@ -6,6 +6,7 @@ import { addProvider } from "@/api/providers"
 import {
   PROTOCOL_OPTIONS,
   isCliProtocol,
+  isHumanProtocol,
   requiresBaseURL,
 } from "@/components/providers/provider-config-fields"
 import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
@@ -84,6 +85,7 @@ export function AddProviderSheet({
     t("providers.field.apiKeyPlaceholder"),
   )
   const cli = isCliProtocol(form.protocol)
+  const human = isHumanProtocol(form.protocol)
 
   // Start from an empty form each time the sheet is opened. Adjusted during
   // render rather than in an effect so the previous attempt's values and errors
@@ -134,11 +136,13 @@ export function AddProviderSheet({
     setServerError("")
     try {
       const cliProto = isCliProtocol(form.protocol)
+      // A human provider reaches a person: no endpoint, no key.
+      const noEndpoint = cliProto || isHumanProtocol(form.protocol)
       await addProvider({
         name: form.name.trim(),
         protocol: form.protocol,
-        base_url: cliProto ? undefined : form.baseURL.trim() || undefined,
-        api_key: cliProto ? undefined : form.apiKey.trim() || undefined,
+        base_url: noEndpoint ? undefined : form.baseURL.trim() || undefined,
+        api_key: noEndpoint ? undefined : form.apiKey.trim() || undefined,
         proxy: form.proxy.trim() || undefined,
         command: cliProto ? form.command.trim() || undefined : undefined,
         strict_compat: form.strictCompat,
@@ -228,6 +232,10 @@ export function AddProviderSheet({
                   className="font-mono text-sm"
                 />
               </Field>
+            ) : human ? (
+              <p className="text-muted-foreground text-xs">
+                {t("providers.field.humanHint")}
+              </p>
             ) : (
               <>
                 <Field label={t("providers.field.baseURL")}>
@@ -257,7 +265,7 @@ export function AddProviderSheet({
             {/* HTTP wire knobs only; the CLI factory reads none of them. The
                 picker offers no CLI protocols, so this is unreachable today —
                 guarded so it stays correct if one is ever added back. */}
-            {!cli && (
+            {!cli && !human && (
               <AdvancedSection>
                 <Field
                   label={t("providers.field.proxy")}

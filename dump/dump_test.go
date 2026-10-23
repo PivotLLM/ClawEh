@@ -18,7 +18,7 @@ func TestWrite_OwnerOnlyModes(t *testing.T) {
 		t.Skip("file permission bits are not enforced on Windows")
 	}
 	dir := filepath.Join(t.TempDir(), "dumps")
-	base, err := Write(dir, "test", map[string]any{"k": "v"},
+	base, err := Write(Dir{Path: dir}, "test", map[string]any{"k": "v"},
 		json.RawMessage(`{"in":1}`), json.RawMessage(`{"out":2}`))
 	if err != nil {
 		t.Fatalf("Write: %v", err)

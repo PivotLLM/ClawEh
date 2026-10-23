@@ -3,8 +3,12 @@ package msg
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -44,8 +48,8 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 	}
 
 	// - ForLLM contains send status description
-	if result.ForLLM != "Message sent to test-channel:test-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to test-channel:test-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message delivered to test-channel:test-chat-id." {
+		t.Errorf("Expected ForLLM 'Message delivered to test-channel:test-chat-id.', got '%s'", result.ForLLM)
 	}
 
 	// - ForUser is empty (user already received message directly)
@@ -92,8 +96,8 @@ func TestMessageTool_Execute_IgnoresSuppliedChannel(t *testing.T) {
 	if !result.Silent {
 		t.Error("Expected Silent=true")
 	}
-	if result.ForLLM != "Message sent to session-channel:session-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to session-channel:session-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message delivered to session-channel:session-chat-id." {
+		t.Errorf("Expected ForLLM 'Message delivered to session-channel:session-chat-id.', got '%s'", result.ForLLM)
 	}
 }
 
@@ -119,7 +123,7 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	}
 
 	// - ForLLM contains error description
-	expectedErrMsg := "sending message: network error"
+	expectedErrMsg := "Not sent: couldn't reach test-channel:test-chat-id."
 	if result.ForLLM != expectedErrMsg {
 		t.Errorf("Expected ForLLM '%s', got '%s'", expectedErrMsg, result.ForLLM)
 	}
@@ -130,6 +134,48 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	}
 	if !errors.Is(result.Err, sendErr) {
 		t.Errorf("Expected Err to be sendErr, got %v", result.Err)
+	}
+}
+
+// TestMessageTool_Execute_Outcomes: the result says what became of the
+// message, naming the chat once (no doubled channel prefix): delivered,
+// queued when no outcome was known in time, or not sent and why. Only a
+// delivered or queued message counts as the round's reply.
+func TestMessageTool_Execute_Outcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		chatID  string
+		err     error
+		want    string
+		isError bool
+		refusal bool
+	}{
+		{"delivered", "device:abc", nil, "Message delivered to device:abc.", false, false},
+		{"delivered, bare chat id", "12345", nil, "Message delivered to device:12345.", false, false},
+		{"queued", "device:abc", ErrQueued, "Message queued for delivery to device:abc.", false, false},
+		{"offline", "device:abc", fmt.Errorf("%w: device not connected", channels.ErrRecipientOffline), "Not sent: device:abc is offline.", true, true},
+		{"not found", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached.", true, true},
+		{"not set up", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up.", true, true},
+		{"not running", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable.", true, true},
+		{"receive-only", "device:abc", channels.ErrReceiveOnly, "Not sent: device:abc is receive-only.", true, true},
+		{"other failure", "device:abc", fmt.Errorf("%w: boom", channels.ErrSendFailed), "Not sent: couldn't reach device:abc.", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := NewMessageTool()
+			tool.SetSendCallback(func(context.Context, string, string, string) error { return tc.err })
+			var sent atomic.Bool
+			ctx := tools.WithRoundSentFlag(tools.WithToolContext(context.Background(), "device", tc.chatID), &sent)
+			result := tool.Execute(ctx, map[string]any{"content": "hi"})
+			if result.ForLLM != tc.want || result.IsError != tc.isError {
+				t.Errorf("result = %q (error %v), want %q (error %v)", result.ForLLM, result.IsError, tc.want, tc.isError)
+			}
+			if tools.IsExpectedRefusal(result.Err) != tc.refusal {
+				t.Errorf("expected refusal = %v, want %v", !tc.refusal, tc.refusal)
+			}
+			if sent.Load() == tc.isError || tool.HasSentInRound() == tc.isError {
+				t.Errorf("round marked sent = %v, want %v", sent.Load(), !tc.isError)
+			}
+		})
 	}
 }
 
@@ -147,6 +193,34 @@ func TestMessageTool_Execute_MissingContent(t *testing.T) {
 	}
 	if result.ForLLM != "content is required" {
 		t.Errorf("Expected ForLLM 'content is required', got '%s'", result.ForLLM)
+	}
+}
+
+// An empty or whitespace-only content is refused before anything is sent:
+// Slack rejects it (no_text) and nobody would receive it anyway.
+func TestMessageTool_Execute_EmptyContent(t *testing.T) {
+	for _, content := range []string{"", "   ", "\n\t"} {
+		t.Run(fmt.Sprintf("%q", content), func(t *testing.T) {
+			tool := NewMessageTool()
+			sent := false
+			tool.SetSendCallback(func(_ context.Context, _, _, _ string) error {
+				sent = true
+				return nil
+			})
+
+			ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+			result := tool.Execute(ctx, map[string]any{"content": content})
+
+			if sent {
+				t.Error("Expected no send for empty content")
+			}
+			if !result.IsError {
+				t.Error("Expected IsError=true for empty content")
+			}
+			if result.ForLLM != "content is empty: nothing to send" {
+				t.Errorf("Expected ForLLM 'content is empty: nothing to send', got '%s'", result.ForLLM)
+			}
+		})
 	}
 }
 
@@ -171,6 +245,9 @@ func TestMessageTool_Execute_NoTargetChannel(t *testing.T) {
 	}
 	if result.ForLLM != "No target channel/chat specified" {
 		t.Errorf("Expected ForLLM 'No target channel/chat specified', got '%s'", result.ForLLM)
+	}
+	if !tools.IsExpectedRefusal(result.Err) {
+		t.Errorf("Err = %v, want an expected refusal (logged at WARN)", result.Err)
 	}
 }
 
@@ -246,5 +323,25 @@ func TestMessageTool_Parameters(t *testing.T) {
 	}
 	if _, present := props["chat_id"]; present {
 		t.Error("'chat_id' must not be a model-facing parameter (target is locked to the session)")
+	}
+}
+
+// TestMessageTool_RefusedInAskedTurn: in an asked turn msg_send has no chat to
+// send to and says so instead of reporting success.
+func TestMessageTool_RefusedInAskedTurn(t *testing.T) {
+	sent := false
+	tool := NewMessageTool()
+	tool.SetSendCallback(func(context.Context, string, string, string) error { sent = true; return nil })
+	ctx := tools.WithToolContext(context.Background(), constants.AgentMessageChannel, "ask-1")
+	res := tool.Execute(ctx, map[string]any{"content": "hi"})
+	if !res.IsError || res.ForLLM != "msg_send needs a target in an asked turn" || sent {
+		t.Fatalf("result = %+v sent=%v, want the refusal and nothing sent", res, sent)
+	}
+	if !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("Err = %v, want an expected refusal (logged at WARN)", res.Err)
+	}
+	ctx = tools.WithToolContext(context.Background(), "telegram", "chat-1")
+	if res := tool.Execute(ctx, map[string]any{"content": "hi"}); res.IsError || !sent {
+		t.Fatalf("result on a chat = %+v sent=%v, want it sent", res, sent)
 	}
 }

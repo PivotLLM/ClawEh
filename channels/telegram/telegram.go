@@ -165,6 +165,9 @@ type TelegramChannel struct {
 
 	registerFunc     func(context.Context, []commands.Definition) error
 	commandRegCancel context.CancelFunc
+	// commandRegDone is closed when the command registration goroutine has
+	// returned; Stop waits for it, so nothing of the channel runs after Stop.
+	commandRegDone chan struct{}
 }
 
 // newHTTPTransport returns the transport for the bot's API calls: net/http
@@ -304,9 +307,14 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}, th.AnyMessage())
 
 	c.SetRunning(true)
-	logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
-		"username": c.bot.Username(),
-	})
+	// Username fetches getMe once, on a context of telego's own that nothing
+	// cancels, so it runs off the start path: an unreachable API must not
+	// hold up Start (or a shutdown waiting for it).
+	go func() {
+		logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
+			"username": c.bot.Username(),
+		})
+	}()
 
 	c.startCommandRegistration(pollCtx, commands.BuiltinDefinitions())
 
@@ -321,7 +329,11 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop stops the bot and waits for its long poll and command registration to
+// exit, each wait bounded by pollExitTimeout and by ctx. It returns ctx's
+// error when ctx ended before they did.
 func (c *TelegramChannel) Stop(ctx context.Context) error {
+	var stopErr error
 	c.stopOnce.Do(func() {
 		logger.InfoC("telegram", "Stopping Telegram bot...")
 		c.SetRunning(false)
@@ -352,16 +364,31 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 		// into a 409 "terminated by other getUpdates request" against an
 		// in-flight HTTP poll on Telegram's side.
 		if c.pollDone != nil {
-			select {
-			case <-c.pollDone:
-			case <-time.After(pollExitTimeout):
-				logger.WarnCF("telegram", "Timed out waiting for long-poll goroutine to exit", map[string]any{
-					"timeout": pollExitTimeout.String(),
-				})
-			}
+			stopErr = waitStopped(ctx, c.pollDone, "Timed out waiting for long-poll goroutine to exit")
+		}
+		if c.commandRegDone != nil && stopErr == nil {
+			stopErr = waitStopped(ctx, c.commandRegDone, "Timed out waiting for command registration to stop")
 		}
 	})
+	return stopErr
+}
 
+// waitStopped waits for done, at most pollExitTimeout (logging timeoutMsg
+// when it passes) and no longer than ctx, whose error it returns when ctx
+// ends first.
+func waitStopped(ctx context.Context, done <-chan struct{}, timeoutMsg string) error {
+	timer := time.NewTimer(pollExitTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		logger.WarnCF("telegram", timeoutMsg, map[string]any{"timeout": pollExitTimeout.String()})
+	case <-ctx.Done():
+		logger.WarnCF("telegram", "Stop ended before the bot's goroutines exited", map[string]any{
+			"error": ctx.Err().Error(),
+		})
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -459,8 +486,13 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 	// The Manager already splits messages to ≤4000 chars (WithMaxMessageLength),
 	// so msg.Content is guaranteed to be within that limit. We still need to
-	// check if HTML expansion pushes it beyond Telegram's 4096-char API limit.
-	replyToID := msg.ReplyToMessageID
+	// check if HTML expansion pushes it beyond Telegram's 4096-char API limit,
+	// and split such a chunk into parts.
+	//
+	// A retry of this message (same SendProgress on ctx) skips the parts an
+	// earlier attempt delivered, so the chat never sees them twice.
+	progress := channels.SendProgressFrom(ctx)
+	part := 0
 	queue := []string{msg.Content}
 	for len(queue) > 0 {
 		chunk := queue[0]
@@ -480,18 +512,30 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 			continue
 		}
 
+		if part < progress.Delivered() {
+			part++
+			continue
+		}
+		// Only the first part is a reply; the others are normal messages.
+		replyToID := ""
+		if part == 0 {
+			replyToID = msg.ReplyToMessageID
+		}
 		if err := c.sendHTMLChunk(ctx, chatID, threadID, htmlContent, chunk, replyToID); err != nil {
 			return err
 		}
-		// Only the first chunk should be a reply; subsequent chunks are normal messages.
-		replyToID = ""
+		progress.MarkDelivered()
+		part++
 	}
 
 	return nil
 }
 
-// sendHTMLChunk sends a single HTML message, falling back to the original
-// markdown as plain text on parse failure so users never see raw HTML tags.
+// sendHTMLChunk sends a single HTML message. When Telegram cannot parse the
+// HTML it sends the original markdown once more as plain text, so users never
+// see raw HTML tags; any other failure is classified as it is. A reply is
+// sent even when the message it replies to was deleted
+// (AllowSendingWithoutReply): it then arrives without the reply link.
 func (c *TelegramChannel) sendHTMLChunk(
 	ctx context.Context, chatID int64, threadID int, htmlContent, mdFallback string, replyToID string,
 ) error {
@@ -502,22 +546,96 @@ func (c *TelegramChannel) sendHTMLChunk(
 	if replyToID != "" {
 		if mid, parseErr := strconv.Atoi(replyToID); parseErr == nil {
 			tgMsg.ReplyParameters = &telego.ReplyParameters{
-				MessageID: mid,
+				MessageID:                mid,
+				AllowSendingWithoutReply: true,
 			}
 		}
 	}
 
 	if _, err := c.bot.SendMessage(ctx, tgMsg); err != nil {
-		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
+		if !htmlParseError(err) {
+			return classifySendErr("telegram send", err)
+		}
+		logger.WarnCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
 			"error": redactErr(err).Error(),
 		})
 		tgMsg.Text = mdFallback
 		tgMsg.ParseMode = ""
 		if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
-			return fmt.Errorf("telegram send: %w", channels.ErrTemporary)
+			return classifySendErr("telegram send", err)
 		}
 	}
 	return nil
+}
+
+// recipientNotFoundReasons are the Telegram API descriptions (lower case) of
+// a chat the bot cannot reach at all: it does not exist, the user blocked
+// the bot, was deactivated or never started a conversation with it, it is
+// another bot, the bot is no longer in the group, or the group was upgraded
+// to a supergroup (a new chat id; the binding must be changed, it is not
+// migrated automatically).
+var recipientNotFoundReasons = []string{
+	"chat not found",
+	"peer_id_invalid",
+	"bot was blocked by the user",
+	"user is deactivated",
+	"bot was kicked",
+	"bot is not a member",
+	"bot can't initiate conversation with a user",
+	"bot can't send messages to bots",
+	"group chat was upgraded to a supergroup",
+}
+
+// htmlParseError reports whether err is Telegram refusing the message's HTML
+// markup (400 "can't parse entities"), the one failure plain text can fix.
+func htmlParseError(err error) bool {
+	var apiErr *ta.Error
+	return errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(apiErr.Description), "can't parse entities")
+}
+
+// recipientNotFound reports whether err is a Telegram API error saying the
+// chat cannot be reached at all. Every 403 is one: Telegram answers 403 only
+// when the bot may not write to that chat.
+func recipientNotFound(err error) bool {
+	var apiErr *ta.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.ErrorCode == http.StatusForbidden {
+		return true
+	}
+	desc := strings.ToLower(apiErr.Description)
+	for _, r := range recipientNotFoundReasons {
+		if strings.Contains(desc, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// classifySendErr maps a failed Telegram send to a channel sentinel: a chat
+// that cannot be reached is ErrRecipientNotFound, a 429 ErrRateLimit, any
+// other 4xx ErrSendFailed (the same request fails again), anything else
+// ErrTemporary (retried). A 429 carries Telegram's retry_after
+// (channels.WithRetryAfter). The redacted error is kept so logs and alerts
+// say why.
+func classifySendErr(op string, err error) error {
+	sentinel := channels.ErrTemporary
+	var retryAfter time.Duration
+	var apiErr *ta.Error
+	switch {
+	case recipientNotFound(err):
+		sentinel = channels.ErrRecipientNotFound
+	case errors.As(err, &apiErr) && apiErr.ErrorCode == http.StatusTooManyRequests:
+		sentinel = channels.ErrRateLimit
+		if apiErr.Parameters != nil {
+			retryAfter = time.Duration(apiErr.Parameters.RetryAfter) * time.Second
+		}
+	case errors.As(err, &apiErr) && apiErr.ErrorCode >= 400 && apiErr.ErrorCode < 500:
+		sentinel = channels.ErrSendFailed
+	}
+	return channels.WithRetryAfter(fmt.Errorf("%s: %w: %w", op, sentinel, redactErr(err)), retryAfter)
 }
 
 // StartTyping implements channels.TypingCapable.
@@ -578,6 +696,19 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 	editMsg.ParseMode = telego.ModeHTML
 	_, err = c.bot.EditMessageText(ctx, editMsg)
 	return redactErr(err)
+}
+
+// DeleteMessage implements channels.MessageDeleter.
+func (c *TelegramChannel) DeleteMessage(ctx context.Context, chatID string, messageID string) error {
+	cid, _, err := parseTelegramChatID(chatID)
+	if err != nil {
+		return err
+	}
+	mid, err := strconv.Atoi(messageID)
+	if err != nil {
+		return err
+	}
+	return redactErr(c.bot.DeleteMessage(ctx, &telego.DeleteMessageParams{ChatID: tu.ID(cid), MessageID: mid}))
 }
 
 // SendPlaceholder implements channels.PlaceholderCapable.
@@ -682,11 +813,12 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		utils.CloseQuietly(file)
 
 		if err != nil {
-			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
+			// The manager logs and alerts the failure by its classification.
+			logger.DebugCF("telegram", "Failed to send media", map[string]any{
 				"type":  part.Type,
 				"error": redactErr(err).Error(),
 			})
-			return fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
+			return classifySendErr("telegram send media", err)
 		}
 	}
 

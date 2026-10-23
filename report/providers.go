@@ -79,9 +79,6 @@ func modelSettings(m *config.ModelConfig) string {
 	if m.ContextWindow > 0 {
 		s = append(s, "context "+itoa(m.ContextWindow))
 	}
-	if m.RPM > 0 {
-		s = append(s, "rpm "+itoa(m.RPM))
-	}
 	if m.ReasoningEffort != "" {
 		s = append(s, "reasoning "+m.ReasoningEffort)
 	}
@@ -128,6 +125,11 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 			}
 			continue
 		}
+		if config.IsHumanProtocol(p.Protocol) {
+			// Reaches a person: no endpoint, key or proxy.
+			api.Rows = append(api.Rows, row(p.Name, "Person", "", "", ""))
+			continue
+		}
 		api.Rows = append(api.Rows, row(p.Name, p.Protocol, p.BaseURL, yesNo(p.APIKey != ""), orValue(redactURL(p.Proxy), "")))
 	}
 	if len(api.Rows) == 0 {
@@ -151,7 +153,6 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 		row("Default model", orValue(d.DefaultModelName(), none)),
 		row("Fallback models", joinLines(tail(d.Models), none)),
 		row("Summarization and memory model chain", chain),
-		row("Image model", joinLines(append([]string{orValue(d.ImageModel, none)}, d.ImageModelFallbacks...), none)),
 		row("Vision model (describes images for text-only models)",
 			joinLines(append([]string{orValue(d.VisionModel, none)}, d.VisionModelFallbacks...), none)),
 	}}

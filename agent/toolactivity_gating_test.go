@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -19,7 +18,7 @@ func TestToolActivity_BreadcrumbGating(t *testing.T) {
 		// Keep the model's ForUser streaming off so only the breadcrumb reaches the bus.
 		cfg.Agents.Defaults.StreamToolActivity = false
 
-		agentInstance := al.registry.GetDefaultAgent()
+		agentInstance := al.registry.Default()
 		if agentInstance == nil {
 			t.Fatal("no default agent")
 		}
@@ -64,18 +63,10 @@ func TestToolActivity_BreadcrumbGating(t *testing.T) {
 			t.Fatalf("runAgentLoop: %v", err)
 		}
 
-		var msgs []string
-		deadline := time.After(2 * time.Second)
-	drain:
-		for {
-			select {
-			case m := <-collected:
-				msgs = append(msgs, m.Content)
-			case <-time.After(250 * time.Millisecond):
-				break drain
-			case <-deadline:
-				break drain
-			}
+		seen := untilMarker(t, msgBus, collected)
+		msgs := make([]string, 0, len(seen))
+		for _, m := range seen {
+			msgs = append(msgs, m.Content)
 		}
 		return msgs
 	}

@@ -36,7 +36,7 @@ func toolRegTestConfig(t *testing.T) *config.Config {
 
 func agentToolNames(t *testing.T, al *AgentLoop) []string {
 	t.Helper()
-	ag, ok := al.GetRegistry().GetAgent("main")
+	ag, ok := al.GetRegistry().Get("main")
 	if !ok {
 		t.Fatal("agent 'main' not found in registry")
 	}
@@ -110,7 +110,7 @@ func TestReloadProviderAndConfig_RegistersRuntimeTools(t *testing.T) {
 func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
 	cfg := toolRegTestConfig(t)
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
-	ag, ok := al.GetRegistry().GetAgent("main")
+	ag, ok := al.GetRegistry().Get("main")
 	if !ok {
 		t.Fatal("agent 'main' not found")
 	}

@@ -49,6 +49,9 @@ type TaskRecord struct {
 	Mode         string `json:"mode"`
 	Task         string `json:"task"`
 	Model        string `json:"model,omitempty"` // requested model (alias); "" = agent default
+	// CharacterCard is the card the worker runs with instead of the agent's
+	// own ("" = the agent's); persisted so a relaunch keeps it.
+	CharacterCard string `json:"character_card,omitempty"`
 	// Media holds media:// refs attached to the worker's initial message. Refs
 	// are in-memory store entries, so a supervisor relaunch after a process
 	// restart will fail ref resolution — the task then errors with a clear message.

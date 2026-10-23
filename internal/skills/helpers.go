@@ -3,10 +3,8 @@ package skills
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -130,94 +128,6 @@ func skillsRemoveCmd(installer *skills.SkillInstaller, skillName string) {
 	fmt.Printf("✓ Skill '%s' removed successfully!\n", skillName)
 }
 
-func skillsInstallBuiltinCmd(cfg *config.Config) {
-	builtinSkillsDir := "./claw/skills"
-	workspaceSkillsDir := cfg.SkillsPath()
-
-	fmt.Printf("Copying builtin skills to workspace...\n")
-
-	skillsToInstall := []string{
-		"weather",
-		"news",
-		"stock",
-		"calculator",
-	}
-
-	for _, skillName := range skillsToInstall {
-		builtinPath := filepath.Join(builtinSkillsDir, skillName)
-		workspacePath := filepath.Join(workspaceSkillsDir, skillName)
-
-		if _, err := os.Stat(builtinPath); err != nil {
-			fmt.Printf("⊘ Builtin skill '%s' not found: %v\n", skillName, err)
-			continue
-		}
-
-		if err := os.MkdirAll(workspacePath, 0o700); err != nil {
-			fmt.Printf("✗ Failed to create directory for %s: %v\n", skillName, err)
-			continue
-		}
-
-		if err := copyDirectory(builtinPath, workspacePath); err != nil {
-			fmt.Printf("✗ Failed to copy %s: %v\n", skillName, err)
-		}
-	}
-
-	fmt.Println("\n✓ All builtin skills installed!")
-	fmt.Println("Now you can use them in your workspace.")
-}
-
-func skillsListBuiltinCmd() {
-	cfg, err := internal.LoadConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return
-	}
-	builtinSkillsDir := filepath.Join(cfg.DataDir(), "claw", "skills")
-
-	fmt.Println("\nAvailable Builtin Skills:")
-	fmt.Println("-----------------------")
-
-	entries, err := os.ReadDir(builtinSkillsDir)
-	if err != nil {
-		fmt.Printf("Error reading builtin skills: %v\n", err)
-		return
-	}
-
-	if len(entries) == 0 {
-		fmt.Println("No builtin skills available.")
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			skillName := entry.Name()
-			skillFile := filepath.Join(builtinSkillsDir, skillName, "SKILL.md")
-
-			description := "No description"
-			if _, err := os.Stat(skillFile); err == nil {
-				data, err := os.ReadFile(skillFile) //nolint:gosec // SKILL.md under the builtin skills dir; name from ReadDir
-				if err == nil {
-					content := string(data)
-					if idx := strings.Index(content, "\n"); idx > 0 {
-						firstLine := content[:idx]
-						if strings.Contains(firstLine, "description:") {
-							descLine := strings.Index(content[idx:], "\n")
-							if descLine > 0 {
-								description = strings.TrimSpace(content[idx+descLine : idx+descLine])
-							}
-						}
-					}
-				}
-			}
-			status := "✓"
-			fmt.Printf("  %s  %s\n", status, entry.Name())
-			if description != "" {
-				fmt.Printf("     %s\n", description)
-			}
-		}
-	}
-}
-
 func skillsSearchCmd(query string) {
 	fmt.Println("Searching for available skills...")
 
@@ -270,40 +180,4 @@ func skillsShowCmd(loader *skills.SkillsLoader, skillName string) {
 	fmt.Printf("\n📦 Skill: %s\n", skillName)
 	fmt.Println("----------------------")
 	fmt.Println(content)
-}
-
-func copyDirectory(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-
-		dstPath := filepath.Join(dst, relPath)
-
-		if info.IsDir() {
-			return os.MkdirAll(dstPath, info.Mode())
-		}
-
-		srcFile, err := os.Open(path) //nolint:gosec // walk of the CLI-supplied source skill directory
-		if err != nil {
-			return err
-		}
-		defer utils.CloseQuietly(srcFile)
-
-		dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode()) //nolint:gosec // destination under the skills dir with the walk's relative path
-		if err != nil {
-			return err
-		}
-
-		if _, err = io.Copy(dstFile, srcFile); err != nil {
-			utils.CloseQuietly(dstFile)
-			return err
-		}
-		return dstFile.Close()
-	})
 }

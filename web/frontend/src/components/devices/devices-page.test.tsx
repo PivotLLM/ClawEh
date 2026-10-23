@@ -3,11 +3,15 @@ import { render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { DevicesPage } from "./devices-page"
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, opts?: { agent?: string }) =>
+      opts?.agent ? `${key}:${opts.agent}` : key,
+  }),
 }))
 
 // The page links to /network; the router is not mounted here.
@@ -44,16 +48,33 @@ const pendingRequest = {
   created_at_ms: 1,
 }
 
-function renderPage(pending: object[] = []) {
+const pairedDevice = {
+  device_id: "device-fedcba9876543210",
+  display_name: "Kitchen R1",
+  platform: "android",
+  client_mode: "node",
+  roles: ["node"],
+  scopes: [],
+  agent_id: "",
+  agent_missing: false,
+  approved_at_ms: 1,
+  last_seen_at_ms: 1,
+}
+
+function renderPage(
+  pending: object[] = [],
+  paired: { devices: object[]; agents: object[] } = { devices: [], agents: [] },
+  pair: object = pairStatus,
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       const body = url.endsWith("/api/devices/pair")
-        ? pairStatus
+        ? pair
         : url.endsWith("/api/devices/pending")
           ? { pending }
-          : { devices: [], agents: [] }
+          : paired
       return { ok: true, json: async () => body }
     }),
   )
@@ -62,9 +83,11 @@ function renderPage(pending: object[] = []) {
   })
   return render(
     <QueryClientProvider client={qc}>
-      <SidebarProvider>
-        <DevicesPage />
-      </SidebarProvider>
+      <TooltipProvider>
+        <SidebarProvider>
+          <DevicesPage />
+        </SidebarProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   )
 }
@@ -84,6 +107,29 @@ describe("DevicesPage", () => {
     expect(screen.getByText(/pages\.devices\.connect_to/)).toBeTruthy()
   })
 
+  it("shows access as a label, with no warning when devices can connect", async () => {
+    renderPage()
+    const access = await screen.findByTestId("devices-access")
+    expect(access.textContent).toContain("network")
+    expect(screen.queryByTestId("devices-warning")).toBeNull()
+    expect(
+      screen.getByRole("link", { name: "Change" }).getAttribute("href"),
+    ).toBe("/network")
+  })
+
+  it("marks a problem with an icon whose hover text names it", async () => {
+    renderPage([], undefined, {
+      ...pairStatus,
+      listen_lan: false,
+      warnings: ["Devices on your network can't connect."],
+    })
+    const access = await screen.findByTestId("devices-access")
+    expect(access.textContent).toContain("localhost")
+    expect(screen.getByTestId("devices-warning").textContent).toBe(
+      "Devices on your network can't connect.",
+    )
+  })
+
   it("shows the client address of a pending request next to its name", async () => {
     renderPage([pendingRequest])
     await screen.findByText("Rabbit R1")
@@ -96,5 +142,77 @@ describe("DevicesPage", () => {
     renderPage([{ ...pendingRequest, remote_ip: "" }])
     await screen.findByText("Rabbit R1")
     expect(screen.queryByTestId("pending-remote-ip")).toBe(null)
+  })
+
+  it("marks an assignment to a deleted agent", async () => {
+    renderPage([], {
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "Bob",
+          agent_ref: "bob",
+          agent_missing: true,
+          agent_state: "not_found",
+        },
+      ],
+      agents: [{ id: "alice", name: "Alice" }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_missing:Bob")
+    const select = screen.getByLabelText("Assistant") as HTMLSelectElement
+    expect(select.value).toBe("bob")
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "pages.devices.default_assistant",
+      "Bob",
+      "Alice",
+    ])
+  })
+
+  it("names a disabled agent in the note, with one option for it", async () => {
+    renderPage([], {
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "Bob",
+          agent_ref: "bob",
+          agent_name: "Bob B.",
+          agent_missing: true,
+          agent_state: "disabled",
+        },
+      ],
+      agents: [{ id: "bob", name: "Bob B." }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_disabled:Bob B.")
+    const select = screen.getByLabelText("Assistant") as HTMLSelectElement
+    expect(select.value).toBe("bob")
+    expect(screen.getAllByRole("option")).toHaveLength(2)
+  })
+
+  it("marks a human agent that is set aside", async () => {
+    renderPage([], {
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "bob",
+          agent_ref: "bob",
+          agent_name: "Bob",
+          agent_missing: true,
+          agent_state: "set_aside",
+        },
+      ],
+      agents: [{ id: "bob", name: "Bob" }],
+    })
+    const note = await screen.findByTestId("device-agent-missing")
+    expect(note.textContent).toBe("pages.devices.agent_set_aside:Bob")
+  })
+
+  it("shows no note for a valid assignment", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, agent_id: "alice", agent_ref: "alice" }],
+      agents: [{ id: "alice", name: "Alice" }],
+    })
+    await screen.findByText("Kitchen R1")
+    expect(screen.queryByTestId("device-agent-missing")).toBe(null)
   })
 })

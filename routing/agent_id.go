@@ -3,6 +3,8 @@ package routing
 import (
 	"regexp"
 	"strings"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 const (
@@ -19,28 +21,10 @@ var (
 	trailingDashRe = regexp.MustCompile(`-+$`)
 )
 
-// NormalizeAgentID sanitizes an agent ID to [a-z0-9][a-z0-9_-]{0,63}.
-// Invalid characters are collapsed to "-". Leading/trailing dashes stripped.
-// Empty input returns DefaultAgentID ("main").
+// NormalizeAgentID is config.NormalizeAgentID: it turns any input into a
+// valid agent id (config.ValidAgentID), "main" when nothing usable is left.
 func NormalizeAgentID(id string) string {
-	trimmed := strings.TrimSpace(id)
-	if trimmed == "" {
-		return DefaultAgentID
-	}
-	lower := strings.ToLower(trimmed)
-	if validIDRe.MatchString(lower) {
-		return lower
-	}
-	result := invalidCharsRe.ReplaceAllString(lower, "-")
-	result = leadingDashRe.ReplaceAllString(result, "")
-	result = trailingDashRe.ReplaceAllString(result, "")
-	if len(result) > MaxAgentIDLength {
-		result = result[:MaxAgentIDLength]
-	}
-	if result == "" {
-		return DefaultAgentID
-	}
-	return result
+	return config.NormalizeAgentID(id)
 }
 
 // NormalizeAccountID sanitizes an account ID. Empty returns DefaultAccountID.

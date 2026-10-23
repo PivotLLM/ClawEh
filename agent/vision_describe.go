@@ -57,7 +57,7 @@ func resolveVisionModelChain(model string, fallbacks []string) []string {
 // last-resort fallback: the whole point is that the primary is text-only, so an
 // unresolvable vision model is skipped (returns ok=false) rather than routed
 // through the non-vision provider. cfg is passed explicitly because this runs
-// during registerRuntimeTools, before al.cfg is swapped on reload.
+// during agentBuilder, before al.cfg is swapped on reload.
 func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstance, visionModelName string) (visionClient, bool) {
 	alias, modelID, ok := resolveCompressModelTarget(cfg, visionModelName)
 	if !ok || al.dispatcher == nil {
@@ -67,7 +67,7 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 		})
 		return nil, false
 	}
-	p, err := al.dispatcher.Get(alias)
+	p, err := al.dispatchProvider(agent, alias)
 	if err != nil {
 		logger.WarnCF("agent", "vision model dispatch failed; skipping", map[string]any{
 			"agent_id":  agent.ID,
@@ -89,7 +89,7 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 
 // wireVisionClients builds the agent's vision-describe chain from the global
 // AgentDefaults.VisionModel + VisionModelFallbacks and stores it on the
-// instance. Called once per agent from registerRuntimeTools (initial construction
+// instance. Called once per agent from agentBuilder (initial construction
 // and config reload). No configured vision model leaves VisionClients empty,
 // which keeps the feature off (images are dropped from dispatch, with a
 // hidden-attachment note from messagesForModel).
@@ -144,7 +144,8 @@ const visionDescribeSystemPrompt = "You are a vision assistant for a text-only m
 // client fails — the caller then degrades gracefully. A describe failure never
 // breaks the turn.
 func (al *AgentLoop) describeImages(ctx context.Context, agent *AgentInstance, images []string, focus string) (string, bool) {
-	if agent == nil || len(agent.VisionClients) == 0 || len(images) == 0 {
+	// A human agent has no vision chain; its conversation never reaches a model.
+	if agent == nil || agent.HumanModel != "" || len(agent.VisionClients) == 0 || len(images) == 0 {
 		return "", false
 	}
 

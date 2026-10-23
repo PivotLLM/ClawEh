@@ -27,6 +27,9 @@ import (
 // with, which no other vantage point can know: one host may run several
 // instances under different users with different PATHs baked into their units.
 func providerReady(p *config.Provider) bool {
+	if config.IsHumanProtocol(p.Protocol) {
+		return true // reaches a person: nothing to authenticate or find
+	}
 	if !config.IsCLIProtocol(p.Protocol) {
 		return p.APIKey != ""
 	}

@@ -94,7 +94,7 @@ function parseChannelNames(cfg: unknown): string[] {
     }
   }
 
-  for (const name of ["webui", "slack", "discord", "matrix", "line"]) {
+  for (const name of ["webui", "slack", "discord", "matrix"]) {
     if (asRecord(channels[name]).enabled === true) names.push(name)
   }
 
@@ -421,7 +421,7 @@ export function BindingsPage() {
                                   onChange={(e) =>
                                     setEditMentions(e.target.value)
                                   }
-                                  placeholder="e.g. amber, karen"
+                                  placeholder="e.g. alice, bob"
                                   className="h-7 font-mono text-xs"
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") saveMentions(i)
@@ -625,7 +625,7 @@ export function BindingsPage() {
                         <Input
                           value={addPeerId}
                           onChange={(e) => setAddPeerId(e.target.value)}
-                          placeholder="Slack channel ID (e.g. C0ANLEQP5GQ)"
+                          placeholder="Slack channel ID (e.g. C0323456789)"
                           className="mt-1.5 font-mono text-xs"
                         />
                       )}
@@ -644,7 +644,7 @@ export function BindingsPage() {
                     <Input
                       value={addMentions}
                       onChange={(e) => setAddMentions(e.target.value)}
-                      placeholder="e.g. amber, karen"
+                      placeholder="e.g. alice, bob"
                       className="font-mono text-xs"
                     />
                   </div>

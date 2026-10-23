@@ -9,6 +9,7 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -16,13 +17,16 @@ import (
 // no outage in progress.
 type connWatch struct {
 	mu sync.Mutex
-	// alertAfter overrides ConnDownAlertAfter when non-zero (tests only).
-	alertAfter time.Duration
-	downSince  time.Time // zero while the connection works
-	lastErr    string
-	timer      *time.Timer
-	alerted    bool // the outage has outlasted the alert threshold
+	// clock times the outage; nil means clock.Real (tests set a fake).
+	clock     clock.Clock
+	downSince time.Time // zero while the connection works
+	lastErr   string
+	timer     clock.Timer
+	alerted   bool // the outage has outlasted the alert threshold
 }
+
+// clk is the watch's clock.
+func (w *connWatch) clk() clock.Clock { return clock.Or(w.clock) }
 
 func (w *connWatch) resetLocked() {
 	if w.timer != nil {
@@ -49,7 +53,7 @@ func (c *BaseChannel) ReportConnected() {
 	if w.alerted {
 		logger.InfoCF("channels", "Channel connection restored", map[string]any{
 			"channel":  c.name,
-			"down_for": time.Since(w.downSince).Round(time.Second).String(),
+			"down_for": w.clk().Since(w.downSince).Round(time.Second).String(),
 		})
 	}
 	w.resetLocked()
@@ -75,14 +79,11 @@ func (c *BaseChannel) ReportConnFailure(err error) {
 		c.outages.failure(c, w.downSince, w.lastErr)
 		return
 	}
-	after := w.alertAfter
-	if after <= 0 {
-		after = ConnDownAlertAfter
-	}
-	start := time.Now()
+	after := ConnDownAlertAfter
+	start := w.clk().Now()
 	w.downSince = start
 	c.outages.failure(c, start, w.lastErr)
-	w.timer = time.AfterFunc(after, func() { c.connDownExpired(start, after) })
+	w.timer = w.clk().AfterFunc(after, func() { c.connDownExpired(start, after) })
 }
 
 // ConnDownSince returns when the current connection outage began, or the zero
@@ -168,9 +169,10 @@ type platformOutage struct {
 	affected map[*BaseChannel]struct{}       // channels counted in the active alert
 	alerted  bool
 	since    time.Time // start of the earliest affected outage
-	// recovered is set once an affected channel reconnects; an outage whose
-	// channels all stopped instead ends without an "up" alert.
-	recovered bool
+	// recovered names the affected channels that reconnected, for the "up"
+	// alert's title; an outage whose channels all stopped instead (none
+	// recovered) ends without an "up" alert.
+	recovered []string
 }
 
 type channelOutage struct {
@@ -229,7 +231,7 @@ func (g *connAggregator) expired(c *BaseChannel, after time.Duration) *alerter.A
 	}
 	slices.Sort(names)
 	return &alerter.Alert{
-		Title:       platformDisplayName(id) + " down",
+		Title:       platformDisplayName(id) + " down: " + nameList(names),
 		Description: fmt.Sprintf("%s, no working connection for %s", countNoun(id, len(names)), shortDuration(after)),
 		Details:     "Channels: " + strings.Join(names, ", ") + "\nLast error: " + mine.lastErr,
 		EventID:     id,
@@ -259,21 +261,22 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 		return nil
 	}
 	delete(p.affected, c)
-	if recovered {
-		p.recovered = true
+	if recovered && !slices.Contains(p.recovered, c.name) {
+		p.recovered = append(p.recovered, c.name)
 	}
 	if len(p.affected) > 0 {
 		return nil
 	}
 	var up *alerter.Alert
-	if p.recovered {
+	if len(p.recovered) > 0 {
+		slices.Sort(p.recovered)
 		up = &alerter.Alert{
-			Title:       platformDisplayName(id) + " up",
-			Description: "back after " + shortDuration(time.Since(p.since)),
+			Title:       platformDisplayName(id) + " up: " + nameList(p.recovered),
+			Description: "back after " + shortDuration(c.conn.clk().Since(p.since)),
 			EventID:     id + "-up",
 		}
 	}
-	p.alerted, p.recovered, p.since = false, false, time.Time{}
+	p.alerted, p.recovered, p.since = false, nil, time.Time{}
 	return up
 }
 
@@ -283,7 +286,6 @@ var platformNames = map[string]string{
 	"discord":  "Discord",
 	"slack":    "Slack",
 	"matrix":   "Matrix",
-	"line":     "LINE",
 	"secmsg":   "SecMsg",
 	"webui":    "WebUI",
 	"device":   "Device",
@@ -311,6 +313,19 @@ func countNoun(platform string, n int) string {
 		noun += "s"
 	}
 	return fmt.Sprintf("%d %s", n, noun)
+}
+
+// maxTitleNames is how many channels an alert title names before it says
+// how many more there are.
+const maxTitleNames = 3
+
+// nameList names the channels for an alert title: "telegram-alice" or
+// "telegram-alice, telegram-bob, +2 more".
+func nameList(names []string) string {
+	if len(names) <= maxTitleNames {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(names[:maxTitleNames], ", "), len(names)-maxTitleNames)
 }
 
 // shortDuration formats d to the minute from a minute up ("10m", "1h5m",

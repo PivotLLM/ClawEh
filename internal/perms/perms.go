@@ -5,10 +5,11 @@
 
 // Package perms enforces the file permissions of the data directory at
 // startup. CLAW_HOME holds the config (with provider keys), OAuth token
-// stores, device pairing tokens, TLS keys and session archives, and none of
-// it is meant for other users of the host. Enforce tightens what it can and
-// refuses to continue when the config itself is readable by others; Check is
-// the report-only walk the configuration report uses.
+// stores, device pairing tokens, TLS keys and session archives. Secrets are
+// never meant for other users of the host; the rest follows the modes in
+// security.permissions (owner-only by default). Enforce tightens what it can
+// and refuses to continue when the config itself is readable by others;
+// Check is the report-only walk the configuration report uses.
 package perms
 
 import (
@@ -20,14 +21,90 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 )
 
-// Finding is one path whose permissions grant group or other access.
+// Finding is one path whose permissions grant group or other access its
+// governing mode does not.
 type Finding struct {
 	Path string
 	Mode fs.FileMode // current permission bits
-	Want fs.FileMode // the same bits with group/other cleared
+	Want fs.FileMode // the same bits with the ungranted group/other bits cleared
+}
+
+// Policy is what Enforce and Check hold the data directory to. Group and
+// other bits a governing mode does not grant are cleared; nothing is ever
+// loosened, and owner bits are never changed.
+type Policy struct {
+	// DirMode governs the data directory itself and every directory outside
+	// an area. Zero means 0700.
+	DirMode fs.FileMode
+	// Areas govern their subtrees; the deepest root containing a path wins.
+	Areas []Area
+}
+
+// Area is one subtree with its own modes.
+type Area struct {
+	Root    string
+	DirMode fs.FileMode
+	// FileMode governs the SQLite databases (and their side files) under
+	// Root when Databases is set; every other secret stays 0600.
+	FileMode  fs.FileMode
+	Databases bool
+}
+
+// privateDirs are the data directory's folders that hold only secrets: they
+// stay owner-only whatever the configured modes.
+var privateDirs = []string{global.InternalDir, "tls", "tokens"}
+
+// PolicyFor is the policy security.permissions in cfg describes: the default
+// directory mode for the data directory, the logs, media, common and backup
+// areas, the agents area (agents.base_dir and every configured workspace,
+// whose databases follow the area's file mode), and the secrets-only folders
+// at 0700.
+func PolicyFor(cfg *config.Config) Policy {
+	p := Policy{DirMode: cfg.PermissionModes("").Dir}
+	add := func(root, area string, databases bool) {
+		m := cfg.PermissionModes(area)
+		p.Areas = append(p.Areas, Area{Root: root, DirMode: m.Dir, FileMode: m.File, Databases: databases})
+	}
+	dd := cfg.DataDir()
+	add(filepath.Join(dd, "logs"), config.AreaLogs, false)
+	add(filepath.Join(dd, "media"), config.AreaMedia, false)
+	add(cfg.ResolveCommonDir(), config.AreaCommon, false)
+	add(cfg.BackupDir(), config.AreaBackup, false)
+	for _, dir := range cfg.AgentDirs() {
+		add(dir, config.AreaAgents, true)
+	}
+	for _, name := range privateDirs {
+		p.Areas = append(p.Areas, Area{Root: filepath.Join(dd, name), DirMode: config.DefaultDirMode, FileMode: config.DefaultFileMode})
+	}
+	return p
+}
+
+// dirMode is the policy's default directory mode.
+func (p Policy) dirMode() fs.FileMode {
+	if p.DirMode == 0 {
+		return config.DefaultDirMode
+	}
+	return p.DirMode
+}
+
+// area returns the area governing path, the one with the deepest root
+// containing it, or nil.
+func (p Policy) area(path string) *Area {
+	var best *Area
+	for i := range p.Areas {
+		a := &p.Areas[i]
+		if a.Root == "" || !config.Within(a.Root, path) {
+			continue
+		}
+		if best == nil || len(filepath.Clean(a.Root)) > len(filepath.Clean(best.Root)) {
+			best = a
+		}
+	}
+	return best
 }
 
 // ErrTruncated is returned by Check when the walk hit the entry cap before
@@ -43,32 +120,38 @@ var walkLimit = 50000
 // groupOther is the permission mask for everyone who is not the owner.
 const groupOther fs.FileMode = 0o077
 
+// want returns mode with the group/other bits allowed does not grant cleared.
+func want(mode, allowed fs.FileMode) fs.FileMode {
+	return mode &^ (groupOther &^ allowed)
+}
+
 // skipDirs are subtrees the walk never enters: media is large and holds no
 // secrets, logs hold none either and are written continuously.
 var skipDirs = map[string]bool{"media": true, "logs": true}
 
-// Enforce makes the data directory private. It creates dataDir 0700 if it is
-// missing and tightens it to 0700 if it is looser; refuses (returns an error
-// the caller should treat as fatal) when configPath grants any group or other
-// access, naming the chmod that fixes it; and clears group/other bits on every
-// secret-bearing file under dataDir (see isSensitive). Symlinks are never
-// followed or changed, and the media/ and logs/ trees are not entered. Every
-// change and every failure to change is reported through log, which may be
-// nil. On Windows it does nothing.
-func Enforce(dataDir, configPath string, log func(msg string, fields map[string]any)) error {
+// Enforce holds the data directory to policy. It creates dataDir with the
+// policy's directory mode if it is missing and tightens it if it is looser;
+// refuses (returns an error the caller should treat as fatal) when configPath
+// grants any group or other access, naming the chmod that fixes it; and
+// clears the group/other bits the governing mode does not grant on every
+// directory and every secret-bearing file under dataDir (see isSensitive).
+// Symlinks are never followed or changed, and the media/ and logs/ trees are
+// not entered. Every change and every failure to change is reported through
+// log, which may be nil. On Windows it does nothing.
+func Enforce(dataDir, configPath string, policy Policy, log func(msg string, fields map[string]any)) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
 	if log == nil {
 		log = func(string, map[string]any) {}
 	}
-	if err := enforceDataDir(dataDir, log); err != nil {
+	if err := enforceDataDir(dataDir, policy.dirMode(), log); err != nil {
 		return err
 	}
-	if err := checkConfig(configPath); err != nil {
+	if err := CheckConfig(configPath); err != nil {
 		return err
 	}
-	truncated, err := walk(dataDir, func(f Finding) {
+	truncated, err := walk(dataDir, policy, func(f Finding) {
 		if err := os.Chmod(f.Path, f.Want); err != nil {
 			log("could not tighten file permissions", map[string]any{
 				"path": f.Path, "mode": fmt.Sprintf("%04o", f.Mode), "error": err.Error(),
@@ -94,22 +177,22 @@ func Enforce(dataDir, configPath string, log func(msg string, fields map[string]
 // dataDir itself and configPath are included when they are loose. When the
 // walk hits the entry cap the findings so far are returned with ErrTruncated.
 // On Windows it returns nothing.
-func Check(dataDir, configPath string) ([]Finding, error) {
+func Check(dataDir, configPath string, policy Policy) ([]Finding, error) {
 	if runtime.GOOS == "windows" {
 		return nil, nil
 	}
 	var findings []Finding
-	if f, ok, err := loose(dataDir); err != nil && !os.IsNotExist(err) {
+	if f, ok, err := loose(dataDir, policy.dirMode()); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	} else if ok {
 		findings = append(findings, f)
 	}
-	if f, ok, err := loose(configPath); err != nil && !os.IsNotExist(err) {
+	if f, ok, err := loose(configPath, 0); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	} else if ok {
 		findings = append(findings, f)
 	}
-	truncated, err := walk(dataDir, func(f Finding) { findings = append(findings, f) })
+	truncated, err := walk(dataDir, policy, func(f Finding) { findings = append(findings, f) })
 	if err != nil {
 		return nil, err
 	}
@@ -127,37 +210,60 @@ func Check(dataDir, configPath string) ([]Finding, error) {
 // too, from the first write rather than from the next restart. An empty file
 // is a valid empty SQLite database. On Windows it does nothing.
 func EnsurePrivateFile(path string) error {
+	return EnsureFileMode(path, 0o600)
+}
+
+// EnsureFileMode creates path as an empty file with mode (narrowed by the
+// umask) when it does not exist, and clears the group/other bits mode does
+// not grant when it does. It never loosens a file. A symbolic link is
+// refused. On Windows it does nothing.
+func EnsureFileMode(path string, mode fs.FileMode) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600) //nolint:gosec // the store path the caller is about to open
+	// A symbolic link is refused, never followed: tightening or creating
+	// through it would act on a file somewhere else.
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("perms: %s is a symbolic link", path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY|oNoFollow, mode.Perm()) //nolint:gosec // the store path the caller is about to open
 	if err != nil {
 		return fmt.Errorf("perms: create %s: %w", path, err)
 	}
-	if closeErr := f.Close(); closeErr != nil {
-		return fmt.Errorf("perms: close %s: %w", path, closeErr)
+	err = tightenOpen(f, mode.Perm())
+	if closeErr := f.Close(); err == nil && closeErr != nil {
+		err = closeErr
 	}
-	fnd, ok, err := loose(path)
 	if err != nil {
-		return fmt.Errorf("perms: stat %s: %w", path, err)
-	}
-	if !ok {
-		return nil
-	}
-	if chmodErr := os.Chmod(path, fnd.Want); chmodErr != nil {
-		return fmt.Errorf("perms: tighten %s: %w", path, chmodErr)
+		return fmt.Errorf("perms: %s: %w", path, err)
 	}
 	return nil
 }
 
-// enforceDataDir creates dataDir 0700 when missing and tightens it when it
-// grants group/other access. A failed chmod (a directory owned by someone
-// else) is logged, not fatal: the operator can still run, and the config
-// check that follows is what guards the secrets.
-func enforceDataDir(dataDir string, log func(string, map[string]any)) error {
-	f, ok, err := loose(dataDir)
+// tightenOpen clears the group/other bits allowed does not grant on the open
+// regular file f, acting on the descriptor so no path is resolved again.
+func tightenOpen(f *os.File, allowed fs.FileMode) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	if mode := fi.Mode().Perm(); want(mode, allowed) != mode {
+		return f.Chmod(want(mode, allowed))
+	}
+	return nil
+}
+
+// enforceDataDir creates dataDir with dirMode when missing and tightens it
+// when it grants group/other access dirMode does not. A failed chmod (a
+// directory owned by someone else) is logged, not fatal: the operator can
+// still run, and the config check that follows is what guards the secrets.
+func enforceDataDir(dataDir string, dirMode fs.FileMode, log func(string, map[string]any)) error {
+	f, ok, err := loose(dataDir, dirMode)
 	if os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(dataDir, 0o700); mkErr != nil {
+		if mkErr := os.MkdirAll(dataDir, dirMode); mkErr != nil {
 			return fmt.Errorf("perms: create %s: %w", dataDir, mkErr)
 		}
 		return nil
@@ -180,13 +286,17 @@ func enforceDataDir(dataDir string, log func(string, map[string]any)) error {
 	return nil
 }
 
-// checkConfig refuses a config file that anyone but the owner can read or
+// CheckConfig refuses a config file that anyone but the owner can read or
 // write. It is never chmod'ed on the operator's behalf: a loose config is a
 // sign that something else on the host has been at it, and the operator
 // should see that rather than have it papered over. A missing config is fine
-// (first run seeds one).
-func checkConfig(configPath string) error {
-	f, ok, err := loose(configPath)
+// (first run seeds one). It needs nothing from the config, so it runs before
+// the config is read. On Windows it does nothing.
+func CheckConfig(configPath string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	f, ok, err := loose(configPath, 0)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -201,23 +311,25 @@ func checkConfig(configPath string) error {
 }
 
 // loose stats path (following a symlink, since it is the target's bits that
-// matter) and reports whether group or other has any access to it.
-func loose(path string) (Finding, bool, error) {
+// matter) and reports whether group or other has access allowed does not
+// grant.
+func loose(path string, allowed fs.FileMode) (Finding, bool, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return Finding{}, false, err
 	}
 	mode := fi.Mode().Perm()
-	if mode&groupOther == 0 {
-		return Finding{}, false, nil
+	if w := want(mode, allowed); w != mode {
+		return Finding{Path: path, Mode: mode, Want: w}, true, nil
 	}
-	return Finding{Path: path, Mode: mode, Want: mode &^ groupOther}, true, nil
+	return Finding{}, false, nil
 }
 
-// walk visits every regular file under dataDir, calling found for each
-// sensitive one whose mode grants group/other access. It reports whether it
+// walk visits every directory and regular file under dataDir, calling found
+// for each directory, and each sensitive file, whose mode grants group/other
+// access its governing mode in policy does not. It reports whether it
 // stopped at walkLimit. Unreadable subtrees are skipped, not fatal.
-func walk(dataDir string, found func(Finding)) (bool, error) {
+func walk(dataDir string, policy Policy, found func(Finding)) (bool, error) {
 	dataDir = filepath.Clean(dataDir)
 	seen := 0
 	truncated := false
@@ -248,6 +360,19 @@ func walk(dataDir string, found func(Finding)) (bool, error) {
 			if skipDirs[d.Name()] {
 				return fs.SkipDir
 			}
+			// Every directory ClawEh creates under the data directory has its
+			// area's mode (owner-only by default), so a looser one (made
+			// before that rule, or by a library with its own default) is
+			// tightened like a secret file.
+			allowed := policy.dirMode()
+			if a := policy.area(path); a != nil {
+				allowed = a.DirMode
+			}
+			if info, infoErr := d.Info(); infoErr == nil {
+				if mode := info.Mode().Perm(); want(mode, allowed) != mode {
+					found(Finding{Path: path, Mode: mode, Want: want(mode, allowed)})
+				}
+			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
@@ -255,18 +380,24 @@ func walk(dataDir string, found func(Finding)) (bool, error) {
 		}
 		// WalkDir builds every path as Join(root, ...), so the relative path
 		// is what follows the cleaned root and its separator.
-		if !isSensitive(strings.TrimPrefix(path, dataDir+string(filepath.Separator))) {
+		rel := strings.TrimPrefix(path, dataDir+string(filepath.Separator))
+		if !isSensitive(rel) {
 			return nil
+		}
+		// Secrets are owner-only; the databases of an area that opts in (the
+		// agents' session archives and memories) follow its file mode.
+		allowed := fs.FileMode(0o600)
+		if a := policy.area(path); a != nil && a.Databases && isDatabase(rel) && !secretName(rel) {
+			allowed = a.FileMode
 		}
 		info, infoErr := d.Info()
 		if infoErr != nil {
 			return nil //nolint:nilerr // the entry vanished mid-walk (a WAL side file, say); nothing to tighten
 		}
 		mode := info.Mode().Perm()
-		if mode&groupOther == 0 {
-			return nil
+		if w := want(mode, allowed); w != mode {
+			found(Finding{Path: path, Mode: mode, Want: w})
 		}
-		found(Finding{Path: path, Mode: mode, Want: mode &^ groupOther})
 		return nil
 	})
 	if err != nil {
@@ -287,14 +418,7 @@ func isSensitive(rel string) bool {
 	rel = filepath.ToSlash(rel)
 	name := strings.ToLower(filepath.Base(rel))
 	ext := filepath.Ext(name)
-	switch {
-	case ext == ".db" || ext == ".db-wal" || ext == ".db-shm":
-		return true
-	case strings.Contains(name, ".sqlite"):
-		return true
-	case name == "credentials.json":
-		return true
-	case strings.Contains(name, "token") || strings.Contains(name, "secret"):
+	if isDatabase(rel) || secretName(rel) || name == "credentials.json" {
 		return true
 	}
 	top, rest, _ := strings.Cut(rel, "/")
@@ -307,4 +431,18 @@ func isSensitive(rel string) bool {
 		return ext == ".key"
 	}
 	return false
+}
+
+// isDatabase reports by name whether the file is a SQLite database or one of
+// its WAL/shm side files.
+func isDatabase(rel string) bool {
+	name := strings.ToLower(filepath.Base(rel))
+	ext := filepath.Ext(name)
+	return ext == ".db" || ext == ".db-wal" || ext == ".db-shm" || strings.Contains(name, ".sqlite")
+}
+
+// secretName reports whether the file's name mentions a token or secret.
+func secretName(rel string) bool {
+	name := strings.ToLower(filepath.Base(rel))
+	return strings.Contains(name, "token") || strings.Contains(name, "secret")
 }

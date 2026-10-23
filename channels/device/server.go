@@ -81,7 +81,10 @@ type Server struct {
 
 	inbound InboundFunc
 	querier AgentQuerier // optional: serves agents.list / chat.history to operator clients
-	conns   sync.Map     // chatID -> *liveConn (the newest connection per device)
+	// staleWarned holds "deviceID|agentID" for each stale assignment already
+	// logged, so a device that keeps talking logs it once.
+	staleWarned sync.Map
+	conns       sync.Map // chatID -> *liveConn (the newest connection per device)
 
 	// live is every post-handshake connection, so a stop or a device removal
 	// can close all of them, not only the newest per device. stopped refuses
@@ -431,11 +434,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	defer cw.close()
 	go cw.run()
 	s.conns.Store(lc.chatID, lc)
-	defer func() {
-		if cur, ok := s.conns.Load(lc.chatID); ok && cur == lc {
-			s.conns.Delete(lc.chatID)
-		}
-	}()
+	defer s.conns.CompareAndDelete(lc.chatID, lc)
 
 	setReadDeadline(conn, time.Time{})
 	s.serveLoop(r.Context(), lc)
@@ -533,7 +532,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	// Pairing decision.
 	paired, ok, err := s.store.GetPaired(ctx, p.Device.ID)
 	if err != nil {
-		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
+		return nil, storeFail(req.ID, "read paired device", p.Device.ID, err)
 	}
 	pairedAndMatches := ok && paired.PublicKey == p.Device.PublicKey
 
@@ -545,12 +544,16 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 			ClientMode: p.Client.Mode, Role: role, Scopes: p.Scopes, RemoteIP: remoteHost(r),
 		})
 		if perr != nil {
-			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
+			return nil, storeFail(req.ID, "create pending pairing", p.Device.ID, perr)
 		}
 		if s.opts.AutoApprove {
 			if dev, _, aerr := s.store.Approve(ctx, reqID, []string{role}, p.Scopes); aerr == nil {
 				paired = dev
 				pairedAndMatches = true
+			} else {
+				logger.WarnCF("device", "Auto-approve failed; pairing stays pending", map[string]any{
+					"deviceId": p.Device.ID, "requestId": reqID, "error": aerr.Error(),
+				})
 			}
 		}
 		if !pairedAndMatches {
@@ -571,6 +574,15 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		tokens = append(tokens, t.DeviceToken)
 	}
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes, tokens: tokens}, nil
+}
+
+// storeFail logs a pairing store failure during a handshake with its cause
+// and returns the UNAVAILABLE refusal the client gets (close 1011).
+func storeFail(reqID, op, deviceID string, err error) *handshakeFail {
+	logger.ErrorCF("device", "Pairing store error", map[string]any{
+		"op": op, "deviceId": deviceID, "error": err.Error(),
+	})
+	return &handshakeFail{id: reqID, err: gatewayproto.NewError(gatewayproto.CodeUnavailable, "pairing store error", nil), code: websocket.CloseInternalServerErr, reason: "store error"}
 }
 
 // presentedDeviceTokens returns the device tokens the connect request carried
@@ -973,7 +985,7 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 		agents, defaultID, _ = s.querier.Agents()
 	}
 	current := defaultID
-	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" && s.assignedAgentRuns(dev.AgentID) {
 		current = dev.AgentID
 	}
 
@@ -1013,7 +1025,7 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 // (case-insensitive) and returns the canonical id + display name, or "" if none.
 func resolveDeviceAgent(agents []DeviceAgentInfo, arg string) (id, name string) {
 	for _, a := range agents {
-		if strings.EqualFold(a.ID, arg) || strings.EqualFold(a.Name, arg) {
+		if config.SameAgentID(a.ID, arg) || strings.EqualFold(a.Name, arg) {
 			return a.ID, agentDisplayName(a)
 		}
 	}
@@ -1044,7 +1056,7 @@ func agentDisplayName(a DeviceAgentInfo) string {
 }
 
 // replyScopeKey is the session key a device-command reply is tagged with: the
-// connection's resolved session, or "" when its key is not allowed.
+// connection's resolved session, or "" when its key names an unknown agent.
 func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
@@ -1059,16 +1071,12 @@ func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 // errUnknownAgent refuses a session key naming an agent that does not exist.
 var errUnknownAgent = errors.New("unknown agent")
 
-// refuseSessionKey answers a request whose session key the device may not use.
+// refuseSessionKey answers a request whose session key names an unknown agent.
 func (s *Server) refuseSessionKey(lc *liveConn, reqID string, err error) {
 	logger.WarnCF("device", "request refused: session key not allowed", map[string]any{
 		"deviceId": lc.deviceID, "reason": err.Error(),
 	})
-	msg := "session key not allowed"
-	if errors.Is(err, errUnknownAgent) {
-		msg = "unknown agent"
-	}
-	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, msg, nil)))
+	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "unknown agent", nil)))
 }
 
 // agentExists reports whether id names a configured agent. Without a querier
@@ -1087,43 +1095,58 @@ func (s *Server) agentExists(id string) bool {
 	return false
 }
 
+// assignedAgentRuns reports whether a per-device assignment names an agent the
+// loop runs. Unlike agentExists it admits human agents (the turn reaches them
+// and they refuse it themselves). Without a querier nothing can be checked and
+// the assignment is honoured.
+func (s *Server) assignedAgentRuns(id string) bool {
+	if s.querier == nil {
+		return true
+	}
+	return s.querier.HasAgent(id)
+}
+
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
 // Both chat.send and chat.history go through it, so a device always reads the
-// transcript it writes, and neither can reach a session the device may not.
+// transcript it writes.
 //
-// Under UNIFIED sessions (the default) a device joins the selected agent's main
-// conversation: the R1, the phone app, Slack and Telegram are one assistant with
-// one history, one tool surface, and one memory. Tell her something on the R1 and
-// she knows it in Slack. Isolation is a property of the agent — to keep a device
-// separate, give it its own agent.
+// Every device joins the selected agent's main conversation: the R1, the phone
+// app, Slack and Telegram are one assistant with one history, one tool surface,
+// and one memory. Tell her something on the R1 and she knows it in Slack. To
+// keep a device separate, give it its own agent.
 //
-// Under an isolating mode every device gets its own per-device session for the
-// selected agent, and a key naming any other session is refused (see
-// routing.ResolveDeviceSessionKey).
-//
-// The agent itself is chosen the same way in both modes: an operator client picks
-// it via the key's 2nd segment, which must name a configured agent (an unknown id
-// is refused before anything touches a session store); a node client (e.g. the
-// R1) has no picker, so it falls back to its per-device assignment (WebUI Devices
-// page / "/agent") and then to the gateway default. The choice reaches the loop
-// as preresolved_agent_id.
+// An operator client picks the agent via the key's 2nd segment, which must name
+// a configured agent (an unknown id is refused before anything touches a
+// session store); a node client (e.g. the R1) has no picker, so it falls back
+// to its per-device assignment (WebUI Devices page / "/agent") and then to the
+// gateway default. The choice reaches the loop as preresolved_agent_id.
 func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) (string, error) {
-	if id := routing.AgentIDFromSessionKey(requested); id != "" && !s.agentExists(id) {
-		return "", errUnknownAgent
+	agentID := routing.AgentIDFromSessionKey(requested)
+	if agentID != "" {
+		if !s.agentExists(agentID) {
+			return "", errUnknownAgent
+		}
+		return routing.BuildAgentMainSessionKey(agentID), nil
 	}
-	fallback := "main"
-	mode := ""
+	agentID = "main"
 	if s.querier != nil {
 		if d := s.querier.DefaultAgentID(); d != "" {
-			fallback = d
+			agentID = d
 		}
-		mode = s.querier.SessionMode()
 	}
-	// Per-device assignment overrides the gateway default for node clients.
+	// Per-device assignment overrides the gateway default for node clients, but
+	// only while the assigned agent exists: the loop drops a turn preresolved to
+	// a missing agent, so a stale assignment would leave the device unanswered.
 	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		fallback = dev.AgentID
+		if s.assignedAgentRuns(dev.AgentID) {
+			agentID = dev.AgentID
+		} else if _, seen := s.staleWarned.LoadOrStore(lc.deviceID+"|"+dev.AgentID, true); !seen {
+			logger.WarnCF("device", "assigned agent not found; using the default agent", map[string]any{
+				"deviceId": lc.deviceID, "device": dev.DisplayName, "assignedAgent": dev.AgentID, "agent": agentID,
+			})
+		}
 	}
-	return routing.ResolveDeviceSessionKey(routing.SessionScope(mode), requested, fallback, lc.deviceID)
+	return routing.BuildAgentMainSessionKey(agentID), nil
 }
 
 // handleNodeEvent handles the node ingress envelope (chat.subscribe / chat.unsubscribe).
@@ -1205,8 +1228,8 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 		lc.mu.Unlock()
 	}
 	// Resolve through the same rule chat.send uses, so a client reads the
-	// transcript its turns are written to — under unified that is the agent's
-	// main conversation, not the key the client happens to have asked for.
+	// transcript its turns are written to — the agent's main conversation, not
+	// the key the client happens to have asked for.
 	sessionKey, err := s.sessionScopeKeyFor(ctx, lc, sessionKey)
 	if err != nil {
 		s.refuseSessionKey(lc, req.ID, err)
@@ -1311,19 +1334,44 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 }
 
 // DeliverReply emits a terminal "chat" final event to the device for the given
-// chatID, carrying the in-flight runId. Returns false if no connection matches.
-func (s *Server) DeliverReply(chatID, content string) bool {
+// chatID ("device:<deviceID>"), carrying the in-flight runId. It says why a
+// reply was not delivered: channels.ErrRecipientNotFound when chatID names no
+// paired device, channels.ErrRecipientOffline when the device is paired but
+// not connected or its connection is closing (closed, or closed because it
+// stopped reading), and channels.ErrSendFailed for a fault of the server
+// itself (the pairing store failed).
+func (s *Server) DeliverReply(ctx context.Context, chatID, content string) error {
 	v, _ := s.conns.Load(chatID)
 	lc, ok := v.(*liveConn)
 	if !ok {
-		return false
+		return s.undeliverable(ctx, chatID)
 	}
 	lc.mu.Lock()
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey
 	lc.currentRun = ""
 	lc.mu.Unlock()
-	return s.emitChatReply(lc, runID, sessionKey, content)
+	if !s.emitChatReply(lc, runID, sessionKey, content) {
+		return fmt.Errorf("%s: the connection is closing: %w", chatID, channels.ErrRecipientOffline)
+	}
+	return nil
+}
+
+// undeliverable says why chatID has no live connection: no paired device by
+// that id, or a paired device that is not connected.
+func (s *Server) undeliverable(ctx context.Context, chatID string) error {
+	deviceID, ok := strings.CutPrefix(chatID, "device:")
+	if !ok || deviceID == "" {
+		return fmt.Errorf("%s is not a device chat: %w", chatID, channels.ErrRecipientNotFound)
+	}
+	_, paired, err := s.store.GetPaired(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("%s: look up the paired device: %w: %w", chatID, channels.ErrSendFailed, err)
+	}
+	if !paired {
+		return fmt.Errorf("%s: no paired device: %w", chatID, channels.ErrRecipientNotFound)
+	}
+	return fmt.Errorf("%s: device not connected: %w", chatID, channels.ErrRecipientOffline)
 }
 
 // emitChatReply delivers a complete assistant reply to one connection. It emits

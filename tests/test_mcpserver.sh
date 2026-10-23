@@ -48,7 +48,8 @@ PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 FUSION_SERVICE="${FUSION_SERVICE:-}"   # optional: a Fusion service the token's agent lists in mcp_tools
-UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of an agent with Fusion on and nothing listed
+UNGRANTED_SERVICE_TOKEN="${UNGRANTED_SERVICE_TOKEN:-}"   # optional: service token of alice: Fusion on and nothing listed; tools "*" without shell_exec
+NOSHELL_SERVICE_TOKEN="${NOSHELL_SERVICE_TOKEN:-}"   # required by 4b.1b: service token of the agent Bob, whose tools leave out shell_exec
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 GATEWAY_LOG="${GATEWAY_LOG:-}"     # optional: the gateway's log file, for background-behaviour checks
@@ -59,7 +60,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # Note: search_tools and get_tool_details are omitted here because they only register
 # when tools.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model required). agent_spawn/agent_status/agent_list (subagent capability) are
+# model required). agent_spawn/agent_status/agent_list/agent_message (subagent capability) are
 # also exposed but only probed when actually present in the catalogue, so this
 # script stays portable.
 EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
@@ -299,6 +300,42 @@ run_test_err_auth() {
         TIER2_FAIL=$((TIER2_FAIL + 1))
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
+}
+
+# run_test_err_msg_auth <name> <tool> <params> <expected>
+# Expects a tool error WITH session_token whose text contains <expected>.
+run_test_err_msg_auth() {
+    local test_name="$1"
+    local tool="$2"
+    local params="$3"
+    local expected="$4"
+
+    echo "  ${test_name}"
+    local result
+    result=$(probe_call_auth "$tool" "$params")
+
+    if echo "$result" | grep -qiE "Tool call failed|Failed to call tool|isError|\"error\"" && echo "$result" | grep -qF "$expected"; then
+        echo "    ${GREEN}PASS${NC}: refused with \"$expected\""
+        TIER2_PASS=$((TIER2_PASS + 1))
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: expected an error containing \"$expected\""
+        echo "    Output: $result"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+}
+
+# tier2_pass / tier2_fail record one tier-2 result for checks written inline
+# (outside the run_test_*_auth helpers), so they count toward the tier-2 tally.
+tier2_pass() {
+    TIER2_PASS=$((TIER2_PASS + 1))
+    PASS_COUNT=$((PASS_COUNT + 1))
+}
+
+tier2_fail() {
+    TIER2_FAIL=$((TIER2_FAIL + 1))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 }
 
 ################################################################################
@@ -604,10 +641,42 @@ else
 
     print_section "4b. Remaining provider tools (graceful probes)"
 
-    # shell_exec is restricted to internal channels, so over MCP it returns a
-    # clean "restricted" error rather than running — a graceful probe.
-    run_test_not_auth_err "4b.1 shell_exec — token accepted" \
-        "shell_exec" '{"command":"echo mcp-shell-ok"}'
+    # shell_exec follows the token's agent: the session token's agent has it
+    # and runs it over MCP; Bob's tools leave it out, so he does not have it.
+    run_test_ok_auth "4b.1 shell_exec runs for an agent allowed it" \
+        "shell_exec" '{"command":"echo mcp-shell-ok"}' "mcp-shell-ok"
+
+    echo "  4b.1b shell_exec refused for an agent not allowed it (service token)"
+    if [ -n "$NOSHELL_SERVICE_TOKEN" ]; then
+        ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+            -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$NOSHELL_SERVICE_TOKEN")" 2>&1)
+        if echo "$ns" | grep -qF "Permission denied: the tool \"shell_exec\" is not enabled for this agent." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, not enabled for Bob"
+            tier2_pass
+        else
+            echo "    ${RED}FAIL${NC}: Bob's service token was not refused"
+            echo "$ns" | head -5 | sed 's/^/      /'
+            tier2_fail
+        fi
+    else
+        echo "    ${RED}FAIL${NC}: NOSHELL_SERVICE_TOKEN is not set (the service token of Bob, whose tools leave out shell_exec)"
+        tier2_fail
+    fi
+
+    # "*" does not include shell_exec: alice's tools are "*" without naming it.
+    if [ -n "$UNGRANTED_SERVICE_TOKEN" ]; then
+        echo "  4b.1c shell_exec refused for an agent whose tools are \"*\" only (service token)"
+        ns=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+            -call shell_exec -params "$(printf '{"command":"echo mcp-shell-ok","session_token":"%s"}' "$UNGRANTED_SERVICE_TOKEN")" 2>&1)
+        if echo "$ns" | grep -qF "Permission denied: the tool \"shell_exec\" is not enabled for this agent." && ! echo "$ns" | grep -q "^mcp-shell-ok"; then
+            echo "    ${GREEN}PASS${NC}: refused, not enabled for alice"
+            tier2_pass
+        else
+            echo "    ${RED}FAIL${NC}: alice's service token was not refused"
+            echo "$ns" | head -5 | sed 's/^/      /'
+            tier2_fail
+        fi
+    fi
 
     run_test_not_auth_err "4b.2 web_search — token accepted" \
         "web_search" '{"query":"hello"}'
@@ -641,6 +710,16 @@ else
             echo "  4b.* $opt_tool not registered on this host (skipped)"
         fi
     done
+
+    # agent_message needs a target in the caller's subagents.allow_agents,
+    # which the test config does not grant: the whisper must be refused with
+    # a tool error (the gating holds on the running binary).
+    if echo "$LIST_OUT" | grep -qw "agent_message"; then
+        run_test_err_msg_auth "4b.8 agent_message — refused without allow_agents" \
+            "agent_message" '{"agent":"alice","message":"probe","wait_seconds":0}' "You may not message alice"
+    else
+        echo "  4b.8 agent_message not registered on this host (skipped)"
+    fi
 
     #---------------------------------------------------------------------------
     # Section 4c: Cognitive-memory tools (cogmem_*). Session-scoped, off by
@@ -856,6 +935,142 @@ else
         echo "  4f.* listen job checks skipped (need GATEWAY_LOG, SERVICE_TOKEN and BEARER_ENDPOINT)"
     fi
 
+    #---------------------------------------------------------------------------
+    # Section 4g: Forum tools (forum_*). The test config switches `forum` on for
+    # main, the session token's agent. Every tool is probed: readme returns the
+    # guide, a template, and refuses an unknown template; models and status
+    # are hermetic successes on an agent with no forums; validate and launch
+    # refuse a call without an ID and an unknown forum; pause, resume, cancel,
+    # results and delete refuse an unknown forum. A forum is then set up hermetically: new,
+    # template, update, export, validate (refused: the template's models are
+    # placeholders and the test config has no models), import, export again,
+    # launch (refused: invalid), status (new), results (refused: no run),
+    # status with a bad run number (refused) and delete. No run is started.
+    #---------------------------------------------------------------------------
+
+    if echo "$LIST_OUT" | grep -qw "forum_launch"; then
+        print_section "4g. Forum tools (forum)"
+        FORUM_ID="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+
+        run_test_ok_auth "4g.1 forum_models lists the agent's models" \
+            "forum_models" '{}' "["
+        run_test_ok_auth "4g.2 forum_status lists no forums" \
+            "forum_status" '{}' "[]"
+        run_test_err_msg_auth "4g.3 forum_validate refuses a call without an id" \
+            "forum_validate" '{}' "The id argument is required"
+        run_test_err_msg_auth "4g.4 forum_launch refuses an unknown forum" \
+            "forum_launch" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.5 forum_pause refuses an unknown forum" \
+            "forum_pause" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.6 forum_resume refuses an unknown forum" \
+            "forum_resume" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.7 forum_cancel refuses an unknown forum" \
+            "forum_cancel" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.8 forum_results refuses an unknown forum" \
+            "forum_results" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_err_msg_auth "4g.9 forum_delete refuses an unknown forum" \
+            "forum_delete" "{\"id\":\"$FORUM_ID\"}" "was not found"
+        run_test_ok_auth "4g.10 forum_readme returns the guide and the templates" \
+            "forum_readme" '{}' "## Templates"
+        run_test_ok_auth "4g.11 forum_readme returns a template" \
+            "forum_readme" '{"template":"council"}' "result_layers"
+        run_test_err_msg_auth "4g.12 forum_readme refuses an unknown template" \
+            "forum_readme" '{"template":"nosuch"}' "There is no template"
+
+        echo "  4g.13 forum_new creates a forum"
+        NEW_FORUM_OUT=$(probe_call_auth "forum_new" '{}')
+        NEW_FORUM_ID=$(echo "$NEW_FORUM_OUT" | grep -oE 'Forum [0-9a-f-]{36} created' | head -1 | awk '{print $2}')
+        if [ -n "$NEW_FORUM_ID" ]; then
+            echo "    ${GREEN}PASS${NC}: forum $NEW_FORUM_ID"
+            TIER2_PASS=$((TIER2_PASS + 1))
+            PASS_COUNT=$((PASS_COUNT + 1))
+            run_test_ok_auth "4g.14 forum_config_template sets the council template" \
+                "forum_config_template" "{\"id\":\"$NEW_FORUM_ID\",\"name\":\"council\"}" "council template"
+            run_test_ok_auth "4g.15 forum_config_update applies a merge patch" \
+                "forum_config_update" "{\"id\":\"$NEW_FORUM_ID\",\"changes\":{\"name\":\"probe-council\",\"seed\":7}}" "is updated"
+            run_test_ok_auth "4g.16 forum_config_export returns the changed configuration" \
+                "forum_config_export" "{\"id\":\"$NEW_FORUM_ID\"}" "probe-council"
+            run_test_err_msg_auth "4g.17 forum_validate names the placeholder models" \
+                "forum_validate" "{\"id\":\"$NEW_FORUM_ID\"}" "participants.member1.model"
+            run_test_ok_auth "4g.18 forum_config_import replaces the configuration" \
+                "forum_config_import" "{\"id\":\"$NEW_FORUM_ID\",\"config\":{\"version\":1,\"name\":\"probe-import\"}}" "imported configuration"
+            run_test_ok_auth "4g.19 forum_config_export returns the imported configuration" \
+                "forum_config_export" "{\"id\":\"$NEW_FORUM_ID\"}" "probe-import"
+            run_test_err_msg_auth "4g.20 forum_launch refuses an invalid configuration" \
+                "forum_launch" "{\"id\":\"$NEW_FORUM_ID\"}" "invalid configuration"
+            run_test_ok_auth "4g.21 forum_status shows the new forum" \
+                "forum_status" "{\"id\":\"$NEW_FORUM_ID\"}" "\"new\""
+            run_test_err_msg_auth "4g.22 forum_results refuses a forum with no run" \
+                "forum_results" "{\"id\":\"$NEW_FORUM_ID\"}" "has not been launched"
+            run_test_err_msg_auth "4g.23 forum_status refuses a bad run number" \
+                "forum_status" "{\"id\":\"$NEW_FORUM_ID\",\"run\":0}" "must be a run number"
+            run_test_ok_auth "4g.24 forum_delete removes the forum" \
+                "forum_delete" "{\"id\":\"$NEW_FORUM_ID\"}" "is deleted"
+        else
+            echo "    ${RED}FAIL${NC}: no forum ID in the reply"
+            echo "    Output: $NEW_FORUM_OUT"
+            TIER2_FAIL=$((TIER2_FAIL + 1))
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+    else
+        # The test config switches forum on for main: missing tools are a
+        # regression, not an optional host feature.
+        echo "  4g. Forum tools"
+        echo "    ${RED}FAIL${NC}: forum_launch is not in the catalogue although main has forum on"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    #---------------------------------------------------------------------------
+    # Section 4h: the character-card tool (ccv3). The test config switches
+    # `ccv3` on for main and attaches the card "probe-attached" to bob. Every
+    # action is probed hermetically: list, create, get, update (and an invalid
+    # patch, nothing written), copy, rename, delete, an unknown action, a
+    # missing argument, an unknown field, and rename/delete refused while bob
+    # uses the card.
+    #---------------------------------------------------------------------------
+
+    if echo "$LIST_OUT" | grep -qw "ccv3"; then
+        print_section "4h. Character cards (ccv3)"
+        CARD_ID="probe-$(printf '%06d' "$$")"
+
+        run_test_ok_auth "4h.1 ccv3 list shows the attached card and who uses it" \
+            "ccv3" '{"action":"list"}' "probe-attached"
+        run_test_ok_auth "4h.2 ccv3 create writes a card" \
+            "ccv3" "{\"action\":\"create\",\"id\":\"$CARD_ID\",\"card\":{\"name\":\"Probe Two\",\"description\":\"{{char}} probes.\"}}" "Probe Two"
+        run_test_ok_auth "4h.3 ccv3 get returns the envelope" \
+            "ccv3" "{\"action\":\"get\",\"id\":\"$CARD_ID\"}" "chara_card_v3"
+        run_test_ok_auth "4h.4 ccv3 update applies a merge patch" \
+            "ccv3" "{\"action\":\"update\",\"id\":\"$CARD_ID\",\"changes\":{\"personality\":\"Curious.\"}}" "Curious."
+        run_test_err_msg_auth "4h.5 ccv3 update refuses an unknown field" \
+            "ccv3" "{\"action\":\"update\",\"id\":\"$CARD_ID\",\"changes\":{\"nosuch\":1}}" "not valid"
+        run_test_err_msg_auth "4h.6 ccv3 create refuses an existing id" \
+            "ccv3" "{\"action\":\"create\",\"id\":\"$CARD_ID\",\"card\":{\"name\":\"Again\"}}" "already exists"
+        run_test_ok_auth "4h.7 ccv3 copy makes a second card" \
+            "ccv3" "{\"action\":\"copy\",\"id\":\"$CARD_ID\",\"new_id\":\"$CARD_ID-copy\"}" "copied_from"
+        run_test_ok_auth "4h.8 ccv3 rename changes the id" \
+            "ccv3" "{\"action\":\"rename\",\"id\":\"$CARD_ID-copy\",\"new_id\":\"$CARD_ID-renamed\"}" "previous_id"
+        run_test_err_msg_auth "4h.9 ccv3 rename refuses a card an agent uses" \
+            "ccv3" "{\"action\":\"rename\",\"id\":\"probe-attached\",\"new_id\":\"probe-free\"}" "is attached to agent Bob"
+        run_test_err_msg_auth "4h.10 ccv3 delete refuses a card an agent uses" \
+            "ccv3" '{"action":"delete","id":"probe-attached"}' "is attached to agent Bob"
+        run_test_err_msg_auth "4h.11 ccv3 refuses an unknown action" \
+            "ccv3" '{"action":"explode"}' "list, get, create, update, rename, copy or delete"
+        run_test_err_msg_auth "4h.12 ccv3 get refuses a call without an id" \
+            "ccv3" '{"action":"get"}' "id"
+        run_test_ok_auth "4h.13 ccv3 delete removes a card" \
+            "ccv3" "{\"action\":\"delete\",\"id\":\"$CARD_ID\"}" "deleted"
+        run_test_ok_auth "4h.14 ccv3 delete removes the renamed copy" \
+            "ccv3" "{\"action\":\"delete\",\"id\":\"$CARD_ID-renamed\"}" "deleted"
+        run_test_err_msg_auth "4h.15 ccv3 get refuses a deleted card" \
+            "ccv3" "{\"action\":\"get\",\"id\":\"$CARD_ID\"}" "does not exist"
+    else
+        echo "  4h. Character cards"
+        echo "    ${RED}FAIL${NC}: ccv3 is not in the catalogue although main has ccv3 on"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
 fi  # end SESSION_TOKEN block
 
 ################################################################################
@@ -957,6 +1172,18 @@ if [ -n "$SERVICE_TOKEN" ]; then
     else
         echo "    ${RED}FAIL${NC}: service token rejected as session_token parameter"
         echo "    Output: $st_i"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    echo "  7.3 service token of an agent allowed shell_exec runs it"
+    st_sh=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+        -call "shell_exec" -params "$(printf '{"command":"echo svc-shell-ok","session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
+    if echo "$st_sh" | grep -q "Tool call succeeded" && echo "$st_sh" | grep -qF "svc-shell-ok"; then
+        echo "    ${GREEN}PASS${NC}: shell_exec ran with the service token"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: shell_exec did not run with the service token"
+        echo "    Output: $st_sh"
         TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 fi  # end service-token tier

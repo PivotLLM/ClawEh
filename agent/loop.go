@@ -14,11 +14,14 @@ import (
 	"github.com/PivotLLM/cogmem/consolidate"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/dump"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/msgtoken"
@@ -30,11 +33,13 @@ import (
 )
 
 type AgentLoop struct {
-	bus             *bus.MessageBus
-	cfg             *config.Config
-	registry        *AgentRegistry
-	state           *state.Manager
-	running         atomic.Bool
+	bus      *bus.MessageBus
+	cfg      *config.Config
+	registry *AgentRegistry
+	running  atomic.Bool
+	// started is closed once Run has begun serving (see Started).
+	started         chan struct{}
+	startedOnce     sync.Once
 	contextManagers sync.Map
 	fallback        *providers.FallbackChain
 	channelManager  *channels.Manager
@@ -43,9 +48,12 @@ type AgentLoop struct {
 	cmdRegistry     *commands.Registry
 	mcp             mcpRuntime
 	mu              sync.RWMutex
-	// Track active requests for safe provider cleanup
+	// activeRequests counts the turns and model calls in flight, for WaitTurns.
 	activeRequests sync.WaitGroup
-	dispatcher     *providers.ProviderDispatcher
+	// modelCalls counts the model calls in flight per provider, for
+	// closeReplacedProvider.
+	modelCalls providerCalls
+	dispatcher *providers.ProviderDispatcher
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
@@ -61,7 +69,11 @@ type AgentLoop struct {
 	// are minted/revoked from the WebUI. The same instance is shared with the API
 	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
 	namedTokens *msgtoken.NamedStore
-	agentStates map[string]*state.Manager // agentID -> per-agent state manager
+	// agentStates holds the restart-recovery state managers of config
+	// agents, by workspace (one manager per state file), made on first use so
+	// an agent a reload adds gets one too. Guarded by agentStatesMu.
+	agentStatesMu sync.Mutex
+	agentStates   map[string]*state.Manager
 	// sessions holds the per-session dispatch state (session scope key →
 	// *sessionState): the goroutine running the session's turns, the messages
 	// queued behind it and the /cancel bookkeeping. The scope key is resolved via
@@ -77,7 +89,7 @@ type AgentLoop struct {
 	// spend sums dispatch cost per UTC day for the daily-spend alert.
 	spend         dailySpend
 	lastSelfClear sync.Map // session key → time.Time, rate-limits session_clear
-	dumpsDir      string
+	dumpsDir      dump.Dir
 	startedAt     time.Time
 
 	// activeModelIdx caches the per-session active model index (write-through to
@@ -120,26 +132,93 @@ type AgentLoop struct {
 
 	// Background-task supervision. taskLive is the process-shared running-task
 	// set, shared by every per-agent SubagentManager (across reloads) so the
-	// supervisor never relaunches a task that is still running. spawnManagers maps
-	// agentID → its current manager (rebuilt on each registerRuntimeTools), used
-	// by the supervisor to scan/relaunch interrupted tasks. superStop is closed by
-	// Close() to stop the supervisor goroutine.
-	taskLive      *toolsagents.LiveSet
-	spawnMu       sync.Mutex
-	spawnManagers map[string]*toolsagents.SubagentManager
-	superStop     chan struct{}
+	// supervisor never relaunches a task that is still running. Each config
+	// agent's current manager hangs off its instance (spawnMgr). superStop is
+	// closed by Close() to stop the supervisor goroutine.
+	taskLive  *toolsagents.LiveSet
+	superStop chan struct{}
+
+	// sweepWG tracks the temporary-agent sweeper, stopped by evictStop.
+	sweepWG sync.WaitGroup
+
+	// extraTools are the host-built tools added with RegisterTool, kept so a
+	// temporary agent created later gets them too.
+	extraToolsMu sync.Mutex
+	extraTools   []tools.Tool
 
 	// stopRun cancels the context Run derives for every turn it starts, with
 	// errShuttingDown as the cause; set by Run, called by Stop. Guarded by
 	// runMu.
 	runMu   sync.Mutex
 	stopRun context.CancelCauseFunc
+	// runCtx is the context Run serves under (nil until Run), for background
+	// work that must stop with the service (/ask). Guarded by runMu.
+	runCtx context.Context
+
+	// asks are the asks (Ask) waiting for their reply; whispers the messages
+	// held for each agent's next message (Whisper).
+	asks     askRegistry
+	whispers whisperStore
+	waits    waitGraph
+
+	// humans holds the requests waiting for a person's answer (human agents).
+	humans humanDesk
+	// clock is what the loop's timing runs on: the turn budget, the asks,
+	// the requests to people, retry backoffs, the session pruners, the
+	// temporary-agent sweep (through registryClock) and the wait for a
+	// replaced provider (nil: the system clock). Tests substitute a
+	// clock.Fake; it is set before the loop runs anything and never after.
+	clock clock.Clock
+	// onWait, when set (tests only), is called as a turn starts to wait for
+	// a resource another holds: a concurrent-turn slot, or a person busy
+	// with another request. Like clock it is set before the loop runs
+	// anything and never after, so turns read it without a lock.
+	onWait func(waitKind)
+	// dismisser clears a chat's indicators for a person's answer, which gets
+	// no reply of its own: the channel manager (SetChannelManager); tests
+	// substitute a fake.
+	dismisser inboundDismisser
+}
+
+// clk is the clock the loop's timing runs on (AgentLoop.clock).
+func (al *AgentLoop) clk() clock.Clock { return clock.Or(al.clock) }
+
+// registryClock is the loop's clock as the agent registry's: each call goes
+// to the clock the loop has at that moment, so a test that puts a fake on
+// the loop after building it also moves the registry's idle times and sweep.
+type registryClock struct{ al *AgentLoop }
+
+func (c registryClock) Now() time.Time                         { return c.al.clk().Now() }
+func (c registryClock) Since(t time.Time) time.Duration        { return c.al.clk().Since(t) }
+func (c registryClock) Until(t time.Time) time.Duration        { return c.al.clk().Until(t) }
+func (c registryClock) Sleep(d time.Duration)                  { c.al.clk().Sleep(d) }
+func (c registryClock) After(d time.Duration) <-chan time.Time { return c.al.clk().After(d) }
+func (c registryClock) NewTimer(d time.Duration) clock.Timer   { return c.al.clk().NewTimer(d) }
+func (c registryClock) NewTicker(d time.Duration) clock.Ticker { return c.al.clk().NewTicker(d) }
+
+func (c registryClock) AfterFunc(d time.Duration, f func()) clock.Timer {
+	return c.al.clk().AfterFunc(d, f)
+}
+
+func (c registryClock) WithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return c.al.clk().WithTimeout(parent, d)
+}
+
+func (c registryClock) WithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return c.al.clk().WithDeadline(parent, deadline)
 }
 
 // errShuttingDown is the cause Stop gives the turn context. A turn ended by it
 // is an interrupted turn: no reply is sent and its pending-turn flag is kept,
 // so it is replayed when the gateway starts again.
-var errShuttingDown = errors.New("claw shutting down")
+var errShuttingDown = errors.New("the service is shutting down")
+
+// stoppedOnPurpose reports whether ctx was cancelled on purpose: by /cancel,
+// or because the asker of the turn stopped waiting for it.
+func stoppedOnPurpose(ctx context.Context) bool {
+	cause := context.Cause(ctx)
+	return errors.Is(cause, errCancelledByUser) || errors.Is(cause, errAskerStopped)
+}
 
 // shuttingDown reports whether ctx was cancelled by Stop.
 func shuttingDown(ctx context.Context) bool {
@@ -162,11 +241,25 @@ type SessionTokenIssuer interface {
 	// tool's ForUser payload back to the originating user. No-op when the
 	// sessionKey is unknown.
 	SetSource(sessionKey, channel, chatID string)
+	// SetDepth records the sub-agent depth of the turn starting on sessionKey,
+	// so MCP tool calls made with the session's token (CLI providers) run at
+	// it. No-op when the sessionKey is unknown.
+	SetDepth(sessionKey string, depth int)
+	// SetTurnScope records the ask chain of the turn starting on sessionKey
+	// (see tools.AskChain), so MCP tool calls made with the session's token
+	// carry it. No-op when the sessionKey is unknown.
+	SetTurnScope(sessionKey string, askChain []string)
+	// Source returns the source SetSource last recorded for sessionKey (empty
+	// when none or unknown).
+	Source(sessionKey string) (channel, chatID string)
 }
+
+// publishTimeout bounds handing one message to the bus, so a full queue
+// delays a turn or a background delivery by at most this much.
+const publishTimeout = 5 * time.Second
 
 const (
 	defaultResponse               = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
-	sessionKeyAgentPrefix         = "agent:"
 	metadataKeyAccountID          = "account_id"
 	metadataKeyGuildID            = "guild_id"
 	metadataKeyTeamID             = "team_id"
@@ -175,41 +268,39 @@ const (
 	metadataKeyPreresolvedAgentID = "preresolved_agent_id"
 )
 
+// LoopOption configures NewAgentLoop.
+type LoopOption func(*loopOptions)
+
+type loopOptions struct {
+	ownsDataDir bool
+}
+
+// OwnsDataDir marks the loop as the data directory's owner: the process that
+// holds claw.lock (the gateway). Only the owner restores the saved temporary
+// agents at start, removes stale temporary-agent directories and writes
+// internal/temp_agents.json. Without it (`claw agent` running beside the
+// service) the loop's temporary agents are kept in memory only and the
+// service's are left alone.
+func OwnsDataDir() LoopOption { return func(o *loopOptions) { o.ownsDataDir = true } }
+
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
+	opts ...LoopOption,
 ) (*AgentLoop, error) {
+	var lo loopOptions
+	for _, opt := range opts {
+		opt(&lo)
+	}
 	// Route the context engine's logs into ours before anything constructs a
 	// session store or context manager.
 	InstallLogging()
 
-	registry, err := NewAgentRegistry(cfg, provider)
-	if err != nil {
-		return nil, err
-	}
-
 	// Set up shared fallback chain with the config-driven cooldown policy.
 	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
 	fallbackChain := providers.NewFallbackChain(cooldown)
-
-	// Create state manager using default agent's workspace for channel recording
-	defaultAgent := registry.GetDefaultAgent()
-	var stateManager *state.Manager
-	if defaultAgent != nil {
-		stateManager = state.NewManager(defaultAgent.Workspace)
-	}
-
-	// Build per-agent state managers and message-token managers.
-	agentStates := make(map[string]*state.Manager)
-
-	for _, agentID := range registry.ListAgentIDs() {
-		if agentInstance, ok := registry.GetAgent(agentID); ok {
-			agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-		}
-	}
-	messageManagers := buildMessageManagers(registry, cfg)
 
 	// Load the long-lived named message-API token store from the data dir. An
 	// empty data dir (only happens in tests that build a bare Config) yields an
@@ -241,18 +332,16 @@ func NewAgentLoop(
 	al := &AgentLoop{
 		bus:                   msgBus,
 		cfg:                   cfg,
-		registry:              registry,
-		state:                 stateManager,
 		fallback:              fallbackChain,
 		cooldown:              cooldown,
 		cmdRegistry:           commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:            dispatcher,
-		agentStates:           agentStates,
-		messageManagers:       messageManagers,
+		agentStates:           make(map[string]*state.Manager),
 		namedTokens:           namedTokens,
 		sessions:              make(map[string]*sessionState),
 		startedAt:             time.Now(),
 		evictStop:             make(chan struct{}),
+		started:               make(chan struct{}),
 		mcpRetryStop:          make(chan struct{}),
 		evictTTL:              defaultEvictTTL,
 		evictInterval:         defaultEvictInterval,
@@ -260,22 +349,44 @@ func NewAgentLoop(
 		exposeReasoningCache:  make(map[string]bool),
 		showToolActivityCache: make(map[string]bool),
 		taskLive:              toolsagents.NewLiveSet(),
-		spawnManagers:         make(map[string]*toolsagents.SubagentManager),
 		superStop:             make(chan struct{}),
 	}
 	if n := cfg.Agents.Defaults.MaxConcurrentTurns; n > 0 {
 		al.turnSem = make(chan struct{}, n)
 	}
 
-	// Register runtime-dependent tools via providers (session closures,
-	// spawn/subagent, msg with shared MessageTool).
-	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain, cfg)
+	// Build the registry: every config agent, then the temporary agents saved
+	// by the previous run. The builder registers each agent's tools (session
+	// closures, spawn/subagent, msg with shared MessageTool), so it runs once
+	// al exists.
+	registry, err := agentreg.New(cfg, agentreg.Hooks[*AgentInstance]{
+		Build:    al.agentBuilder(provider, dispatcher, fallbackChain),
+		Retire:   al.retireAgent,
+		Inserted: al.agentInserted,
+		Clock:    registryClock{al},
+		Owner:    lo.ownsDataDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	al.registry = registry
+
+	// Per-agent state managers and message-token managers: config agents only.
+	for _, agentID := range registry.List() {
+		al.stateManager(agentID)
+	}
+	al.messageManagers = buildMessageManagers(registry, cfg)
 
 	return al, nil
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
+	al.startedOnce.Do(func() {
+		if al.started != nil {
+			close(al.started)
+		}
+	})
 
 	// Every turn runs under this context, so Stop can abort the model requests,
 	// CLI subprocesses and tool calls still in flight.
@@ -283,6 +394,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	defer stopRun(nil)
 	al.runMu.Lock()
 	al.stopRun = stopRun
+	al.runCtx = ctx
 	al.runMu.Unlock()
 
 	if err := al.ensureMCPInitialized(ctx); err != nil {
@@ -294,6 +406,12 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Drop dispatch state for sessions that have been idle for an hour.
 	go al.pruneSessions()
+
+	// Delete temporary agents idle past their TTL (and any the configuration
+	// can no longer build). One pass now catches those that expired while the
+	// process was down.
+	al.registry.Sweep(al.clk().Now())
+	al.sweepWG.Go(func() { al.registry.RunSweeper(al.evictStop, agentreg.SweepInterval) })
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).
@@ -314,12 +432,34 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-			al.activeRequests.Add(1)
-			go al.processSessionMessage(ctx, msg)
+			al.dispatchInbound(ctx, msg)
 		}
 	}
 
 	return nil
+}
+
+// Started is closed once Run has begun: from then on asks are accepted
+// (the forum resumes its forums only after that).
+func (al *AgentLoop) Started() <-chan struct{} { return al.started }
+
+// runContext is the context Run serves under, or nil before Run.
+func (al *AgentLoop) runContext() context.Context {
+	al.runMu.Lock()
+	defer al.runMu.Unlock()
+	return al.runCtx
+}
+
+// dispatchInbound hands one inbound message to its session goroutine. A
+// person's answer to a waiting request is taken here instead, in arrival
+// order, before any goroutine could race it (human agents); a message that
+// finds nothing waiting here is never retried as an answer later.
+func (al *AgentLoop) dispatchInbound(ctx context.Context, msg bus.InboundMessage) {
+	if al.takeHumanAnswer(ctx, msg) {
+		return
+	}
+	al.activeRequests.Add(1)
+	go al.processSessionMessage(ctx, msg)
 }
 
 // Stop ends Run and cancels the turns in flight. A cancelled turn is left
@@ -331,6 +471,24 @@ func (al *AgentLoop) Stop() {
 	al.runMu.Unlock()
 	if stopRun != nil {
 		stopRun(errShuttingDown)
+	}
+}
+
+// WaitTurns blocks until every turn and model request the loop started has
+// returned, or until ctx ends, whose error it then returns. Call it after Stop
+// and after Run has returned: a turn Stop cancelled may still be unwinding
+// and writing to its session.
+func (al *AgentLoop) WaitTurns(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		al.activeRequests.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -387,6 +545,9 @@ func (al *AgentLoop) Close(ctx context.Context) {
 		mgr.Stop()
 	}
 
+	// The sweeper stopped with evictStop; wait for a sweep in progress so it
+	// cannot close an agent the registry closes next. Close runs once.
+	al.sweepWG.Wait()
 	al.GetRegistry().Close()
 }
 
@@ -411,6 +572,9 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+	if cm != nil {
+		al.dismisser = cm
+	}
 }
 
 // ReloadProviderAndConfig atomically swaps the provider and config with proper synchronization.
@@ -429,89 +593,33 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return errors.New("config cannot be nil")
 	}
 
-	// Create new registry with updated config and provider
-	// Wrap in defer/recover to handle any panics gracefully
-	type registryResult struct {
-		registry *AgentRegistry
-		err      error
-	}
-	done := make(chan registryResult, 1)
-
-	go func() {
-		var res registryResult
-		defer func() {
-			if r := recover(); r != nil {
-				res.err = fmt.Errorf("panic during registry creation: %v", r)
-				logger.ErrorCF("agent", "Panic during registry creation",
-					map[string]any{"panic": r})
-			}
-			done <- res
-		}()
-		res.registry, res.err = NewAgentRegistry(cfg, provider)
-	}()
-
-	var registry *AgentRegistry
-	select {
-	case res := <-done:
-		if res.err != nil {
-			return fmt.Errorf("registry creation failed: %w", res.err)
-		}
-		if res.registry == nil {
-			return errors.New("registry creation failed (nil result)")
-		}
-		registry = res.registry
-	case <-ctx.Done():
-		return fmt.Errorf("context canceled during registry creation: %w", ctx.Err())
-	}
-
-	// Check context again before proceeding
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context canceled after registry creation: %w", err)
+		return fmt.Errorf("context canceled before registry creation: %w", err)
 	}
 
-	// Register tools on the freshly built registry with the full runtime deps —
-	// the same single registration the initial construction performs. Without
-	// this, reloaded agents would have an empty tool set (NewAgentInstance no
-	// longer registers anything). The new fallback chain is built here so it is
-	// shared between the registered spawn tools and the swapped-in al.fallback.
-	// Reuse the existing cooldown tracker so its state (notably out-of-credits
-	// parks) PERSISTS across the reload; only refresh its policy from the new
-	// config. The shared tracker continues to back both the new fallback chain
-	// and the rebuilt compaction managers.
+	registry := al.GetRegistry()
+	oldProvider, hadProvider := extractProvider(registry)
+
+	// The new fallback chain is built here so it is shared between the tools the
+	// rebuilt agents register and the swapped-in al.fallback. Reuse the existing
+	// cooldown tracker so its state (notably out-of-credits parks) PERSISTS
+	// across the reload; only refresh its policy from the new config. The shared
+	// tracker continues to back both the new fallback chain and the rebuilt
+	// compaction managers.
 	al.cooldown.SetPolicy(cooldownPolicy(cfg))
 	newFallback := providers.NewFallbackChain(al.cooldown)
-	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback, cfg)
 
-	// Rebuild callback managers against the new registry/config and wire them onto
-	// the new ContextBuilders. Without this, reloaded agents get no callback token
-	// injected, and the stale managers would keep validating tokens against the
-	// OLD config (e.g. an agent whose callbacks were since disabled).
-	newCallbackManagers := buildMessageManagers(registry, cfg)
-
-	// Atomically swap the config and registry under write lock
-	// This ensures readers see a consistent pair
-	al.mu.Lock()
-	oldRegistry := al.registry
-	oldCallbackManagers := al.messageManagers
-
-	// Store new values
-	al.cfg = cfg
-	al.registry = registry
-	al.messageManagers = newCallbackManagers
-
-	// Also update fallback chain with new config (same chain used for the tools
-	// just registered above). al.cooldown is unchanged — the same shared tracker
-	// persists across reload and backs both the chain and the rebuilt compaction
-	// managers.
-	al.fallback = newFallback
-
-	al.mu.Unlock()
-
-	// Stop the superseded callback managers (their tokens persist on disk and are
-	// reloaded by the rebuilt manager for still-enabled agents).
-	for _, mgr := range oldCallbackManagers {
-		mgr.Stop()
+	if err := al.reloadRegistry(ctx, registry, provider, cfg, newFallback); err != nil {
+		return err
 	}
+
+	// Whispers held for an agent the new configuration removed are dropped;
+	// rebuilt agents keep theirs.
+	al.whispers.prune(func(id string) bool {
+		_, ok := registry.Get(id)
+		return ok
+	})
+	al.replaceMessageManagers(registry, cfg)
 
 	// Flush the dispatcher cache so stale providers are evicted on config reload.
 	if al.dispatcher != nil {
@@ -524,24 +632,8 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// session token until released, then rebuild on their next access.
 	al.invalidateContextManagers(ctx)
 
-	// Close old provider after releasing the lock
-	// This prevents blocking readers while closing
-	if oldProvider, ok := extractProvider(oldRegistry); ok {
-		if stateful, ok := oldProvider.(providers.StatefulProvider); ok {
-			waitDone := make(chan struct{})
-			go func() {
-				al.activeRequests.Wait()
-				close(waitDone)
-			}()
-			select {
-			case <-waitDone:
-			case <-time.After(30 * time.Second):
-				logger.WarnCF("agent", "Timeout waiting for in-flight requests during provider close; forcing close", nil)
-			case <-ctx.Done():
-				logger.WarnCF("agent", "Context canceled waiting for in-flight requests; forcing close", nil)
-			}
-			stateful.Close()
-		}
+	if hadProvider {
+		al.closeReplacedProvider(ctx, oldProvider)
 	}
 
 	logger.InfoCF("agent", "Provider and config reloaded successfully",
@@ -550,6 +642,116 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		})
 
 	return nil
+}
+
+// reloadRegistry rebuilds every agent against the new config and provider
+// (config agents from the config, temporary agents against it too), each
+// with its tools registered the same way as at start. Nothing changes until
+// all are built; then the registry swaps them in one step and, in the same
+// step, the config and fallback chain are swapped here, so readers see a
+// consistent pair. A ctx that ends first returns at once: the rebuild is
+// abandoned (the commit refuses) and closes what it built. Whichever of the
+// commit and the abandonment comes first wins. Panics are recovered and
+// reported as a failed reload.
+func (al *AgentLoop) reloadRegistry(
+	ctx context.Context,
+	registry *AgentRegistry,
+	provider providers.LLMProvider,
+	cfg *config.Config,
+	newFallback *providers.FallbackChain,
+) error {
+	const (
+		reloadPending int32 = iota
+		reloadCommitted
+		reloadAbandoned
+	)
+	var outcome atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic during registry creation: %v", r)
+				logger.ErrorCF("agent", "Panic during registry creation",
+					map[string]any{"panic": r})
+			}
+			done <- err
+		}()
+		err = registry.Reload(ctx, cfg, al.agentBuilder(provider, al.dispatcher, newFallback), func() bool {
+			if !outcome.CompareAndSwap(reloadPending, reloadCommitted) {
+				return false
+			}
+			al.mu.Lock()
+			al.cfg = cfg
+			al.fallback = newFallback
+			al.mu.Unlock()
+			return true
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("registry creation failed: %w", err)
+		}
+	case <-ctx.Done():
+		if outcome.CompareAndSwap(reloadPending, reloadAbandoned) {
+			return fmt.Errorf("context canceled during registry creation: %w", ctx.Err())
+		}
+		// The swap already happened: finish the reload.
+		if err := <-done; err != nil {
+			return fmt.Errorf("registry creation failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// replaceMessageManagers rebuilds the callback managers against the new
+// registry and config, so tokens are no longer validated against the old
+// config (e.g. an agent whose callbacks were since disabled), and stops the
+// superseded ones. Their tokens persist on disk and are reloaded by the
+// rebuilt manager for still-enabled agents.
+func (al *AgentLoop) replaceMessageManagers(registry *AgentRegistry, cfg *config.Config) {
+	newCallbackManagers := buildMessageManagers(registry, cfg)
+	al.mu.Lock()
+	oldCallbackManagers := al.messageManagers
+	al.messageManagers = newCallbackManagers
+	al.mu.Unlock()
+	for _, mgr := range oldCallbackManagers {
+		mgr.Stop()
+	}
+}
+
+// providerCloseWait bounds how long closeReplacedProvider waits for the
+// calls still in flight on the replaced provider.
+const providerCloseWait = 30 * time.Second
+
+// closeReplacedProvider closes the provider the reload replaced, once the
+// model calls in flight on it have finished (at most providerCloseWait on
+// the loop's clock, or until ctx ends). It runs after the swap, so readers
+// are never blocked by it, and it leaves nothing running behind it.
+func (al *AgentLoop) closeReplacedProvider(ctx context.Context, oldProvider providers.LLMProvider) {
+	stateful, ok := oldProvider.(providers.StatefulProvider)
+	if !ok {
+		return
+	}
+	timer := al.clk().NewTimer(providerCloseWait)
+	defer timer.Stop()
+	select {
+	case <-al.modelCalls.idle(oldProvider):
+	case <-timer.C():
+		logger.WarnCF("agent", "Timeout waiting for in-flight requests during provider close; forcing close", nil)
+	case <-ctx.Done():
+		logger.WarnCF("agent", "Context canceled waiting for in-flight requests; forcing close", nil)
+	}
+	stateful.Close()
+}
+
+// fallbackChain returns the current fallback chain (thread-safe); a reload
+// replaces it.
+func (al *AgentLoop) fallbackChain() *providers.FallbackChain {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return al.fallback
 }
 
 // cooldownTracker returns the shared cooldown tracker (thread-safe). Compaction
@@ -580,15 +782,35 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 
 	// Propagate store to send_file / msg_send_file tools in all agents.
 	registry := al.GetRegistry()
-	type mediaStoreSetter interface {
-		SetMediaStore(store media.MediaStore)
-	}
-	for _, toolName := range []string{"send_file", "msg_send_file"} {
-		registry.ForEachTool(toolName, func(t tools.Tool) {
+	for _, toolName := range mediaStoreTools {
+		forEachTool(registry, toolName, func(t tools.Tool) {
 			if sf, ok := t.(mediaStoreSetter); ok {
 				sf.SetMediaStore(s)
 			}
 		})
+	}
+}
+
+// mediaStoreSetter is a tool that sends files and needs the media store.
+type mediaStoreSetter interface {
+	SetMediaStore(store media.MediaStore)
+}
+
+// mediaStoreTools are the tools SetMediaStore wires.
+var mediaStoreTools = []string{"send_file", "msg_send_file"}
+
+// applyMediaStore gives one agent's file-sending tools the media store, for an
+// agent built after SetMediaStore ran. No-op before it runs.
+func (al *AgentLoop) applyMediaStore(agent *AgentInstance) {
+	if al.mediaStore == nil {
+		return
+	}
+	for _, toolName := range mediaStoreTools {
+		if t, ok := agent.Tools.Get(toolName); ok {
+			if sf, ok := t.(mediaStoreSetter); ok {
+				sf.SetMediaStore(al.mediaStore)
+			}
+		}
 	}
 }
 
@@ -598,15 +820,15 @@ func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 }
 
 // SetDumpsDir configures the directory where diagnostic dump files are written.
-// An empty string disables dumping.
-func (al *AgentLoop) SetDumpsDir(dir string) { al.dumpsDir = dir }
+// An empty Path disables dumping.
+func (al *AgentLoop) SetDumpsDir(dir dump.Dir) { al.dumpsDir = dir }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
 func (al *AgentLoop) GetStartupInfo() map[string]any {
 	info := make(map[string]any)
 
 	registry := al.GetRegistry()
-	agent := registry.GetDefaultAgent()
+	agent := registry.Default()
 	if agent == nil {
 		return info
 	}
@@ -623,8 +845,8 @@ func (al *AgentLoop) GetStartupInfo() map[string]any {
 
 	// Agents info
 	info["agents"] = map[string]any{
-		"count": len(registry.ListAgentIDs()),
-		"ids":   registry.ListAgentIDs(),
+		"count": len(registry.List()),
+		"ids":   registry.List(),
 	}
 
 	return info

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -30,9 +31,7 @@ type modelResponse struct {
 	Model     string `json:"model"`
 	Provider  string `json:"provider"`
 	// Advanced fields
-	ConnectMode    string `json:"connect_mode,omitempty"`
 	Workspace      string `json:"workspace,omitempty"`
-	RPM            int    `json:"rpm,omitempty"`
 	MaxTokens      int    `json:"max_tokens,omitempty"`
 	ContextWindow  int    `json:"context_window,omitempty"` // tokens; 0 = use the agent default
 	MaxTokensField string `json:"max_tokens_field,omitempty"`
@@ -86,9 +85,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			ModelName:         m.ModelName,
 			Model:             m.Model,
 			Provider:          m.Provider,
-			ConnectMode:       m.ConnectMode,
 			Workspace:         m.Workspace,
-			RPM:               m.RPM,
 			MaxTokens:         m.MaxTokens,
 			ContextWindow:     m.ContextWindow,
 			MaxTokensField:    m.MaxTokensField,
@@ -111,6 +108,9 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 		"models":        models,
 		"total":         len(models),
 		"default_model": defaultModel,
+		// The effective turn budget in seconds, so the page can note a request
+		// timeout that a turn never lets run to its end.
+		"turn_timeout": int(cfg.Agents.Defaults.GetTurnTimeout() / time.Second),
 	})
 }
 
@@ -208,7 +208,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		cfg.Models[idx] = mc
 
 		// If the alias was renamed, repoint every reference (agent defaults,
-		// per-agent chains, routing, image models, summarization) so nothing orphans.
+		// per-agent chains, routing, vision models, summarization) so nothing orphans.
 		if mc.ModelName != oldName {
 			cfg.RenameModelReferences(oldName, mc.ModelName)
 		}

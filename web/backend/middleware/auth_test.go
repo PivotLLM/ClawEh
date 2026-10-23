@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,8 +48,8 @@ func okHandler() http.Handler {
 
 // authHandler wires the middleware the way httpHost does, with a fixed store
 // and exempt set.
-func authHandler(store *AuthStore, exempt *AuthExempt) http.Handler {
-	return Auth(func() *AuthStore { return store }, func() *AuthExempt { return exempt }, okHandler())
+func authHandler(store *AuthStore) http.Handler {
+	return Auth(func() *AuthStore { return store }, okHandler())
 }
 
 func serve(h http.Handler, method, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -73,7 +72,7 @@ func TestAuthStore_NoFileIsUnconfigured(t *testing.T) {
 		t.Fatal("Login succeeded with no credentials file")
 	}
 
-	rec := serve(authHandler(s, nil), http.MethodGet, "/api/config", nil)
+	rec := serve(authHandler(s), http.MethodGet, "/api/config", nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
@@ -255,8 +254,7 @@ func TestAuthStore_WatchReloadsOnFileChange(t *testing.T) {
 
 func TestAuth_ExemptPathsPassWithoutSession(t *testing.T) {
 	s := NewAuthStore(admin.Path(t.TempDir())) // no account at all: the strictest state
-	exempt := CompileAuthExempt("/webhook/line")
-	h := authHandler(s, exempt)
+	h := authHandler(s)
 
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/health"},
@@ -268,7 +266,6 @@ func TestAuth_ExemptPathsPassWithoutSession(t *testing.T) {
 		{http.MethodPost, "/api/auth/login"},
 		{http.MethodPost, "/api/auth/logout"},
 		{http.MethodGet, "/api/auth/status"},
-		{http.MethodPost, "/webhook/line"},
 		// The SPA shell and assets: no secrets, and where the login page lives.
 		{http.MethodGet, "/"},
 		{http.MethodGet, "/login"},
@@ -287,28 +284,22 @@ func TestAuth_ExemptPathsPassWithoutSession(t *testing.T) {
 		{http.MethodGet, "/api/message/abcdef"}, // only POST is the token API
 		{http.MethodGet, "/api/auth/login"},     // only POST is exempt
 		{http.MethodGet, "/webui/ws"},
+		{http.MethodGet, "/manual"},
+		{http.MethodGet, "/manual/"},
+		{http.MethodHead, "/manual/getting-started/overview.html"},
 		{http.MethodPost, "/"},
 		{http.MethodPost, "/webhook/slack"},
+		{http.MethodPost, "/webhook/line"},
 		{http.MethodGet, "/api/v1x"},
 	} {
 		if rec := serve(h, tc.method, tc.path, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)
 		}
 	}
-
-	// A nil exempt set (before ApplyPolicy) still exempts the built-in list
-	// and nothing else.
-	h = authHandler(s, nil)
-	if rec := serve(h, http.MethodGet, "/health", nil); rec.Code != http.StatusOK {
-		t.Errorf("nil exempt: /health = %d", rec.Code)
-	}
-	if rec := serve(h, http.MethodPost, "/webhook/line", nil); rec.Code != http.StatusUnauthorized {
-		t.Errorf("nil exempt: /webhook/line = %d, want 401", rec.Code)
-	}
 }
 
 func TestAuth_NilStoreFailsClosed(t *testing.T) {
-	h := Auth(func() *AuthStore { return nil }, func() *AuthExempt { return nil }, okHandler())
+	h := Auth(func() *AuthStore { return nil }, okHandler())
 	if rec := serve(h, http.MethodGet, "/api/config", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
@@ -319,7 +310,7 @@ func TestAuth_NilStoreFailsClosed(t *testing.T) {
 
 func TestAuth_SessionCookieAdmitsEitherName(t *testing.T) {
 	s := NewAuthStore(writeCreds(t))
-	h := authHandler(s, nil)
+	h := authHandler(s)
 	id, _ := s.Login(testUser, testPass)
 
 	for _, name := range []string{SessionCookieSecure, SessionCookieInsecure} {
@@ -330,6 +321,10 @@ func TestAuth_SessionCookieAdmitsEitherName(t *testing.T) {
 		rec = serve(h, http.MethodGet, "/webui/ws", &http.Cookie{Name: name, Value: id})
 		if rec.Code != http.StatusOK {
 			t.Errorf("cookie %s on /webui/ws: status = %d, want 200", name, rec.Code)
+		}
+		rec = serve(h, http.MethodGet, "/manual/", &http.Cookie{Name: name, Value: id})
+		if rec.Code != http.StatusOK {
+			t.Errorf("cookie %s on /manual/: status = %d, want 200", name, rec.Code)
 		}
 	}
 	rec := serve(h, http.MethodGet, "/api/config", &http.Cookie{Name: SessionCookieInsecure, Value: "forged"})
@@ -345,7 +340,7 @@ func TestAuth_SetsAuditActor(t *testing.T) {
 	s := NewAuthStore(writeCreds(t))
 	id, _ := s.Login(testUser, testPass)
 	var actor string
-	h := Auth(func() *AuthStore { return s }, func() *AuthExempt { return nil },
+	h := Auth(func() *AuthStore { return s },
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			actor = audit.ActorFromContext(r.Context())
 		}))
@@ -392,16 +387,5 @@ func TestSessionCookie_NameAndSecureFollowTransport(t *testing.T) {
 		if c.MaxAge >= 0 {
 			t.Errorf("cleared cookie %s has MaxAge %d", c.Name, c.MaxAge)
 		}
-	}
-}
-
-func TestCompileAuthExempt_IgnoresBlankPatterns(t *testing.T) {
-	e := CompileAuthExempt("", "  ", "/webhook/line")
-	r := httptest.NewRequest(http.MethodPost, "/webhook/line", nil)
-	if !e.Matches(r) {
-		t.Fatal("extra pattern not exempt")
-	}
-	if e.Matches(httptest.NewRequest(http.MethodGet, filepath.Join("/", "api", "config"), nil)) {
-		t.Fatal("/api/config exempt")
 	}
 }

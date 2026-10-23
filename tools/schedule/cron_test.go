@@ -12,23 +12,23 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// testConfig builds a config where amber and karen each have a concrete default
+// testConfig builds a config where alice and bob each have a concrete default
 // channel, boss has global_cron (may schedule for others), and nodefault has a
 // binding that is NOT marked default (so it has no delivery channel).
 func testConfig() *config.Config {
 	peer := func(id string) *config.PeerMatch { return &config.PeerMatch{Kind: "channel", ID: id} }
 	return &config.Config{
 		Bindings: []config.AgentBinding{
-			{AgentID: "amber", Default: true, Match: config.BindingMatch{Channel: "telegram-Amber", Peer: peer("chat-amber")}},
-			{AgentID: "karen", Default: true, Match: config.BindingMatch{Channel: "telegram-Karen", Peer: peer("chat-karen")}},
+			{AgentID: "alice", Default: true, Match: config.BindingMatch{Channel: "telegram-Alice", Peer: peer("chat-alice")}},
+			{AgentID: "bob", Default: true, Match: config.BindingMatch{Channel: "telegram-Bob", Peer: peer("chat-bob")}},
 			{AgentID: "tester", Default: true, Match: config.BindingMatch{Channel: "cli", Peer: peer("direct")}},
-			// penny: a Telegram-style default — channel-only binding (no peer) plus
+			// third: a Telegram-style default — channel-only binding (no peer) plus
 			// an explicit DeliverTo chat id.
-			{AgentID: "penny", Default: true, DeliverTo: "12345", Match: config.BindingMatch{Channel: "telegram-Penny"}},
+			{AgentID: "third", Default: true, DeliverTo: "12345", Match: config.BindingMatch{Channel: "telegram-Third"}},
 			{AgentID: "nodefault", Match: config.BindingMatch{Channel: "slack", Peer: peer("c1")}},
 		},
 		Agents: config.AgentsConfig{List: []config.AgentConfig{
-			{ID: "amber"}, {ID: "karen"}, {ID: "tester"}, {ID: "penny"}, {ID: "boss", GlobalCron: true}, {ID: "nodefault"},
+			{ID: "alice"}, {ID: "bob"}, {ID: "tester"}, {ID: "third"}, {ID: "boss", GlobalCron: true}, {ID: "nodefault"},
 		}},
 	}
 }
@@ -70,7 +70,7 @@ func TestCronTool_AddRequiresDefaultChannel(t *testing.T) {
 // ExecuteJob resolves the agent's default channel at fire time.
 func TestCronTool_AddAddressesAgent(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(agentCtx("amber"), map[string]any{
+	result := tool.Execute(agentCtx("alice"), map[string]any{
 		"action":     "add",
 		"message":    "time to stretch",
 		"at_seconds": float64(600),
@@ -83,15 +83,15 @@ func TestCronTool_AddAddressesAgent(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}
-	if jobs[0].AgentID != "amber" {
-		t.Fatalf("job should be addressed to amber, got %q", jobs[0].AgentID)
+	if jobs[0].AgentID != "alice" {
+		t.Fatalf("job should be addressed to alice, got %q", jobs[0].AgentID)
 	}
 	if jobs[0].Payload.Channel != "" || jobs[0].Payload.To != "" {
 		t.Fatalf("destination must be resolved at fire time, not stored; got %s/%s",
 			jobs[0].Payload.Channel, jobs[0].Payload.To)
 	}
 
-	// Fire it: delivery resolves amber's default channel.
+	// Fire it: delivery resolves alice's default channel.
 	out, err := tool.ExecuteJob(context.Background(), &jobs[0])
 	if err != nil || out != "ok" {
 		t.Fatalf("ExecuteJob = %q, %v, want ok", out, err)
@@ -103,24 +103,24 @@ func TestCronTool_AddAddressesAgent(t *testing.T) {
 func TestCronTool_CrossAgentRequiresGlobalCron(t *testing.T) {
 	tool := newTestCronTool(t)
 
-	// amber (no global_cron) targeting karen → denied.
-	denied := tool.Execute(agentCtx("amber"), map[string]any{
-		"action": "add", "agent": "karen", "message": "x", "at_seconds": float64(60),
+	// alice (no global_cron) targeting bob → denied.
+	denied := tool.Execute(agentCtx("alice"), map[string]any{
+		"action": "add", "agent": "bob", "message": "x", "at_seconds": float64(60),
 	})
 	if !denied.IsError || !strings.Contains(denied.ForLLM, "global_cron") {
 		t.Fatalf("cross-agent without global_cron should be denied, got: isErr=%v %s", denied.IsError, denied.ForLLM)
 	}
 
-	// boss (global_cron) targeting karen → allowed, job addressed to karen.
+	// boss (global_cron) targeting bob → allowed, job addressed to bob.
 	ok := tool.Execute(agentCtx("boss"), map[string]any{
-		"action": "add", "agent": "karen", "message": "weekly report", "every_seconds": float64(3600),
+		"action": "add", "agent": "bob", "message": "weekly report", "every_seconds": float64(3600),
 	})
 	if ok.IsError {
-		t.Fatalf("boss scheduling for karen should succeed, got: %s", ok.ForLLM)
+		t.Fatalf("boss scheduling for bob should succeed, got: %s", ok.ForLLM)
 	}
 	jobs := tool.cronService.ListJobs(true)
-	if len(jobs) != 1 || jobs[0].AgentID != "karen" {
-		t.Fatalf("job should be addressed to karen, got %+v", jobs)
+	if len(jobs) != 1 || jobs[0].AgentID != "bob" {
+		t.Fatalf("job should be addressed to bob, got %+v", jobs)
 	}
 }
 
@@ -129,18 +129,18 @@ func TestCronTool_CrossAgentRequiresGlobalCron(t *testing.T) {
 // schedule and fire — the cron deliver-to path.
 func TestCronTool_TelegramDeliverTo(t *testing.T) {
 	tool := newTestCronTool(t)
-	add := tool.Execute(agentCtx("penny"), map[string]any{
+	add := tool.Execute(agentCtx("third"), map[string]any{
 		"action": "add", "message": "drink water", "every_seconds": float64(3600),
 	})
 	if add.IsError {
-		t.Fatalf("penny add should succeed via deliver_to, got: %s", add.ForLLM)
+		t.Fatalf("third add should succeed via deliver_to, got: %s", add.ForLLM)
 	}
 	jobs := tool.cronService.ListJobs(true)
-	if len(jobs) != 1 || jobs[0].AgentID != "penny" {
-		t.Fatalf("expected one job addressed to penny, got %+v", jobs)
+	if len(jobs) != 1 || jobs[0].AgentID != "third" {
+		t.Fatalf("expected one job addressed to third, got %+v", jobs)
 	}
 	if out, err := tool.ExecuteJob(context.Background(), &jobs[0]); err != nil || out != "ok" {
-		t.Fatalf("penny job ExecuteJob = %q, want ok", out)
+		t.Fatalf("third job ExecuteJob = %q, want ok", out)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestCronTool_ExecuteJobOperatorFallback(t *testing.T) {
 // TestCronTool_GetJob returns full detail for one job and errors on a bad id.
 func TestCronTool_GetJob(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("amber")
+	ctx := agentCtx("alice")
 	add := tool.Execute(ctx, map[string]any{
 		"action": "add", "message": "daily standup reminder", "every_seconds": float64(3600),
 	})
@@ -196,35 +196,35 @@ func TestCronTool_GetJob(t *testing.T) {
 func TestCronTool_ScopedToAgent(t *testing.T) {
 	tool := newTestCronTool(t)
 
-	// Amber creates a job.
-	add := tool.Execute(agentCtx("amber"), map[string]any{
-		"action": "add", "message": "amber's reminder", "every_seconds": float64(3600),
+	// Alice creates a job.
+	add := tool.Execute(agentCtx("alice"), map[string]any{
+		"action": "add", "message": "alice's reminder", "every_seconds": float64(3600),
 	})
 	if add.IsError {
-		t.Fatalf("amber add failed: %s", add.ForLLM)
+		t.Fatalf("alice add failed: %s", add.ForLLM)
 	}
 	jobID := tool.cronService.ListJobs(true)[0].ID
 
-	// Karen cannot see it.
-	karen := agentCtx("karen")
-	list := tool.Execute(karen, map[string]any{"action": "list"})
+	// Bob cannot see it.
+	bob := agentCtx("bob")
+	list := tool.Execute(bob, map[string]any{"action": "list"})
 	if !strings.Contains(list.ForLLM, "No scheduled jobs") {
-		t.Fatalf("karen should see no jobs, got: %s", list.ForLLM)
+		t.Fatalf("bob should see no jobs, got: %s", list.ForLLM)
 	}
-	// Karen cannot get/remove/disable it (reported as not found).
+	// Bob cannot get/remove/disable it (reported as not found).
 	for _, action := range []string{"get", "remove", "disable"} {
-		res := tool.Execute(karen, map[string]any{"action": action, "job_id": jobID})
+		res := tool.Execute(bob, map[string]any{"action": action, "job_id": jobID})
 		if !res.IsError || !strings.Contains(res.ForLLM, "not found") {
-			t.Fatalf("karen %s on amber's job should be 'not found', got: isErr=%v %s",
+			t.Fatalf("bob %s on alice's job should be 'not found', got: isErr=%v %s",
 				action, res.IsError, res.ForLLM)
 		}
 	}
 
-	// Amber still sees and can remove her own job.
-	if l := tool.Execute(agentCtx("amber"), map[string]any{"action": "list"}); !strings.Contains(l.ForLLM, "amber's reminder") {
-		t.Fatalf("amber should see her own job, got: %s", l.ForLLM)
+	// Alice still sees and can remove her own job.
+	if l := tool.Execute(agentCtx("alice"), map[string]any{"action": "list"}); !strings.Contains(l.ForLLM, "alice's reminder") {
+		t.Fatalf("alice should see her own job, got: %s", l.ForLLM)
 	}
-	if r := tool.Execute(agentCtx("amber"), map[string]any{"action": "remove", "job_id": jobID}); r.IsError {
-		t.Fatalf("amber should be able to remove her own job, got: %s", r.ForLLM)
+	if r := tool.Execute(agentCtx("alice"), map[string]any{"action": "remove", "job_id": jobID}); r.IsError {
+		t.Fatalf("alice should be able to remove her own job, got: %s", r.ForLLM)
 	}
 }

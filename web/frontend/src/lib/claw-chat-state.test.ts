@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
-  clearStoredSessionId,
   generateSessionId,
   getInitialActiveSessionId,
   normalizeUnixTimestamp,
-  readStoredSessionId,
   writeStoredSessionId,
 } from "./claw-chat-state"
 
@@ -19,7 +17,7 @@ describe("stored session id", () => {
   it("round-trips through localStorage", () => {
     writeStoredSessionId("abc-123")
     expect(localStorage.getItem(KEY)).toBe("abc-123")
-    expect(readStoredSessionId()).toBe("abc-123")
+    expect(getInitialActiveSessionId()).toBe("abc-123")
   })
 
   // Writing "" is how the caller says "forget the session", so it must remove
@@ -29,25 +27,18 @@ describe("stored session id", () => {
     writeStoredSessionId("abc-123")
     writeStoredSessionId("")
     expect(localStorage.getItem(KEY)).toBeNull()
-    expect(readStoredSessionId()).toBe("")
-  })
-
-  it("clears explicitly", () => {
-    writeStoredSessionId("abc-123")
-    clearStoredSessionId()
-    expect(readStoredSessionId()).toBe("")
   })
 
   // A value that is only whitespace is not a usable session id; it would be
   // sent to the gateway as one and resolve to a session nobody owns.
   it("ignores a whitespace-only stored value", () => {
     localStorage.setItem(KEY, "   ")
-    expect(readStoredSessionId()).toBe("")
+    expect(getInitialActiveSessionId().trim()).not.toBe("")
   })
 
   it("trims a stored value", () => {
     localStorage.setItem(KEY, "  abc-123  ")
-    expect(readStoredSessionId()).toBe("abc-123")
+    expect(getInitialActiveSessionId()).toBe("abc-123")
   })
 
   // Private-browsing modes and blocked site data make localStorage throw or be
@@ -67,9 +58,8 @@ describe("stored session id", () => {
       configurable: true,
     })
     try {
-      expect(readStoredSessionId()).toBe("")
+      expect(getInitialActiveSessionId()).not.toBe("")
       expect(() => writeStoredSessionId("abc")).not.toThrow()
-      expect(() => clearStoredSessionId()).not.toThrow()
     } finally {
       if (descriptor) {
         Object.defineProperty(globalThis, "localStorage", descriptor)

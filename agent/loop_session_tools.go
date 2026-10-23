@@ -13,7 +13,7 @@ import (
 )
 
 // buildSessionInfo constructs session info for the given agent and session key.
-// Extracted so it can be reused by registerRuntimeTools in loop.go.
+// Extracted so it can be reused by registerAgentTools in loop_tools.go.
 func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*tools.SessionInfo, error) {
 	info := &tools.SessionInfo{
 		SessionKey: sessionKey,
@@ -46,7 +46,7 @@ func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*
 		}
 	}
 
-	archivePath := archiveDBPath(agent.Workspace, sessionKey)
+	archivePath := archiveDBPath(agent.StateDir, sessionKey)
 	if a, openErr := memory.OpenReadOnly(archivePath); openErr == nil {
 		defer utils.CloseQuietly(a)
 		minSeq, maxSeq, boundsErr := a.Bounds()

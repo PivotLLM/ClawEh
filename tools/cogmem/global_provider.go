@@ -9,9 +9,11 @@
 // aggregator publishes them under the "cogmem" namespace as
 // "cogmem_domain_get" and so on.
 //
-// Every tool operates on the agent's one memory, <workspace>/cogmem, shared by
-// all of its sessions. Cognitive memory is ON by default: every agent gets
-// these tools unless its `cogmem` flag is false.
+// Every tool operates on the agent's one memory, <state dir>/cogmem: the
+// workspace for a config agent, the agent's own directory for a temporary one
+// (a sub-agent clone works on its snapshot of its source's memory there, and
+// never reaches the source's). Cognitive memory is ON by default: every agent
+// gets these tools unless its `cogmem` flag is false.
 package cogmem
 
 import (
@@ -68,24 +70,30 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 		cfg = v
 	}
 
+	dir := cogmemhost.Dir(cd.EffectiveStateDir())
+	modes := config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	if cfg != nil {
+		modes = cfg.AgentModes(dir)
+	}
 	host := cogmemtools.Host{
-		Dir:       cogmemhost.Dir(workspace),
-		Workspace: workspace,
+		Dir:          dir,
+		Workspace:    workspace,
+		StoreOptions: cogmemhost.StoreOptions(modes),
 		CheckAttachment: func(ref string) (int64, error) {
 			return cogmemhost.Check(cfg, workspace, ref)
 		},
+	}
+	// An ephemeral memory (a sub-agent's snapshot of its source's memory) is
+	// never consolidated: nothing is observed into it and it is deleted with
+	// the sub-agent.
+	if !cd.EphemeralMemory {
 		// Read the trigger at call time, not registration time: the gateway
 		// installs it after the tool providers are registered.
-		Consolidate: func(agentID, sessionKey string) {
+		host.Consolidate = func(agentID, sessionKey string) {
 			if consolidateTrigger != nil {
 				consolidateTrigger(agentID, sessionKey)
 			}
-		},
+		}
 	}
-	// Sub-agents get the full cogmem toolset, including writes. Their memory is a
-	// snapshot copied onto the sub-agent session's own DB and deleted after the
-	// run (see agent.runSubagentTask), so any writes land on that throwaway copy
-	// and the primary's memory is never touched — the isolation, not tool
-	// withholding, is what protects it.
 	return cogmemtools.Definitions(host)
 }

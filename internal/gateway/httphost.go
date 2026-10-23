@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -32,7 +32,7 @@ const hstsHeader = "max-age=31536000"
 
 // defaultMaxBody caps the request body on every route without an entry in
 // bodyLimits. 1 MiB is far above any JSON the WebUI API accepts, and matches
-// the caps the message route and the LINE webhook already apply themselves.
+// the cap the message route already applies itself.
 const defaultMaxBody int64 = 1 << 20
 
 // bodyLimits are the routes that legitimately take more than defaultMaxBody,
@@ -49,6 +49,10 @@ var bodyLimits = []struct {
 	// POST /api/skills/import is a multipart upload whose file part the
 	// handler caps at 1 MiB; the rest is form framing.
 	{"/api/skills/import", 4 << 20},
+	// POST /api/cards/import is a multipart upload whose file part (a card
+	// as JSON or PNG) the handler caps at ccv3.MaxImportBytes; the rest is
+	// form framing.
+	{"/api/cards/import", ccv3.MaxImportBytes + 1<<20},
 }
 
 // maxBodyFor is the request body limit for path.
@@ -113,8 +117,12 @@ type httpHost struct {
 	opts    hostOptions
 	handler http.Handler // the shared chain, outermost first (see newHTTPHost)
 
-	mux         atomic.Pointer[http.ServeMux]
-	trusted     atomic.Pointer[config.TrustedProxySet]
+	mux     atomic.Pointer[http.ServeMux]
+	trusted atomic.Pointer[config.TrustedProxySet]
+	// proxyWatch records forwarded requests from an untrusted loopback peer
+	// (a proxy missing from gateway.trusted_proxies); Check Up and the
+	// Network page read it through the API handler.
+	proxyWatch  middleware.ProxyWatch
 	allow       atomic.Pointer[middleware.Allowlist]
 	hosts       atomic.Pointer[middleware.HostAllowlist]
 	crossOrigin atomic.Pointer[http.CrossOriginProtection]
@@ -123,11 +131,8 @@ type httpHost struct {
 	// gateway to answer to it). Set by SetCertificateNames, read by ApplyPolicy.
 	certNames atomic.Pointer[[]string]
 	// auth is the login-session store the Auth middleware consults (nil fails
-	// closed: every protected request is 401); authExempt the routes that
-	// need no session, rebuilt by ApplyPolicy since the signed webhook paths
-	// come from config.
-	auth       atomic.Pointer[middleware.AuthStore]
-	authExempt atomic.Pointer[middleware.AuthExempt]
+	// closed: every protected request is 401).
+	auth atomic.Pointer[middleware.AuthStore]
 
 	// httpServer serves the plain-HTTP listeners, tlsServer the HTTPS ones
 	// (nil when off). Set by Start.
@@ -150,7 +155,9 @@ func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	// The chain in front of the dynamic mux, outermost first:
 	//   Trusted proxy  — from a gateway.trusted_proxies peer, the client is
 	//                    the X-Real-IP / X-Forwarded-For address; every layer
-	//                    below sees that address as RemoteAddr.
+	//                    below sees that address as RemoteAddr. A forwarded
+	//                    request from an untrusted loopback peer is noted in
+	//                    proxyWatch.
 	//   IP allowlist   — who may connect. Loopback always; otherwise the
 	//                    configured networks, regardless of bind address.
 	//                    Matches the TCP peer (RemoteAddr), so behind a reverse
@@ -172,12 +179,12 @@ func newHTTPHost(opts hostOptions) (*httpHost, error) {
 	if err := h.SetTrustedProxies(opts.TrustedProxies); err != nil {
 		return nil, err
 	}
-	h.handler = middleware.TrustedProxy(h.trusted.Load,
+	h.handler = middleware.TrustedProxy(h.trusted.Load, &h.proxyWatch,
 		middleware.IPAllowlist(h.allow.Load,
 			middleware.HostCheck(h.hosts.Load,
 				middleware.CrossOrigin(h.crossOrigin.Load,
 					middleware.SecurityHeaders(
-						middleware.Auth(h.auth.Load, h.authExempt.Load,
+						middleware.Auth(h.auth.Load,
 							limitBody(http.HandlerFunc(h.serveMux))))))))
 	return h, nil
 }
@@ -237,9 +244,8 @@ func (h *httpHost) SetCrossOrigin(trustedOrigins, bypassPatterns []string) error
 }
 
 // ApplyPolicy derives the Host allowlist and cross-origin policy from the
-// gateway config and the running channels, and swaps both in. Called at boot
-// and on every config reload, since external_url and the LINE webhook path can
-// change, and after a certificate change.
+// gateway config, and swaps both in. Called at boot and on every config
+// reload, since external_url can change, and after a certificate change.
 //
 // Allowed hosts are the bind addresses (a wildcard expanded to the interface
 // addresses), the host of the effective external URL
@@ -248,7 +254,7 @@ func (h *httpHost) SetCrossOrigin(trustedOrigins, bypassPatterns []string) error
 // loopback names. Anything else — a DNS-rebinding name, a hostname nobody told
 // the gateway about — gets 421. gateway.external_url, when set, is also the one
 // origin trusted to make cross-site requests.
-func (h *httpHost) ApplyPolicy(gw config.GatewayConfig, cm *channels.Manager) error {
+func (h *httpHost) ApplyPolicy(gw config.GatewayConfig) error {
 	var trusted []string
 	if gw.ExternalURL != "" {
 		u, err := url.Parse(gw.ExternalURL)
@@ -257,11 +263,9 @@ func (h *httpHost) ApplyPolicy(gw config.GatewayConfig, cm *channels.Manager) er
 		}
 		trusted = []string{u.Scheme + "://" + u.Host}
 	}
-	if err := h.SetCrossOrigin(trusted, append([]string{messageRoutePattern}, signedWebhookPaths(cm)...)); err != nil {
+	if err := h.SetCrossOrigin(trusted, []string{messageRoutePattern}); err != nil {
 		return fmt.Errorf("invalid gateway.external_url %q: %w", gw.ExternalURL, err)
 	}
-	// Signed webhooks authenticate their own requests, so they need no login.
-	h.authExempt.Store(middleware.CompileAuthExempt(signedWebhookPaths(cm)...))
 
 	// Every address a listener binds, a wildcard expanded to the interface
 	// addresses: an IP literal is not a DNS-rebinding vector, and it is what
@@ -282,24 +286,6 @@ func (h *httpHost) ApplyPolicy(gw config.GatewayConfig, cm *channels.Manager) er
 		"trusted_origins": trusted,
 	})
 	return nil
-}
-
-// signedWebhookPaths returns the mounted paths of channel webhooks that verify
-// their own request signatures and so may be posted to from any origin. Only
-// LINE (HMAC-signed) qualifies today; the WebUI channel's /webui/ is not one.
-func signedWebhookPaths(cm *channels.Manager) []string {
-	if cm == nil {
-		return nil
-	}
-	ch, ok := cm.GetChannel("line")
-	if !ok {
-		return nil
-	}
-	wh, ok := ch.(channels.WebhookHandler)
-	if !ok {
-		return nil
-	}
-	return []string{wh.WebhookPath()}
 }
 
 // SetMux atomically swaps the handler mux. In-flight requests served by the

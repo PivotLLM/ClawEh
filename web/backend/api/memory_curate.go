@@ -309,7 +309,7 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "memory store not found", http.StatusNotFound)
 		return
 	}
-	s, err := cogmemstore.Open(path)
+	s, err := h.openMemoryStore(path)
 	if err != nil {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return

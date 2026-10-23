@@ -1,8 +1,23 @@
 {
   "agents": {
+    "delete": "Delete",
+    "deleteTitle": "Delete {{name}}?",
+    "deleteDescription": "Its files stay on disk.",
+    "idLabel": "Agent ID",
+    "idPlaceholder": "Agent ID (e.g. alice)",
     "summarizationModels": "Memory models (optional)",
     "summarizationModelsAdd": "Add memory model…",
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
+    "allowShell": "Allow shell commands",
+    "allowShellHint": "Lets this agent run commands on this machine. Off by default.",
+    "allowShellDenied": "Ignored: blocked by Denied tools.",
+    "mayMessage": "May message",
+    "mayMessageHint": "Agents it may message, start as sub-agents or invite to forums.",
+    "mayMessageAll": "All agents",
+    "mayMessageNoOthers": "No other agents.",
+    "mayMessageUnknown": "(not another configured agent)",
+    "mayMessageNone": "{{name}} can't message any agent yet.",
+    "mayMessageNoTool": "No effect until agent_message is ticked above.",
     "denyTools": "Denied tools",
     "denyToolsHint": "Tools the agent may never call, even if allowed above. Same matching as the allow lists (e.g. google_calendar_event_delete, shell_exec).",
     "denyToolsPlaceholder": "tool name (e.g. shell_exec)",
@@ -24,6 +39,15 @@
     "maestroAllowParallelHint": "Runs are sequential unless the LLM asks for parallel; turn this off to refuse such requests.",
     "fusion": "Fusion (REST-API tools)",
     "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
+    "forum": "Allow forum",
+    "forumHint": "Lets this agent hold forums with the other agents it may message.",
+    "characterCard": "Character card",
+    "characterCardNone": "None",
+    "characterCardMissingOption": "{{id}} (missing)",
+    "characterCardMissing": "This card does not exist in the library.",
+    "characterCardLibrary": "Character cards",
+    "ccv3": "Allow character card tools",
+    "ccv3Hint": "Lets the agent create, edit and delete cards in the library.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",
@@ -35,7 +59,13 @@
     "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot.",
     "eventRetention": "Event memory retention (days)",
     "retiredRetention": "Retired memory retention (days)",
-    "retentionHint": "(blank = {{days}}, -1 = keep forever)"
+    "retentionHint": "(blank = {{days}}, -1 = keep forever)",
+    "human": "Represents a person: answers are typed by hand.",
+    "humanNotRunning": "Not running: {{message}}",
+    "humanIgnored": "Ignored: {{message}}",
+    "bypassNotAllowed": "{{provider}} is not allowed to bypass its restrictions.",
+    "bypassAllow": "Allow it",
+    "mountReserved": "Ignored: \"{{name}}\" is a reserved name."
   },
   "navigation": {
     "chat": "Chat",
@@ -45,7 +75,7 @@
     "agent_group": "Agents",
     "agents": "Agents",
     "skills": "Skills",
-    "tools": "Tools",
+    "cards": "Character cards",
     "bindings": "Bindings",
     "services": "Services",
     "channels_group": "Channels",
@@ -57,6 +87,7 @@
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
+    "manual": "Manual",
     "report": "Check Up",
     "audit": "Audit"
   },
@@ -71,13 +102,6 @@
       "step3": "Preparing response...",
       "step4": "Almost there..."
     },
-    "history": "History",
-    "noHistory": "No chat history yet",
-    "historyLoadFailed": "Failed to load chat history",
-    "historyOpenFailed": "Failed to open this chat history",
-    "loadingMore": "Loading more...",
-    "deleteSession": "Delete session",
-    "messagesCount": "{{count}} messages",
     "noModel": "Select model",
     "empty": {
       "noConfiguredModel": "No Model Configured",
@@ -155,21 +179,30 @@
     "advanced": {
       "toggle": "Advanced options"
     },
+    "turnTimeoutNote": {
+      "prefix": "Limited to {{duration}} by the",
+      "link": "Turn timeout",
+      "suffix": "."
+    },
+    "duration": {
+      "hours_one": "{{count}} hour",
+      "hours_other": "{{count}} hours",
+      "minutes_one": "{{count}} minute",
+      "minutes_other": "{{count}} minutes",
+      "seconds_one": "{{count}} second",
+      "seconds_other": "{{count}} seconds"
+    },
     "field": {
       "provider": "Provider",
       "providerHint": "The named provider this model is reached through. Manage providers on the Providers page.",
       "providerPlaceholder": "Select a provider",
       "proxyHint": "Optional. e.g. http://127.0.0.1:7890",
-      "connectMode": "Connect Mode",
-      "connectModeHint": "Connection mode for CLI-based providers: stdio or grpc.",
       "workspace": "Workspace Path",
       "workspaceHint": "Working directory for CLI-based providers (e.g. GitHub Copilot).",
       "requestTimeout": "Request Timeout (s)",
       "requestTimeoutHint": "Maximum seconds to wait for a response. 0 = use default.",
-      "rpm": "Rate Limit (RPM)",
-      "rpmHint": "Maximum requests per minute. 0 = no limit.",
       "thinkingLevel": "Thinking Level",
-      "thinkingLevelHint": "Extended thinking budget: off, low, medium, high, xhigh, adaptive.",
+      "thinkingLevelHint": "Anthropic models only: off, adaptive, low, medium, high, xhigh, max.",
       "maxTokens": "Max Output Tokens",
       "maxTokensHint": "Maximum tokens the model may generate per response. Overrides the global default for this model only.",
       "contextWindow": "Context Window (tokens)",
@@ -207,7 +240,6 @@
       "secmsg": "SecMsg",
       "discord": "Discord",
       "slack": "Slack",
-      "line": "LINE",
       "webui": "Web",
       "matrix": "Matrix"
     },
@@ -246,7 +278,9 @@
       "saveError": "Failed to save channel configuration",
       "enabled": "enabled",
       "docLink": "Documentation",
-      "enableLabel": "Enable channel"
+      "enableLabel": "Enable channel",
+      "deleteSecmsgDaemon": "Delete {{name}}",
+      "removeSecmsgAccount": "Remove account {{name}}"
     },
     "form": {
       "desc": {
@@ -282,9 +316,6 @@
         "corpId": "Enterprise Corp ID.",
         "agentId": "Enterprise application Agent ID.",
         "webhookUrl": "Full webhook URL.",
-        "webhookHost": "Webhook listening host.",
-        "webhookPort": "Webhook listening port.",
-        "webhookPath": "Webhook route path.",
         "replyTimeout": "Reply timeout in seconds.",
         "maxSteps": "Maximum number of processing steps.",
         "welcomeMessage": "Welcome message content for new sessions.",
@@ -321,37 +352,6 @@
         "load_detail_error": "Failed to load skill content.",
         "path": "Skill Path",
         "no_description": "No description provided."
-      },
-      "tools": {
-        "description": "This view reflects whether each agent tool is enabled, disabled, or blocked by a missing prerequisite.",
-        "empty": "No tools are available.",
-        "enable": "Enable",
-        "disable": "Disable",
-        "enable_success": "Tool enabled.",
-        "disable_success": "Tool disabled.",
-        "toggle_error": "Failed to update tool state.",
-        "config_key": "Controlled by tools.{{key}}",
-        "status": {
-          "enabled": "Enabled",
-          "disabled": "Disabled",
-          "blocked": "Blocked"
-        },
-        "categories": {
-          "automation": "Automation",
-          "filesystem": "Filesystem",
-          "web": "Web",
-          "communication": "Communication",
-          "skills": "Skills",
-          "agents": "Agents",
-          "context": "Context",
-          "common": "Common Directory",
-          "memory": "Memory"
-        },
-        "reasons": {
-          "requires_skills": "Enable `tools.skills` before this skill-registry tool can be used.",
-          "requires_subagent": "Enable `tools.subagent` before the spawn tool can delegate work.",
-          "requires_mcp_discovery": "Enable `tools.mcp.discovery` before MCP discovery tools become available."
-        }
       }
     },
     "network": {
@@ -440,7 +440,8 @@
         "lockout_exempt": "Never locked out",
         "lockout_exempt_hint": "Addresses that are never locked out after failed sign-ins; localhost never is.",
         "trusted_proxies": "Trusted proxies",
-        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted."
+        "trusted_proxies_hint": "Reverse proxies whose forwarded client address is trusted.",
+        "untrusted_proxy": "Requests arrive through a proxy that is not trusted; network access control and lockout don't apply."
       },
       "device": {
         "title": "Device listener",
@@ -454,7 +455,7 @@
         "port_hint": "Port of the device listener (default 18791).",
         "external_address": "External address",
         "external_address_hint": "Where devices connect from outside, for example through a reverse proxy.",
-        "external_address_placeholder": "host or host:port",
+        "external_address_placeholder": "claw.example.com:8443",
         "cidrs": "Allowed network CIDRs",
         "cidrs_hint": "Networks that may reach the device listener; empty allows any, localhost is always allowed.",
         "auto_approve": "Auto-approve pairings",
@@ -482,13 +483,11 @@
     "config": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
       "base_dir": "Agent base directory",
-      "base_dir_hint": "Base directory for all agent files. Each agent lives in <base>/<id> (the default agent in <base>/default). Leave blank for ~/.claw/agents; point it at another volume to relocate every agent.",
+      "base_dir_hint": "Folder that holds every agent's files, one folder per agent. Blank uses the agents folder in the data directory.",
       "common_dir": "Common directory",
-      "common_dir_hint": "Shared directory agents can read/write (default: <agents>/common). Set an absolute path to place it anywhere.",
+      "common_dir_hint": "Folder agents share files through. Blank uses the common folder in the data directory.",
       "restrict_workspace": "Restrict to workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
-      "allow_remote": "Allow remote shell execution",
-      "allow_remote_hint": "When enabled, shell commands can also run for remote sessions or non-local contexts. When disabled, shell execution stays limited to local safe contexts.",
       "stream_tool_activity": "Stream tool activity",
       "stream_tool_activity_hint": "When enabled, the assistant's inter-tool narration and each tool's intermediate output are sent to the chat as it works. When disabled (default), the user receives only the final answer.",
       "max_tokens": "Max tokens",
@@ -496,7 +495,7 @@
       "max_tool_iterations": "Max tool iterations",
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
       "request_timeout": "Request timeout (s)",
-      "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
+      "request_timeout_hint": "Seconds to wait for a model's reply when the model sets no timeout of its own.",
       "turn_timeout": "Turn timeout (s)",
       "turn_timeout_hint": "Overall wall-clock budget in seconds for a single user turn (across all model calls and tool loops). 0 = built-in 900s (15 min) default.",
       "max_subagent_depth": "Max sub-agent depth",
@@ -505,7 +504,7 @@
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",
       "default_temperature": "Default temperature",
-      "default_temperature_hint": "0–2; blank uses the provider default.",
+      "default_temperature_hint": "0–2; blank lets each model use its own default. Not sent to Anthropic models.",
       "summarization_models": "Memory models",
       "summarization_models_hint": "Models tried in order for memory consolidation and context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
       "summarization_models_empty": "No memory models configured — each agent uses its own model.",
@@ -556,16 +555,6 @@
       "eviction_evict_turns_hint": "The number of turns after which reads will be evicted regardless of size.",
       "eviction_budget_bytes": "Read byte budget",
       "eviction_budget_bytes_hint": "The maximum combined size of all un-evicted reads. If this is exceeded, the largest are evicted first. (0 = automatically derive from context window, ~40%.)",
-      "session_mode": "Session mode",
-      "session_mode_hint": "Controls how the agent's memory is divided across users and platforms.",
-      "session_mode_unified": "Unified",
-      "session_mode_unified_desc": "One shared memory for the entire agent, across all users and channels.",
-      "session_mode_per_user": "Per user",
-      "session_mode_per_user_desc": "Each person gets their own private memory.",
-      "session_mode_per_platform": "Per platform",
-      "session_mode_per_platform_desc": "Each person has a separate memory per platform.",
-      "session_mode_per_account": "Per account",
-      "session_mode_per_account_desc": "Like per-platform, but also separates by bot account.",
       "devices_enabled": "Enable devices",
       "devices_enabled_hint": "Enable hardware-device integrations.",
       "monitor_usb": "Monitor USB",
@@ -580,7 +569,8 @@
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
         "devices": "Devices",
-        "backup": "Backup"
+        "backup": "Backup",
+        "forum": "Forums"
       },
       "open_raw": "Raw config",
       "back_to_visual": "System settings",
@@ -612,7 +602,13 @@
       "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
       "backup_now_running": "Backing up…",
       "backup_now_done": "Backup written to {{folder}}",
-      "backup_now_failed": "Backup failed"
+      "backup_now_failed": "Backup failed",
+      "forum_desc": "The most any forum on this install may use. Blank uses the default.",
+      "forum_max_calls": "Max calls per forum",
+      "forum_max_duration_seconds": "Max run time (seconds)",
+      "forum_call_timeout_seconds": "Call timeout (seconds)",
+      "forum_max_parallel_calls": "Max parallel calls",
+      "forum_default": "Default {{value}}."
     },
     "logs": {
       "empty": "Waiting for logs...",
@@ -637,7 +633,9 @@
         "tool_call": "Tool call",
         "config_write": "Config write",
         "auth": "Auth",
-        "restart": "Restart"
+        "restart": "Restart",
+        "card_import": "Card import",
+        "card_delete": "Card delete"
       },
       "col": {
         "time": "Time",
@@ -806,7 +804,11 @@
       "download": "Full report"
     },
     "devices": {
-      "connect_to": "Devices will connect to"
+      "connect_to": "Devices will connect to",
+      "default_assistant": "Default assistant",
+      "agent_missing": "Ignored: {{agent}} no longer exists; using the default agent.",
+      "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent.",
+      "agent_set_aside": "Ignored: {{agent}} is set aside; using the default agent."
     }
   },
   "providers": {
@@ -841,6 +843,7 @@
       "namePlaceholder": "e.g. openai-main",
       "protocol": "Protocol",
       "protocolHint": "The wire protocol used to talk to this provider.",
+      "humanHint": "A person answers in their own chat. No URL or key.",
       "baseURL": "Base URL",
       "baseURLRequiredHint": "Required for this protocol. e.g. https://api.example.com/v1",
       "command": "Command",
@@ -945,7 +948,7 @@
     },
     "agent": {
       "title": "Create your first agent",
-      "body": "Give your agent a name. It will use the default model and standard tools — you can fine-tune it later on the Agents page.",
+      "body": "Give your agent a name. It starts with no tools; add them later on the Agents page with Default tools.",
       "nameLabel": "Agent name"
     },
     "review": {
@@ -976,5 +979,34 @@
       "retry": "Check again"
     },
     "logout": "Sign out"
+  },
+  "cards": {
+    "hint": "A card's author instructions are used as written.",
+    "empty": "No character cards yet.",
+    "import": "Import",
+    "importTitle": "Import a character card",
+    "importDescription": "A V2 or V3 card as .json or .png.",
+    "file": "File",
+    "chooseFile": "Choose file…",
+    "id": "Card ID",
+    "idPlaceholder": "card id (e.g. alice)",
+    "replace": "Replace existing",
+    "importConfirm": "Import",
+    "importSuccess": "Card \"{{id}}\" imported.",
+    "importExists": "A card with this id exists. Tick Replace existing to overwrite it.",
+    "name": "Name",
+    "tags": "Tags",
+    "modified": "Last modified",
+    "usedBy": "Used by",
+    "actions": "Actions",
+    "download": "Download",
+    "delete": "Delete",
+    "deleteTitle": "Delete {{name}}?",
+    "deleteDescription": "The card \"{{id}}\" is removed from the library.",
+    "deleteConfirm": "Delete",
+    "deleteSuccess": "Card deleted.",
+    "invalidTitle": "Files that are not valid cards",
+    "invalidFile": "{{file}}: {{reason}}",
+    "loadError": "Failed to load character cards."
   }
 }

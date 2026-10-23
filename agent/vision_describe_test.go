@@ -161,7 +161,7 @@ func (flowAImageTool) Execute(_ context.Context, _ map[string]any) *tools.ToolRe
 func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

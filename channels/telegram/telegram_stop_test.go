@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -167,4 +168,36 @@ func TestStopAbortsInFlightLongPoll(t *testing.T) {
 	start := time.Now()
 	require.NoError(t, ch.Stop(context.Background()))
 	require.Less(t, time.Since(start), time.Second, "Stop waited for the long poll instead of aborting it")
+}
+
+// TestStopBoundedByContext: Stop waits no longer than its context, even
+// when the long poll and the command registration never exit, and says so.
+func TestStopBoundedByContext(t *testing.T) {
+	orig := pollExitTimeout
+	pollExitTimeout = time.Hour
+	t.Cleanup(func() { pollExitTimeout = orig })
+
+	base := channels.NewBaseChannel("telegram", nil, nil, nil)
+	_, cancel := context.WithCancel(context.Background())
+	c := &TelegramChannel{
+		BaseChannel:    base,
+		ctx:            context.Background(),
+		cancel:         cancel,
+		pollDone:       make(chan struct{}), // never closed
+		commandRegDone: make(chan struct{}), // never closed
+		chatIDs:        map[string]int64{},
+	}
+
+	ctx, stop := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- c.Stop(ctx) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop outlived its context")
+	}
 }

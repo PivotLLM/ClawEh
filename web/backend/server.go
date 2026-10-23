@@ -71,5 +71,6 @@ func (s *Server) APIHandler() *api.Handler {
 // more specific patterns that take precedence over the SPA's "/" fallback.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.apiHandler.RegisterRoutes(mux)
+	RegisterManualRoutes(mux)
 	RegisterEmbedRoutes(mux)
 }

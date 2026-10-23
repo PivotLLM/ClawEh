@@ -54,31 +54,29 @@ func writeTestCert(t *testing.T, certPath string, notAfter time.Time) {
 // Distinctive fake secrets planted everywhere a credential can live. The
 // no-secrets test asserts none of them reach the rendered report.
 const (
-	secretAPIKey     = "sk-FAKEKEY-9f8e7d6c"
-	secretProxyPass  = "PROXYSECRET-8a7b"
-	secretEnvValue   = "ENVSECRET-6c5d4e"
-	secretHeader     = "Bearer HDRSECRET-3f2e1d"
-	secretMCPEnv     = "MCPENVSECRET-0a9b"
-	secretTelegram   = "TGSECRET-7e6f5a"
-	secretDiscord    = "DISCORDSECRET-4d3c"
-	secretWebUI      = "WEBUISECRET-2b1a"
-	secretDevice     = "DEVSECRET-1c2d3e"
-	secretWordToken  = "apple banana cherry dolphin eagle"
-	secretBrave      = "BRAVESECRET-5e6f"
-	secretGitHub     = "GHSECRET-7a8b"
-	secretClawHub    = "HUBSECRET-9c0d"
-	secretSTT        = "STTSECRET-1e2f"
-	secretSlackBot   = "xoxb-SLACKSECRET-3a4b"
-	secretSlackApp   = "xapp-SLACKSECRET-5c6d"
-	secretMatrix     = "MATRIXSECRET-7e8f"
-	secretLINE       = "LINESECRET-9a0b"
-	secretLINEAccess = "LINEACCESS-1c2d"
+	secretAPIKey    = "sk-FAKEKEY-9f8e7d6c"
+	secretProxyPass = "PROXYSECRET-8a7b"
+	secretEnvValue  = "ENVSECRET-6c5d4e"
+	secretHeader    = "Bearer HDRSECRET-3f2e1d"
+	secretMCPEnv    = "MCPENVSECRET-0a9b"
+	secretTelegram  = "TGSECRET-7e6f5a"
+	secretDiscord   = "DISCORDSECRET-4d3c"
+	secretWebUI     = "WEBUISECRET-2b1a"
+	secretDevice    = "DEVSECRET-1c2d3e"
+	secretWordToken = "apple banana cherry dolphin eagle"
+	secretBrave     = "BRAVESECRET-5e6f"
+	secretGitHub    = "GHSECRET-7a8b"
+	secretClawHub   = "HUBSECRET-9c0d"
+	secretSTT       = "STTSECRET-1e2f"
+	secretSlackBot  = "xoxb-SLACKSECRET-3a4b"
+	secretSlackApp  = "xapp-SLACKSECRET-5c6d"
+	secretMatrix    = "MATRIXSECRET-7e8f"
 )
 
 var allSecrets = []string{
 	secretAPIKey, secretProxyPass, secretEnvValue, secretHeader, secretMCPEnv, secretTelegram,
 	secretDiscord, secretWebUI, secretDevice, secretWordToken, secretBrave, secretGitHub,
-	secretClawHub, secretSTT, secretSlackBot, secretSlackApp, secretMatrix, secretLINE, secretLINEAccess,
+	secretClawHub, secretSTT, secretSlackBot, secretSlackApp, secretMatrix,
 }
 
 // fixtureEnv is the process environment the tests describe.
@@ -88,7 +86,7 @@ func fixtureEnv(dataDir string) Environment {
 		DataDir:    dataDir,
 		Executable: "/usr/local/bin/alice",
 		Hostname:   "testbox",
-		User:       "eric",
+		User:       "admin",
 		Group:      "staff",
 		OS:         "linux",
 		Arch:       "amd64",
@@ -175,11 +173,7 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	cfg.Channels.Slack = config.SlackConfig{Enabled: true, BotToken: secretSlackBot, AppToken: secretSlackApp}
 	cfg.Channels.Matrix = config.MatrixConfig{
 		Enabled: true, Homeserver: "https://matrix.example.com", UserID: "@alice:example.com",
-		AccessToken: secretMatrix, AllowFrom: []string{"@eric:example.com"},
-	}
-	cfg.Channels.LINE = config.LINEConfig{
-		Enabled: true, ChannelSecret: secretLINE, ChannelAccessToken: secretLINEAccess,
-		WebhookHost: "0.0.0.0", WebhookPort: 18792, WebhookPath: "/webhook/line", AllowFrom: []string{"U1"},
+		AccessToken: secretMatrix, AllowFrom: []string{"@admin:example.com"},
 	}
 	cfg.Channels.WebUI = config.WebUIConfig{Enabled: true, Token: secretWebUI}
 	cfg.Channels.Device = config.DeviceChannelConfig{Enabled: true, Token: secretDevice, WordToken: secretWordToken, Host: "0.0.0.0"}

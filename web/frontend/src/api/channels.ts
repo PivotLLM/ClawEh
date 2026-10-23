@@ -1,4 +1,5 @@
 // API client for channels navigation and channel-specific config flows.
+import { errorMessage } from "./error-message"
 
 export type ChannelConfig = Record<string, unknown>
 export type AppConfig = Record<string, unknown>
@@ -24,22 +25,7 @@ const BASE_URL = ""
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, options)
   if (!res.ok) {
-    let message = `API error: ${res.status} ${res.statusText}`
-    try {
-      const body = (await res.json()) as {
-        error?: string
-        errors?: string[]
-        status?: string
-      }
-      if (Array.isArray(body.errors) && body.errors.length > 0) {
-        message = body.errors.join("; ")
-      } else if (typeof body.error === "string" && body.error.trim() !== "") {
-        message = body.error
-      }
-    } catch {
-      // Keep default fallback message if response body is not JSON.
-    }
-    throw new Error(message)
+    throw new Error(await errorMessage(res))
   }
   return res.json() as Promise<T>
 }
@@ -81,11 +67,52 @@ export interface AgentToolCatalogResponse {
   // Fusion services defined in the fusion config folder. An mcp_tools entry
   // naming one grants the service's tools when the agent's Fusion switch is on.
   fusion_services?: string[]
+  // The standard set the "Default tools" button writes into an agent's list.
   default_tools: string[]
 }
 
 export async function getAgentTools(): Promise<AgentToolCatalogResponse> {
   return request<AgentToolCatalogResponse>("/api/agents/tools")
+}
+
+// HumanAgentProblem is one way the configuration breaks the human-agent
+// rules. kind says where it shows: "not_running" and "ignored" on the agent's
+// card, "setting" on the page given by page (/system, /models). link, when
+// set, is the page that fixes it.
+export interface HumanAgentProblem {
+  agent?: string
+  kind: "not_running" | "ignored" | "setting"
+  message: string
+  link?: string
+  page?: string
+}
+
+export interface HumanAgentsInfo {
+  problems: HumanAgentProblem[]
+  human_agents: string[]
+}
+
+// HUMAN_AGENTS_QUERY_KEY is the react-query key of getHumanAgents, shared by
+// every page that shows or refreshes the human-agent notes.
+export const HUMAN_AGENTS_QUERY_KEY = ["agents-human-problems"] as const
+
+export async function getHumanAgents(): Promise<HumanAgentsInfo> {
+  const res = await request<Partial<HumanAgentsInfo>>("/api/agents/human")
+  return { problems: res.problems ?? [], human_agents: res.human_agents ?? [] }
+}
+
+// IgnoredMount is a saved mount that is not used because its name is
+// reserved for a workspace folder.
+export interface IgnoredMount {
+  agent: string
+  mount: string
+}
+
+export async function getIgnoredMounts(): Promise<IgnoredMount[]> {
+  const res = await request<{ ignored?: IgnoredMount[] }>(
+    "/api/agents/mounts/ignored",
+  )
+  return res.ignored ?? []
 }
 
 // SecMsgLinkStatus mirrors the backend pairing reply. status is

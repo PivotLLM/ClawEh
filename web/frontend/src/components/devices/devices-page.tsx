@@ -1,3 +1,4 @@
+import { IconAlertTriangle } from "@tabler/icons-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
@@ -6,6 +7,7 @@ import { toast } from "sonner"
 
 import {
   type DeviceStatus,
+  type PairedDevice,
   approveDevice,
   assignDeviceAgent,
   generateDevicePairing,
@@ -26,6 +28,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 // copyToClipboard works in both secure and insecure contexts. navigator.clipboard
 // is undefined when the WebUI is served over plain HTTP on a non-localhost host, so
@@ -136,6 +143,18 @@ export function DevicesPage() {
   const pendingList = pending.data?.pending ?? []
   const pairedList = paired.data?.devices ?? []
   const agentOptions = paired.data?.agents ?? []
+  // Why an assignment is ignored, as the server reports it.
+  const staleAgentNote = (d: PairedDevice) => {
+    const agent = d.agent_name || d.agent_id
+    switch (d.agent_state) {
+      case "disabled":
+        return t("pages.devices.agent_disabled", { agent })
+      case "set_aside":
+        return t("pages.devices.agent_set_aside", { agent })
+      default:
+        return t("pages.devices.agent_missing", { agent })
+    }
+  }
 
   return (
     <>
@@ -148,8 +167,8 @@ export function DevicesPage() {
           <CardHeader>
             <CardTitle>Pair a device</CardTitle>
             <CardDescription>
-              Generate a QR code, then scan it with your device. The first
-              connection appears below for approval.
+              Generate a QR code and scan it with your device, then approve it
+              below.
               {s && (
                 <>
                   {" "}
@@ -160,28 +179,40 @@ export function DevicesPage() {
                   >
                     {s.connect_url}
                   </code>
-                  . The device listener is on{" "}
-                  <code className="text-foreground">
-                    {s.listen_host}:{s.listen_port}
-                  </code>{" "}
-                  ({s.listen_lan ? "local network" : "loopback only"}); change
-                  that on the{" "}
-                  <Link to="/network" className="underline">
-                    Network page
-                  </Link>
                   .
                 </>
               )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {s?.warnings?.length ? (
-              <ul className="text-sm text-amber-600 dark:text-amber-400">
-                {s.warnings.map((w) => (
-                  <li key={w}>⚠ {w}</li>
-                ))}
-              </ul>
-            ) : null}
+            {/* Access is a label; a problem is an icon with short hover
+                text, and the link goes where it is fixed. */}
+            {s && (
+              <div
+                className="flex items-center gap-2 text-sm"
+                data-testid="devices-access"
+              >
+                <span className="text-muted-foreground">Access:</span>
+                <span>{s.listen_lan ? "network" : "localhost"}</span>
+                {s.warnings?.length ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="text-amber-600 dark:text-amber-400"
+                        data-testid="devices-warning"
+                      >
+                        <IconAlertTriangle className="size-4" aria-hidden />
+                        <span className="sr-only">{s.warnings.join(" ")}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{s.warnings.join(" ")}</TooltipContent>
+                  </Tooltip>
+                ) : null}
+                <Link to="/network" className="underline">
+                  Change
+                </Link>
+              </div>
+            )}
             <Button onClick={() => genMut.mutate()} disabled={genMut.isPending}>
               {qr ? "Regenerate pairing QR" : "Generate pairing QR"}
             </Button>
@@ -339,13 +370,21 @@ export function DevicesPage() {
                         {d.platform} · roles {d.roles.join(", ") || "—"} ·{" "}
                         {d.device_id.slice(0, 12)}…
                       </div>
+                      {d.agent_missing && (
+                        <p
+                          data-testid="device-agent-missing"
+                          className="text-xs text-amber-600 dark:text-amber-400"
+                        >
+                          {staleAgentNote(d)}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {d.client_mode === "node" ? (
                         <select
                           className="border-border bg-background rounded border px-2 py-1 text-sm"
                           aria-label="Assistant"
-                          value={d.agent_id}
+                          value={d.agent_ref ?? d.agent_id}
                           disabled={assignAgentMut.isPending}
                           onChange={(e) =>
                             assignAgentMut.mutate({
@@ -354,7 +393,14 @@ export function DevicesPage() {
                             })
                           }
                         >
-                          <option value="">Default assistant</option>
+                          <option value="">
+                            {t("pages.devices.default_assistant")}
+                          </option>
+                          {d.agent_state === "not_found" && (
+                            <option value={d.agent_ref ?? d.agent_id}>
+                              {d.agent_id}
+                            </option>
+                          )}
                           {agentOptions.map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.name}

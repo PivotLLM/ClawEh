@@ -15,28 +15,28 @@ import (
 // endpoint: a token validates only against the agent that issued it, and bogus
 // or empty tokens are rejected.
 func TestValidateMessageToken(t *testing.T) {
-	mgrAmber, err := msgtoken.NewManager("amber", filepath.Join(t.TempDir(), "amber.json"), 5, 3)
+	mgrAlice, err := msgtoken.NewManager("alice", filepath.Join(t.TempDir(), "alice.json"), 5, 3)
 	if err != nil {
-		t.Fatalf("NewManager amber: %v", err)
+		t.Fatalf("NewManager alice: %v", err)
 	}
-	defer mgrAmber.Stop()
-	mgrDawn, err := msgtoken.NewManager("dawn", filepath.Join(t.TempDir(), "dawn.json"), 5, 3)
+	defer mgrAlice.Stop()
+	mgrBob, err := msgtoken.NewManager("bob", filepath.Join(t.TempDir(), "bob.json"), 5, 3)
 	if err != nil {
-		t.Fatalf("NewManager dawn: %v", err)
+		t.Fatalf("NewManager bob: %v", err)
 	}
-	defer mgrDawn.Stop()
+	defer mgrBob.Stop()
 
 	al := &AgentLoop{messageManagers: map[string]*msgtoken.Manager{
-		"amber": mgrAmber,
-		"dawn":  mgrDawn,
+		"alice": mgrAlice,
+		"bob":   mgrBob,
 	}}
 
 	// A valid token resolves to exactly the issuing agent.
-	if id, ok := al.ValidateMessageToken(mgrAmber.CurrentToken()); !ok || id != "amber" {
-		t.Errorf("amber token -> (%q,%v), want (amber,true)", id, ok)
+	if id, ok := al.ValidateMessageToken(mgrAlice.CurrentToken()); !ok || id != "alice" {
+		t.Errorf("alice token -> (%q,%v), want (alice,true)", id, ok)
 	}
-	if id, ok := al.ValidateMessageToken(mgrDawn.CurrentToken()); !ok || id != "dawn" {
-		t.Errorf("dawn token -> (%q,%v), want (dawn,true)", id, ok)
+	if id, ok := al.ValidateMessageToken(mgrBob.CurrentToken()); !ok || id != "bob" {
+		t.Errorf("bob token -> (%q,%v), want (bob,true)", id, ok)
 	}
 
 	// Forged and empty tokens are rejected — no agent leaks out.
@@ -56,13 +56,13 @@ func TestCheckMessageToken_RateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
-	tok, err := named.Create("amber", "gps")
+	tok, err := named.Create("alice", "gps")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	named.Update("amber", tok.ID, 2, 15) // limit 2/min
+	named.Update("alice", tok.ID, 2, 15) // limit 2/min
 
-	mgr, err := msgtoken.NewManager("dawn", filepath.Join(t.TempDir(), "dawn.json"), 5, 3)
+	mgr, err := msgtoken.NewManager("bob", filepath.Join(t.TempDir(), "bob.json"), 5, 3)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestCheckMessageToken_RateLimit(t *testing.T) {
 
 	al := &AgentLoop{
 		namedTokens:     named,
-		messageManagers: map[string]*msgtoken.Manager{"dawn": mgr},
+		messageManagers: map[string]*msgtoken.Manager{"bob": mgr},
 	}
 
 	// Within limit → Valid.
@@ -85,13 +85,13 @@ func TestCheckMessageToken_RateLimit(t *testing.T) {
 	if d != MsgTokenRateLimited {
 		t.Fatalf("3rd check decision = %v, want RateLimited", d)
 	}
-	if agentID != "amber" || retry <= 0 {
-		t.Fatalf("rate-limited check = (%q,%v), want (amber, >0)", agentID, retry)
+	if agentID != "alice" || retry <= 0 {
+		t.Fatalf("rate-limited check = (%q,%v), want (alice, >0)", agentID, retry)
 	}
 
 	// Rotating tokens are never rate-limited.
-	if id, _, d := al.CheckMessageToken(mgr.CurrentToken()); d != MsgTokenValid || id != "dawn" {
-		t.Fatalf("rotating check = (%q,%v), want (dawn,Valid)", id, d)
+	if id, _, d := al.CheckMessageToken(mgr.CurrentToken()); d != MsgTokenValid || id != "bob" {
+		t.Fatalf("rotating check = (%q,%v), want (bob,Valid)", id, d)
 	}
 
 	// Junk → Invalid.

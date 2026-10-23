@@ -1,11 +1,7 @@
 import dayjs from "dayjs"
 import { useAtomValue } from "jotai"
 
-import {
-  newChatSession,
-  sendChatMessage,
-  switchChatSession,
-} from "@/lib/claw-chat-controller"
+import { newChatSession, sendChatMessage } from "@/lib/claw-chat-controller"
 import { chatAtom } from "@/store/chat"
 
 const UNIX_MS_THRESHOLD = 1e12
@@ -66,7 +62,6 @@ export function useClawChat() {
     isTyping,
     activeSessionId,
     sendMessage: sendChatMessage,
-    switchSession: switchChatSession,
     newChat: newChatSession,
   }
 }

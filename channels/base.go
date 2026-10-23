@@ -307,6 +307,8 @@ func (c *BaseChannel) IsAllowedSender(sender bus.SenderInfo) bool {
 	return false
 }
 
+// HandleMessage hands an inbound message to the agents (see DeliverMessage);
+// a failure to publish it is logged.
 func (c *BaseChannel) HandleMessage(
 	ctx context.Context,
 	peer bus.Peer,
@@ -315,6 +317,27 @@ func (c *BaseChannel) HandleMessage(
 	metadata map[string]string,
 	senderOpts ...bus.SenderInfo,
 ) {
+	if err := c.DeliverMessage(ctx, peer, messageID, senderID, chatID, content, media, metadata, senderOpts...); err != nil {
+		logger.ErrorCF("channels", "Failed to publish inbound message", map[string]any{
+			"channel": c.name,
+			"chat_id": chatID,
+			"error":   err.Error(),
+		})
+	}
+}
+
+// DeliverMessage is HandleMessage for a channel that must know whether the
+// message reached the agents: it returns the error when publishing failed (the
+// bus closed, or ctx ended), and nil when it was published or deliberately
+// dropped (a sender not allowed, a duplicate).
+func (c *BaseChannel) DeliverMessage(
+	ctx context.Context,
+	peer bus.Peer,
+	messageID, senderID, chatID, content string,
+	media []string,
+	metadata map[string]string,
+	senderOpts ...bus.SenderInfo,
+) error {
 	// Use SenderInfo-based allow check when available, else fall back to string
 	var sender bus.SenderInfo
 	if len(senderOpts) > 0 {
@@ -326,14 +349,14 @@ func (c *BaseChannel) HandleMessage(
 				"channel": c.name, "chat_id": chatID, "canonical_id": sender.CanonicalID,
 				"platform_id": sender.PlatformID, "allow_list_len": len(c.allowList),
 			})
-			return
+			return nil
 		}
 	} else {
 		if !c.IsAllowed(senderID) {
 			logger.DebugCF("channels", "inbound rejected by allow-list", map[string]any{
 				"channel": c.name, "chat_id": chatID, "sender_id": senderID, "allow_list_len": len(c.allowList),
 			})
-			return
+			return nil
 		}
 	}
 
@@ -342,7 +365,7 @@ func (c *BaseChannel) HandleMessage(
 		logger.DebugCF("channels", "inbound dropped: duplicate delivery", map[string]any{
 			"channel": c.name, "chat_id": chatID, "message_id": messageID,
 		})
-		return
+		return nil
 	}
 
 	// Set SenderID to canonical if available, otherwise keep the raw senderID
@@ -366,8 +389,8 @@ func (c *BaseChannel) HandleMessage(
 		Metadata:   metadata,
 	}
 	// A channel may pin the conversation session explicitly (the device gateway
-	// uses this to isolate each device/agent and to align with the session a client
-	// reads history from). The agent loop honors an agent-scoped SessionKey.
+	// uses this to select the agent and to align with the session a client reads
+	// history from). The agent loop resolves it to that agent's main session.
 	if sk := metadata["session_key"]; sk != "" {
 		msg.SessionKey = sk
 	}
@@ -400,13 +423,7 @@ func (c *BaseChannel) HandleMessage(
 		}
 	}
 
-	if err := c.bus.PublishInbound(ctx, msg); err != nil {
-		logger.ErrorCF("channels", "Failed to publish inbound message", map[string]any{
-			"channel": c.name,
-			"chat_id": chatID,
-			"error":   err.Error(),
-		})
-	}
+	return c.bus.PublishInbound(ctx, msg)
 }
 
 // SetRunning records whether the channel is running. Stopping ends any

@@ -36,6 +36,10 @@ export interface TLSStatus {
   certificate: TLSCertificate | null
   /** A listener setting changed since start; the running listeners differ. */
   restart_required: boolean
+  /** Requests arrive through a proxy that trusted_proxies does not list. */
+  untrusted_proxy: boolean
+  /** TLS ends at a proxy, so plain HTTP on the network is not flagged. */
+  behind_proxy: boolean
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -83,6 +87,8 @@ export async function getTLS(): Promise<TLSStatus> {
     },
     certificate: cert ? { ...cert, names: cert.names ?? [] } : null,
     restart_required: data.restart_required === true,
+    untrusted_proxy: data.untrusted_proxy === true,
+    behind_proxy: data.behind_proxy === true,
   }
 }
 

@@ -1,14 +1,18 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 func TestAgentModels_RoundTrip(t *testing.T) {
@@ -73,13 +77,7 @@ func TestAgentConfig_FullParse(t *testing.T) {
 					"peer": {"kind": "direct", "id": "user123"}
 				}
 			}
-		],
-		"session": {
-			"mode": "per-user",
-			"identity_links": {
-				"john": ["telegram:123", "discord:john#1234"]
-			}
-		}
+		]
 	}`
 
 	cfg := DefaultConfig()
@@ -119,17 +117,6 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	}
 	if binding.Match.Peer == nil || binding.Match.Peer.Kind != "direct" || binding.Match.Peer.ID != "user123" {
 		t.Errorf("binding.Match.Peer = %+v", binding.Match.Peer)
-	}
-
-	if cfg.Session.Mode != "per-user" {
-		t.Errorf("Session.Mode = %q", cfg.Session.Mode)
-	}
-	if len(cfg.Session.IdentityLinks) != 1 {
-		t.Errorf("Session.IdentityLinks = %v", cfg.Session.IdentityLinks)
-	}
-	links := cfg.Session.IdentityLinks["john"]
-	if len(links) != 2 {
-		t.Errorf("john links = %v", links)
 	}
 }
 
@@ -365,42 +352,32 @@ func TestConfig_Complete(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ExecAllowRemoteDisabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if cfg.Tools.Exec.AllowRemote {
-		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be false (exec restricted to internal channels by default)")
+// TestLoadConfig_ExecAllowRemoteIsUnknown: tools.exec.allow_remote was
+// removed; an old config that still sets it loads, and the key is warned
+// about as unknown like any other.
+func TestLoadConfig_ExecAllowRemoteIsUnknown(t *testing.T) {
+	data := []byte(`{"tools":{"exec":{"enable_deny_patterns":true,"allow_remote":true}}}`)
+	doc, err := decodeDocument(data)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	if got, want := unknownConfigKeys(doc), []string{"tools.exec.allow_remote"}; !slices.Equal(got, want) {
+		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)
+	}
 
-func TestLoadConfig_ExecAllowRemoteDefaultsFalseWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"enable_deny_patterns":true}}}`), 0o600); err != nil {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err = os.WriteFile(configPath, data, 0o600); err != nil {
 		t.Fatalf("WriteFile() error: %v", err)
 	}
-
-	cfg, err := LoadConfig(configPath)
+	var buf bytes.Buffer
+	restore := logger.RedirectForTest(&buf)
+	_, err = LoadConfig(configPath)
+	restore()
 	if err != nil {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
-	if cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should default to false when unset in config file")
-	}
-}
-
-func TestLoadConfig_ExecAllowRemoteCanBeEnabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"allow_remote":true}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should be true when explicitly enabled in config file")
+	if !strings.Contains(buf.String(), "unknown config key: tools.exec.allow_remote") {
+		t.Fatalf("no unknown-key warning for tools.exec.allow_remote; log:\n%s", buf.String())
 	}
 }
 
@@ -435,14 +412,6 @@ func TestDefaultConfig_SummarizationThresholds(t *testing.T) {
 	}
 	if got := (&AgentConfig{}).EffectiveCompression(cfg.Agents.Defaults.Compression); got.Trigger != nil || got.Retain != nil {
 		t.Errorf("EffectiveCompression on an empty config = %+v, want no trigger/retain overrides", got)
-	}
-}
-
-func TestDefaultConfig_SessionMode(t *testing.T) {
-	cfg := DefaultConfig()
-
-	if cfg.Session.Mode != "unified" {
-		t.Errorf("Session.Mode = %q, want 'unified'", cfg.Session.Mode)
 	}
 }
 
@@ -619,8 +588,12 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 }
 
 func TestValidateMountName(t *testing.T) {
-	ok := []string{"notes", "notes-eric", "a1", "X-9", "maestro"}
-	bad := []string{"notes eric", "notes/sub", "notes.md", "no_tes", "", "files", "skills", "tasks", "common", "Files"}
+	ok := []string{"notes", "notes-bob", "a1", "X-9", "filesx", "my-tasks"}
+	bad := make([]string, 0, 5+3*len(ReservedWorkspaceNames))
+	bad = append(bad, "notes bob", "notes/sub", "notes.md", "no_tes", "")
+	for _, r := range ReservedWorkspaceNames {
+		bad = append(bad, r, strings.ToUpper(r), strings.ToUpper(r[:1])+r[1:])
+	}
 	for _, n := range ok {
 		if err := ValidateMountName(n); err != nil {
 			t.Errorf("ValidateMountName(%q) unexpected error: %v", n, err)
@@ -654,12 +627,13 @@ func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 		t.Fatalf("maestro off: expected no mounts, mounts %+v", mounts)
 	}
 
-	// Explicit maestro mount wins (not duplicated, keeps operator Writable=false).
+	// A configured mount named "maestro" is reserved and ignored: the auto
+	// mount of the workspace folder is used.
 	a.Maestro = &MaestroConfig{Enabled: true}
-	a.Mounts = []MountConfig{{Name: "maestro", Path: "/tmp/custom", Writable: false}}
+	a.Mounts = []MountConfig{{Name: "Maestro", Path: "/tmp/custom", Writable: false}}
 	got = a.EffectiveMounts(ws)
-	if len(got) != 1 || got[0].Path != "/tmp/custom" || got[0].Writable {
-		t.Fatalf("explicit maestro mount should win, got %+v", got)
+	if len(got) != 1 || got[0].Path != wantPath || !got[0].Writable {
+		t.Fatalf("reserved maestro mount should be ignored, got %+v", got)
 	}
 
 	// Other mounts preserved alongside auto maestro.

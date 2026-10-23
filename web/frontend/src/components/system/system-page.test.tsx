@@ -13,6 +13,8 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/api/channels", () => ({
   patchAppConfig: vi.fn().mockResolvedValue({ status: "ok" }),
+  HUMAN_AGENTS_QUERY_KEY: ["agents-human-problems"],
+  getHumanAgents: vi.fn().mockResolvedValue({ problems: [], human_agents: [] }),
 }))
 
 // The page links to /config/raw; the router is not mounted here.
@@ -24,7 +26,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 const patched = vi.mocked(patchAppConfig)
 
-const sample = {
+const sample: Record<string, unknown> = {
   agents: {
     list: [{ id: "alice", name: "Alice" }],
     defaults: { max_tokens: 4096 },
@@ -164,5 +166,122 @@ describe("SystemPage with the config already cached", () => {
       agents: { defaults: { max_tokens: number } }
     }
     expect(patch.agents.defaults.max_tokens).toBe(4096)
+  })
+})
+
+/** The `forum` block of the most recent PATCH. */
+function lastForumPatch() {
+  const patch = patched.mock.calls.at(-1)?.[0] as
+    { forum?: Record<string, unknown> } | undefined
+  return patch?.forum
+}
+
+describe("SystemPage forum maximums", () => {
+  // A field left blank shows the default and is saved as null (the key is
+  // removed, so the default applies); a value set in the config is shown
+  // and saved as a number.
+  it("shows set values and defaults, and saves them", async () => {
+    sample.forum = { limits: { max_calls: 300 } }
+    try {
+      renderPage()
+      const maxCalls = (await screen.findByTestId(
+        "forum-max_calls",
+      )) as HTMLInputElement
+      expect(maxCalls.value).toBe("300")
+      const timeout = screen.getByTestId(
+        "forum-call_timeout_seconds",
+      ) as HTMLInputElement
+      expect(timeout.value).toBe("")
+      expect(timeout.placeholder).toBe("1800")
+      expect(
+        (screen.getByTestId("forum-max_duration_seconds") as HTMLInputElement)
+          .placeholder,
+      ).toBe("7200")
+      expect(
+        (screen.getByTestId("forum-max_parallel_calls") as HTMLInputElement)
+          .placeholder,
+      ).toBe("8")
+
+      fireEvent.change(timeout, { target: { value: "600" } })
+      await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
+      })
+      expect(lastForumPatch()).toEqual({
+        limits: {
+          max_calls: 300,
+          max_duration_seconds: null,
+          call_timeout_seconds: 600,
+          max_parallel_calls: null,
+        },
+      })
+    } finally {
+      delete sample.forum
+    }
+  })
+
+  it("refuses a negative value without saving", async () => {
+    renderPage()
+    const maxCalls = await screen.findByTestId("forum-max_calls")
+    fireEvent.change(maxCalls, { target: { value: "-1" } })
+    // The label is the field's en.json entry (t returns the key here).
+    await screen.findByText(
+      "pages.config.forum_max_calls must be >= 0.",
+      undefined,
+      { timeout: 3000 },
+    )
+    expect(patched).not.toHaveBeenCalled()
+  })
+})
+
+describe("SystemPage refused save", () => {
+  // The server's sentence is what the operator sees, not a status code.
+  it("shows why the save was refused", async () => {
+    const why =
+      "Bob (human) represents a person and can't be a summarization model."
+    patched.mockRejectedValueOnce(new Error(why))
+    renderPage()
+    const dest = await screen.findByTestId("backup-dest")
+    fireEvent.change(dest, { target: { value: "/mnt/other" } })
+    expect(
+      await screen.findByText(why, undefined, { timeout: 3000 }),
+    ).toBeTruthy()
+  })
+})
+
+describe("SystemPage link to a field", () => {
+  // The Models page links /system#turn-timeout. The link lands before the
+  // form has loaded, so the page scrolls to the field itself once it is there.
+  it("scrolls to #turn-timeout once the form has loaded", async () => {
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    window.history.replaceState(null, "", "/system#turn-timeout")
+    try {
+      renderPage()
+      await screen.findByTestId("backup-dest")
+      const field = document.getElementById("turn-timeout")
+      expect(field).not.toBeNull()
+      expect(field?.tagName).toBe("INPUT")
+      await waitFor(() => expect(scrolled).toEqual([field]))
+    } finally {
+      window.history.replaceState(null, "", "/")
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
+  it("does not scroll without a hash", async () => {
+    const scroll = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scroll
+    try {
+      renderPage()
+      await screen.findByTestId("backup-dest")
+      expect(document.getElementById("turn-timeout")).not.toBeNull()
+      expect(scroll).not.toHaveBeenCalled()
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
   })
 })

@@ -3,12 +3,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
+import { HUMAN_AGENTS_QUERY_KEY } from "@/api/channels"
 import {
   type ModelInfo,
   getModels,
   setDefaultModel,
   updateModel,
 } from "@/api/models"
+import { HumanSettingNotes } from "@/components/human-setting-notes"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
@@ -37,7 +39,7 @@ export function ModelsPage() {
   )
 
   const {
-    data: models = [],
+    data,
     isPending: loading,
     error,
   } = useQuery({
@@ -47,13 +49,16 @@ export function ModelsPage() {
       // Sort by provider, then alphabetically by model name within each
       // provider. The provider groups are ordered alphabetically below; this
       // keeps each group's models in alphabetical order.
-      return [...data.models].sort((a, b) => {
+      const models = [...data.models].sort((a, b) => {
         const byProvider = (a.provider || "").localeCompare(b.provider || "")
         if (byProvider !== 0) return byProvider
         return a.model_name.localeCompare(b.model_name)
       })
+      return { models, turnTimeout: data.turn_timeout }
     },
   })
+  const models = data?.models ?? []
+  const turnTimeout = data?.turnTimeout ?? 0
   const fetchError = error
     ? error instanceof Error
       ? error.message
@@ -62,6 +67,8 @@ export function ModelsPage() {
 
   const fetchModels = async () => {
     await queryClient.invalidateQueries({ queryKey: ["models"] })
+    // A model change can create or clear a human-agent note.
+    await queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
   }
 
   const handleToggleEnabled = async (model: ModelInfo) => {
@@ -136,6 +143,7 @@ export function ModelsPage() {
           <p className="text-muted-foreground mt-1 text-sm">
             {t("models.description")}
           </p>
+          <HumanSettingNotes page="/models" />
         </div>
 
         {loading && (
@@ -174,6 +182,7 @@ export function ModelsPage() {
         open={editingModel !== null}
         onClose={() => setEditingModel(null)}
         onSaved={fetchModels}
+        turnTimeout={turnTimeout}
       />
 
       <AddModelSheet
@@ -181,6 +190,7 @@ export function ModelsPage() {
         onClose={() => setAddOpen(false)}
         onSaved={fetchModels}
         existingModelNames={models.map((model) => model.model_name)}
+        turnTimeout={turnTimeout}
       />
 
       <DeleteModelDialog

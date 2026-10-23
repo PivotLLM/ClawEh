@@ -10,14 +10,39 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
+
+// cardExists reports whether the character-card library has card id.
+func cardExists(cfg *config.Config, id string) bool {
+	store, err := ccv3.Open(cfg.CardsPath())
+	return err == nil && store.Exists(id)
+}
+
+// cardCount describes the character-card library for the Data section.
+func cardCount(cfg *config.Config) string {
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	cards, invalid, err := store.List()
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	out := itoa(len(cards)) + " cards"
+	if len(invalid) > 0 {
+		out += ", " + itoa(len(invalid)) + " invalid files"
+	}
+	return out
+}
 
 // sensitiveTools are the internal tools that reach beyond the agent's own
 // workspace read: run programs, change files, send messages, install code,
-// or start other agents.
-var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn"}
+// or start other agents (or give them turns).
+var sensitiveTools = []string{"shell_exec", "file_write", "file_edit", "file_delete", "msg_send", "skill_install", "agent_spawn", "agent_message"}
 
 // folderRow is one line of the Folder access table before sorting.
 type folderRow struct {
@@ -37,6 +62,13 @@ type folderAccess struct {
 	rows map[string]*folderRow
 	// special is the one highlighted "anything" row, kept first.
 	special *folderRow
+}
+
+// alwaysReadableNotes says what each of config.AlwaysReadableWorkspaceDirs holds.
+var alwaysReadableNotes = map[string]string{
+	"tasks":             "sub-agent results",
+	"tmp":               "inbound attachments",
+	forumfs.BaseDirName: "the agent's forums",
 }
 
 func (f *folderAccess) add(path string, read, write bool, note string) {
@@ -85,8 +117,9 @@ func agentFolderAccess(cfg *config.Config, env Environment, a *config.AgentConfi
 			for _, sub := range d.WorkspaceReadSubdirs {
 				fa.add(filepath.Join(ws, sub), true, false, "workspace read area")
 			}
-			fa.add(filepath.Join(ws, "tasks"), true, false, "sub-agent results (always readable)")
-			fa.add(filepath.Join(ws, "tmp"), true, false, "inbound attachments (always readable)")
+			for _, sub := range config.AlwaysReadableWorkspaceDirs {
+				fa.add(filepath.Join(ws, sub), true, false, alwaysReadableNotes[sub]+" (always readable)")
+			}
 		}
 		for _, p := range cfg.Tools.AllowReadPaths {
 			fa.add(p, true, false, "pattern (allow_read_paths)")
@@ -150,9 +183,9 @@ func access(read, write bool) string {
 // sensitive marker, so the table uses the page width.
 func agentToolsTable(a *config.AgentConfig) Table {
 	t := Table{Caption: "Internal tools", Columns: []string{"Tool", "Sensitive", "Tool", "Sensitive"}}
-	tools := effectiveTools(a)
+	tools := a.Tools
 	if len(tools) == 0 {
-		t.Rows = append(t.Rows, row("(none: the tools list is empty)", "", "", ""))
+		t.Rows = append(t.Rows, row("(none)", "", "", ""))
 		return t
 	}
 	var cells [][]string
@@ -162,9 +195,15 @@ func agentToolsTable(a *config.AgentConfig) Table {
 		cells = append(cells, row(e, yesNo(isSensitive(e))))
 	}
 	for _, s := range sensitiveTools {
-		if !explicit[s] && config.MatchToolPattern(tools, s) {
+		// shell_exec is granted only by name, never by a pattern.
+		if !explicit[s] && !config.IsShellTool(s) && config.MatchToolPattern(tools, s) {
 			cells = append(cells, row(s, "yes (by pattern)"))
 		}
+	}
+	// forum_launch gives other agents turns; the forum switch, not the
+	// tools list, grants it.
+	if a.Forum && !a.IsToolDenied(forumfs.LaunchTool) {
+		cells = append(cells, row(forumfs.LaunchTool, "yes (Allow forum)"))
 	}
 	for i := 0; i < len(cells); i += 2 {
 		r := row(cells[i][0], cells[i][1], "", "")
@@ -226,7 +265,8 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	if a.Subagents != nil && (len(a.Subagents.AllowAgents) > 0 || len(a.Subagents.Models) > 0) {
 		sub = "agents " + joinOr(a.Subagents.AllowAgents, none) + "; models " + joinOr(a.Subagents.Models, "(agent's own)")
 	}
-	sub += "; gate " + onOff(cfg.Tools.Subagent.Enabled) + ", max depth " + itoa(d.GetMaxSubagentDepth())
+	sub += "; max depth " + itoa(d.GetMaxSubagentDepth())
+	_, human := cfg.HumanModelOf(a)
 	memory := onOff(a.CognitiveMemoryEnabled())
 	if a.Memory != nil {
 		memory += " (per-agent memory block)"
@@ -235,15 +275,28 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	if a.Name != "" && a.Name != a.ID {
 		title += " (" + a.Name + ")"
 	}
+	card := none
+	if a.CharacterCard != "" {
+		card = a.CharacterCard
+		switch {
+		case human:
+			card += " (ignored: the agent represents a person)"
+		case !cardExists(cfg, a.CharacterCard):
+			card += " (missing: no such card in the library)"
+		}
+	}
 	settings := pairs("Settings",
 		row("Enabled", yesNo(a.IsEnabled())),
-		row("Routing default", yesNo(strings.EqualFold(a.ID, defaultAgentID(cfg)))),
+		row("Routing default", yesNo(config.SameAgentID(a.ID, defaultAgentID(cfg)))),
 		row("Workspace", resolveWorkspace(cfg, a)),
 		row("Models", strings.TrimSpace(joinLines(models, none)+"\n"+strings.TrimSpace(modelsNote))),
 		row("Summarization models", joinOr(a.SummarizationModels, "(global chain)")),
 		row("Cognitive memory", memory),
 		row("Sub-agents", sub),
 		row("Suites", "Maestro "+onOff(a.MaestroEnabled())+", Fusion "+onOff(a.Fusion)),
+		row("Forum (sets up forums with other agents)", onOff(a.Forum)),
+		row("Character card", card),
+		row("Character card tools (edits the card library)", onOff(a.CCv3)),
 		row("Shared common directory", onOff(a.SharesCommon())),
 		row("Global cron (schedules for other agents)", onOff(a.GlobalCron)),
 	)
@@ -260,7 +313,7 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 	d := cfg.Agents.Defaults
 	readSubdirs := append([]string{}, d.WorkspaceReadSubdirs...)
 	if len(readSubdirs) > 0 {
-		readSubdirs = append(readSubdirs, "tasks", "tmp")
+		readSubdirs = append(readSubdirs, config.AlwaysReadableWorkspaceDirs...)
 	}
 	defaults := pairs("Defaults (agents.defaults)",
 		row("restrict_to_workspace", onOff(d.RestrictToWorkspace)),
@@ -268,7 +321,6 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 		row("Workspace write area", orValue(d.WorkspaceWriteSubdir, "(whole workspace)")),
 		row("Workspace read areas", joinOr(readSubdirs, "(whole workspace)")),
 		row("Agents base directory", cfg.BaseDir()),
-		row("Default tool allowlist (when an agent sets none)", joinOr(config.DefaultAgentTools, none)),
 		row("Max sub-agent depth", itoa(d.GetMaxSubagentDepth())),
 	)
 	s := Section{

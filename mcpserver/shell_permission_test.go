@@ -1,0 +1,58 @@
+// ClawEh
+// License: MIT
+
+package mcpserver
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/tools/shell"
+)
+
+// TestDispatch_ShellFollowsTheTokensAgent: a shell_exec call over MCP runs
+// when the token's agent has shell_exec, and is refused like any other tool
+// the agent does not have when it does not, for a session token and a
+// service token alike. The channel the session last heard from plays no part.
+func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
+	exec, err := shell.NewExecTool("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := newRegistryWith(exec)
+	bob := newRegistryWith() // Bob's tool permissions leave out shell_exec
+	resolve := resolverFor(map[string]*tools.ToolRegistry{"alice": alice, "bob": bob})
+
+	st := newSessionTokenStore()
+	aliceTok := st.Issue("alice", "agent:alice:main", "/ws")
+	bobTok := st.Issue("bob", "agent:bob:main", "/ws")
+	st.SetSource("agent:alice:main", "telegram", "chat-1")
+	st.SetSource("agent:bob:main", "telegram", "chat-2")
+	aliceSvc := "SST" + strings.Repeat("ab", 32)
+	bobSvc := "SST" + strings.Repeat("cd", 32)
+	st.RegisterService(aliceSvc, "alice", "/ws")
+	st.RegisterService(bobSvc, "bob", "/ws")
+
+	bobRefusal := tools.NotEnabledMessage("shell_exec")
+	for _, tc := range []struct {
+		name, token, want string
+		wantErr           bool
+	}{
+		{"alice session token", aliceTok, "shell-ok", false},
+		{"alice service token", aliceSvc, "shell-ok", false},
+		{"bob session token", bobTok, bobRefusal, true},
+		{"bob service token", bobSvc, bobRefusal, true},
+	} {
+		out, isErr := dispatchToolCall(context.Background(), "shell_exec",
+			map[string]any{"session_token": tc.token, "command": "echo shell-ok"},
+			st, resolve, nil, nil, nil, nil)
+		if isErr != tc.wantErr || !strings.Contains(out, tc.want) {
+			t.Errorf("%s: (%q, isErr=%v), want %q isErr=%v", tc.name, out, isErr, tc.want, tc.wantErr)
+		}
+		if tc.wantErr && out != tc.want {
+			t.Errorf("%s: refusal %q, want exactly %q", tc.name, out, tc.want)
+		}
+	}
+}

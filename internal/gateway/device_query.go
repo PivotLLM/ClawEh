@@ -16,15 +16,20 @@ import (
 // imports channels, so the device package cannot import agent.
 type deviceAgentQuerier struct{ al *agent.AgentLoop }
 
-// Agents lists configured agents plus the default agent's id and main session key.
+// Agents lists configured agents (human agents left out: a device cannot
+// chat with a person) plus the default agent's id and main session key.
 func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) {
 	reg := q.al.GetRegistry()
-	defaultID := reg.GetDefaultAgentID()
-	ids := reg.ListAgentIDs()
+	defaultID := reg.DefaultID()
+	ids := reg.List()
 	out := make([]device.DeviceAgentInfo, 0, len(ids))
 	for _, id := range ids {
 		info := device.DeviceAgentInfo{ID: id, Name: id}
-		if inst, ok := reg.GetAgent(id); ok && inst.Name != "" {
+		inst, ok := reg.Get(id)
+		if ok && inst.HumanModel != "" {
+			continue // a person can't be chatted with, only asked by agents
+		}
+		if ok && inst.Name != "" {
 			info.Name = inst.Name
 		}
 		// Always carry a non-empty name: operator clients hide entries without a
@@ -36,19 +41,14 @@ func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) 
 
 // DefaultAgentID returns the registry's default agent id.
 func (q deviceAgentQuerier) DefaultAgentID() string {
-	return q.al.GetRegistry().GetDefaultAgentID()
+	return q.al.GetRegistry().DefaultID()
 }
 
-// SessionMode returns the configured session mode, so the device gateway can
-// join the agent's main conversation when sessions are unified. An unreadable
-// config yields "", which IsUnified treats as unified — the safe default, since
-// unified is what every other surface falls back to.
-func (q deviceAgentQuerier) SessionMode() string {
-	cfg := q.al.GetConfig()
-	if cfg == nil {
-		return ""
-	}
-	return cfg.Session.Mode
+// HasAgent reports whether id names a configured agent the loop runs, human
+// agents included.
+func (q deviceAgentQuerier) HasAgent(id string) bool {
+	_, ok := q.al.GetRegistry().GetConfigured(id)
+	return ok
 }
 
 // History returns the user/assistant text turns stored for a session key. A
@@ -73,43 +73,36 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	return out
 }
 
-// agentForSessionKey resolves the registered agent that owns a session key of
-// the form "agent:<id>:...", or nil when there is none.
+// agentForSessionKey resolves the config agent that owns a session key of the
+// form "agent:<id>:...", or nil when there is none. A temporary agent is never
+// reachable from a device.
 func agentForSessionKey(reg *agent.AgentRegistry, sessionKey string) *agent.AgentInstance {
 	parts := strings.SplitN(sessionKey, ":", 3)
 	if len(parts) < 2 || parts[0] != "agent" {
 		return nil
 	}
-	inst, ok := reg.GetAgent(parts[1])
+	inst, ok := reg.GetConfigured(parts[1])
 	if !ok {
 		return nil
 	}
 	return inst
 }
 
-// injectDeviceAgentQuerier wires the agent loop into the device channel (if
-// enabled) so it can serve agents.list / chat.history to operator clients.
-func injectDeviceAgentQuerier(cm *channels.Manager, al *agent.AgentLoop) {
-	ch, ok := cm.Channel("device")
-	if !ok {
-		return
-	}
+// injectDeviceAgentQuerier wires the agent loop into the device channel ch
+// so it can serve agents.list / chat.history to operator clients.
+func injectDeviceAgentQuerier(ch channels.Channel, al *agent.AgentLoop) {
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
 	}
 }
 
 // injectDeviceTLS lends the gateway certificate manager to the device channel
-// (if enabled), so channels.device.tls serves the WebUI HTTPS certificate and
-// follows its reloads. certs is nil when HTTPS was off at start; the channel
-// then refuses to start with channels.device.tls on. Like the querier, it is
-// re-injected after every channel manager rebuild.
-func injectDeviceTLS(cm *channels.Manager, certs *tlscert.Manager) {
+// ch, so channels.device.tls serves the WebUI HTTPS certificate and follows
+// its reloads. certs is nil when HTTPS was off at start; the channel then
+// refuses to start with channels.device.tls on. Like the querier, it is
+// injected into every device channel the manager builds (channelBuildHook).
+func injectDeviceTLS(ch channels.Channel, certs *tlscert.Manager) {
 	if certs == nil {
-		return
-	}
-	ch, ok := cm.Channel("device")
-	if !ok {
 		return
 	}
 	if setter, ok := ch.(interface{ SetTLSConfig(cfg *tls.Config) }); ok {

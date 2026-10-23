@@ -40,10 +40,9 @@ type parityCase struct {
 // skill, a channel prompt, mounts, memory guidance and tool discovery.
 func parityContextBuilder(t *testing.T) *ContextBuilder {
 	t.Helper()
-	// Keep the global and builtin skill roots empty so the prompt depends only
-	// on the workspace built here.
+	// Keep the global skill root empty so the prompt depends only on the
+	// workspace built here.
 	t.Setenv("CLAW_HOME", t.TempDir())
-	t.Setenv("CLAW_BUILTIN_SKILLS", t.TempDir())
 
 	ws := t.TempDir()
 	files := map[string]string{
@@ -66,6 +65,7 @@ func parityContextBuilder(t *testing.T) *ContextBuilder {
 	}
 
 	cb := NewContextBuilder(ws).
+		WithSkillsFilter([]string{"*"}).
 		WithToolDiscovery(true).
 		WithMemoryGuidance("**Memory** - Retrieve before you assume.").
 		WithMounts([]config.MountConfig{{Name: "notes", Path: "/srv/notes", Writable: true}})

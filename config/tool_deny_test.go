@@ -1,6 +1,14 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/PivotLLM/ClawEh/logger"
+)
 
 // deny_tools is evaluated after the generic Tools allow list, under
 // MatchToolPattern's rule, and deny wins.
@@ -34,13 +42,13 @@ func TestAgentConfig_IsToolAllowed_DenyTools(t *testing.T) {
 		{"unrelated deny leaves allow intact", []string{"file_read_lines"}, []string{"shell_exec"}, "file_read_lines", true},
 
 		// nil / empty deny ⇒ unchanged behaviour.
-		{"nil deny, wildcard allow", []string{"*"}, nil, "shell_exec", true},
-		{"empty deny, wildcard allow", []string{"*"}, []string{}, "shell_exec", true},
+		{"nil deny, wildcard allow", []string{"*"}, nil, "file_read_lines", true},
+		{"empty deny, wildcard allow", []string{"*"}, []string{}, "file_read_lines", true},
 		{"nil deny, empty allow", []string{}, nil, "shell_exec", false},
 
-		// nil Tools falls back to the install defaults, still subject to deny.
-		{"default tools minus deny", nil, []string{"shell_exec"}, "shell_exec", false},
-		{"default tools, other tool allowed", nil, []string{"shell_exec"}, "file_read_lines", true},
+		// nil Tools (no tools key) grants nothing.
+		{"no tools key, nothing denied", nil, nil, "file_read_lines", false},
+		{"no tools key, other tool denied", nil, []string{"shell_exec"}, "file_read_lines", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -192,5 +200,73 @@ func TestDenyTools_RegistrationAndExecutionGatesAgree(t *testing.T) {
 	}
 	if !a.IsToolAllowed("file_read_lines") {
 		t.Error("file_read_lines should stay allowed")
+	}
+}
+
+// shell_exec is granted only by naming it in the agent's own tools list: no
+// wildcard or prefix entry includes it, deny_tools still wins, and no
+// install-wide setting plays a part.
+func TestAgentConfig_IsToolAllowed_ShellExplicitOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		tools     []string
+		deny      []string
+		toolName  string
+		wantAllow bool
+	}{
+		{"named", []string{"shell_exec"}, nil, "shell_exec", true},
+		{"named among others", []string{"file_read_lines", "shell_exec"}, nil, "shell_exec", true},
+		{"named beside a wildcard", []string{"*", "shell_exec"}, nil, "shell_exec", true},
+		{"named, different case", []string{"Shell_Exec"}, nil, "shell_exec", true},
+		{"named, tool name different case", []string{"shell_exec"}, nil, "SHELL_EXEC", true},
+		{"named with spaces", []string{" shell_exec "}, nil, "shell_exec", true},
+		{"wildcard only", []string{"*"}, nil, "shell_exec", false},
+		{"prefix shell_*", []string{"shell_*"}, nil, "shell_exec", false},
+		{"prefix s*", []string{"s*"}, nil, "shell_exec", false},
+		{"other tools only", []string{"file_*"}, nil, "shell_exec", false},
+		{"empty tools", []string{}, nil, "shell_exec", false},
+		{"named but denied", []string{"shell_exec"}, []string{"shell_exec"}, "shell_exec", false},
+		{"named but denied by prefix", []string{"shell_exec"}, []string{"shell_*"}, "shell_exec", false},
+		{"named but denied by star", []string{"shell_exec"}, []string{"*"}, "shell_exec", false},
+		{"wildcard does not affect other tools", []string{"*"}, nil, "file_write", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &AgentConfig{Tools: tc.tools, DenyTools: tc.deny}
+			if got := a.IsToolAllowed(tc.toolName); got != tc.wantAllow {
+				t.Errorf("IsToolAllowed(%q) with tools=%v deny=%v = %v, want %v",
+					tc.toolName, tc.tools, tc.deny, got, tc.wantAllow)
+			}
+		})
+	}
+}
+
+// A config that still sets the removed tools.tool_overrides loads, the key is
+// reported as unknown, and it changes nobody's tools: each agent's own tools
+// list alone decides.
+func TestLoadConfig_ToolOverridesUnknown(t *testing.T) {
+	var buf bytes.Buffer
+	restore := logger.RedirectForTest(&buf)
+	defer restore()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	doc := `{"tools":{"tool_overrides":{"shell_exec":true,"file_write":false,"agent_spawn":true},"exec":{}},` +
+		`"agents":{"list":[{"id":"alice","tools":["file_write","shell_exec"]},{"id":"bob","tools":["file_read_lines"]}]}}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !strings.Contains(buf.String(), "unknown config key: tools.tool_overrides") {
+		t.Errorf("tools.tool_overrides not reported as unknown:\n%s", buf.String())
+	}
+	alice, bob := cfg.AgentByID("alice"), cfg.AgentByID("bob")
+	if !alice.IsToolAllowed("file_write") || !alice.IsToolAllowed("shell_exec") {
+		t.Error("alice lost a tool her list names")
+	}
+	if bob.IsToolAllowed("shell_exec") || bob.IsToolAllowed("agent_spawn") {
+		t.Error("bob gained a tool his list does not name")
 	}
 }

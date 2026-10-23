@@ -103,11 +103,11 @@ func (p *finalLLMProvider) GetDefaultModel() string { return "test-final" }
 // attaches the agent ID to ctx before reaching any compression-capable entry
 // point. Assemble and AddUserMessage (which holds the in-loop triggerCheck
 // path) must both see agent_id when the loop runs, otherwise compression error
-// logs lose the agent attribution Eric saw.
+// logs lose the agent attribution the operator saw.
 func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	al := newTestAgentLoop(t).al
 
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

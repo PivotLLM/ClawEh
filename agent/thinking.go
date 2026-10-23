@@ -4,9 +4,9 @@ import "strings"
 
 // ThinkingLevel controls how the provider sends thinking parameters.
 //
-//   - "adaptive": sends {thinking: {type: "adaptive"}} + output_config.effort (Claude 4.6+)
-//   - "low"/"medium"/"high"/"xhigh": sends {thinking: {type: "enabled", budget_tokens: N}} (all models)
-//   - "off": disables thinking
+//   - "adaptive": adaptive thinking at the model's default effort
+//   - "low"/"medium"/"high"/"xhigh"/"max": adaptive thinking with that effort
+//   - "off": no thinking
 type ThinkingLevel string
 
 const (
@@ -15,6 +15,7 @@ const (
 	ThinkingMedium   ThinkingLevel = "medium"
 	ThinkingHigh     ThinkingLevel = "high"
 	ThinkingXHigh    ThinkingLevel = "xhigh"
+	ThinkingMax      ThinkingLevel = "max"
 	ThinkingAdaptive ThinkingLevel = "adaptive"
 )
 
@@ -33,6 +34,8 @@ func parseThinkingLevel(level string) ThinkingLevel {
 		return ThinkingHigh
 	case "xhigh":
 		return ThinkingXHigh
+	case "max":
+		return ThinkingMax
 	default:
 		return ThinkingOff
 	}

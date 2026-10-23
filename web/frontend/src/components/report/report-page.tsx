@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconFileTypePdf } from "@tabler/icons-react"
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
 
 import { type ReportAssessment, getReportAssessment } from "@/api/report"
@@ -101,7 +102,30 @@ export function ReportPage() {
                     <td
                       className={`px-2 py-2.5 break-words ${row.action ? "text-foreground font-medium" : ""}`}
                     >
-                      {row.item}
+                      {row.link?.startsWith("/manual/") ? (
+                        // The manual is served by the backend, not the
+                        // router; it opens in a new tab like the sidebar's.
+                        <a
+                          href={row.link}
+                          target="_blank"
+                          rel="noopener"
+                          className="underline underline-offset-2"
+                          data-testid="report-row-link"
+                        >
+                          {row.item}
+                        </a>
+                      ) : row.link ? (
+                        <Link
+                          to={row.link.split("#")[0]}
+                          hash={row.link.split("#")[1]}
+                          className="underline underline-offset-2"
+                          data-testid="report-row-link"
+                        >
+                          {row.item}
+                        </Link>
+                      ) : (
+                        row.item
+                      )}
                     </td>
                     <td className="text-muted-foreground px-2 py-2.5 break-words whitespace-normal">
                       {row.status}

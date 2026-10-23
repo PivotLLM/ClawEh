@@ -29,7 +29,7 @@ export function AgentDefaultsSection({
         <Input
           value={form.baseDir}
           onChange={(e) => onFieldChange("baseDir", e.target.value)}
-          placeholder="~/.claw/agents"
+          placeholder="<data directory>/agents"
         />
       </Field>
 
@@ -41,7 +41,7 @@ export function AgentDefaultsSection({
         <Input
           value={form.commonDir}
           onChange={(e) => onFieldChange("commonDir", e.target.value)}
-          placeholder="<agents>/common"
+          placeholder="<data directory>/common"
         />
       </Field>
 
@@ -53,14 +53,6 @@ export function AgentDefaultsSection({
         onCheckedChange={(checked) =>
           onFieldChange("restrictToWorkspace", checked)
         }
-      />
-
-      <SwitchCardField
-        label={t("pages.config.allow_remote")}
-        hint={t("pages.config.allow_remote_hint")}
-        layout="setting-row"
-        checked={form.allowRemote}
-        onCheckedChange={(checked) => onFieldChange("allowRemote", checked)}
       />
 
       <SwitchCardField
@@ -118,6 +110,7 @@ export function AgentDefaultsSection({
         layout="setting-row"
       >
         <Input
+          id="turn-timeout"
           type="number"
           min={0}
           value={form.turnTimeout}

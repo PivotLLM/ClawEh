@@ -14,6 +14,7 @@ export const PROTOCOL_OPTIONS = [
   "codex-cli",
   "antigravity-cli",
   "cursor-cli",
+  "human",
 ] as const
 
 export type Protocol = (typeof PROTOCOL_OPTIONS)[number]
@@ -33,6 +34,13 @@ const CLI_PROTOCOLS: ReadonlySet<string> = new Set([
 // `command` and have no base_url / api_key.
 export function isCliProtocol(protocol: string): boolean {
   return CLI_PROTOCOLS.has(protocol)
+}
+
+// isHumanProtocol reports whether a protocol is "human": a model on it
+// represents a person, who answers in their own chat. It has no base_url,
+// api_key or command.
+export function isHumanProtocol(protocol: string): boolean {
+  return protocol === "human"
 }
 
 // requiresBaseURL reports whether base_url is required for a protocol.

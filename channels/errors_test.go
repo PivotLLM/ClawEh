@@ -17,7 +17,7 @@ func TestErrorsIs(t *testing.T) {
 }
 
 func TestErrorsIsAllTypes(t *testing.T) {
-	sentinels := []error{ErrNotRunning, ErrRateLimit, ErrTemporary, ErrSendFailed}
+	sentinels := []error{ErrUnknownChannel, ErrNotRunning, ErrRecipientOffline, ErrRecipientNotFound, ErrRateLimit, ErrTemporary, ErrSendFailed, ErrReceiveOnly}
 
 	for _, sentinel := range sentinels {
 		wrapped := fmt.Errorf("context: %w", sentinel)

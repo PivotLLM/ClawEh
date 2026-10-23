@@ -51,7 +51,7 @@ func (f *fakeSource) Stop() error { return nil }
 // still starts the others.
 func TestStart_AlertsWhenSourceFails(t *testing.T) {
 	rec := &alertRecorder{}
-	s := NewService(Config{Enabled: true, Alerter: rec}, nil)
+	s := NewService(Config{Enabled: true, Alerter: rec})
 	s.sources = append(s.sources,
 		&fakeSource{kind: events.KindUSB},
 		&fakeSource{kind: events.KindBluetooth, err: errors.New("no adapter")},

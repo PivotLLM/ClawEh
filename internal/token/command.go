@@ -77,10 +77,8 @@ func resolveAgent(arg string) (cfg *config.Config, agentID string, err error) {
 		return nil, "", fmt.Errorf("load config: %w", err)
 	}
 	want := routing.NormalizeAgentID(arg)
-	for i := range cfg.Agents.List {
-		if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == want {
-			return cfg, want, nil
-		}
+	if configuredAgent(cfg, want) {
+		return cfg, want, nil
 	}
 	return nil, "", fmt.Errorf("no agent %q in config (agents: %s)", arg, agentIDs(cfg))
 }
@@ -110,25 +108,40 @@ func issue(arg string) error {
 	return nil
 }
 
+// revoke removes an agent's service token. It works from the token store,
+// not the config, so the token of an agent that has been removed from the
+// config can still be revoked; otherwise it would work again if an agent with
+// that id came back.
 func revoke(arg string) error {
-	cfg, agentID, err := resolveAgent(arg)
+	cfg, err := internal.LoadConfig()
 	if err != nil {
-		return err
+		return fmt.Errorf("load config: %w", err)
 	}
+	want := routing.NormalizeAgentID(arg)
 	path := servicetoken.Path(cfg.DataDir())
 	tokens, err := servicetoken.Load(path)
 	if err != nil {
 		return err
 	}
-	if _, ok := tokens[agentID]; !ok {
-		fmt.Printf("No service token for agent %q.\n", agentID)
+	key, found := "", false
+	for id := range tokens {
+		if config.SameAgentID(id, want) {
+			key, found = id, true
+			break
+		}
+	}
+	if !found {
+		if !configuredAgent(cfg, want) {
+			return fmt.Errorf("no agent %q in config and no service token for it (agents: %s)", arg, agentIDs(cfg))
+		}
+		fmt.Printf("No service token for agent %q.\n", want)
 		return nil
 	}
-	delete(tokens, agentID)
+	delete(tokens, key)
 	if err := servicetoken.Save(path, tokens); err != nil {
 		return err
 	}
-	fmt.Printf("Revoked service token for agent %q. A running claw removes it automatically within a few seconds.\n", agentID)
+	fmt.Printf("Revoked service token for agent %q. A running claw removes it automatically within a few seconds.\n", key)
 	return nil
 }
 
@@ -151,6 +164,16 @@ func list() error {
 		fmt.Printf("  %s\n", id)
 	}
 	return nil
+}
+
+// configuredAgent reports whether the config lists an agent with the id.
+func configuredAgent(cfg *config.Config, id string) bool {
+	for i := range cfg.Agents.List {
+		if config.SameAgentID(cfg.Agents.List[i].ID, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func agentIDs(cfg *config.Config) string {

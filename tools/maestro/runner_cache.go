@@ -125,6 +125,21 @@ func runnerFor(agentID string, spec runnerSpec, disp *dispatcher, cfg *mconfig.C
 	return r, sw
 }
 
+// sharedRunner returns the agent's cached runner and dispatcher untouched, for
+// a temporary agent acting as that agent: the cache is neither changed nor
+// re-pointed. When the agent has no runner yet, the temporary agent gets a
+// private one on disp that is never cached.
+func sharedRunner(agentID string, disp *dispatcher, cfg *mconfig.Config, l *mlogging.Logger) (*runner.Runner, *swapDispatcher) {
+	runners.mu.Lock()
+	prev, cached := runners.byAgent[agentID]
+	runners.mu.Unlock()
+	if cached {
+		return prev.runner, prev.disp
+	}
+	sw := newSwapDispatcher(disp)
+	return newRunner(cfg, l, sw), sw
+}
+
 // reuseRunner returns the cached runner, pointed at disp, when it can be kept.
 func reuseRunner(agentID string, spec runnerSpec, disp *dispatcher) (*runner.Runner, *swapDispatcher, bool) {
 	runners.mu.Lock()

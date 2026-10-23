@@ -51,9 +51,13 @@ func (globalCommonProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	}
 
 	var commonDir, workspace string
+	workspaceModes := config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	commonModes := workspaceModes
 	if c != nil {
 		commonDir = c.ResolveCommonDir()
 		workspace = cd.Workspace
+		workspaceModes = c.AgentModes(workspace)
+		commonModes = c.PermissionModes(config.AreaCommon)
 	}
 
 	return []global.ToolDefinition{
@@ -74,7 +78,7 @@ func (globalCommonProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			Category:     "common",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return getCommon(commonDir, workspace, call.Args), nil
+				return getCommon(commonDir, workspace, workspaceModes, call.Args), nil
 			},
 		},
 		{
@@ -84,15 +88,17 @@ func (globalCommonProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			Category:     "common",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return putCommon(commonDir, workspace, call.Args), nil
+				return putCommon(commonDir, workspace, commonModes, call.Args), nil
 			},
 		},
+		// Not in the default set: deleting from the folder every agent shares
+		// is granted per agent.
 		{
 			Name:         "delete",
 			Description:  "Delete a file from the shared common directory.",
 			RawSchema:    deleteSchema,
 			Category:     "common",
-			DefaultAllow: global.Allow(true),
+			DefaultAllow: global.Allow(false),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return deleteCommon(commonDir, call.Args), nil
 			},

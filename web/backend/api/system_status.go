@@ -119,7 +119,6 @@ func countChannels(cfg *config.Config) int {
 		cfg.Channels.Discord.Enabled,
 		cfg.Channels.Slack.Enabled,
 		cfg.Channels.Matrix.Enabled,
-		cfg.Channels.LINE.Enabled,
 		cfg.Channels.WebUI.Enabled,
 		cfg.Channels.Device.Enabled,
 	} {

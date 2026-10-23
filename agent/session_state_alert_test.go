@@ -49,7 +49,7 @@ func (failingCompactionStore) SetCompactionState(string, memory.CompactionState)
 // store; a working store raises none.
 func TestSessionState_AlertsWhenPersistFails(t *testing.T) {
 	al := newTestAgentLoop(t).al
-	agent := al.registry.GetDefaultAgent()
+	agent := al.registry.Default()
 	if agent == nil {
 		t.Fatal("no default agent")
 	}

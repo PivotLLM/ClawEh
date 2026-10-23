@@ -13,7 +13,7 @@ import (
 )
 
 func TestToolStats_RoundTrip(t *testing.T) {
-	const key = "agent:alice:subagent:round-trip"
+	const key = "agent:clone-round-trip:main"
 	BeginToolStats(key)
 	RecordToolResult(key, "file_read_lines", NewToolResult("ok"))
 	RecordToolResult(key, "web_fetch", ErrorResult("first failure"))
@@ -30,7 +30,7 @@ func TestToolStats_RoundTrip(t *testing.T) {
 }
 
 func TestToolStats_NilResultText(t *testing.T) {
-	const key = "agent:alice:subagent:nil-result"
+	const key = "agent:clone-nil-result:main"
 	BeginToolStats(key)
 	RecordToolResult(key, "maestro_task_get", nil)
 	_, _, last := EndToolStats(key)
@@ -49,7 +49,7 @@ func TestToolStats_UnregisteredKeyIsNoOp(t *testing.T) {
 }
 
 func TestToolStats_ZerosAfterEnd(t *testing.T) {
-	const key = "agent:alice:subagent:ended"
+	const key = "agent:clone-ended:main"
 	BeginToolStats(key)
 	RecordToolResult(key, "web_fetch", ErrorResult("boom"))
 	if calls, _, _ := EndToolStats(key); calls != 1 {
@@ -63,7 +63,7 @@ func TestToolStats_ZerosAfterEnd(t *testing.T) {
 }
 
 func TestToolStats_LastErrorRedactedAndTruncated(t *testing.T) {
-	const key = "agent:alice:subagent:redact"
+	const key = "agent:clone-redact:main"
 	token := "SST" + strings.Repeat("a", 64)
 	BeginToolStats(key)
 	RecordToolResult(key, "cogmem_status", ErrorResult("rejected "+token+" "+strings.Repeat("x", 1000)))
@@ -81,7 +81,7 @@ func TestToolStats_LastErrorRedactedAndTruncated(t *testing.T) {
 }
 
 func TestToolStats_ConcurrentRecord(t *testing.T) {
-	const key = "agent:alice:subagent:concurrent"
+	const key = "agent:clone-concurrent:main"
 	const workers, perWorker = 16, 50
 	BeginToolStats(key)
 	var wg sync.WaitGroup

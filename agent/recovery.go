@@ -9,7 +9,9 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/state"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // recoveryMaxAttempts caps how often restarts replay one interrupted turn: a
@@ -25,8 +27,8 @@ const (
 // that were interrupted mid-turn (PendingTurn == true on startup).
 func (al *AgentLoop) recoverPendingTurns(ctx context.Context) {
 	registry := al.GetRegistry()
-	for _, agentID := range registry.ListAgentIDs() {
-		agent, ok := registry.GetAgent(agentID)
+	for _, agentID := range registry.List() {
+		agent, ok := registry.Get(agentID)
 		if !ok {
 			continue
 		}
@@ -59,7 +61,16 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		al.clearPendingTurnSource(agentID, sessionKey)
 	}
 
-	sm, ok := al.agentStates[agentID]
+	// A session no turn runs in any more (a per-sender key from an earlier
+	// release) is left on disk, but its interrupted turn is not replayed: the
+	// replay would land in the main session while this flag stayed set, and
+	// repeat on every restart.
+	if routing.ResolveAgentSessionKey(agentID, sessionKey) != sessionKey {
+		clearPending("Pending session is no longer used")
+		return
+	}
+
+	sm, ok := al.stateManager(agentID)
 	if !ok {
 		clearPending("No state manager for agent")
 		return
@@ -88,13 +99,14 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 	}
 	if content == "" {
 		clearPending("No user message found for pending session")
+		al.publishRequiredGiveUp(ctx, src)
 		return
 	}
 
 	fields["attempts"] = src.Attempts
 	if src.Attempts >= recoveryMaxAttempts {
 		clearPending("Recovery attempts exhausted")
-		al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+		al.publishGiveUp(ctx, src)
 		return
 	}
 	src.Attempts++
@@ -102,7 +114,7 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		// Without a persisted count a replay could crash-loop; give up instead.
 		fields["error"] = err.Error()
 		clearPending("Cannot persist recovery attempt count")
-		al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+		al.publishGiveUp(ctx, src)
 		return
 	}
 
@@ -113,11 +125,17 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 		SenderID:   "recovery",
 		Content:    content,
 		SessionKey: sessionKey,
+		MessageID:  src.MessageID,
 		IsRetry:    true,
+		Internal:   true,
 		Metadata: map[string]string{
 			metadataKeyPreresolvedAgentID: agentID,
 		},
 	}
+	if src.ReplyRequired {
+		msg.Metadata[bus.MetaReplyRequired] = "1"
+	}
+	msg.Metadata = bus.SetSpawnDepth(msg.Metadata, src.SpawnDepth)
 	if err := al.bus.PublishInbound(ctx, msg); err != nil {
 		fields["error"] = err.Error()
 		logger.WarnCF("agent", "Failed to queue recovery message", fields)
@@ -140,21 +158,57 @@ func (al *AgentLoop) publishRecoveryNotice(ctx context.Context, src state.Pendin
 	}
 }
 
+// publishGiveUp tells the chat that recovery gave up on its interrupted turn:
+// the give-up notice, which is the turn's final error reply when the sender
+// required one.
+func (al *AgentLoop) publishGiveUp(ctx context.Context, src state.PendingTurn) {
+	if src.ReplyRequired {
+		al.publishRequiredGiveUp(ctx, src)
+		return
+	}
+	al.publishRecoveryNotice(ctx, src, recoveryGiveUpNotice)
+}
+
+// publishRequiredGiveUp sends the final error reply owed to a sender that
+// required one (bus.MetaReplyRequired) for a turn recovery will not replay.
+// Nothing is sent for a turn without the flag.
+func (al *AgentLoop) publishRequiredGiveUp(ctx context.Context, src state.PendingTurn) {
+	if !src.ReplyRequired {
+		return
+	}
+	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		Channel:           src.Channel,
+		ChatID:            src.ChatID,
+		Content:           recoveryGiveUpNotice,
+		OriginalMessageID: src.MessageID,
+		Outcome:           bus.OutcomeError,
+	}); err != nil {
+		logger.WarnCF("agent", "Failed to publish recovery give-up reply",
+			map[string]any{"channel": src.Channel, "chat_id": src.ChatID, "error": err.Error()})
+	}
+}
+
 // recordPendingTurnSource remembers where the turn now in flight came from, so
 // a restart can replay it on the same channel and deliver the reply there.
 // Internal channels have no handler to deliver to, so they are not recorded and
 // an interrupted turn on one is never replayed. Call it when the session
 // store's pending-turn flag is set; clearPendingTurnSource pairs with clearing
 // the flag.
-func (al *AgentLoop) recordPendingTurnSource(agent *AgentInstance, opts processOptions) {
+func (al *AgentLoop) recordPendingTurnSource(ctx context.Context, agent *AgentInstance, opts processOptions) {
 	if opts.Channel == "" || opts.ChatID == "" || constants.IsInternalChannel(opts.Channel) {
 		return
 	}
-	sm, ok := al.agentStates[agent.ID]
+	sm, ok := al.stateManager(agent.ID)
 	if !ok {
 		return
 	}
-	if err := sm.SetPendingTurn(opts.SessionKey, state.PendingTurn{Channel: opts.Channel, ChatID: opts.ChatID}); err != nil {
+	if err := sm.SetPendingTurn(opts.SessionKey, state.PendingTurn{
+		Channel:       opts.Channel,
+		ChatID:        opts.ChatID,
+		MessageID:     opts.MessageID,
+		ReplyRequired: opts.ReplyRequired,
+		SpawnDepth:    toolsagents.SpawnDepth(ctx),
+	}); err != nil {
 		logger.WarnCF("agent", "Failed to record pending turn source",
 			map[string]any{"error": err.Error(), "session": opts.SessionKey})
 	}
@@ -162,7 +216,7 @@ func (al *AgentLoop) recordPendingTurnSource(agent *AgentInstance, opts processO
 
 // clearPendingTurnSource forgets the source recorded by recordPendingTurnSource.
 func (al *AgentLoop) clearPendingTurnSource(agentID, sessionKey string) {
-	sm, ok := al.agentStates[agentID]
+	sm, ok := al.stateManager(agentID)
 	if !ok {
 		return
 	}
@@ -170,4 +224,27 @@ func (al *AgentLoop) clearPendingTurnSource(agentID, sessionKey string) {
 		logger.WarnCF("agent", "Failed to clear pending turn source",
 			map[string]any{"error": err.Error(), "session": sessionKey})
 	}
+}
+
+// stateManager returns the restart-recovery state manager of config agent
+// agentID, making it on first use: an agent a reload adds gets one as soon as
+// its first turn records where it came from. A temporary agent has none
+// (its interrupted turns are never replayed).
+func (al *AgentLoop) stateManager(agentID string) (*state.Manager, bool) {
+	registry := al.GetRegistry()
+	if registry == nil {
+		return nil, false
+	}
+	agent, ok := registry.GetConfigured(agentID)
+	if !ok {
+		return nil, false
+	}
+	al.agentStatesMu.Lock()
+	defer al.agentStatesMu.Unlock()
+	sm, ok := al.agentStates[agent.Workspace]
+	if !ok {
+		sm = state.NewManager(agent.Workspace, agentModes(al.GetConfig(), agent.Workspace).Dir)
+		al.agentStates[agent.Workspace] = sm
+	}
+	return sm, true
 }

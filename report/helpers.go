@@ -131,31 +131,16 @@ func bindAddr(host string, port int) string {
 	return host + ":" + itoa(port)
 }
 
-// expandHome mirrors config's ~ expansion for per-agent workspace paths.
-func expandHome(path string) string {
-	if path == "" || path[0] != '~' {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if len(path) > 1 && path[1] == '/' {
-		return home + path[1:]
-	}
-	return home
-}
-
 // resolveWorkspace is the per-agent workspace the runtime uses
 // (agent/instance.go resolveAgentWorkspace): an explicit workspace wins,
 // otherwise <base_dir>/<id> with the routing-default id at <base_dir>/default.
 func resolveWorkspace(cfg *config.Config, a *config.AgentConfig) string {
 	if a != nil && strings.TrimSpace(a.Workspace) != "" {
-		return expandHome(strings.TrimSpace(a.Workspace))
+		return config.ExpandHome(strings.TrimSpace(a.Workspace))
 	}
 	id := "default"
 	if a != nil {
-		if nid := routing.NormalizeAgentID(a.ID); nid != "" && nid != routing.DefaultAgentID {
+		if nid := routing.NormalizeAgentID(a.ID); nid != routing.DefaultAgentID {
 			id = nid
 		}
 	}
@@ -195,6 +180,19 @@ func enabledAgents(cfg *config.Config) []*config.AgentConfig {
 	return out
 }
 
+// agentNames returns the display name of each agent id, or the id itself
+// for one the configuration does not list.
+func agentNames(cfg *config.Config, ids []string) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id
+		if a := cfg.AgentByID(id); a != nil {
+			out[i] = a.DisplayName()
+		}
+	}
+	return out
+}
+
 func agentIDs(agents []*config.AgentConfig) []string {
 	ids := make([]string, 0, len(agents))
 	for _, a := range agents {
@@ -211,29 +209,18 @@ func defaultAgentID(cfg *config.Config) string {
 		return routing.DefaultAgentID
 	}
 	for _, a := range agents {
-		if a.Default && strings.TrimSpace(a.ID) != "" {
+		if a.Default && a.ID != "" {
 			return routing.NormalizeAgentID(a.ID)
 		}
 	}
-	if id := strings.TrimSpace(agents[0].ID); id != "" {
+	if id := agents[0].ID; id != "" {
 		return routing.NormalizeAgentID(id)
 	}
 	return routing.DefaultAgentID
 }
 
-// effectiveTools is the agent's internal-tool allowlist as IsToolAllowed
-// applies it: nil (key absent) means the install defaults, an empty list means
-// no tools.
-func effectiveTools(a *config.AgentConfig) []string {
-	if a.Tools == nil {
-		return config.DefaultAgentTools
-	}
-	return a.Tools
-}
-
 // agentHasTool reports whether the agent can call the named internal tool, as
-// IsToolAllowed decides it: the allow list (or the install defaults) minus
-// deny_tools.
+// IsToolAllowed decides it: the allow list minus deny_tools.
 func agentHasTool(a *config.AgentConfig, name string) bool {
 	return a.IsToolAllowed(name)
 }

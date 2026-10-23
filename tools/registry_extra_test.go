@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // mockTool is a simple tool for registry tests.
@@ -174,5 +177,31 @@ func TestToolRegistry_Version_IncreasesOnRegister(t *testing.T) {
 	v1 := r.Version()
 	if v1 <= v0 {
 		t.Errorf("Version should increase after Register: v0=%d, v1=%d", v0, v1)
+	}
+}
+
+// TestToolRegistry_ShellIsAnOrdinaryTool: an unregistered shell_exec gets the
+// same not-found result as any other unregistered tool; one registered but
+// hidden by progressive discovery is not found in the loop and runs for the
+// host, like any other hidden tool.
+func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
+	ctx := context.Background()
+	missing := NewToolRegistry()
+	for _, name := range []string{config.ShellExecTool, "file_write"} {
+		res := missing.Execute(ctx, name, nil)
+		if want := fmt.Sprintf("tool %q not found", name); !res.IsError || res.ForLLM != want {
+			t.Errorf("unregistered %s: %+v, want %q", name, res, want)
+		}
+	}
+
+	hidden := NewToolRegistry()
+	hidden.RegisterHidden(&mockTool{name: config.ShellExecTool})
+	res := hidden.Execute(ctx, config.ShellExecTool, nil)
+	if want := fmt.Sprintf("tool %q not found", config.ShellExecTool); !res.IsError || res.ForLLM != want {
+		t.Errorf("hidden in the loop: %+v, want %q", res, want)
+	}
+	res = hidden.ExecuteForHost(ctx, config.ShellExecTool, nil, "", "", nil)
+	if res.IsError || res.ForLLM != "tool executed: "+config.ShellExecTool {
+		t.Errorf("hidden for the host: %+v, want it run", res)
 	}
 }

@@ -75,8 +75,8 @@ describe("CLIAgentsSection", () => {
   })
 
   it("shows the resolved path once installed", async () => {
-    renderSection([cli({ path: "/home/eric/.local/bin/agy" })])
-    expect(await screen.findByText("/home/eric/.local/bin/agy")).toBeTruthy()
+    renderSection([cli({ path: "/home/admin/.local/bin/agy" })])
+    expect(await screen.findByText("/home/admin/.local/bin/agy")).toBeTruthy()
   })
 
   it("says how many models a switch governs when it is more than one", async () => {

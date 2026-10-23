@@ -43,11 +43,18 @@ func (m *mockChannel) EditMessage(ctx context.Context, chatID, messageID, conten
 	return nil
 }
 
-// newTestManager creates a minimal Manager suitable for unit tests.
+// newTestManager creates a minimal Manager suitable for unit tests. Its
+// retries wait on an instant recording clock (waitsOf).
 func newTestManager() *Manager {
 	return &Manager{
 		channels: make(map[string]Channel),
 		workers:  make(map[string]*channelWorker),
+		inputs:   make(map[string]string),
+		cancels:  make(map[string]context.CancelFunc),
+		held:     make(map[string]*heldOutbound),
+
+		startCancels: make(map[string]context.CancelFunc),
+		clock:        newRecordingClock(true),
 	}
 }
 
@@ -68,7 +75,9 @@ func TestSendWithRetry_Success(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call, got %d", callCount)
@@ -95,7 +104,9 @@ func TestSendWithRetry_TemporaryThenSuccess(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 3 {
 		t.Fatalf("expected 3 Send calls (2 failures + 1 success), got %d", callCount)
@@ -119,7 +130,9 @@ func TestSendWithRetry_PermanentFailure(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call (no retry for permanent failure), got %d", callCount)
@@ -143,7 +156,9 @@ func TestSendWithRetry_NotRunning(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 Send call (no retry for ErrNotRunning), got %d", callCount)
@@ -170,16 +185,16 @@ func TestSendWithRetry_RateLimitRetry(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	start := time.Now()
-	m.sendWithRetry(ctx, "test", w, msg)
-	elapsed := time.Since(start)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 2 {
 		t.Fatalf("expected 2 Send calls (1 rate limit + 1 success), got %d", callCount)
 	}
-	// Should have waited at least rateLimitDelay (1s) but allow some slack
-	if elapsed < 900*time.Millisecond {
-		t.Fatalf("expected at least ~1s delay for rate limit retry, got %v", elapsed)
+	// A rate limit waits exactly rateLimitDelay, without jitter.
+	if got := waitsOf(m); len(got) != 1 || got[0] != rateLimitDelay {
+		t.Fatalf("waits = %v, want [%v]", got, rateLimitDelay)
 	}
 }
 
@@ -200,11 +215,16 @@ func TestSendWithRetry_MaxRetriesExhausted(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	expected := maxRetries + 1 // initial attempt + maxRetries retries
 	if callCount != expected {
 		t.Fatalf("expected %d Send calls, got %d", expected, callCount)
+	}
+	if got := waitsOf(m); len(got) != maxRetries {
+		t.Fatalf("waits = %v, want %d (one before each retry)", got, maxRetries)
 	}
 }
 
@@ -228,7 +248,9 @@ func TestSendWithRetry_UnknownError(t *testing.T) {
 	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if callCount != 2 {
 		t.Fatalf("expected 2 Send calls (unknown error treated as temporary), got %d", callCount)
@@ -237,6 +259,7 @@ func TestSendWithRetry_UnknownError(t *testing.T) {
 
 func TestSendWithRetry_ContextCancelled(t *testing.T) {
 	m := newTestManager()
+	m.clock = newRecordingClock(false) // the backoff never ends by itself
 	var callCount int
 	ch := &mockChannel{
 		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
@@ -259,7 +282,9 @@ func TestSendWithRetry_ContextCancelled(t *testing.T) {
 		return fmt.Errorf("timeout: %w", ErrTemporary)
 	}
 
-	m.sendWithRetry(ctx, "test", w, msg)
+	if err := m.sendWithRetry(ctx, "test", w, msg); err == nil {
+		t.Fatal("sendWithRetry must report the failed delivery")
+	}
 
 	// Should have called Send once, then noticed ctx canceled during backoff
 	if callCount != 1 {
@@ -299,14 +324,21 @@ func TestWorkerRateLimiter(t *testing.T) {
 		w.queue <- bus.OutboundMessage{Channel: "test", ChatID: "1", Content: fmt.Sprintf("msg%d", i)}
 	}
 
-	// Wait enough time for all messages to be sent (4 msgs at 2/s = ~2s, give extra margin)
-	time.Sleep(3 * time.Second)
-
-	mu.Lock()
-	times := make([]time.Time, len(sendTimes))
-	copy(times, sendTimes)
-	mu.Unlock()
-
+	// Wait until all four are sent (about 1.5s at 2/s).
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		times = append(times[:0], sendTimes...)
+		mu.Unlock()
+		if len(times) >= 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 4 sends, got %d", len(times))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if len(times) != 4 {
 		t.Fatalf("expected 4 sends, got %d", len(times))
 	}
@@ -372,14 +404,15 @@ func TestRunWorker_MessageSplitting(t *testing.T) {
 	// Send a message that should be split
 	w.queue <- bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello world"}
 
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	count := len(received)
-	mu.Unlock()
-
-	if count < 2 {
-		t.Fatalf("expected message to be split into at least 2 chunks, got %d", count)
+	count := 0
+	for deadline := time.Now().Add(10 * time.Second); count < 2; {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected message to be split into at least 2 chunks, got %d", count)
+		}
+		time.Sleep(time.Millisecond)
+		mu.Lock()
+		count = len(received)
+		mu.Unlock()
 	}
 }
 
@@ -395,12 +428,12 @@ func (m *mockChannelWithLength) MaxMessageLength() int {
 
 func TestSendWithRetry_ExponentialBackoff(t *testing.T) {
 	m := newTestManager()
+	fc := newRecordingClock(false)
+	m.clock = fc
 
-	var callTimes []time.Time
 	var callCount atomic.Int32
 	ch := &mockChannel{
 		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-			callTimes = append(callTimes, time.Now())
 			callCount.Add(1)
 			return fmt.Errorf("timeout: %w", ErrTemporary)
 		},
@@ -409,20 +442,41 @@ func TestSendWithRetry_ExponentialBackoff(t *testing.T) {
 		ch:      ch,
 		limiter: rate.NewLimiter(rate.Inf, 1),
 	}
-
-	ctx := context.Background()
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "1", Content: "hello"}
 
-	start := time.Now()
-	m.sendWithRetry(ctx, "test", w, msg)
-	totalElapsed := time.Since(start)
+	result := make(chan error, 1)
+	go func() { result <- m.sendWithRetry(context.Background(), "test", w, msg) }()
 
-	// With maxRetries=3: attempts at 0, ~500ms, ~1.5s, ~3.5s
-	// Total backoff: 500ms + 1s + 2s = 3.5s, jittered by ±20% → at least 2.8s
-	if totalElapsed < 2800*time.Millisecond {
-		t.Fatalf("expected total elapsed >= 2.8s for exponential backoff, got %v", totalElapsed)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Each retry waits baseBackoff doubled per attempt (500ms, 1s, 2s),
+	// jittered, and is sent only once that wait is over.
+	for i := range maxRetries {
+		if err := fc.BlockUntil(ctx, 1); err != nil {
+			t.Fatalf("retry %d: never waited: %v", i+1, err)
+		}
+		if got := int(callCount.Load()); got != i+1 {
+			t.Fatalf("retry %d: %d calls before the wait ended, want %d", i+1, got, i+1)
+		}
+		wait := fc.Waits()[i]
+		if lo, hi := jitterBounds(baseBackoff << i); wait < lo || wait > hi {
+			t.Fatalf("retry %d waits %v, want within [%v, %v]", i+1, wait, lo, hi)
+		}
+		fc.Advance(wait - time.Nanosecond)
+		if got := int(callCount.Load()); got != i+1 {
+			t.Fatalf("retry %d sent before its wait ended", i+1)
+		}
+		fc.Advance(time.Nanosecond)
 	}
 
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("sendWithRetry must report the failed delivery")
+		}
+	case <-ctx.Done():
+		t.Fatal("sendWithRetry did not return after its last retry")
+	}
 	if int(callCount.Load()) != maxRetries+1 {
 		t.Fatalf("expected %d calls, got %d", maxRetries+1, callCount.Load())
 	}
@@ -725,7 +779,9 @@ func TestSendWithRetry_PreSendEditsPlaceholder(t *testing.T) {
 	}
 
 	msg := bus.OutboundMessage{Channel: "test", ChatID: "123", Content: "hello"}
-	m.sendWithRetry(context.Background(), "test", w, msg)
+	if err := m.sendWithRetry(context.Background(), "test", w, msg); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if sendCalled {
 		t.Fatal("expected Send to NOT be called when placeholder was edited")
@@ -993,7 +1049,9 @@ func TestManager_PlaceholderConsumedByResponse(t *testing.T) {
 		ChatID:  "chat-1",
 		Content: "Transcript: hello",
 	}
-	mgr.sendWithRetry(ctx, "mock", worker, msgTranscript)
+	if err := mgr.sendWithRetry(ctx, "mock", worker, msgTranscript); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if mockCh.editedMessages != 1 {
 		t.Errorf("expected 1 edited message (placeholder consumed by transcript), got %d", mockCh.editedMessages)
@@ -1013,7 +1071,9 @@ func TestManager_PlaceholderConsumedByResponse(t *testing.T) {
 		ChatID:  "chat-1",
 		Content: "Final Answer",
 	}
-	mgr.sendWithRetry(ctx, "mock", worker, msgFinal)
+	if err := mgr.sendWithRetry(ctx, "mock", worker, msgFinal); err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
 
 	if len(mockCh.sentMessages) != 1 {
 		t.Errorf("expected 1 normal message sent, got %d", len(mockCh.sentMessages))

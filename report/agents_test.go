@@ -4,9 +4,13 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/ccv3"
 )
 
 func agentSub(t *testing.T, s Section, id string) Section {
@@ -38,6 +42,10 @@ func TestCollectAgents_FolderAccessResolved(t *testing.T) {
 	_, tasks := findRow(t, fa, filepath.Join(link, "tasks"))
 	if tasks[1] != "[read]" || !strings.Contains(tasks[2], "does not exist") {
 		t.Errorf("tasks row = %v", tasks)
+	}
+	_, forums := findRow(t, fa, filepath.Join(link, "forums"))
+	if forums[1] != "[read]" || !strings.Contains(forums[2], "forums (always readable)") {
+		t.Errorf("forums row = %v", forums)
 	}
 	// Allow-list patterns are shown verbatim.
 	_, rp := findRow(t, fa, "^/srv/shared/")
@@ -77,7 +85,7 @@ func TestCollectAgents_UnrestrictedIsHighlighted(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.RestrictToWorkspace = false
 	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
-	if len(fa.Rows) == 0 || fa.Rows[0][0] != "anything user eric can access" {
+	if len(fa.Rows) == 0 || fa.Rows[0][0] != "anything user admin can access" {
 		t.Fatalf("first row = %v", fa.Rows)
 	}
 	if fa.Rows[0][1] != "[read/write]" || !strings.Contains(fa.Rows[0][2], "restrict_to_workspace is off") {
@@ -95,7 +103,7 @@ func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.AllowReadOutsideWorkspace = true
 	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
-	if fa.Rows[0][0] != "anything user eric can read" || fa.Rows[0][1] != "[read]" {
+	if fa.Rows[0][0] != "anything user admin can read" || fa.Rows[0][1] != "[read]" {
 		t.Errorf("first row = %v", fa.Rows[0])
 	}
 	if !isHighlighted(fa, 0) {
@@ -105,16 +113,26 @@ func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 
 func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(t.Context(), cfg, env)
 
-	// alice has no tools key: the install defaults ("*") apply, and every
-	// sensitive tool is admitted by the pattern.
+	// alice has no tools key: she has no tools.
+	aliceTable := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Internal tools")
+	if len(aliceTable.Rows) != 1 || aliceTable.Rows[0][0] != "(none)" {
+		t.Errorf("no tools key rows = %v", aliceTable.Rows)
+	}
+
+	// With "*", every sensitive tool but shell_exec is admitted by the
+	// pattern (shell_exec is granted only by name).
+	cfg.Agents.List[0].Tools = []string{"*"}
+	s := collectAgents(t.Context(), cfg, env)
 	alice := toolMarkers(findTable(t, agentSub(t, s, "alice"), "Internal tools"))
 	if alice["*"] != "no" {
 		t.Errorf("* marker = %q", alice["*"])
 	}
-	if alice["shell_exec"] != "yes (by pattern)" {
-		t.Errorf("shell_exec marker = %q", alice["shell_exec"])
+	if alice["file_write"] != "yes (by pattern)" {
+		t.Errorf("file_write marker = %q", alice["file_write"])
+	}
+	if m, ok := alice["shell_exec"]; ok {
+		t.Errorf(`shell_exec listed for "*" (marker %q): "*" does not include it`, m)
 	}
 
 	// bob lists two tools explicitly: one row holding both pairs.
@@ -182,6 +200,21 @@ func TestCollectAgents_Settings(t *testing.T) {
 	if cron[1] != "on" {
 		t.Errorf("global cron = %q", cron[1])
 	}
+	if _, fr := findRow(t, st, "Forum"); fr[1] != "off" {
+		t.Errorf("bob forum = %q, want off (the default)", fr[1])
+	}
+	if markers := toolMarkers(findTable(t, agentSub(t, s, "bob"), "Internal tools")); markers["forum_launch"] != "" {
+		t.Errorf("bob (forum off) lists forum_launch as %q", markers["forum_launch"])
+	}
+	cfg.Agents.List[1].Forum = true
+	on := collectAgents(t.Context(), cfg, env)
+	bobOn := findTable(t, agentSub(t, on, "bob"), "Settings")
+	if _, fr := findRow(t, bobOn, "Forum"); fr[1] != "on" {
+		t.Errorf("bob forum with the switch on = %q, want on", fr[1])
+	}
+	if m := toolMarkers(findTable(t, agentSub(t, on, "bob"), "Internal tools"))["forum_launch"]; m != "yes (Allow forum)" {
+		t.Errorf("bob (forum on) forum_launch marker = %q, want sensitive by Allow forum", m)
+	}
 	_, def := findRow(t, st, "Routing default")
 	if def[1] != "no" {
 		t.Errorf("bob routing default = %q", def[1])
@@ -222,5 +255,64 @@ func TestCollectAgents_MCPAccess_Fusion(t *testing.T) {
 	mcp = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "MCP access")
 	if len(mcp.Rows) != 1 || !strings.Contains(mcp.Rows[0][1], "no Fusion tools") {
 		t.Errorf("empty list with Fusion on = %v", mcp.Rows)
+	}
+}
+
+// The character card rows: the card id, marked when it is missing from the
+// library or ignored on a human agent, and the tool switch.
+func TestCollectAgents_CharacterCard(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("watson", json.RawMessage(`{"name":"Watson"}`)); err != nil {
+		t.Fatal(err)
+	}
+	bob := &cfg.Agents.List[1]
+	bob.CharacterCard, bob.CCv3 = "Watson", true
+	cfg.Agents.List[0].CharacterCard = "nobody"
+
+	s := collectAgents(t.Context(), cfg, env)
+	if _, r := findRow(t, findTable(t, agentSub(t, s, "bob"), "Settings"), "Character card tools"); r[1] != "on" {
+		t.Errorf("bob card tools = %q, want on", r[1])
+	}
+	if _, r := findRow(t, findTable(t, agentSub(t, s, "bob"), "Settings"), "Character card"); r[1] != "Watson" {
+		t.Errorf("bob card = %q, want Watson", r[1])
+	}
+	alice := findTable(t, agentSub(t, s, "alice"), "Settings")
+	if _, r := findRow(t, alice, "Character card"); r[1] != "nobody (missing: no such card in the library)" {
+		t.Errorf("alice card = %q", r[1])
+	}
+	if _, r := findRow(t, alice, "Character card tools"); r[1] != "off" {
+		t.Errorf("alice card tools = %q, want off", r[1])
+	}
+
+	bob.CharacterCard = ""
+	if _, r := findRow(t, findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Settings"), "Character card"); r[1] != none {
+		t.Errorf("bob without a card = %q", r[1])
+	}
+}
+
+func TestCollectData_CharacterCards(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	tb := findTable(t, collectData(t.Context(), cfg, env), "Storage")
+	_, r := findRow(t, tb, "Character cards")
+	if r[1] != cfg.CardsPath() || r[2] != "0 cards" {
+		t.Errorf("cards row = %v", r)
+	}
+	store, err := ccv3.Open(cfg.CardsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("watson", json.RawMessage(`{"name":"Watson"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.CardsPath(), "junk.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, r = findRow(t, findTable(t, collectData(t.Context(), cfg, env), "Storage"), "Character cards")
+	if r[2] != "1 cards, 1 invalid files" {
+		t.Errorf("cards row = %v", r)
 	}
 }

@@ -11,9 +11,7 @@ import (
 type ToolDescriptor struct {
 	Name           string // tool name as returned by Tool.Name()
 	Description    string // one-line description for the GUI
-	Category       string // GUI grouping: "filesystem", "web", "session", etc.
-	ConfigKey      string // maps to the config flag that enables/disables this tool
-	DefaultEnabled bool   // include in the default agent tool allowlist
+	DefaultEnabled bool   // in the standard set the WebUI "Default tools" button writes
 	// Suite, when non-empty, marks this as an all-or-nothing tool suite (e.g.
 	// "cogmem", "maestro"): it is managed by a single per-agent toggle rather than
 	// the per-tool allowlist, and the GUI renders it as one (read-only) entry
@@ -49,6 +47,20 @@ type ToolDeps struct {
 	AgentCfg  *config.AgentConfig // nil for the default agent
 	AgentID   string
 	Workspace string
+	// StateDir holds the agent's conversation archive (sessions/) and its
+	// cognitive memory (cogmem/): the workspace for a config agent, the
+	// agent's own directory for a temporary one. Empty means Workspace.
+	StateDir string
+	// EphemeralMemory marks a memory nothing is consolidated into (a
+	// sub-agent's snapshot of its source's memory).
+	EphemeralMemory bool
+	// TempAgent marks a temporary agent (a sub-agent clone). Its tools must
+	// not replace anything registered once per agent id for the agent it acts
+	// as (the Maestro runner): it uses what is there.
+	TempAgent bool
+	// TempPurpose is what a temporary agent was created for (TempPurposeForum
+	// for a forum participant); empty for every other agent.
+	TempPurpose string
 
 	// Spawn/subagent
 	Provider          providers.LLMProvider
@@ -57,6 +69,13 @@ type ToolDeps struct {
 	Candidates        []providers.FallbackCandidate
 	SpawnAllowlist    func(callerID, targetID string) bool
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
+
+	// Agents manages temporary agents on behalf of this agent (see
+	// AgentServices).
+	Agents AgentServices
+
+	// Messenger sends this agent's agent_message asks and whispers.
+	Messenger Messenger
 
 	// Spawn holds the robust sub-agent launcher (a global.Spawner). The AgentLoop
 	// builds it per agent and sets it here; toGlobalDeps forwards it to
@@ -76,4 +95,12 @@ type ToolDeps struct {
 
 	// Shared pre-built tool instances
 	MessageTool Tool // shared msg_send instance; may be nil
+}
+
+// EffectiveStateDir is StateDir, or Workspace when StateDir is unset.
+func (d ToolDeps) EffectiveStateDir() string {
+	if d.StateDir != "" {
+		return d.StateDir
+	}
+	return d.Workspace
 }

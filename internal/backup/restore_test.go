@@ -179,7 +179,7 @@ func corruptArchive(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "bad.tar.gz")
 	m := Manifest{Version: ManifestVersion, CreatedAt: time.Now(), Home: "/nowhere", Files: []string{"config.json", "internal/gateway.db"}}
-	err := writeArchive(path, m, func(tw *tar.Writer) error {
+	err := writeArchive(path, 0o600, m, func(tw *tar.Writer) error {
 		for name, body := range map[string]string{
 			"config.json":         `{"restored":true}`,
 			"internal/gateway.db": "SQLite format 3\x00 but the rest is garbage ...............................",
@@ -234,7 +234,7 @@ func TestRestoreRejectsForeignArchives(t *testing.T) {
 	}
 	// A manifest from a layout this build does not read.
 	wrongVersion := filepath.Join(dir, "y.tar.gz")
-	if err := writeArchive(wrongVersion, Manifest{Version: ManifestVersion + 1}, func(*tar.Writer) error { return nil }); err != nil {
+	if err := writeArchive(wrongVersion, 0o600, Manifest{Version: ManifestVersion + 1}, func(*tar.Writer) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := PlanRestore(wrongVersion, dir); err == nil || !strings.Contains(err.Error(), "manifest version") {
@@ -242,7 +242,7 @@ func TestRestoreRejectsForeignArchives(t *testing.T) {
 	}
 	// An archive with a manifest and no files is valid, if pointless.
 	empty := filepath.Join(dir, "z.tar.gz")
-	if err := writeArchive(empty, Manifest{Version: ManifestVersion}, func(*tar.Writer) error { return nil }); err != nil {
+	if err := writeArchive(empty, 0o600, Manifest{Version: ManifestVersion}, func(*tar.Writer) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := PlanRestore(empty, dir); err != nil {

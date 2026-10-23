@@ -9,6 +9,9 @@ something fails.
 `make` (or `make all`) runs it before building, so a failing suite never
 produces a binary. It runs, in order:
 
+- the user manual build (`make manual-check`: VitePress, rebuilt every run so a
+  broken manual fails the gate; a missing `manual/node_modules` fails it with
+  the fix, `make manual-deps`)
 - `go generate ./...`
 - `gofmt`/`gofumpt` formatting check (`make fmt-check`)
 - `go vet ./...`
@@ -57,9 +60,17 @@ entry. See "Capability changes" in `CLAUDE.md`.
 Claude CLI with "Allow CLI to bypass restrictions" off, asking for a tool call the CLI
 must approve. It passes when the tool ran or when the turn ended with the
 "declined to use tools" error naming the setting; silence or a timeout fails.
-It costs one model call on the CLI account, so it is off by default and the
-summary prints `CLI smoke: skipped`. `CLAW_TEST_CLI_COMMAND` names another CLI
-binary.
+With the same switch, `tests/test_cli_ccv3.sh` runs while the integration
+gateway is up: the probe asks main's `agent_spawn` to run a turn on an agent
+whose model is the Claude CLI, pointed by its `mcp.json` at that gateway's own
+MCP host and allowed only `mcp__claw__ccv3`, and told to create a card. It
+passes when the card file is in the gateway's `cards/` library and the gateway
+logged the tool's write, so a model's tool call over MCP from a CLI provider is
+exercised end to end; the model's reply alone is not evidence. Each costs one
+model call on the CLI account, so both are off by default and the summary
+prints `CLI smoke: skipped`. `CLAW_TEST_CLI_COMMAND` names another CLI binary.
+
+**Telegram live check (opt-in).** `CLAW_TEST_TELEGRAM=1 CLAW_TEST_TELEGRAM_TOKEN=<bot token> go test ./channels/telegram/ -run TestLive` sends to chats that cannot exist and expects "recipient not found" with Telegram's reason and no token in the error; nothing is delivered.
 
 Useful flags:
 
@@ -84,8 +95,8 @@ It lists each failed test with its package, source file and line, and a
 paste-ready rerun command, for example:
 
 ```
-✗ github.com/PivotLLM/ClawEh/agent  TestRecordLastChannel  loop_test.go:82
-    go test -race -count=1 -run '^TestRecordLastChannel$' ./agent
+✗ github.com/PivotLLM/ClawEh/agent  TestPruneSessions  retention_test.go:82
+    go test -race -count=1 -run '^TestPruneSessions$' ./agent
 ```
 
 A compile error shows as `(build failed)` and a crash outside any test as

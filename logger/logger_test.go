@@ -1,6 +1,11 @@
 package logger
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -252,5 +257,35 @@ func TestFormatFieldValue(t *testing.T) {
 				t.Errorf("formatFieldValue() = %q, expected %q", actual, tt.expected)
 			}
 		})
+	}
+}
+
+type statusError struct {
+	Status  int
+	Wrapped error
+}
+
+func (e *statusError) Error() string {
+	return "status " + strconv.Itoa(e.Status) + ": " + e.Wrapped.Error()
+}
+
+func TestErrorFieldLoggedByMessage(t *testing.T) {
+	var buf bytes.Buffer
+	restore := RedirectForTest(&buf)
+	defer restore()
+
+	err := &statusError{Status: 400, Wrapped: errors.New(`bad request (400): {"error":{"message":"thinking is required"}}`)}
+	WarnCF("test", "candidate failed", map[string]any{"error": err})
+
+	var line map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &line); jerr != nil {
+		t.Fatalf("log line is not JSON: %v (%s)", jerr, buf.String())
+	}
+	got, ok := line["error"].(string)
+	if !ok {
+		t.Fatalf("error field = %#v, want the error's message as a string", line["error"])
+	}
+	if !strings.Contains(got, "thinking is required") || !strings.Contains(got, "status 400") {
+		t.Fatalf("error field = %q, want the full error message", got)
 	}
 }
