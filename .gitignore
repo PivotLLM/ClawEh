@@ -3,7 +3,9 @@
 .cm*
 CLAUDE.local.md
 
+
 # Binaries and build artifacts
+ClawEh
 bin/
 build/
 private/

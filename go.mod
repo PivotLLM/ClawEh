@@ -15,7 +15,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/ergochat/readline v0.1.3
 	github.com/go-pdf/fpdf v0.9.0
-	github.com/gomarkdown/markdown v0.0.0-20261011113952-f83953680332
+	github.com/gomarkdown/markdown v0.0.0-20261022144421-6c848fa1b723
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/h2non/filetype v1.1.3
