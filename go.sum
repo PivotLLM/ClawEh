@@ -202,8 +202,8 @@ github.com/tenebris-tech/alerter v0.1.5 h1:hNr2lxE7qCYtTpD+6nKqnq8GFsptvQvlJwGcr
 github.com/tenebris-tech/alerter v0.1.5/go.mod h1:/+Y0cFNJnhhYbCIoAq1ejokieVgPIalGcsK55+CDVqs=
 github.com/tenebris-tech/mlogger v0.0.5 h1:WaM7BryR+kF2ueN+RuXdUmyfKtSn3SVF8OGGRAVOqFo=
 github.com/tenebris-tech/mlogger v0.0.5/go.mod h1:OzBSmbdvLvIN9w3sfe7RBQK8nsL80RJdSRpMGnYSuSw=
-github.com/tenebris-tech/secmsg v0.1.1 h1:nljZdgnTcG9r91+eS8Pc4kQ6hFVLjB7n/s9wXlu5yYo=
-github.com/tenebris-tech/secmsg v0.1.1/go.mod h1:+35jIvDIp9a0dZrG3KUpZzhsV+qtVZnNq9Bjt8GMhvo=
+github.com/tenebris-tech/secmsg v0.1.2 h1:qcrC5FT1KVbwdBciDs4V89t+u9nt03LXMuF6fVlTNrU=
+github.com/tenebris-tech/secmsg v0.1.2/go.mod h1:UBd10qmF96I6e/91nqI/UJaeg2wP+rw41rL6GcplGiE=
 github.com/tenebris-tech/x2md v0.0.3 h1:L7jr34PGGqZGzs2/nz6qnGCZnIX5X9Hhn67bPjB9pvM=
 github.com/tenebris-tech/x2md v0.0.3/go.mod h1:5rWmLDBWr+KpxWX1u2wkUibuUWVFBIVrFUG2Mjk/fok=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

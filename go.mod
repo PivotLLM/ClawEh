@@ -29,7 +29,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tenebris-tech/alerter v0.1.5
 	github.com/tenebris-tech/mlogger v0.0.5
-	github.com/tenebris-tech/secmsg v0.1.1
+	github.com/tenebris-tech/secmsg v0.1.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/term v0.47.0
