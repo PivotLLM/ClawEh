@@ -171,12 +171,16 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 	refs := make([]string, 0, len(atts))
 	for i, a := range atts {
 		ext := extForMIME(a.MimeType)
+		data := a.Data
+		if ext == ".wav" {
+			data = repairWAVSizes(data)
+		}
 		f, err := os.CreateTemp(mediaDir, "device-media-*"+ext)
 		if err != nil {
 			logger.WarnCF("device", "attachment temp file failed", map[string]any{"error": err.Error()})
 			continue
 		}
-		_, werr := f.Write(a.Data)
+		_, werr := f.Write(data)
 		if werr == nil && fileMode != 0o600 { // CreateTemp makes it 0600
 			werr = f.Chmod(fileMode)
 		}
@@ -205,8 +209,14 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 }
 
 // extForMIME maps a few common attachment MIME types to a file extension so the
-// stored file (and downstream MIME sniffing) behaves. Defaults to ".bin".
+// stored file (and downstream MIME sniffing) behaves. Audio types map to the
+// extensions voice transcription recognises, since speech-to-text backends pick
+// the decoder from the file name. MIME parameters ("audio/wav; rate=16000") are
+// ignored. Defaults to ".bin".
 func extForMIME(mime string) string {
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = mime[:i]
+	}
 	switch strings.ToLower(strings.TrimSpace(mime)) {
 	case "image/jpeg", "image/jpg":
 		return ".jpg"
@@ -218,6 +228,18 @@ func extForMIME(mime string) string {
 		return ".webp"
 	case "image/heic":
 		return ".heic"
+	case "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave":
+		return ".wav"
+	case "audio/ogg", "application/ogg", "audio/opus":
+		return ".ogg"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/mp4", "audio/x-m4a", "audio/m4a":
+		return ".m4a"
+	case "audio/flac", "audio/x-flac":
+		return ".flac"
+	case "audio/aac":
+		return ".aac"
 	default:
 		return ".bin"
 	}
