@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"strings"
 	"testing"
@@ -71,5 +72,50 @@ func TestStoreInboundAttachmentsNoStore(t *testing.T) {
 		{MimeType: "image/jpeg", Data: []byte{1, 2, 3}},
 	}); refs != nil {
 		t.Fatalf("expected nil refs with no media store, got %v", refs)
+	}
+}
+
+// TestStoreInboundAttachmentsStreamedWAV verifies a streamed WAV clip (header
+// sizes left as placeholders) is stored with a .wav extension and a repaired
+// header, so voice transcription accepts it.
+func TestStoreInboundAttachmentsStreamedWAV(t *testing.T) {
+	utils.SetMediaStagingDir(t.TempDir(), 0, 0)
+	defer utils.SetMediaStagingDir("", 0, 0)
+
+	dc, err := NewDeviceChannel(config.DeviceChannelConfig{Enabled: true}, t.TempDir(), false, bus.NewMessageBus(), "", nil)
+	if err != nil {
+		t.Fatalf("NewDeviceChannel: %v", err)
+	}
+	defer func() {
+		if stopErr := dc.Stop(context.Background()); stopErr != nil {
+			t.Errorf("Stop: %v", stopErr)
+		}
+	}()
+	store := media.NewFileMediaStore()
+	dc.SetMediaStore(store)
+
+	payload := []byte{1, 2, 3, 4, 5, 6}
+	refs := dc.storeInboundAttachments("device:dev1", "run1", []InboundAttachment{
+		{MimeType: "audio/wav; rate=16000", Data: wavFixture(0xFFFFFFFF, 0xFFFFFFFF, nil, payload)},
+	})
+	if len(refs) != 1 {
+		t.Fatalf("expected one ref, got %v", refs)
+	}
+	path, meta, err := store.ResolveWithMeta(refs[0])
+	if err != nil {
+		t.Fatalf("resolve ref: %v", err)
+	}
+	if !strings.HasSuffix(path, ".wav") || !strings.HasSuffix(meta.Filename, ".wav") {
+		t.Fatalf("expected .wav path and filename, got %q / %q", path, meta.Filename)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read stored file: %v", err)
+	}
+	if r := binary.LittleEndian.Uint32(got[4:8]); r != uint32(len(got)-8) {
+		t.Errorf("RIFF size = %d, want %d", r, len(got)-8)
+	}
+	if d := binary.LittleEndian.Uint32(got[40:44]); d != uint32(len(payload)) {
+		t.Errorf("data size = %d, want %d", d, len(payload))
 	}
 }
