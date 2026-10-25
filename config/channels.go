@@ -287,20 +287,20 @@ type DeviceChannelConfig struct {
 
 type VoiceConfig struct {
 	EchoTranscription bool `json:"echo_transcription" env:"CLAW_VOICE_ECHO_TRANSCRIPTION"`
-	// STT is an ordered list of speech-to-text backends. The first enabled entry
-	// with an API key is used to transcribe inbound audio; the rest are reserved
-	// for future fallback. Empty list falls back to legacy provider auto-detect.
+	// STT is an ordered list of speech-to-text backends. Every enabled, usable
+	// entry joins a fallback chain tried in listed order. An empty list (or no
+	// usable entry) turns transcription off.
 	STT []STTProvider `json:"stt,omitempty"`
 }
 
-// STTProvider configures one OpenAI-compatible Whisper transcription backend.
-// BaseURL and Model default from the provider preset when left blank.
+// STTProvider selects a configured provider as a Whisper-style transcription
+// backend. The endpoint and API key are the provider's; the entry carries only
+// the model. It is used only when the provider has an HTTP protocol, a base_url
+// and an api_key.
 type STTProvider struct {
-	Provider string `json:"provider"` // groq | openai | openrouter | custom
+	Provider string `json:"provider"` // name of a configured provider (Provider.Name)
 	Enabled  bool   `json:"enabled"`
-	APIKey   string `json:"api_key,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"` // preset default when blank
-	Model    string `json:"model,omitempty"`    // preset default when blank
+	Model    string `json:"model,omitempty"` // blank: the default for the provider's host, when known
 }
 
 // ValidateExposure refuses an enabled device listener on a network address

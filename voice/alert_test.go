@@ -59,7 +59,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 			return tr
 		},
 		"openrouter": func(base string, a alerter.Alerter) Transcriber {
-			tr := NewOpenRouterTranscriber("sk-bad", "", "", a)
+			tr := NewOpenRouterTranscriber("openrouter", "sk-bad", "", "", a)
 			tr.apiBase = base
 			return tr
 		},

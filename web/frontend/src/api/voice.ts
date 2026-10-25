@@ -1,23 +1,26 @@
 // API client for speech-to-text (voice transcription) backend configuration.
 import { errorMessage } from "./error-message"
 
+// STTProvider is one transcription backend: a reference to a provider on the
+// Providers page (which holds the key and endpoint) plus an optional model.
 export interface STTProvider {
   provider: string
   enabled: boolean
-  api_key?: string
-  base_url?: string
-  model?: string
+  model: string
 }
 
-export interface STTPreset {
-  provider: string
-  base_url: string
-  model: string
+// STTProviderOption is a configured provider that can serve transcription.
+// default_model is "" when the service has no known default; ready is false
+// when the provider has no API key.
+export interface STTProviderOption {
+  name: string
+  default_model: string
+  ready: boolean
 }
 
 export interface VoiceSTTResponse {
   stt: STTProvider[]
-  presets: STTPreset[]
+  providers: STTProviderOption[]
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -32,7 +35,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // slice as null, and every consumer expects an array.
 export const getVoiceSTT = async (): Promise<VoiceSTTResponse> => {
   const data = await request<Partial<VoiceSTTResponse>>("/api/voice/stt")
-  return { stt: data.stt ?? [], presets: data.presets ?? [] }
+  // Go leaves a blank model out of the JSON; the page treats it as a string.
+  const stt = (data.stt ?? []).map((s) => ({ ...s, model: s.model ?? "" }))
+  return { stt, providers: data.providers ?? [] }
 }
 
 export const saveVoiceSTT = (stt: STTProvider[]) =>

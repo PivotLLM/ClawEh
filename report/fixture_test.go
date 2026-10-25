@@ -67,7 +67,6 @@ const (
 	secretBrave     = "BRAVESECRET-5e6f"
 	secretGitHub    = "GHSECRET-7a8b"
 	secretClawHub   = "HUBSECRET-9c0d"
-	secretSTT       = "STTSECRET-1e2f"
 	secretSlackBot  = "xoxb-SLACKSECRET-3a4b"
 	secretSlackApp  = "xapp-SLACKSECRET-5c6d"
 	secretMatrix    = "MATRIXSECRET-7e8f"
@@ -76,7 +75,7 @@ const (
 var allSecrets = []string{
 	secretAPIKey, secretProxyPass, secretEnvValue, secretHeader, secretMCPEnv, secretTelegram,
 	secretDiscord, secretWebUI, secretDevice, secretWordToken, secretBrave, secretGitHub,
-	secretClawHub, secretSTT, secretSlackBot, secretSlackApp, secretMatrix,
+	secretClawHub, secretSlackBot, secretSlackApp, secretMatrix,
 }
 
 // fixtureEnv is the process environment the tests describe.
@@ -165,7 +164,7 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	cfg.Tools.Web.Brave = config.BraveConfig{Enabled: true, APIKey: secretBrave}
 	cfg.Tools.Skills.Github.Token = secretGitHub
 	cfg.Tools.Skills.Registries.ClawHub.AuthToken = secretClawHub
-	cfg.Voice.STT = []config.STTProvider{{Provider: "groq", Enabled: true, APIKey: secretSTT}}
+	cfg.Voice.STT = []config.STTProvider{{Provider: "OpenAI", Enabled: true}}
 
 	cfg.Gateway = config.GatewayConfig{Host: "127.0.0.1", Port: 18790, AllowedCIDRs: []string{"192.168.1.0/24"}}
 	cfg.Channels.Telegram = []config.TelegramBotConfig{{ID: "bob", Enabled: true, Token: secretTelegram, AllowFrom: []string{"*"}}}

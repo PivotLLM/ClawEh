@@ -47,7 +47,8 @@ export function DeleteProviderDialog({
       onDeleted()
       onClose()
     } catch (e) {
-      // A 409 here means models still reference the provider — surface it.
+      // A 409 here means a model or a speech backend still references the
+      // provider — surface it.
       setError(e instanceof Error ? e.message : t("providers.delete.error"))
     } finally {
       setDeleting(false)

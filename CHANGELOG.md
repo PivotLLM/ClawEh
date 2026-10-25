@@ -10,6 +10,37 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.7.0]
+
+### Changed
+
+- **BREAKING: a speech-to-text backend now names a provider instead of
+  carrying its own endpoint and key.** Each `voice.stt` entry names a provider
+  from the Providers page in its `provider` field and carries only `enabled`
+  and `model`; the endpoint and API key are the provider's. A blank `model`
+  uses the default for the provider's endpoint (Groq `whisper-large-v3`, OpenAI
+  `whisper-1`, OpenRouter `openai/whisper-large-v3`); any other endpoint needs a
+  model. An entry's `api_key` and `base_url` are no longer read: they are
+  reported as unknown config keys on load and dropped from `config.json` on the
+  next save. `provider` no longer accepts `groq`, `openai`, `openrouter` or
+  `custom` as presets, only the name of a configured provider (matched exactly,
+  including case). Only a provider with protocol `openai-chat` or
+  `openai-responses` and a base URL can transcribe. An entry naming no
+  configured provider, one that cannot transcribe, or one without an API key, is
+  skipped (with a warning in the log) and shown as *Not used* on the Speech
+  page. Deleting a provider that a speech backend names is now refused, and
+  renaming one carries the speech backend along to the new name.
+  Migration: the next save of `config.json` from any page drops the old entry's
+  `api_key`, so if `config.json` is the only place that key is kept, copy it
+  out before saving anything. Then add a provider on the Providers page with the
+  endpoint and key (for Groq: protocol `openai-chat`, base URL
+  `https://api.groq.com/openai/v1`), and pick it on the Speech page.
+  `GET /api/voice/stt` now returns `providers` (each `name`, `default_model`
+  and `ready`, meaning the provider has a key; only providers that can
+  transcribe are listed) in place of `presets`, and no longer returns keys;
+  `PUT /api/voice/stt` refuses an entry naming an unknown provider or one that
+  cannot transcribe.
+
 ## [0.6.1]
 
 ### Fixed
@@ -2852,6 +2883,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.7.0]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.7.0
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0
 [0.5.7]: https://github.com/PivotLLM/ClawEh/compare/0.5.6...0.5.7

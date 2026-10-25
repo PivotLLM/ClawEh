@@ -88,7 +88,7 @@ func registryRows(cfg *config.Config) [][]string {
 }
 
 func voiceRows(cfg *config.Config) [][]string {
-	active := "none: no enabled STT backend has a key"
+	active := "none: no enabled STT backend is usable"
 	if t := voice.DetectTranscriber(cfg); t != nil {
 		active = t.Name()
 	}
@@ -98,11 +98,7 @@ func voiceRows(cfg *config.Config) [][]string {
 		row("Echo transcription to the sender", onOff(cfg.Voice.EchoTranscription)),
 	)
 	for _, s := range cfg.Voice.STT {
-		key := setOrNot(s.APIKey)
-		if key == "not set" {
-			key = "not set (may reuse a provider key for the same host)"
-		}
-		rows = append(rows, row("STT backend "+s.Provider, onOff(s.Enabled)+", key "+key+", "+orValue(s.BaseURL, "preset URL")+", model "+orValue(s.Model, "preset")))
+		rows = append(rows, row("STT backend "+s.Provider, onOff(s.Enabled)+", model "+orValue(s.Model, "default")))
 	}
 	return rows
 }
