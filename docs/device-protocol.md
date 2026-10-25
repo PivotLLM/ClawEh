@@ -149,6 +149,24 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
 `agents.list` / `chat.history` are served from a read-only `AgentQuerier` over the agent loop
 (injected from `internal/gateway`, keeping `channels` free of a `agent` import cycle).
 
+### `chat.history` paging
+
+`chat.history` takes the optional paging fields the OpenClaw Gateway protocol defines
+(`ChatHistoryParamsSchema`), with the same bounds, counted from the **newest** message:
+
+| Field | Meaning |
+|---|---|
+| `limit` | messages to return, 1..1000; default 200 |
+| `offset` | most-recent messages to skip, ≥ 0; default 0 |
+| `maxChars` | cut each message's text to this many characters, 1..500000; a cut text ends in `...` |
+
+A value outside its bounds is refused with `INVALID_REQUEST` (not clamped). The response
+carries `messages` (oldest first within the page), `offset` (as applied), `totalMessages`,
+`hasMore`, and, when `hasMore` is true, `nextOffset`: send it back as `offset` to get the page
+before this one. A small device shows the last few turns with `{"limit":5}` and pages back
+with `nextOffset`; `maxChars` keeps a long reply from flooding its parser.
+(`channels/device/history_page.go`.)
+
 ## The `chat.send` turn lifecycle
 
 This is the crux of client compatibility. A turn is **immediate ack + async stream**, exactly

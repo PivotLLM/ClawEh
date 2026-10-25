@@ -1215,6 +1215,7 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 	}
 	var p struct {
 		SessionKey string `json:"sessionKey"`
+		historyPageParams
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
 		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
@@ -1235,18 +1236,30 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 		s.refuseSessionKey(lc, req.ID, err)
 		return
 	}
-	history := s.querier.History(sessionKey)
-	messages := make([]map[string]any, 0, len(history))
-	for _, m := range history {
+	page, err := pageHistory(s.querier.History(sessionKey), p.historyPageParams)
+	if err != nil {
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
+			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, err.Error(), nil)))
+		return
+	}
+	messages := make([]map[string]any, 0, len(page.Messages))
+	for _, m := range page.Messages {
 		messages = append(messages, map[string]any{
 			"role":    m.Role,
 			"content": []map[string]any{{"type": "text", "text": m.Content}},
 		})
 	}
-	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{
-		"sessionKey": sessionKey,
-		"messages":   messages,
-	}))
+	payload := map[string]any{
+		"sessionKey":    sessionKey,
+		"messages":      messages,
+		"offset":        page.Offset,
+		"totalMessages": page.TotalMessages,
+		"hasMore":       page.HasMore,
+	}
+	if page.HasMore {
+		payload["nextOffset"] = page.NextOffset
+	}
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, payload))
 }
 
 // StreamDelta emits an incremental assistant-text update to the device for the

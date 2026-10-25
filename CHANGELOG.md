@@ -12,6 +12,17 @@ observe does not need an entry.
 
 ## [0.6.1]
 
+### Added
+
+- The device listener's `chat.history` request takes the paging fields the
+  OpenClaw Gateway protocol defines: `limit` (1 to 1000, default 200),
+  `offset` (most-recent messages to skip) and `maxChars` (cut each message's
+  text to that many characters). The window is counted from the newest
+  message, and the response now carries `offset`, `totalMessages`, `hasMore`
+  and, while there is more, `nextOffset` to send as the next `offset`. A value
+  outside its bounds is refused. Without these fields the response is as
+  before, except for the new fields and a 200-message cap.
+
 ### Fixed
 
 - Audio attachments sent over the device gateway (`chat.send` with an `audio/*`
