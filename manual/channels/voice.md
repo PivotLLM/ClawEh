@@ -12,7 +12,7 @@ file it usually cannot listen to. With one, the agent gets the words.
 | [Telegram](./telegram.md) | Voice notes and audio files. |
 | [Discord](./discord.md) | Audio files attached to a message. |
 | [Slack](./slack.md), [Matrix](./matrix.md), [SecMsg](./secmsg.md) | Audio files and voice messages sent as attachments. |
-| [Devices](./devices.md) (Rabbit R1, voice apps) | Text. The device turns speech into text itself and speaks the reply, so no transcription service is needed for it. |
+| [Devices](./devices.md) (Rabbit R1, voice apps) | Text, or an audio clip sent as an attachment. A device that turns speech into text itself (the Rabbit R1) needs no transcription service; one that sends audio does. |
 
 A file counts as audio by its type (`audio/...`) or its name (`.mp3`, `.wav`,
 `.ogg`, `.oga`, `.opus`, `.m4a`, `.flac`, `.aac`, `.wma`).

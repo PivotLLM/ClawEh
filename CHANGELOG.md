@@ -10,6 +10,20 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.6.1]
+
+### Fixed
+
+- Audio attachments sent over the device gateway (`chat.send` with an `audio/*`
+  `mimeType`) are now stored with a matching file extension (`.wav`, `.ogg`,
+  `.mp3`, `.m4a`, `.flac`, `.aac`, `.webm`) instead of `.bin`, so the configured
+  `voice.stt` provider recognises and transcribes them. When the type is not
+  recognised, the extension of the attachment's `name` is used. Previously the
+  clip was attached but never transcribed and the agent saw only `[voice]`.
+- A WAV attachment whose RIFF and `data` chunk lengths are placeholders (as
+  written by a device that streams audio before it knows the final length) has
+  those lengths repaired on receipt, so transcription providers accept the file.
+
 ## [0.6.0]
 
 ### Security
@@ -2838,6 +2852,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0
 [0.5.7]: https://github.com/PivotLLM/ClawEh/compare/0.5.6...0.5.7
 [0.5.6]: https://github.com/PivotLLM/ClawEh/compare/0.5.5...0.5.6
