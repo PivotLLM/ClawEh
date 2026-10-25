@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import {
-  type STTPreset,
   type STTProvider,
+  type STTProviderOption,
   getVoiceSTT,
   saveVoiceSTT,
 } from "@/api/voice"
@@ -21,24 +22,33 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 
-const PROVIDER_CHOICES = ["groq", "openai", "openrouter", "custom"]
-
 type SaveStatus = "saving" | "saved" | "error" | null
 
-function presetFor(
-  presets: STTPreset[],
-  provider: string,
-): STTPreset | undefined {
-  return presets.find((p) => p.provider === provider)
+function optionFor(
+  providers: STTProviderOption[],
+  name: string,
+): STTProviderOption | undefined {
+  return providers.find((p) => p.name === name)
 }
 
-// missingEndpoint: a provider with no preset (custom) has no default endpoint
-// or model, so the backend is skipped until both are set.
-function missingEndpoint(presets: STTPreset[], row: STTProvider): boolean {
-  return (
-    !presetFor(presets, row.provider) &&
-    (!row.base_url?.trim() || !row.model?.trim())
-  )
+// NO_KEY_REASON is the one label the user can act on from here: the key is
+// entered on the Providers page, so the row links there.
+const NO_KEY_REASON = "Not used: provider has no API key."
+
+// notUsedReason is the label an enabled row carries when the backend would be
+// skipped, or "" when it is usable: the provider must be configured (and still
+// an HTTP provider), hold an API key, and have a model (its own or a default).
+function notUsedReason(
+  providers: STTProviderOption[],
+  row: STTProvider,
+): string {
+  const option = optionFor(providers, row.provider)
+  if (!option) return "Not used: provider not configured."
+  if (!option.ready) return NO_KEY_REASON
+  if (!row.model.trim() && !option.default_model) {
+    return "Not used: needs a model."
+  }
+  return ""
 }
 
 export function VoicePage() {
@@ -60,7 +70,7 @@ export function VoicePage() {
     setRows(stt.data.stt)
   }
 
-  const presets = stt.data?.presets ?? []
+  const providers = stt.data?.providers ?? []
 
   const [status, setStatus] = useState<SaveStatus>(null)
   // Refs let the debounced save read the latest rows; synced in an effect (not
@@ -83,7 +93,7 @@ export function VoicePage() {
   )
 
   // doSave persists the whole backend list (a full-replace PUT). It does NOT
-  // refetch afterwards, so an api_key being typed is not blanked mid-edit.
+  // refetch afterwards, so a model being typed is not replaced mid-edit.
   const doSave = async () => {
     setStatus("saving")
     try {
@@ -117,10 +127,8 @@ export function VoicePage() {
     setRows((prev) => [
       ...prev,
       {
-        provider: "groq",
+        provider: providers[0]?.name ?? "",
         enabled: prev.length === 0,
-        api_key: "",
-        base_url: "",
         model: "",
       },
     ])
@@ -135,7 +143,7 @@ export function VoicePage() {
   // Enabled backends are tried in list order: the first is the primary, the
   // rest are its fallbacks.
   const primaryIndex = rows.findIndex(
-    (r) => r.enabled && !missingEndpoint(presets, r),
+    (r) => r.enabled && !notUsedReason(providers, r),
   )
 
   return (
@@ -163,8 +171,8 @@ export function VoicePage() {
         <CardHeader>
           <CardTitle>Transcription backends</CardTitle>
           <CardDescription>
-            Leave the endpoint and model blank to use the provider&apos;s
-            defaults.
+            The API key and endpoint come from the Providers page; the model may
+            be left blank for a known service.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -175,8 +183,8 @@ export function VoicePage() {
             </p>
           ) : (
             rows.map((row, i) => {
-              const preset = presetFor(presets, row.provider)
-              const unusable = missingEndpoint(presets, row)
+              const option = optionFor(providers, row.provider)
+              const reason = notUsedReason(providers, row)
               return (
                 <div
                   key={i}
@@ -192,14 +200,23 @@ export function VoicePage() {
                       <span className="text-sm font-medium">
                         {row.enabled ? "Enabled" : "Disabled"}
                       </span>
-                      {row.enabled && !unusable && (
+                      {row.enabled && !reason && (
                         <span className="rounded bg-green-500/15 px-2 py-0.5 text-xs text-green-600">
                           {i === primaryIndex ? "Primary" : "Fallback"}
                         </span>
                       )}
-                      {row.enabled && unusable && (
+                      {row.enabled && reason && (
                         <span className="text-xs text-amber-500">
-                          Not used: needs an endpoint and model.
+                          {reason}
+                          {reason === NO_KEY_REASON && (
+                            <>
+                              {" "}
+                              <Link to="/providers" className="underline">
+                                Add it on the Providers page
+                              </Link>
+                              .
+                            </>
+                          )}
                         </span>
                       )}
                     </div>
@@ -223,42 +240,24 @@ export function VoicePage() {
                           update(i, { provider: e.target.value })
                         }
                       >
-                        {PROVIDER_CHOICES.map((p) => (
-                          <option key={p} value={p}>
-                            {p}
+                        {/* A provider that is no longer listed stays
+                            selectable so the row is not silently rewritten. */}
+                        {!option && (
+                          <option value={row.provider}>{row.provider}</option>
+                        )}
+                        {providers.map((p) => (
+                          <option key={p.name} value={p.name}>
+                            {p.name}
                           </option>
                         ))}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <Label htmlFor={`stt-api-key-${i}`}>API key</Label>
-                      <Input
-                        id={`stt-api-key-${i}`}
-                        type="password"
-                        value={row.api_key ?? ""}
-                        placeholder="Blank uses the key from Providers"
-                        onChange={(e) => update(i, { api_key: e.target.value })}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor={`stt-base-url-${i}`}>
-                        Endpoint (base URL)
-                      </Label>
-                      <Input
-                        id={`stt-base-url-${i}`}
-                        value={row.base_url ?? ""}
-                        placeholder={preset?.base_url ?? "Required"}
-                        onChange={(e) =>
-                          update(i, { base_url: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
                       <Label htmlFor={`stt-model-${i}`}>Model</Label>
                       <Input
                         id={`stt-model-${i}`}
-                        value={row.model ?? ""}
-                        placeholder={preset?.model ?? "Required"}
+                        value={row.model}
+                        placeholder={option?.default_model || "Required"}
                         onChange={(e) => update(i, { model: e.target.value })}
                       />
                     </div>
@@ -269,9 +268,22 @@ export function VoicePage() {
           )}
 
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={addRow}>
+            <Button
+              variant="outline"
+              onClick={addRow}
+              disabled={providers.length === 0}
+            >
               Add backend
             </Button>
+            {stt.data && providers.length === 0 && (
+              <span className="text-muted-foreground text-sm">
+                Add a provider on the{" "}
+                <Link to="/providers" className="underline">
+                  Providers
+                </Link>{" "}
+                page first.
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -1893,13 +1893,15 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
       assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
     }
     // Enabled backends are tried in order: the first usable one is Primary,
-    // the others Fallback; one with no preset and no endpoint or model is
-    // Not used; a disabled one carries no label.
-    const presets = voice.presets ?? []
+    // the others Fallback; one whose provider is not listed, has no API key
+    // or has no model (its own or a default) is Not used; a disabled one
+    // carries no label.
+    const options = voice.providers ?? []
     let primarySeen = false
     for (let i = 0; i < stt.length; i++) {
       const b = stt[i]
-      const usable = presets.some((p) => p.provider === b.provider) || (b.base_url?.trim() && b.model?.trim())
+      const option = options.find((p) => p.name === b.provider)
+      const usable = Boolean(option && option.ready && (b.model?.trim() || option.default_model))
       let want = ""
       if (b.enabled && !usable) want = "Not used"
       else if (b.enabled) {

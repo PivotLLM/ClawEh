@@ -17,8 +17,16 @@ func (h *Handler) registerVoiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/voice/stt", h.handleUpdateVoiceSTT)
 }
 
-// handleGetVoiceSTT returns the configured STT backends (API keys masked) plus
-// the known provider presets.
+// sttProviderOption is a configured provider a speech backend may name.
+type sttProviderOption struct {
+	Name         string `json:"name"`
+	DefaultModel string `json:"default_model"`
+	Ready        bool   `json:"ready"` // the provider has an API key
+}
+
+// handleGetVoiceSTT returns the configured STT backends plus the providers they
+// may name: every provider that can transcribe, in config order. No API keys
+// are returned.
 //
 //	GET /api/voice/stt
 func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
@@ -28,22 +36,32 @@ func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]config.STTProvider, len(cfg.Voice.STT))
-	for i, s := range cfg.Voice.STT {
-		s.APIKey = maskAPIKey(s.APIKey)
-		out[i] = s
+	stt := cfg.Voice.STT
+	if stt == nil {
+		stt = []config.STTProvider{}
+	}
+	providers := []sttProviderOption{}
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if !voice.CanTranscribe(p) {
+			continue
+		}
+		providers = append(providers, sttProviderOption{
+			Name:         p.Name,
+			DefaultModel: voice.DefaultSTTModel(p.BaseURL),
+			Ready:        p.APIKey != "",
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]any{
-		"stt":     out,
-		"presets": voice.STTPresets(),
+		"stt":       stt,
+		"providers": providers,
 	})
 }
 
-// handleUpdateVoiceSTT replaces the STT list. A blank or masked api_key on an
-// incoming entry keeps the stored key at the same list position, so the UI can
-// round-trip masked values without wiping credentials.
+// handleUpdateVoiceSTT replaces the STT list. Each entry must name a
+// configured provider that can transcribe.
 //
 //	PUT /api/voice/stt  {"stt": [...]}
 func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +74,7 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range body.STT {
 		body.STT[i].Provider = strings.TrimSpace(body.STT[i].Provider)
+		body.STT[i].Model = strings.TrimSpace(body.STT[i].Model)
 		if body.STT[i].Provider == "" {
 			http.Error(w, "each STT entry needs a provider", http.StatusBadRequest)
 			return
@@ -64,13 +83,12 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 
 	err := h.updateConfig(r, func(cfg *config.Config) error {
 		for i := range body.STT {
-			key := body.STT[i].APIKey
-			if key == "" || strings.Contains(key, "****") {
-				if i < len(cfg.Voice.STT) {
-					body.STT[i].APIKey = cfg.Voice.STT[i].APIKey
-				} else {
-					body.STT[i].APIKey = ""
-				}
+			p, err := cfg.GetProvider(body.STT[i].Provider)
+			if err != nil {
+				return badRequest("unknown provider %q", body.STT[i].Provider)
+			}
+			if !voice.CanTranscribe(p) {
+				return badRequest("provider %q cannot transcribe", body.STT[i].Provider)
 			}
 		}
 		cfg.Voice.STT = body.STT

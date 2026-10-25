@@ -19,41 +19,44 @@ A file counts as audio by its type (`audio/...`) or its name (`.mp3`, `.wav`,
 
 ## Set up a transcription service
 
-1. Get an API key from the service: Groq, OpenAI, OpenRouter, or any service
-   with an OpenAI-compatible `/audio/transcriptions` endpoint.
+A speech backend uses a provider from the **Providers** page for its endpoint
+and API key. The same provider can serve both chat models and transcription,
+or you can add one just for transcription.
+
+1. On the **Providers** page, make sure the service has a provider with an
+   **API Key**. The built-in catalogue already has **Groq**, **OpenAI** and
+   **OpenRouter Chat**; for any other service with an OpenAI-compatible
+   `/audio/transcriptions` endpoint, click **Add Provider**, pick the
+   `openai-chat` protocol and enter its **Base URL** and **API Key** (see
+   [Providers and models](../providers/index.md)).
 2. In the WebUI sidebar, open **Speech** in the **Services** group.
 3. Click **Add backend**.
-4. Choose the **Provider**: `groq`, `openai`, `openrouter` or `custom`.
-5. Paste the **API key**.
-6. Leave **Endpoint (base URL)** and **Model** blank to use the provider's
-   defaults:
+4. Choose the **Provider**.
+5. Leave **Model** blank for a known service, or enter the model to use:
 
-   | Provider | Endpoint | Model |
-   |---|---|---|
-   | `groq` | `https://api.groq.com/openai/v1` | `whisper-large-v3` |
-   | `openai` | `https://api.openai.com/v1` | `whisper-1` |
-   | `openrouter` | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` |
+   | Provider endpoint | Default model |
+   |---|---|
+   | `https://api.groq.com/openai/v1` | `whisper-large-v3` |
+   | `https://api.openai.com/v1` | `whisper-1` |
+   | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` |
 
-   For `custom`, both are required: a `custom` backend without them is not
+   For any other endpoint the model is required: a backend without one is not
    used, and the page marks it **Not used**.
-7. Make sure the switch on the backend says **Enabled**.
+6. Make sure the switch on the backend says **Enabled**.
 
 The page saves by itself ("Saved ✓"), and the change applies without a
 restart. Send the agent a voice message to check.
 
-### Reusing a provider key
-
-If you leave **API key** blank, ClawEh uses the key of a provider on the
-**Providers** page whose endpoint is on the same host. For example, an
-`openrouter` backend with no key uses the key of your OpenRouter provider. A
-backend with no key of its own and no matching provider is skipped.
+A backend whose provider has no API key is marked **Not used** and skipped.
+A provider that a backend uses cannot be deleted; renaming it carries the
+backend along. The provider's proxy setting is not used for transcription.
 
 ## Several backends
 
 Backends are tried in the order listed: the first enabled one is marked
 **Primary**, the others **Fallback**. If one fails (the service is down, or
-refuses the key), the next enabled backend with a key is tried. Silence is not
-a failure: an empty transcript does not move on to the next backend.
+refuses the key), the next usable backend is tried. Silence is not a failure:
+an empty transcript does not move on to the next backend.
 
 To stop transcribing, turn the backends off or remove them.
 
@@ -87,11 +90,13 @@ service.
 - When the service refuses the key or the account (no credit), ClawEh raises
   the **Voice transcription rejected** [alert](../admin/alerts.md), and voice
   messages are not transcribed until it is fixed.
-- The keys are stored in `config.json` under `voice.stt`. Like other secrets,
-  they can be references such as `env:GROQ_API_KEY` (see
+- The key is the provider's, stored in `config.json` under `providers`. The
+  backends themselves are under `voice.stt`, each naming its provider and
+  model. Like other secrets, the key can be a reference such as
+  `env:GROQ_API_KEY` (see
   [Configuration](../reference/configuration.md#keeping-secrets-out-of-the-file)).
-- The [full report](../admin/checkup.md) lists the backends, whether each has
-  a key, and the chain in use.
+- The [full report](../admin/checkup.md) lists the backends, whether each is
+  on, its model, and the chain in use.
 
 ## Agents that represent a person
 
