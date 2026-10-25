@@ -84,7 +84,7 @@ func TestCollectExternal_SkillsAndRegistries(t *testing.T) {
 
 	voice := findTable(t, s, "Voice")
 	_, active := findRow(t, voice, "Active transcription chain")
-	if active[1] != "OpenAI" {
+	if active[1] != "OpenAI (whisper-1)" {
 		t.Errorf("active transcription = %q", active[1])
 	}
 	for _, sec := range allSecrets {

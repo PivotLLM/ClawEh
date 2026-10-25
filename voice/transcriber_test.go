@@ -59,7 +59,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{Provider: "groq", Enabled: false},
 				}},
 			},
-			wantName: "my-openrouter",
+			wantName: "my-openrouter (openai/whisper-large-v3)",
 		},
 		{
 			name: "multiple enabled entries form an ordered fallback chain",
@@ -70,8 +70,9 @@ func TestDetectTranscriber(t *testing.T) {
 					{Provider: "groq", Enabled: true},
 				}},
 			},
-			// fallbackTranscriber.Name() joins the chain in order.
-			wantName: "my-openrouter,groq",
+			// fallbackTranscriber.Name() joins the chain in order; each name
+			// carries its model so repeats of one provider stay distinguishable.
+			wantName: "my-openrouter (openai/whisper-large-v3),groq (whisper-large-v3)",
 		},
 		{
 			name: "an unknown host with a model is used",
@@ -79,7 +80,7 @@ func TestDetectTranscriber(t *testing.T) {
 				Providers: []config.Provider{customProvider},
 				Voice:     config.VoiceConfig{STT: []config.STTProvider{{Provider: "local-whisper", Enabled: true, Model: "whisper-1"}}},
 			},
-			wantName: "local-whisper",
+			wantName: "local-whisper (whisper-1)",
 		},
 	}
 
@@ -136,7 +137,7 @@ func TestDetectTranscriber_SkipsUnusableEntries(t *testing.T) {
 
 			cfg.Voice.STT = []config.STTProvider{tc.entry, {Provider: "groq", Enabled: true}}
 			w, ok := DetectTranscriber(cfg).(*whisperTranscriber)
-			if !ok || w.name != "groq" {
+			if !ok || w.name != "groq (whisper-large-v3)" {
 				t.Fatalf("DetectTranscriber() = %v, want the groq transcriber alone", w)
 			}
 		})
@@ -163,7 +164,7 @@ func TestDetectTranscriber_UsesTheProvider(t *testing.T) {
 			if !ok {
 				t.Fatalf("DetectTranscriber() = %T, want *whisperTranscriber", DetectTranscriber(cfg))
 			}
-			if w.name != "groq" || w.apiKey != "sk-groq" || w.apiBase != "https://api.groq.com/openai/v1" || w.model != tc.wantModel {
+			if w.name != "groq ("+tc.wantModel+")" || w.apiKey != "sk-groq" || w.apiBase != "https://api.groq.com/openai/v1" || w.model != tc.wantModel {
 				t.Fatalf("transcriber = %s %s %s, want groq at the provider endpoint with model %s", w.name, w.apiBase, w.model, tc.wantModel)
 			}
 		})

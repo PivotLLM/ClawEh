@@ -57,6 +57,9 @@ observe does not need an entry.
   transcribe are listed) in place of `presets`, and no longer returns keys;
   `PUT /api/voice/stt` refuses an entry naming an unknown provider or one that
   cannot transcribe.
+- A speech backend is named by its provider and model, `Openrouter Chat
+  (openai/whisper-1)`, in the log, the full report's transcription chain and
+  the voice alerts, so two backends on one provider can be told apart.
 
 ### Fixed
 

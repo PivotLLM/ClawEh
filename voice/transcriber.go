@@ -401,7 +401,9 @@ func resolveSTT(cfg *config.Config, s *config.STTProvider) (b sttBackend, skip s
 	if model == "" {
 		return b, "no model set and no default for this endpoint"
 	}
-	return sttBackend{name: p.Name, apiKey: p.APIKey, baseURL: p.BaseURL, model: model}, ""
+	// The name carries the model so two backends on one provider can be told
+	// apart in the log, the report's chain and the rejected-key alert.
+	return sttBackend{name: p.Name + " (" + model + ")", apiKey: p.APIKey, baseURL: p.BaseURL, model: model}, ""
 }
 
 // skippedSTT is an enabled voice.stt entry that resolveSTT could not use.
