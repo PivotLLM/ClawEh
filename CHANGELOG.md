@@ -10,7 +10,7 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
-## [0.7.0]
+## [0.6.1]
 
 ### Changed
 
@@ -40,8 +40,6 @@ observe does not need an entry.
   transcribe are listed) in place of `presets`, and no longer returns keys;
   `PUT /api/voice/stt` refuses an entry naming an unknown provider or one that
   cannot transcribe.
-
-## [0.6.1]
 
 ### Fixed
 
@@ -2883,7 +2881,6 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
-[0.7.0]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.7.0
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0
 [0.5.7]: https://github.com/PivotLLM/ClawEh/compare/0.5.6...0.5.7
