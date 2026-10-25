@@ -696,10 +696,14 @@ exported; it exits 2 with a hint otherwise.
   frontend typecheck, oxlint and vitest, none of which load a page.
 
 ## Workflow Rules
-- Work on a fix or feature branch (`fix/...`, `feature/...`), and commit and
-  push to it at logical points (a tested, self-contained step), without waiting
-  to be asked.
-- Never push directly to main — use feature branches + PRs.
+- All work for the version in development lands on one branch, `dev/<version>`
+  (the version in `app/app.go`, e.g. `dev/0.6.1`). Start every worktree from
+  its tip, never from another piece of in-progress work, and land tested work
+  back on it (fast-forward push, or a small PR with it as base) as soon as it
+  passes, then remove the worktree. Commit and push at logical points (a
+  tested, self-contained step) without waiting to be asked.
+- `main` holds released code only: it receives one PR from the dev branch when
+  the release is cut. Never push directly to main.
 - **Never create, move, or delete git tags.** Tags are cut by the release build
   process when binaries are uploaded — they are release markers, not commit
   markers. Bumping the `version` constant in `app/app.go` is a normal code
