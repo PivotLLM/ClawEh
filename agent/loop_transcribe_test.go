@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
@@ -94,6 +96,32 @@ func TestPrepareInbound_Voice(t *testing.T) {
 				t.Errorf("log does not carry the reason %q:\n%s", tt.wantLog, logs.String())
 			}
 		})
+	}
+}
+
+// TestPrepareInbound_AlertsWhenVoiceNotTranscribed: a voice message that no
+// backend could transcribe raises an urgent alert keyed by the channel and
+// carrying the error.
+func TestPrepareInbound_AlertsWhenVoiceNotTranscribed(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, _, _ := freshLoop(t)
+	store := media.NewFileMediaStore()
+	al.SetMediaStore(store)
+	al.SetTranscriber(stubTranscriber{err: errors.New("upstream 503")})
+	rec := &alertRecorder{}
+	al.SetAlerter(rec)
+
+	al.prepareInbound(context.Background(), voiceMessage(t, store))
+
+	if len(rec.alerts) != 1 {
+		t.Fatalf("want one alert, got %+v", rec.alerts)
+	}
+	a := rec.alerts[0]
+	if a.Priority != alerter.Urgent || a.Title != "Voice message not transcribed" ||
+		a.EventID != "voice:failed:test" || a.Details != "upstream 503" ||
+		a.Description != "test: every speech backend failed; the agent received the audio untranscribed" {
+		t.Fatalf("unexpected alert %+v", a)
 	}
 }
 

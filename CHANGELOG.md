@@ -22,6 +22,12 @@ observe does not need an entry.
   and, while there is more, `nextOffset` to send as the next `offset`. A value
   outside its bounds is refused. Without these fields the response is as
   before, except for the new fields and a 200-message cap.
+- Two voice alerts. "Speech backend not usable" fires at startup and on
+  config reload for each enabled `voice.stt` entry that cannot be used (for
+  example its provider is not configured or has no API key); it is urgent
+  when no entry is usable, because voice messages then reach the agent
+  untranscribed. "Voice message not transcribed" fires (urgent) when every
+  speech backend failed on a voice message, naming the channel.
 
 ### Changed
 

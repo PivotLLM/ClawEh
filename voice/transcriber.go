@@ -404,6 +404,31 @@ func resolveSTT(cfg *config.Config, s *config.STTProvider) (b sttBackend, skip s
 	return sttBackend{name: p.Name, apiKey: p.APIKey, baseURL: p.BaseURL, model: model}, ""
 }
 
+// skippedSTT is an enabled voice.stt entry that resolveSTT could not use.
+type skippedSTT struct {
+	provider, reason string
+}
+
+// alertSkipped raises one alert per skipped entry, urgent when none is usable
+// (transcription is off) and normal when another entry still serves.
+func alertSkipped(a alerter.Alerter, skipped []skippedSTT, noneUsable bool) {
+	if a == nil {
+		return
+	}
+	priority := alerter.Normal
+	if noneUsable {
+		priority = alerter.Urgent
+	}
+	for _, s := range skipped {
+		a.Send(alerter.Alert{
+			Priority:    priority,
+			Title:       "Speech backend not usable",
+			Description: fmt.Sprintf("%s: %s; voice messages are not transcribed by this backend until it is fixed", s.provider, s.reason),
+			EventID:     "voice:config:" + s.provider,
+		})
+	}
+}
+
 // fallbackTranscriber tries an ordered list of transcribers, moving to the next
 // only when one returns an error. An empty transcript is a success (silence),
 // not a trigger for fallback.
@@ -452,9 +477,12 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 }
 
 // DetectTranscriberWithAlerter is DetectTranscriber with an alerter that
-// receives the alert raised when a provider rejects the key or account.
+// receives the alert raised when a provider rejects the key or account, and
+// one alert per enabled entry that is skipped as unusable: urgent when no
+// entry is usable (transcription is off), normal when another one is.
 func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
+	var skipped []skippedSTT
 	for i := range cfg.Voice.STT {
 		s := &cfg.Voice.STT[i]
 		if !s.Enabled {
@@ -465,10 +493,12 @@ func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcr
 			logger.WarnCF("voice", "Speech backend skipped: "+skip, map[string]any{
 				"provider": s.Provider, "reason": skip,
 			})
+			skipped = append(skipped, skippedSTT{provider: s.Provider, reason: skip})
 			continue
 		}
 		chain = append(chain, NewTranscriber(b.name, b.apiKey, b.baseURL, b.model, a))
 	}
+	alertSkipped(a, skipped, len(chain) == 0)
 	switch len(chain) {
 	case 0:
 		return nil
