@@ -128,8 +128,8 @@ Under **Paired devices**, each device has a **User** field. It is the name the
 assistant is told the sender has, so it can tell the device's messages apart
 from the rest of the conversation.
 
-Left empty, it uses the admin account's name, shown greyed in the field. Set it
-when someone else uses the device.
+Left empty, it uses **Your name** on the System page, else the admin account's
+name, shown greyed in the field. Set it when someone else uses the device.
 
 ## Encryption
 

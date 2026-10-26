@@ -121,3 +121,56 @@ func TestDeviceList_NoAdminAccountNoDefaultUser(t *testing.T) {
 		t.Fatalf("devices = %+v, want user_default empty", devs)
 	}
 }
+
+// operator.name, set through PATCH /api/config, is the default user GET
+// /api/devices returns in place of the admin account's username; GET
+// /api/config returns it as written, and a refused one is a 400.
+func TestDeviceList_OperatorNameIsDefaultUser(t *testing.T) {
+	h := NewHandler(setupTestEnv(t))
+	credsPath := admin.Path(t.TempDir())
+	if err := admin.Write(credsPath, "bob", "a long enough password"); err != nil {
+		t.Fatal(err)
+	}
+	h.SetAuth(middleware.NewAuthStore(credsPath))
+	pairTestDevice(t, h, "dev1")
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	patch := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := patch(`{"operator":{"name":"Alice"}}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH operator.name: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if devs := listDevices(t, mux); len(devs) != 1 || devs[0].UserDefault != "Alice" {
+		t.Fatalf("devices = %+v, want user_default Alice", devs)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var got struct {
+		Operator struct {
+			Name string `json:"name"`
+		} `json:"operator"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Operator.Name != "Alice" {
+		t.Fatalf("GET /api/config operator.name = %q (err %v), want Alice: %s", got.Operator.Name, err, rec.Body.String())
+	}
+
+	if rec := patch(`{"operator":{"name":"Al\u0007ice"}}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH a control character: status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+
+	if rec := patch(`{"operator":{"name":""}}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH clear: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if devs := listDevices(t, mux); devs[0].UserDefault != "bob" {
+		t.Fatalf("after clear: user_default = %q, want the admin account's bob", devs[0].UserDefault)
+	}
+}

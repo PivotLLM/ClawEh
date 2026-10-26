@@ -97,14 +97,37 @@ func injectDeviceAgentQuerier(ch channels.Channel, al *agent.AgentLoop) {
 	}
 }
 
-// injectDeviceDefaultUser hands the device channel ch the admin account's
-// username as the default name of the person speaking on a device, read from
-// the credentials file at credentialsPath on every call so a `claw admin`
-// change is seen at once. No usable account gives "".
-func injectDeviceDefaultUser(ch channels.Channel, credentialsPath string) {
+// injectDeviceDefaultUser hands the device channel ch the default name of the
+// person speaking on a device: operator.name from the agent loop's current
+// config, else the admin account's username from the credentials file at
+// credentialsPath. Both are read on every call, so a config reload or a
+// `claw admin` change is seen at once. Neither gives "".
+func injectDeviceDefaultUser(ch channels.Channel, al *agent.AgentLoop, credentialsPath string) {
 	if setter, ok := ch.(interface{ SetDefaultUser(fn func() string) }); ok {
-		setter.SetDefaultUser(func() string { return adminUsername(credentialsPath) })
+		setter.SetDefaultUser(func() string {
+			if name := operatorName(al); name != "" {
+				return name
+			}
+			return adminUsername(credentialsPath)
+		})
 	}
+}
+
+// injectWebUIOperatorName hands the WebUI channel ch operator.name from the
+// agent loop's current config, read on every message, as the name of the
+// web chat's sender.
+func injectWebUIOperatorName(ch channels.Channel, al *agent.AgentLoop) {
+	if setter, ok := ch.(interface{ SetOperatorName(fn func() string) }); ok {
+		setter.SetOperatorName(func() string { return operatorName(al) })
+	}
+}
+
+// operatorName is operator.name in the agent loop's current config, or "".
+func operatorName(al *agent.AgentLoop) string {
+	if cfg := al.GetConfig(); cfg != nil {
+		return cfg.OperatorName()
+	}
+	return ""
 }
 
 // adminUsername is the username in the credentials file at path, or "" when

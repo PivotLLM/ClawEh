@@ -86,7 +86,7 @@ See [Network access](../admin/network.md) and [HTTPS and certificates](../admin/
 
 ### System
 
-Install-wide settings in sections: **Agent**, **Agent defaults**, **Context management**, **Runtime**, **Backup**, **Forums** and **Devices**. **Raw config** opens the whole `config.json` for editing.
+Install-wide settings in sections: **Operator** (your name), **Agent**, **Agent defaults**, **Context management**, **Runtime**, **Backup**, **Forums** and **Devices**. **Raw config** opens the whole `config.json` for editing.
 
 See [Configuration file](../reference/configuration.md), [Backup and restore](../admin/backup.md) and [Forums](../forums/index.md).
 

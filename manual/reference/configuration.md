@@ -59,6 +59,7 @@ The reference is written back unchanged when the configuration is saved. A refer
 | `cooldown` | How long a failing model is paused ([Cooldowns](../providers/concepts.md#cooldowns)), in minutes, per kind of failure: `billing_auth_minutes` (default 30), `rate_limit_minutes` (10), `client_error_minutes` (10), `server_error_minutes` (10), `bad_request_minutes` (0). | `config.json` only. |
 | `backup` | The nightly backup: `enabled` (default on), `at` (default `03:00`), `retain_days` (default 30) and `dest` (default `backup/` in the data directory). | **System** page, **Backup**. See [Backup and restore](../admin/backup.md). |
 | `forum` | `forum.limits`: the install-wide maximums for forums. | **System** page, **Forums**. See [Forums](../forums/index.md). |
+| `operator` | `operator.name`: your name, which the assistant is told for your web chat messages and for devices with no **User** of their own. Empty uses the admin login name. | **System** page, **Operator** (**Your name**). |
 | `default_config` | Marks a configuration that has never been saved. The setup wizard uses it. Leave it alone. | Set by ClawEh. |
 | `config_reload_interval_seconds` | How often ClawEh checks `config.json` for changes (default 5). | `config.json` only. |
 

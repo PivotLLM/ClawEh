@@ -212,4 +212,58 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 	if got := rebuilt.DefaultUser(); got != "alice" {
 		t.Fatalf("default user after the admin account changed = %q, want %q", got, "alice")
 	}
+	// operator.name, once a config reload sets it, comes before the admin
+	// account; cleared again, the admin account is back.
+	for _, tc := range []struct{ operatorName, want string }{{" Alice ", "Alice"}, {"", "alice"}} {
+		next := changed
+		next.Operator.Name = tc.operatorName
+		if rerr := al.ReloadProviderAndConfig(context.Background(), providers.NewUnconfiguredProvider(), &next); rerr != nil {
+			t.Fatalf("ReloadProviderAndConfig: %v", rerr)
+		}
+		if got := rebuilt.DefaultUser(); got != tc.want {
+			t.Fatalf("default user with operator.name %q = %q, want %q", tc.operatorName, got, tc.want)
+		}
+	}
+}
+
+// operatorNameSetter records the function SetOperatorName installs, standing
+// in for the WebUI channel.
+type operatorNameSetter struct {
+	channels.Channel
+	fn func() string
+}
+
+func (s *operatorNameSetter) SetOperatorName(fn func() string) { s.fn = fn }
+
+// The build hook gives the WebUI channel operator.name from the agent loop's
+// current config, so a config reload is seen without a rebuild.
+func TestChannelBuildHook_WebUIOperatorName(t *testing.T) {
+	t.Setenv(global.EnvVarHome, t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.Agents.BaseDir = t.TempDir()
+	cfg.Agents.Defaults.Models = []string{"test-model"}
+	cfg.Agents.List = []config.AgentConfig{{ID: "alice", Name: "Alice", Default: true}}
+	cfg.Operator.Name = "Alice"
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	al, err := agent.NewAgentLoop(cfg, mb, providers.NewUnconfiguredProvider(), nil)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
+	ch := &operatorNameSetter{}
+	channelBuildHook(al, nil, "")("webui", ch)
+	if ch.fn == nil {
+		t.Fatal("the build hook did not set the WebUI channel's operator name")
+	}
+	if got := ch.fn(); got != "Alice" {
+		t.Fatalf("operator name = %q, want Alice", got)
+	}
+	next := *cfg
+	next.Operator.Name = "Bob"
+	if err := al.ReloadProviderAndConfig(context.Background(), providers.NewUnconfiguredProvider(), &next); err != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	}
+	if got := ch.fn(); got != "Bob" {
+		t.Fatalf("operator name after reload = %q, want Bob", got)
+	}
 }

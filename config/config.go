@@ -102,6 +102,7 @@ type Config struct {
 	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
 	Backup        BackupConfig        `json:"backup,omitempty"`
 	Forum         ForumConfig         `json:"forum,omitzero"`
+	Operator      OperatorConfig      `json:"operator,omitzero"`
 	// DefaultConfig marks a never-saved, auto-seeded config. DefaultConfig() sets
 	// it true and SeedDefaultConfig() preserves it on disk; the first save through
 	// SaveConfig clears it. The setup wizard uses it (with a "no usable model"

@@ -55,8 +55,9 @@ type DeviceChannel struct {
 	useTLS    bool
 	tlsConfig *tls.Config
 	// defaultUser names the person speaking on a device with no user of its
-	// own (the admin account's username), injected by SetDefaultUser before
-	// Start; nil or "" falls back to the device's display name.
+	// own (operator.name, else the admin account's username), injected by
+	// SetDefaultUser before Start; nil or "" falls back to the device's
+	// display name.
 	defaultUser func() string
 	loopDone    chan struct{}
 	ctx         context.Context
@@ -154,9 +155,9 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 }
 
 // senderName is the name the model is told a device's sender has: the paired
-// device's user name when set, else the default user (the admin account),
-// else the device's display name. When the record cannot be read, only the
-// default user is left, and without it the sender has no name.
+// device's user name when set, else the default user (operator.name, else the
+// admin account), else the device's display name. When the record cannot be
+// read, only the default user is left, and without it the sender has no name.
 func (c *DeviceChannel) senderName(ctx context.Context, deviceID string) string {
 	dev, ok, err := c.store.GetPaired(ctx, deviceID)
 	if err != nil {
@@ -178,9 +179,9 @@ func (c *DeviceChannel) senderName(ctx context.Context, deviceID string) string 
 }
 
 // SetDefaultUser sets the function naming the person speaking on a device
-// that has no user of its own (the admin account's username). It is called
-// per inbound message, so a changed admin account is seen at once. Call
-// before Start.
+// that has no user of its own (operator.name, else the admin account's
+// username). It is called per inbound message, so a changed name is seen at
+// once. Call before Start.
 func (c *DeviceChannel) SetDefaultUser(fn func() string) { c.defaultUser = fn }
 
 // DefaultUser returns the current default user SetDefaultUser installed, or "".

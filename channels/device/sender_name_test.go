@@ -10,14 +10,17 @@ import (
 )
 
 // A device message reaches the bus with the device's user as the sender's
-// display name: the paired device's user name, else the default user (the
-// admin account), else the device's display name. Username stays empty.
+// display name: the paired device's user name, else the default user
+// (operator.name, else the admin account), else the device's display name.
+// Username stays empty.
 func TestInbound_SenderDisplayName(t *testing.T) {
 	for _, tc := range []struct {
 		name, userName, defaultUser, want string
 	}{
 		{"stored user name", "Alice", "bob", "Alice"},
 		{"default user", "", "bob", "bob"},
+		{"operator name as default user", "", "Alice", "Alice"},
+		{"stored user name over operator name", "Bob", "Alice", "Bob"},
 		{"device display name", "", "", "Rabbit R1"},
 		{"blank default user", "", "  ", "Rabbit R1"},
 	} {

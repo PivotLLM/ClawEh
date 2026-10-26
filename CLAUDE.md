@@ -611,9 +611,12 @@ Hard-won learnings (don't relearn these):
   intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field
   `sessionScopeKeyFor` reads, so it survives restarts. Reply goes through the normal event path.
 - **Sender name:** the inbound bridge (`DeviceChannel.senderName`) sets `SenderInfo.DisplayName`
-  to `paired_devices.user_name` (`SetDeviceUser`, Devices page **User** field), else the admin
-  account's username (`SetDefaultUser`, injected by `channelBuildHook`, reads
+  to `paired_devices.user_name` (`SetDeviceUser`, Devices page **User** field), else
+  `operator.name` (System page **Your name**), else the admin account's username
+  (`SetDefaultUser`, injected by `channelBuildHook`, reads `al.GetConfig()` and
   `credentials.json` per message), else the device's display name; `Username` stays empty.
+  The WebUI channel's sender name is `operator.name` (`SetOperatorName`, same hook), else
+  the login username.
 - No permessage-deflate (disabled end-to-end); the OpenClaw `agent` event schema is
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 

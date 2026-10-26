@@ -333,8 +333,8 @@ conversation.
 The device channel puts the device's user in the turn's sender display name
 (`bus.SenderInfo.DisplayName`, which the agent loop shows the model as `[From: <name>]`):
 the paired device's `user_name` (WebUI Devices page, `POST /api/devices/{id}/user`), else
-the admin account's username, else the device's display name. Nothing in the protocol
-carries it; a device cannot set it.
+`operator.name` (System page **Your name**), else the admin account's username, else the
+device's display name. Nothing in the protocol carries it; a device cannot set it.
 
 ### `/agent` command (node clients switch assistants)
 

@@ -972,6 +972,8 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
     for (const s of ["Agent defaults", "Context management", "Runtime", "Backup", "Devices"]) {
       assert(body.includes(s), `missing section "${s}"`)
     }
+    // operator.name: the sender's name for the operator's own messages.
+    assert(body.includes("Your name"), 'missing the "Your name" field')
     // The listeners moved to /network; a Service card here would be a second
     // writer of gateway.* fighting the Network page.
     assert(!body.includes("Allowed network CIDRs"), "the listener settings are still on /system")

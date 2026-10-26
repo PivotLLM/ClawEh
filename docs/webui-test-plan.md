@@ -137,7 +137,7 @@ else is on **System**. `/config` still works and lands on `/system`;
 
 | ID | Process | Expected |
 |---|---|---|
-| G1 | Load `/system` | Sections Agent defaults, Context management, Runtime, Backup and Devices all render; there is **no** listener section (no *Allowed network CIDRs*) — a second writer of `gateway.*` here would fight the Network page. No console errors |
+| G1 | Load `/system` | Sections Agent defaults, Context management, Runtime, Backup and Devices all render, and the **Your name** field (`operator.name`) is present; there is **no** listener section (no *Allowed network CIDRs*) — a second writer of `gateway.*` here would fight the Network page. No console errors |
 | G2 | Note the current **Backup destination**, change it to `/tmp/e2e-probe-backup`, wait ~2s | The new value is in `backup.dest` |
 | G3 | Restore the original value, wait ~2s | `backup.dest` matches what G2 recorded |
 | G4 | Load `/config/raw` | The configuration document renders |

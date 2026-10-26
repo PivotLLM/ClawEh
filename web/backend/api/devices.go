@@ -436,8 +436,8 @@ type pairedDeviceView struct {
 	AgentMissing bool   `json:"agent_missing"`
 	AgentState   string `json:"agent_state,omitempty"`
 	// UserName is the person holding the device, as stored ("" = the
-	// default); UserDefault is that default, the admin account's username
-	// ("" when there is no admin account).
+	// default); UserDefault is that default, operator.name, else the admin
+	// account's username ("" when neither is set).
 	UserName    string `json:"user_name"`
 	UserDefault string `json:"user_default"`
 	// AllowedAgents are the agents the device may talk to ([] = every
@@ -511,8 +511,8 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agents := configuredAgents(cfg)
-	userDefault := ""
-	if auth := h.authStore(); auth != nil {
+	userDefault := cfg.OperatorName()
+	if auth := h.authStore(); userDefault == "" && auth != nil {
 		userDefault = auth.Username()
 	}
 	views := make([]pairedDeviceView, 0, len(paired))
@@ -567,8 +567,9 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceUser sets (or clears) the name of the person holding a paired
 // device, which the assistant is told is the sender. Body: {"user_name":
-// "<name>"} — empty string uses the default (the admin account's username).
-// Takes effect on the device's next message (read live from the store).
+// "<name>"} — empty string uses the default (operator.name, else the admin
+// account's username). Takes effect on the device's next message (read live
+// from the store).
 func (h *Handler) handleDeviceUser(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 	var body struct {

@@ -75,3 +75,32 @@ func TestHandleMessageSend_NamesLoginAccount(t *testing.T) {
 		t.Fatalf("PlatformID = %q, want webui-user", msg.Sender.PlatformID)
 	}
 }
+
+// senderName: operator.name, when set, names the sender in place of the
+// login username; blank or not installed, the username stays.
+func TestSenderName_OperatorName(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		operatorName func() string
+		want         string
+	}{
+		{"operator name", func() string { return "Alice" }, "Alice"},
+		{"blank operator name", func() string { return "  " }, "bob"},
+		{"not installed", nil, "bob"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mb := bus.NewMessageBus()
+			defer mb.Close()
+			c, err := NewWebUIChannel(config.WebUIConfig{Token: "webui-token-abcdefghijkl"}, mb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.operatorName != nil {
+				c.SetOperatorName(tc.operatorName)
+			}
+			if got := c.senderName(&webuiConn{username: "bob"}); got != tc.want {
+				t.Fatalf("senderName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

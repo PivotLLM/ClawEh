@@ -38,6 +38,11 @@ observe does not need an entry.
   characters; empty clears it); `GET /api/devices` now carries `user_name`
   (stored, may be empty) and `user_default` (the admin account's username)
   per device.
+- `operator.name` (**Your name** on the System page): the name the assistant
+  is told for your web chat messages and for devices with no **User** of
+  their own. Empty uses the admin login name, as before. At most 64
+  characters, no control characters; `GET /api/devices` `user_default`
+  reports it when set.
 - An **Assistants** setting per device on the Devices page: **All**, or
   **Selected** with a checkbox per assistant, limiting which assistants the
   device can talk to. New route `POST /api/devices/{id}/agents` with body
