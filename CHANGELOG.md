@@ -12,108 +12,86 @@ observe does not need an entry.
 
 ## [0.6.1]
 
+This release is about voice devices. Audio clips from a device are
+transcribed, a device can page through its assistant's history, the assistant
+knows who is speaking on a device, and a device can be limited to some
+assistants. Two changes are breaking: speech backends now name a provider, and
+the per-channel prompt files are renamed.
+
 ### Added
 
-- The device listener's `chat.history` request takes the paging fields the
-  OpenClaw Gateway protocol defines: `limit` (1 to 1000, default 200),
-  `offset` (most-recent messages to skip) and `maxChars` (cut each message's
-  text to that many characters). The window is counted from the newest
-  message, and the response now carries `offset`, `totalMessages`, `hasMore`
-  and, while there is more, `nextOffset` to send as the next `offset`. A value
-  outside its bounds is refused. Without these fields the response is as
-  before, except for the new fields and a 200-message cap. Each message in
-  the response now carries `timestamp`, when it was stored, as integer
-  milliseconds since the Unix epoch.
-- Two voice alerts. "Speech backend not usable" fires at startup and on
-  config reload for each enabled `voice.stt` entry that cannot be used (for
-  example its provider is not configured or has no API key); it is urgent
-  when no entry is usable, because voice messages then reach the agent
-  untranscribed. "Voice message not transcribed" fires (urgent) when every
-  speech backend failed on a voice message, naming the channel.
-- A **User** field per device on the Devices page: the name the assistant is
-  told the sender has (`[From: <name>]`) for that device's messages, which
-  until now reached it with no name. Empty uses the admin account's username,
-  and without one the device's name. New route `POST /api/devices/{id}/user`
-  with body `{"user_name": "..."}` (at most 64 characters, no control
-  characters; empty clears it); `GET /api/devices` now carries `user_name`
-  (stored, may be empty) and `user_default` (the admin account's username)
-  per device.
-- `operator.name` (**Your name** on the System page): the name the assistant
-  is told for your web chat messages and for devices with no **User** of
-  their own. Empty uses the admin login name, as before. At most 64
-  characters, no control characters; `GET /api/devices` `user_default`
-  reports it when set.
-- An **Assistants** setting per device on the Devices page: **All**, or
-  **Selected** with a checkbox per assistant, limiting which assistants the
-  device can talk to. New route `POST /api/devices/{id}/agents` with body
-  `{"allowed_agents": ["..."]}` (valid agent ids; empty allows all);
-  `GET /api/devices` now carries `allowed_agents` (`[]` = all) and
-  `agent_allowed` (false when the assigned assistant is outside the set) per
-  device. A device that names an assistant outside its set is refused with
-  `INVALID_REQUEST` "agent not allowed for this device", and one none of whose
-  assistants is running with `UNAVAILABLE` "no allowed assistant is available
-  on this device".
+- **Devices: the assistant knows who is speaking.** Each paired device has a
+  **User** field on the Devices page, and the System page has **Your name**
+  (`operator.name`), used for devices with no User of their own and for the
+  web chat. A device's messages reach the assistant as `[From: <name>]`. The
+  name is the device's User, else Your name, else the admin login name, else
+  the device's own name. API: `POST /api/devices/{id}/user` with
+  `{"user_name": "..."}` (at most 64 characters, empty clears);
+  `GET /api/devices` adds `user_name` and `user_default`.
+- **Devices: limit a device to selected assistants.** **Assistants** on the
+  Devices page is **All**, or **Selected** with a checkbox per assistant. A
+  restricted device sees only those assistants, and a request for another is
+  refused (`INVALID_REQUEST` "agent not allowed for this device"; `UNAVAILABLE`
+  "no allowed assistant is available on this device" when none of them is
+  running). An assigned assistant outside the set is marked on the page and
+  not used. API: `POST /api/devices/{id}/agents` with
+  `{"allowed_agents": ["..."]}` (`[]` allows all); `GET /api/devices` adds
+  `allowed_agents` and `agent_allowed`.
+- **Devices: paged history with timestamps.** `chat.history` takes `limit`
+  (1 to 1000, default 200), `offset` and `maxChars` as the OpenClaw Gateway
+  protocol defines them, counted from the newest message, and answers with
+  `offset`, `totalMessages`, `hasMore` and `nextOffset`. Each message carries
+  `timestamp`, milliseconds since the Unix epoch. Without the fields the
+  response is as before, capped at 200 messages.
+- **Voice alerts.** "Speech backend not usable" fires at startup and on reload
+  for each enabled speech backend that cannot be used, urgent when none is
+  left. "Voice message not transcribed" fires when every backend failed on a
+  message.
 
 ### Changed
 
-- **BREAKING: a speech-to-text backend now names a provider instead of
-  carrying its own endpoint and key.** Each `voice.stt` entry names a provider
-  from the Providers page in its `provider` field and carries only `enabled`
-  and `model`; the endpoint and API key are the provider's. A blank `model`
-  uses the default for the provider's endpoint (Groq `whisper-large-v3`, OpenAI
-  `whisper-1`, OpenRouter `openai/whisper-large-v3`); any other endpoint needs a
-  model. An entry's `api_key` and `base_url` are no longer read: they are
-  reported as unknown config keys on load and dropped from `config.json` on the
-  next save. `provider` no longer accepts `groq`, `openai`, `openrouter` or
-  `custom` as presets, only the name of a configured provider (matched exactly,
-  including case). Only a provider with protocol `openai-chat` or
-  `openai-responses` and a base URL can transcribe. An entry naming no
-  configured provider, one that cannot transcribe, or one without an API key, is
-  skipped (with a warning in the log) and shown as *Not used* on the Speech
-  page. Deleting a provider that a speech backend names is now refused, and
-  renaming one carries the speech backend along to the new name.
-  Migration: the next save of `config.json` from any page drops the old entry's
-  `api_key`, so if `config.json` is the only place that key is kept, copy it
-  out before saving anything. Then add a provider on the Providers page with the
-  endpoint and key (for Groq: protocol `openai-chat`, base URL
-  `https://api.groq.com/openai/v1`), and pick it on the Speech page.
-  `GET /api/voice/stt` now returns `providers` (each `name`, `default_model`
-  and `ready`, meaning the provider has a key; only providers that can
-  transcribe are listed) in place of `presets`, and no longer returns keys;
-  `PUT /api/voice/stt` refuses an entry naming an unknown provider or one that
+- **BREAKING: speech backends name a provider.** A `voice.stt` entry now names
+  a provider from the Providers page in `provider` and carries only `enabled`
+  and `model`; the endpoint and key are the provider's. `api_key` and
+  `base_url` are no longer read and are dropped on the next save of
+  `config.json`. Only `openai-chat` and `openai-responses` providers with a
+  base URL can transcribe. A blank model uses the default for Groq
+  (`whisper-large-v3`), OpenAI (`whisper-1`) and OpenRouter
+  (`openai/whisper-large-v3`). An unusable entry is skipped, logged and shown
+  as *Not used* on the Speech page. Deleting a provider a backend names is
+  refused; renaming one carries the backend along.
+  **To migrate:** if `config.json` is the only copy of the old key, copy it out
+  first. Add a provider with the endpoint and key on the Providers page (Groq:
+  protocol `openai-chat`, base URL `https://api.groq.com/openai/v1`), then
+  pick it on the Speech page. API: `GET /api/voice/stt` returns `providers`
+  (`name`, `default_model`, `ready`) in place of `presets` and no longer
+  returns keys; `PUT /api/voice/stt` refuses an unknown provider or one that
   cannot transcribe.
-- A speech backend is named by its provider and model, `Openrouter Chat
-  (openai/whisper-1)`, in the log, the full report's transcription chain and
-  the voice alerts, so two backends on one provider can be told apart.
-- **BREAKING: an agent's per-channel prompt file is now named after the
-  channel in capitals**: `DEVICE.md`, `TELEGRAM.md`, `SLACK.md`, `DISCORD.md`,
-  `MATRIX.md`, `SECMSG.md` and `WEBUI.md` in the agent's directory. There is
-  one file per channel, shared by every Telegram bot and every secure-messaging
-  account, and it is created with a short default only for channels that are
-  enabled. A `channel-<channel>.md` file is no longer read. Migration: none
-  needed for one file per channel; at the next start an existing
-  `channel-<channel>.md` (for example `channel-device.md` or
-  `channel-telegram-<bot id>.md`) is renamed to the new name. When there are
-  two for the same channel (two Telegram bots), the first by file name is
-  renamed, the other is left in place, the log says it is no longer read, and
-  its text has to be merged into the new file by hand.
+- **BREAKING: per-channel prompt files are named after the channel in
+  capitals**: `DEVICE.md`, `TELEGRAM.md`, `SLACK.md`, `DISCORD.md`,
+  `MATRIX.md`, `SECMSG.md` and `WEBUI.md` in the agent's directory, one per
+  channel shared by every bot or account of it, created with a short default
+  only for channels that are enabled. `channel-<channel>.md` is no longer
+  read. **To migrate:** nothing, in the common case; at the next start an
+  existing `channel-<channel>.md` is renamed. With two for one channel (two
+  Telegram bots), the first by name is renamed and the other is left in place
+  and logged; merge its text into the new file by hand.
+- Speech backends are named by provider and model, `Openrouter Chat
+  (openai/whisper-1)`, in the log, the full report and the voice alerts, so
+  two backends on one provider can be told apart.
 
 ### Fixed
 
-- Messages from the WebUI chat and from Slack now carry the sender's name to
-  the assistant (the `[From: …]` line), like the other channels. WebUI messages
-  are named after the logged-in account; Slack messages after the user's display
-  name (else real name) and handle, looked up once per user with `users.info`
-  (a failed lookup is retried after five minutes).
-- Audio attachments sent over the device gateway (`chat.send` with an `audio/*`
-  `mimeType`) are now stored with a matching file extension (`.wav`, `.ogg`,
-  `.mp3`, `.m4a`, `.flac`, `.aac`, `.webm`) instead of `.bin`, so the configured
-  `voice.stt` provider recognises and transcribes them. When the type is not
-  recognised, the extension of the attachment's `name` is used. Previously the
-  clip was attached but never transcribed and the agent saw only `[voice]`.
-- A WAV attachment whose RIFF and `data` chunk lengths are placeholders (as
-  written by a device that streams audio before it knows the final length) has
-  those lengths repaired on receipt, so transcription providers accept the file.
+- **Audio from a device is transcribed.** A clip sent with `chat.send` is
+  stored with its real extension (`.wav`, `.ogg`, `.mp3`, `.m4a`, `.flac`,
+  `.aac`, `.webm`, else the one in the attachment's name) instead of `.bin`,
+  and a WAV with placeholder lengths from a streaming device is repaired on
+  receipt. Before, the clip was never transcribed and the agent saw only
+  `[voice]`.
+- **WebUI and Slack messages carry the sender's name** like the other
+  channels: the logged-in account for the WebUI; the display name and handle
+  from `users.info` for Slack, looked up once per user and retried after five
+  minutes on failure.
 
 ## [0.6.0]
 
