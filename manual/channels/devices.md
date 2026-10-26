@@ -78,6 +78,12 @@ agent.
 - **Apps with their own agent picker**, such as the Android app, show
   "assistant chosen in app"; the person picks the agent in the app.
 
+### How an agent replies on a device
+
+Each agent's directory has a `channel-device.md`, read only for messages from
+devices. Edit it to make that agent brief on a small screen without changing
+how it replies elsewhere; see [Creating and editing agents](../agents/creating.md).
+
 ### Switching agents from the device
 
 On a device without a picker, the person can send:

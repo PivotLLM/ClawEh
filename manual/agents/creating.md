@@ -78,4 +78,6 @@ ClawEh creates these files in a new workspace. Edit them in a text editor to sha
 | `COMPRESSION.md` | Extra instructions for summarizing this agent's conversation. Comment-only by default. |
 | `COGMEM.md` | Extra instructions for this agent's memory consolidation. |
 
-You may delete `MEMORY.md` and `COMPRESSION.md`; they are not recreated. A file named `channel-<channel>.md` (for example `channel-telegram.md`) adds instructions only for messages on that channel.
+You may delete `MEMORY.md` and `COMPRESSION.md`; they are not recreated. Deleting any other file brings its current default back on the next start, which is how to refresh an agent onto an updated template.
+
+A file named `channel-<channel>.md` adds instructions only for messages on that channel, so one agent can answer briefly on a small screen and at length elsewhere. `channel-device.md` is created for every agent and read for messages from [devices](../channels/devices.md); edit it to change how that agent replies there, or empty it to add nothing. For other channels create the file yourself, named after the channel: `channel-slack.md`, `channel-discord.md`, `channel-matrix.md`, `channel-webui.md`, or `channel-telegram-<bot id>.md` for a Telegram bot.
