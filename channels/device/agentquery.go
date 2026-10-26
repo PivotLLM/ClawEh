@@ -1,5 +1,7 @@
 package device
 
+import "time"
+
 // DeviceAgentInfo is the minimal agent summary the device gateway returns from
 // agents.list — enough for an operator client to populate its agent picker.
 type DeviceAgentInfo struct {
@@ -8,10 +10,12 @@ type DeviceAgentInfo struct {
 }
 
 // DeviceHistoryMessage is one transcript entry returned by chat.history, oldest
-// first. Only user/assistant turns with text content are surfaced.
+// first. Only user/assistant turns with text content are surfaced. Timestamp is
+// when the message was stored; zero when the store has no time for it.
 type DeviceHistoryMessage struct {
-	Role    string
-	Content string
+	Role      string
+	Content   string
+	Timestamp time.Time
 }
 
 // AgentQuerier exposes the read-only agent/session facts the device gateway needs

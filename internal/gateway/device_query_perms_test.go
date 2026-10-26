@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -39,6 +40,23 @@ func TestDeviceQuerierHistory_CreatesArchivePrivately(t *testing.T) {
 	}
 	if got := (deviceAgentQuerier{al: al}).History("agent:alice:main"); len(got) != 0 {
 		t.Fatalf("history of a new session = %+v", got)
+	}
+
+	// A stored message comes back with the time the store stamped it.
+	before := time.Now().Add(-time.Minute)
+	inst := agentForSessionKey(al.GetRegistry(), "agent:alice:main")
+	if inst == nil || inst.Sessions == nil {
+		t.Fatal("alice has no session store")
+	}
+	if addErr := inst.Sessions.AddMessage("agent:alice:main", "user", "hello"); addErr != nil {
+		t.Fatalf("AddMessage: %v", addErr)
+	}
+	got := (deviceAgentQuerier{al: al}).History("agent:alice:main")
+	if len(got) != 1 || got[0].Content != "hello" {
+		t.Fatalf("history = %+v, want the one stored message", got)
+	}
+	if got[0].Timestamp.Before(before) || got[0].Timestamp.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("timestamp = %v, want about now", got[0].Timestamp)
 	}
 
 	found := 0

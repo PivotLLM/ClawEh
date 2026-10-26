@@ -1244,10 +1244,14 @@ func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewa
 	}
 	messages := make([]map[string]any, 0, len(page.Messages))
 	for _, m := range page.Messages {
-		messages = append(messages, map[string]any{
+		entry := map[string]any{
 			"role":    m.Role,
 			"content": []map[string]any{{"type": "text", "text": m.Content}},
-		})
+		}
+		if !m.Timestamp.IsZero() {
+			entry["timestamp"] = m.Timestamp.UnixMilli()
+		}
+		messages = append(messages, entry)
 	}
 	payload := map[string]any{
 		"sessionKey":    sessionKey,

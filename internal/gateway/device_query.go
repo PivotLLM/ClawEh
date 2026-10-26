@@ -59,7 +59,7 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	if inst == nil || inst.Sessions == nil {
 		return nil
 	}
-	msgs := inst.Sessions.GetHistory(sessionKey)
+	msgs := inst.Sessions.GetHistoryWithSeqs(sessionKey)
 	out := make([]device.DeviceHistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -68,7 +68,7 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 		if strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		out = append(out, device.DeviceHistoryMessage{Role: m.Role, Content: m.Content})
+		out = append(out, device.DeviceHistoryMessage{Role: m.Role, Content: m.Content, Timestamp: m.CreatedAt})
 	}
 	return out
 }

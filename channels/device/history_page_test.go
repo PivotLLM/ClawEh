@@ -4,12 +4,18 @@ import (
 	"encoding/json"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 )
 
+// transcriptEpoch is the stored time of transcript message 0; message i is
+// stored i seconds later.
+const transcriptEpoch = int64(1_761_500_000)
+
 // transcript builds n messages whose text is their 1-based position, so a page
-// can be checked by the numbers it carries.
+// can be checked by the numbers it carries. Every message but the newest is
+// stamped, so the newest covers a message the store never timed.
 func transcript(n int) []DeviceHistoryMessage {
 	out := make([]DeviceHistoryMessage, 0, n)
 	for i := 1; i <= n; i++ {
@@ -17,7 +23,11 @@ func transcript(n int) []DeviceHistoryMessage {
 		if i%2 == 0 {
 			role = "assistant"
 		}
-		out = append(out, DeviceHistoryMessage{Role: role, Content: strconv.Itoa(i)})
+		m := DeviceHistoryMessage{Role: role, Content: strconv.Itoa(i)}
+		if i < n {
+			m.Timestamp = time.Unix(transcriptEpoch+int64(i), 0)
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -206,6 +216,7 @@ func TestChatHistoryPagingOverWire(t *testing.T) {
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
+			Timestamp int64 `json:"timestamp"`
 		} `json:"messages"`
 		Offset        int  `json:"offset"`
 		TotalMessages int  `json:"totalMessages"`
@@ -217,6 +228,27 @@ func TestChatHistoryPagingOverWire(t *testing.T) {
 	}
 	if len(got.Messages) != 2 || got.Messages[0].Content[0].Text != "3" || got.Messages[1].Content[0].Text != "4" {
 		t.Fatalf("messages = %+v, want texts 3 and 4", got.Messages)
+	}
+	// timestamp is the stored time in milliseconds since the Unix epoch.
+	if want := (transcriptEpoch + 3) * 1000; got.Messages[0].Timestamp != want || got.Messages[1].Timestamp != want+1000 {
+		t.Fatalf("timestamps = %d, %d, want %d, %d", got.Messages[0].Timestamp, got.Messages[1].Timestamp, want, want+1000)
+	}
+
+	// A message the store never timed carries no timestamp field at all.
+	em.writeReq(t, conn, "h3", "chat.history", map[string]any{"sessionKey": "agent:bob:main", "limit": 1})
+	var newest struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if r := readRes(t, conn, "h3"); !r.OK {
+		t.Fatalf("chat.history refused: %+v", r.Error)
+	} else if err := json.Unmarshal(r.Payload, &newest); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(newest.Messages) != 1 {
+		t.Fatalf("messages = %+v, want the newest one", newest.Messages)
+	}
+	if _, has := newest.Messages[0]["timestamp"]; has {
+		t.Fatalf("unstamped message carries a timestamp: %+v", newest.Messages[0])
 	}
 	if got.Offset != 1 || got.TotalMessages != 5 || !got.HasMore || got.NextOffset != 3 {
 		t.Fatalf("offset/total/hasMore/next = %d/%d/%v/%d, want 1/5/true/3", got.Offset, got.TotalMessages, got.HasMore, got.NextOffset)

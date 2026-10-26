@@ -21,7 +21,9 @@ observe does not need an entry.
   message, and the response now carries `offset`, `totalMessages`, `hasMore`
   and, while there is more, `nextOffset` to send as the next `offset`. A value
   outside its bounds is refused. Without these fields the response is as
-  before, except for the new fields and a 200-message cap.
+  before, except for the new fields and a 200-message cap. Each message in
+  the response now carries `timestamp`, when it was stored, as integer
+  milliseconds since the Unix epoch.
 - Two voice alerts. "Speech backend not usable" fires at startup and on
   config reload for each enabled `voice.stt` entry that cannot be used (for
   example its provider is not configured or has no API key); it is urgent

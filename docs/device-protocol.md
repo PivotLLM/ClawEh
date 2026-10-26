@@ -160,7 +160,10 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
 | `offset` | most-recent messages to skip, ≥ 0; default 0 |
 | `maxChars` | cut each message's text to this many characters, 1..500000; a cut text ends in `...` |
 
-A value outside its bounds is refused with `INVALID_REQUEST` (not clamped). The response
+A value outside its bounds is refused with `INVALID_REQUEST` (not clamped). Each message
+carries `timestamp`, the time it was stored as integer milliseconds since the Unix epoch
+(left out for a message the store never stamped, which only an old migrated transcript can
+have), so a client can show how old it is. The response
 carries `messages` (oldest first within the page), `offset` (as applied), `totalMessages`,
 `hasMore`, and, when `hasMore` is true, `nextOffset`: send it back as `offset` to get the page
 before this one. A small device shows the last few turns with `{"limit":5}` and pages back
