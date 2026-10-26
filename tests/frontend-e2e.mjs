@@ -1731,7 +1731,7 @@ if (useGroup("I", "Models and providers")) {
 
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
-  await check(1, "devices page renders, shows the connect URL and a User field per paired device", async () => {
+  await check(1, "devices page renders, shows the connect URL and User and Assistants controls per paired device", async () => {
     const pair = await api("/api/devices/pair")
     assert(pair.status === 200, `/api/devices/pair ${pair.status}`)
     const connectURL = pair.json?.connect_url
@@ -1757,6 +1757,18 @@ if (useGroup("J", "Devices")) {
       const value = await field.inputValue()
       const placeholder = (await field.getAttribute("placeholder")) ?? ""
       if (!value && !placeholder) blank.push(`${d.device_id.slice(0, 12)}: empty with no placeholder`)
+      // The Assistants control: an All and a Selected radio per row, with the
+      // one the stored list implies checked. Read-only; nothing is clicked.
+      const all = page.locator(`#device-agents-all-${d.device_id}`)
+      const selected = page.locator(`#device-agents-selected-${d.device_id}`)
+      if ((await all.count()) !== 1 || (await selected.count()) !== 1) {
+        blank.push(`${d.device_id.slice(0, 12)}: no Assistants control`)
+        continue
+      }
+      const want = (d.allowed_agents ?? []).length > 0 ? selected : all
+      if ((await want.getAttribute("aria-checked")) !== "true") {
+        blank.push(`${d.device_id.slice(0, 12)}: Assistants radio does not match allowed_agents`)
+      }
     }
     await close()
     assert(/device/i.test(body), "devices page looks empty")
@@ -1765,7 +1777,7 @@ if (useGroup("J", "Devices")) {
     assert(userCount === paired.length, `${userCount} User fields for ${paired.length} paired devices`)
     assert(blank.length === 0, blank[0])
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    return `${connectURL}; ${paired.length} paired device(s)` + (paired.length ? "" : " (User field not exercised)")
+    return `${connectURL}; ${paired.length} paired device(s)` + (paired.length ? "" : " (User and Assistants controls not exercised)")
   })
   await check(2, "/api/devices does not fail under concurrent load", async () => {
     // Regression: the handler opened its own SQLite handle per request and lost

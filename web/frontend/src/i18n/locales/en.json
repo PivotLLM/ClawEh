@@ -810,7 +810,13 @@
       "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent.",
       "agent_set_aside": "Ignored: {{agent}} is set aside; using the default agent.",
       "user_label": "User",
-      "user_hint": "The name the assistant is told this device's messages come from."
+      "user_hint": "The name the assistant is told this device's messages come from.",
+      "agents_label": "Assistants",
+      "agents_all": "All",
+      "agents_selected": "Selected",
+      "agents_choose_one": "Choose at least one assistant.",
+      "agent_not_allowed": "Not in this device's assistants; the device uses another assistant.",
+      "agent_not_found": "(not found)"
     }
   },
   "providers": {

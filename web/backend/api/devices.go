@@ -37,6 +37,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/devices", h.handleDeviceList)
 	mux.HandleFunc("POST /api/devices/{id}/agent", h.handleDeviceAgent)
 	mux.HandleFunc("POST /api/devices/{id}/user", h.handleDeviceUser)
+	mux.HandleFunc("POST /api/devices/{id}/agents", h.handleDeviceAllowedAgents)
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
@@ -437,10 +438,15 @@ type pairedDeviceView struct {
 	// UserName is the person holding the device, as stored ("" = the
 	// default); UserDefault is that default, the admin account's username
 	// ("" when there is no admin account).
-	UserName     string `json:"user_name"`
-	UserDefault  string `json:"user_default"`
-	ApprovedAtMs int64  `json:"approved_at_ms"`
-	LastSeenAtMs int64  `json:"last_seen_at_ms"`
+	UserName    string `json:"user_name"`
+	UserDefault string `json:"user_default"`
+	// AllowedAgents are the agents the device may talk to ([] = every
+	// agent); AgentAllowed is false when the assigned agent is outside
+	// them, so the device does not use it.
+	AllowedAgents []string `json:"allowed_agents"`
+	AgentAllowed  bool     `json:"agent_allowed"`
+	ApprovedAtMs  int64    `json:"approved_at_ms"`
+	LastSeenAtMs  int64    `json:"last_seen_at_ms"`
 }
 
 // agentOption is a selectable agent for the per-device assistant dropdown.
@@ -515,7 +521,11 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
 			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
 			UserName: d.UserName, UserDefault: userDefault,
+			AllowedAgents: d.AllowedAgents, AgentAllowed: d.AgentID == "" || d.Allows(d.AgentID),
 			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
+		}
+		if v.AllowedAgents == nil {
+			v.AllowedAgents = []string{}
 		}
 		if d.AgentID != "" {
 			v.AgentRef = routing.NormalizeAgentID(d.AgentID)
@@ -584,6 +594,47 @@ func (h *Handler) handleDeviceUser(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
 		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleDeviceAllowedAgents limits a paired device to some agents. Body:
+// {"allowed_agents": ["<id>", ...]} — required; an empty array allows every agent. Each
+// id must be a valid agent id; one not configured (yet) is accepted. Takes
+// effect on the device's next request (read live from the store).
+func (h *Handler) handleDeviceAllowedAgents(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	var body struct {
+		AllowedAgents *[]string `json:"allowed_agents"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.AllowedAgents == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "allowed_agents is required."})
+		return
+	}
+	for _, id := range *body.AllowedAgents {
+		if !config.ValidAgentID(strings.TrimSpace(id)) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("%q is not a valid agent id.", id),
+			})
+			return
+		}
+	}
+	store, _, err := h.openDeviceStore(r.Context())
+	if err != nil {
+		h.deviceStoreUnavailable(w, err)
+		return
+	}
+	if err := store.SetDeviceAllowedAgents(r.Context(), deviceID, *body.AllowedAgents); err != nil {
+		if errors.Is(err, device.ErrPairedNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

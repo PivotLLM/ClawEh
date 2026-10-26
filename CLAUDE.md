@@ -594,7 +594,10 @@ Hard-won learnings (don't relearn these):
   (`assignedAgentState`), which the Devices page shows). Every device joins the selected
   agent's main conversation (`agent:<id>:main`), whatever the rest of the key says — one
   agent, one history, one memory across the R1, the app, Slack, Telegram, and MCP service
-  tokens. There are no session modes; an unknown agent id is refused. `chat.history` resolves
+  tokens. There are no session modes; an unknown agent id is refused, and so is one outside the
+  device's allowed set (`paired_devices.allowed_agents`, `SetDeviceAllowedAgents`,
+  `PairedDevice.Allows`; empty = all), which also limits `agents.list` and `/agent`, while
+  `deviceAgentFor` picks an unqualified turn's agent within it. `chat.history` resolves
   through the same rule as `chat.send` (`Server.sessionScopeKeyFor`). Every other inbound path
   goes through `routing.ResolveAgentSessionKey`, which keeps only the agent's own sub-agent
   key and collapses anything else to `agent:<id>:main`: cogmem's inbox is fed from exactly

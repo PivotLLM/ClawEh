@@ -52,6 +52,10 @@ export interface PairedDevice {
   user_name: string
   // The admin account's username, used when user_name is empty.
   user_default: string
+  // The assistants this device may use ([] = all).
+  allowed_agents: string[]
+  // False when the assigned assistant is outside allowed_agents.
+  agent_allowed: boolean
   approved_at_ms: number
   last_seen_at_ms: number
 }
@@ -114,6 +118,12 @@ export const setDeviceUser = (id: string, userName: string) =>
   request<unknown>(
     `/api/devices/${encodeURIComponent(id)}/user`,
     jsonPost({ user_name: userName }),
+  )
+// setDeviceAgents limits the device to these assistants ([] = all).
+export const setDeviceAgents = (id: string, allowedAgents: string[]) =>
+  request<unknown>(
+    `/api/devices/${encodeURIComponent(id)}/agents`,
+    jsonPost({ allowed_agents: allowedAgents }),
   )
 export const removeDevice = (id: string) =>
   request<unknown>(`/api/devices/${encodeURIComponent(id)}`, {

@@ -110,6 +110,18 @@ another agent in the **Assistant** list, or have the person send `/agent`.
 
 Agents that represent a person ([human agents](../agents/human-agents.md)) are never offered to devices.
 
+### Assistants
+
+Under **Paired devices**, each device has an **Assistants** setting: **All** or
+**Selected**, with a checkbox per assistant.
+
+A device set to **Selected** sees only the checked assistants. It cannot open,
+read or switch to any other; `/agent` lists only the checked ones.
+
+If the device's assigned assistant is not checked, the page marks it and the
+device uses a checked assistant instead. If none of the checked assistants is
+running, the device gets an error until one is.
+
 ## Who the assistant thinks is speaking
 
 Under **Paired devices**, each device has a **User** field. It is the name the

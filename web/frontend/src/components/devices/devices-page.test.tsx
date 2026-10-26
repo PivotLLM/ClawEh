@@ -59,6 +59,8 @@ const pairedDevice = {
   agent_missing: false,
   user_name: "",
   user_default: "alice",
+  allowed_agents: [],
+  agent_allowed: true,
   approved_at_ms: 1,
   last_seen_at_ms: 1,
 }
@@ -285,6 +287,174 @@ describe("DevicesPage", () => {
     expect(JSON.parse(saves()[0][1]?.body as string)).toEqual({
       user_name: "",
     })
+  })
+
+  const agentSaves = () =>
+    (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) =>
+      String(url).endsWith("/agents"),
+    )
+  const twoAgents = [
+    { id: "alice", name: "Alice" },
+    { id: "bob", name: "Bob" },
+  ]
+
+  it("shows Assistants as All, with no checkboxes, when none are selected", async () => {
+    renderPage([], { devices: [pairedDevice], agents: twoAgents })
+    await screen.findByText("Kitchen R1")
+    const all = screen.getByRole("radio", { name: "pages.devices.agents_all" })
+    expect(all.id).toBe("device-agents-all-device-fedcba9876543210")
+    expect(all.getAttribute("aria-checked")).toBe("true")
+    expect(
+      screen
+        .getByRole("radio", { name: "pages.devices.agents_selected" })
+        .getAttribute("aria-checked"),
+    ).toBe("false")
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0)
+    expect(screen.queryByTestId("device-agent-not-allowed")).toBe(null)
+  })
+
+  it("shows Selected with the stored assistants checked", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, allowed_agents: ["bob"] }],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    expect(
+      screen
+        .getByRole("radio", { name: "pages.devices.agents_selected" })
+        .getAttribute("aria-checked"),
+    ).toBe("true")
+    const alice = screen.getByRole("checkbox", { name: "Alice" })
+    const bob = screen.getByRole("checkbox", { name: "Bob" })
+    expect(alice.id).toBe("device-agent-device-fedcba9876543210-alice")
+    expect(alice.getAttribute("aria-checked")).toBe("false")
+    expect(bob.getAttribute("aria-checked")).toBe("true")
+  })
+
+  it("saves the set when a checkbox is checked", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, allowed_agents: ["bob"] }],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    fireEvent.click(screen.getByRole("checkbox", { name: "Alice" }))
+    await waitFor(() => expect(agentSaves()).toHaveLength(1))
+    const [url, init] = agentSaves()[0]
+    expect(String(url)).toBe("/api/devices/device-fedcba9876543210/agents")
+    expect(init?.method).toBe("POST")
+    expect(JSON.parse(init?.body as string)).toEqual({
+      allowed_agents: ["bob", "alice"],
+    })
+  })
+
+  it("saves an empty list when All is chosen", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, allowed_agents: ["bob"] }],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    fireEvent.click(
+      screen.getByRole("radio", { name: "pages.devices.agents_all" }),
+    )
+    await waitFor(() => expect(agentSaves()).toHaveLength(1))
+    expect(JSON.parse(agentSaves()[0][1]?.body as string)).toEqual({
+      allowed_agents: [],
+    })
+  })
+
+  it("does not save Selected until one assistant is checked", async () => {
+    renderPage([], { devices: [pairedDevice], agents: twoAgents })
+    await screen.findByText("Kitchen R1")
+    fireEvent.click(
+      screen.getByRole("radio", { name: "pages.devices.agents_selected" }),
+    )
+    expect(screen.getByTestId("device-agents-choose-one").textContent).toBe(
+      "pages.devices.agents_choose_one",
+    )
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2)
+    expect(agentSaves()).toHaveLength(0)
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bob" }))
+    await waitFor(() => expect(agentSaves()).toHaveLength(1))
+    expect(JSON.parse(agentSaves()[0][1]?.body as string)).toEqual({
+      allowed_agents: ["bob"],
+    })
+  })
+
+  it("ignores clicks while a save is pending and clears the draft after the refetch", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, allowed_agents: ["bob"] }],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    // Hold the POST open; the controls must be disabled until it resolves.
+    let release: (() => void) | undefined
+    const held = new Promise<void>((r) => (release = r))
+    const original = fetch as unknown as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<{ ok: boolean; json: () => Promise<unknown> }>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/agents")) await held
+        return original(input, init)
+      }),
+    )
+    fireEvent.click(screen.getByRole("checkbox", { name: "Alice" }))
+    await waitFor(() => expect(agentSaves()).toHaveLength(1))
+    const bob = screen.getByRole("checkbox", { name: "Bob" })
+    await waitFor(() => expect(bob.hasAttribute("disabled")).toBe(true))
+    expect(
+      screen
+        .getByRole("radio", { name: "pages.devices.agents_all" })
+        .hasAttribute("disabled"),
+    ).toBe(true)
+    fireEvent.click(bob)
+    fireEvent.click(
+      screen.getByRole("radio", { name: "pages.devices.agents_all" }),
+    )
+    expect(agentSaves()).toHaveLength(1)
+    release?.()
+    await waitFor(() => expect(bob.hasAttribute("disabled")).toBe(false))
+    expect(agentSaves()).toHaveLength(1)
+  })
+
+  it("marks a stored id that is not a configured assistant", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, allowed_agents: ["bob", "carol"] }],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    const carol = screen.getByRole("checkbox", { name: /carol/ })
+    expect(carol.id).toBe("device-agent-device-fedcba9876543210-carol")
+    expect(
+      document.querySelector(`label[for="${carol.id}"]`)?.textContent,
+    ).toBe("carol pages.devices.agent_not_found")
+    expect(carol.getAttribute("aria-checked")).toBe("true")
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Bob" })
+        .getAttribute("aria-checked"),
+    ).toBe("true")
+  })
+
+  it("warns when the assigned assistant is outside the selected set", async () => {
+    renderPage([], {
+      devices: [
+        {
+          ...pairedDevice,
+          agent_id: "alice",
+          agent_ref: "alice",
+          allowed_agents: ["bob"],
+          agent_allowed: false,
+        },
+      ],
+      agents: twoAgents,
+    })
+    await screen.findByText("Kitchen R1")
+    expect(screen.getByTestId("device-agent-not-allowed").textContent).toBe(
+      "pages.devices.agent_not_allowed",
+    )
   })
 
   it("shows no note for a valid assignment", async () => {

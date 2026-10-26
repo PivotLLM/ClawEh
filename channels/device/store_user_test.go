@@ -92,8 +92,8 @@ func TestSetDeviceUser_RefusesInvalidNames(t *testing.T) {
 	}
 }
 
-// A database created before agent_id and user_name existed gains both
-// columns on open, and its devices read back with them empty.
+// A database created before agent_id, user_name and allowed_agents existed
+// gains the columns on open, and its devices read back with them empty.
 func TestOpenStore_MigratesPairedDeviceColumns(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "gateway.db")
@@ -135,11 +135,14 @@ func TestOpenStore_MigratesPairedDeviceColumns(t *testing.T) {
 			t.Fatalf("OpenStore pass %d: %v", pass, err)
 		}
 		dev, ok, err := s.GetPaired(ctx, "dev-old")
-		if err != nil || !ok || dev.AgentID != "" || dev.UserName != wantUser || dev.DisplayName != "Rabbit R1" {
+		if err != nil || !ok || dev.AgentID != "" || dev.UserName != wantUser || len(dev.AllowedAgents) != 0 || dev.DisplayName != "Rabbit R1" {
 			t.Fatalf("pass %d: GetPaired = %+v ok=%v err=%v", pass, dev, ok, err)
 		}
 		if err := s.SetDeviceUser(ctx, "dev-old", "Alice"); err != nil {
 			t.Fatalf("pass %d: SetDeviceUser on a migrated database: %v", pass, err)
+		}
+		if err := s.SetDeviceAllowedAgents(ctx, "dev-old", nil); err != nil {
+			t.Fatalf("pass %d: SetDeviceAllowedAgents on a migrated database: %v", pass, err)
 		}
 		wantUser = "Alice"
 		if err := s.Close(); err != nil {

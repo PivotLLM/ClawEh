@@ -304,6 +304,19 @@ conversation.
   isolate it.
 - A key must name a configured agent: an unknown id is refused with `INVALID_REQUEST`
   "unknown agent" before any session is read.
+- **Allowed agents.** A paired device may be limited to some agents (`paired_devices.allowed_agents`,
+  WebUI Devices page **Assistants**, `POST /api/devices/{id}/agents`); empty means every agent.
+  `agents.list` then lists only those, with `defaultId`/`mainKey` naming the agent an
+  unqualified `chat.send` reaches (empty when that is not a listed agent). A `chat.send` or
+  `chat.history` key naming an agent outside the set is refused with `INVALID_REQUEST` "agent
+  not allowed for this device". A key that names no agent reaches, in order: the per-device
+  assignment if allowed, the default agent if allowed, the first allowed agent `agents.list`
+  offers; when there is none, the request is refused with `UNAVAILABLE` "no allowed assistant
+  is available on this device" (logged once). `/agent` lists and matches only allowed agents,
+  so another name is answered like an unknown one; `/agent` and `/help` work whatever session
+  key the connection holds. When the device's record cannot be read, `agents.list`,
+  `chat.send` and `chat.history` are refused with `UNAVAILABLE` "device record unavailable"
+  (the restriction fails closed).
 - `chat.history` resolves through the **same** rule as `chat.send`, so a client always reads
   the transcript its turns are written to — a client asking for its own profile key is
   answered with the agent's main conversation.
@@ -333,10 +346,12 @@ command (`handleChatSend` intercepts it and replies as a normal turn — no agen
   on id or name). Persists via `store.SetDeviceAgent` to the `paired_devices.agent_id` column
   (`~/.claw/internal/gateway.db`), the same field session-scope resolution reads — so the switch takes
   effect on the **next** turn and **survives restarts / reconnects**.
-- **`/agent default`** (or `reset`) — clears the assignment back to the default agent.
+- **`/agent default`** (or `reset`) — clears the assignment; the reply names the agent the
+  device then reaches.
 - **`/help`** — lists the available device commands.
 
-The device is a dedicated channel, so any configured agent is reachable. The confirmation is
+The device is a dedicated channel, so any configured agent that its allowed set admits is
+reachable. The confirmation is
 delivered through the normal reply path (both `agent` + `chat` events), so the R1 speaks and
 displays it. This is the same per-device assignment the WebUI devices page sets via the dropdown.
 

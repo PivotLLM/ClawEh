@@ -839,7 +839,7 @@ func (s *Server) dispatch(ctx context.Context, lc *liveConn, req gatewayproto.Re
 	case "node.event":
 		s.handleNodeEvent(lc, req)
 	case "agents.list":
-		s.handleAgentsList(lc, req)
+		s.handleAgentsList(ctx, lc, req)
 	case "chat.history":
 		s.handleChatHistory(ctx, lc, req)
 	default:
@@ -874,19 +874,28 @@ func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewaypr
 	if runID == "" {
 		runID = randomToken(8)
 	}
-	requested := p.SessionKey
-	if requested == "" {
-		lc.mu.Lock()
-		requested = lc.sessionKey
-		lc.mu.Unlock()
-	}
-	scopeKey, err := s.sessionScopeKeyFor(ctx, lc, requested)
-	if err != nil {
-		s.refuseSessionKey(lc, req.ID, err)
-		return
+	// Device text commands (e.g. "/agent bob") are answered without resolving
+	// the session first, so a stored key naming an agent the device may no
+	// longer reach cannot block the command that fixes it.
+	cmd, cmdArg, isCmd := parseSlashCommand(p.Message)
+	isCmd = isCmd && (cmd == "agent" || cmd == "help")
+	scopeKey := ""
+	if !isCmd {
+		requested := p.SessionKey
+		if requested == "" {
+			lc.mu.Lock()
+			requested = lc.sessionKey
+			lc.mu.Unlock()
+		}
+		var err error
+		scopeKey, err = s.sessionScopeKeyFor(ctx, lc, requested)
+		if err != nil {
+			s.refuseSessionKey(lc, req.ID, err)
+			return
+		}
 	}
 	lc.mu.Lock()
-	if p.SessionKey != "" {
+	if p.SessionKey != "" && !isCmd {
 		lc.sessionKey = p.SessionKey
 	}
 	lc.currentRun = runID
@@ -910,17 +919,15 @@ func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewaypr
 	// client's transport times out waiting for this frame.
 	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 
-	// Device text commands (e.g. "/agent bob") are handled here and answered as a
-	// reply event, without running the agent loop.
-	if cmd, arg, ok := parseSlashCommand(p.Message); ok {
-		switch cmd {
-		case "agent":
-			go s.handleAgentCommand(ctx, lc, runID, arg)
-			return
-		case "help":
-			go s.emitChatReply(lc, runID, scopeKey, deviceHelpText)
-			return
+	// Device text commands are answered as a reply event, without running the
+	// agent loop.
+	if isCmd {
+		if cmd == "agent" {
+			go s.handleAgentCommand(ctx, lc, runID, cmdArg)
+		} else {
+			go s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), deviceHelpText)
 		}
+		return
 	}
 
 	// Decode inline attachments (e.g. photos). Oversized or undecodable entries are
@@ -976,21 +983,31 @@ func parseSlashCommand(message string) (cmd, arg string, ok bool) {
 // lists the configured assistants (marking the current one); with a name or id it
 // switches this device's assigned assistant via the pairing store so subsequent
 // turns route there (sessionScopeKey reads the assignment). "default"/"reset"
-// clears the assignment back to the gateway default. The device is a dedicated
-// channel, so it may target any configured agent.
+// clears the assignment back to the gateway default. The device may target any
+// configured agent its allowed set (PairedDevice.AllowedAgents) admits; the list
+// shows only those, and any other name is answered as unknown.
 func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, arg string) {
-	var agents []DeviceAgentInfo
-	defaultID := ""
+	var all []DeviceAgentInfo
 	if s.querier != nil {
-		agents, defaultID, _ = s.querier.Agents()
+		all, _, _ = s.querier.Agents()
 	}
-	current := defaultID
-	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" && s.assignedAgentRuns(dev.AgentID) {
-		current = dev.AgentID
+	dev, err := s.pairedRecord(ctx, lc)
+	if err != nil {
+		s.emitChatReply(lc, runID, "", "This device's settings could not be read.")
+		return
+	}
+	agents := all
+	if dev != nil {
+		agents = allowedAgentInfos(all, *dev)
 	}
 
-	if len(agents) == 0 {
+	if len(all) == 0 {
 		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "No assistants are configured.")
+		return
+	}
+	current, err := s.deviceAgentFor(lc, dev)
+	if err != nil || len(agents) == 0 {
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "No assistants are available on this device.")
 		return
 	}
 	if arg == "" || strings.EqualFold(arg, "list") {
@@ -1002,10 +1019,24 @@ func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, ar
 			s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "Couldn't reset assistant: "+err.Error())
 			return
 		}
-		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc), "Switched to the default assistant.")
+		// Name the agent the device now reaches, which is the gateway default
+		// only when the device's allowed set admits it.
+		var reset PairedDevice
+		if dev != nil {
+			reset = *dev
+		}
+		reset.AgentID = ""
+		name := "the default assistant"
+		if id, err := s.deviceAgentFor(lc, &reset); err == nil {
+			name = agentNameFor(agents, id)
+		}
+		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc),
+			"Switched to "+name+". New messages will go to this assistant.")
 		return
 	}
 
+	// Only the agents the device may reach are matched, so a hidden agent
+	// gets the same reply as one that does not exist.
 	targetID, targetName := resolveDeviceAgent(agents, arg)
 	if targetID == "" {
 		s.emitChatReply(lc, runID, s.replyScopeKey(ctx, lc),
@@ -1039,13 +1070,24 @@ func formatAgentList(agents []DeviceAgentInfo, currentID string) string {
 	for _, a := range agents {
 		b.WriteString("• ")
 		b.WriteString(agentDisplayName(a))
-		if a.ID == currentID {
+		if config.SameAgentID(a.ID, currentID) {
 			b.WriteString(" (current)")
 		}
 		b.WriteString("\n")
 	}
 	b.WriteString("\nSend \"/agent <name>\" to switch, or \"/agent default\" to reset.")
 	return b.String()
+}
+
+// agentNameFor is the display name of the agent id among agents, or the id
+// itself when it is not listed.
+func agentNameFor(agents []DeviceAgentInfo, id string) string {
+	for _, a := range agents {
+		if config.SameAgentID(a.ID, id) {
+			return agentDisplayName(a)
+		}
+	}
+	return id
 }
 
 func agentDisplayName(a DeviceAgentInfo) string {
@@ -1071,12 +1113,41 @@ func (s *Server) replyScopeKey(ctx context.Context, lc *liveConn) string {
 // errUnknownAgent refuses a session key naming an agent that does not exist.
 var errUnknownAgent = errors.New("unknown agent")
 
-// refuseSessionKey answers a request whose session key names an unknown agent.
+// errAgentNotAllowed refuses a session key naming an agent outside the
+// device's allowed set.
+var errAgentNotAllowed = errors.New("agent not allowed for this device")
+
+// errNoAllowedAgent refuses a turn that names no agent when none of the
+// agents the device is allowed runs.
+var errNoAllowedAgent = errors.New("no allowed assistant is available on this device")
+
+// errDeviceRecordUnavailable refuses a request whose device record cannot be
+// read: without it the device's allowed set is unknown, so the request fails
+// closed.
+var errDeviceRecordUnavailable = errors.New("device record unavailable")
+
+// refuseSessionKey answers a request whose agent cannot be resolved
+// (errUnknownAgent, errAgentNotAllowed, errNoAllowedAgent,
+// errDeviceRecordUnavailable); the
+// error's text is the refusal's message and refusalCode its code. A record
+// failure was already logged once by pairedRecord.
 func (s *Server) refuseSessionKey(lc *liveConn, reqID string, err error) {
-	logger.WarnCF("device", "request refused: session key not allowed", map[string]any{
-		"deviceId": lc.deviceID, "reason": err.Error(),
-	})
-	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "unknown agent", nil)))
+	if !errors.Is(err, errDeviceRecordUnavailable) && !errors.Is(err, errNoAllowedAgent) {
+		logger.WarnCF("device", "request refused: session key not allowed", map[string]any{
+			"deviceId": lc.deviceID, "reason": err.Error(),
+		})
+	}
+	lc.cw.send(gatewayproto.NewErrorResponse(reqID, gatewayproto.NewError(refusalCode(err), err.Error(), nil)))
+}
+
+// refusalCode is the protocol error code for a refusal: UNAVAILABLE for a
+// server-side failure to read the device record or when no allowed agent
+// runs, INVALID_REQUEST otherwise.
+func refusalCode(err error) gatewayproto.ErrorCode {
+	if errors.Is(err, errDeviceRecordUnavailable) || errors.Is(err, errNoAllowedAgent) {
+		return gatewayproto.CodeUnavailable
+	}
+	return gatewayproto.CodeInvalidRequest
 }
 
 // agentExists reports whether id names a configured agent. Without a querier
@@ -1116,37 +1187,141 @@ func (s *Server) assignedAgentRuns(id string) bool {
 // keep a device separate, give it its own agent.
 //
 // An operator client picks the agent via the key's 2nd segment, which must name
-// a configured agent (an unknown id is refused before anything touches a
-// session store); a node client (e.g. the R1) has no picker, so it falls back
-// to its per-device assignment (WebUI Devices page / "/agent") and then to the
-// gateway default. The choice reaches the loop as preresolved_agent_id.
+// a configured agent the device is allowed (an unknown or disallowed id is
+// refused before anything touches a session store); a node client (e.g. the
+// R1) has no picker, so it gets deviceAgentFor's choice. The choice reaches
+// the loop as preresolved_agent_id.
 func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) (string, error) {
+	dev, err := s.pairedRecord(ctx, lc)
+	if err != nil {
+		return "", err
+	}
 	agentID := routing.AgentIDFromSessionKey(requested)
 	if agentID != "" {
 		if !s.agentExists(agentID) {
 			return "", errUnknownAgent
 		}
+		if dev != nil && !dev.Allows(agentID) {
+			return "", errAgentNotAllowed
+		}
 		return routing.BuildAgentMainSessionKey(agentID), nil
 	}
-	agentID = "main"
-	if s.querier != nil {
-		if d := s.querier.DefaultAgentID(); d != "" {
-			agentID = d
-		}
-	}
-	// Per-device assignment overrides the gateway default for node clients, but
-	// only while the assigned agent exists: the loop drops a turn preresolved to
-	// a missing agent, so a stale assignment would leave the device unanswered.
-	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		if s.assignedAgentRuns(dev.AgentID) {
-			agentID = dev.AgentID
-		} else if _, seen := s.staleWarned.LoadOrStore(lc.deviceID+"|"+dev.AgentID, true); !seen {
-			logger.WarnCF("device", "assigned agent not found; using the default agent", map[string]any{
-				"deviceId": lc.deviceID, "device": dev.DisplayName, "assignedAgent": dev.AgentID, "agent": agentID,
-			})
-		}
+	agentID, err = s.deviceAgentFor(lc, dev)
+	if err != nil {
+		return "", err
 	}
 	return routing.BuildAgentMainSessionKey(agentID), nil
+}
+
+// pairedRecord is the connection's paired-device record, or nil when the
+// device is not paired (no assignment, no restriction). A store error is
+// logged at WARN once per device and returned as errDeviceRecordUnavailable,
+// so the caller refuses the request rather than ignore the device's allowed
+// set.
+func (s *Server) pairedRecord(ctx context.Context, lc *liveConn) (*PairedDevice, error) {
+	dev, ok, err := s.store.GetPaired(ctx, lc.deviceID)
+	if err != nil {
+		s.warnOnce(lc.deviceID+"|record unavailable", "paired device record unreadable; refusing the request", map[string]any{
+			"deviceId": lc.deviceID, "error": err.Error(),
+		})
+		return nil, errDeviceRecordUnavailable
+	}
+	if !ok {
+		return nil, nil
+	}
+	return dev, nil
+}
+
+// deviceAgentFor is the agent a turn reaches when the client names none: the
+// device's assignment (WebUI Devices page / "/agent") while that agent runs
+// and is allowed, else the gateway default when allowed, else the first
+// allowed agent the device can list (allowedFallback). When none is, the turn
+// is refused with errNoAllowedAgent and a WARN is logged once: falling back
+// to the default would reach an agent outside the set. A stale or disallowed
+// assignment is skipped with a WARN once: the loop drops a turn preresolved
+// to a missing agent, so honouring it would leave the device unanswered. dev
+// may be nil (no record).
+func (s *Server) deviceAgentFor(lc *liveConn, dev *PairedDevice) (string, error) {
+	defaultID := "main"
+	if s.querier != nil {
+		if d := s.querier.DefaultAgentID(); d != "" {
+			defaultID = d
+		}
+	}
+	if dev == nil {
+		return defaultID, nil
+	}
+	assignedReason := ""
+	if dev.AgentID != "" {
+		switch {
+		case !s.assignedAgentRuns(dev.AgentID):
+			assignedReason = "assigned agent not found"
+		case !dev.Allows(dev.AgentID):
+			assignedReason = "assigned agent not allowed for this device"
+		default:
+			return dev.AgentID, nil
+		}
+	}
+	agentID, found := defaultID, dev.Allows(defaultID)
+	if !found {
+		agentID, found = s.allowedFallback(*dev)
+	}
+	if assignedReason != "" {
+		s.warnOnce(lc.deviceID+"|"+dev.AgentID+"|"+assignedReason, assignedReason+"; using another agent", map[string]any{
+			"deviceId": lc.deviceID, "device": dev.DisplayName, "assignedAgent": dev.AgentID, "agent": agentID,
+		})
+	}
+	if !found {
+		s.warnOnce(lc.deviceID+"|no allowed agent", "no allowed agent runs; refusing the device's turns", map[string]any{
+			"deviceId": lc.deviceID, "device": dev.DisplayName, "allowedAgents": dev.AllowedAgents,
+		})
+		return "", errNoAllowedAgent
+	}
+	return agentID, nil
+}
+
+// allowedFallback is the first of dev's allowed agents, in their stored
+// order, that agents.list offers (a configured agent the loop runs, not a
+// human agent), so the fallback is always one the device can see. Without a
+// querier nothing can be checked and the first allowed id is used.
+func (s *Server) allowedFallback(dev PairedDevice) (string, bool) {
+	if s.querier == nil {
+		if len(dev.AllowedAgents) > 0 {
+			return dev.AllowedAgents[0], true
+		}
+		return "", false
+	}
+	listed, _, _ := s.querier.Agents()
+	for _, id := range dev.AllowedAgents {
+		for _, a := range listed {
+			if config.SameAgentID(a.ID, id) {
+				return a.ID, true
+			}
+		}
+	}
+	return "", false
+}
+
+// warnOnce logs msg at WARN the first time key is seen, so a device that
+// keeps talking logs a misconfiguration once.
+func (s *Server) warnOnce(key, msg string, fields map[string]any) {
+	if _, seen := s.staleWarned.LoadOrStore(key, true); !seen {
+		logger.WarnCF("device", msg, fields)
+	}
+}
+
+// allowedAgentInfos is the subset of agents the device dev may talk to.
+func allowedAgentInfos(agents []DeviceAgentInfo, dev PairedDevice) []DeviceAgentInfo {
+	if len(dev.AllowedAgents) == 0 {
+		return agents
+	}
+	out := make([]DeviceAgentInfo, 0, len(agents))
+	for _, a := range agents {
+		if dev.Allows(a.ID) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // handleNodeEvent handles the node ingress envelope (chat.subscribe / chat.unsubscribe).
@@ -1172,14 +1347,35 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 
 // handleAgentsList answers an operator client's agents.list with the configured
 // agents and the default agent's main session key (which the client echoes back
-// as the chat.history/chat.send sessionKey).
-func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
+// as the chat.history/chat.send sessionKey). A device limited to some agents
+// gets only those, with defaultId/mainKey naming the agent an unqualified
+// chat.send reaches (deviceAgentFor), or empty when that is not one of them.
+func (s *Server) handleAgentsList(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
 		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: agents.list", nil)))
 		return
 	}
+	dev, err := s.pairedRecord(ctx, lc)
+	if err != nil {
+		s.refuseSessionKey(lc, req.ID, err)
+		return
+	}
 	agents, defaultID, mainKey := s.querier.Agents()
+	if dev != nil && len(dev.AllowedAgents) > 0 {
+		agents = allowedAgentInfos(agents, *dev)
+		// defaultId is always one of the listed agents: an agent outside
+		// them (none runs, or a human agent assigned) leaves both empty.
+		defaultID, mainKey = "", ""
+		if id, err := s.deviceAgentFor(lc, dev); err == nil {
+			for _, a := range agents {
+				if config.SameAgentID(a.ID, id) {
+					defaultID, mainKey = a.ID, routing.BuildAgentMainSessionKey(a.ID)
+					break
+				}
+			}
+		}
+	}
 	list := make([]map[string]any, 0, len(agents))
 	for _, a := range agents {
 		entry := map[string]any{"id": a.ID}

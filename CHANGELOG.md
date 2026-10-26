@@ -38,6 +38,16 @@ observe does not need an entry.
   characters; empty clears it); `GET /api/devices` now carries `user_name`
   (stored, may be empty) and `user_default` (the admin account's username)
   per device.
+- An **Assistants** setting per device on the Devices page: **All**, or
+  **Selected** with a checkbox per assistant, limiting which assistants the
+  device can talk to. New route `POST /api/devices/{id}/agents` with body
+  `{"allowed_agents": ["..."]}` (valid agent ids; empty allows all);
+  `GET /api/devices` now carries `allowed_agents` (`[]` = all) and
+  `agent_allowed` (false when the assigned assistant is outside the set) per
+  device. A device that names an assistant outside its set is refused with
+  `INVALID_REQUEST` "agent not allowed for this device", and one none of whose
+  assistants is running with `UNAVAILABLE` "no allowed assistant is available
+  on this device".
 
 ### Changed
 
