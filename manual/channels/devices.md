@@ -80,9 +80,12 @@ agent.
 
 ### How an agent replies on a device
 
-Each agent's directory has a `channel-device.md`, read only for messages from
-devices. Edit it to make that agent brief on a small screen without changing
-how it replies elsewhere; see [Creating and editing agents](../agents/creating.md).
+While the device channel is enabled, each agent's directory has a `DEVICE.md`,
+read only for messages from devices and shared by all of them. Edit it to make
+that agent brief on a small screen without changing how it replies elsewhere,
+empty it to add nothing, or delete it and the default returns on the next
+start. An older `channel-device.md` is renamed to `DEVICE.md` on the next
+start. See [Creating and editing agents](../agents/creating.md).
 
 ### Switching agents from the device
 

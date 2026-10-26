@@ -51,7 +51,7 @@ func parityContextBuilder(t *testing.T) *ContextBuilder {
 		"USER.md":              "# User\n\nPrefers short answers.\n",
 		"IDENTITY.md":          "# Identity\n\nYou are Alice.\n",
 		"MEMORY.md":            "- The build is gated by make check.\n",
-		"channel-webui.md":     "## WebUI\n\nMarkdown is rendered.\n",
+		"WEBUI.md":             "## WebUI\n\nMarkdown is rendered.\n",
 		"skills/demo/SKILL.md": "---\nname: demo\ndescription: A demo skill\n---\n# Demo\n",
 	}
 	for name, content := range files {

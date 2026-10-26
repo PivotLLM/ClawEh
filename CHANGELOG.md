@@ -62,6 +62,18 @@ observe does not need an entry.
 - A speech backend is named by its provider and model, `Openrouter Chat
   (openai/whisper-1)`, in the log, the full report's transcription chain and
   the voice alerts, so two backends on one provider can be told apart.
+- **BREAKING: an agent's per-channel prompt file is now named after the
+  channel in capitals**: `DEVICE.md`, `TELEGRAM.md`, `SLACK.md`, `DISCORD.md`,
+  `MATRIX.md`, `SECMSG.md` and `WEBUI.md` in the agent's directory. There is
+  one file per channel, shared by every Telegram bot and every secure-messaging
+  account, and it is created with a short default only for channels that are
+  enabled. A `channel-<channel>.md` file is no longer read. Migration: none
+  needed for one file per channel; at the next start an existing
+  `channel-<channel>.md` (for example `channel-device.md` or
+  `channel-telegram-<bot id>.md`) is renamed to the new name. When there are
+  two for the same channel (two Telegram bots), the first by file name is
+  renamed, the other is left in place, the log says it is no longer read, and
+  its text has to be merged into the new file by hand.
 
 ### Fixed
 

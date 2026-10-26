@@ -506,7 +506,9 @@ production instance directly; test against a dev instance.
   (`ToolDeps.TempAgent`: the source's Maestro runner is used as is, never
   re-pointed); a **fresh** temporary agent gets an empty workspace of its own
   (never seeded: no AGENTS.md/SOUL.md/IDENTITY.md/USER.md/MEMORY.md/
-  COMPRESSION.md/COGMEM.md, no skills), no tools, no session token and no
+  COMPRESSION.md/COGMEM.md, none of the per-channel `<KIND>.md` files that a
+  config agent gets for the channel kinds in use, `config.ChannelKindsInUse`,
+  no skills), no tools, no session token and no
   engine archive; its whole system prompt is the `WithSystemPrompt` text or
   `agentreg.DefaultSystemPrompt` (`ContextBuilder.WithFixedPrompt`), followed
   only by memory recall when it has memory. Its `agentreg.Mode` (saved with its
