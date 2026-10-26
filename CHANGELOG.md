@@ -85,6 +85,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- Messages from the WebUI chat and from Slack now carry the sender's name to
+  the assistant (the `[From: …]` line), like the other channels. WebUI messages
+  are named after the logged-in account; Slack messages after the user's display
+  name (else real name) and handle, looked up once per user with `users.info`
+  (a failed lookup is retried after five minutes).
 - Audio attachments sent over the device gateway (`chat.send` with an `audio/*`
   `mimeType`) are now stored with a matching file extension (`.wav`, `.ogg`,
   `.mp3`, `.m4a`, `.flac`, `.aac`, `.webm`) instead of `.bin`, so the configured

@@ -415,7 +415,7 @@ func startWebAuth(services *gatewayServices, cfg *config.Config) error {
 	if err := services.WebServer.APIHandler().SetLockoutExempt(cfg.Gateway.LockoutExempt); err != nil {
 		return err
 	}
-	webui.SetSessionValidator(authStore.HasSession)
+	webui.SetSessionValidator(authStore.Authenticate)
 	authCtx, stopAuthWatch := context.WithCancel(context.Background())
 	services.stopAuthWatch = stopAuthWatch
 	go authStore.Watch(authCtx, middleware.CredentialsPollInterval)

@@ -41,7 +41,7 @@ func newCommandChannel(t *testing.T, postReply string) (*SlackChannel, *bus.Mess
 		api:         slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/")),
 		botUserID:   "UBOT",
 	}
-	c.userNameCache.Store("U1", "Alice")
+	c.userNameCache.Store("U1", slackUserName{displayName: "Alice"})
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	t.Cleanup(c.cancel)
 	c.SetRunning(true)

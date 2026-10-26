@@ -326,13 +326,6 @@ func (s *AuthStore) Authenticate(r *http.Request) (string, bool) {
 	return "", false
 }
 
-// HasSession is Authenticate as a predicate, in the shape the WebUI channel
-// takes for its WebSocket handshake check.
-func (s *AuthStore) HasSession(r *http.Request) bool {
-	_, ok := s.Authenticate(r)
-	return ok
-}
-
 // SessionCookieName picks the cookie for the transport the request arrived
 // on: the __Host- Secure cookie over TLS, the plain one over HTTP.
 func SessionCookieName(r *http.Request) string {
