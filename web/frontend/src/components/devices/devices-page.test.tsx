@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -57,6 +57,8 @@ const pairedDevice = {
   scopes: [],
   agent_id: "",
   agent_missing: false,
+  user_name: "",
+  user_default: "alice",
   approved_at_ms: 1,
   last_seen_at_ms: 1,
 }
@@ -205,6 +207,84 @@ describe("DevicesPage", () => {
     })
     const note = await screen.findByTestId("device-agent-missing")
     expect(note.textContent).toBe("pages.devices.agent_set_aside:Bob")
+  })
+
+  it("shows the device's user name in the User field", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, user_name: "Bob" }],
+      agents: [],
+    })
+    await screen.findByText("Kitchen R1")
+    const field = screen.getByLabelText(
+      "pages.devices.user_label",
+    ) as HTMLInputElement
+    expect(field.id).toBe("device-user-device-fedcba9876543210")
+    expect(field.value).toBe("Bob")
+    expect(screen.getByText("pages.devices.user_hint")).toBeTruthy()
+  })
+
+  it("shows the default user as the placeholder of an empty User field", async () => {
+    renderPage([], { devices: [pairedDevice], agents: [] })
+    await screen.findByText("Kitchen R1")
+    const field = screen.getByLabelText(
+      "pages.devices.user_label",
+    ) as HTMLInputElement
+    expect(field.value).toBe("")
+    expect(field.placeholder).toBe("alice")
+  })
+
+  it("falls back to the device name as placeholder when there is no default user", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, user_default: "" }],
+      agents: [],
+    })
+    await screen.findByText("Kitchen R1")
+    const field = screen.getByLabelText(
+      "pages.devices.user_label",
+    ) as HTMLInputElement
+    expect(field.placeholder).toBe("Kitchen R1")
+  })
+
+  it("saves the User field on blur", async () => {
+    renderPage([], { devices: [pairedDevice], agents: [] })
+    await screen.findByText("Kitchen R1")
+    const field = screen.getByLabelText("pages.devices.user_label")
+    fireEvent.change(field, { target: { value: " Bob " } })
+    fireEvent.blur(field)
+    await waitFor(() => {
+      const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+      const save = calls.find(([url]) => String(url).endsWith("/user"))
+      expect(save).toBeTruthy()
+      expect(String(save?.[0])).toBe(
+        "/api/devices/device-fedcba9876543210/user",
+      )
+      expect(save?.[1]?.method).toBe("POST")
+      expect(JSON.parse(save?.[1]?.body as string)).toEqual({
+        user_name: "Bob",
+      })
+    })
+  })
+
+  it("saves the User field on Enter and sends nothing when unchanged", async () => {
+    renderPage([], {
+      devices: [{ ...pairedDevice, user_name: "Bob" }],
+      agents: [],
+    })
+    await screen.findByText("Kitchen R1")
+    const field = screen.getByLabelText("pages.devices.user_label")
+    const saves = () =>
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([url]) => String(url).endsWith("/user"),
+      )
+    fireEvent.change(field, { target: { value: "Bob" } })
+    fireEvent.keyDown(field, { key: "Enter" })
+    expect(saves()).toHaveLength(0)
+    fireEvent.change(field, { target: { value: "" } })
+    fireEvent.keyDown(field, { key: "Enter" })
+    await waitFor(() => expect(saves()).toHaveLength(1))
+    expect(JSON.parse(saves()[0][1]?.body as string)).toEqual({
+      user_name: "",
+    })
   })
 
   it("shows no note for a valid assignment", async () => {

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
@@ -26,6 +28,13 @@ var ErrPendingNotFound = errors.New("device: pending pairing not found")
 // ErrPairedNotFound is returned when an update references an unknown paired device.
 var ErrPairedNotFound = errors.New("device: paired device not found")
 
+// ErrInvalidUserName is returned when a device user name is refused: longer
+// than MaxDeviceUserNameLen characters or containing a control character.
+var ErrInvalidUserName = errors.New("device: invalid user name")
+
+// MaxDeviceUserNameLen is the longest device user name, in characters.
+const MaxDeviceUserNameLen = 64
+
 // PairedDevice is an approved device identity (auth/identity, not command surface).
 type PairedDevice struct {
 	DeviceID     string
@@ -38,6 +47,7 @@ type PairedDevice struct {
 	Roles        []string
 	Scopes       []string // approved scope baseline
 	AgentID      string   // per-device assigned agent ("" = gateway default)
+	UserName     string   // person holding the device ("" = the default user)
 	CreatedAtMs  int64
 	ApprovedAtMs int64
 	LastSeenAtMs int64
@@ -89,6 +99,7 @@ CREATE TABLE IF NOT EXISTS paired_devices (
   roles           TEXT,
   scopes          TEXT,
   agent_id        TEXT NOT NULL DEFAULT '',
+  user_name       TEXT NOT NULL DEFAULT '',
   created_at_ms   INTEGER NOT NULL,
   approved_at_ms  INTEGER NOT NULL,
   last_seen_at_ms INTEGER
@@ -172,6 +183,13 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		!strings.Contains(err.Error(), "duplicate column") {
 		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("device: migrate agent_id: %w", err)
+	}
+	// The same for user_name, added after agent_id.
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE paired_devices ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		utils.CloseQuietly(db)
+		return nil, fmt.Errorf("device: migrate user_name: %w", err)
 	}
 	if err := hashPlaintextTokens(ctx, db); err != nil {
 		utils.CloseQuietly(db)
@@ -513,10 +531,10 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 	var roles, scopes string
 	var lastSeen sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, user_name, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices WHERE device_id=?`, deviceID).Scan(
 		&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily, &d.ClientID,
-		&d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
+		&d.ClientMode, &roles, &scopes, &d.AgentID, &d.UserName, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -532,7 +550,7 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 // ListPaired returns all paired devices, newest-approved first.
 func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, user_name, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices ORDER BY approved_at_ms DESC`)
 	if err != nil {
 		return nil, err
@@ -548,7 +566,7 @@ func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 		var roles, scopes string
 		var lastSeen sql.NullInt64
 		if err := rows.Scan(&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily,
-			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
+			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.AgentID, &d.UserName, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
 			return nil, err
 		}
 		d.Roles = unmarshalStrings(roles)
@@ -573,6 +591,44 @@ func (s *Store) SetDeviceAgent(ctx context.Context, deviceID, agentID string) er
 	}
 	if n == 0 {
 		return ErrPairedNotFound
+	}
+	return nil
+}
+
+// SetDeviceUser sets the name of the person holding a paired device ("" = the
+// default user). The name is trimmed; one longer than MaxDeviceUserNameLen
+// characters or containing a control character is refused with
+// ErrInvalidUserName. Returns ErrPairedNotFound if the device isn't paired.
+func (s *Store) SetDeviceUser(ctx context.Context, deviceID, userName string) error {
+	userName = strings.TrimSpace(userName)
+	if err := validateUserName(userName); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET user_name=? WHERE device_id=?`, userName, deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrPairedNotFound
+	}
+	return nil
+}
+
+// validateUserName refuses a trimmed user name that is not valid UTF-8, is
+// longer than MaxDeviceUserNameLen characters or contains a control character.
+func validateUserName(name string) error {
+	switch {
+	case !utf8.ValidString(name):
+		return fmt.Errorf("%w: not valid UTF-8", ErrInvalidUserName)
+	case utf8.RuneCountInString(name) > MaxDeviceUserNameLen:
+		return fmt.Errorf("%w: longer than %d characters", ErrInvalidUserName, MaxDeviceUserNameLen)
+	case strings.IndexFunc(name, unicode.IsControl) >= 0:
+		return fmt.Errorf("%w: contains a control character", ErrInvalidUserName)
 	}
 	return nil
 }

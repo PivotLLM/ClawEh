@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/devices/pending/{id}/reject", h.handleDeviceReject)
 	mux.HandleFunc("GET /api/devices", h.handleDeviceList)
 	mux.HandleFunc("POST /api/devices/{id}/agent", h.handleDeviceAgent)
+	mux.HandleFunc("POST /api/devices/{id}/user", h.handleDeviceUser)
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
@@ -432,6 +434,11 @@ type pairedDeviceView struct {
 	// human agent breaking the human-agent rules).
 	AgentMissing bool   `json:"agent_missing"`
 	AgentState   string `json:"agent_state,omitempty"`
+	// UserName is the person holding the device, as stored ("" = the
+	// default); UserDefault is that default, the admin account's username
+	// ("" when there is no admin account).
+	UserName     string `json:"user_name"`
+	UserDefault  string `json:"user_default"`
 	ApprovedAtMs int64  `json:"approved_at_ms"`
 	LastSeenAtMs int64  `json:"last_seen_at_ms"`
 }
@@ -498,11 +505,16 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agents := configuredAgents(cfg)
+	userDefault := ""
+	if auth := h.authStore(); auth != nil {
+		userDefault = auth.Username()
+	}
 	views := make([]pairedDeviceView, 0, len(paired))
 	for _, d := range paired {
 		v := pairedDeviceView{
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
 			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
+			UserName: d.UserName, UserDefault: userDefault,
 			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
 		}
 		if d.AgentID != "" {
@@ -538,6 +550,40 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleDeviceUser sets (or clears) the name of the person holding a paired
+// device, which the assistant is told is the sender. Body: {"user_name":
+// "<name>"} — empty string uses the default (the admin account's username).
+// Takes effect on the device's next message (read live from the store).
+func (h *Handler) handleDeviceUser(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	var body struct {
+		UserName string `json:"user_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	store, _, err := h.openDeviceStore(r.Context())
+	if err != nil {
+		h.deviceStoreUnavailable(w, err)
+		return
+	}
+	if err := store.SetDeviceUser(r.Context(), deviceID, body.UserName); err != nil {
+		switch {
+		case errors.Is(err, device.ErrInvalidUserName):
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("The user name must be at most %d characters, with no control characters.", device.MaxDeviceUserNameLen),
+			})
+		case errors.Is(err, device.ErrPairedNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

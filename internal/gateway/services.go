@@ -135,7 +135,7 @@ func setupAndStartServices(
 
 	var err error
 	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore,
-		channels.WithBuildHook(channelBuildHook(agentLoop, services.TLSCerts)))
+		channels.WithBuildHook(channelBuildHook(agentLoop, services.TLSCerts, admin.Path(cfg.DataDir()))))
 	if err != nil {
 		return nil, fmt.Errorf("error creating channel manager: %w", err)
 	}
@@ -282,16 +282,19 @@ func wireChannelManager(services *gatewayServices, agentLoop *agent.AgentLoop) {
 
 // channelBuildHook wires what the gateway provides into each channel the
 // manager builds, at start and whenever a reload rebuilds it: the device
-// channel's agent querier (agents.list, chat.history for operator clients)
-// and the HTTPS listener's certificate for channels.device.tls. Both live for
-// the whole process, so a kept channel keeps what it was given.
-func channelBuildHook(al *agent.AgentLoop, certs *tlscert.Manager) func(name string, ch channels.Channel) {
+// channel's agent querier (agents.list, chat.history for operator clients),
+// the HTTPS listener's certificate for channels.device.tls, and the admin
+// account's username (from the credentials file at credentialsPath) as the
+// default device user. All live for the whole process, so a kept channel
+// keeps what it was given.
+func channelBuildHook(al *agent.AgentLoop, certs *tlscert.Manager, credentialsPath string) func(name string, ch channels.Channel) {
 	return func(name string, ch channels.Channel) {
 		if name != "device" {
 			return
 		}
 		injectDeviceAgentQuerier(ch, al)
 		injectDeviceTLS(ch, certs)
+		injectDeviceDefaultUser(ch, credentialsPath)
 	}
 }
 

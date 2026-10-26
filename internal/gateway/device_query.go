@@ -7,6 +7,7 @@ import (
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -94,6 +95,26 @@ func injectDeviceAgentQuerier(ch channels.Channel, al *agent.AgentLoop) {
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
 	}
+}
+
+// injectDeviceDefaultUser hands the device channel ch the admin account's
+// username as the default name of the person speaking on a device, read from
+// the credentials file at credentialsPath on every call so a `claw admin`
+// change is seen at once. No usable account gives "".
+func injectDeviceDefaultUser(ch channels.Channel, credentialsPath string) {
+	if setter, ok := ch.(interface{ SetDefaultUser(fn func() string) }); ok {
+		setter.SetDefaultUser(func() string { return adminUsername(credentialsPath) })
+	}
+}
+
+// adminUsername is the username in the credentials file at path, or "" when
+// there is no usable admin account.
+func adminUsername(path string) string {
+	creds, err := admin.Load(path)
+	if err != nil {
+		return ""
+	}
+	return creds.Username
 }
 
 // injectDeviceTLS lends the gateway certificate manager to the device channel

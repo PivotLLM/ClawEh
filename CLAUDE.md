@@ -607,6 +607,10 @@ Hard-won learnings (don't relearn these):
   (list), `/agent <name-or-id>` (switch), or `/agent default` (reset). `handleChatSend`
   intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field
   `sessionScopeKeyFor` reads, so it survives restarts. Reply goes through the normal event path.
+- **Sender name:** the inbound bridge (`DeviceChannel.senderName`) sets `SenderInfo.DisplayName`
+  to `paired_devices.user_name` (`SetDeviceUser`, Devices page **User** field), else the admin
+  account's username (`SetDefaultUser`, injected by `channelBuildHook`, reads
+  `credentials.json` per message), else the device's display name; `Username` stays empty.
 - No permessage-deflate (disabled end-to-end); the OpenClaw `agent` event schema is
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 

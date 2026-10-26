@@ -315,6 +315,14 @@ conversation.
   (an agent has one conversation); routing logs `matched_by=preresolved`
   for the chosen agent.
 
+### Sender name
+
+The device channel puts the device's user in the turn's sender display name
+(`bus.SenderInfo.DisplayName`, which the agent loop shows the model as `[From: <name>]`):
+the paired device's `user_name` (WebUI Devices page, `POST /api/devices/{id}/user`), else
+the admin account's username, else the device's display name. Nothing in the protocol
+carries it; a device cannot set it.
+
 ### `/agent` command (node clients switch assistants)
 
 A node client like the R1 can't pick an agent in-app, so it switches by **typing** a slash

@@ -17,6 +17,7 @@ import {
   regenerateWordToken,
   rejectDevice,
   removeDevice,
+  setDeviceUser,
 } from "@/api/devices"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -27,6 +28,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Tooltip,
@@ -61,6 +63,55 @@ async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// DeviceUserField edits the name the assistant is told a device's messages come
+// from. Saved on blur or Enter; an empty field shows what will be used instead.
+function DeviceUserField({
+  device,
+  onSave,
+}: {
+  device: PairedDevice
+  onSave: (userName: string) => Promise<unknown>
+}) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState<string | null>(null)
+  const id = `device-user-${device.device_id}`
+  const commit = () => {
+    if (draft === null) return
+    const name = draft.trim()
+    if (name === device.user_name) {
+      setDraft(null)
+      return
+    }
+    void onSave(name).finally(() => setDraft(null))
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Label htmlFor={id}>{t("pages.devices.user_label")}</Label>
+        <Input
+          id={id}
+          data-testid="device-user"
+          className="h-8 w-40"
+          value={draft ?? device.user_name}
+          placeholder={device.user_default || device.display_name}
+          aria-describedby={`${id}-hint`}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commit()
+            }
+          }}
+          onBlur={commit}
+        />
+      </div>
+      <p id={`${id}-hint`} className="text-muted-foreground text-xs">
+        {t("pages.devices.user_hint")}
+      </p>
+    </div>
+  )
 }
 
 export function DevicesPage() {
@@ -134,6 +185,16 @@ export function DevicesPage() {
       assignDeviceAgent(id, agentId),
     onSuccess: () => {
       toast.success("Assistant updated")
+      refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const setUserMut = useMutation({
+    mutationFn: ({ id, userName }: { id: string; userName: string }) =>
+      setDeviceUser(id, userName),
+    onSuccess: () => {
+      toast.success("User updated")
       refresh()
     },
     onError: (e: Error) => toast.error(e.message),
@@ -380,6 +441,14 @@ export function DevicesPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      <DeviceUserField
+                        device={d}
+                        onSave={(userName) =>
+                          setUserMut
+                            .mutateAsync({ id: d.device_id, userName })
+                            .catch(() => undefined)
+                        }
+                      />
                       {d.client_mode === "node" ? (
                         <select
                           className="border-border bg-background rounded border px-2 py-1 text-sm"

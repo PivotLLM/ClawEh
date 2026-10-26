@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -129,8 +131,9 @@ func TestReloadRebuildsTheServicesItStops(t *testing.T) {
 
 // A device channel rebuilt by a reload gets what the gateway's build hook
 // provides, as the first one did: the agent querier (agents.list and
-// chat.history for operator clients) and the HTTPS certificate, without which
-// a channel with channels.device.tls on refuses to start.
+// chat.history for operator clients), the HTTPS certificate, without which
+// a channel with channels.device.tls on refuses to start, and the admin
+// account's username as the default device user.
 func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 	t.Setenv(global.EnvVarHome, t.TempDir())
 	cfg := config.DefaultConfig()
@@ -164,7 +167,11 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tlscert.Load: %v", err)
 	}
-	m, err := channels.NewManager(cfg, mb, nil, channels.WithBuildHook(channelBuildHook(al, certs)))
+	credsPath := filepath.Join(t.TempDir(), admin.FileName)
+	if err = admin.Write(credsPath, "bob", "a long enough password"); err != nil {
+		t.Fatalf("admin.Write: %v", err)
+	}
+	m, err := channels.NewManager(cfg, mb, nil, channels.WithBuildHook(channelBuildHook(al, certs, credsPath)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +201,15 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 	q, ok := rebuilt.AgentQuerier().(deviceAgentQuerier)
 	if !ok || q.al != al {
 		t.Fatalf("the rebuilt device channel's agent querier = %T, want the agent loop's", rebuilt.AgentQuerier())
+	}
+	if got := rebuilt.DefaultUser(); got != "bob" {
+		t.Fatalf("the rebuilt device channel's default user = %q, want the admin account's %q", got, "bob")
+	}
+	// The default user follows a changed admin account without a rebuild.
+	if werr := admin.Write(credsPath, "alice", "a long enough password"); werr != nil {
+		t.Fatalf("admin.Write: %v", werr)
+	}
+	if got := rebuilt.DefaultUser(); got != "alice" {
+		t.Fatalf("default user after the admin account changed = %q, want %q", got, "alice")
 	}
 }

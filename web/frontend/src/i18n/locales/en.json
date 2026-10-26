@@ -808,7 +808,9 @@
       "default_assistant": "Default assistant",
       "agent_missing": "Ignored: {{agent}} no longer exists; using the default agent.",
       "agent_disabled": "Ignored: {{agent}} is disabled; using the default agent.",
-      "agent_set_aside": "Ignored: {{agent}} is set aside; using the default agent."
+      "agent_set_aside": "Ignored: {{agent}} is set aside; using the default agent.",
+      "user_label": "User",
+      "user_hint": "The name the assistant is told this device's messages come from."
     }
   },
   "providers": {

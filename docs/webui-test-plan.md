@@ -209,7 +209,7 @@ a field but is refused before anything is sent. Nothing in this group clicks
 
 | ID | Process | Expected |
 |---|---|---|
-| J1 | Load `/devices`, and read `GET /api/devices/pair` | Renders, no console errors; the **Pair a device** card says **Devices will connect to** followed by the response's `connect_url` (for example `wss://ops42.example.com:42330`) |
+| J1 | Load `/devices`, and read `GET /api/devices/pair` and `GET /api/devices` | Renders, no console errors; the **Pair a device** card says **Devices will connect to** followed by the response's `connect_url` (for example `wss://ops42.example.com:42330`). Under **Paired devices**, every device in `devices[]` has a **User** field (`device-user-<device_id>`) next to its **Assistant** control, showing `user_name` or, when that is empty, `user_default` (the admin's username) or the device's name as its placeholder; none is blank with no placeholder. Its hint is the one sentence *The name the assistant is told this device's messages come from.* (not exercised when no device is paired) |
 | J2 | Request `/api/devices`, `/api/devices/pending` and `/api/devices/pair` concurrently, 12 times | No `5xx`. These share one SQLite store; opening it per request used to lose a WAL-conversion race and return an intermittent 500 |
 
 The client address shown after a pending request's name (`remote_ip` from

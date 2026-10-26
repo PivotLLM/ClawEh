@@ -110,6 +110,15 @@ another agent in the **Assistant** list, or have the person send `/agent`.
 
 Agents that represent a person ([human agents](../agents/human-agents.md)) are never offered to devices.
 
+## Who the assistant thinks is speaking
+
+Under **Paired devices**, each device has a **User** field. It is the name the
+assistant is told the sender has, so it can tell the device's messages apart
+from the rest of the conversation.
+
+Left empty, it uses the admin account's name, shown greyed in the field. Set it
+when someone else uses the device.
+
 ## Encryption
 
 By default devices connect over plain WebSocket (`ws://`). To encrypt:

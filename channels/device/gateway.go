@@ -54,9 +54,13 @@ type DeviceChannel struct {
 	// manager's configuration, injected by SetTLSConfig before Start.
 	useTLS    bool
 	tlsConfig *tls.Config
-	loopDone  chan struct{}
-	ctx       context.Context
-	cancel    context.CancelFunc
+	// defaultUser names the person speaking on a device with no user of its
+	// own (the admin account's username), injected by SetDefaultUser before
+	// Start; nil or "" falls back to the device's display name.
+	defaultUser func() string
+	loopDone    chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewDeviceChannel opens the pairing store under <dataDir>/internal and builds the
@@ -124,6 +128,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 			Platform:    "device",
 			PlatformID:  deviceID,
 			CanonicalID: identity.BuildCanonicalID("device", deviceID),
+			DisplayName: dc.senderName(ctx, deviceID),
 		}
 		metadata := map[string]string{"platform": "device", "device_id": deviceID}
 		// Pin the conversation session (the selected agent's main conversation,
@@ -146,6 +151,44 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		dc.HandleMessage(ctx, peer, idempotencyKey, deviceID, chatID, content, mediaRefs, metadata, sender)
 	})
 	return dc, nil
+}
+
+// senderName is the name the model is told a device's sender has: the paired
+// device's user name when set, else the default user (the admin account),
+// else the device's display name. When the record cannot be read, only the
+// default user is left, and without it the sender has no name.
+func (c *DeviceChannel) senderName(ctx context.Context, deviceID string) string {
+	dev, ok, err := c.store.GetPaired(ctx, deviceID)
+	if err != nil {
+		logger.WarnCF("device", "paired device lookup failed; using the default user", map[string]any{
+			"deviceId": deviceID, "error": err.Error(),
+		})
+		ok = false
+	}
+	if ok && dev.UserName != "" {
+		return dev.UserName
+	}
+	if name := c.DefaultUser(); name != "" {
+		return name
+	}
+	if ok {
+		return dev.DisplayName
+	}
+	return ""
+}
+
+// SetDefaultUser sets the function naming the person speaking on a device
+// that has no user of its own (the admin account's username). It is called
+// per inbound message, so a changed admin account is seen at once. Call
+// before Start.
+func (c *DeviceChannel) SetDefaultUser(fn func() string) { c.defaultUser = fn }
+
+// DefaultUser returns the current default user SetDefaultUser installed, or "".
+func (c *DeviceChannel) DefaultUser() string {
+	if c.defaultUser == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.defaultUser())
 }
 
 // storeInboundAttachments writes each decoded attachment to the media staging

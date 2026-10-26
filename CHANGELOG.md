@@ -30,6 +30,14 @@ observe does not need an entry.
   when no entry is usable, because voice messages then reach the agent
   untranscribed. "Voice message not transcribed" fires (urgent) when every
   speech backend failed on a voice message, naming the channel.
+- A **User** field per device on the Devices page: the name the assistant is
+  told the sender has (`[From: <name>]`) for that device's messages, which
+  until now reached it with no name. Empty uses the admin account's username,
+  and without one the device's name. New route `POST /api/devices/{id}/user`
+  with body `{"user_name": "..."}` (at most 64 characters, no control
+  characters; empty clears it); `GET /api/devices` now carries `user_name`
+  (stored, may be empty) and `user_default` (the admin account's username)
+  per device.
 
 ### Changed
 

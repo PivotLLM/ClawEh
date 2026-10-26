@@ -1731,20 +1731,41 @@ if (useGroup("I", "Models and providers")) {
 
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
-  await check(1, "devices page renders and shows the connect URL", async () => {
+  await check(1, "devices page renders, shows the connect URL and a User field per paired device", async () => {
     const pair = await api("/api/devices/pair")
     assert(pair.status === 200, `/api/devices/pair ${pair.status}`)
     const connectURL = pair.json?.connect_url
     assert(typeof connectURL === "string" && /^wss?:\/\/.+:\d+$/.test(connectURL), `connect_url = ${JSON.stringify(connectURL)}`)
+    const devices = await api("/api/devices")
+    assert(devices.status === 200, `/api/devices ${devices.status}`)
+    const paired = devices.json?.devices ?? []
     const { close, page, text, problems } = await open("/devices")
     const body = await text()
     const shown = await page.locator("[data-testid=devices-connect-url]").innerText()
+    // One User field per paired row, each showing the stored name or, when
+    // empty, what will be used instead (the admin's username, then the
+    // device's name); an empty field with an empty placeholder is a defect.
+    const users = page.locator("[data-testid=device-user]")
+    const userCount = await users.count()
+    const blank = []
+    for (const d of paired) {
+      const field = page.locator(`#device-user-${d.device_id}`)
+      if ((await field.count()) !== 1) {
+        blank.push(`${d.device_id.slice(0, 12)}: no User field`)
+        continue
+      }
+      const value = await field.inputValue()
+      const placeholder = (await field.getAttribute("placeholder")) ?? ""
+      if (!value && !placeholder) blank.push(`${d.device_id.slice(0, 12)}: empty with no placeholder`)
+    }
     await close()
     assert(/device/i.test(body), "devices page looks empty")
     assert(body.includes("Devices will connect to"), "no 'Devices will connect to' line")
     assert(shown === connectURL, `page shows ${shown}, API says ${connectURL}`)
+    assert(userCount === paired.length, `${userCount} User fields for ${paired.length} paired devices`)
+    assert(blank.length === 0, blank[0])
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    return connectURL
+    return `${connectURL}; ${paired.length} paired device(s)` + (paired.length ? "" : " (User field not exercised)")
   })
   await check(2, "/api/devices does not fail under concurrent load", async () => {
     // Regression: the handler opened its own SQLite handle per request and lost
