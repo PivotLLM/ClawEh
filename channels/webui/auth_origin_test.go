@@ -56,6 +56,12 @@ func testChannel(t *testing.T, token string) *WebUIChannel {
 	return c
 }
 
+// admitted reports whether the channel authenticates r.
+func admitted(c *WebUIChannel, r *http.Request) bool {
+	_, ok := c.authenticate(r)
+	return ok
+}
+
 // TestAuthenticate_Subprotocol covers a non-browser client presenting the
 // token as a subprotocol.
 func TestAuthenticate_Subprotocol(t *testing.T) {
@@ -78,7 +84,7 @@ func TestAuthenticate_Subprotocol(t *testing.T) {
 			if tc.protocol != "" {
 				r.Header.Set("Sec-WebSocket-Protocol", tc.protocol)
 			}
-			if got := c.authenticate(r); got != tc.want {
+			if got := admitted(c, r); got != tc.want {
 				t.Fatalf("authenticate(protocol=%q) = %v, want %v", tc.protocol, got, tc.want)
 			}
 		})
@@ -91,7 +97,7 @@ func TestAuthenticate_Subprotocol(t *testing.T) {
 func TestAuthenticate_QueryTokenNeverAccepted(t *testing.T) {
 	const token = "webui-token-abcdefghijkl"
 	r := httptest.NewRequest(http.MethodGet, "/webui/ws?token="+token, nil)
-	if testChannel(t, token).authenticate(r) {
+	if admitted(testChannel(t, token), r) {
 		t.Fatal("query token accepted")
 	}
 }
@@ -103,13 +109,13 @@ func TestAuthenticate_BearerStillWorks(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/webui/ws", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
-	if !c.authenticate(r) {
+	if !admitted(c, r) {
 		t.Fatal("Bearer token rejected")
 	}
 
 	r = httptest.NewRequest(http.MethodGet, "/webui/ws", nil)
 	r.Header.Set("Authorization", "Bearer wrong")
-	if c.authenticate(r) {
+	if admitted(c, r) {
 		t.Fatal("wrong Bearer token accepted")
 	}
 }
@@ -126,28 +132,28 @@ func TestAuthenticate_LoginSession(t *testing.T) {
 	withCookie.AddCookie(&http.Cookie{Name: "claw_session", Value: "live"})
 	bare := httptest.NewRequest(http.MethodGet, "/webui/ws", nil)
 
-	if c.authenticate(withCookie) {
+	if admitted(c, withCookie) {
 		t.Fatal("cookie accepted with no validator installed")
 	}
 
-	SetSessionValidator(func(r *http.Request) bool {
+	SetSessionValidator(func(r *http.Request) (string, bool) {
 		ck, err := r.Cookie("claw_session")
-		return err == nil && ck.Value == "live"
+		return "alice", err == nil && ck.Value == "live"
 	})
-	if !c.authenticate(withCookie) {
+	if !admitted(c, withCookie) {
 		t.Fatal("live session rejected")
 	}
-	if c.authenticate(bare) {
+	if admitted(c, bare) {
 		t.Fatal("request without a session or token accepted")
 	}
 	// The token path is still there for non-browser clients.
 	bare.Header.Set("Authorization", "Bearer "+token)
-	if !c.authenticate(bare) {
+	if !admitted(c, bare) {
 		t.Fatal("Bearer token rejected while a validator is installed")
 	}
 
 	SetSessionValidator(nil)
-	if c.authenticate(withCookie) {
+	if admitted(c, withCookie) {
 		t.Fatal("cookie accepted after the validator was removed")
 	}
 }
@@ -166,9 +172,9 @@ func TestHandleWebSocket_RequiresSession(t *testing.T) {
 		}
 		SetSessionValidator(nil)
 	})
-	SetSessionValidator(func(r *http.Request) bool {
+	SetSessionValidator(func(r *http.Request) (string, bool) {
 		ck, err := r.Cookie("claw_session")
-		return err == nil && ck.Value == "live"
+		return "alice", err == nil && ck.Value == "live"
 	})
 
 	srv := httptest.NewServer(c)

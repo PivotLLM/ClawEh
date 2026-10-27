@@ -8,12 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -25,6 +29,13 @@ var ErrPendingNotFound = errors.New("device: pending pairing not found")
 
 // ErrPairedNotFound is returned when an update references an unknown paired device.
 var ErrPairedNotFound = errors.New("device: paired device not found")
+
+// ErrInvalidUserName is returned when a device user name is refused: longer
+// than MaxDeviceUserNameLen characters or containing a control character.
+var ErrInvalidUserName = errors.New("device: invalid user name")
+
+// MaxDeviceUserNameLen is the longest device user name, in characters.
+const MaxDeviceUserNameLen = 64
 
 // PairedDevice is an approved device identity (auth/identity, not command surface).
 type PairedDevice struct {
@@ -38,9 +49,13 @@ type PairedDevice struct {
 	Roles        []string
 	Scopes       []string // approved scope baseline
 	AgentID      string   // per-device assigned agent ("" = gateway default)
-	CreatedAtMs  int64
-	ApprovedAtMs int64
-	LastSeenAtMs int64
+	UserName     string   // person holding the device ("" = the default user)
+	// AllowedAgents are the agent ids (normalised) the device may talk to;
+	// empty means every agent.
+	AllowedAgents []string
+	CreatedAtMs   int64
+	ApprovedAtMs  int64
+	LastSeenAtMs  int64
 }
 
 // DeviceToken is a persistent bearer token issued per granted role. The
@@ -89,6 +104,8 @@ CREATE TABLE IF NOT EXISTS paired_devices (
   roles           TEXT,
   scopes          TEXT,
   agent_id        TEXT NOT NULL DEFAULT '',
+  user_name       TEXT NOT NULL DEFAULT '',
+  allowed_agents  TEXT NOT NULL DEFAULT '',
   created_at_ms   INTEGER NOT NULL,
   approved_at_ms  INTEGER NOT NULL,
   last_seen_at_ms INTEGER
@@ -172,6 +189,20 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		!strings.Contains(err.Error(), "duplicate column") {
 		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("device: migrate agent_id: %w", err)
+	}
+	// The same for user_name, added after agent_id.
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE paired_devices ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		utils.CloseQuietly(db)
+		return nil, fmt.Errorf("device: migrate user_name: %w", err)
+	}
+	// The same for allowed_agents, added after user_name.
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE paired_devices ADD COLUMN allowed_agents TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		utils.CloseQuietly(db)
+		return nil, fmt.Errorf("device: migrate allowed_agents: %w", err)
 	}
 	if err := hashPlaintextTokens(ctx, db); err != nil {
 		utils.CloseQuietly(db)
@@ -510,13 +541,13 @@ func (s *Store) Approve(ctx context.Context, requestID string, roles, scopes []s
 // GetPaired returns the paired device by id, or (nil,false) if not paired.
 func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, bool, error) {
 	var d PairedDevice
-	var roles, scopes string
+	var roles, scopes, allowed string
 	var lastSeen sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, user_name, allowed_agents, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices WHERE device_id=?`, deviceID).Scan(
 		&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily, &d.ClientID,
-		&d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
+		&d.ClientMode, &roles, &scopes, &d.AgentID, &d.UserName, &allowed, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -525,6 +556,9 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 	}
 	d.Roles = unmarshalStrings(roles)
 	d.Scopes = unmarshalStrings(scopes)
+	if d.AllowedAgents, err = parseAllowedAgents(allowed); err != nil {
+		return nil, false, fmt.Errorf("device %s: %w", deviceID, err)
+	}
 	d.LastSeenAtMs = lastSeen.Int64
 	return &d, true, nil
 }
@@ -532,7 +566,7 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 // ListPaired returns all paired devices, newest-approved first.
 func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, user_name, allowed_agents, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices ORDER BY approved_at_ms DESC`)
 	if err != nil {
 		return nil, err
@@ -545,14 +579,22 @@ func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 	var out []PairedDevice
 	for rows.Next() {
 		var d PairedDevice
-		var roles, scopes string
+		var roles, scopes, allowed string
 		var lastSeen sql.NullInt64
 		if err := rows.Scan(&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily,
-			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
+			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.AgentID, &d.UserName, &allowed, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
 			return nil, err
 		}
 		d.Roles = unmarshalStrings(roles)
 		d.Scopes = unmarshalStrings(scopes)
+		// One unreadable row must not hide every device: it is listed with no
+		// set, while GetPaired keeps refusing the device itself.
+		var perr error
+		if d.AllowedAgents, perr = parseAllowedAgents(allowed); perr != nil {
+			logger.WarnCF("device", "allowed_agents column unreadable; the device is refused until it is set again",
+				map[string]any{"deviceId": d.DeviceID, "error": perr.Error()})
+			d.AllowedAgents = nil
+		}
 		d.LastSeenAtMs = lastSeen.Int64
 		out = append(out, d)
 	}
@@ -573,6 +615,118 @@ func (s *Store) SetDeviceAgent(ctx context.Context, deviceID, agentID string) er
 	}
 	if n == 0 {
 		return ErrPairedNotFound
+	}
+	return nil
+}
+
+// SetDeviceAllowedAgents limits a paired device to the given agents. Ids are
+// normalised (config.NormalizeAgentID) and de-duplicated, keeping their order;
+// an empty list allows every agent. Ids are not checked against the
+// configuration, since an agent may be added later. Returns ErrPairedNotFound
+// if the device isn't paired.
+func (s *Store) SetDeviceAllowedAgents(ctx context.Context, deviceID string, agents []string) error {
+	stored := ""
+	if ids := normalizeAgentIDs(agents); len(ids) > 0 {
+		stored = marshalStrings(ids)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET allowed_agents=? WHERE device_id=?`, stored, deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrPairedNotFound
+	}
+	return nil
+}
+
+// parseAllowedAgents reads the allowed_agents column strictly: "" is every
+// agent, anything else must be a JSON array of strings. A corrupted value is
+// an error rather than "every agent", so a restriction never silently lapses.
+func parseAllowedAgents(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(s), "[") {
+		return nil, errors.New("allowed_agents is not a JSON array")
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(s), &ids); err != nil {
+		return nil, fmt.Errorf("allowed_agents: %w", err)
+	}
+	return ids, nil
+}
+
+// normalizeAgentIDs returns ids normalised and de-duplicated in their first
+// order, skipping blanks and ids that are not valid agent ids (which
+// NormalizeAgentID would turn into some other agent).
+func normalizeAgentIDs(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if !config.ValidAgentID(id) {
+			continue
+		}
+		id = config.NormalizeAgentID(id)
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// Allows reports whether the device may talk to agentID: true when the device
+// has no restriction or its list names the agent.
+func (d PairedDevice) Allows(agentID string) bool {
+	if len(d.AllowedAgents) == 0 {
+		return true
+	}
+	for _, a := range d.AllowedAgents {
+		if config.SameAgentID(a, agentID) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetDeviceUser sets the name of the person holding a paired device ("" = the
+// default user). The name is trimmed; one longer than MaxDeviceUserNameLen
+// characters or containing a control character is refused with
+// ErrInvalidUserName. Returns ErrPairedNotFound if the device isn't paired.
+func (s *Store) SetDeviceUser(ctx context.Context, deviceID, userName string) error {
+	userName = strings.TrimSpace(userName)
+	if err := validateUserName(userName); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET user_name=? WHERE device_id=?`, userName, deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrPairedNotFound
+	}
+	return nil
+}
+
+// validateUserName refuses a trimmed user name that is not valid UTF-8, is
+// longer than MaxDeviceUserNameLen characters or contains a control character.
+func validateUserName(name string) error {
+	switch {
+	case !utf8.ValidString(name):
+		return fmt.Errorf("%w: not valid UTF-8", ErrInvalidUserName)
+	case utf8.RuneCountInString(name) > MaxDeviceUserNameLen:
+		return fmt.Errorf("%w: longer than %d characters", ErrInvalidUserName, MaxDeviceUserNameLen)
+	case strings.IndexFunc(name, unicode.IsControl) >= 0:
+		return fmt.Errorf("%w: contains a control character", ErrInvalidUserName)
 	}
 	return nil
 }

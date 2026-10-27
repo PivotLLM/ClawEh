@@ -19,6 +19,7 @@ import { BackupSection } from "@/components/config/sections/backup-section"
 import { ContextManagementSection } from "@/components/config/sections/context-management-section"
 import { DevicesSection } from "@/components/config/sections/devices-section"
 import { ForumSection } from "@/components/config/sections/forum-section"
+import { OperatorSection } from "@/components/config/sections/operator-section"
 import { RuntimeSection } from "@/components/config/sections/runtime-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -26,8 +27,8 @@ import { Button } from "@/components/ui/button"
 type SaveStatus = "saving" | "saved" | "error" | null
 
 // SystemPage is everything about the running system that is not a listener:
-// agent defaults, context management, runtime, logging, backup, forum
-// maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
+// the operator's name, agent defaults, context management, runtime, logging,
+// backup, forum maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
 // device gateway) are on the Network page. Fields autosave on a debounce, as
 // a JSON merge patch.
 export function SystemPage() {
@@ -318,6 +319,11 @@ export function SystemPage() {
         // No gateway.* here: the listeners are the Network page's, and a
         // second writer would overwrite what was saved there.
         patch = {
+          // Sent even when blank so the name can be cleared (the merge patch
+          // keeps a key it does not see); the backend validates it.
+          operator: {
+            name: form.operatorName.trim(),
+          },
           agents: {
             base_dir: baseDir,
             common_dir: form.commonDir.trim(),
@@ -479,6 +485,8 @@ export function SystemPage() {
                   {saveError}
                 </div>
               )}
+
+              <OperatorSection form={form} onFieldChange={updateField} />
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
 

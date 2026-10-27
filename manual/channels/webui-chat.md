@@ -49,6 +49,8 @@ other programs that connect to the chat socket directly.
 
 ## Things to know
 
+- The assistant is told your messages come from **Your name** on the System
+  page, else your login name.
 - The WebUI chat cannot be an agent's default channel (where scheduled output
   goes), because it has no fixed address. The **Default Channel** section on
   the **Agents** page marks it "can't be a default channel".

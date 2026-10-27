@@ -76,7 +76,7 @@ See [Devices](../channels/devices.md).
 
 ### Speech
 
-Transcribe voice messages before they reach the agent. **Add backend** adds a transcription service (any OpenAI-compatible Whisper endpoint); enabled ones are tried in order, the first marked **Primary** and the rest **Fallback**. With none, voice messages reach the agent untranscribed.
+Transcribe voice messages before they reach the agent. **Add backend** adds a transcription backend: a provider from the **Providers** page (any OpenAI-compatible Whisper endpoint) and a model; enabled ones are tried in order, the first marked **Primary** and the rest **Fallback**. With none, voice messages reach the agent untranscribed.
 
 ### Network
 
@@ -86,7 +86,7 @@ See [Network access](../admin/network.md) and [HTTPS and certificates](../admin/
 
 ### System
 
-Install-wide settings in sections: **Agent**, **Agent defaults**, **Context management**, **Runtime**, **Backup**, **Forums** and **Devices**. **Raw config** opens the whole `config.json` for editing.
+Install-wide settings in sections: **Operator** (your name), **Agent**, **Agent defaults**, **Context management**, **Runtime**, **Backup**, **Forums** and **Devices**. **Raw config** opens the whole `config.json` for editing.
 
 See [Configuration file](../reference/configuration.md), [Backup and restore](../admin/backup.md) and [Forums](../forums/index.md).
 

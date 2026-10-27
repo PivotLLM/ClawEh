@@ -4,5 +4,5 @@ package templates
 
 import "embed"
 
-//go:embed *.md all:skills
+//go:embed *.md channels all:skills
 var FS embed.FS

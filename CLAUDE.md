@@ -506,7 +506,9 @@ production instance directly; test against a dev instance.
   (`ToolDeps.TempAgent`: the source's Maestro runner is used as is, never
   re-pointed); a **fresh** temporary agent gets an empty workspace of its own
   (never seeded: no AGENTS.md/SOUL.md/IDENTITY.md/USER.md/MEMORY.md/
-  COMPRESSION.md/COGMEM.md, no skills), no tools, no session token and no
+  COMPRESSION.md/COGMEM.md, none of the per-channel `<KIND>.md` files that a
+  config agent gets for the channel kinds in use, `config.ChannelKindsInUse`,
+  no skills), no tools, no session token and no
   engine archive; its whole system prompt is the `WithSystemPrompt` text or
   `agentreg.DefaultSystemPrompt` (`ContextBuilder.WithFixedPrompt`), followed
   only by memory recall when it has memory. Its `agentreg.Mode` (saved with its
@@ -592,7 +594,10 @@ Hard-won learnings (don't relearn these):
   (`assignedAgentState`), which the Devices page shows). Every device joins the selected
   agent's main conversation (`agent:<id>:main`), whatever the rest of the key says — one
   agent, one history, one memory across the R1, the app, Slack, Telegram, and MCP service
-  tokens. There are no session modes; an unknown agent id is refused. `chat.history` resolves
+  tokens. There are no session modes; an unknown agent id is refused, and so is one outside the
+  device's allowed set (`paired_devices.allowed_agents`, `SetDeviceAllowedAgents`,
+  `PairedDevice.Allows`; empty = all), which also limits `agents.list` and `/agent`, while
+  `deviceAgentFor` picks an unqualified turn's agent within it. `chat.history` resolves
   through the same rule as `chat.send` (`Server.sessionScopeKeyFor`). Every other inbound path
   goes through `routing.ResolveAgentSessionKey`, which keeps only the agent's own sub-agent
   key and collapses anything else to `agent:<id>:main`: cogmem's inbox is fed from exactly
@@ -605,6 +610,13 @@ Hard-won learnings (don't relearn these):
   (list), `/agent <name-or-id>` (switch), or `/agent default` (reset). `handleChatSend`
   intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field
   `sessionScopeKeyFor` reads, so it survives restarts. Reply goes through the normal event path.
+- **Sender name:** the inbound bridge (`DeviceChannel.senderName`) sets `SenderInfo.DisplayName`
+  to `paired_devices.user_name` (`SetDeviceUser`, Devices page **User** field), else
+  `operator.name` (System page **Your name**), else the admin account's username
+  (`SetDefaultUser`, injected by `channelBuildHook`, reads `al.GetConfig()` and
+  `credentials.json` per message), else the device's display name; `Username` stays empty.
+  The WebUI channel's sender name is `operator.name` (`SetOperatorName`, same hook), else
+  the login username.
 - No permessage-deflate (disabled end-to-end); the OpenClaw `agent` event schema is
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 
@@ -696,10 +708,14 @@ exported; it exits 2 with a hint otherwise.
   frontend typecheck, oxlint and vitest, none of which load a page.
 
 ## Workflow Rules
-- Work on a fix or feature branch (`fix/...`, `feature/...`), and commit and
-  push to it at logical points (a tested, self-contained step), without waiting
-  to be asked.
-- Never push directly to main — use feature branches + PRs.
+- All work for the version in development lands on one branch, `dev/<version>`
+  (the version in `app/app.go`, e.g. `dev/0.6.1`). Start every worktree from
+  its tip, never from another piece of in-progress work, and land tested work
+  back on it (fast-forward push, or a small PR with it as base) as soon as it
+  passes, then remove the worktree. Commit and push at logical points (a
+  tested, self-contained step) without waiting to be asked.
+- `main` holds released code only: it receives one PR from the dev branch when
+  the release is cut. Never push directly to main.
 - **Never create, move, or delete git tags.** Tags are cut by the release build
   process when binaries are uploaded — they are release markers, not commit
   markers. Bumping the `version` constant in `app/app.go` is a normal code

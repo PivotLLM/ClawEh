@@ -10,6 +10,89 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.6.1]
+
+This release is about voice devices. Audio clips from a device are
+transcribed, a device can page through its assistant's history, the assistant
+knows who is speaking on a device, and a device can be limited to some
+assistants. Two changes are breaking: speech backends now name a provider, and
+the per-channel prompt files are renamed.
+
+### Added
+
+- **Devices: the assistant knows who is speaking.** Each paired device has a
+  **User** field on the Devices page, and the System page has **Your name**
+  (`operator.name`), used for devices with no User of their own and for the
+  web chat. A device's messages reach the assistant as `[From: <name>]`. The
+  name is the device's User, else Your name, else the admin login name, else
+  the device's own name. API: `POST /api/devices/{id}/user` with
+  `{"user_name": "..."}` (at most 64 characters, empty clears);
+  `GET /api/devices` adds `user_name` and `user_default`.
+- **Devices: limit a device to selected assistants.** **Assistants** on the
+  Devices page is **All**, or **Selected** with a checkbox per assistant. A
+  restricted device sees only those assistants, and a request for another is
+  refused (`INVALID_REQUEST` "agent not allowed for this device"; `UNAVAILABLE`
+  "no allowed assistant is available on this device" when none of them is
+  running). An assigned assistant outside the set is marked on the page and
+  not used. API: `POST /api/devices/{id}/agents` with
+  `{"allowed_agents": ["..."]}` (`[]` allows all); `GET /api/devices` adds
+  `allowed_agents` and `agent_allowed`.
+- **Devices: paged history with timestamps.** `chat.history` takes `limit`
+  (1 to 1000, default 200), `offset` and `maxChars` as the OpenClaw Gateway
+  protocol defines them, counted from the newest message, and answers with
+  `offset`, `totalMessages`, `hasMore` and `nextOffset`. Each message carries
+  `timestamp`, milliseconds since the Unix epoch. Without the fields the
+  response is as before, capped at 200 messages.
+- **Voice alerts.** "Speech backend not usable" fires at startup and on reload
+  for each enabled speech backend that cannot be used, urgent when none is
+  left. "Voice message not transcribed" fires when every backend failed on a
+  message.
+
+### Changed
+
+- **BREAKING: speech backends name a provider.** A `voice.stt` entry now names
+  a provider from the Providers page in `provider` and carries only `enabled`
+  and `model`; the endpoint and key are the provider's. `api_key` and
+  `base_url` are no longer read and are dropped on the next save of
+  `config.json`. Only `openai-chat` and `openai-responses` providers with a
+  base URL can transcribe. A blank model uses the default for Groq
+  (`whisper-large-v3`), OpenAI (`whisper-1`) and OpenRouter
+  (`openai/whisper-large-v3`). An unusable entry is skipped, logged and shown
+  as *Not used* on the Speech page. Deleting a provider a backend names is
+  refused; renaming one carries the backend along.
+  **To migrate:** if `config.json` is the only copy of the old key, copy it out
+  first. Add a provider with the endpoint and key on the Providers page (Groq:
+  protocol `openai-chat`, base URL `https://api.groq.com/openai/v1`), then
+  pick it on the Speech page. API: `GET /api/voice/stt` returns `providers`
+  (`name`, `default_model`, `ready`) in place of `presets` and no longer
+  returns keys; `PUT /api/voice/stt` refuses an unknown provider or one that
+  cannot transcribe.
+- **BREAKING: per-channel prompt files are named after the channel in
+  capitals**: `DEVICE.md`, `TELEGRAM.md`, `SLACK.md`, `DISCORD.md`,
+  `MATRIX.md`, `SECMSG.md` and `WEBUI.md` in the agent's directory, one per
+  channel shared by every bot or account of it, created with a short default
+  only for channels that are enabled. `channel-<channel>.md` is no longer
+  read. **To migrate:** nothing, in the common case; at the next start an
+  existing `channel-<channel>.md` is renamed. With two for one channel (two
+  Telegram bots), the first by name is renamed and the other is left in place
+  and logged; merge its text into the new file by hand.
+- Speech backends are named by provider and model, `Openrouter Chat
+  (openai/whisper-1)`, in the log, the full report and the voice alerts, so
+  two backends on one provider can be told apart.
+
+### Fixed
+
+- **Audio from a device is transcribed.** A clip sent with `chat.send` is
+  stored with its real extension (`.wav`, `.ogg`, `.mp3`, `.m4a`, `.flac`,
+  `.aac`, `.webm`, else the one in the attachment's name) instead of `.bin`,
+  and a WAV with placeholder lengths from a streaming device is repaired on
+  receipt. Before, the clip was never transcribed and the agent saw only
+  `[voice]`.
+- **WebUI and Slack messages carry the sender's name** like the other
+  channels: the logged-in account for the WebUI; the display name and handle
+  from `users.info` for Slack, looked up once per user and retried after five
+  minutes on failure.
+
 ## [0.6.0]
 
 ### Security
@@ -2838,6 +2921,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0
 [0.5.7]: https://github.com/PivotLLM/ClawEh/compare/0.5.6...0.5.7
 [0.5.6]: https://github.com/PivotLLM/ClawEh/compare/0.5.5...0.5.6

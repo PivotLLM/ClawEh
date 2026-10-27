@@ -972,6 +972,8 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
     for (const s of ["Agent defaults", "Context management", "Runtime", "Backup", "Devices"]) {
       assert(body.includes(s), `missing section "${s}"`)
     }
+    // operator.name: the sender's name for the operator's own messages.
+    assert(body.includes("Your name"), 'missing the "Your name" field')
     // The listeners moved to /network; a Service card here would be a second
     // writer of gateway.* fighting the Network page.
     assert(!body.includes("Allowed network CIDRs"), "the listener settings are still on /system")
@@ -1731,20 +1733,53 @@ if (useGroup("I", "Models and providers")) {
 
 // J. Devices — the store-open regression
 if (useGroup("J", "Devices")) {
-  await check(1, "devices page renders and shows the connect URL", async () => {
+  await check(1, "devices page renders, shows the connect URL and User and Assistants controls per paired device", async () => {
     const pair = await api("/api/devices/pair")
     assert(pair.status === 200, `/api/devices/pair ${pair.status}`)
     const connectURL = pair.json?.connect_url
     assert(typeof connectURL === "string" && /^wss?:\/\/.+:\d+$/.test(connectURL), `connect_url = ${JSON.stringify(connectURL)}`)
+    const devices = await api("/api/devices")
+    assert(devices.status === 200, `/api/devices ${devices.status}`)
+    const paired = devices.json?.devices ?? []
     const { close, page, text, problems } = await open("/devices")
     const body = await text()
     const shown = await page.locator("[data-testid=devices-connect-url]").innerText()
+    // One User field per paired row, each showing the stored name or, when
+    // empty, what will be used instead (the admin's username, then the
+    // device's name); an empty field with an empty placeholder is a defect.
+    const users = page.locator("[data-testid=device-user]")
+    const userCount = await users.count()
+    const blank = []
+    for (const d of paired) {
+      const field = page.locator(`#device-user-${d.device_id}`)
+      if ((await field.count()) !== 1) {
+        blank.push(`${d.device_id.slice(0, 12)}: no User field`)
+        continue
+      }
+      const value = await field.inputValue()
+      const placeholder = (await field.getAttribute("placeholder")) ?? ""
+      if (!value && !placeholder) blank.push(`${d.device_id.slice(0, 12)}: empty with no placeholder`)
+      // The Assistants control: an All and a Selected radio per row, with the
+      // one the stored list implies checked. Read-only; nothing is clicked.
+      const all = page.locator(`#device-agents-all-${d.device_id}`)
+      const selected = page.locator(`#device-agents-selected-${d.device_id}`)
+      if ((await all.count()) !== 1 || (await selected.count()) !== 1) {
+        blank.push(`${d.device_id.slice(0, 12)}: no Assistants control`)
+        continue
+      }
+      const want = (d.allowed_agents ?? []).length > 0 ? selected : all
+      if ((await want.getAttribute("aria-checked")) !== "true") {
+        blank.push(`${d.device_id.slice(0, 12)}: Assistants radio does not match allowed_agents`)
+      }
+    }
     await close()
     assert(/device/i.test(body), "devices page looks empty")
     assert(body.includes("Devices will connect to"), "no 'Devices will connect to' line")
     assert(shown === connectURL, `page shows ${shown}, API says ${connectURL}`)
+    assert(userCount === paired.length, `${userCount} User fields for ${paired.length} paired devices`)
+    assert(blank.length === 0, blank[0])
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    return connectURL
+    return `${connectURL}; ${paired.length} paired device(s)` + (paired.length ? "" : " (User and Assistants controls not exercised)")
   })
   await check(2, "/api/devices does not fail under concurrent load", async () => {
     // Regression: the handler opened its own SQLite handle per request and lost
@@ -1893,13 +1928,15 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
       assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
     }
     // Enabled backends are tried in order: the first usable one is Primary,
-    // the others Fallback; one with no preset and no endpoint or model is
-    // Not used; a disabled one carries no label.
-    const presets = voice.presets ?? []
+    // the others Fallback; one whose provider is not listed, has no API key
+    // or has no model (its own or a default) is Not used; a disabled one
+    // carries no label.
+    const options = voice.providers ?? []
     let primarySeen = false
     for (let i = 0; i < stt.length; i++) {
       const b = stt[i]
-      const usable = presets.some((p) => p.provider === b.provider) || (b.base_url?.trim() && b.model?.trim())
+      const option = options.find((p) => p.name === b.provider)
+      const usable = Boolean(option && option.ready && (b.model?.trim() || option.default_model))
       let want = ""
       if (b.enabled && !usable) want = "Not used"
       else if (b.enabled) {

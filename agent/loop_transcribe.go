@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -72,6 +74,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 			logger.WarnCF("voice", "Transcription failed", map[string]any{
 				"ref": ref, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error(),
 			})
+			al.alertUntranscribed(msg.Channel, err)
 			transcriptions = append(transcriptions, voiceTranscript{failed: true})
 			continue
 		}
@@ -105,6 +108,22 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 
 	msg.Content = newContent
 	return msg, true
+}
+
+// alertUntranscribed raises an urgent alert, keyed by channel, for a voice
+// message that every speech backend failed to transcribe.
+func (al *AgentLoop) alertUntranscribed(channel string, err error) {
+	details := []rune(strings.TrimSpace(err.Error()))
+	if len(details) > 200 {
+		details = details[:200]
+	}
+	al.Alerter().Send(alerter.Alert{
+		Priority:    alerter.Urgent,
+		Title:       "Voice message not transcribed",
+		Description: channel + ": every speech backend failed; the agent received the audio untranscribed",
+		Details:     string(details),
+		EventID:     "voice:failed:" + channel,
+	})
 }
 
 var receivedFileNameUnsafeRe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

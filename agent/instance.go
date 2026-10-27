@@ -311,7 +311,7 @@ func agentModes(cfg *config.Config, path string) config.Modes {
 func prepareWorkspace(spec agentreg.Spec, cfg *config.Config) error {
 	m := agentModes(cfg, spec.Workspace)
 	if !spec.Fresh {
-		agentws.Populate(spec.Workspace, m.Dir, m.File)
+		agentws.Populate(spec.Workspace, m.Dir, m.File, cfg.ChannelKindsInUse(), cfg.ChannelKind)
 		return nil
 	}
 	if err := os.MkdirAll(spec.Workspace, m.Dir); err != nil {
@@ -343,7 +343,7 @@ func migrateCognitiveMemory(spec agentreg.Spec, agentCfg *config.AgentConfig, mo
 // Progressive discovery is a single global switch; AgentLoop also sets it
 // during tool registration, so this only seeds the context rule.
 func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cfg *config.Config) *ContextBuilder {
-	contextBuilder := NewContextBuilder(spec.Workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
+	contextBuilder := NewContextBuilder(spec.Workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled).WithChannelKind(cfg.ChannelKind)
 	switch {
 	case spec.Fresh:
 		// The whole system prompt is the creator's (or the default): no

@@ -32,6 +32,7 @@ const sample: Record<string, unknown> = {
     defaults: { max_tokens: 4096 },
   },
   backup: { enabled: true, at: "02:30", retain_days: 14, dest: "/mnt/backup" },
+  operator: { name: "Alice" },
 }
 
 // Renders the page and returns the fetch mock. `qc` lets a test start from a
@@ -80,6 +81,41 @@ function lastBackupPatch() {
 afterEach(() => {
   vi.unstubAllGlobals()
   patched.mockClear()
+})
+
+describe("SystemPage operator name", () => {
+  // operator.name is the sender's name for the operator's own messages when a
+  // device has no User of its own. Shown as configured; an edit is saved under
+  // operator.name, trimmed.
+  it("shows the configured name and saves an edit", async () => {
+    renderPage()
+    const name = (await screen.findByTestId(
+      "operator-name",
+    )) as HTMLInputElement
+    expect(name.value).toBe("Alice")
+
+    fireEvent.change(name, { target: { value: " Bob " } })
+
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    })
+    const patch = patched.mock.calls.at(-1)?.[0] as Record<string, unknown>
+    expect(patch).toMatchObject({ operator: { name: "Bob" } })
+    await screen.findByText("Saved ✓")
+  })
+
+  // The server's one-sentence refusal is what the operator sees.
+  it("shows the server's refusal of a bad name", async () => {
+    const why =
+      "Your name must be at most 64 characters, with no control characters."
+    patched.mockRejectedValueOnce(new Error(why))
+    renderPage()
+    const name = await screen.findByTestId("operator-name")
+    fireEvent.change(name, { target: { value: "x".repeat(65) } })
+    expect(
+      await screen.findByText(why, undefined, { timeout: 3000 }),
+    ).toBeTruthy()
+  })
 })
 
 describe("SystemPage backup block", () => {

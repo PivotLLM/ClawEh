@@ -113,6 +113,19 @@ func (s *AuthStore) Configured() bool {
 	return s.creds != nil
 }
 
+// Username returns the admin account's username, or "" when no usable
+// account is loaded. It re-reads the credentials file first if it changed
+// (Refresh), so an account written by `claw admin` is seen at once.
+func (s *AuthStore) Username() string {
+	s.Refresh()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.creds == nil {
+		return ""
+	}
+	return s.creds.Username
+}
+
 // Reload re-reads the credentials file. When the account changed — created,
 // replaced, removed, or made unusable — every session is revoked, so a new
 // password takes effect at once. The credentials poller calls this on a file
@@ -311,13 +324,6 @@ func (s *AuthStore) Authenticate(r *http.Request) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// HasSession is Authenticate as a predicate, in the shape the WebUI channel
-// takes for its WebSocket handshake check.
-func (s *AuthStore) HasSession(r *http.Request) bool {
-	_, ok := s.Authenticate(r)
-	return ok
 }
 
 // SessionCookieName picks the cookie for the transport the request arrived

@@ -23,6 +23,14 @@ func TestWhisperTranscriberName(t *testing.T) {
 	}
 }
 
+// Providers shared by the detection tests.
+var (
+	groqProvider       = config.Provider{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq"}
+	openAIProvider     = config.Provider{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"}
+	openRouterProvider = config.Provider{Name: "my-openrouter", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", APIKey: "sk-or"}
+	customProvider     = config.Provider{Name: "local-whisper", Protocol: "openai-chat", BaseURL: "https://stt.example.com/v1", APIKey: "sk-local"}
+)
+
 func TestDetectTranscriber(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -36,107 +44,43 @@ func TestDetectTranscriber(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			// A model provider alone no longer enables STT — only voice.stt does
-			// (its key may still be borrowed from a matching provider).
-			name: "provider key alone does not enable STT",
-			cfg: &config.Config{
-				Providers: []config.Provider{
-					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq-direct"},
-				},
-			},
+			// A model provider alone does not enable STT; only voice.stt does.
+			name:    "provider alone does not enable STT",
+			cfg:     &config.Config{Providers: []config.Provider{groqProvider}},
 			wantNil: true,
 		},
 		{
-			name: "stt list picks first enabled with key",
+			name: "first enabled entry is used, disabled ones are not",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "openai", Enabled: false, APIKey: "sk-off"},
-						{Provider: "openrouter", Enabled: true, APIKey: "sk-or"},
-						{Provider: "groq", Enabled: false, APIKey: "sk-groq"},
-					},
-				},
+				Providers: []config.Provider{openAIProvider, openRouterProvider, groqProvider},
+				Voice: config.VoiceConfig{STT: []config.STTProvider{
+					{Provider: "openai", Enabled: false},
+					{Provider: "my-openrouter", Enabled: true},
+					{Provider: "groq", Enabled: false},
+				}},
 			},
-			wantName: "openrouter",
+			wantName: "my-openrouter (openai/whisper-large-v3)",
 		},
 		{
 			name: "multiple enabled entries form an ordered fallback chain",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "openrouter", Enabled: true, APIKey: "sk-or"},
-						{Provider: "groq", Enabled: true, APIKey: "sk-groq"},
-					},
-				},
+				Providers: []config.Provider{groqProvider, openRouterProvider},
+				Voice: config.VoiceConfig{STT: []config.STTProvider{
+					{Provider: "my-openrouter", Enabled: true},
+					{Provider: "groq", Enabled: true},
+				}},
 			},
-			// fallbackTranscriber.Name() joins the chain in order.
-			wantName: "openrouter,groq",
+			// fallbackTranscriber.Name() joins the chain in order; each name
+			// carries its model so repeats of one provider stay distinguishable.
+			wantName: "my-openrouter (openai/whisper-large-v3),groq (whisper-large-v3)",
 		},
 		{
-			name: "stt list enabled without key is skipped",
+			name: "an unknown host with a model is used",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "openai", Enabled: true},
-					},
-				},
+				Providers: []config.Provider{customProvider},
+				Voice:     config.VoiceConfig{STT: []config.STTProvider{{Provider: "local-whisper", Enabled: true, Model: "whisper-1"}}},
 			},
-			wantNil: true,
-		},
-		{
-			// custom has no preset: blank endpoint or model is never filled
-			// in with another provider's (it used to fall back to Groq).
-			name: "custom entry without endpoint or model is skipped",
-			cfg: &config.Config{
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"},
-						{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"},
-					},
-				},
-			},
-			wantNil: true,
-		},
-		{
-			name: "custom entry with endpoint and model is used",
-			cfg: &config.Config{
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1", Model: "whisper-1"},
-					},
-				},
-			},
-			wantName: "custom",
-		},
-		{
-			name: "stt entry borrows key from matching provider",
-			cfg: &config.Config{
-				Providers: []config.Provider{
-					{Name: "or", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", APIKey: "sk-or-provider"},
-				},
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "openrouter", Enabled: true}, // no key of its own
-					},
-				},
-			},
-			wantName: "openrouter",
-		},
-		{
-			name: "stt entry with no key and no matching provider is skipped",
-			cfg: &config.Config{
-				Providers: []config.Provider{
-					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq"},
-				},
-				Voice: config.VoiceConfig{
-					STT: []config.STTProvider{
-						{Provider: "openrouter", Enabled: true}, // openrouter.ai has no provider key
-					},
-				},
-			},
-			// The entry can't resolve a key and an unrelated groq provider does
-			// not enable STT, so nothing is detected.
-			wantNil: true,
+			wantName: "local-whisper (whisper-1)",
 		},
 	}
 
@@ -156,6 +100,101 @@ func TestDetectTranscriber(t *testing.T) {
 				t.Errorf("Name() = %q, want %q", got, tc.wantName)
 			}
 		})
+	}
+}
+
+// An entry that cannot be used is skipped, with its reason, and the next
+// usable entry is chosen alone rather than starting a chain with a broken one.
+func TestDetectTranscriber_SkipsUnusableEntries(t *testing.T) {
+	providers := []config.Provider{
+		groqProvider,
+		{Name: "no-key", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
+		{Name: "no-url", Protocol: "openai-chat", APIKey: "sk-x"},
+		{Name: "cli", Protocol: "claude-cli"},
+		{Name: "anthropic-api", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "sk-a"},
+		{Name: "azure-api", Protocol: "azure", BaseURL: "https://example.openai.azure.com", APIKey: "sk-z"},
+		customProvider,
+	}
+	for _, tc := range []struct {
+		name     string
+		entry    config.STTProvider
+		wantSkip string
+	}{
+		{"provider not configured", config.STTProvider{Provider: "missing", Enabled: true}, "provider not configured"},
+		{"provider name is case-sensitive", config.STTProvider{Provider: "Groq", Enabled: true}, "provider not configured"},
+		{"provider without a key", config.STTProvider{Provider: "no-key", Enabled: true}, "provider has no API key"},
+		{"provider without a base URL", config.STTProvider{Provider: "no-url", Enabled: true}, "provider has no base URL"},
+		{"CLI provider", config.STTProvider{Provider: "cli", Enabled: true}, "provider protocol is not OpenAI-compatible"},
+		{"anthropic provider", config.STTProvider{Provider: "anthropic-api", Enabled: true}, "provider protocol is not OpenAI-compatible"},
+		{"azure provider", config.STTProvider{Provider: "azure-api", Enabled: true}, "provider protocol is not OpenAI-compatible"},
+		{"unknown host without a model", config.STTProvider{Provider: "local-whisper", Enabled: true}, "no model set and no default for this endpoint"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Providers: providers}
+			if _, skip := resolveSTT(cfg, &tc.entry); skip != tc.wantSkip {
+				t.Fatalf("resolveSTT skip = %q, want %q", skip, tc.wantSkip)
+			}
+
+			cfg.Voice.STT = []config.STTProvider{tc.entry, {Provider: "groq", Enabled: true}}
+			w, ok := DetectTranscriber(cfg).(*whisperTranscriber)
+			if !ok || w.name != "groq (whisper-large-v3)" {
+				t.Fatalf("DetectTranscriber() = %v, want the groq transcriber alone", w)
+			}
+		})
+	}
+}
+
+// The endpoint and key come from the named provider; the model is the entry's,
+// or the default for the provider's host.
+func TestDetectTranscriber_UsesTheProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		entry     config.STTProvider
+		wantModel string
+	}{
+		{"blank model takes the host default", config.STTProvider{Provider: "groq", Enabled: true}, "whisper-large-v3"},
+		{"set model wins", config.STTProvider{Provider: "groq", Enabled: true, Model: "whisper-large-v3-turbo"}, "whisper-large-v3-turbo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Providers: []config.Provider{groqProvider},
+				Voice:     config.VoiceConfig{STT: []config.STTProvider{tc.entry}},
+			}
+			w, ok := DetectTranscriber(cfg).(*whisperTranscriber)
+			if !ok {
+				t.Fatalf("DetectTranscriber() = %T, want *whisperTranscriber", DetectTranscriber(cfg))
+			}
+			if w.name != "groq ("+tc.wantModel+")" || w.apiKey != "sk-groq" || w.apiBase != "https://api.groq.com/openai/v1" || w.model != tc.wantModel {
+				t.Fatalf("transcriber = %s %s %s, want groq at the provider endpoint with model %s", w.name, w.apiBase, w.model, tc.wantModel)
+			}
+		})
+	}
+}
+
+// The wire protocol follows the endpoint's host, not the provider's name.
+func TestNewTranscriber_ChoosesProtocolByHost(t *testing.T) {
+	if _, ok := NewTranscriber("my-openrouter", "sk", "https://openrouter.ai/api/v1", "m", nil).(*openRouterTranscriber); !ok {
+		t.Error("openrouter.ai must use the OpenRouter protocol")
+	}
+	if _, ok := NewTranscriber("openrouter", "sk", "https://api.groq.com/openai/v1", "m", nil).(*whisperTranscriber); !ok {
+		t.Error("a provider named openrouter on another host must use the multipart protocol")
+	}
+	if got := NewTranscriber("my-openrouter", "sk", "https://openrouter.ai/api/v1", "m", nil).Name(); got != "my-openrouter" {
+		t.Errorf("Name() = %q, want the configured provider name", got)
+	}
+}
+
+func TestDefaultSTTModel(t *testing.T) {
+	for base, want := range map[string]string{
+		"https://api.groq.com/openai/v1": "whisper-large-v3",
+		"https://api.openai.com/v1":      "whisper-1",
+		"https://OpenRouter.ai/api/v1":   "openai/whisper-large-v3",
+		"https://stt.example.com/v1":     "",
+		"":                               "",
+	} {
+		if got := DefaultSTTModel(base); got != want {
+			t.Errorf("DefaultSTTModel(%q) = %q, want %q", base, got, want)
+		}
 	}
 }
 
@@ -279,63 +318,4 @@ func TestTranscribe(t *testing.T) {
 			t.Fatal("expected error for missing file, got nil")
 		}
 	})
-}
-
-// An incomplete custom entry (no endpoint, no model or no key) listed before a
-// valid groq entry is skipped: groq alone is chosen, not a chain that starts
-// with a custom transcriber pointed at Groq.
-func TestDetectTranscriber_IncompleteCustomBeforeGroq(t *testing.T) {
-	groq := config.STTProvider{Provider: "groq", Enabled: true, APIKey: "sk-groq"}
-	for _, tc := range []struct {
-		name   string
-		custom config.STTProvider
-	}{
-		{"custom without endpoint", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"}},
-		{"custom without model", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"}},
-		{"custom without key", config.STTProvider{Provider: "custom", Enabled: true, BaseURL: "https://stt.example.com/v1", Model: "whisper-1"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Voice: config.VoiceConfig{STT: []config.STTProvider{tc.custom, groq}}}
-			tr := DetectTranscriber(cfg)
-			w, ok := tr.(*whisperTranscriber)
-			if !ok {
-				t.Fatalf("DetectTranscriber() = %T (%v), want the groq *whisperTranscriber alone", tr, tr)
-			}
-			if w.name != "groq" || w.apiBase != "https://api.groq.com/openai/v1" || w.model != "whisper-large-v3" || w.apiKey != "sk-groq" {
-				t.Fatalf("transcriber = %s %s %s, want groq at the Groq preset", w.name, w.apiBase, w.model)
-			}
-		})
-	}
-}
-
-// A custom entry never takes Groq's (or any preset's) endpoint or model: its
-// blanks resolve to blanks, and the constructor leaves them blank too.
-func TestCustomTranscriber_NeverInheritsGroqDefaults(t *testing.T) {
-	cfg := &config.Config{
-		Providers: []config.Provider{
-			{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq"},
-		},
-	}
-	for _, tc := range []struct {
-		name      string
-		entry     config.STTProvider
-		wantBase  string
-		wantModel string
-	}{
-		{"missing endpoint", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", Model: "whisper-1"}, "", "whisper-1"},
-		{"missing model", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c", BaseURL: "https://stt.example.com/v1"}, "https://stt.example.com/v1", ""},
-		{"missing both", config.STTProvider{Provider: "custom", Enabled: true, APIKey: "sk-c"}, "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, base, model := resolveSTTCredentials(cfg, &tc.entry)
-			if base != tc.wantBase || model != tc.wantModel {
-				t.Fatalf("resolveSTTCredentials = %q, %q; want %q, %q", base, model, tc.wantBase, tc.wantModel)
-			}
-		})
-	}
-
-	w := NewWhisperTranscriber("custom", "sk-c", "", "", nil)
-	if w.apiBase != "" || w.model != "" {
-		t.Fatalf("NewWhisperTranscriber(custom) = base %q, model %q; want both blank", w.apiBase, w.model)
-	}
 }

@@ -37,7 +37,7 @@ type SlackChannel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	pendingAcks   sync.Map
-	userNameCache sync.Map // userID → display name string
+	userNameCache sync.Map // userID → slackUserName
 	// slashResponses maps a slash command's trigger id to its slashResponse.
 	slashResponses sync.Map
 	// clock dates slash command response URLs; nil means clock.Real.
@@ -154,29 +154,58 @@ func isSlackAuthError(err error) bool {
 	return errors.As(err, &status) && status.Code == http.StatusNotFound
 }
 
-// resolveDisplayName fetches the human-readable display name for a Slack user
-// ID, with an in-memory cache so each user is resolved at most once per
-// process lifetime. Falls back through DisplayName → RealName → Name.
-func (c *SlackChannel) resolveDisplayName(userID string) string {
-	v, _ := c.userNameCache.Load(userID)
-	if cached, ok := v.(string); ok {
-		return cached
+// userLookupTimeout bounds the users.info call that names a sender. It runs
+// once per user, on the inbound path, so a slow Slack API delays only that
+// user's first message.
+const userLookupTimeout = 5 * time.Second
+
+// userLookupRetry is how long a failed users.info lookup is remembered before
+// the next message from that user tries again.
+const userLookupRetry = 5 * time.Minute
+
+// slackUserName is what users.info says about a user: the name to show and
+// the Slack handle. failedAt is set when the lookup failed and the name is
+// empty until it is retried.
+type slackUserName struct {
+	displayName string
+	username    string
+	failedAt    time.Time
+}
+
+// withSenderName fills the sender's DisplayName (the profile display name,
+// else the real name) and Username (the Slack handle) from users.info. A
+// found name is kept for the life of the process; a failed lookup is logged,
+// leaves the sender unnamed, and is retried after userLookupRetry.
+func (c *SlackChannel) withSenderName(ctx context.Context, s bus.SenderInfo) bus.SenderInfo {
+	name := c.lookupUserName(ctx, s.PlatformID)
+	s.DisplayName = name.displayName
+	s.Username = name.username
+	return s
+}
+
+func (c *SlackChannel) lookupUserName(ctx context.Context, userID string) slackUserName {
+	now := clock.Or(c.clock).Now()
+	if v, ok := c.userNameCache.Load(userID); ok {
+		if cached, ok := v.(slackUserName); ok &&
+			(cached.failedAt.IsZero() || now.Sub(cached.failedAt) < userLookupRetry) {
+			return cached
+		}
 	}
-	user, err := c.api.GetUserInfo(userID)
+	ctx, cancel := context.WithTimeout(ctx, userLookupTimeout)
+	defer cancel()
+	user, err := c.api.GetUserInfoContext(ctx, userID)
 	if err != nil {
-		logger.DebugCF("slack", "Failed to resolve display name", map[string]any{
+		logger.DebugCF("slack", "Failed to resolve user name", map[string]any{
 			"user_id": userID,
 			"error":   err.Error(),
 		})
-		c.userNameCache.Store(userID, "")
-		return ""
+		failed := slackUserName{failedAt: now}
+		c.userNameCache.Store(userID, failed)
+		return failed
 	}
-	name := user.Profile.DisplayName
-	if name == "" {
-		name = user.RealName
-	}
-	if name == "" {
-		name = user.Name
+	name := slackUserName{displayName: user.Profile.DisplayName, username: user.Name}
+	if name.displayName == "" {
+		name.displayName = user.RealName
 	}
 	c.userNameCache.Store(userID, name)
 	return name
@@ -513,7 +542,7 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 		})
 		return
 	}
-	sender.DisplayName = c.resolveDisplayName(ev.User)
+	sender = c.withSenderName(c.ctx, sender)
 
 	senderID := ev.User
 	channelID := ev.Channel
@@ -603,24 +632,19 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		return
 	}
 
-	if !c.IsAllowedSender(bus.SenderInfo{
-		Platform:    "slack",
-		PlatformID:  ev.User,
-		CanonicalID: identity.BuildCanonicalID("slack", ev.User),
-	}) {
-		logger.DebugCF("slack", "Mention rejected by allowlist", map[string]any{
-			"user_id": ev.User,
-		})
-		return
-	}
-
 	senderID := ev.User
 	mentionSender := bus.SenderInfo{
 		Platform:    "slack",
 		PlatformID:  senderID,
 		CanonicalID: identity.BuildCanonicalID("slack", senderID),
-		DisplayName: c.resolveDisplayName(senderID),
 	}
+	if !c.IsAllowedSender(mentionSender) {
+		logger.DebugCF("slack", "Mention rejected by allowlist", map[string]any{
+			"user_id": ev.User,
+		})
+		return
+	}
+	mentionSender = c.withSenderName(c.ctx, mentionSender)
 	channelID := ev.Channel
 	threadTS := ev.ThreadTimeStamp
 	messageTS := ev.TimeStamp
@@ -734,7 +758,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 		})
 		return
 	}
-	cmdSender.DisplayName = c.resolveDisplayName(cmd.UserID)
+	cmdSender = c.withSenderName(c.ctx, cmdSender)
 
 	senderID := cmd.UserID
 	channelID := cmd.ChannelID

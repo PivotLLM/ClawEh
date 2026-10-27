@@ -32,8 +32,11 @@ type webuiConn struct {
 	id        string
 	conn      *websocket.Conn
 	sessionID string
-	writeMu   sync.Mutex
-	closed    atomic.Bool
+	// username is the WebUI login account that opened the connection; empty
+	// when it was opened with the channel token instead of a session.
+	username string
+	writeMu  sync.Mutex
+	closed   atomic.Bool
 }
 
 // errConnClosed is returned by writeJSON on a connection already closed.
@@ -101,8 +104,12 @@ type WebUIChannel struct {
 	upgrader    websocket.Upgrader
 	connections sync.Map // connID → *webuiConn
 	connCount   atomic.Int32
-	ctx         context.Context
-	cancel      context.CancelFunc
+	// operatorName returns operator.name, the sender's name for every
+	// message when set (else the connection's login username); injected by
+	// SetOperatorName before Start, nil when not.
+	operatorName func() string
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // TokenSubprotocol is the WebSocket subprotocol name that marks the second
@@ -122,16 +129,18 @@ const TokenSubprotocol = "claw-token"
 const maxMessageBytes = 1 << 20
 
 // sessionValidator reports whether a WebSocket handshake carries a live WebUI
-// login session. The gateway installs it with SetSessionValidator; until then
-// (and in tests) only the channel token authenticates.
-var sessionValidator atomic.Pointer[func(*http.Request) bool]
+// login session, and the session's username. The gateway installs it with
+// SetSessionValidator; until then (and in tests) only the channel token
+// authenticates.
+var sessionValidator atomic.Pointer[func(*http.Request) (string, bool)]
 
 // SetSessionValidator installs the login-session check the channel consults
 // before the token: the browser holds a session cookie from /api/auth/login
 // and nothing else, so this is how the bundled UI reaches the chat socket.
 // The channel is built by the channel manager from config, which is why this
-// is a package-level hook rather than a constructor argument.
-func SetSessionValidator(fn func(*http.Request) bool) {
+// is a package-level hook rather than a constructor argument. The username it
+// returns names the sender of the connection's messages.
+func SetSessionValidator(fn func(*http.Request) (string, bool)) {
 	if fn == nil {
 		sessionValidator.Store(nil)
 		return
@@ -351,7 +360,8 @@ func (c *WebUIChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authenticate
-	if !c.authenticate(r) {
+	username, ok := c.authenticate(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -385,6 +395,7 @@ func (c *WebUIChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		id:        uuid.New().String(),
 		conn:      conn,
 		sessionID: sessionID,
+		username:  username,
 	}
 
 	c.connections.Store(pc.id, pc)
@@ -402,22 +413,25 @@ func (c *WebUIChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // (the browser's cookie, checked through SetSessionValidator) or the channel
 // token as a Bearer header or subprotocol (non-browser clients). The token is
 // never accepted from the URL: a query string is recorded by proxies, access
-// logs and browser history.
-func (c *WebUIChannel) authenticate(r *http.Request) bool {
-	if validate := sessionValidator.Load(); validate != nil && (*validate)(r) {
-		return true
+// logs and browser history. The username is the login session's; a token
+// client has none.
+func (c *WebUIChannel) authenticate(r *http.Request) (username string, ok bool) {
+	if validate := sessionValidator.Load(); validate != nil {
+		if user, ok := (*validate)(r); ok {
+			return user, true
+		}
 	}
 
 	token := c.config.Token
 	if token == "" {
-		return false
+		return "", false
 	}
 
 	// Check Authorization header
 	auth := r.Header.Get("Authorization")
 	if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
 		if subtle.ConstantTimeCompare([]byte(after), []byte(token)) == 1 {
-			return true
+			return "", true
 		}
 	}
 
@@ -427,11 +441,11 @@ func (c *WebUIChannel) authenticate(r *http.Request) bool {
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(proto), []byte(token)) == 1 {
-			return true
+			return "", true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 // readLoop reads messages from a WebSocket connection.
@@ -569,6 +583,7 @@ func (c *WebUIChannel) handleMessageSend(pc *webuiConn, msg WebUIMessage) {
 		Platform:    "webui",
 		PlatformID:  senderID,
 		CanonicalID: identity.BuildCanonicalID("webui", senderID),
+		DisplayName: c.senderName(pc),
 	}
 
 	if !c.IsAllowedSender(sender) {
@@ -577,6 +592,22 @@ func (c *WebUIChannel) handleMessageSend(pc *webuiConn, msg WebUIMessage) {
 
 	c.HandleMessage(c.ctx, peer, msg.ID, senderID, chatID, content, nil, metadata, sender)
 }
+
+// senderName is the display name of a message sent on pc: operator.name when
+// set, else the login username the connection was opened with ("" for a
+// token client).
+func (c *WebUIChannel) senderName(pc *webuiConn) string {
+	if c.operatorName != nil {
+		if name := strings.TrimSpace(c.operatorName()); name != "" {
+			return name
+		}
+	}
+	return pc.username
+}
+
+// SetOperatorName sets the function returning operator.name, read on every
+// message so a config reload is seen at once. Call before Start.
+func (c *WebUIChannel) SetOperatorName(fn func() string) { c.operatorName = fn }
 
 // truncate truncates a string to maxLen runes.
 func truncate(s string, maxLen int) string {

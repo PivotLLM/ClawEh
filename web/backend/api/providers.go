@@ -153,11 +153,17 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 			return badRequest("Validation error: %v", verr)
 		}
 
-		// If the provider was renamed, re-point models that referenced it.
+		// If the provider was renamed, re-point models and speech backends that
+		// referenced it.
 		if p.Name != oldName {
 			for i := range cfg.Models {
 				if cfg.Models[i].Provider == oldName {
 					cfg.Models[i].Provider = p.Name
+				}
+			}
+			for i := range cfg.Voice.STT {
+				if cfg.Voice.STT[i].Provider == oldName {
+					cfg.Voice.STT[i].Provider = p.Name
 				}
 			}
 		}
@@ -187,6 +193,11 @@ func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		for _, m := range cfg.Models {
 			if m.Provider == name {
 				return &httpError{status: http.StatusConflict, msg: fmt.Sprintf("provider %q is in use by model %q", name, m.ModelName)}
+			}
+		}
+		for _, s := range cfg.Voice.STT {
+			if s.Provider == name {
+				return &httpError{status: http.StatusConflict, msg: fmt.Sprintf("provider %q is in use by a speech backend", name)}
 			}
 		}
 

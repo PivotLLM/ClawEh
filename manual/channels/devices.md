@@ -78,6 +78,15 @@ agent.
 - **Apps with their own agent picker**, such as the Android app, show
   "assistant chosen in app"; the person picks the agent in the app.
 
+### How an agent replies on a device
+
+While the device channel is enabled, each agent's directory has a `DEVICE.md`,
+read only for messages from devices and shared by all of them. Edit it to make
+that agent brief on a small screen without changing how it replies elsewhere,
+empty it to add nothing, or delete it and the default returns on the next
+start. An older `channel-device.md` is renamed to `DEVICE.md` on the next
+start. See [Creating and editing agents](../agents/creating.md).
+
 ### Switching agents from the device
 
 On a device without a picker, the person can send:
@@ -100,6 +109,27 @@ for example "Ignored: Bob no longer exists; using the default agent." Choose
 another agent in the **Assistant** list, or have the person send `/agent`.
 
 Agents that represent a person ([human agents](../agents/human-agents.md)) are never offered to devices.
+
+### Assistants
+
+Under **Paired devices**, each device has an **Assistants** setting: **All** or
+**Selected**, with a checkbox per assistant.
+
+A device set to **Selected** sees only the checked assistants. It cannot open,
+read or switch to any other; `/agent` lists only the checked ones.
+
+If the device's assigned assistant is not checked, the page marks it and the
+device uses a checked assistant instead. If none of the checked assistants is
+running, the device gets an error until one is.
+
+## Who the assistant thinks is speaking
+
+Under **Paired devices**, each device has a **User** field. It is the name the
+assistant is told the sender has, so it can tell the device's messages apart
+from the rest of the conversation.
+
+Left empty, it uses **Your name** on the System page, else the admin account's
+name, shown greyed in the field. Set it when someone else uses the device.
 
 ## Encryption
 

@@ -3,6 +3,9 @@ export type JsonRecord = Record<string, unknown>
 // CoreConfigForm is the System page's form. The listeners (gateway.* and
 // channels.device.*) are the Network page's — see network/network-form.ts.
 export interface CoreConfigForm {
+  // operator.name: the name used for the operator's own messages when a
+  // device has no User of its own. "" means not set.
+  operatorName: string
   baseDir: string
   commonDir: string
   restrictToWorkspace: boolean
@@ -68,6 +71,7 @@ export const FORUM_LIMIT_DEFAULTS = {
 } as const
 
 export const EMPTY_FORM: CoreConfigForm = {
+  operatorName: "",
   baseDir: "",
   commonDir: "",
   restrictToWorkspace: true,
@@ -172,6 +176,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   )
 
   return {
+    operatorName: asString(asRecord(root.operator).name),
     baseDir: asString(agents.base_dir),
     commonDir: asString(agents.common_dir),
     restrictToWorkspace:

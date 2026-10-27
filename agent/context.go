@@ -36,6 +36,11 @@ type ContextBuilder struct {
 	// when it has none the dynamic prompt says so (noToolsNotice).
 	toolsGranted func() bool
 
+	// channelKind resolves a channel name to its kind, whose prompt file
+	// (config.ChannelPromptFile) the dynamic prompt carries
+	// (WithChannelKind). Nil: only the names fixed by the code are known.
+	channelKind func(channel string) string
+
 	// fixedPrompt, when set, is the agent's whole system prompt: no identity,
 	// workspace files, skills, memory guidance, date or runtime block. A fresh
 	// temporary agent's prompt (see WithFixedPrompt).
@@ -105,6 +110,14 @@ const noToolsNotice = "You have not been granted any tools. If a request require
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
 	cb.toolDiscoveryActive = active
+	return cb
+}
+
+// WithChannelKind sets how a channel name resolves to its channel kind
+// (config.Config.ChannelKind), so a secmsg account's channel finds its
+// kind's prompt file.
+func (cb *ContextBuilder) WithChannelKind(kindOf func(channel string) string) *ContextBuilder {
+	cb.channelKind = kindOf
 	return cb
 }
 
@@ -688,7 +701,7 @@ func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
 	}
 
-	// Channel-specific guidance from <workspace>/channel-<channel>.md (seeded from
+	// Channel-specific guidance from <workspace>/<KIND>.md (seeded from
 	// templates, user-editable). Injected here (not in the cached static prompt)
 	// because it varies by channel while the static prompt is shared per agent.
 	if extra := cb.loadChannelPrompt(channel); extra != "" {
@@ -704,30 +717,23 @@ func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	return sb.String()
 }
 
-// loadChannelPrompt returns the contents of <workspace>/channel-<channel>.md, or
-// "" if there is none. The channel name is sanitized to a safe filename token.
+// loadChannelPrompt returns the contents of the prompt file of the channel's
+// kind (<workspace>/<KIND>.md, config.ChannelPromptFile), or "" for a channel
+// of no known kind or a kind without the file.
 func (cb *ContextBuilder) loadChannelPrompt(channel string) string {
-	safe := sanitizeChannelName(channel)
-	if safe == "" {
+	kindOf := cb.channelKind
+	if kindOf == nil {
+		kindOf = (*config.Config)(nil).ChannelKind
+	}
+	name := config.ChannelPromptFile(kindOf(channel))
+	if name == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md")) //nolint:gosec // channel name sanitized by sanitizeChannelName; fixed workspace dir
+	data, err := os.ReadFile(filepath.Join(cb.workspace, name)) //nolint:gosec // fixed file name from the channel kind table; fixed workspace dir
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-// sanitizeChannelName keeps only [A-Za-z0-9_-] so the channel name can't escape
-// the workspace via path traversal.
-func sanitizeChannelName(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // PromptLayers returns the host's system-prompt layers for one dispatch, in

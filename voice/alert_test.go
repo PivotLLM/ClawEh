@@ -14,7 +14,68 @@ import (
 	"testing"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
+
+// TestDetectTranscriber_AlertsOnUnusableBackend: an enabled entry that cannot
+// be used raises one alert keyed by its provider, urgent when it leaves no
+// usable backend and normal when another one serves; a disabled entry raises
+// none.
+func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
+	tests := []struct {
+		name         string
+		stt          []config.STTProvider
+		wantAlert    bool
+		wantPriority int
+	}{
+		{
+			name:         "only entry unusable",
+			stt:          []config.STTProvider{{Provider: "alice-stt", Enabled: true}},
+			wantAlert:    true,
+			wantPriority: alerter.Urgent,
+		},
+		{
+			name:         "another entry usable",
+			stt:          []config.STTProvider{{Provider: "alice-stt", Enabled: true}, {Provider: "groq", Enabled: true}},
+			wantAlert:    true,
+			wantPriority: alerter.Normal,
+		},
+		{
+			name: "disabled entry",
+			stt:  []config.STTProvider{{Provider: "alice-stt"}, {Provider: "groq", Enabled: true}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &alertRecorder{}
+			cfg := &config.Config{
+				Providers: []config.Provider{groqProvider},
+				Voice:     config.VoiceConfig{STT: tt.stt},
+			}
+			DetectTranscriberWithAlerter(cfg, rec)
+			if !tt.wantAlert {
+				if len(rec.alerts) != 0 {
+					t.Fatalf("want no alert, got %+v", rec.alerts)
+				}
+				return
+			}
+			if len(rec.alerts) != 1 {
+				t.Fatalf("want one alert, got %+v", rec.alerts)
+			}
+			a := rec.alerts[0]
+			want := alerter.Alert{
+				Priority:    tt.wantPriority,
+				Title:       "Speech backend not usable",
+				Description: "alice-stt: provider not configured; voice messages are not transcribed by this backend until it is fixed",
+				EventID:     "voice:config:alice-stt",
+			}
+			if a != want {
+				t.Fatalf("got %+v, want %+v", a, want)
+			}
+		})
+	}
+}
 
 type alertRecorder struct {
 	mu     sync.Mutex
@@ -59,7 +120,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 			return tr
 		},
 		"openrouter": func(base string, a alerter.Alerter) Transcriber {
-			tr := NewOpenRouterTranscriber("sk-bad", "", "", a)
+			tr := NewOpenRouterTranscriber("openrouter", "sk-bad", "", "", a)
 			tr.apiBase = base
 			return tr
 		},

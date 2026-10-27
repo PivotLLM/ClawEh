@@ -7,6 +7,7 @@ import (
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -59,7 +60,7 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 	if inst == nil || inst.Sessions == nil {
 		return nil
 	}
-	msgs := inst.Sessions.GetHistory(sessionKey)
+	msgs := inst.Sessions.GetHistoryWithSeqs(sessionKey)
 	out := make([]device.DeviceHistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -68,7 +69,7 @@ func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMes
 		if strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		out = append(out, device.DeviceHistoryMessage{Role: m.Role, Content: m.Content})
+		out = append(out, device.DeviceHistoryMessage{Role: m.Role, Content: m.Content, Timestamp: m.CreatedAt})
 	}
 	return out
 }
@@ -94,6 +95,49 @@ func injectDeviceAgentQuerier(ch channels.Channel, al *agent.AgentLoop) {
 	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
 	}
+}
+
+// injectDeviceDefaultUser hands the device channel ch the default name of the
+// person speaking on a device: operator.name from the agent loop's current
+// config, else the admin account's username from the credentials file at
+// credentialsPath. Both are read on every call, so a config reload or a
+// `claw admin` change is seen at once. Neither gives "".
+func injectDeviceDefaultUser(ch channels.Channel, al *agent.AgentLoop, credentialsPath string) {
+	if setter, ok := ch.(interface{ SetDefaultUser(fn func() string) }); ok {
+		setter.SetDefaultUser(func() string {
+			if name := operatorName(al); name != "" {
+				return name
+			}
+			return adminUsername(credentialsPath)
+		})
+	}
+}
+
+// injectWebUIOperatorName hands the WebUI channel ch operator.name from the
+// agent loop's current config, read on every message, as the name of the
+// web chat's sender.
+func injectWebUIOperatorName(ch channels.Channel, al *agent.AgentLoop) {
+	if setter, ok := ch.(interface{ SetOperatorName(fn func() string) }); ok {
+		setter.SetOperatorName(func() string { return operatorName(al) })
+	}
+}
+
+// operatorName is operator.name in the agent loop's current config, or "".
+func operatorName(al *agent.AgentLoop) string {
+	if cfg := al.GetConfig(); cfg != nil {
+		return cfg.OperatorName()
+	}
+	return ""
+}
+
+// adminUsername is the username in the credentials file at path, or "" when
+// there is no usable admin account.
+func adminUsername(path string) string {
+	creds, err := admin.Load(path)
+	if err != nil {
+		return ""
+	}
+	return creds.Username
 }
 
 // injectDeviceTLS lends the gateway certificate manager to the device channel

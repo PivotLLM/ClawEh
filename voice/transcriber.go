@@ -45,47 +45,30 @@ type TranscriptionResponse struct {
 	Duration float64 `json:"duration,omitempty"`
 }
 
-// STTPreset holds the default endpoint and model for a known STT provider.
-type STTPreset struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	Model    string `json:"model"`
+// openRouterHost is the host whose transcription endpoint speaks OpenRouter's
+// JSON/base64 protocol rather than the OpenAI multipart one.
+const openRouterHost = "openrouter.ai"
+
+// sttDefaultModels maps the host of a known speech-to-text endpoint to the
+// model used when a voice.stt entry leaves its model blank. It is the single
+// source of truth for those defaults; the WebUI reads it via DefaultSTTModel.
+var sttDefaultModels = map[string]string{
+	"api.groq.com":   "whisper-large-v3",
+	"api.openai.com": "whisper-1",
+	openRouterHost:   "openai/whisper-large-v3",
 }
 
-// sttPresets is the single source of truth for known provider defaults, ordered
-// for stable UI display. The WebUI reads it via STTPresets.
-var sttPresets = []STTPreset{
-	{"groq", "https://api.groq.com/openai/v1", "whisper-large-v3"},
-	{"openai", "https://api.openai.com/v1", "whisper-1"},
-	{"openrouter", "https://openrouter.ai/api/v1", "openai/whisper-large-v3"},
-}
-
-// STTPresets returns the known provider presets in display order.
-func STTPresets() []STTPreset { return sttPresets }
-
-// presetFor returns the preset for a provider name, or a zero preset if unknown.
-func presetFor(provider string) STTPreset {
-	for _, p := range sttPresets {
-		if p.Provider == provider {
-			return p
-		}
-	}
-	return STTPreset{}
+// DefaultSTTModel returns the default transcription model for a provider base
+// URL, chosen by its host, or "" when the host is not a known STT service.
+func DefaultSTTModel(baseURL string) string {
+	return sttDefaultModels[urlHost(baseURL)]
 }
 
 // NewWhisperTranscriber builds a transcriber for an OpenAI-compatible endpoint.
-// Blank baseURL/model fall back to the provider preset; a provider with no
-// preset (custom) must set both.
+// name is the configured provider name, used in logs, Name() and alerts.
 // a receives the alert raised when the API rejects the key or account; nil
 // means none.
 func NewWhisperTranscriber(name, apiKey, baseURL, model string, a alerter.Alerter) *whisperTranscriber {
-	preset := presetFor(name)
-	if baseURL == "" {
-		baseURL = preset.BaseURL
-	}
-	if model == "" {
-		model = preset.Model
-	}
 	logger.DebugCF("voice", "Creating transcriber", map[string]any{
 		"provider": name, "base_url": baseURL, "model": model, "has_api_key": apiKey != "",
 	})
@@ -227,6 +210,7 @@ func (t *whisperTranscriber) Name() string {
 // (input_audio.data + .format) rather than a multipart file upload, and returns
 // {"text", "usage"}. Model ids are namespaced (e.g. "openai/whisper-large-v3").
 type openRouterTranscriber struct {
+	name       string
 	apiKey     string
 	apiBase    string
 	model      string
@@ -234,21 +218,14 @@ type openRouterTranscriber struct {
 	alerter    alerter.Alerter
 }
 
-// NewOpenRouterTranscriber builds a transcriber for OpenRouter. Blank
-// baseURL/model fall back to the openrouter preset. a is as for
-// NewWhisperTranscriber.
-func NewOpenRouterTranscriber(apiKey, baseURL, model string, a alerter.Alerter) *openRouterTranscriber {
-	preset := presetFor("openrouter")
-	if baseURL == "" {
-		baseURL = preset.BaseURL
-	}
-	if model == "" {
-		model = preset.Model
-	}
+// NewOpenRouterTranscriber builds a transcriber for OpenRouter. name and a are
+// as for NewWhisperTranscriber.
+func NewOpenRouterTranscriber(name, apiKey, baseURL, model string, a alerter.Alerter) *openRouterTranscriber {
 	logger.DebugCF("voice", "Creating transcriber", map[string]any{
-		"provider": "openrouter", "base_url": baseURL, "model": model, "has_api_key": apiKey != "",
+		"provider": name, "base_url": baseURL, "model": model, "has_api_key": apiKey != "",
 	})
 	return &openRouterTranscriber{
+		name:       name,
 		apiKey:     apiKey,
 		apiBase:    strings.TrimRight(baseURL, "/"),
 		model:      model,
@@ -257,10 +234,10 @@ func NewOpenRouterTranscriber(apiKey, baseURL, model string, a alerter.Alerter) 
 	}
 }
 
-func (t *openRouterTranscriber) Name() string { return "openrouter" }
+func (t *openRouterTranscriber) Name() string { return t.name }
 
 func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
-	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath, "provider": "openrouter"})
+	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath, "provider": t.name})
 
 	raw, err := os.ReadFile(audioFilePath) //nolint:gosec // audio path comes from the media store (loop_transcribe)
 	if err != nil {
@@ -306,8 +283,8 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		logger.ErrorCF("voice", "API error", map[string]any{"provider": "openrouter", "status_code": resp.StatusCode, "response": string(body)})
-		alertRejected(t.alerter, "openrouter", resp.StatusCode, body)
+		logger.ErrorCF("voice", "API error", map[string]any{"provider": t.name, "status_code": resp.StatusCode, "response": string(body)})
+		alertRejected(t.alerter, t.name, resp.StatusCode, body)
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -324,21 +301,22 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 
 	result := &TranscriptionResponse{Text: parsed.Text, Duration: parsed.Usage.Seconds}
 	logger.InfoCF("voice", "Transcription completed successfully", map[string]any{
-		"provider":         "openrouter",
+		"provider":         t.name,
 		"text_length":      len(result.Text),
 		"duration_seconds": result.Duration,
 	})
 	return result, nil
 }
 
-// NewTranscriber builds the right transcriber for a provider. OpenRouter uses a
-// JSON/base64 protocol; every other provider is treated as OpenAI-compatible
-// multipart (groq, openai, or a custom OpenAI-style host).
-func NewTranscriber(provider, apiKey, baseURL, model string, a alerter.Alerter) Transcriber {
-	if provider == "openrouter" {
-		return NewOpenRouterTranscriber(apiKey, baseURL, model, a)
+// NewTranscriber builds the right transcriber for an endpoint, chosen by the
+// base URL's host. OpenRouter uses a JSON/base64 protocol; every other host is
+// treated as OpenAI-compatible multipart (Groq, OpenAI, or any OpenAI-style
+// host). name is the configured provider name.
+func NewTranscriber(name, apiKey, baseURL, model string, a alerter.Alerter) Transcriber {
+	if urlHost(baseURL) == openRouterHost {
+		return NewOpenRouterTranscriber(name, apiKey, baseURL, model, a)
 	}
-	return NewWhisperTranscriber(provider, apiKey, baseURL, model, a)
+	return NewWhisperTranscriber(name, apiKey, baseURL, model, a)
 }
 
 func orNop(a alerter.Alerter) alerter.Alerter {
@@ -370,7 +348,8 @@ func alertRejected(a alerter.Alerter, provider string, status int, body []byte) 
 	})
 }
 
-// urlHost returns the host of a URL, or "" if it can't be parsed.
+// urlHost returns the lower-cased host name (without port) of a URL, or "" if
+// it can't be parsed.
 func urlHost(raw string) string {
 	if raw == "" {
 		return ""
@@ -379,37 +358,77 @@ func urlHost(raw string) string {
 	if err != nil {
 		return ""
 	}
-	return u.Host
+	return strings.ToLower(u.Hostname())
 }
 
-// resolveSTTCredentials fills in a Speech entry's endpoint/model from the
-// provider preset, and — when the entry has no api_key — borrows the key from a
-// configured model provider that targets the same host. This lets an operator
-// enable "openrouter" (or groq/openai) in the Speech list without re-typing a
-// key they already configured as a provider.
-func resolveSTTCredentials(cfg *config.Config, s *config.STTProvider) (apiKey, baseURL, model string) {
-	preset := presetFor(s.Provider)
-	baseURL = s.BaseURL
-	if baseURL == "" {
-		baseURL = preset.BaseURL
+// sttBackend is a voice.stt entry resolved against the provider it names.
+type sttBackend struct {
+	name, apiKey, baseURL, model string
+}
+
+// CanTranscribe reports whether a provider can serve speech-to-text: it speaks
+// an OpenAI-compatible protocol and has a base URL to send audio to.
+func CanTranscribe(p *config.Provider) bool {
+	return isOpenAIProtocol(p.Protocol) && p.BaseURL != ""
+}
+
+func isOpenAIProtocol(protocol string) bool {
+	return protocol == "openai-chat" || protocol == "openai-responses"
+}
+
+// resolveSTT resolves an entry to the provider it names (Config.GetProvider,
+// matched case-sensitively). The endpoint and key are the provider's; the
+// model is the entry's, or the default for the provider's host. A non-empty
+// skip is the reason the entry cannot be used.
+func resolveSTT(cfg *config.Config, s *config.STTProvider) (b sttBackend, skip string) {
+	p, err := cfg.GetProvider(s.Provider)
+	if err != nil {
+		return b, "provider not configured"
 	}
-	model = s.Model
-	if model == "" {
-		model = preset.Model
-	}
-	apiKey = s.APIKey
-	if apiKey != "" {
-		return apiKey, baseURL, model
-	}
-	if host := urlHost(baseURL); host != "" {
-		for i := range cfg.Providers {
-			p := &cfg.Providers[i]
-			if p.APIKey != "" && urlHost(p.BaseURL) == host {
-				return p.APIKey, baseURL, model
-			}
+	if !CanTranscribe(p) {
+		if p.BaseURL == "" && isOpenAIProtocol(p.Protocol) {
+			return b, "provider has no base URL"
 		}
+		return b, "provider protocol is not OpenAI-compatible"
 	}
-	return "", baseURL, model
+	if p.APIKey == "" {
+		return b, "provider has no API key"
+	}
+	model := s.Model
+	if model == "" {
+		model = DefaultSTTModel(p.BaseURL)
+	}
+	if model == "" {
+		return b, "no model set and no default for this endpoint"
+	}
+	// The name carries the model so two backends on one provider can be told
+	// apart in the log, the report's chain and the rejected-key alert.
+	return sttBackend{name: p.Name + " (" + model + ")", apiKey: p.APIKey, baseURL: p.BaseURL, model: model}, ""
+}
+
+// skippedSTT is an enabled voice.stt entry that resolveSTT could not use.
+type skippedSTT struct {
+	provider, reason string
+}
+
+// alertSkipped raises one alert per skipped entry, urgent when none is usable
+// (transcription is off) and normal when another entry still serves.
+func alertSkipped(a alerter.Alerter, skipped []skippedSTT, noneUsable bool) {
+	if a == nil {
+		return
+	}
+	priority := alerter.Normal
+	if noneUsable {
+		priority = alerter.Urgent
+	}
+	for _, s := range skipped {
+		a.Send(alerter.Alert{
+			Priority:    priority,
+			Title:       "Speech backend not usable",
+			Description: fmt.Sprintf("%s: %s; voice messages are not transcribed by this backend until it is fixed", s.provider, s.reason),
+			EventID:     "voice:config:" + s.provider,
+		})
+	}
 }
 
 // fallbackTranscriber tries an ordered list of transcribers, moving to the next
@@ -451,8 +470,8 @@ func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath stri
 }
 
 // DetectTranscriber builds the transcription backend from the enabled voice.stt
-// entries (each usable when it has its own key or can borrow one from a matching
-// provider). Multiple enabled entries form an ordered fallback chain, tried in
+// entries (each usable when it names a configured OpenAI-compatible provider with a base
+// URL and an API key, and has a model or a default for that host). Multiple enabled entries form an ordered fallback chain, tried in
 // listed order. No enabled entry means transcription is off. The result raises
 // no operator alerts; the gateway uses DetectTranscriberWithAlerter.
 func DetectTranscriber(cfg *config.Config) Transcriber {
@@ -460,28 +479,28 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 }
 
 // DetectTranscriberWithAlerter is DetectTranscriber with an alerter that
-// receives the alert raised when a provider rejects the key or account.
+// receives the alert raised when a provider rejects the key or account, and
+// one alert per enabled entry that is skipped as unusable: urgent when no
+// entry is usable (transcription is off), normal when another one is.
 func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
+	var skipped []skippedSTT
 	for i := range cfg.Voice.STT {
 		s := &cfg.Voice.STT[i]
 		if !s.Enabled {
 			continue
 		}
-		apiKey, baseURL, model := resolveSTTCredentials(cfg, s)
-		if apiKey == "" {
-			continue
-		}
-		// A provider with no preset (custom) has no default endpoint or model;
-		// it is never silently sent to another provider's.
-		if baseURL == "" || model == "" {
-			logger.WarnCF("voice", "Speech backend skipped: no endpoint or model", map[string]any{
-				"provider": s.Provider, "has_base_url": baseURL != "", "has_model": model != "",
+		b, skip := resolveSTT(cfg, s)
+		if skip != "" {
+			logger.WarnCF("voice", "Speech backend skipped: "+skip, map[string]any{
+				"provider": s.Provider, "reason": skip,
 			})
+			skipped = append(skipped, skippedSTT{provider: s.Provider, reason: skip})
 			continue
 		}
-		chain = append(chain, NewTranscriber(s.Provider, apiKey, baseURL, model, a))
+		chain = append(chain, NewTranscriber(b.name, b.apiKey, b.baseURL, b.model, a))
 	}
+	alertSkipped(a, skipped, len(chain) == 0)
 	switch len(chain) {
 	case 0:
 		return nil

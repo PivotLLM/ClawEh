@@ -656,8 +656,6 @@
       {
         "provider": "x",
         "enabled": true,
-        "api_key": "x",
-        "base_url": "x",
         "model": "x"
       }
     ]
@@ -732,6 +730,9 @@
       "call_timeout_seconds": 1,
       "max_parallel_calls": 1
     }
+  },
+  "operator": {
+    "name": "x"
   },
   "default_config": true,
   "config_reload_interval_seconds": 1

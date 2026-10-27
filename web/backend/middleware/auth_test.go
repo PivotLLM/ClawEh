@@ -188,6 +188,20 @@ func TestAuthStore_IdleAndAbsoluteExpiry(t *testing.T) {
 	}
 }
 
+func TestAuthStore_Username(t *testing.T) {
+	path := admin.Path(t.TempDir())
+	s := NewAuthStore(path)
+	if got := s.Username(); got != "" {
+		t.Fatalf("Username() with no credentials file = %q, want empty", got)
+	}
+	if err := admin.Write(path, "bob", testPass); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Username(); got != "bob" {
+		t.Fatalf("Username() after the account was written = %q, want %q", got, "bob")
+	}
+}
+
 func TestAuthStore_ReloadRevokesOnChange(t *testing.T) {
 	path := writeCreds(t)
 	s := NewAuthStore(path)

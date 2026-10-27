@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
+  type AgentOption,
   type DeviceStatus,
   type PairedDevice,
   approveDevice,
@@ -17,6 +18,8 @@ import {
   regenerateWordToken,
   rejectDevice,
   removeDevice,
+  setDeviceAgents,
+  setDeviceUser,
 } from "@/api/devices"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -27,7 +30,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   Tooltip,
   TooltipContent,
@@ -61,6 +67,173 @@ async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// DeviceUserField edits the name the assistant is told a device's messages come
+// from. Saved on blur or Enter; an empty field shows what will be used instead.
+function DeviceUserField({
+  device,
+  onSave,
+}: {
+  device: PairedDevice
+  onSave: (userName: string) => Promise<unknown>
+}) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState<string | null>(null)
+  const id = `device-user-${device.device_id}`
+  const commit = () => {
+    if (draft === null) return
+    const name = draft.trim()
+    if (name === device.user_name) {
+      setDraft(null)
+      return
+    }
+    void onSave(name).finally(() => setDraft(null))
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Label htmlFor={id}>{t("pages.devices.user_label")}</Label>
+        <Input
+          id={id}
+          data-testid="device-user"
+          className="h-8 w-40"
+          value={draft ?? device.user_name}
+          placeholder={device.user_default || device.display_name}
+          aria-describedby={`${id}-hint`}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commit()
+            }
+          }}
+          onBlur={commit}
+        />
+      </div>
+      <p id={`${id}-hint`} className="text-muted-foreground text-xs">
+        {t("pages.devices.user_hint")}
+      </p>
+    </div>
+  )
+}
+
+// DeviceAgentsField limits a device to a subset of the assistants: All, or
+// Selected with one checkbox per assistant. Every change saves at once, except
+// a Selected set with nothing checked, which would mean All and is not saved.
+// The controls are disabled while a save is in flight (saving = true), so a
+// second change cannot be built from a stale list.
+function DeviceAgentsField({
+  device,
+  agents,
+  saving,
+  onSave,
+}: {
+  device: PairedDevice
+  agents: AgentOption[]
+  saving: boolean
+  onSave: (allowedAgents: string[]) => Promise<unknown>
+}) {
+  const { t } = useTranslation()
+  // Selected chosen before anything is checked (null = as stored).
+  const [selectedOverride, setSelectedOverride] = useState<boolean | null>(null)
+  // The set being edited while a save is in flight (null = as stored).
+  const [draft, setDraft] = useState<string[] | null>(null)
+  const stored = device.allowed_agents ?? []
+  const selected = selectedOverride ?? stored.length > 0
+  const checked = draft ?? stored
+  const allId = `device-agents-all-${device.device_id}`
+  const selectedId = `device-agents-selected-${device.device_id}`
+  // Configured assistants first, then any stored id that no longer is one.
+  const rows = [
+    ...agents.map((a) => ({ id: a.id, label: a.name || a.id, found: true })),
+    ...stored
+      .filter((id) => !agents.some((a) => a.id === id))
+      .map((id) => ({ id, label: id, found: false })),
+  ]
+  const settle = () => {
+    setDraft(null)
+    setSelectedOverride(null)
+  }
+  const pickMode = (mode: string) => {
+    if (mode === "selected") {
+      setSelectedOverride(true)
+      return
+    }
+    setDraft(null)
+    setSelectedOverride(false)
+    if (stored.length > 0) void onSave([]).finally(settle)
+    else setSelectedOverride(null)
+  }
+  const toggle = (id: string, on: boolean) => {
+    const next = on
+      ? [...checked.filter((x) => x !== id), id]
+      : checked.filter((x) => x !== id)
+    setDraft(next)
+    if (next.length === 0) return
+    void onSave(next).finally(settle)
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-3">
+        <Label>{t("pages.devices.agents_label")}</Label>
+        <RadioGroup
+          value={selected ? "selected" : "all"}
+          onValueChange={pickMode}
+          disabled={saving}
+          className="flex gap-3"
+          data-testid="device-agents"
+        >
+          <div className="flex items-center gap-1.5">
+            <RadioGroupItem value="all" id={allId} />
+            <Label htmlFor={allId} className="font-normal">
+              {t("pages.devices.agents_all")}
+            </Label>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <RadioGroupItem value="selected" id={selectedId} />
+            <Label htmlFor={selectedId} className="font-normal">
+              {t("pages.devices.agents_selected")}
+            </Label>
+          </div>
+        </RadioGroup>
+      </div>
+      {selected && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {rows.map((r) => {
+            const id = `device-agent-${device.device_id}-${r.id}`
+            return (
+              <div key={r.id} className="flex items-center gap-1.5">
+                <Checkbox
+                  id={id}
+                  checked={checked.includes(r.id)}
+                  disabled={saving}
+                  onCheckedChange={(v) => toggle(r.id, v === true)}
+                />
+                <Label htmlFor={id} className="text-xs font-normal">
+                  {r.label}
+                  {!r.found && (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      {t("pages.devices.agent_not_found")}
+                    </span>
+                  )}
+                </Label>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {selected && checked.length === 0 && (
+        <p
+          data-testid="device-agents-choose-one"
+          className="text-xs text-amber-600 dark:text-amber-400"
+        >
+          {t("pages.devices.agents_choose_one")}
+        </p>
+      )}
+    </div>
+  )
 }
 
 export function DevicesPage() {
@@ -135,6 +308,30 @@ export function DevicesPage() {
     onSuccess: () => {
       toast.success("Assistant updated")
       refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const setUserMut = useMutation({
+    mutationFn: ({ id, userName }: { id: string; userName: string }) =>
+      setDeviceUser(id, userName),
+    onSuccess: () => {
+      toast.success("User updated")
+      refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const setAgentsMut = useMutation({
+    mutationFn: ({ id, agents }: { id: string; agents: string[] }) =>
+      setDeviceAgents(id, agents),
+    onSuccess: () => {
+      toast.success("Assistants updated")
+      void qc.invalidateQueries({ queryKey: ["device-status"] })
+      void qc.invalidateQueries({ queryKey: ["device-pending"] })
+      // Resolve only once the fresh list is in, so the field's draft is not
+      // cleared against stale data.
+      return qc.invalidateQueries({ queryKey: ["device-paired"] })
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -379,47 +576,78 @@ export function DevicesPage() {
                         </p>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {d.client_mode === "node" ? (
-                        <select
-                          className="border-border bg-background rounded border px-2 py-1 text-sm"
-                          aria-label="Assistant"
-                          value={d.agent_ref ?? d.agent_id}
-                          disabled={assignAgentMut.isPending}
-                          onChange={(e) =>
-                            assignAgentMut.mutate({
-                              id: d.device_id,
-                              agentId: e.target.value,
-                            })
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2">
+                        <DeviceUserField
+                          device={d}
+                          onSave={(userName) =>
+                            setUserMut
+                              .mutateAsync({ id: d.device_id, userName })
+                              .catch(() => undefined)
                           }
+                        />
+                        {d.client_mode === "node" ? (
+                          <select
+                            className="border-border bg-background rounded border px-2 py-1 text-sm"
+                            aria-label="Assistant"
+                            value={d.agent_ref ?? d.agent_id}
+                            disabled={assignAgentMut.isPending}
+                            onChange={(e) =>
+                              assignAgentMut.mutate({
+                                id: d.device_id,
+                                agentId: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">
+                              {t("pages.devices.default_assistant")}
+                            </option>
+                            {d.agent_state === "not_found" && (
+                              <option value={d.agent_ref ?? d.agent_id}>
+                                {d.agent_id}
+                              </option>
+                            )}
+                            {agentOptions.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">
+                            assistant chosen in app
+                          </span>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => removeMut.mutate(d.device_id)}
+                          disabled={removeMut.isPending}
                         >
-                          <option value="">
-                            {t("pages.devices.default_assistant")}
-                          </option>
-                          {d.agent_state === "not_found" && (
-                            <option value={d.agent_ref ?? d.agent_id}>
-                              {d.agent_id}
-                            </option>
-                          )}
-                          {agentOptions.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">
-                          assistant chosen in app
-                        </span>
+                          Remove
+                        </Button>
+                      </div>
+                      {d.agent_allowed === false && (
+                        <p
+                          data-testid="device-agent-not-allowed"
+                          className="text-xs text-amber-600 dark:text-amber-400"
+                        >
+                          {t("pages.devices.agent_not_allowed")}
+                        </p>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => removeMut.mutate(d.device_id)}
-                        disabled={removeMut.isPending}
-                      >
-                        Remove
-                      </Button>
+                      <DeviceAgentsField
+                        device={d}
+                        agents={agentOptions}
+                        saving={
+                          setAgentsMut.isPending &&
+                          setAgentsMut.variables?.id === d.device_id
+                        }
+                        onSave={(agents) =>
+                          setAgentsMut
+                            .mutateAsync({ id: d.device_id, agents })
+                            .catch(() => undefined)
+                        }
+                      />
                     </div>
                   </li>
                 ))}
