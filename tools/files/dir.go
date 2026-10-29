@@ -84,7 +84,7 @@ func NewRmdirToolScoped(workspace string, restrict bool, writeSubdir string, all
 func (t *RmdirTool) Name() string { return "file_rmdir" }
 
 func (t *RmdirTool) Description() string {
-	return "Remove a folder (folders only; delete files with file_delete). Requires sure=true. Removes only an empty folder unless recursive=true. Makes no backup, and refuses to remove backup files (<name>.NNNN)."
+	return "Remove a folder (folders only; delete files with file_delete), or a link (the link itself is removed, its target is not touched). Requires sure=true. Removes only an empty folder unless recursive=true. Makes no backup, and refuses to remove backup files (<name>.NNNN)."
 }
 
 func (t *RmdirTool) Parameters() map[string]any {
@@ -107,22 +107,26 @@ func (t *RmdirTool) Execute(_ context.Context, args map[string]any) *tools.ToolR
 	if !getBoolArg(args, "sure", false) {
 		return errResult(tools.Refusal(errors.New("refusing to remove: pass sure=true to confirm removing " + path)))
 	}
-	if err := checkWrite(t.sysFs, path); err != nil {
-		return errResult(err)
-	}
 	if isRoot(t.sysFs, path) {
 		return errResult(tools.Refusal(errors.New("refusing to remove a top-level folder (the write folder or a mount): " + path)))
+	}
+	// A link is removed itself, whatever it points to; its target is not
+	// touched. Remove checks the link's folder, not where the link leads.
+	if linkInfo, err := t.sysFs.Lstat(path); err == nil && linkInfo.Mode()&fs.ModeSymlink != 0 {
+		if backupFilePattern.MatchString(filepath.Base(path)) {
+			return errResult(tools.Refusal(errors.New("refusing to remove a backup file (<name>.NNNN): " + path)))
+		}
+		if err := t.sysFs.Remove(path); err != nil {
+			return errResult(err)
+		}
+		return tools.SilentResult(linkRemovedMsg(path))
+	}
+	if err := checkWrite(t.sysFs, path); err != nil {
+		return errResult(err)
 	}
 	info, statErr := t.sysFs.Stat(path)
 	if statErr != nil {
 		return errResult(statErr)
-	}
-	// A link to a folder is removed itself; the folder it points to is kept.
-	if linkInfo, err := t.sysFs.Lstat(path); err == nil && linkInfo.Mode()&fs.ModeSymlink != 0 && info.IsDir() {
-		if err := t.sysFs.Remove(path); err != nil {
-			return errResult(err)
-		}
-		return tools.SilentResult("Link removed: " + path + " (the folder it points to was kept)")
 	}
 	if !info.IsDir() {
 		return errResult(tools.Refusal(errors.New("path is a file; file_rmdir removes folders only, use file_delete for files: " + path)))
@@ -156,15 +160,23 @@ func (t *RmdirTool) Execute(_ context.Context, args map[string]any) *tools.ToolR
 			return errResult(err)
 		}
 	}
+	// A link is removed as a link, so it is not checked where it leads; its
+	// folder is checked with the others below.
+	for _, l := range tree.links {
+		if backupFilePattern.MatchString(filepath.Base(l)) {
+			return errResult(tools.Refusal(errors.New("refusing to remove: the folder contains a backup file (<name>.NNNN): " + filepath.Join(path, l))))
+		}
+	}
 	for _, d := range tree.dirs {
 		if err := checkWrite(t.sysFs, filepath.Join(path, d)); err != nil {
 			return errResult(err)
 		}
 	}
 
-	// Files first, then folders deepest first, then the folder itself.
-	victims := make([]string, 0, len(tree.files)+len(tree.dirs)+1)
+	// Files and links first, then folders deepest first, then the folder itself.
+	victims := make([]string, 0, len(tree.files)+len(tree.links)+len(tree.dirs)+1)
 	victims = append(victims, tree.files...)
+	victims = append(victims, tree.links...)
 	for _, d := range slices.Backward(tree.dirs) {
 		victims = append(victims, d)
 	}
@@ -175,17 +187,18 @@ func (t *RmdirTool) Execute(_ context.Context, args map[string]any) *tools.ToolR
 				i, len(victims), path, filepath.Join(path, v), err)).WithError(err)
 		}
 	}
-	return tools.SilentResult(fmt.Sprintf("Folder removed: %s (%d files)", path, len(tree.files)))
+	return tools.SilentResult(fmt.Sprintf("Folder removed: %s (%d files)", path, len(tree.files)+len(tree.links)))
 }
 
 // dirTree lists what is under a folder, by path relative to that folder.
 type dirTree struct {
 	dirs  []string // parents before their children
-	files []string // everything that is not a folder, links included
+	files []string // everything that is neither a folder nor a link
+	links []string // links, whatever they point to
 }
 
 // walkTree lists the tree under root through fsys, so every layer's path
-// policy applies to every entry. Links are listed as files, not followed.
+// policy applies to every entry. Links are listed apart and not followed.
 func walkTree(fsys fileSystem, root string) (dirTree, error) {
 	var tree dirTree
 	var walk func(rel string) error
@@ -196,6 +209,10 @@ func walkTree(fsys fileSystem, root string) (dirTree, error) {
 		}
 		for _, e := range entries {
 			child := filepath.Join(rel, e.Name())
+			if e.Type()&fs.ModeSymlink != 0 {
+				tree.links = append(tree.links, child)
+				continue
+			}
 			if !e.IsDir() {
 				tree.files = append(tree.files, child)
 				continue
@@ -260,6 +277,9 @@ func (t *MoveFileTool) moveDir(src, dst string, overwrite bool) *tools.ToolResul
 	tree, err := walkTree(t.sysFs, src)
 	if err != nil {
 		return errResult(err)
+	}
+	if len(tree.links) > 0 {
+		return errResult(linkMoveRefusal(filepath.Join(src, tree.links[0])))
 	}
 
 	// Pre-flight: the rest of the source must be removable and the rest of the

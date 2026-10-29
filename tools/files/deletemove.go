@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 
@@ -15,6 +16,18 @@ import (
 // wipe the safety net. (A legitimate file ending in .NNNN is conservatively
 // protected too — rename it first if it genuinely must be deleted.)
 var backupFilePattern = regexp.MustCompile(`\.\d{4}$`)
+
+// linkRemovedMsg is the result of file_delete and file_rmdir removing a link.
+func linkRemovedMsg(path string) string {
+	return "Link removed: " + path + " (its target was not touched)"
+}
+
+// linkMoveRefusal is file_move's refusal for a link, as the source or inside a
+// source folder: a link cannot be recreated at the destination, and copying
+// what it points to would bring in content from elsewhere.
+func linkMoveRefusal(path string) error {
+	return tools.Refusal(errors.New("refusing to move: file_move cannot move a link: " + path))
+}
 
 // DeleteFileTool deletes a whole file. A required sure=true guards against
 // accidental deletion; it makes no backup and refuses to delete backup files.
@@ -33,7 +46,7 @@ func NewDeleteFileToolScoped(workspace string, restrict bool, writeSubdir string
 func (t *DeleteFileTool) Name() string { return "file_delete" }
 
 func (t *DeleteFileTool) Description() string {
-	return "Delete a file (files only; remove folders with file_rmdir). Requires sure=true. Makes no backup, and refuses to delete backup files (<name>.NNNN)."
+	return "Delete a file (files only; remove folders with file_rmdir), or a link (the link itself is removed, its target is not touched). Requires sure=true. Makes no backup, and refuses to delete backup files (<name>.NNNN)."
 }
 
 func (t *DeleteFileTool) Parameters() map[string]any {
@@ -57,6 +70,14 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 	}
 	if backupFilePattern.MatchString(filepath.Base(path)) {
 		return errResult(tools.Refusal(errors.New("refusing to delete a backup file (<name>.NNNN): " + path)))
+	}
+	// A link is removed itself, whatever it points to (a file, a folder or
+	// nothing); its target is not touched.
+	if linkInfo, err := t.sysFs.Lstat(path); err == nil && linkInfo.Mode()&fs.ModeSymlink != 0 {
+		if err := t.sysFs.Remove(path); err != nil {
+			return errResult(err)
+		}
+		return tools.SilentResult(linkRemovedMsg(path))
 	}
 	info, err := t.sysFs.Stat(path)
 	if err != nil {
@@ -124,6 +145,10 @@ func (t *MoveFileTool) Execute(_ context.Context, args map[string]any) *tools.To
 	}
 	overwrite := getBoolArg(args, "overwrite", false)
 
+	// Checked before any copy: copying a link would copy what it points to.
+	if info, err := t.sysFs.Lstat(src); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return errResult(linkMoveRefusal(src))
+	}
 	if info, err := t.sysFs.Stat(src); err == nil && info.IsDir() {
 		return t.moveDir(src, dst, overwrite)
 	}

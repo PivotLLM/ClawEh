@@ -37,8 +37,10 @@ observe does not need an entry.
   area.** Previously a link inside `files/` pointing elsewhere in the workspace
   (e.g. `files/link -> ../skills`) let `file_write`, `file_delete`,
   `file_rmdir`, `file_move` and the other write tools change files outside
-  `files/`. Links that stay inside `files/` still work, and `file_rmdir` on a
-  link to a folder removes only the link.
+  `files/`. Links that stay inside `files/` still work. `file_delete` and
+  `file_rmdir` remove a link as a link, wherever it points (or if it points
+  nowhere), and never touch its target; `file_move` refuses a link, or a
+  folder that contains one.
 
 ## [0.6.1]
 

@@ -1381,8 +1381,10 @@ type writeScopedFs struct {
 }
 
 // writeAllowed reports whether a write to path is permitted: either the path
-// matches a whitelisted host pattern, or it resolves within writeRoot.
-func (w *writeScopedFs) writeAllowed(path string) error {
+// matches a whitelisted host pattern, or it resolves within writeRoot. With
+// parentOnly, links are resolved in the parent of path only, not in its last
+// component: removing a link removes the link, not what it points to.
+func (w *writeScopedFs) writeAllowed(path string, parentOnly bool) error {
 	for _, p := range w.patterns {
 		if p.MatchString(path) {
 			return nil
@@ -1407,6 +1409,9 @@ func (w *writeScopedFs) writeAllowed(path string) error {
 	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
 		return tools.Refusal(fmt.Errorf("write denied: outside %s", w.writeRoot))
 	}
+	if parentOnly {
+		return w.resolvedWithinRoot(path, filepath.Dir(absPath), absRoot)
+	}
 	return w.resolvedWithinRoot(path, absPath, absRoot)
 }
 
@@ -1414,8 +1419,8 @@ func (w *writeScopedFs) writeAllowed(path string) error {
 // (a -> b, b -> a) is refused instead of followed forever.
 const maxLinkHops = 40
 
-// resolvedWithinRoot refuses a write to absPath (which is lexically inside
-// absRoot) when, with links resolved, it lands outside the write folder. The
+// resolvedWithinRoot refuses a write to path when absPath (path itself, or its
+// parent) lands outside the write folder with links resolved. The
 // sandbox below follows links that stay inside the workspace, so without this
 // check a link such as files/link -> ../skills would let writes reach skills/.
 func (w *writeScopedFs) resolvedWithinRoot(path, absPath, absRoot string) error {
@@ -1526,7 +1531,7 @@ func splitPath(p string) []string {
 // CheckWrite refuses a write to path that writeAllowed, or a layer below,
 // would refuse.
 func (w *writeScopedFs) CheckWrite(path string) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return checkWrite(w.inner, path)
@@ -1553,14 +1558,14 @@ func (w *writeScopedFs) Lstat(path string) (os.FileInfo, error) {
 }
 
 func (w *writeScopedFs) Remove(path string) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, true); err != nil {
 		return err
 	}
 	return w.inner.Remove(path)
 }
 
 func (w *writeScopedFs) MkdirAll(path string) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.MkdirAll(path)
@@ -1583,21 +1588,21 @@ func (w *writeScopedFs) isRoot(path string) bool {
 }
 
 func (w *writeScopedFs) WriteFile(path string, data []byte) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFile(path, data)
 }
 
 func (w *writeScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFileMode(path, data, mode)
 }
 
 func (w *writeScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFileExclMode(path, data, mode)

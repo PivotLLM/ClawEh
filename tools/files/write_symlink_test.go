@@ -39,14 +39,8 @@ func TestWriteScoped_LinkOutOfWriteFolderRefused(t *testing.T) {
 		{"file_delete through the link", func(ws string) *tools.ToolResult {
 			return NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link/s/skill.md", "sure": true})
 		}},
-		{"file_rmdir recursive on the link", func(ws string) *tools.ToolResult {
-			return NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true, "recursive": true})
-		}},
 		{"file_rmdir recursive below the link", func(ws string) *tools.ToolResult {
 			return NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link/s", "sure": true, "recursive": true})
-		}},
-		{"file_move with the link as source", func(ws string) *tools.ToolResult {
-			return NewMoveFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"source_path": "files/link", "destination_path": "files/moved"})
 		}},
 		{"file_mkdir through the link", func(ws string) *tools.ToolResult {
 			return NewMkdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link/new"})
@@ -138,6 +132,164 @@ func TestWriteScoped_LinkTargetDotDotRefused(t *testing.T) {
 			}
 			mustNotExist(t, filepath.Join(ws, "skills", "x"))
 			mustNotExist(t, filepath.Join(ws, "skills", "new"))
+		})
+	}
+}
+
+// Removing a link removes the link only, so file_delete and file_rmdir remove
+// a link in files/ whatever it points to, and leave its target alone.
+func TestWriteScoped_LinkRemovedAsLink(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		target string // relative to files/
+		run    func(ws string) *tools.ToolResult
+	}{
+		{"file_delete of a link to a folder outside", "../skills", func(ws string) *tools.ToolResult {
+			return NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true})
+		}},
+		{"file_delete of a link to a file outside", "../skills/s/skill.md", func(ws string) *tools.ToolResult {
+			return NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true})
+		}},
+		{"file_rmdir of a link to a folder outside", "../skills", func(ws string) *tools.ToolResult {
+			return NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true})
+		}},
+		{"file_rmdir recursive of a link to a folder outside", "../skills", func(ws string) *tools.ToolResult {
+			return NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true, "recursive": true})
+		}},
+		{"file_delete of a dangling link", "missing", func(ws string) *tools.ToolResult {
+			return NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true})
+		}},
+		{"file_rmdir of a dangling link", "missing", func(ws string) *tools.ToolResult {
+			return NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": true})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			mkTree(t, ws, map[string]string{"skills/s/skill.md": "skill", "files/keep.txt": "k"})
+			link := filepath.Join(ws, "files", "link")
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+			res := tc.run(ws)
+			if res.IsError || !contains(res.ForLLM, "Link removed: files/link (its target was not touched)") {
+				t.Fatalf("want the link removed, got IsError=%v: %s", res.IsError, res.ForLLM)
+			}
+			if _, err := os.Lstat(link); !os.IsNotExist(err) {
+				t.Fatalf("link should be gone (err=%v)", err)
+			}
+			mustRead(t, filepath.Join(ws, "skills", "s", "skill.md"), "skill")
+			mustRead(t, filepath.Join(ws, "files", "keep.txt"), "k")
+		})
+	}
+}
+
+func TestWriteScoped_LinkDeleteNeedsSure(t *testing.T) {
+	ws, skill := linkedWorkspace(t)
+	ctx := context.Background()
+	for _, res := range []*tools.ToolResult{
+		NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": false}),
+		NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/link", "sure": false}),
+	} {
+		if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
+			t.Fatalf("want a refusal without sure=true, got IsError=%v: %s", res.IsError, res.ForLLM)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(ws, "files", "link")); err != nil {
+		t.Fatalf("link should still be there: %v", err)
+	}
+	mustRead(t, skill, "skill")
+}
+
+func TestWriteScoped_LinkWithBackupNameRefused(t *testing.T) {
+	ws, skill := linkedWorkspace(t)
+	link := filepath.Join(ws, "files", "notes.0001")
+	if err := os.Symlink("keep.txt", link); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, res := range []*tools.ToolResult{
+		NewDeleteFileToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/notes.0001", "sure": true}),
+		NewRmdirToolScoped(ws, true, "files").Execute(ctx, map[string]any{"path": "files/notes.0001", "sure": true}),
+	} {
+		if !res.IsError || !tools.IsExpectedRefusal(res.Err) || !contains(res.ForLLM, "backup file") {
+			t.Fatalf("want a backup-name refusal, got IsError=%v: %s", res.IsError, res.ForLLM)
+		}
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("link should still be there: %v", err)
+	}
+	mustRead(t, skill, "skill")
+}
+
+func TestWriteScoped_RmdirTreeWithOutwardLink(t *testing.T) {
+	ws := t.TempDir()
+	mkTree(t, ws, map[string]string{"skills/s/skill.md": "skill", "files/dir/a.txt": "a", "files/dir/sub/b.txt": "b"})
+	if err := os.Symlink(filepath.Join("..", "..", "..", "skills"), filepath.Join(ws, "files", "dir", "sub", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("gone", filepath.Join(ws, "files", "dir", "dangling")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := NewRmdirToolScoped(ws, true, "files").Execute(context.Background(), map[string]any{"path": "files/dir", "sure": true, "recursive": true})
+	if res.IsError {
+		t.Fatalf("rmdir of a folder holding links: %s", res.ForLLM)
+	}
+	mustNotExist(t, filepath.Join(ws, "files", "dir"))
+	mustRead(t, filepath.Join(ws, "skills", "s", "skill.md"), "skill")
+}
+
+func TestWriteScoped_MoveFolderWithLinkRefused(t *testing.T) {
+	ws := t.TempDir()
+	mkTree(t, ws, map[string]string{"skills/s/skill.md": "skill", "files/dir/a.txt": "a"})
+	if err := os.Symlink(filepath.Join("..", "..", "skills"), filepath.Join(ws, "files", "dir", "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := NewMoveFileToolScoped(ws, true, "files").Execute(context.Background(), map[string]any{"source_path": "files/dir", "destination_path": "files/moved"})
+	if !res.IsError || !tools.IsExpectedRefusal(res.Err) || !contains(res.ForLLM, "files/dir/link") {
+		t.Fatalf("want a refusal naming the link, got IsError=%v: %s", res.IsError, res.ForLLM)
+	}
+	mustNotExist(t, filepath.Join(ws, "files", "moved"))
+	mustRead(t, filepath.Join(ws, "files", "dir", "a.txt"), "a")
+	if _, err := os.Lstat(filepath.Join(ws, "files", "dir", "link")); err != nil {
+		t.Fatalf("link should still be there: %v", err)
+	}
+	mustRead(t, filepath.Join(ws, "skills", "s", "skill.md"), "skill")
+}
+
+// file_move refuses a link as its source, before any copy, wherever it points.
+func TestWriteScoped_MoveLinkSourceRefused(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string // relative to files/
+	}{
+		{"link to a file inside files", "real.txt"},
+		{"link to a folder inside files", "realdir"},
+		{"link to a folder outside files", "../skills"},
+		{"dangling link", "missing"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			mkTree(t, ws, map[string]string{"skills/s/skill.md": "skill", "files/real.txt": "r", "files/realdir/a.txt": "a"})
+			link := filepath.Join(ws, "files", "link")
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+			res := NewMoveFileToolScoped(ws, true, "files").Execute(context.Background(), map[string]any{"source_path": "files/link", "destination_path": "files/moved"})
+			if !res.IsError || !tools.IsExpectedRefusal(res.Err) || !contains(res.ForLLM, "file_move cannot move a link: files/link") {
+				t.Fatalf("want a refusal naming the link, got IsError=%v: %s", res.IsError, res.ForLLM)
+			}
+			mustNotExist(t, filepath.Join(ws, "files", "moved"))
+			if _, err := os.Lstat(link); err != nil {
+				t.Fatalf("link should still be there: %v", err)
+			}
+			mustRead(t, filepath.Join(ws, "files", "real.txt"), "r")
+			mustRead(t, filepath.Join(ws, "files", "realdir", "a.txt"), "a")
+			mustRead(t, filepath.Join(ws, "skills", "s", "skill.md"), "skill")
 		})
 	}
 }
