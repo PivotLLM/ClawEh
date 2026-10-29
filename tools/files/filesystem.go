@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
@@ -730,6 +732,8 @@ type fileSystem interface {
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
+	// Lstat is Stat without following a link in the final component.
+	Lstat(path string) (os.FileInfo, error)
 	Remove(path string) error
 	// MkdirAll creates the folder at path and any missing parents; an existing
 	// folder is not an error.
@@ -863,6 +867,10 @@ func discardPartial(f *os.File, remove func(string) error, path string) {
 
 func (h *hostFs) Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
+}
+
+func (h *hostFs) Lstat(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
@@ -1032,6 +1040,19 @@ func (r *sandboxFs) Stat(path string) (os.FileInfo, error) {
 	return info, err
 }
 
+func (r *sandboxFs) Lstat(path string) (os.FileInfo, error) {
+	var info os.FileInfo
+	err := r.execute(path, func(root *os.Root, relPath string) error {
+		fi, err := root.Lstat(relPath)
+		if err != nil {
+			return err
+		}
+		info = fi
+		return nil
+	})
+	return info, err
+}
+
 func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
 	var entries []os.DirEntry
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -1143,6 +1164,13 @@ func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
 		return w.host.Stat(path)
 	}
 	return w.sandbox.Stat(path)
+}
+
+func (w *whitelistFs) Lstat(path string) (os.FileInfo, error) {
+	if w.matches(path) {
+		return w.host.Lstat(path)
+	}
+	return w.sandbox.Lstat(path)
 }
 
 func (w *whitelistFs) ReadDir(path string) ([]os.DirEntry, error) {
@@ -1291,6 +1319,13 @@ func (r *readScopedFs) Stat(path string) (os.FileInfo, error) {
 	return r.inner.Stat(path)
 }
 
+func (r *readScopedFs) Lstat(path string) (os.FileInfo, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Lstat(path)
+}
+
 func (r *readScopedFs) WriteFile(path string, data []byte) error {
 	return r.inner.WriteFile(path, data)
 }
@@ -1372,7 +1407,120 @@ func (w *writeScopedFs) writeAllowed(path string) error {
 	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
 		return tools.Refusal(fmt.Errorf("write denied: outside %s", w.writeRoot))
 	}
+	return w.resolvedWithinRoot(path, absPath, absRoot)
+}
+
+// maxLinkHops bounds how many links resolveInWorkspace follows, so a loop
+// (a -> b, b -> a) is refused instead of followed forever.
+const maxLinkHops = 40
+
+// resolvedWithinRoot refuses a write to absPath (which is lexically inside
+// absRoot) when, with links resolved, it lands outside the write folder. The
+// sandbox below follows links that stay inside the workspace, so without this
+// check a link such as files/link -> ../skills would let writes reach skills/.
+func (w *writeScopedFs) resolvedWithinRoot(path, absPath, absRoot string) error {
+	absWorkspace, err := filepath.Abs(w.workspace)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	relPath, err := filepath.Rel(absWorkspace, absPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve file path: %w", err)
+	}
+	relRoot, err := filepath.Rel(absWorkspace, absRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve write root: %w", err)
+	}
+
+	root, err := os.OpenRoot(absWorkspace)
+	if err != nil {
+		return fmt.Errorf("failed to open workspace: %w", err)
+	}
+	defer utils.CloseQuietly(root)
+
+	outside := tools.Refusal(fmt.Errorf("write denied: %s resolves outside %s", path, w.writeRoot))
+	resolvedRoot, ok, err := resolveInWorkspace(root, relRoot)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return outside
+	}
+	resolved, ok, err := resolveInWorkspace(root, relPath)
+	if err != nil {
+		return err
+	}
+	if !ok || (resolved != resolvedRoot && !isWithinWorkspace(resolved, resolvedRoot)) {
+		return outside
+	}
 	return nil
+}
+
+// resolveInWorkspace returns rel (a path relative to root) with every link in
+// its existing components resolved; the components from the first missing one
+// on are appended as given. ok is false when resolution leaves root, a link
+// is absolute (os.Root refuses those), or links chain more than maxLinkHops.
+func resolveInWorkspace(root *os.Root, rel string) (resolved string, ok bool, err error) {
+	resolved = "."
+	pending := splitPath(rel)
+	hops := 0
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
+		if c == ".." {
+			if resolved == "." {
+				return "", false, nil
+			}
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, c)
+		info, lerr := root.Lstat(next)
+		if lerr != nil {
+			if errors.Is(lerr, fs.ErrNotExist) || errors.Is(lerr, syscall.ENOTDIR) {
+				// Nothing below a missing component can be a link. A ".." below
+				// it is refused: MkdirAll would create the missing folders and
+				// then follow the ".." into whatever links come after it.
+				if slices.Contains(pending, "..") {
+					return "", false, nil
+				}
+				return filepath.Join(append([]string{next}, pending...)...), true, nil
+			}
+			return "", false, fmt.Errorf("failed to resolve %s: %w", next, lerr)
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		hops++
+		if hops > maxLinkHops {
+			return "", false, nil
+		}
+		target, rerr := root.Readlink(next)
+		if rerr != nil {
+			return "", false, fmt.Errorf("failed to read link %s: %w", next, rerr)
+		}
+		if filepath.IsAbs(target) {
+			return "", false, nil
+		}
+		// A relative target is resolved against the link's folder, which is
+		// where resolved still points.
+		pending = append(splitPath(target), pending...)
+	}
+	return resolved, true, nil
+}
+
+// splitPath splits a relative path into its components, dropping empty and "."
+// ones. It does not clean the path: in a link target such as "l/..", the ".."
+// applies to where the link l leads, not lexically to "l".
+func splitPath(p string) []string {
+	var parts []string
+	for c := range strings.SplitSeq(filepath.ToSlash(p), "/") {
+		if c != "" && c != "." {
+			parts = append(parts, c)
+		}
+	}
+	return parts
 }
 
 // CheckWrite refuses a write to path that writeAllowed, or a layer below,
@@ -1398,6 +1546,10 @@ func (w *writeScopedFs) Open(path string) (fs.File, error) {
 
 func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
 	return w.inner.Stat(path)
+}
+
+func (w *writeScopedFs) Lstat(path string) (os.FileInfo, error) {
+	return w.inner.Lstat(path)
 }
 
 func (w *writeScopedFs) Remove(path string) error {

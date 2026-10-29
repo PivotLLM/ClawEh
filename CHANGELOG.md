@@ -31,6 +31,15 @@ observe does not need an entry.
 - **`file_delete` on a folder points at `file_rmdir`**, and `file_copy` on a
   folder points at `file_move`.
 
+### Fixed
+
+- **File tools refuse writes through a link that leaves the agent's writable
+  area.** Previously a link inside `files/` pointing elsewhere in the workspace
+  (e.g. `files/link -> ../skills`) let `file_write`, `file_delete`,
+  `file_rmdir`, `file_move` and the other write tools change files outside
+  `files/`. Links that stay inside `files/` still work, and `file_rmdir` on a
+  link to a folder removes only the link.
+
 ## [0.6.1]
 
 This release is about voice devices. Audio clips from a device are

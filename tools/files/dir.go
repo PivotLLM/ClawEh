@@ -117,6 +117,13 @@ func (t *RmdirTool) Execute(_ context.Context, args map[string]any) *tools.ToolR
 	if statErr != nil {
 		return errResult(statErr)
 	}
+	// A link to a folder is removed itself; the folder it points to is kept.
+	if linkInfo, err := t.sysFs.Lstat(path); err == nil && linkInfo.Mode()&fs.ModeSymlink != 0 && info.IsDir() {
+		if err := t.sysFs.Remove(path); err != nil {
+			return errResult(err)
+		}
+		return tools.SilentResult("Link removed: " + path + " (the folder it points to was kept)")
+	}
 	if !info.IsDir() {
 		return errResult(tools.Refusal(errors.New("path is a file; file_rmdir removes folders only, use file_delete for files: " + path)))
 	}

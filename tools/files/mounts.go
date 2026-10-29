@@ -202,6 +202,16 @@ func (m *mountFs) Stat(path string) (os.FileInfo, error) {
 	return m.inner.Stat(path)
 }
 
+func (m *mountFs) Lstat(path string) (os.FileInfo, error) {
+	if me, rel, ok := m.resolve(path); ok {
+		if rel == "." {
+			return os.Lstat(me.sb.workspace)
+		}
+		return me.sb.Lstat(rel)
+	}
+	return m.inner.Lstat(path)
+}
+
 func (m *mountFs) Open(path string) (fs.File, error) {
 	if me, rel, ok := m.resolve(path); ok {
 		if rel == "." {
