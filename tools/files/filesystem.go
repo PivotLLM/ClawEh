@@ -731,6 +731,9 @@ type fileSystem interface {
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
 	Remove(path string) error
+	// MkdirAll creates the folder at path and any missing parents; an existing
+	// folder is not an error.
+	MkdirAll(path string) error
 }
 
 // writeChecker is implemented by the layers that refuse writes by path, so a
@@ -748,6 +751,21 @@ func checkWrite(fsys fileSystem, path string) error {
 		return c.CheckWrite(path)
 	}
 	return nil
+}
+
+// rootChecker is implemented by the layers that have a root folder an agent
+// must not remove: the sandbox's workspace, the write folder (e.g. files/) and
+// each mount's root.
+type rootChecker interface {
+	isRoot(path string) bool
+}
+
+// isRoot reports whether path is the root folder of any layer of fsys.
+func isRoot(fsys fileSystem, path string) bool {
+	if c, ok := fsys.(rootChecker); ok {
+		return c.isRoot(path)
+	}
+	return false
 }
 
 // errResult is the error result for err, keeping err so the registry can
@@ -796,6 +814,10 @@ func (h *hostFs) Remove(path string) error {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
 	return nil
+}
+
+func (h *hostFs) MkdirAll(path string) error {
+	return os.MkdirAll(path, 0o700)
 }
 
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
@@ -1039,6 +1061,18 @@ func (r *sandboxFs) Remove(path string) error {
 	})
 }
 
+func (r *sandboxFs) MkdirAll(path string) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		return root.MkdirAll(relPath, 0o700)
+	})
+}
+
+// isRoot reports whether path is the sandbox's workspace itself.
+func (r *sandboxFs) isRoot(path string) bool {
+	rel, err := getSafeRelPath(r.workspace, path)
+	return err == nil && rel == "."
+}
+
 func (r *sandboxFs) Open(path string) (fs.File, error) {
 	var f fs.File
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -1130,6 +1164,17 @@ func (w *whitelistFs) Remove(path string) error {
 		return w.host.Remove(path)
 	}
 	return w.sandbox.Remove(path)
+}
+
+func (w *whitelistFs) MkdirAll(path string) error {
+	if w.matches(path) {
+		return w.host.MkdirAll(path)
+	}
+	return w.sandbox.MkdirAll(path)
+}
+
+func (w *whitelistFs) isRoot(path string) bool {
+	return !w.matches(path) && w.sandbox.isRoot(path)
 }
 
 // buildFs returns the appropriate fileSystem implementation based on restriction
@@ -1262,6 +1307,12 @@ func (r *readScopedFs) Remove(path string) error {
 	return r.inner.Remove(path)
 }
 
+func (r *readScopedFs) MkdirAll(path string) error {
+	return r.inner.MkdirAll(path)
+}
+
+func (r *readScopedFs) isRoot(path string) bool { return isRoot(r.inner, path) }
+
 // buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
 // When restrict is on and writeSubdir is non-empty, writes are confined to
 // <workspace>/<writeSubdir> while reads stay workspace-wide; host paths matching
@@ -1354,6 +1405,29 @@ func (w *writeScopedFs) Remove(path string) error {
 		return err
 	}
 	return w.inner.Remove(path)
+}
+
+func (w *writeScopedFs) MkdirAll(path string) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.MkdirAll(path)
+}
+
+// isRoot reports whether path is the write folder itself, or a root of a
+// layer below.
+func (w *writeScopedFs) isRoot(path string) bool {
+	absRoot, err := filepath.Abs(w.writeRoot)
+	if err != nil {
+		return false
+	}
+	absPath := filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		if absPath, err = filepath.Abs(filepath.Join(w.workspace, path)); err != nil {
+			return false
+		}
+	}
+	return absPath == absRoot || isRoot(w.inner, path)
 }
 
 func (w *writeScopedFs) WriteFile(path string, data []byte) error {

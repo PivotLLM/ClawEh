@@ -33,7 +33,7 @@ func NewDeleteFileToolScoped(workspace string, restrict bool, writeSubdir string
 func (t *DeleteFileTool) Name() string { return "file_delete" }
 
 func (t *DeleteFileTool) Description() string {
-	return "Delete a file. Requires sure=true. Makes no backup, and refuses to delete backup files (<name>.NNNN)."
+	return "Delete a file (files only; remove folders with file_rmdir). Requires sure=true. Makes no backup, and refuses to delete backup files (<name>.NNNN)."
 }
 
 func (t *DeleteFileTool) Parameters() map[string]any {
@@ -63,7 +63,7 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 		return errResult(err)
 	}
 	if info.IsDir() {
-		return errResult(tools.Refusal(errors.New("path is a directory; file_delete removes files only: " + path)))
+		return errResult(tools.Refusal(errors.New("path is a directory; file_delete removes files only, use file_rmdir for folders: " + path)))
 	}
 	if err := t.sysFs.Remove(path); err != nil {
 		return errResult(err)
@@ -79,6 +79,10 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 // commonly live on a different device than the workspace, so a rename-based move
 // would silently break cross-mount moves. The files handled here are small, so the
 // extra copy is not a concern. Do not "optimize" this into a rename.
+//
+// A folder is moved the same way, one file at a time (see moveDir in dir.go):
+// every file is copied and then its source removed, and the emptied source
+// folders are removed last. A rename of the folder would hit the same EXDEV.
 type MoveFileTool struct {
 	sysFs fileSystem
 }
@@ -94,16 +98,16 @@ func NewMoveFileToolScoped(workspace string, restrict bool, writeSubdir string, 
 func (t *MoveFileTool) Name() string { return "file_move" }
 
 func (t *MoveFileTool) Description() string {
-	return "Move a file from source_path to destination_path to organize files (parent directories created as needed; works across mount boundaries; no content enters context)."
+	return "Move a file or a folder from source_path to destination_path to organize files (parent directories created as needed; works across mount boundaries; no content enters context)."
 }
 
 func (t *MoveFileTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"source_path":      map[string]any{"type": "string", "description": "Path of the file to move."},
-			"destination_path": map[string]any{"type": "string", "description": "New path for the file."},
-			"overwrite":        map[string]any{"type": "boolean", "description": "Replace destination if it exists (default false).", "default": false},
+			"source_path":      map[string]any{"type": "string", "description": "Path of the file or folder to move."},
+			"destination_path": map[string]any{"type": "string", "description": "New path for the file or folder."},
+			"overwrite":        map[string]any{"type": "boolean", "description": "Replace destination if it exists (default false). For a folder, its files are merged into the existing destination folder.", "default": false},
 		},
 		"required": []string{"source_path", "destination_path"},
 	}
@@ -119,6 +123,10 @@ func (t *MoveFileTool) Execute(_ context.Context, args map[string]any) *tools.To
 		return tools.ErrorResult("destination_path is required")
 	}
 	overwrite := getBoolArg(args, "overwrite", false)
+
+	if info, err := t.sysFs.Stat(src); err == nil && info.IsDir() {
+		return t.moveDir(src, dst, overwrite)
+	}
 
 	// The source must be removable: checked before copying, so a move out of a
 	// read-only area is refused and leaves no copy behind.
