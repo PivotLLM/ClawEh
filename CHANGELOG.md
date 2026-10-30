@@ -10,6 +10,44 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.6.2]
+
+### Added
+
+- **Folder tools for agents.** `file_mkdir` creates a folder and any missing
+  parents (`path`), and succeeds if it already exists. `file_rmdir` removes a
+  folder (`path`, `sure` must be true); it removes only an empty folder unless
+  `recursive` is true. It refuses to remove a tree that holds a backup file
+  (`<name>.NNNN`), and never removes `files/` itself or a mount. Both are
+  allowed by default like the other file tools, so an agent granted `file_*`
+  has them; add `file_rmdir` to `deny_tools` to withhold it.
+- **The "Telegram down" alert says whether each bot still answers.** When it
+  fires, each bot it names is checked once with its own token: the details add
+  "Bot check: working" or "failing (502)" / "failing (no response)", and how
+  many messages are waiting. The results are also logged ("Connection check").
+  This tells a bot-specific fault apart from Telegram being unreachable. The
+  alert may arrive up to 15 seconds later while the check runs.
+
+### Changed
+
+- **`file_move` moves folders.** A folder as `source_path` is moved with
+  everything in it, also across mounts. The destination must not exist unless
+  `overwrite` is true, which merges into it. If a move stops part-way, the
+  error lists which files were moved and which are still at the source.
+- **`file_delete` on a folder points at `file_rmdir`**, and `file_copy` on a
+  folder points at `file_move`.
+
+### Fixed
+
+- **File tools refuse writes through a link that leaves the agent's writable
+  area.** Previously a link inside `files/` pointing elsewhere in the workspace
+  (e.g. `files/link -> ../skills`) let `file_write`, `file_delete`,
+  `file_rmdir`, `file_move` and the other write tools change files outside
+  `files/`. Links that stay inside `files/` still work. `file_delete` and
+  `file_rmdir` remove a link as a link, wherever it points (or if it points
+  nowhere), and never touch its target; `file_move` refuses a link, or a
+  folder that contains one.
+
 ## [0.6.1]
 
 This release is about voice devices. Audio clips from a device are
@@ -2921,6 +2959,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.2]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0
 [0.5.7]: https://github.com/PivotLLM/ClawEh/compare/0.5.6...0.5.7

@@ -78,7 +78,9 @@ don't see it yet, nothing has been recorded — start recording.
   where a spawned sub-agent's results are saved — a spawn callback points you at
   `tasks/<uuid>-results.json`, read it with `file_read_lines`). Writes only go to
   `files/`. Everything else in the workspace is invisible to your file tools. Use
-  the `common_*` tools to share files with other agents.
+  the `common_*` tools to share files with other agents. Make folders with
+  `file_mkdir`, remove them with `file_rmdir`, and move or rename them with
+  `file_move`.
 - **Addressing — keep units matched:** `file_search_lines` returns LINE numbers →
   feed them to `file_read_lines` (`start_line`); `file_search_bytes` returns BYTE
   offsets → feed them to `file_read_bytes` (`offset`). Never mix a line number

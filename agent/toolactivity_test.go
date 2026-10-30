@@ -53,6 +53,18 @@ func TestToolActivitySummary(t *testing.T) {
 			notWant: "SECRET",
 		},
 		{
+			desc: "file_mkdir shows the folder name",
+			tool: "file_mkdir",
+			args: map[string]any{"path": "files/projects/alice"},
+			want: "🔧 `file_mkdir` `alice`",
+		},
+		{
+			desc: "file_rmdir shows the folder name",
+			tool: "file_rmdir",
+			args: map[string]any{"path": "files/projects/bob", "sure": true, "recursive": true},
+			want: "🔧 `file_rmdir` `bob`",
+		},
+		{
 			desc:    "web_fetch shows host only",
 			tool:    "web_fetch",
 			args:    map[string]any{"url": "https://example.com/path?q=secretquery"},
