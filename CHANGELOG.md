@@ -21,6 +21,12 @@ observe does not need an entry.
   (`<name>.NNNN`), and never removes `files/` itself or a mount. Both are
   allowed by default like the other file tools, so an agent granted `file_*`
   has them; add `file_rmdir` to `deny_tools` to withhold it.
+- **The "Telegram down" alert says whether each bot still answers.** When it
+  fires, each bot it names is checked once with its own token: the details add
+  "Bot check: working" or "failing (502)" / "failing (no response)", and how
+  many messages are waiting. The results are also logged ("Connection check").
+  This tells a bot-specific fault apart from Telegram being unreachable. The
+  alert may arrive up to 15 seconds later while the check runs.
 
 ### Changed
 

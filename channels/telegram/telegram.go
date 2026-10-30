@@ -470,6 +470,40 @@ func (c *TelegramChannel) pollFailed(err error, wait time.Duration) {
 	c.ReportConnFailure(err)
 }
 
+// ConnCheck asks Telegram, with this bot's token, whether the bot answers
+// (getMe) and how many updates wait to be fetched (getWebhookInfo). It is
+// read-only and runs once, when a "Telegram down" alert names this bot.
+func (c *TelegramChannel) ConnCheck(ctx context.Context) channels.ConnCheckResult {
+	var r channels.ConnCheckResult
+	if _, err := c.bot.GetMe(ctx); err != nil {
+		r.Reason = connCheckReason(err)
+	} else {
+		r.Working = true
+	}
+	if info, err := c.bot.GetWebhookInfo(ctx); err == nil {
+		r.Waiting, r.WaitingKnown = info.PendingUpdateCount, true
+	}
+	return r
+}
+
+// reServerErrorStatus matches the status in telego's error for an HTTP 5xx
+// answer ("internal server error: 502").
+var reServerErrorStatus = regexp.MustCompile(`internal server error: (\d{3})`)
+
+// connCheckReason is the short reason a check call failed: the HTTP status
+// Telegram answered with, or channels.ConnCheckNoResponse for a timeout or a
+// transport error.
+func connCheckReason(err error) string {
+	var apiErr *ta.Error
+	if errors.As(err, &apiErr) && apiErr.ErrorCode != 0 {
+		return strconv.Itoa(apiErr.ErrorCode)
+	}
+	if m := reServerErrorStatus.FindStringSubmatch(err.Error()); m != nil {
+		return m[1]
+	}
+	return channels.ConnCheckNoResponse
+}
+
 func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	if !c.IsRunning() {
 		return channels.ErrNotRunning

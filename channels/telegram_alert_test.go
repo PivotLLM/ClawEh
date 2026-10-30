@@ -135,3 +135,54 @@ func TestTelegramDownAlert_NoToken(t *testing.T) {
 		t.Fatal("logs carry the bot token")
 	}
 }
+
+// A Telegram bot whose polls fail gets a down alert that carries the bot
+// check: getMe's failure and the messages waiting.
+func TestTelegramDownAlert_BotCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/getWebhookInfo") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"","has_custom_certificate":false,"pending_update_count":3}}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	ch, err := telegram.NewTelegramChannelFromConfig(config.TelegramBotConfig{
+		ID: "alice", Token: "1234567890:secretSECRETsecretSECRETsecretSECRE", BaseURL: srv.URL,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.SetOwner(ch)
+	rec := &recorder{}
+	ch.SetAlerter(rec)
+	ch.SetPlatform("telegram")
+	fc := clock.NewFake(time.Now())
+	channels.SetConnClock(ch.BaseChannel, fc)
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := ch.Stop(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelWait()
+	if err := fc.BlockUntil(waitCtx, 1); err != nil {
+		t.Fatalf("the bot never reported a failed connection: %v", err)
+	}
+	fc.Advance(channels.ConnDownAlertAfter)
+	alerts := rec.snapshot()
+	if len(alerts) != 1 {
+		t.Fatalf("want one down alert, got %+v", alerts)
+	}
+	want := "Channels: telegram-alice\nLast error: telego: getUpdates: internal execution: request call: internal server error: 502\n" +
+		"Bot check: failing (502)\nWaiting messages: 3"
+	if alerts[0].Details != want {
+		t.Fatalf("details = %q, want %q", alerts[0].Details, want)
+	}
+}
