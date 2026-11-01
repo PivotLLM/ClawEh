@@ -45,6 +45,7 @@ describe("editsFromAgent", () => {
       mcpTools: [],
       denyTools: [],
       allowAgents: [],
+      subagentModels: [],
       maestro: {
         maxConcurrent: undefined,
         rateLimitRequests: undefined,
@@ -52,6 +53,14 @@ describe("editsFromAgent", () => {
         allowParallel: true,
       },
     })
+  })
+
+  it("seeds Worker models from subagent_models", () => {
+    expect(
+      editsFromAgent(agent("a", { subagent_models: ["fast", "slow"] }))
+        .subagentModels,
+    ).toEqual(["fast", "slow"])
+    expect(editsFromAgent(agent("a")).subagentModels).toEqual([])
   })
 
   // No skills or tools list and an empty one both mean none.

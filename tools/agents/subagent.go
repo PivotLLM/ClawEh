@@ -22,12 +22,12 @@ type SubagentManager struct {
 	ownerAgentID string
 	live         *LiveSet
 
-	// Model candidates: selfCandidates for self-spawns, or the target agent's
-	// candidates (resolved via candidateResolver). Used to validate a requested
-	// spawn model.
+	// Worker model candidates: selfCandidates for self-spawns, or the target
+	// agent's (resolved via candidateResolver). Used to validate a spawn.
 	selfCandidates    []providers.FallbackCandidate
 	callerAgentID     string
 	candidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
+	workerModelsSet   func(agentID string) bool
 
 	// runFull runs the target agent's FULL pipeline (curated prompt, full tools,
 	// MCP, snapshotted memory) on the task as a temporary clone of the agent,
@@ -47,14 +47,20 @@ type SubagentManagerConfig struct {
 	// Live is the process-shared running-task set, shared across reloads so the
 	// supervisor never relaunches a task that is still running.
 	Live *LiveSet
-	// SelfCandidates are the calling agent's model candidates for self-spawns.
+	// SelfCandidates are the calling agent's worker model candidates for
+	// self-spawns.
 	SelfCandidates []providers.FallbackCandidate
 	// CallerAgentID is the ID of the agent that owns this manager (for allowlist
 	// and as the task record's owner).
 	CallerAgentID string
-	// CandidateResolver resolves model candidates for a named target agent.
-	// Returns false if the agent is unknown.
+	// CandidateResolver resolves the worker model candidates of a named target
+	// agent. Returns false if the agent is unknown.
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
+	// WorkerModelsSet reports whether an agent has configured worker models
+	// (subagents.models). When it has and none of them is available, a spawn
+	// of it is refused rather than run on the agent's own models. Nil: no
+	// agent has any.
+	WorkerModelsSet func(agentID string) bool
 	// RunFull runs the target agent's full pipeline on the task as a temporary
 	// clone of the agent (see SubagentManager.runFull). Required for spawning
 	// to behave as "a copy of the agent with fresh context."
@@ -77,6 +83,7 @@ func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
 		selfCandidates:    cfg.SelfCandidates,
 		callerAgentID:     cfg.CallerAgentID,
 		candidateResolver: cfg.CandidateResolver,
+		workerModelsSet:   cfg.WorkerModelsSet,
 		runFull:           cfg.RunFull,
 	}
 }
@@ -105,9 +112,10 @@ func errRunnerNotConfigured() error {
 	return fmt.Errorf("%w: full-pipeline runner not configured", global.ErrSpawnUnavailable)
 }
 
-// CandidatesFor returns the model candidates for a target agent (or the caller's
-// own, for a self-spawn with empty agentID) — i.e. that agent's configured
-// models. Used to validate a requested spawn model.
+// CandidatesFor returns the worker model candidates for a target agent (or the
+// caller's own, for a self-spawn with empty agentID): that agent's configured
+// worker models, else its own models. Used to validate a spawn and its
+// requested model.
 func (sm *SubagentManager) CandidatesFor(agentID string) []providers.FallbackCandidate {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -118,6 +126,12 @@ func (sm *SubagentManager) CandidatesFor(agentID string) []providers.FallbackCan
 		}
 	}
 	return candidates
+}
+
+// hasWorkerModels reports whether the agent a spawn of agentID runs as (the
+// caller for a self-spawn) has configured worker models.
+func (sm *SubagentManager) hasWorkerModels(agentID string) bool {
+	return sm.workerModelsSet != nil && sm.workerModelsSet(sm.targetAgent(agentID))
 }
 
 // normalizeModelName normalizes a model name for tolerant matching: trims, strips

@@ -141,6 +141,11 @@ type Spec struct {
 	// CloneModel is the one model a clone runs on instead of its source's
 	// list (see CloneModel); empty keeps the source's. Saved across restarts.
 	CloneModel string
+	// CloneModels is the model list a clone runs on instead of its source's
+	// (see CloneModels): the source's worker models when the clone was
+	// created. Ignored when CloneModel is set; empty keeps the source's.
+	// Saved across restarts.
+	CloneModels []string
 	// CardPrompt is the rendered character card a clone was created with
 	// (see WithCardPrompt), used in place of its source's card; empty keeps
 	// the source's. Captured at creation, so a later change to the card does
@@ -907,8 +912,8 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 			return spec, "", err
 		}
 		cs.Owner, cs.Purpose = spec.Owner, spec.Purpose
-		cs.CloneModel, cs.CardPrompt = spec.CloneModel, spec.CardPrompt
-		cs.Config.Models = cloneModels(cs.Config.Models, spec.CloneModel)
+		cs.CloneModel, cs.CloneModels, cs.CardPrompt = spec.CloneModel, spec.CloneModels, spec.CardPrompt
+		cs.Config.Models = cloneModels(cs.Config.Models, spec.CloneModel, spec.CloneModels)
 		spec = cs
 	}
 	if missing := missingModels(cfg, spec.Config); len(missing) > 0 {
@@ -921,12 +926,16 @@ func (r *Registry[T]) respec(cfg *config.Config, spec Spec, entries map[string]*
 }
 
 // sourceHasModel reports whether model is in a clone source's model list
-// (the default list when it names none), by model_name or by the wire model
-// id of an enabled model, the way missingModels matches them.
+// (the default list when it names none) or in its worker models
+// (subagents.models), by model_name or by the wire model id of an enabled
+// model, the way missingModels matches them.
 func sourceHasModel(cfg *config.Config, ac *config.AgentConfig, model string) bool {
 	list := ac.Models
 	if len(list) == 0 && cfg != nil {
 		list = cfg.Agents.Defaults.Models
+	}
+	if ac.Subagents != nil {
+		list = append(slices.Clone(list), ac.Subagents.Models...)
 	}
 	for _, name := range list {
 		if name == model {

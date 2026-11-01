@@ -44,6 +44,7 @@ type tempRecord struct {
 	Owner        string              `json:"owner,omitempty"`
 	Purpose      string              `json:"purpose,omitempty"`
 	CloneModel   string              `json:"clone_model,omitempty"`
+	CloneModels  []string            `json:"clone_models,omitempty"`
 	CardPrompt   string              `json:"card_prompt,omitempty"`
 	Mode         Mode                `json:"mode,omitempty"`
 	SystemPrompt string              `json:"system_prompt,omitempty"`
@@ -68,15 +69,16 @@ func (r *Registry[T]) persist() {
 			continue
 		}
 		rec := tempRecord{
-			ID:         e.spec.ID,
-			SourceID:   e.spec.SourceID,
-			Created:    e.meta.created.UTC(),
-			LastUsed:   e.meta.last().UTC(),
-			TTLSeconds: int64(e.meta.ttl / time.Second),
-			Owner:      e.spec.Owner,
-			Purpose:    e.spec.Purpose,
-			CloneModel: e.spec.CloneModel,
-			CardPrompt: e.spec.CardPrompt,
+			ID:          e.spec.ID,
+			SourceID:    e.spec.SourceID,
+			Created:     e.meta.created.UTC(),
+			LastUsed:    e.meta.last().UTC(),
+			TTLSeconds:  int64(e.meta.ttl / time.Second),
+			Owner:       e.spec.Owner,
+			Purpose:     e.spec.Purpose,
+			CloneModel:  e.spec.CloneModel,
+			CloneModels: e.spec.CloneModels,
+			CardPrompt:  e.spec.CardPrompt,
 		}
 		if !e.spec.IsClone() {
 			rec.Config, rec.Mode, rec.SystemPrompt = e.spec.Config, e.spec.Mode, e.spec.SystemPrompt
@@ -147,6 +149,7 @@ func (r *Registry[T]) restore() {
 			spec = freshSpec(*rec.Config, id, spec.StateDir, rec.Mode, rec.SystemPrompt, false)
 		}
 		spec.Owner, spec.Purpose, spec.CloneModel, spec.CardPrompt = rec.Owner, rec.Purpose, rec.CloneModel, rec.CardPrompt
+		spec.CloneModels = rec.CloneModels
 		spec, gone, err := r.respec(r.cfg, spec, r.entries)
 		if gone != "" {
 			removeDir(spec.StateDir)

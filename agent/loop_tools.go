@@ -173,18 +173,23 @@ func (al *AgentLoop) newMessageTool() tools.Tool {
 	return mt
 }
 
-// spawnCandidates is the spawn tool's candidate resolver: the model
-// candidates of the target agent. The registry is looked up at call time,
-// because tools are registered while the registry is still being built.
+// spawnCandidates is the spawn tool's candidate resolver: the worker
+// candidates of the target agent, possibly none. The registry is looked up at
+// call time, because tools are registered while the registry is still being
+// built.
 func (al *AgentLoop) spawnCandidates(targetAgentID string) ([]providers.FallbackCandidate, bool) {
 	target, ok := al.GetRegistry().Get(targetAgentID)
 	if !ok {
 		return nil, false
 	}
-	if len(target.Candidates) == 0 {
-		return nil, false
-	}
-	return target.Candidates, true
+	return target.WorkerCandidates, true
+}
+
+// hasWorkerModels reports whether the agent has configured worker models
+// (subagents.models), whether or not any of them is available.
+func (al *AgentLoop) hasWorkerModels(agentID string) bool {
+	target, ok := al.GetRegistry().Get(agentID)
+	return ok && target.Subagents != nil && len(target.Subagents.Models) > 0
 }
 
 // newSpawner builds the agent's sub-agent launcher, shared by the internal
@@ -202,9 +207,10 @@ func (al *AgentLoop) newSpawner(
 	spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 		Workspace:         currentAgent.Workspace,
 		Live:              al.taskLive,
-		SelfCandidates:    currentAgent.Candidates,
+		SelfCandidates:    currentAgent.WorkerCandidates,
 		CallerAgentID:     agentID,
 		CandidateResolver: candidateResolver,
+		WorkerModelsSet:   al.hasWorkerModels,
 		RunFull:           al.runSubagentTask,
 		Alerter:           al.Alerter(),
 	})

@@ -85,16 +85,10 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf("not allowed to spawn agent '%s'", req.TargetAgentID)}, nil
 	}
 
-	// A requested model must be one of the executing agent's configured models
-	// (self-spawn → the caller's; targeted → the target's). This is the security
-	// boundary: an agent can only run a model it is already allowed to use.
-	if strings.TrimSpace(req.Model) != "" {
-		cands := s.mgr.CandidatesFor(req.TargetAgentID)
-		if _, ok := MatchCandidate(cands, req.Model); !ok {
-			return &global.Result{IsError: true, ForLLM: fmt.Sprintf(
-				"model %q is not available for this agent; choose one of: %s",
-				req.Model, candidateNames(cands))}, nil
-		}
+	// The worker runs on the executing agent's worker models (self-spawn → the
+	// caller's; targeted → the target's).
+	if problem := s.workerModelProblem(req.TargetAgentID, req.Model); problem != "" {
+		return &global.Result{IsError: true, ForLLM: problem}, nil
 	}
 
 	// A character card must exist; the worker is created with it rendered.
@@ -173,14 +167,29 @@ func (s *Spawner) RunSync(ctx context.Context, task, model string) (*global.Sync
 	if limit := s.maxSpawnDepth(); SpawnDepth(ctx) >= limit {
 		return nil, fmt.Errorf("%w: maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", global.ErrSpawnDepthExceeded, limit)
 	}
-	// Same security boundary as Spawn: a self-spawn may only run a model the
-	// calling agent is already configured to use.
-	if strings.TrimSpace(model) != "" {
-		cands := s.mgr.CandidatesFor("")
-		if _, ok := MatchCandidate(cands, model); !ok {
-			return nil, fmt.Errorf("%w: model %q is not available for this agent; choose one of: %s",
-				global.ErrModelNotAvailable, model, candidateNames(cands))
-		}
+	// Same check as Spawn, for a self-spawn.
+	if problem := s.workerModelProblem("", model); problem != "" {
+		return nil, fmt.Errorf("%w: %s", global.ErrModelNotAvailable, problem)
 	}
 	return s.mgr.RunSync(ctx, task, "", model)
+}
+
+// workerModelProblem says why a spawn of agentID (the caller for a
+// self-spawn) cannot run: the agent has configured worker models and none is
+// available, or the requested model is not one of its worker models. Empty
+// when it can. This is the security boundary: an agent's worker only runs a
+// model the agent is configured to give it.
+func (s *Spawner) workerModelProblem(agentID, model string) string {
+	cands := s.mgr.CandidatesFor(agentID)
+	if len(cands) == 0 && s.mgr.hasWorkerModels(agentID) {
+		return fmt.Sprintf("no worker model is available for agent %q; check its worker models", s.mgr.targetAgent(agentID))
+	}
+	if strings.TrimSpace(model) == "" {
+		return ""
+	}
+	if _, ok := MatchCandidate(cands, model); !ok {
+		return fmt.Sprintf("model %q is not available for agent %q; choose one of its worker models: %s",
+			model, s.mgr.targetAgent(agentID), candidateNames(cands))
+	}
+	return ""
 }

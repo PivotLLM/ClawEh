@@ -44,7 +44,7 @@ type SpawnRequest struct {
 	Name          string   // short label; required for callback mode (human handle)
 	Label         string   // optional display label (used by wait mode)
 	TargetAgentID string   // "" ⇒ self-spawn (caller's own agent)
-	Model         string   // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
+	Model         string   // optional model (alias) for the sub-agent; must be one of the executing agent's worker models (subagents.models, else its own models). "" ⇒ its first worker model.
 	CharacterCard string   // optional character card (an id in the library) the sub-agent runs with instead of the agent's own; "" ⇒ the agent's.
 	Media         []string // optional media:// refs attached to the worker's initial message (e.g. hand an image to a vision-capable agent)
 	Channel       string   // originating channel (for attribution / callback routing)
@@ -157,7 +157,7 @@ var (
 	ErrSpawnUnavailable = errors.New("spawn is not available")
 	// ErrSpawnDepthExceeded: the caller is already at the sub-agent depth bound.
 	ErrSpawnDepthExceeded = errors.New("maximum sub-agent depth reached")
-	// ErrModelNotAvailable: the requested model is not one of the agent's candidates.
+	// ErrModelNotAvailable: the requested model is not one of the agent's worker models, or the agent has none.
 	ErrModelNotAvailable = errors.New("model not available for this agent")
 )
 

@@ -78,6 +78,8 @@ export interface AgentCardProps {
   eventRetentionDays?: number
   retiredRetentionDays?: number
   summarizationModels?: string[]
+  /** subagents.models ("Worker models"); [] = the agent's own models. */
+  subagentModels?: string[]
   shareCommon?: boolean
   globalCron?: boolean
   maestro?: boolean
@@ -124,6 +126,7 @@ export interface AgentCardProps {
   onRetiredRetentionDaysChange?: (v: number | undefined) => void
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
+  onSubagentModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
   onGlobalCronChange?: (v: boolean) => void
   onMaestroChange?: (v: boolean) => void
@@ -150,6 +153,7 @@ export function AgentCard({
   eventRetentionDays = undefined,
   retiredRetentionDays = undefined,
   summarizationModels = [],
+  subagentModels = [],
   shareCommon = true,
   globalCron = false,
   maestro = false,
@@ -187,6 +191,7 @@ export function AgentCard({
   onRetiredRetentionDaysChange = undefined,
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
+  onSubagentModelsChange = undefined,
   onShareCommonChange = undefined,
   onGlobalCronChange = undefined,
   onMaestroChange = undefined,
@@ -339,6 +344,26 @@ export function AgentCard({
             </p>
           ))}
         </div>
+
+        {!human && onSubagentModelsChange !== undefined && (
+          <div className="space-y-1.5">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.workerModels")}
+            </p>
+            <FallbacksSelect
+              fallbacks={subagentModels}
+              primary=""
+              models={models}
+              onChange={onSubagentModelsChange}
+              addPlaceholder={t("agents.workerModelsAdd")}
+            />
+            <p className="text-muted-foreground text-xs">
+              {subagentModels.length === 0
+                ? t("agents.workerModelsEmptyHint")
+                : t("agents.workerModelsHint")}
+            </p>
+          </div>
+        )}
 
         {!human && onSummarizationModelsChange !== undefined && (
           <div className="space-y-1.5">

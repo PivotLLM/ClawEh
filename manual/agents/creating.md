@@ -32,6 +32,7 @@ If a model in the chain runs on a [command-line provider](../providers/cli-provi
 
 Other model settings on the card:
 
+- **Worker models (tried in order)**: the models the agent's [sub-agents](./subagents.md#worker-models) run on. Empty means they use the Models list above.
 - **Memory models (optional)**: models tried first when this agent's memory is consolidated or its conversation is summarized, ahead of the install's memory models. Use them when the default models refuse this agent's content.
 - **Temperature**: 0 to 2; blank uses **Default temperature** on the System page, else the model's own default. Anthropic models ignore it.
 

@@ -325,6 +325,68 @@ describe("agentsPayload", () => {
     expect(bob.agents.list[0].subagents).toEqual({ allow_agents: ["Bob"] })
   })
 
+  it("loads subagents.models into subagent_models", () => {
+    const cfg = parseAgentsConfig(loaded)
+    expect(cfg.list?.[0].subagent_models).toEqual(["fast"])
+    const none = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    expect(none.list?.[0].subagent_models).toEqual([])
+  })
+
+  it("writes Worker models into subagents.models and omits it when empty, keeping the rest", () => {
+    // A block with a key neither box edits: it must survive both ways.
+    const cfg = parseAgentsConfig({
+      agents: {
+        list: [
+          {
+            id: "alice",
+            subagents: {
+              allow_agents: ["bob"],
+              models: ["fast"],
+              a_key_added_later: true,
+            },
+          },
+        ],
+      },
+    })
+    const edit = (models: string[]) =>
+      (
+        agentsPayload({
+          ...cfg,
+          list: (cfg.list ?? []).map((a) => ({
+            ...a,
+            subagent_models: models,
+          })),
+        }) as { agents: { list: Record<string, unknown>[] } }
+      ).agents.list[0]
+    expect(edit(["slow", "fast"]).subagents).toEqual({
+      allow_agents: ["bob"],
+      models: ["slow", "fast"],
+      a_key_added_later: true,
+    })
+    expect(edit([]).subagents).toEqual({
+      allow_agents: ["bob"],
+      a_key_added_later: true,
+    })
+  })
+
+  it("adds no subagents block when Worker models and May message are both empty", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    const out = agentsPayload({
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({
+        ...a,
+        allow_agents: [],
+        subagent_models: [],
+      })),
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(out.agents.list[0]).not.toHaveProperty("subagents")
+    const only = agentsPayload({
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({ ...a, subagent_models: ["fast"] })),
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(only.agents.list[0].subagents).toEqual({ models: ["fast"] })
+  })
+
   it("toggling Allow forum on Alice writes forum and keeps everything else", () => {
     const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
       // As handleToggleForum applies it: only Alice's forum flag flips.

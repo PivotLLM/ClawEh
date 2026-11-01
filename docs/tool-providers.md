@@ -149,6 +149,13 @@ is granted only by naming it: `"*"` and prefix entries never include it.
 **A sub-agent inherits the parent's full toolset.** There is no per-tool
 sub-agent restriction: nothing is withheld from a worker because of what it is.
 
+**A sub-agent runs on the agent's worker models.** `subagents.models` on the
+agent, when set, is the chain a worker starts on and falls back along, and the
+only models `agent_spawn`'s `model` may name (`AgentInstance.WorkerCandidates`,
+resolved in `agent/instance.go`; the clone is created with
+`agentreg.CloneModels`). When it is empty the worker uses the agent's own
+`models`. Maestro dispatch goes through the same `RunSync` path.
+
 `ToolDefinition.PrimaryOnly` still exists in `toolspec` and is vestigial —
 **ClawEh does not read it**, so setting it has no effect. It once marked tools a
 spawned worker could not have, which was effectively a depth limit of one, and

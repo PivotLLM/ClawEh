@@ -10,6 +10,31 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.6.3]
+
+### Added
+
+- **Worker models for an agent.** `subagents.models` on an agent (the
+  **Worker models (tried in order)** list on the Agents page) is now the model
+  chain its workers run on: every sub-agent it starts through `agent_spawn`
+  and every Maestro task it dispatches uses the first worker model, falling
+  back along the list, and a `model` given to `agent_spawn` must be one of
+  them. A worker started for another agent (`agent_id`) uses that agent's
+  worker models. Left empty, workers use the agent's own **Models** list as
+  before. Use it to keep a manager on a fast API model while its workers run
+  on command-line models that reach the source tree and the development tools.
+
+### Changed
+
+- **BREAKING for an install that already has `subagents.models` set.** The key
+  existed but nothing read it, though Check Up listed it. From this release an
+  agent with the key set runs its workers on that list only: a `model` given
+  to `agent_spawn`, or a Maestro `llm_model_id`, that is not in it is refused,
+  and when no model in it is enabled every spawn and dispatch of that agent is
+  refused with "no worker model is available". To restore the previous
+  behaviour clear **Worker models** on the agent's card, or remove
+  `subagents.models` from the agent in `config.json`.
+
 ## [0.6.2]
 
 ### Added
@@ -2959,6 +2984,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.3]: https://github.com/PivotLLM/ClawEh/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0

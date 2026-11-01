@@ -184,6 +184,7 @@ export function AgentsPage() {
       mcp_tools: edits.mcpTools,
       deny_tools: edits.denyTools,
       allow_agents: edits.allowAgents,
+      subagent_models: edits.subagentModels,
       maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -520,6 +521,10 @@ export function AgentsPage() {
                       summarizationModels={e.summarizationModels}
                       onSummarizationModelsChange={(sm) =>
                         edit(i, { summarizationModels: sm })
+                      }
+                      subagentModels={e.subagentModels}
+                      onSubagentModelsChange={(wm) =>
+                        edit(i, { subagentModels: wm })
                       }
                       shareCommon={e.shareCommon}
                       onShareCommonChange={(sc) => edit(i, { shareCommon: sc })}

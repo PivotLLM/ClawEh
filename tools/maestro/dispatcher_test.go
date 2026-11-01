@@ -14,6 +14,7 @@ import (
 	mllm "github.com/PivotLLM/Maestro/llm"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
@@ -136,6 +137,56 @@ func TestDispatcher_PermanentErrors(t *testing.T) {
 	res, err := (&dispatcher{}).Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "p"})
 	if res != nil || !mllm.IsPermanent(err) {
 		t.Errorf("missing runner: got %+v / %v, want permanent error", res, err)
+	}
+}
+
+// TestDispatcher_WorkerModels: through the host spawner, a dispatch with no
+// llm_model_id runs on the agent's worker chain (no model narrows it); a
+// model outside the worker models, or an agent whose configured worker
+// models are all unavailable, fails the task permanently without running a
+// worker.
+func TestDispatcher_WorkerModels(t *testing.T) {
+	workers := []providers.FallbackCandidate{{Provider: "p", Model: "cheap-wire", Alias: "Cheap"}}
+	tests := []struct {
+		name      string
+		workers   []providers.FallbackCandidate
+		llmID     string
+		permanent bool
+	}{
+		{name: "no model hint", workers: workers, llmID: ""},
+		{name: "worker model", workers: workers, llmID: "cheap"},
+		{name: "not a worker model", workers: workers, llmID: "Pro", permanent: true},
+		{name: "no worker models", workers: nil, llmID: "", permanent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var runs []string
+			mgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
+				Workspace: t.TempDir(), Live: toolsagents.NewLiveSet(), CallerAgentID: "alice", SelfCandidates: tt.workers,
+				WorkerModelsSet: func(string) bool { return true },
+				RunFull: func(_ context.Context, _, _, model, _ string, _ []string) (*global.SyncResult, func(), error) {
+					runs = append(runs, model)
+					return &global.SyncResult{Content: "ok", Iterations: 1}, func() {}, nil
+				},
+			})
+			d := &dispatcher{run: toolsagents.NewSpawner(mgr)}
+			res, err := d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "p", LLMID: tt.llmID})
+			if tt.permanent {
+				if res != nil || !mllm.IsPermanent(err) || !errors.Is(err, global.ErrModelNotAvailable) {
+					t.Fatalf("got %+v / %v, want a permanent ErrModelNotAvailable", res, err)
+				}
+				if len(runs) != 0 {
+					t.Fatalf("a worker ran: %v", runs)
+				}
+				return
+			}
+			if err != nil || res == nil || res.ExitCode != 0 {
+				t.Fatalf("Dispatch = %+v / %v, want success", res, err)
+			}
+			if len(runs) != 1 || runs[0] != strings.TrimSpace(tt.llmID) {
+				t.Fatalf("worker ran with models %v, want [%q]", runs, tt.llmID)
+			}
+		})
 	}
 }
 

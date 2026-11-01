@@ -508,7 +508,10 @@ func MatchVisibility(patterns []string, name string) bool {
 
 type SubagentsConfig struct {
 	AllowAgents []string `json:"allow_agents,omitempty"`
-	Models      []string `json:"models,omitempty"`
+	// Models are the models the agent's workers (spawned sub-agents and
+	// Maestro dispatches) run on, tried in order. Empty: the agent's own
+	// models.
+	Models []string `json:"models,omitempty"`
 }
 
 // MessageConfig controls the rotating-token external-message system for an agent.

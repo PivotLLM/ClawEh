@@ -51,6 +51,10 @@ type AgentInstance struct {
 	Subagents      *config.SubagentsConfig
 	SkillsFilter   []string
 	Candidates     []providers.FallbackCandidate
+	// WorkerCandidates is the chain the agent's workers (spawned sub-agents
+	// and Maestro dispatches) run on: its configured worker models
+	// (subagents.models), else its own Candidates.
+	WorkerCandidates []providers.FallbackCandidate
 
 	// VisionClients is the ordered vision-describe side-model chain (from
 	// AgentDefaults.VisionModel + VisionModelFallbacks). When the active model is
@@ -210,6 +214,7 @@ func newAgentInstance(
 	compressOpts := agentCompressOptions(agentCfg, defaults)
 
 	candidates := resolveAgentCandidates(cfg, models, agentID)
+	workerCandidates := resolveWorkerCandidates(cfg, subagents, candidates, agentID)
 
 	// Config is never nil after construction: a nil config is equivalent to
 	// an empty allowlist (deny all tools), so callers need not guard on nil.
@@ -225,29 +230,30 @@ func newAgentInstance(
 	// the full runtime deps (session closures, the sub-agent spawner, the
 	// per-agent message tool) are present.
 	inst := &AgentInstance{
-		ID:             agentID,
-		Name:           agentName,
-		Model:          model,
-		Fallbacks:      fallbacks,
-		Workspace:      workspace,
-		StateDir:       stateDir,
-		Spec:           spec,
-		MaxIterations:  limits.maxIterations,
-		MaxTokens:      limits.maxTokens,
-		Temperature:    limits.temperature,
-		ThinkingLevel:  limits.thinkingLevel,
-		NoTools:        limits.noTools,
-		ContextWindow:  limits.contextWindow,
-		CompressOpts:   compressOpts,
-		Provider:       provider,
-		Sessions:       sessions,
-		ContextBuilder: contextBuilder,
-		Tools:          tools.NewToolRegistry(),
-		Subagents:      subagents,
-		SkillsFilter:   skillsFilter,
-		Candidates:     candidates,
-		Config:         agentCfg,
-		HumanModel:     humanModel,
+		ID:               agentID,
+		Name:             agentName,
+		Model:            model,
+		Fallbacks:        fallbacks,
+		Workspace:        workspace,
+		StateDir:         stateDir,
+		Spec:             spec,
+		MaxIterations:    limits.maxIterations,
+		MaxTokens:        limits.maxTokens,
+		Temperature:      limits.temperature,
+		ThinkingLevel:    limits.thinkingLevel,
+		NoTools:          limits.noTools,
+		ContextWindow:    limits.contextWindow,
+		CompressOpts:     compressOpts,
+		Provider:         provider,
+		Sessions:         sessions,
+		ContextBuilder:   contextBuilder,
+		Tools:            tools.NewToolRegistry(),
+		Subagents:        subagents,
+		SkillsFilter:     skillsFilter,
+		Candidates:       candidates,
+		WorkerCandidates: workerCandidates,
+		Config:           agentCfg,
+		HumanModel:       humanModel,
 	}
 	// An agent left with no tools at all is told so. Its registry is read at
 	// every turn: tools are registered after this, and MCP tools may arrive
@@ -290,6 +296,21 @@ func resolveAgentCandidates(cfg *config.Config, models []string, agentID string)
 				"primary":   primary,
 				"fallbacks": fallbacks,
 			})
+	}
+	return candidates
+}
+
+// resolveWorkerCandidates resolves the chain the agent's workers run on: its
+// worker models (subagents.models) when it has any, else its own candidates.
+// A worker list that resolves to nothing is logged as an error.
+func resolveWorkerCandidates(cfg *config.Config, subagents *config.SubagentsConfig, own []providers.FallbackCandidate, agentID string) []providers.FallbackCandidate {
+	if subagents == nil || len(subagents.Models) == 0 {
+		return own
+	}
+	candidates := providers.ResolveCandidatesWithLookup(providers.ModelConfig{Models: subagents.Models}, "", modelListLookup(cfg))
+	if len(candidates) == 0 {
+		logger.ErrorCF("agent", "agent worker model chain is empty after resolving aliases",
+			map[string]any{"agent_id": agentID, "worker_models": subagents.Models})
 	}
 	return candidates
 }
