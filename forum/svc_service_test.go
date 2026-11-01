@@ -1129,8 +1129,9 @@ func TestSvcRecover(t *testing.T) {
 		if len(e.agents.deletedIDs()) != 2 {
 			t.Errorf("deleted %v, want both temporary agents", e.agents.deletedIDs())
 		}
-		if e.notifier.count() != 1 || len(e.notifier.problems()) != 0 {
-			t.Errorf("%d notices, problems %v", e.notifier.count(), e.notifier.problems())
+		svcEventually(t, "notice", func() bool { return e.notifier.count() == 1 })
+		if len(e.notifier.problems()) != 0 {
+			t.Errorf("problems %v", e.notifier.problems())
 		}
 		if e.ctrls.openCount() != 1 {
 			t.Error("a terminal forum was opened")

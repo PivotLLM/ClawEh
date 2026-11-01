@@ -297,6 +297,8 @@ func (r ConnCheckResult) status() string {
 // has one, concurrently and within connCheckTimeout, and appends the results
 // to a's details and to the log. A check still running at the timeout counts
 // as "no response". It must not be called with a connection lock held.
+//
+//nolint:contextcheck,nolintlint // runs from the outage timer, not a caller's request; the checks get their own connCheckTimeout
 func addConnChecks(a *alerter.Alert, affected []*BaseChannel) {
 	type check struct {
 		name    string

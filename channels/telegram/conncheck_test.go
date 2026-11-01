@@ -34,13 +34,17 @@ func newCheckServer(t *testing.T, getMe, webhook apiReply) *TelegramChannel {
 			reply = getMe
 		}
 		if reply.hang {
-			_, _ = io.Copy(io.Discard, r.Body) // lets the server notice the client hang up
+			if _, err := io.Copy(io.Discard, r.Body); err != nil { // lets the server notice the client hang up
+				t.Errorf("reading request body: %v", err)
+			}
 			<-r.Context().Done()
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(reply.status)
-		_, _ = w.Write([]byte(reply.body))
+		if _, err := w.Write([]byte(reply.body)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	ch, err := NewTelegramChannelFromConfig(config.TelegramBotConfig{Token: testToken, BaseURL: srv.URL}, bus.NewMessageBus())

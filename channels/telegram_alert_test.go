@@ -142,7 +142,9 @@ func TestTelegramDownAlert_BotCheck(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/getWebhookInfo") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"","has_custom_certificate":false,"pending_update_count":3}}`))
+			if _, err := w.Write([]byte(`{"ok":true,"result":{"url":"","has_custom_certificate":false,"pending_update_count":3}}`)); err != nil {
+				t.Errorf("writing response: %v", err)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusBadGateway)
