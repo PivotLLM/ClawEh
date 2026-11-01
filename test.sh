@@ -646,6 +646,8 @@ PY
       "file_copy",
       "file_delete",
       "file_move",
+      "file_mkdir",
+      "file_rmdir",
       "web_fetch",
       "web_search",
       "msg_send",

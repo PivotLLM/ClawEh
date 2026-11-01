@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -113,9 +114,14 @@ func (c *BaseChannel) connDownExpired(start time.Time, after time.Duration) {
 	}
 	w.alerted = true
 	w.timer = nil
-	down := c.outages.expired(c, after)
+	down, affected := c.outages.expired(c, after)
 	w.mu.Unlock()
+	if down == nil {
+		return
+	}
+	addConnChecks(down, affected)
 	c.sendConnAlert(down)
+	c.sendConnAlert(c.outages.downSent(c))
 }
 
 // connStopped ends the outage of a channel that has stopped: it no longer
@@ -173,6 +179,11 @@ type platformOutage struct {
 	// alert's title; an outage whose channels all stopped instead (none
 	// recovered) ends without an "up" alert.
 	recovered []string
+	// preparing is set from when expired returns the down alert until downSent
+	// reports it sent; an "up" alert raised meanwhile is held in heldUp, so it
+	// never arrives before the down alert.
+	preparing bool
+	heldUp    *alerter.Alert
 }
 
 type channelOutage struct {
@@ -205,37 +216,149 @@ func (g *connAggregator) failure(c *BaseChannel, since time.Time, lastErr string
 
 // expired records that c's outage has lasted after. The first channel of a
 // platform to get there returns the "<Platform> down" alert, which counts every
-// channel of the platform then down; later ones join it silently.
-func (g *connAggregator) expired(c *BaseChannel, after time.Duration) *alerter.Alert {
+// channel of the platform then down, and those channels sorted by name; later
+// ones join it silently.
+func (g *connAggregator) expired(c *BaseChannel, after time.Duration) (*alerter.Alert, []*BaseChannel) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	id := c.platformID()
 	p := g.platformLocked(id)
 	mine, ok := p.down[c]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if p.alerted {
 		p.affected[c] = struct{}{}
-		return nil
+		return nil, nil
 	}
 	p.alerted = true
+	p.preparing = true
 	p.since = mine.since
-	names := make([]string, 0, len(p.down))
+	affected := make([]*BaseChannel, 0, len(p.down))
 	for ch, o := range p.down {
 		p.affected[ch] = struct{}{}
-		names = append(names, ch.name)
+		affected = append(affected, ch)
 		if o.since.Before(p.since) {
 			p.since = o.since
 		}
 	}
-	slices.Sort(names)
+	slices.SortFunc(affected, func(a, b *BaseChannel) int { return strings.Compare(a.name, b.name) })
+	names := make([]string, len(affected))
+	for i, ch := range affected {
+		names[i] = ch.name
+	}
 	return &alerter.Alert{
 		Title:       platformDisplayName(id) + " down: " + nameList(names),
 		Description: fmt.Sprintf("%s, no working connection for %s", countNoun(id, len(names)), shortDuration(after)),
 		Details:     "Channels: " + strings.Join(names, ", ") + "\nLast error: " + mine.lastErr,
 		EventID:     id,
+	}, affected
+}
+
+// ConnChecker is implemented by a channel that can check its own connection
+// once, when its platform's "<Platform> down" alert is raised. The result is
+// added to the alert's details and logged.
+type ConnChecker interface {
+	// ConnCheck runs the check. It must be read-only and return when ctx ends.
+	ConnCheck(ctx context.Context) ConnCheckResult
+}
+
+// ConnCheckResult is the outcome of a ConnChecker's check.
+type ConnCheckResult struct {
+	Working bool
+	// Reason says why the check failed: an HTTP status ("502") or
+	// ConnCheckNoResponse.
+	Reason string
+	// Waiting is how many messages wait to be fetched, valid when WaitingKnown.
+	Waiting      int
+	WaitingKnown bool
+}
+
+// ConnCheckNoResponse is the failure reason of a check that got no answer.
+const ConnCheckNoResponse = "no response"
+
+// connCheckTimeout bounds all the checks run for one down alert. var (not
+// const) so tests can shorten it.
+var connCheckTimeout = 15 * time.Second
+
+// status is the check's label: "working" or "failing (502)".
+func (r ConnCheckResult) status() string {
+	if r.Working {
+		return "working"
 	}
+	reason := r.Reason
+	if reason == "" {
+		reason = ConnCheckNoResponse
+	}
+	return "failing (" + reason + ")"
+}
+
+// addConnChecks runs the connection check of every channel in affected that
+// has one, concurrently and within connCheckTimeout, and appends the results
+// to a's details and to the log. A check still running at the timeout counts
+// as "no response". It must not be called with a connection lock held.
+func addConnChecks(a *alerter.Alert, affected []*BaseChannel) {
+	type check struct {
+		name    string
+		checker ConnChecker
+	}
+	var checks []check
+	for _, ch := range affected {
+		if cc, ok := ch.owner.(ConnChecker); ok {
+			checks = append(checks, check{ch.name, cc})
+		}
+	}
+	if len(checks) == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), connCheckTimeout)
+	defer cancel()
+	type done struct {
+		i int
+		r ConnCheckResult
+	}
+	finished := make(chan done, len(checks)) // buffered: a late check never blocks
+	for i, k := range checks {
+		go func() { finished <- done{i, k.checker.ConnCheck(ctx)} }()
+	}
+	results := make([]ConnCheckResult, len(checks)) // zero value: no response
+wait:
+	for range checks {
+		select {
+		case d := <-finished:
+			results[d.i] = d.r
+		case <-ctx.Done():
+			break wait
+		}
+	}
+
+	var lines strings.Builder
+	for i, k := range checks {
+		r := results[i]
+		fields := map[string]any{"channel": k.name, "check": r.status()}
+		if r.WaitingKnown {
+			fields["waiting"] = r.Waiting
+		}
+		if r.Working {
+			logger.InfoCF("channels", "Connection check", fields)
+		} else {
+			logger.WarnCF("channels", "Connection check", fields)
+		}
+
+		switch {
+		case len(affected) == 1:
+			lines.WriteString("\nBot check: " + r.status())
+			if r.WaitingKnown {
+				fmt.Fprintf(&lines, "\nWaiting messages: %d", r.Waiting)
+			}
+		case r.WaitingKnown:
+			fmt.Fprintf(&lines, "\nBot check %s: %s, %d waiting", k.name, r.status(), r.Waiting)
+		default:
+			fmt.Fprintf(&lines, "\nBot check %s: %s", k.name, r.status())
+		}
+	}
+	a.Details += lines.String()
 }
 
 // connected records that c's connection works again, returning the
@@ -277,6 +400,22 @@ func (g *connAggregator) leaveLocked(c *BaseChannel, recovered bool) *alerter.Al
 		}
 	}
 	p.alerted, p.recovered, p.since = false, nil, time.Time{}
+	if p.preparing {
+		// The down alert is still being prepared: send this after it.
+		p.heldUp, up = up, nil
+	}
+	return up
+}
+
+// downSent records that the down alert expired returned for c's platform has
+// been sent, and returns the "up" alert held back while it was prepared, if
+// any.
+func (g *connAggregator) downSent(c *BaseChannel) *alerter.Alert {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p := g.platformLocked(c.platformID())
+	up := p.heldUp
+	p.preparing, p.heldUp = false, nil
 	return up
 }
 

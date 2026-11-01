@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
@@ -730,7 +732,12 @@ type fileSystem interface {
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
+	// Lstat is Stat without following a link in the final component.
+	Lstat(path string) (os.FileInfo, error)
 	Remove(path string) error
+	// MkdirAll creates the folder at path and any missing parents; an existing
+	// folder is not an error.
+	MkdirAll(path string) error
 }
 
 // writeChecker is implemented by the layers that refuse writes by path, so a
@@ -748,6 +755,21 @@ func checkWrite(fsys fileSystem, path string) error {
 		return c.CheckWrite(path)
 	}
 	return nil
+}
+
+// rootChecker is implemented by the layers that have a root folder an agent
+// must not remove: the sandbox's workspace, the write folder (e.g. files/) and
+// each mount's root.
+type rootChecker interface {
+	isRoot(path string) bool
+}
+
+// isRoot reports whether path is the root folder of any layer of fsys.
+func isRoot(fsys fileSystem, path string) bool {
+	if c, ok := fsys.(rootChecker); ok {
+		return c.isRoot(path)
+	}
+	return false
 }
 
 // errResult is the error result for err, keeping err so the registry can
@@ -798,6 +820,10 @@ func (h *hostFs) Remove(path string) error {
 	return nil
 }
 
+func (h *hostFs) MkdirAll(path string) error {
+	return os.MkdirAll(path, 0o700)
+}
+
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -841,6 +867,10 @@ func discardPartial(f *os.File, remove func(string) error, path string) {
 
 func (h *hostFs) Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
+}
+
+func (h *hostFs) Lstat(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
@@ -1010,6 +1040,19 @@ func (r *sandboxFs) Stat(path string) (os.FileInfo, error) {
 	return info, err
 }
 
+func (r *sandboxFs) Lstat(path string) (os.FileInfo, error) {
+	var info os.FileInfo
+	err := r.execute(path, func(root *os.Root, relPath string) error {
+		fi, err := root.Lstat(relPath)
+		if err != nil {
+			return err
+		}
+		info = fi
+		return nil
+	})
+	return info, err
+}
+
 func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
 	var entries []os.DirEntry
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -1037,6 +1080,18 @@ func (r *sandboxFs) Remove(path string) error {
 		}
 		return nil
 	})
+}
+
+func (r *sandboxFs) MkdirAll(path string) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		return root.MkdirAll(relPath, 0o700)
+	})
+}
+
+// isRoot reports whether path is the sandbox's workspace itself.
+func (r *sandboxFs) isRoot(path string) bool {
+	rel, err := getSafeRelPath(r.workspace, path)
+	return err == nil && rel == "."
 }
 
 func (r *sandboxFs) Open(path string) (fs.File, error) {
@@ -1111,6 +1166,13 @@ func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
 	return w.sandbox.Stat(path)
 }
 
+func (w *whitelistFs) Lstat(path string) (os.FileInfo, error) {
+	if w.matches(path) {
+		return w.host.Lstat(path)
+	}
+	return w.sandbox.Lstat(path)
+}
+
 func (w *whitelistFs) ReadDir(path string) ([]os.DirEntry, error) {
 	if w.matches(path) {
 		return w.host.ReadDir(path)
@@ -1130,6 +1192,17 @@ func (w *whitelistFs) Remove(path string) error {
 		return w.host.Remove(path)
 	}
 	return w.sandbox.Remove(path)
+}
+
+func (w *whitelistFs) MkdirAll(path string) error {
+	if w.matches(path) {
+		return w.host.MkdirAll(path)
+	}
+	return w.sandbox.MkdirAll(path)
+}
+
+func (w *whitelistFs) isRoot(path string) bool {
+	return !w.matches(path) && w.sandbox.isRoot(path)
 }
 
 // buildFs returns the appropriate fileSystem implementation based on restriction
@@ -1246,6 +1319,13 @@ func (r *readScopedFs) Stat(path string) (os.FileInfo, error) {
 	return r.inner.Stat(path)
 }
 
+func (r *readScopedFs) Lstat(path string) (os.FileInfo, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Lstat(path)
+}
+
 func (r *readScopedFs) WriteFile(path string, data []byte) error {
 	return r.inner.WriteFile(path, data)
 }
@@ -1261,6 +1341,12 @@ func (r *readScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileM
 func (r *readScopedFs) Remove(path string) error {
 	return r.inner.Remove(path)
 }
+
+func (r *readScopedFs) MkdirAll(path string) error {
+	return r.inner.MkdirAll(path)
+}
+
+func (r *readScopedFs) isRoot(path string) bool { return isRoot(r.inner, path) }
 
 // buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
 // When restrict is on and writeSubdir is non-empty, writes are confined to
@@ -1295,8 +1381,10 @@ type writeScopedFs struct {
 }
 
 // writeAllowed reports whether a write to path is permitted: either the path
-// matches a whitelisted host pattern, or it resolves within writeRoot.
-func (w *writeScopedFs) writeAllowed(path string) error {
+// matches a whitelisted host pattern, or it resolves within writeRoot. With
+// parentOnly, links are resolved in the parent of path only, not in its last
+// component: removing a link removes the link, not what it points to.
+func (w *writeScopedFs) writeAllowed(path string, parentOnly bool) error {
 	for _, p := range w.patterns {
 		if p.MatchString(path) {
 			return nil
@@ -1321,13 +1409,129 @@ func (w *writeScopedFs) writeAllowed(path string) error {
 	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
 		return tools.Refusal(fmt.Errorf("write denied: outside %s", w.writeRoot))
 	}
+	if parentOnly {
+		return w.resolvedWithinRoot(path, filepath.Dir(absPath), absRoot)
+	}
+	return w.resolvedWithinRoot(path, absPath, absRoot)
+}
+
+// maxLinkHops bounds how many links resolveInWorkspace follows, so a loop
+// (a -> b, b -> a) is refused instead of followed forever.
+const maxLinkHops = 40
+
+// resolvedWithinRoot refuses a write to path when absPath (path itself, or its
+// parent) lands outside the write folder with links resolved. The
+// sandbox below follows links that stay inside the workspace, so without this
+// check a link such as files/link -> ../skills would let writes reach skills/.
+func (w *writeScopedFs) resolvedWithinRoot(path, absPath, absRoot string) error {
+	absWorkspace, err := filepath.Abs(w.workspace)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	relPath, err := filepath.Rel(absWorkspace, absPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve file path: %w", err)
+	}
+	relRoot, err := filepath.Rel(absWorkspace, absRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve write root: %w", err)
+	}
+
+	root, err := os.OpenRoot(absWorkspace)
+	if err != nil {
+		return fmt.Errorf("failed to open workspace: %w", err)
+	}
+	defer utils.CloseQuietly(root)
+
+	outside := tools.Refusal(fmt.Errorf("write denied: %s resolves outside %s", path, w.writeRoot))
+	resolvedRoot, ok, err := resolveInWorkspace(root, relRoot)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return outside
+	}
+	resolved, ok, err := resolveInWorkspace(root, relPath)
+	if err != nil {
+		return err
+	}
+	if !ok || (resolved != resolvedRoot && !isWithinWorkspace(resolved, resolvedRoot)) {
+		return outside
+	}
 	return nil
+}
+
+// resolveInWorkspace returns rel (a path relative to root) with every link in
+// its existing components resolved; the components from the first missing one
+// on are appended as given. ok is false when resolution leaves root, a link
+// is absolute (os.Root refuses those), or links chain more than maxLinkHops.
+func resolveInWorkspace(root *os.Root, rel string) (resolved string, ok bool, err error) {
+	resolved = "."
+	pending := splitPath(rel)
+	hops := 0
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
+		if c == ".." {
+			if resolved == "." {
+				return "", false, nil
+			}
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, c)
+		info, lerr := root.Lstat(next)
+		if lerr != nil {
+			if errors.Is(lerr, fs.ErrNotExist) || errors.Is(lerr, syscall.ENOTDIR) {
+				// Nothing below a missing component can be a link. A ".." below
+				// it is refused: MkdirAll would create the missing folders and
+				// then follow the ".." into whatever links come after it.
+				if slices.Contains(pending, "..") {
+					return "", false, nil
+				}
+				return filepath.Join(append([]string{next}, pending...)...), true, nil
+			}
+			return "", false, fmt.Errorf("failed to resolve %s: %w", next, lerr)
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		hops++
+		if hops > maxLinkHops {
+			return "", false, nil
+		}
+		target, rerr := root.Readlink(next)
+		if rerr != nil {
+			return "", false, fmt.Errorf("failed to read link %s: %w", next, rerr)
+		}
+		if filepath.IsAbs(target) {
+			return "", false, nil
+		}
+		// A relative target is resolved against the link's folder, which is
+		// where resolved still points.
+		pending = append(splitPath(target), pending...)
+	}
+	return resolved, true, nil
+}
+
+// splitPath splits a relative path into its components, dropping empty and "."
+// ones. It does not clean the path: in a link target such as "l/..", the ".."
+// applies to where the link l leads, not lexically to "l".
+func splitPath(p string) []string {
+	var parts []string
+	for c := range strings.SplitSeq(filepath.ToSlash(p), "/") {
+		if c != "" && c != "." {
+			parts = append(parts, c)
+		}
+	}
+	return parts
 }
 
 // CheckWrite refuses a write to path that writeAllowed, or a layer below,
 // would refuse.
 func (w *writeScopedFs) CheckWrite(path string) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return checkWrite(w.inner, path)
@@ -1349,29 +1553,56 @@ func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
 	return w.inner.Stat(path)
 }
 
+func (w *writeScopedFs) Lstat(path string) (os.FileInfo, error) {
+	return w.inner.Lstat(path)
+}
+
 func (w *writeScopedFs) Remove(path string) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, true); err != nil {
 		return err
 	}
 	return w.inner.Remove(path)
 }
 
+func (w *writeScopedFs) MkdirAll(path string) error {
+	if err := w.writeAllowed(path, false); err != nil {
+		return err
+	}
+	return w.inner.MkdirAll(path)
+}
+
+// isRoot reports whether path is the write folder itself, or a root of a
+// layer below.
+func (w *writeScopedFs) isRoot(path string) bool {
+	absRoot, err := filepath.Abs(w.writeRoot)
+	if err != nil {
+		return false
+	}
+	absPath := filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		if absPath, err = filepath.Abs(filepath.Join(w.workspace, path)); err != nil {
+			return false
+		}
+	}
+	return absPath == absRoot || isRoot(w.inner, path)
+}
+
 func (w *writeScopedFs) WriteFile(path string, data []byte) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFile(path, data)
 }
 
 func (w *writeScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFileMode(path, data, mode)
 }
 
 func (w *writeScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
-	if err := w.writeAllowed(path); err != nil {
+	if err := w.writeAllowed(path, false); err != nil {
 		return err
 	}
 	return w.inner.WriteFileExclMode(path, data, mode)

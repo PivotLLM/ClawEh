@@ -164,6 +164,24 @@ func (m *mountFs) Remove(path string) error {
 	return m.inner.Remove(path)
 }
 
+func (m *mountFs) MkdirAll(path string) error {
+	if me, rel, ok := m.resolve(path); ok {
+		if !me.writable {
+			return readOnlyMountErr(me.name)
+		}
+		return me.sb.MkdirAll(rel)
+	}
+	return m.inner.MkdirAll(path)
+}
+
+// isRoot reports whether path is a mount's root, or a root of the layer below.
+func (m *mountFs) isRoot(path string) bool {
+	if _, rel, ok := m.resolve(path); ok {
+		return filepath.Clean(rel) == "."
+	}
+	return isRoot(m.inner, path)
+}
+
 func (m *mountFs) ReadDir(path string) ([]os.DirEntry, error) {
 	if me, rel, ok := m.resolve(path); ok {
 		if rel == "." { // the mount root itself
@@ -182,6 +200,16 @@ func (m *mountFs) Stat(path string) (os.FileInfo, error) {
 		return me.sb.Stat(rel)
 	}
 	return m.inner.Stat(path)
+}
+
+func (m *mountFs) Lstat(path string) (os.FileInfo, error) {
+	if me, rel, ok := m.resolve(path); ok {
+		if rel == "." {
+			return os.Lstat(me.sb.workspace)
+		}
+		return me.sb.Lstat(rel)
+	}
+	return m.inner.Lstat(path)
 }
 
 func (m *mountFs) Open(path string) (fs.File, error) {

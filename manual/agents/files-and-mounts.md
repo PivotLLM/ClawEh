@@ -22,7 +22,7 @@ Each agent's workspace (see [Creating and editing agents](./creating.md#workspac
 
 The instruction files at the top of the workspace (`AGENTS.md`, `SOUL.md` and the others) are already in the agent's prompt; it does not read or change them with file tools.
 
-The agent refers to these folders by name, for example `files/report.md`.
+The agent refers to these folders by name, for example `files/report.md`. It makes folders with `file_mkdir`, removes them with `file_rmdir`, and moves or renames them with `file_move`; it cannot remove `files/` itself or a mount.
 
 ### Install-wide file settings
 

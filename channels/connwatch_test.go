@@ -275,7 +275,7 @@ func TestConnAlertText(t *testing.T) {
 	g := newConnAggregator()
 	tg := NewBaseChannel("telegram-Alice", nil, nil, nil)
 	g.failure(tg, time.Now().Add(-18*time.Minute), "boom")
-	down := g.expired(tg, ConnDownAlertAfter)
+	down, _ := g.expired(tg, ConnDownAlertAfter)
 	want := alerter.Alert{
 		Title:       "Telegram down: telegram-Alice",
 		Description: "1 bot, no working connection for 10m",
@@ -285,6 +285,9 @@ func TestConnAlertText(t *testing.T) {
 	if *down != want {
 		t.Fatalf("down alert = %+v, want %+v", *down, want)
 	}
+	if held := g.downSent(tg); held != nil {
+		t.Fatalf("nothing should be held, got %+v", held)
+	}
 	up := g.connected(tg)
 	if up == nil || *up != (alerter.Alert{Title: "Telegram up: telegram-Alice", Description: "back after 18m", EventID: "telegram-up"}) {
 		t.Fatalf("unexpected up alert %+v", up)
@@ -293,8 +296,8 @@ func TestConnAlertText(t *testing.T) {
 	mx := NewBaseChannel("matrix", nil, nil, nil)
 	mx.SetPlatform("matrix")
 	g.failure(mx, time.Now(), "sync failed")
-	if d := g.expired(mx, ConnDownAlertAfter).Description; d != "1 connection, no working connection for 10m" {
-		t.Fatalf("matrix description = %q", d)
+	if down, _ := g.expired(mx, ConnDownAlertAfter); down.Description != "1 connection, no working connection for 10m" {
+		t.Fatalf("matrix description = %q", down.Description)
 	}
 
 	for d, want := range map[time.Duration]string{

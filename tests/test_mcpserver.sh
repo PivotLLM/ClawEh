@@ -63,7 +63,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # model required). agent_spawn/agent_status/agent_list/agent_message (subagent capability) are
 # also exposed but only probed when actually present in the catalogue, so this
 # script stays portable.
-EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move file_mkdir file_rmdir web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -598,6 +598,26 @@ else
 
     run_test_ok_auth "3.8g file_edit_bytes replaces a byte range" \
         "file_edit_bytes" "{\"path\":\"$LINEFILE\",\"start\":0,\"end\":0,\"replace\":\"Z\"}" "Replaced"
+
+    # Folder tools: make a folder, move it with its file, then remove it.
+    DIR_REL="files/claw_mcp_dir_$$"
+    run_test_ok_auth "3.8h file_mkdir creates a folder" \
+        "file_mkdir" "{\"path\":\"$DIR_REL/sub\"}"
+
+    run_test_ok_auth "3.8i file_write seeds a file in the folder" \
+        "file_write" "{\"path\":\"$DIR_REL/sub/x.txt\",\"content\":\"folder-$$\"}"
+
+    run_test_ok_auth "3.8j file_move moves the folder" \
+        "file_move" "{\"source_path\":\"$DIR_REL\",\"destination_path\":\"${DIR_REL}_moved\"}"
+
+    run_test_ok_auth "3.8k file_read_bytes reads the moved file" \
+        "file_read_bytes" "{\"path\":\"${DIR_REL}_moved/sub/x.txt\"}" "folder-$$"
+
+    run_test_err_auth "3.8l file_rmdir refuses a non-empty folder without recursive" \
+        "file_rmdir" "{\"path\":\"${DIR_REL}_moved\",\"sure\":true}"
+
+    run_test_ok_auth "3.8m file_rmdir removes the folder recursively" \
+        "file_rmdir" "{\"path\":\"${DIR_REL}_moved\",\"sure\":true,\"recursive\":true}"
 
     run_test_err_auth "3.9 file_read_bytes on missing path returns an error" \
         "file_read_bytes" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'

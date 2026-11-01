@@ -46,8 +46,8 @@ func toolActivitySummary(name string, args map[string]any) string {
 			}
 			return head + " " + code(base)
 		}
-	case "file_read_bytes", "file_edit", "file_write", "file_append",
-		"file_delete", "file_search_lines", "file_search_bytes":
+	case "file_read_bytes", "file_edit", "file_write", "file_append", "file_mkdir",
+		"file_delete", "file_rmdir", "file_search_lines", "file_search_bytes":
 		if base := toolArgBase(args, "path"); base != "" {
 			return head + " " + code(base)
 		}
