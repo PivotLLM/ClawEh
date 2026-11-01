@@ -35,6 +35,22 @@ observe does not need an entry.
   behaviour clear **Worker models** on the agent's card, or remove
   `subagents.models` from the agent in `config.json`.
 - Improved LLM use logging.
+- **Prompt caching on Anthropic API and OpenRouter Claude models.** Requests
+  to the Anthropic API, and to Claude models through an OpenRouter provider
+  on the `openai-chat` protocol (the "OpenRouter Chat" providers, not
+  "OpenRouter Responses"), now mark the prompt for caching, so repeated calls
+  in a conversation are billed at the cache-read rate instead of in full
+  (spawnllm 0.1.20). Those OpenRouter calls also report their cost on the
+  `LLM finish` log line, and that cost now counts toward the daily spend
+  alert, which previously saw only Claude CLI costs. Each OpenRouter request
+  carries the agent id as its `session_id` so OpenRouter can route repeated
+  calls to the same cache.
+- **`input_tokens` on the `LLM finish` line is the uncached input only**, on
+  every provider, and a new `prompt_tokens` field is the whole prompt
+  (`input_tokens + cache_read_tokens + cache_creation_tokens`). `input_tokens`
+  shrinks for the `openai-chat`, `openai-responses` and `azure` protocols and
+  the Codex CLI, which previously counted cached tokens in it. `cost` is `unknown` only when the provider
+  returned no cost; a reported 0 prints as 0.
 
 ## [0.6.2]
 

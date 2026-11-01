@@ -89,7 +89,7 @@ func TestEmitLLMFinishEvent_SuccessPath_UsesProviderStatus(t *testing.T) {
 			CacheReadTokens:     3,
 			CacheCreationTokens: 100,
 			StopReason:          "end_turn",
-			CostUSD:             0.005,
+			CostUSD:             new(0.005),
 			DurationMs:          150,
 			BytesSent:           512,
 			BytesReceived:       1024,
@@ -122,6 +122,7 @@ func TestEmitLLMFinishEvent_SuccessPath_UsesProviderStatus(t *testing.T) {
 		"model":                 "claude-haiku-4-5-20251001",
 		"success":               true,
 		"input_tokens":          float64(12),
+		"prompt_tokens":         float64(115),
 		"cache_creation_tokens": float64(100),
 		"cost":                  0.005,
 		"bytes_sent":            float64(512),
@@ -188,16 +189,17 @@ func TestEmitLLMFinishEvent_ErrorPathWithPartialStatus_BytesPreserved(t *testing
 	})
 }
 
-// A cost the provider reported is printed as the number; a status with no
-// cost prints unknown, since DispatchStatus has no "reported" flag and every
-// API provider leaves it zero.
+// A cost the provider reported is printed as the number, zero included;
+// unknown is printed when the provider returned none (a nil CostUSD) or
+// there is no status at all.
 func TestLLMFinishFields_Cost(t *testing.T) {
 	tests := []struct {
 		name   string
 		status *providers.DispatchStatus
 		want   any
 	}{
-		{name: "reported", status: &providers.DispatchStatus{Success: true, CostUSD: 0.0123}, want: 0.0123},
+		{name: "reported", status: &providers.DispatchStatus{Success: true, CostUSD: new(0.0123)}, want: 0.0123},
+		{name: "reported zero", status: &providers.DispatchStatus{Success: true, CostUSD: new(0.0)}, want: 0.0},
 		{name: "not reported", status: &providers.DispatchStatus{Success: true}, want: costUnknown},
 		{name: "no status", status: nil, want: costUnknown},
 	}
@@ -561,4 +563,27 @@ func TestMemoryModelCaller_FinishHasNoSessionKey(t *testing.T) {
 		"agent_id":  "alice",
 		"our_model": "Summarizer",
 	}, "session_key")
+}
+
+// prompt_tokens is the whole prompt: the provider's usage count when it gave
+// one, otherwise the uncached input plus the cache reads and writes.
+func TestLLMFinishFields_PromptTokens(t *testing.T) {
+	status := &providers.DispatchStatus{Success: true, InputTokens: 10, CacheReadTokens: 200, CacheCreationTokens: 30}
+	tests := []struct {
+		name string
+		resp *providers.LLMResponse
+		want int
+	}{
+		{name: "from usage", resp: &providers.LLMResponse{Status: status, Usage: &providers.UsageInfo{PromptTokens: 240}}, want: 240},
+		{name: "summed from status", resp: &providers.LLMResponse{Status: status}, want: 240},
+		{name: "no status", resp: nil, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := llmFinish{caller: llmCaller{agentID: "alice", label: "alice"}, kind: llmKindAgent, resp: tt.resp}.fields()
+			if got["prompt_tokens"] != tt.want {
+				t.Errorf("prompt_tokens = %v, want %d", got["prompt_tokens"], tt.want)
+			}
+		})
+	}
 }

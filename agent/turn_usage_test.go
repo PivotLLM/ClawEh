@@ -23,15 +23,19 @@ func TestAddTurnUsage_NilTargetOrResponse(t *testing.T) {
 func TestAddTurnUsage_AccumulatesAcrossIterations(t *testing.T) {
 	var u global.TurnUsage
 	addTurnUsage(&u, &providers.LLMResponse{Status: &providers.DispatchStatus{
-		Model: "claude-a", InputTokens: 100, OutputTokens: 10, CacheReadTokens: 5, CacheCreationTokens: 2, CostUSD: 0.01,
+		Model: "claude-a", InputTokens: 100, OutputTokens: 10, CacheReadTokens: 5, CacheCreationTokens: 2, CostUSD: new(0.01),
 	}}, "anthropic", "requested")
 	addTurnUsage(&u, &providers.LLMResponse{Status: &providers.DispatchStatus{
-		Model: "claude-a", InputTokens: 200, OutputTokens: 20, CacheReadTokens: 1, CacheCreationTokens: 0, CostUSD: 0.02,
+		Model: "claude-a", InputTokens: 200, OutputTokens: 20, CacheReadTokens: 1, CacheCreationTokens: 0, CostUSD: new(0.02),
+	}}, "anthropic", "requested")
+	// A call whose provider returned no cost adds its tokens and nothing to the cost.
+	addTurnUsage(&u, &providers.LLMResponse{Status: &providers.DispatchStatus{
+		Model: "claude-a", InputTokens: 50, OutputTokens: 5,
 	}}, "anthropic", "requested")
 
 	want := global.TurnUsage{
 		Model: "claude-a", Provider: "anthropic",
-		InputTokens: 300, OutputTokens: 30, CacheReadTokens: 6, CacheCreationTokens: 2, CostUSD: 0.03,
+		InputTokens: 350, OutputTokens: 35, CacheReadTokens: 6, CacheCreationTokens: 2, CostUSD: 0.03,
 	}
 	if u.Model != want.Model || u.Provider != want.Provider || u.InputTokens != want.InputTokens ||
 		u.OutputTokens != want.OutputTokens || u.CacheReadTokens != want.CacheReadTokens ||

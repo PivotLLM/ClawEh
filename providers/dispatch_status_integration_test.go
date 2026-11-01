@@ -50,8 +50,12 @@ func TestIntegration_DispatchStatus_ClaudeCLI(t *testing.T) {
 		t.Error("DurationMs = 0; expected non-zero")
 	}
 	// Cost reported by claude-cli should be non-zero when the model dispatched.
-	if resp.Status.CostUSD <= 0 {
-		t.Logf("warning: CostUSD = %v; design doc expects non-zero", resp.Status.CostUSD)
+	if resp.Status.CostUSD == nil || *resp.Status.CostUSD <= 0 {
+		var shown any = "not reported"
+		if resp.Status.CostUSD != nil {
+			shown = *resp.Status.CostUSD
+		}
+		t.Logf("warning: CostUSD = %v; design doc expects a reported, non-zero cost", shown)
 	}
 	if resp.Status.BytesSent == 0 {
 		t.Error("BytesSent = 0; expected non-zero (stdin payload)")

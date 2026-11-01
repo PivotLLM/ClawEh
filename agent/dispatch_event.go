@@ -128,11 +128,18 @@ func (f llmFinish) fields() map[string]any {
 	if model == "" {
 		model = f.requestedModel
 	}
-	// DispatchStatus has no "cost reported" flag: a cost above zero is one
-	// the provider reported.
+	// A nil CostUSD means the provider returned no cost; a reported cost is
+	// printed as is, zero included.
 	var cost any = costUnknown
-	if status.CostUSD > 0 {
-		cost = status.CostUSD
+	if status.CostUSD != nil {
+		cost = *status.CostUSD
+	}
+	// The whole prompt: the provider's count when it gave one, else the sum of
+	// the uncached input and the cache reads and writes, which is the same
+	// quantity on every provider.
+	promptTokens := status.InputTokens + status.CacheReadTokens + status.CacheCreationTokens
+	if f.resp != nil && f.resp.Usage != nil && f.resp.Usage.PromptTokens > 0 {
+		promptTokens = f.resp.Usage.PromptTokens
 	}
 	fields := map[string]any{
 		"agent_id":              f.caller.agentID,
@@ -144,6 +151,7 @@ func (f llmFinish) fields() map[string]any {
 		"model":                 model,
 		"num_turns":             status.NumTurns,
 		"input_tokens":          status.InputTokens,
+		"prompt_tokens":         promptTokens,
 		"output_tokens":         status.OutputTokens,
 		"cache_read_tokens":     status.CacheReadTokens,
 		"cache_creation_tokens": status.CacheCreationTokens,
