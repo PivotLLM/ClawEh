@@ -34,6 +34,7 @@ observe does not need an entry.
   refused with "no worker model is available". To restore the previous
   behaviour clear **Worker models** on the agent's card, or remove
   `subagents.models` from the agent in `config.json`.
+- Improved LLM use logging.
 
 ## [0.6.2]
 

@@ -42,5 +42,7 @@ func (c *memoryModelCaller) Complete(ctx context.Context, req consolidate.ModelR
 // This is the constructor the gateway's WorkerFactory calls per Job.
 func (al *AgentLoop) NewMemoryModelCaller(agent *AgentInstance) consolidate.ModelCaller {
 	caller, effective := al.newCompressModelCaller(agent, "cogmem")
+	// "cogmem" labels the chain's own log lines; it is not a session key.
+	caller.noSessionKey = true
 	return &memoryModelCaller{complete: caller.complete, modelName: effective}
 }

@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -27,6 +28,11 @@ type visionReply struct {
 type providerVisionClient struct {
 	provider providers.LLMProvider
 	model    string
+	// caller, alias and ourProvider label the finish line: the agent the
+	// chain belongs to, the model's model_name and its provider name.
+	caller      llmCaller
+	alias       string
+	ourProvider string
 }
 
 // Model returns the model name, used to label log lines.
@@ -35,7 +41,19 @@ func (c *providerVisionClient) Model() string { return c.model }
 func (c *providerVisionClient) Complete(ctx context.Context, messages []providers.Message) (visionReply, error) {
 	// No response-format option: a describe call wants free-form prose, not a
 	// JSON object.
+	start := time.Now()
 	resp, err := c.provider.Chat(ctx, messages, nil, c.model, nil)
+	emitLLMFinishEvent(llmFinish{
+		caller:         c.caller,
+		kind:           llmKindVision,
+		ourProvider:    c.ourProvider,
+		ourModel:       c.alias,
+		requestedModel: c.model,
+		turnID:         turnIDFrom(ctx),
+		elapsedMs:      time.Since(start).Milliseconds(),
+		resp:           resp,
+		err:            err,
+	})
 	if err != nil {
 		return visionReply{}, err
 	}
@@ -84,7 +102,13 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 		"alias":     alias,
 		"model":     modelID,
 	})
-	return &providerVisionClient{provider: p, model: modelID}, true
+	return &providerVisionClient{
+		provider:    p,
+		model:       modelID,
+		caller:      callerOf(agent),
+		alias:       alias,
+		ourProvider: compressProviderName(cfg, alias),
+	}, true
 }
 
 // wireVisionClients builds the agent's vision-describe chain from the global

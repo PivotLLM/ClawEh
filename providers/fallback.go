@@ -39,6 +39,7 @@ type FallbackResult struct {
 	Response *LLMResponse
 	Provider string
 	Model    string
+	Alias    string // config model_name of the candidate that answered, when known
 	Attempts []FallbackAttempt
 }
 
@@ -264,6 +265,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 				result.Response = resp
 				result.Provider = candidate.Provider
 				result.Model = candidate.Model
+				result.Alias = candidate.Alias
 				return result, nil
 			}
 
@@ -377,6 +379,7 @@ func (fc *FallbackChain) ExecuteImage(
 			result.Response = resp
 			result.Provider = candidate.Provider
 			result.Model = candidate.Model
+			result.Alias = candidate.Alias
 			return result, nil
 		}
 

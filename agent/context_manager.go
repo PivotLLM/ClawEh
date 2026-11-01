@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,10 @@ type providerLLMClient struct {
 	model             string
 	providerName      string // provider NAME (config), for the shared cooldown key
 	requestJSONObject bool
+	// alias and ourProvider are the model_name and provider name logged on
+	// the finish line; empty when the model resolved to no models entry.
+	alias       string
+	ourProvider string
 }
 
 // Model returns the model name this client dispatches to, used to label
@@ -71,8 +76,12 @@ func (c *providerLLMClient) chat(ctx context.Context, messages []providers.Messa
 type compressModelCaller struct {
 	clients  []*providerLLMClient
 	cooldown *providers.CooldownTracker
-	// agentID and sessionKey label the log lines.
-	agentID, sessionKey string
+	// caller and sessionKey label the log lines.
+	caller     llmCaller
+	sessionKey string
+	// noSessionKey leaves session_key off the finish line, for a caller whose
+	// sessionKey names no conversation (memory consolidation).
+	noSessionKey bool
 }
 
 // Complete implements ctxengine.ModelCaller.
@@ -101,14 +110,31 @@ func (c *compressModelCaller) complete(ctx context.Context, system, user string,
 		if c.cooldown != nil && cl.model != "" && !c.cooldown.IsAvailable(cl.providerName, cl.model) {
 			cooling++
 			logger.InfoCF("llmcontext", "compression model in cooldown; skipping", map[string]any{
-				"agent_id":  c.agentID,
+				"agent_id":  c.caller.agentID,
 				"session":   c.sessionKey,
 				"model":     cl.model,
 				"remaining": c.cooldown.CooldownRemaining(cl.providerName, cl.model).Round(time.Second).String(),
 			})
 			continue
 		}
+		sessionKey := c.sessionKey
+		if c.noSessionKey {
+			sessionKey = ""
+		}
+		start := time.Now()
 		resp, chatErr := cl.chat(ctx, messages, jsonObject)
+		emitLLMFinishEvent(llmFinish{
+			caller:         c.caller,
+			kind:           llmKindCompression,
+			ourProvider:    cl.ourProvider,
+			ourModel:       cmp.Or(cl.alias, cl.model),
+			requestedModel: cl.model,
+			sessionKey:     sessionKey,
+			turnID:         turnIDFrom(ctx),
+			elapsedMs:      time.Since(start).Milliseconds(),
+			resp:           resp,
+			err:            chatErr,
+		})
 		if chatErr != nil {
 			lastErr, lastModel = chatErr, cl.model
 			// Record the failure against the shared cooldown policy; statuses
@@ -117,7 +143,7 @@ func (c *compressModelCaller) complete(ctx context.Context, system, user string,
 				c.cooldown.MarkFailure(cl.providerName, cl.model, fe.Reason, fe.Status, fe.RetryAfter)
 			}
 			logger.WarnCF("llmcontext", "compression model call failed; trying next in chain", map[string]any{
-				"agent_id": c.agentID,
+				"agent_id": c.caller.agentID,
 				"session":  c.sessionKey,
 				"model":    cl.model,
 				"error":    redactedError(chatErr),
@@ -226,7 +252,8 @@ func (al *AgentLoop) resolveCompressClient(agent *AgentInstance, compressModelNa
 				"model":     modelID,
 				"session":   sessionKey,
 			})
-			return &providerLLMClient{provider: p, model: modelID, providerName: compressProviderName(cfg, alias), requestJSONObject: true}
+			provName := compressProviderName(cfg, alias)
+			return &providerLLMClient{provider: p, model: modelID, providerName: provName, requestJSONObject: true, alias: alias, ourProvider: provName}
 		} else {
 			logger.WarnCF("llmcontext", "compression model dispatch failed; falling back to agent provider", map[string]any{
 				"agent_id":  agent.ID,
@@ -248,7 +275,16 @@ func (al *AgentLoop) resolveCompressClient(agent *AgentInstance, compressModelNa
 	// compress_model string so the existing single-provider configurations
 	// (e.g. all-anthropic, all-openai deployments) keep working without a
 	// models entry.
-	return &providerLLMClient{provider: agent.Provider, model: compressModelName, requestJSONObject: true}
+	return &providerLLMClient{provider: agent.Provider, model: compressModelName, requestJSONObject: true, ourProvider: defaultProviderName(cfg)}
+}
+
+// defaultProviderName is the provider name of the agent defaults' model, the
+// one agent.Provider is built for (providers.CreateProvider); "" when unknown.
+func defaultProviderName(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return compressProviderName(cfg, cfg.Agents.Defaults.DefaultModelName())
 }
 
 // resolveDefaultCompressClient resolves the agent's primary model to a concrete
@@ -265,7 +301,7 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 					"model":    modelID,
 					"session":  sessionKey,
 				})
-				return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
+				return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true, alias: alias, ourProvider: compressProviderName(cfg, alias)}
 			} else {
 				logger.WarnCF("llmcontext", "compression: default (agent primary) dispatch failed; using agent provider directly", map[string]any{
 					"agent_id": agent.ID,
@@ -278,7 +314,7 @@ func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionK
 		}
 	}
 	// Last-resort fallback: use the agent's primary provider directly.
-	return &providerLLMClient{provider: agent.Provider, model: primary, requestJSONObject: true}
+	return &providerLLMClient{provider: agent.Provider, model: primary, requestJSONObject: true, ourProvider: defaultProviderName(cfg)}
 }
 
 // newCompressModelCaller builds the summarization ModelCaller for an agent and
@@ -293,7 +329,7 @@ func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey str
 		// A person's conversation is never given to a model: no
 		// summarization chain at all, so compaction and consolidation find
 		// no model (and the person is never asked to summarize).
-		return &compressModelCaller{agentID: agent.ID, sessionKey: sessionKey}, ""
+		return &compressModelCaller{caller: callerOf(agent), sessionKey: sessionKey}, ""
 	}
 	var agentModels, globalModels []string
 	if agent.Config != nil {
@@ -333,7 +369,7 @@ func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey str
 	return &compressModelCaller{
 		clients:    clients,
 		cooldown:   al.cooldownTracker(),
-		agentID:    agent.ID,
+		caller:     callerOf(agent),
 		sessionKey: sessionKey,
 	}, effective
 }

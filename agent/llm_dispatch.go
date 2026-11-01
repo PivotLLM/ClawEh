@@ -36,9 +36,12 @@ type llmDispatch struct {
 	// runProvider and runModel serve the request when no fallback chain runs.
 	runProvider providers.LLMProvider
 	runModel    string
-	// provider is the protocol named in the finish event, updated when the
-	// fallback chain lands on another candidate.
+	// provider is the config provider name logged as our_provider on the
+	// finish line, updated when the fallback chain lands on another candidate.
 	provider string
+	// alias is the model_name of the fallback candidate that answered the
+	// last call; empty when no fallback chain ran or the candidate has none.
+	alias string
 	// promptEstimate is the engine's prompt-token estimate for the request.
 	promptEstimate int
 }
@@ -105,7 +108,7 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 		dispatchStart := time.Now()
 		var response *providers.LLMResponse
 		response, err = t.callModel(ctx, d)
-		emitLLMFinishEvent(t.agent.ID, t.iteration, d.provider, t.model, dispatchStart, response, err)
+		t.emitFinish(ctx, d, time.Since(dispatchStart).Milliseconds(), response, err)
 		if err == nil {
 			addTurnUsage(t.opts.UsageOut, response, d.provider, t.model)
 			if d.promptEstimate > 0 && response != nil && response.Usage != nil && response.Usage.PromptTokens > 0 {
@@ -128,6 +131,33 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 		break
 	}
 	return nil, t.dispatchFailed(ctx, err)
+}
+
+// emitFinish writes the "LLM finish" line for one call of the dispatch.
+func (t *llmTurn) emitFinish(ctx context.Context, d *llmDispatch, elapsedMs int64, resp *providers.LLMResponse, err error) {
+	kind := llmKindAgent
+	if t.agent.Spec.IsClone() {
+		kind = llmKindSubagent
+	}
+	ourModel := d.alias
+	if ourModel == "" {
+		ourModel = t.model
+	}
+	emitLLMFinishEvent(llmFinish{
+		caller:         callerOf(t.agent),
+		kind:           kind,
+		iteration:      t.iteration,
+		ourProvider:    d.provider,
+		ourModel:       ourModel,
+		requestedModel: t.model,
+		sessionKey:     t.opts.SessionKey,
+		channel:        t.opts.Channel,
+		chatID:         t.opts.ChatID,
+		turnID:         turnIDFrom(ctx),
+		elapsedMs:      elapsedMs,
+		resp:           resp,
+		err:            err,
+	})
 }
 
 // waitToRetry waits out the backoff, on clk, before retrying a timed-out
@@ -245,6 +275,7 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	// and closes once its calls are done.
 	defer al.modelCalls.begin(t.agent.Provider)()
 
+	d.alias = ""
 	hasTools := len(d.defs) > 0
 	fallback := al.fallbackChain()
 	if len(t.candidates) == 0 || fallback == nil {
@@ -278,6 +309,7 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	if err != nil {
 		return nil, err
 	}
+	d.alias = fbResult.Alias
 	if fbResult.Provider != "" {
 		d.provider = fbResult.Provider
 		if len(fbResult.Attempts) > 0 {

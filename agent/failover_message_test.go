@@ -255,7 +255,7 @@ func TestProviderErrorLogsRedactSecrets(t *testing.T) {
 		var buf bytes.Buffer
 		restore := logger.RedirectForTest(&buf)
 		defer restore()
-		c := &compressModelCaller{agentID: "alice", clients: []*providerLLMClient{
+		c := &compressModelCaller{caller: llmCaller{agentID: "alice"}, clients: []*providerLLMClient{
 			compressClient(&scriptedProvider{err: providerErrorWithKey()}, "p1", "model-a"),
 		}}
 		if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{System: "s", User: "u"}); err == nil {

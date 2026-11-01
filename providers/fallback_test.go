@@ -802,3 +802,33 @@ func TestResolveCandidatesWithLookup_UnresolvedAliasIsDropped(t *testing.T) {
 		}
 	}
 }
+
+// The result names the alias of the candidate that answered, not the primary's.
+func TestFallback_ResultCarriesAnsweringAlias(t *testing.T) {
+	fc := NewFallbackChain(NewCooldownTracker())
+	candidates := []FallbackCandidate{
+		{Provider: "openai", Model: "gpt-4", Alias: "Alice GPT"},
+		{Provider: "anthropic", Model: "claude-opus", Alias: "Bob Opus"},
+	}
+	run := func(_ context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		if c.Provider == "openai" {
+			return nil, errors.New("rate limit exceeded")
+		}
+		return &LLMResponse{Content: "ok"}, nil
+	}
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Alias != "Bob Opus" || result.Model != "claude-opus" {
+		t.Fatalf("result = %s/%s, want Bob Opus/claude-opus", result.Alias, result.Model)
+	}
+
+	image, err := NewFallbackChain(NewCooldownTracker()).ExecuteImage(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("image: unexpected error: %v", err)
+	}
+	if image.Alias != "Bob Opus" {
+		t.Fatalf("image result alias = %q, want Bob Opus", image.Alias)
+	}
+}
