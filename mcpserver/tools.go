@@ -312,7 +312,7 @@ func agentMayCall(reg *tools.ToolRegistry, policy acl.Policy, agentID, toolName 
 	if reg == nil {
 		return false
 	}
-	if _, ok := reg.GetForHost(toolName); !ok {
+	if _, ok := reg.Get(toolName); !ok {
 		return false
 	}
 	return policy.IsAllowed(agentID, toolName)
@@ -410,10 +410,9 @@ func firstToolNamed(agentRegistries map[string]*tools.ToolRegistry, name string)
 		if reg == nil {
 			continue
 		}
-		// GetForHost: the host catalogue lists every registered tool regardless of
-		// progressive-discovery TTL state, so a TTL-hidden tool still supplies a
-		// schema for tools/list.
-		if t, ok := reg.GetForHost(name); ok {
+		// Get resolves every registered tool, discovery-hidden or not, so a
+		// hidden tool still supplies a schema for tools/list.
+		if t, ok := reg.Get(name); ok {
 			return t, true
 		}
 	}
@@ -495,11 +494,11 @@ func dispatchToolCall(
 		return fmt.Sprintf("agent %q has no registered tool registry", agentName), true
 	}
 
-	// GetForHost (not Get): a valid, authorized call must never be denied because
-	// progressive discovery has the tool TTL-hidden — discovery is an in-loop
-	// context optimization, not an access control. Authorization is enforced below
-	// by the ACL policy and the primary-only check.
-	toolInstance, toolOK := reg.GetForHost(toolName)
+	// Progressive discovery never gates a call (a hidden tool is only deferred
+	// in the in-loop tool list), so a discovery-hidden tool resolves here too.
+	// Authorization is enforced below by the ACL policy and the primary-only
+	// check.
+	toolInstance, toolOK := reg.Get(toolName)
 	if !toolOK {
 		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
@@ -565,9 +564,9 @@ func dispatchToolCall(
 		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
 		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r, spawnDepth)
 	}
-	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
-	// applies progressive discovery; authorization was enforced by the ACL policy above.
-	result := reg.ExecuteForHost(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
+	// Authorization was enforced by the ACL policy above; discovery never gates
+	// execution.
+	result := reg.ExecuteWithContext(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})

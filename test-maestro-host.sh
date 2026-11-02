@@ -12,6 +12,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+# A test gateway must never alert the operator: no ALERTER_* channel from ~/.alerter.
+# shellcheck source=tests/lib/gateway_env.sh
+source "$ROOT/tests/lib/gateway_env.sh"
 KEEP=false
 while getopts "k" opt; do
     case $opt in

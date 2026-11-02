@@ -926,7 +926,64 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(12, "delete the agent and confirm it is gone", async () => {
+  await check(12, "Sub-Agent models: adding a model saves subagents.models, removing it drops the key, allow_agents kept", async () => {
+    const ID = "e2e-wrk"
+    const before = await config()
+    const model = (before.models ?? []).find((m) => m.enabled)?.model_name
+    if (!model) return "skipped, no enabled model to add"
+    const subagents = { allow_agents: [ID] }
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, tools: [], subagents }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    try {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      const section = page.locator("div", { has: page.getByText("Sub-Agent models (tried in order)", { exact: true }) }).last()
+      const add = section.getByRole("combobox").filter({ hasText: /Add sub-agent model/ })
+      assert((await add.count()) > 0, "no Add sub-agent model… control under Sub-Agent models")
+      await add.click()
+      await page.waitForTimeout(400)
+      await page.locator(`[role=option]:has-text("${model}")`).first().click()
+      await page.waitForTimeout(2000)
+      let a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(
+        JSON.stringify(a?.subagents?.models) === JSON.stringify([model]),
+        `subagents.models = ${JSON.stringify(a?.subagents?.models)} after the add; expected ${JSON.stringify([model])}`,
+      )
+      assert(
+        JSON.stringify(a?.subagents?.allow_agents) === JSON.stringify(subagents.allow_agents),
+        `subagents.allow_agents = ${JSON.stringify(a?.subagents?.allow_agents)} after the add; the save changed it`,
+      )
+      await section.locator('button[title="Remove"]').first().click()
+      await page.waitForTimeout(2000)
+      await close()
+      a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(
+        a?.subagents?.models === undefined,
+        `subagents.models = ${JSON.stringify(a?.subagents?.models)} after the remove; expected the key to be absent`,
+      )
+      assert(
+        JSON.stringify(a?.subagents?.allow_agents) === JSON.stringify(subagents.allow_agents),
+        `subagents.allow_agents = ${JSON.stringify(a?.subagents?.allow_agents)} after the remove; the save changed it`,
+      )
+      return `${ID}: subagents.models saved as [${model}], then removed; allow_agents kept`
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
+
+  await check(13, "delete the agent and confirm it is gone", async () => {
     if (!created) return "skipped, never created"
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
@@ -1616,6 +1673,7 @@ if (useGroup("I", "Models and providers")) {
   await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const configured = clis.find((c) => c.configured)
+    if (!configured) return "skipped: no CLI provider configured on this instance"
     const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()

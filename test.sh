@@ -32,6 +32,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# A test gateway must never alert the operator: no ALERTER_* channel from ~/.alerter.
+# shellcheck source=tests/lib/gateway_env.sh
+source "$SCRIPT_DIR/tests/lib/gateway_env.sh"
+
 #===============================================================================
 # Configuration
 #===============================================================================
@@ -492,6 +496,9 @@ PY
             mkdir -p "$INTEG_HOME"
 
             cleanup_integration() {
+                if [ -n "${ALERT_PID:-}" ]; then
+                    kill -KILL "$ALERT_PID" 2>/dev/null || true
+                fi
                 if [ -n "${INTEG_PID:-}" ] && kill -0 "$INTEG_PID" 2>/dev/null; then
                     kill -TERM "$INTEG_PID" 2>/dev/null || true
                     # Give the gateway a moment to release its lock + shut down cleanly.
@@ -926,6 +933,86 @@ EOF
                             fi
                         done
                     fi
+                fi
+
+                # ---- Test gateways never alert the operator ----
+                #
+                # tests/lib/gateway_env.sh (sourced above) exports every
+                # ALERTER_* channel variable empty, so the alerter does not
+                # take the operator's ~/.alerter settings and alerts reach
+                # alerts.log only. A second gateway gets a decoy ~/.alerter
+                # that sets every channel variable but leaves each channel one
+                # required value short, so it can never deliver: a variable
+                # the helper misses makes its channel half-configured, which
+                # disables alerting, and the expected alert is then missing
+                # from alerts.log. Its config names a model that does not
+                # exist, which raises an alert at startup.
+                echo ""
+                echo "${BOLD}--- Test gateway alerts stay local ---${NC}"
+                echo ""
+                ALERT_TMP="$INTEG_TMP/alert-check"
+                ALERT_HOME="$ALERT_TMP/home"
+                ALERT_LOG="$ALERT_TMP/gateway.log"
+                ALERTS_FILE="$ALERT_HOME/logs/alerts.log"
+                mkdir -p "$ALERT_HOME" "$ALERT_TMP/userhome"
+                # The variables the helper exports, read from the helper itself.
+                ALERT_VARS=$(grep -o 'ALERTER_[A-Z_]*=' "$SCRIPT_DIR/tests/lib/gateway_env.sh" | tr -d '=')
+                ALERT_ENV_LEAKS=""
+                [ -n "$ALERT_VARS" ] || ALERT_ENV_LEAKS=" (no ALERTER_* variables found)"
+                for v in $ALERT_VARS; do
+                    if [ -z "${!v+set}" ] || [ -n "${!v}" ]; then
+                        ALERT_ENV_LEAKS="$ALERT_ENV_LEAKS $v"
+                    fi
+                done
+                cat > "$ALERT_TMP/userhome/.alerter" <<EOF
+ALERTER_PUSHOVER_TOKEN=decoy
+ALERTER_PUSHOVER_NORMAL=0
+ALERTER_PUSHOVER_URGENT=1
+ALERTER_PUSHOVER_EMERGENCY=2
+ALERTER_TELNYX_API_KEY=decoy
+ALERTER_SMS_FROM=+15550100
+ALERTER_SMTP_HOST=127.0.0.1
+ALERTER_SMTP_PORT=1
+ALERTER_SMTP_USER=alice
+ALERTER_SMTP_PASSWORD=decoy
+ALERTER_SMTP_FROM=alice@example.com
+ALERTER_WEBHOOK_HEADERS={"X-Decoy":"1"}
+EOF
+                cat > "$ALERT_HOME/config.json" <<EOF
+{
+  "agents": {
+    "defaults": { "models": ["No Such Model"] },
+    "list": [{ "id": "main", "name": "main", "default": true }]
+  },
+  "channels": { "webui": { "enabled": true, "token": "alert-check-token" } },
+  "gateway": { "host": "127.0.0.1", "port": $(pick_free_port), "tls": { "mode": "off" } }
+}
+EOF
+                chmod 600 "$ALERT_HOME/config.json"
+                HOME="$ALERT_TMP/userhome" CLAW_HOME="$ALERT_HOME" "$INTEG_BIN" gateway >"$ALERT_LOG" 2>&1 &
+                ALERT_PID=$!
+                for _ in $(seq 1 40); do
+                    grep -qs 'No Such Model' "$ALERTS_FILE" && break
+                    kill -0 "$ALERT_PID" 2>/dev/null || break
+                    sleep 0.25
+                done
+                kill -TERM "$ALERT_PID" 2>/dev/null || true
+                for _ in $(seq 1 40); do
+                    kill -0 "$ALERT_PID" 2>/dev/null || break
+                    sleep 0.25
+                done
+                kill -KILL "$ALERT_PID" 2>/dev/null || true
+                wait "$ALERT_PID" 2>/dev/null || true
+                ALERT_PID=""
+                if [ -n "$ALERT_ENV_LEAKS" ]; then
+                    integ_fail "not exported empty for test gateways (tests/lib/gateway_env.sh):$ALERT_ENV_LEAKS"
+                elif ! grep -qs 'agents.defaults.models named model "No Such Model"' "$ALERTS_FILE"; then
+                    echo "${DIM}--- gateway log (tail) ---${NC}"
+                    tail -n 40 "$ALERT_LOG" | sed 's/^/    /'
+                    integ_fail "missing-model alert not in the test gateway's alerts.log (see gateway log tail above)"
+                else
+                    echo "  ${GREEN}PASS${NC}: test gateway alert written to its alerts.log only"
+                    INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
                 fi
             fi
         fi

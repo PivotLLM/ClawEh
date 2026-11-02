@@ -254,7 +254,7 @@ func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron
 	if registry == nil {
 		return "", fmt.Errorf("agent %q has no tool registry", agentID)
 	}
-	tool, ok := registry.GetForHost(w.Tool)
+	tool, ok := registry.Get(w.Tool)
 	if !ok {
 		return "", fmt.Errorf("tool %q is not available to agent %q", w.Tool, agentID)
 	}
@@ -262,7 +262,7 @@ func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron
 		return "", fmt.Errorf("tool %q is session-scoped and cannot be used as a watch probe", w.Tool)
 	}
 
-	res := registry.ExecuteForHost(ctx, w.Tool, w.Args, "", "", nil)
+	res := registry.ExecuteWithContext(ctx, w.Tool, w.Args, "", "", nil)
 	if res == nil {
 		return "", fmt.Errorf("tool %q returned no result", w.Tool)
 	}

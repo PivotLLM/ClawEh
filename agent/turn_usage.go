@@ -25,5 +25,9 @@ func addTurnUsage(u *global.TurnUsage, resp *providers.LLMResponse, provider, re
 	if st.Model != "" {
 		model = st.Model
 	}
-	u.Add(model, provider, st.InputTokens, st.OutputTokens, st.CacheReadTokens, st.CacheCreationTokens, st.CostUSD)
+	cost := 0.0
+	if st.CostUSD != nil {
+		cost = *st.CostUSD
+	}
+	u.Add(model, provider, st.InputTokens, st.OutputTokens, st.CacheReadTokens, st.CacheCreationTokens, cost)
 }

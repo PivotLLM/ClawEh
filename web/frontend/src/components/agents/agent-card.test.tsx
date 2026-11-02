@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { AgentCard } from "./agent-card"
@@ -82,6 +82,7 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
   onCCv3Change: () => {},
   onCogmemChange: () => {},
   onSummarizationModelsChange: () => {},
+  onSubagentModelsChange: () => {},
   onSetDefaultBinding: () => {},
 }
 
@@ -101,6 +102,7 @@ const personIgnores = [
   "Rotating Tokens",
   "Mounts (external folders, beside files/)",
   "Memory models (optional)",
+  "Sub-Agent models (tried in order)",
 ]
 
 describe("AgentCard mounts", () => {
@@ -330,5 +332,76 @@ describe("AgentCard May message", () => {
   it("shows no note when the tool and the list agree", () => {
     mayMessage({ tools: ["agent_message"], allowAgents: ["bob"] })
     expect(screen.queryByTestId("may-message-note")).toBeNull()
+  })
+})
+
+describe("AgentCard Sub-Agent models", () => {
+  const model = (name: string, index: number) =>
+    ({
+      index,
+      model_name: name,
+      model: name,
+      provider: "p",
+      enabled: true,
+      configured: true,
+      is_default: false,
+    }) as React.ComponentProps<typeof AgentCard>["models"][number]
+  const models = [model("fast", 0), model("slow", 1)]
+
+  it("lists the saved worker models in order and says they are exclusive", () => {
+    renderCard([], {
+      models,
+      subagentModels: ["slow", "fast"],
+      onSubagentModelsChange: () => {},
+    })
+    const section = screen
+      .getByText("Sub-Agent models (tried in order)")
+      .closest("div")!
+    const rows = [...section.querySelectorAll(".font-mono")].map(
+      (el) => el.textContent,
+    )
+    expect(rows).toEqual(["slow", "fast"])
+    expect(
+      screen.queryByText(
+        "Sub-agents this agent starts run on these models and no others.",
+      ),
+    ).not.toBeNull()
+    expect(screen.queryByText("Sub-agents use the models above.")).toBeNull()
+  })
+
+  it("says workers use the agent's own models when the list is empty", () => {
+    renderCard([], { models, onSubagentModelsChange: () => {} })
+    expect(screen.queryByText("Sub-agents use the models above.")).not.toBeNull()
+    expect(screen.queryByText("Add sub-agent model…")).not.toBeNull()
+  })
+
+  it("adding a model reports the new list", () => {
+    const onChange = vi.fn()
+    renderCard([], {
+      models,
+      subagentModels: ["fast"],
+      onSubagentModelsChange: onChange,
+    })
+    const section = screen
+      .getByText("Sub-Agent models (tried in order)")
+      .closest("div")!
+    const add = within(section).getByRole("combobox")
+    fireEvent.keyDown(add, { key: "ArrowDown" })
+    fireEvent.click(screen.getByRole("option", { name: "slow" }))
+    expect(onChange).toHaveBeenCalledWith(["fast", "slow"])
+  })
+
+  it("removing a model reports the list without it", () => {
+    const onChange = vi.fn()
+    renderCard([], {
+      models,
+      subagentModels: ["fast", "slow"],
+      onSubagentModelsChange: onChange,
+    })
+    const section = screen
+      .getByText("Sub-Agent models (tried in order)")
+      .closest("div")!
+    fireEvent.click(within(section).getAllByTitle("Remove")[0])
+    expect(onChange).toHaveBeenCalledWith(["slow"])
   })
 })

@@ -355,7 +355,7 @@ func mcpServerToolEntries(agent *AgentInstance, mgr *mcp.Manager, serverName str
 		// the instance), hide them behind search_tools; otherwise advertise.
 		// A namespace pinned via always_shown_namespaces stays visible.
 		// Hidden ones are grouped by server so a reveal-together server
-		// unlocks as a set.
+		// loads as a set.
 		if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
 			entries = append(entries, tools.ToolEntry{
 				Tool: mcpTool, Group: serverName, RevealTogether: conn.RevealTogether(),

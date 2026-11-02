@@ -263,7 +263,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	}
 	sub := "none allowed"
 	if a.Subagents != nil && (len(a.Subagents.AllowAgents) > 0 || len(a.Subagents.Models) > 0) {
-		sub = "agents " + joinOr(a.Subagents.AllowAgents, none) + "; models " + joinOr(a.Subagents.Models, "(agent's own)")
+		sub = "agents " + joinOr(a.Subagents.AllowAgents, none) + "; worker models " + joinOr(a.Subagents.Models, "(agent's own)")
 	}
 	sub += "; max depth " + itoa(d.GetMaxSubagentDepth())
 	_, human := cfg.HumanModelOf(a)

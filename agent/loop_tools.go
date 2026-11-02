@@ -173,18 +173,23 @@ func (al *AgentLoop) newMessageTool() tools.Tool {
 	return mt
 }
 
-// spawnCandidates is the spawn tool's candidate resolver: the model
-// candidates of the target agent. The registry is looked up at call time,
-// because tools are registered while the registry is still being built.
+// spawnCandidates is the spawn tool's candidate resolver: the worker
+// candidates of the target agent, possibly none. The registry is looked up at
+// call time, because tools are registered while the registry is still being
+// built.
 func (al *AgentLoop) spawnCandidates(targetAgentID string) ([]providers.FallbackCandidate, bool) {
 	target, ok := al.GetRegistry().Get(targetAgentID)
 	if !ok {
 		return nil, false
 	}
-	if len(target.Candidates) == 0 {
-		return nil, false
-	}
-	return target.Candidates, true
+	return target.WorkerCandidates, true
+}
+
+// hasWorkerModels reports whether the agent has configured worker models
+// (subagents.models), whether or not any of them is available.
+func (al *AgentLoop) hasWorkerModels(agentID string) bool {
+	target, ok := al.GetRegistry().Get(agentID)
+	return ok && target.Subagents != nil && len(target.Subagents.Models) > 0
 }
 
 // newSpawner builds the agent's sub-agent launcher, shared by the internal
@@ -202,9 +207,10 @@ func (al *AgentLoop) newSpawner(
 	spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 		Workspace:         currentAgent.Workspace,
 		Live:              al.taskLive,
-		SelfCandidates:    currentAgent.Candidates,
+		SelfCandidates:    currentAgent.WorkerCandidates,
 		CallerAgentID:     agentID,
 		CandidateResolver: candidateResolver,
+		WorkerModelsSet:   al.hasWorkerModels,
 		RunFull:           al.runSubagentTask,
 		Alerter:           al.Alerter(),
 	})
@@ -303,7 +309,7 @@ func (al *AgentLoop) registerProviderTools(currentAgent *AgentInstance, cfg *con
 				currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
 			case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
 				// fusion/maestro behind discovery; carry any reveal-together group
-				// (e.g. a fusion service) so the whole set unlocks in one search.
+				// (e.g. a fusion service) so get_tool_details loads the whole set.
 				// A namespace pinned via always_shown_namespaces skips this and
 				// falls through to RegisterSuite (always visible to the model).
 				if g, ok := t.(tools.DiscoveryGrouped); ok {
@@ -397,8 +403,6 @@ func discoveryPins(cfg *config.Config, agentCfg *config.AgentConfig) []string {
 // points. They are suite-exempt (gated by the discovery decision, not the per-tool
 // allowlist) and present only when discovery is active for the agent.
 func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *config.Config) {
-	ttlMax := cfg.DiscoveryTTLMax()
-	visibleBudget := cfg.DiscoveryVisibleBudget()
 	maxHits := cfg.Tools.Discovery.MaxSearchResults
 	if maxHits <= 0 {
 		maxHits = config.DefaultDiscoveryMaxSearchHits
@@ -406,7 +410,7 @@ func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *confi
 	// Suite-exempt from the allow list, but the agent's deny list still applies.
 	for _, t := range []tools.Tool{
 		tools.NewSearchTool(agent.Tools, maxHits),
-		tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget),
+		tools.NewToolDetailsTool(agent.Tools),
 	} {
 		if agent.Config.IsToolDenied(t.Name()) {
 			continue

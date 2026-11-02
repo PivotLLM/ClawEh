@@ -30,7 +30,6 @@ type (
 	ThinkingCapable        = spawnllm.ThinkingCapable
 	CLIProvider            = spawnllm.CLIProvider
 	HTTPProvider           = spawnllm.HTTPProvider
-	ClaudeProvider         = spawnllm.ClaudeProvider
 	ClaudeCliProvider      = spawnllm.ClaudeCliProvider
 	CodexCliProvider       = spawnllm.CodexCliProvider
 	AntigravityCliProvider = spawnllm.AntigravityCliProvider

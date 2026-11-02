@@ -209,20 +209,16 @@ export function ToolsSection({
 
 interface DiscoverySectionProps {
   discoveryEnabled: boolean
-  ttlMax: number
-  visibleBudget: number
   alwaysShownNamespaces: string[]
   onFieldChange: UpdateMCPField
   onNamespacesChange: (next: string[]) => void
 }
 
 // DiscoverySection edits the global progressive-tool-discovery switch
-// (tools.discovery.enabled), its ttl_max / visible_budget tuning, and the extra
-// always-shown namespaces (mcp_host.always_shown_namespaces).
+// (tools.discovery.enabled) and the extra always-shown namespaces
+// (tools.discovery.always_shown_namespaces).
 export function DiscoverySection({
   discoveryEnabled,
-  ttlMax,
-  visibleBudget,
   alwaysShownNamespaces,
   onFieldChange,
   onNamespacesChange,
@@ -253,32 +249,6 @@ export function DiscoverySection({
       />
       {discoveryEnabled && (
         <div className="space-y-3 py-4">
-          <Field
-            label="Max TTL (turns)"
-            hint="Longest a revealed tool stays visible without being used; each use resets it. Default 50."
-            layout="setting-row"
-          >
-            <Input
-              type="number"
-              min={1}
-              value={ttlMax}
-              onChange={(e) => onFieldChange("ttlMax", Number(e.target.value))}
-            />
-          </Field>
-          <Field
-            label="Visible budget"
-            hint="Max revealed tools at once; a new reveal over this hides the lowest-TTL tools first. Default 100."
-            layout="setting-row"
-          >
-            <Input
-              type="number"
-              min={1}
-              value={visibleBudget}
-              onChange={(e) =>
-                onFieldChange("visibleBudget", Number(e.target.value))
-              }
-            />
-          </Field>
           <div className="text-muted-foreground text-xs">
             Pinned namespaces: discovery-eligible tools whose namespace is
             listed here stay visible to the model instead of being hidden behind
@@ -562,7 +532,7 @@ export function ServerFields({
 
       <SwitchCardField
         label="Reveal together"
-        hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
+        hint="Under progressive discovery, make all of this server's tools available together when the model looks one of them up. Use only for small, cohesive servers."
         checked={s.revealTogether}
         onCheckedChange={(c) => onChange({ revealTogether: c })}
         layout="setting-row"

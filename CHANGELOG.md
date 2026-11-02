@@ -10,6 +10,66 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.6.3]
+
+### Added
+
+- **Sub-agent models for an agent.** `subagents.models` on an agent (the
+  **Sub-Agent models (tried in order)** list on the Agents page) is now the model
+  chain its workers run on: every sub-agent it starts through `agent_spawn`
+  and every Maestro task it dispatches uses the first worker model, falling
+  back along the list, and a `model` given to `agent_spawn` must be one of
+  them. A worker started for another agent (`agent_id`) uses that agent's
+  worker models. Left empty, workers use the agent's own **Models** list as
+  before. Use it to keep a manager on a fast API model while its workers run
+  on command-line models that reach the source tree and the development tools.
+
+### Changed
+
+- **BREAKING for an install that already has `subagents.models` set.** The key
+  existed but nothing read it, though Check Up listed it. From this release an
+  agent with the key set runs its workers on that list only: a `model` given
+  to `agent_spawn`, or a Maestro `llm_model_id`, that is not in it is refused,
+  and when no model in it is enabled every spawn and dispatch of that agent is
+  refused with "no worker model is available". To restore the previous
+  behaviour clear **Sub-Agent models** on the agent's card, or remove
+  `subagents.models` from the agent in `config.json`.
+- Improved LLM use logging.
+- **`extra_body` may no longer set `session_id` or `cache_control`.** spawnllm
+  0.1.20 sets both itself on OpenRouter requests and would skip an operator's
+  value with only a log warning, so a model whose `extra_body` names either
+  key is now refused at load and on save, like the other reserved request
+  fields.
+- **Prompt caching on Anthropic API and OpenRouter Claude models.** Requests
+  to the Anthropic API, and to Claude models through an OpenRouter provider
+  on the `openai-chat` protocol (the "OpenRouter Chat" providers, not
+  "OpenRouter Responses"), now mark the prompt for caching, so repeated calls
+  in a conversation are billed at the cache-read rate instead of in full
+  (spawnllm 0.1.20). Those OpenRouter calls also report their cost on the
+  `LLM finish` log line, and that cost now counts toward the daily spend
+  alert, which previously saw only Claude CLI costs. Each OpenRouter request
+  carries the agent id as its `session_id` so OpenRouter can route repeated
+  calls to the same cache.
+- **`input_tokens` on the `LLM finish` line is the uncached input only**, on
+  every provider, and a new `prompt_tokens` field is the whole prompt
+  (`input_tokens + cache_read_tokens + cache_creation_tokens`). `input_tokens`
+  shrinks for the `openai-chat`, `openai-responses` and `azure` protocols and
+  the Codex CLI, which previously counted cached tokens in it. `cost` is `unknown` only when the provider
+  returned no cost; a reported 0 prints as 0.
+- **With tool discovery on, every tool is offered on every call.** Hidden
+  tools are marked for on-demand loading: Anthropic (Claude 4.5 and later)
+  and OpenAI Responses (gpt-5.4 and later) models load a hidden tool when
+  `search_tools` or `get_tool_details` names it; other providers receive it as
+  an ordinary tool from then on; command-line providers see the search text
+  only (spawnllm 0.1.21). A hidden tool may be called at any time. The tool list no longer
+  changes between calls, so prompt caching holds.
+
+### Removed
+
+- **`tools.discovery.ttl_max` and `tools.discovery.visible_budget`** (and the
+  older `ttl`) are gone, with their environment variables and the fields on
+  the MCP page. A value still in `config.json` is ignored.
+
 ## [0.6.2]
 
 ### Added
@@ -2959,6 +3019,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.3]: https://github.com/PivotLLM/ClawEh/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/PivotLLM/ClawEh/compare/0.5.7...0.6.0

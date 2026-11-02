@@ -42,7 +42,7 @@ func (c *Config) modelRefSites() []modelRef {
 			modelRef{where: fmt.Sprintf("agents.list[%s].summarization_models", a.ID), agent: a.DisplayName(), slice: &a.SummarizationModels, role: "a summarization model"},
 		)
 		if a.Subagents != nil {
-			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.DisplayName(), slice: &a.Subagents.Models, role: "a sub-agent model"})
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.DisplayName(), slice: &a.Subagents.Models, role: "a worker model"})
 		}
 	}
 	return sites

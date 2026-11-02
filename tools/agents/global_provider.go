@@ -56,7 +56,7 @@ func spawnToolSchema() map[string]any {
 			},
 			"model": map[string]any{
 				"type":        "string",
-				"description": "Optional model for the subagent to run, by its model name. Must be one of the configured models for the executing agent (yourself on a self-spawn, or the target agent). Omit to use that agent's default model. Useful to run a heavier model for a demanding subtask while you stay on a lighter one.",
+				"description": "Optional model for the subagent to run, by its model name. Must be one of the executing agent's worker models (yourself on a self-spawn, or the target agent): its configured worker models, else its own models. Omit to use its first worker model. Useful to run a heavier model for a demanding subtask while you stay on a lighter one.",
 			},
 			"media": map[string]any{
 				"type":        "array",

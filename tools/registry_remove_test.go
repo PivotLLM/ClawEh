@@ -69,11 +69,15 @@ func TestReplaceByPrefix(t *testing.T) {
 	if got := r.List(); !slices.Equal(got, want) {
 		t.Fatalf("tools = %v, want %v", got, want)
 	}
-	if _, ok := r.Get("mcp_alice_search"); !ok {
-		t.Error("mcp_alice_search should be visible")
+	deferred := make(map[string]bool)
+	for _, d := range r.ToProviderDefs() {
+		deferred[d.Function.Name] = d.Deferred
 	}
-	if _, ok := r.Get("mcp_alice_lookup"); ok {
-		t.Error("mcp_alice_lookup was registered hidden and should not be visible")
+	if v, ok := deferred["mcp_alice_search"]; !ok || v {
+		t.Error("mcp_alice_search should be offered as a core tool")
+	}
+	if v, ok := deferred["mcp_alice_lookup"]; !ok || !v {
+		t.Error("mcp_alice_lookup was registered hidden and should be offered deferred")
 	}
 
 	// Nothing under the prefix and nothing new: no change, no version bump.

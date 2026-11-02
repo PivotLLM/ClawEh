@@ -20,6 +20,10 @@
 #   CLAW_TEST_CLI_COMMAND  the CLI binary (default: claude)
 set -uo pipefail
 
+# A test gateway must never alert the operator: no ALERTER_* channel from ~/.alerter.
+# shellcheck source=tests/lib/gateway_env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/gateway_env.sh"
+
 CLAW_BIN="${1:-}"
 if [ -z "$CLAW_BIN" ] || [ ! -x "$CLAW_BIN" ]; then
     echo "usage: $0 <claw binary>" >&2

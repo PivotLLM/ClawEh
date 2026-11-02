@@ -38,14 +38,18 @@ func GetClawHome() string {
 	return filepath.Join(home, ".claw")
 }
 
+// installRoot is the system install location detectInstalledClawHome checks.
+// A variable only so tests can point it away from a real /opt/claw.
+var installRoot = "/opt/claw"
+
 func detectInstalledClawHome() string {
 	// 1. Check if running executable is inside /opt/claw
 	if exe, err := os.Executable(); err == nil {
 		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
 			exe = resolved
 		}
-		if strings.HasPrefix(exe, "/opt/claw") {
-			return "/opt/claw"
+		if strings.HasPrefix(exe, installRoot) {
+			return installRoot
 		}
 	}
 
@@ -58,12 +62,12 @@ func detectInstalledClawHome() string {
 	}
 
 	// 3. Check if /opt/claw/config.json exists and is owned by the current user
-	if fi, err := os.Stat("/opt/claw/config.json"); err == nil && !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(installRoot, "config.json")); err == nil && !fi.IsDir() {
 		// If current user is the owner of /opt/claw, or running as that user
 		if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
 			curUID := os.Getuid()
 			if curUID == int(stat.Uid) {
-				return "/opt/claw"
+				return installRoot
 			}
 		}
 	}

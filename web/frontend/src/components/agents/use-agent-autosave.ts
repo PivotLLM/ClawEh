@@ -34,6 +34,8 @@ export interface AgentEdits {
   denyTools: string[]
   /** subagents.allow_agents ("May message"); [] = none. */
   allowAgents: string[]
+  /** subagents.models ("Sub-Agent models"); [] = the agent's own models. */
+  subagentModels: string[]
   maestro: MaestroRunnerEdits
 }
 
@@ -58,6 +60,7 @@ export function editsFromAgent(a: AgentEntry): AgentEdits {
     mcpTools: a.mcp_tools ?? [],
     denyTools: a.deny_tools ?? [],
     allowAgents: a.allow_agents ?? [],
+    subagentModels: a.subagent_models ?? [],
     maestro: maestroEditsFromAgent(a),
   }
 }

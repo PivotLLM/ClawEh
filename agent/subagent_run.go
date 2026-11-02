@@ -56,10 +56,11 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model, 
 		}
 	}
 
-	// The clone runs on the agent's configuration; an optional model (already
-	// validated against the agent's candidates by the Spawner) narrows it to
-	// that one model. A model that does not match is an error rather than a
-	// silent run on the default model.
+	// The clone runs on the agent's configuration and its worker chain: an
+	// optional model (already validated against the agent's worker candidates
+	// by the Spawner) narrows it to that one model, else its configured worker
+	// models replace its own. A model that does not match is an error rather
+	// than a silent run on the default model.
 	opts := []agentreg.CloneOption{agentreg.EphemeralMemory()}
 	// A character card of the worker's own replaces the agent's in its prompt;
 	// it is rendered now, so the worker runs on the card as it is at launch.
@@ -71,11 +72,22 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model, 
 		opts = append(opts, agentreg.WithCardPrompt(text))
 	}
 	if strings.TrimSpace(model) != "" {
-		matched, found := toolsagents.MatchCandidate(target.Candidates, model)
+		matched, found := toolsagents.MatchCandidate(target.WorkerCandidates, model)
 		if !found {
-			return nil, noop, fmt.Errorf("%w: model %q is not configured for agent %q", global.ErrModelNotAvailable, model, agentID)
+			return nil, noop, fmt.Errorf("%w: model %q is not a worker model of agent %q", global.ErrModelNotAvailable, model, agentID)
 		}
 		opts = append(opts, agentreg.CloneModel(candidateName(matched)))
+	} else if target.Subagents != nil && len(target.Subagents.Models) > 0 {
+		// Never fall back to the agent's own models when its worker models
+		// are all unavailable (the Spawner refuses this before launch).
+		if len(target.WorkerCandidates) == 0 {
+			return nil, noop, fmt.Errorf("%w: no worker model is available for agent %q; check its worker models", global.ErrModelNotAvailable, agentID)
+		}
+		names := make([]string, 0, len(target.WorkerCandidates))
+		for _, c := range target.WorkerCandidates {
+			names = append(names, candidateName(c))
+		}
+		opts = append(opts, agentreg.CloneModels(names))
 	}
 
 	// The clone is in a turn from the moment it exists, so nothing (a reload,

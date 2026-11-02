@@ -86,7 +86,9 @@ log rotation, mount watcher, devices, voice, the API handler). Code with no
 owner, such as package singletons, free functions and providers rebuilt per
 tool registry, raises through the process default in the `alerts` package,
 which ClawEh sets once at startup. Tests capture the default with
-`internal/testalerts.Install`.
+`internal/testalerts.Install`. Scripts that start a test gateway source
+`tests/lib/gateway_env.sh`, which exports every `ALERTER_*` channel variable
+empty so the gateway does not take the operator's `~/.alerter` channels.
 
 Titles are fixed strings, so the alert log can be searched by them.
 

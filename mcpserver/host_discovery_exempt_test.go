@@ -14,30 +14,26 @@ import (
 )
 
 // regWithHiddenSuiteTool returns a registry holding one suite tool registered
-// hidden + TTL-gated — exactly how the maestro/fusion suites register when
-// progressive discovery is enabled (RegisterSuiteHidden ⇒ IsCore=false, TTL=0).
+// hidden behind discovery — exactly how the maestro/fusion suites register when
+// progressive discovery is enabled (RegisterSuiteHidden ⇒ IsCore=false).
 func regWithHiddenSuiteTool(tool tools.Tool) *tools.ToolRegistry {
 	r := tools.NewToolRegistry()
 	r.RegisterSuiteHidden(tool)
 	return r
 }
 
-// TestHost_ListsAndDispatchesTTLHiddenSuiteTool is the regression for the Alice
+// TestHost_ListsAndDispatchesHiddenSuiteTool is the regression for the Alice
 // bug: a claude-cli agent reaching a maestro tool through the MCP host got
-// "tool_not_in_registry" because the tool was discovery-hidden (TTL 0). The host
+// "tool_not_in_registry" because the tool was discovery-hidden. The host
 // must never apply progressive discovery — it lists the tool AND dispatches it,
-// authorization coming from the ACL policy, not the TTL state.
-func TestHost_ListsAndDispatchesTTLHiddenSuiteTool(t *testing.T) {
+// authorization coming from the ACL policy, not the discovery state.
+func TestHost_ListsAndDispatchesHiddenSuiteTool(t *testing.T) {
 	tool := &mockTool{name: "maestro_file_list", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	reg := regWithHiddenSuiteTool(tool)
 
-	// Sanity: the plain (in-loop) Get gates it out while hidden, but GetForHost
-	// (the host path) resolves it. This is the crux of the fix.
-	if _, ok := reg.Get("maestro_file_list"); ok {
-		t.Fatal("precondition: a TTL-hidden tool must be gated by the in-loop Get")
-	}
-	if _, ok := reg.GetForHost("maestro_file_list"); !ok {
-		t.Fatal("GetForHost must resolve a TTL-hidden tool for the host path")
+	// A hidden tool is registered like any other: discovery never gates it.
+	if _, ok := reg.Get("maestro_file_list"); !ok {
+		t.Fatal("Get must resolve a discovery-hidden tool")
 	}
 
 	regs := map[string]*tools.ToolRegistry{"alice": reg}

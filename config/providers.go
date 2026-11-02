@@ -202,9 +202,12 @@ type ModelConfig struct {
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own
-// request builder. ExtraBody entries colliding with these keys are rejected at
-// config load — the collision guard there is what guarantees the merge step in
-// the request builder cannot overwrite a claw-managed field.
+// request builder, and the ones spawnllm sets itself on OpenRouter requests
+// (session_id from the agent id, cache_control for Claude models), which it
+// would otherwise skip with only a log warning. ExtraBody entries colliding
+// with these keys are rejected at config load — the collision guard there is
+// what guarantees the merge step in the request builder cannot overwrite a
+// claw-managed field.
 var reservedRequestBodyKeys = map[string]struct{}{
 	"model":                 {},
 	"messages":              {},
@@ -218,6 +221,8 @@ var reservedRequestBodyKeys = map[string]struct{}{
 	"max_completion_tokens": {},
 	"top_p":                 {},
 	"n":                     {},
+	"session_id":            {},
+	"cache_control":         {},
 }
 
 // Validate checks if the ModelConfig has all required fields.
@@ -360,19 +365,6 @@ func (c *Config) GetProvider(name string) (*Provider, error) {
 		}
 	}
 	return nil, fmt.Errorf("provider %q not found", name)
-}
-
-// FindProviderByProtocol returns the first provider declaring the given
-// protocol, or nil. Used by flows that target a wire family rather than a
-// specific named endpoint (e.g. OAuth login attaching to the anthropic
-// provider).
-func (c *Config) FindProviderByProtocol(protocol string) *Provider {
-	for i := range c.Providers {
-		if c.Providers[i].Protocol == protocol {
-			return &c.Providers[i]
-		}
-	}
-	return nil
 }
 
 // ValidateProviders checks that provider names are unique and non-empty, each

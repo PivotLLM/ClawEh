@@ -60,64 +60,124 @@ func (al *AgentLoop) recordSpend(costUSD float64) {
 	})
 }
 
-// emitLLMFinishEvent writes a single "LLM finish" INFO record at the agent loop
-// call site. It is invoked for both success and error returns from callLLM so
-// the dispatch / finish pair is always balanced.
-//
-// If the provider returned a populated DispatchStatus the event uses it
-// verbatim; otherwise a fallback is synthesised using the requested model and
-// the wall-clock elapsed since dispatchStart.
-func emitLLMFinishEvent(
-	agentID string,
-	iteration int,
-	provider, requestedModel string,
-	dispatchStart time.Time,
-	resp *providers.LLMResponse,
-	callErr error,
-) {
-	fields := buildLLMFinishFields(
-		agentID, iteration, provider, requestedModel,
-		time.Since(dispatchStart).Milliseconds(),
-		resp, callErr,
-	)
-	logger.InfoCF("agent", "LLM finish", fields)
+// Kinds of model call named by the kind field of the "LLM finish" line.
+const (
+	llmKindAgent       = "agent"
+	llmKindSubagent    = "subagent"
+	llmKindCompression = "compression"
+	llmKindVision      = "vision"
+)
+
+// costUnknown is what the cost field shows when the provider reported no cost.
+const costUnknown = "unknown"
+
+// llmCaller is the agent a model call is made for, as named on the finish
+// line: its id, its label ("alice (clone 1a2b3c4d)" for a clone) and, for a
+// clone, the id of the agent it was cloned from.
+type llmCaller struct {
+	agentID  string
+	label    string
+	parentID string
 }
 
-// buildLLMFinishFields assembles the structured fields for the LLM finish
-// event. Split out from emitLLMFinishEvent so tests can assert the payload
-// without intercepting the global logger.
-func buildLLMFinishFields(
-	agentID string,
-	iteration int,
-	provider, requestedModel string,
-	elapsedMs int64,
-	resp *providers.LLMResponse,
-	callErr error,
-) map[string]any {
-	status := resolveDispatchStatus(resp, callErr, requestedModel, elapsedMs)
+// callerOf names agent for the finish line.
+func callerOf(agent *AgentInstance) llmCaller {
+	c := llmCaller{agentID: agent.ID, label: agent.Label()}
+	if agent.Spec.IsClone() {
+		c.parentID = agent.Spec.SourceID
+	}
+	return c
+}
+
+// llmFinish is one completed model call, the input of the "LLM finish" line.
+// Empty optional fields are left off the line.
+type llmFinish struct {
+	caller llmCaller
+	kind   string
+	// iteration is the agent loop's iteration; logged for agent and
+	// subagent calls only.
+	iteration int
+	// ourProvider and ourModel are the config provider name and model_name
+	// alias of the model that answered.
+	ourProvider string
+	ourModel    string
+	// requestedModel is the model logged when the provider's status names
+	// none.
+	requestedModel string
+	sessionKey     string
+	channel        string
+	chatID         string
+	turnID         string
+	elapsedMs      int64
+	resp           *providers.LLMResponse
+	err            error
+}
+
+// emitLLMFinishEvent writes the single "LLM finish" INFO record for one model
+// call, on success and on error alike, so every call leaves one usage line.
+func emitLLMFinishEvent(f llmFinish) {
+	logger.InfoCF("agent", "LLM finish", f.fields())
+}
+
+// fields assembles the structured fields of the finish line. If the provider
+// returned a populated DispatchStatus it is used verbatim; otherwise a
+// fallback is synthesised from the requested model and the elapsed time.
+func (f llmFinish) fields() map[string]any {
+	status := resolveDispatchStatus(f.resp, f.err, f.requestedModel, f.elapsedMs)
 	model := status.Model
 	if model == "" {
-		model = requestedModel
+		model = f.requestedModel
+	}
+	// A nil CostUSD means the provider returned no cost; a reported cost is
+	// printed as is, zero included.
+	var cost any = costUnknown
+	if status.CostUSD != nil {
+		cost = *status.CostUSD
+	}
+	// The whole prompt: the provider's count when it gave one, else the sum of
+	// the uncached input and the cache reads and writes, which is the same
+	// quantity on every provider.
+	promptTokens := status.InputTokens + status.CacheReadTokens + status.CacheCreationTokens
+	if f.resp != nil && f.resp.Usage != nil && f.resp.Usage.PromptTokens > 0 {
+		promptTokens = f.resp.Usage.PromptTokens
 	}
 	fields := map[string]any{
-		"agent_id":              agentID,
-		"iteration":             iteration,
+		"agent_id":              f.caller.agentID,
+		"agent":                 f.caller.label,
+		"kind":                  f.kind,
 		"success":               status.Success,
-		"provider":              provider,
+		"our_provider":          f.ourProvider,
+		"our_model":             f.ourModel,
 		"model":                 model,
 		"num_turns":             status.NumTurns,
 		"input_tokens":          status.InputTokens,
+		"prompt_tokens":         promptTokens,
 		"output_tokens":         status.OutputTokens,
 		"cache_read_tokens":     status.CacheReadTokens,
 		"cache_creation_tokens": status.CacheCreationTokens,
 		"stop_reason":           status.StopReason,
-		"cost_usd":              status.CostUSD,
+		"cost":                  cost,
 		"duration_ms":           status.DurationMs,
 		"bytes_sent":            status.BytesSent,
 		"bytes_received":        status.BytesReceived,
 	}
-	if callErr != nil {
-		fields["error"] = truncateForLog(callErr.Error(), finishEventMaxErrLen)
+	if f.kind == llmKindAgent || f.kind == llmKindSubagent {
+		fields["iteration"] = f.iteration
+	}
+	optional := map[string]string{
+		"parent_agent_id": f.caller.parentID,
+		"session_key":     f.sessionKey,
+		"channel":         f.channel,
+		"chat_id":         f.chatID,
+		"turn_id":         f.turnID,
+	}
+	for k, v := range optional {
+		if v != "" {
+			fields[k] = v
+		}
+	}
+	if f.err != nil {
+		fields["error"] = truncateForLog(redactSecrets(f.err.Error()), finishEventMaxErrLen)
 	}
 	return fields
 }

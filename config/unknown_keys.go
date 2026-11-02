@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,13 +21,24 @@ import (
 // never takes effect; this is how the operator finds out.
 //
 // Types with their own UnmarshalJSON own their decoding (MaestroConfig accepts a
-// retired boolean form, ToolDiscoveryConfig a renamed key), so the walk stops
-// at them rather than second-guessing what they accept.
+// retired boolean form), so the walk stops at them rather than second-guessing
+// what they accept. Keys in silentlyRemovedKeys are not reported either.
 func unknownConfigKeys(doc any) []string {
 	var out []string
 	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", &out)
+	out = slices.DeleteFunc(out, func(key string) bool { return silentlyRemovedKeys[key] })
 	sort.Strings(out)
 	return out
+}
+
+// silentlyRemovedKeys are removed settings that an existing config.json may
+// still hold and that are ignored without a warning: the discovery TTL and
+// visible budget (and the older name of the TTL) stopped mattering when every
+// tool began to be offered on every call, hidden ones deferred.
+var silentlyRemovedKeys = map[string]bool{
+	"tools.discovery.ttl":            true,
+	"tools.discovery.ttl_max":        true,
+	"tools.discovery.visible_budget": true,
 }
 
 var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()

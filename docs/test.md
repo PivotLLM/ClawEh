@@ -45,7 +45,11 @@ of `tests/test_mcpserver.sh` checks per-agent Fusion gating on the running
 binary: the agent whose `mcp_tools` lists the service can call its tools, the
 agent with Fusion on and nothing listed is refused. `probe` must be on `PATH`
 (or set `PROBE_PATH`); if it is not found this section counts as a failure,
-because the full suite did not run.
+because the full suite did not run. Every test gateway runs with the
+variables in `tests/lib/gateway_env.sh` exported empty, so it never takes the
+operator's `~/.alerter` channels; a second short-lived gateway with a missing
+model and a decoy `~/.alerter` checks that its alert reaches only its own
+`alerts.log`.
 
 **Effective capabilities (part of the Go tests).** `tests/capabilities` loads a
 production-shaped fixture and pins, per agent and per CLI model, what it may do:

@@ -342,7 +342,7 @@ production instance directly; test against a dev instance.
   call timeout, run deadline, cancel), and a timeout the run deadline cut ends
   the run `incomplete (deadline)`;
   Agents over `agentreg` (temporary participants carry `Spec.Purpose` "forum",
-  `tools.TempPurposeForum`, and a clone's `CloneModel` and `CardPrompt`, all persisted; `Touch`;
+  `tools.TempPurposeForum`, and a clone's `CloneModel`, `CloneModels` and `CardPrompt`, all persisted; `Touch`;
   `Delete` of one still in a turn deletes it when the turn ends,
   `DeleteWhenIdle`, `forum.ErrDeletePending`, kept in the cleanup marker);
   the completion notice (status and end reason) as a `system` inbound to the
@@ -463,7 +463,9 @@ production instance directly; test against a dev instance.
   are created at run time (`CreateClone(sourceID, ...CloneOption)`, or
   `CreateCloneInTurn` which begins a turn atomically with insertion, and
   `CreateFresh(cfg, ...FreshOption)`; the shared options `EphemeralMemory`,
-  `Temp(ttl)`, `OwnedBy`, `WithPurpose` are both kinds, `CloneModel` and
+  `Temp(ttl)`, `OwnedBy`, `WithPurpose` are both kinds, `CloneModel`,
+  `CloneModels` (a model list of the clone's own, `Spec.CloneModels`; an
+  explicit `CloneModel` wins) and
   `WithCardPrompt` (a rendered character card of the clone's own,
   `Spec.CardPrompt`) are `CloneOption`s only and `WithSystemPrompt`,
   `WithoutMemory`, `SingleShot` are `FreshOption`s only, so a wrong combination
@@ -532,7 +534,14 @@ production instance directly; test against a dev instance.
   permission behaviour, so the exact-prompt guarantee holds for HTTP models
   only. Sub-agents (`agent_spawn`, Maestro dispatch) are ephemeral clones
   (`runSubagentTask`), deleted once their result is delivered; there is no
-  sub-agent session key. Logs name a clone `alice (clone 1a2b3c4d)`
+  sub-agent session key. A worker runs on the agent's **worker models**
+  (`subagents.models` → `AgentInstance.WorkerCandidates`, resolved in
+  `agent/instance.go`; the clone is created with `agentreg.CloneModels` of the
+  enabled names) and an explicit spawn `model` must be one of them; with the
+  key empty `WorkerCandidates` is the agent's own `Candidates` and nothing
+  changes. The Spawner (`tools/agents/spawner.go`) validates against the
+  target's worker candidates and refuses an agent whose worker list resolves
+  to no enabled model (`WorkerModelsSet`). Logs name a clone `alice (clone 1a2b3c4d)`
   (`AgentInstance.Label`); audit rows keep the source id in the agent column
   and add `"clone"` to details. CLI clones reach their tools through the MCP
   host's `WithAgentLookup` fallback.
@@ -625,6 +634,7 @@ Hard-won learnings (don't relearn these):
 - **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
 - **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
 - **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral ClawEh instance. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
+- **A test gateway must never alert the operator.** Any script that starts a gateway outside production sources `tests/lib/gateway_env.sh` (or exports the same `ALERTER_*` variables empty), so the operator's `~/.alerter` is not used and alerts go only to `<CLAW_HOME>/logs/alerts.log`.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
 ### Capability changes — the golden fixture and the BREAKING entry
@@ -681,7 +691,7 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 154 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 155 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

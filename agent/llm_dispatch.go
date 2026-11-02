@@ -36,8 +36,8 @@ type llmDispatch struct {
 	// runProvider and runModel serve the request when no fallback chain runs.
 	runProvider providers.LLMProvider
 	runModel    string
-	// provider is the protocol named in the finish event, updated when the
-	// fallback chain lands on another candidate.
+	// provider is the config provider name serving the dispatch, updated when
+	// the fallback chain lands on another candidate.
 	provider string
 	// promptEstimate is the engine's prompt-token estimate for the request.
 	promptEstimate int
@@ -102,10 +102,8 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 			"num_tools":    len(d.defs),
 			"max_tokens":   t.agent.MaxTokens,
 		})
-		dispatchStart := time.Now()
 		var response *providers.LLMResponse
 		response, err = t.callModel(ctx, d)
-		emitLLMFinishEvent(t.agent.ID, t.iteration, d.provider, t.model, dispatchStart, response, err)
 		if err == nil {
 			addTurnUsage(t.opts.UsageOut, response, d.provider, t.model)
 			if d.promptEstimate > 0 && response != nil && response.Usage != nil && response.Usage.PromptTokens > 0 {
@@ -128,6 +126,37 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 		break
 	}
 	return nil, t.dispatchFailed(ctx, err)
+}
+
+// emitFinish writes the "LLM finish" line for one provider call: provider and
+// ourModel name the config provider and model_name that were called,
+// requestedModel the model id sent to it.
+func (t *llmTurn) emitFinish(
+	ctx context.Context,
+	provider, ourModel, requestedModel string,
+	elapsed time.Duration,
+	resp *providers.LLMResponse,
+	err error,
+) {
+	kind := llmKindAgent
+	if t.agent.Spec.IsClone() {
+		kind = llmKindSubagent
+	}
+	emitLLMFinishEvent(llmFinish{
+		caller:         callerOf(t.agent),
+		kind:           kind,
+		iteration:      t.iteration,
+		ourProvider:    provider,
+		ourModel:       ourModel,
+		requestedModel: requestedModel,
+		sessionKey:     t.opts.SessionKey,
+		channel:        t.opts.Channel,
+		chatID:         t.opts.ChatID,
+		turnID:         turnIDFrom(ctx),
+		elapsedMs:      elapsed.Milliseconds(),
+		resp:           resp,
+		err:            err,
+	})
 }
 
 // waitToRetry waits out the backoff, on clk, before retrying a timed-out
@@ -186,7 +215,7 @@ func (t *llmTurn) compressForRetry(ctx context.Context, d *llmDispatch, err erro
 		logger.WarnCF("agent", "force compression failed",
 			map[string]any{"error": ferr.Error(), "session": t.opts.SessionKey})
 	}
-	if asm, berr := comprMgr.Assemble(ctx, t.al.assembleRequestWithDefs(ctx, t.agent, t.mem, t.opts, d.defs)); berr == nil {
+	if asm, berr := comprMgr.Assemble(ctx, t.al.assembleRequestWithDefs(ctx, t.agent, t.mem, t.opts, d.defs, t.messages)); berr == nil {
 		t.messages = asm.Messages
 		d.promptEstimate = asm.PromptTokenEstimate
 	}
@@ -236,7 +265,9 @@ func (t *llmTurn) dispatchFailed(ctx context.Context, err error) error {
 // callModel makes one call for the dispatch: through the fallback chain when
 // the turn has candidates, else straight to the provider resolved for the
 // agent's primary model, so a non-default protocol is never routed through
-// the shared agent.Provider.
+// the shared agent.Provider. Every provider call it makes writes its own
+// "LLM finish" line, and each candidate passed over is logged as the chain
+// moves on.
 func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLMResponse, error) {
 	al := t.al
 	al.activeRequests.Add(1)
@@ -248,75 +279,124 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	hasTools := len(d.defs) > 0
 	fallback := al.fallbackChain()
 	if len(t.candidates) == 0 || fallback == nil {
-		return d.runProvider.Chat(ctx, al.messagesForModel(t.messages, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
+		start := time.Now()
+		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.messages, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
+		t.emitFinish(ctx, d.provider, t.model, d.runModel, time.Since(start), resp, err)
+		return resp, err
 	}
 	fbResult, err := fallback.ExecuteWithNotify(
 		ctx,
 		t.candidates,
 		func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
-			// Image parts are dropped for a candidate whose model cannot take
-			// them: a screenshot in history would otherwise fail every turn on
-			// a non-vision candidate. Keyed by alias like GetModelConfig.
-			modelKey := c.Alias
-			if modelKey == "" {
-				modelKey = c.Model
-			}
-			msgs := al.messagesForModel(t.messages, modelKey, hasTools)
-			if al.dispatcher != nil {
-				key := c.Alias
-				if key == "" {
-					key = c.Provider + "/" + c.Model
-				}
-				if p, getErr := al.dispatchProvider(t.agent, key); getErr == nil {
-					return p.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
-				}
-			}
-			return t.agent.Provider.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+			start := time.Now()
+			resp, err := t.chatCandidate(ctx, d, c, hasTools)
+			t.emitFinish(ctx, c.Provider, candidateModelName(c), c.Model, time.Since(start), resp, err)
+			return resp, err
 		},
-		t.notifier,
+		t.loggingNotifier(),
 	)
 	if err != nil {
+		// Cooldown skips at the tail of the chain reach no notifier.
+		if exhausted, ok := errors.AsType[*providers.FallbackExhaustedError](err); ok {
+			t.logPassed(trailingSkips(exhausted.Attempts))
+		}
 		return nil, err
 	}
 	if fbResult.Provider != "" {
 		d.provider = fbResult.Provider
 		if len(fbResult.Attempts) > 0 {
-			t.logFallbackAttempts(fbResult)
+			logger.InfoCF(
+				"agent",
+				fmt.Sprintf("Fallback: succeeded with %s/%s after %d attempts",
+					fbResult.Provider, fbResult.Model, len(fbResult.Attempts)+1),
+				map[string]any{"agent_id": t.agent.ID, "iteration": t.iteration},
+			)
 		}
 	}
 	return fbResult.Response, nil
 }
 
-// logFallbackAttempts logs a call the fallback chain answered after passing
-// over candidates: the one that succeeded, then each one skipped or failed.
-func (t *llmTurn) logFallbackAttempts(fbResult *providers.FallbackResult) {
-	logger.InfoCF(
-		"agent",
-		fmt.Sprintf("Fallback: succeeded with %s/%s after %d attempts",
-			fbResult.Provider, fbResult.Model, len(fbResult.Attempts)+1),
-		map[string]any{"agent_id": t.agent.ID, "iteration": t.iteration},
-	)
-	for _, attempt := range fbResult.Attempts {
-		if attempt.Skipped {
-			logger.WarnCF("agent", "Fallback: skipped candidate (cooldown)",
+// chatCandidate makes one call to fallback candidate c.
+func (t *llmTurn) chatCandidate(
+	ctx context.Context,
+	d *llmDispatch,
+	c providers.FallbackCandidate,
+	hasTools bool,
+) (*providers.LLMResponse, error) {
+	al := t.al
+	// Image parts are dropped for a candidate whose model cannot take
+	// them: a screenshot in history would otherwise fail every turn on
+	// a non-vision candidate. Keyed by alias like GetModelConfig.
+	msgs := al.messagesForModel(t.messages, candidateModelName(c), hasTools)
+	if al.dispatcher != nil {
+		key := c.Alias
+		if key == "" {
+			key = c.Provider + "/" + c.Model
+		}
+		if p, getErr := al.dispatchProvider(t.agent, key); getErr == nil {
+			return p.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+		}
+	}
+	return t.agent.Provider.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+}
+
+// candidateModelName is the candidate's model_name, or its wire model when it
+// has none.
+func candidateModelName(c providers.FallbackCandidate) string {
+	if c.Alias != "" {
+		return c.Alias
+	}
+	return c.Model
+}
+
+// loggingNotifier wraps the turn's fallback notifier so each candidate the
+// chain passes over is logged as it moves on: a failed one (the chain calls
+// the notifier only when it falls back to another candidate, not for a
+// same-model retry nor for a failure that ends the chain) and each cooldown
+// skip.
+func (t *llmTurn) loggingNotifier() providers.FallbackNotify {
+	return func(passed []providers.FallbackAttempt, next providers.FallbackCandidate) {
+		t.logPassed(passed)
+		if t.notifier != nil {
+			t.notifier(passed, next)
+		}
+	}
+}
+
+// trailingSkips returns the cooldown skips after the last candidate called,
+// which no notifier saw.
+func trailingSkips(attempts []providers.FallbackAttempt) []providers.FallbackAttempt {
+	i := len(attempts)
+	for i > 0 && attempts[i-1].Skipped {
+		i--
+	}
+	return attempts[i:]
+}
+
+// logPassed logs each attempt the chain passed over: a failed candidate or a
+// cooldown skip.
+func (t *llmTurn) logPassed(attempts []providers.FallbackAttempt) {
+	for _, attempt := range attempts {
+		if !attempt.Skipped {
+			logger.WarnCF("agent", "Fallback: candidate failed",
 				map[string]any{
-					"agent_id":  t.agent.ID,
-					"provider":  attempt.Provider,
-					"model":     attempt.Model,
-					"reason":    attempt.Reason,
-					"remaining": attempt.Remaining.Round(time.Second),
-					"error":     redactedError(attempt.Error),
+					"agent_id": t.agent.ID,
+					"provider": attempt.Provider,
+					"model":    attempt.Model,
+					"reason":   attempt.Reason,
+					"duration": attempt.Duration.Round(time.Millisecond),
+					"error":    redactedError(attempt.Error),
 				})
 			continue
 		}
-		logger.WarnCF("agent", "Fallback: candidate failed",
+		logger.WarnCF("agent", "Fallback: skipped candidate (cooldown)",
 			map[string]any{
-				"agent_id": t.agent.ID,
-				"provider": attempt.Provider,
-				"model":    attempt.Model,
-				"reason":   attempt.Reason,
-				"duration": attempt.Duration.Round(time.Millisecond),
-				"error":    redactedError(attempt.Error),
+				"agent_id":  t.agent.ID,
+				"provider":  attempt.Provider,
+				"model":     attempt.Model,
+				"reason":    attempt.Reason,
+				"remaining": attempt.Remaining.Round(time.Second),
+				"error":     redactedError(attempt.Error),
 			})
 	}
 }

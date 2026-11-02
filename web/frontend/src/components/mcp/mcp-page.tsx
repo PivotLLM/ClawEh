@@ -105,8 +105,6 @@ export function MCPConfigPage() {
     if (!listenErr && !pathErr) {
       toolsPatch.discovery = {
         enabled: f.discoveryEnabled,
-        ttl_max: f.ttlMax,
-        visible_budget: f.visibleBudget,
         always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
     }
@@ -200,8 +198,6 @@ export function MCPConfigPage() {
 
               <DiscoverySection
                 discoveryEnabled={form.discoveryEnabled}
-                ttlMax={form.ttlMax}
-                visibleBudget={form.visibleBudget}
                 alwaysShownNamespaces={form.alwaysShownNamespaces}
                 onFieldChange={updateField}
                 onNamespacesChange={(next) =>

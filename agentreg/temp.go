@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,7 +39,8 @@ type Option func(*createOptions)
 func (f Option) applyClone(o *createOptions) { f(o) }
 func (f Option) applyFresh(o *createOptions) { f(o) }
 
-// CloneOption configures CreateClone: an Option or CloneModel.
+// CloneOption configures CreateClone: an Option, CloneModel, CloneModels or
+// WithCardPrompt.
 type CloneOption interface{ applyClone(o *createOptions) }
 
 // FreshOption configures CreateFresh: an Option, WithSystemPrompt,
@@ -65,6 +67,9 @@ type createOptions struct {
 	purpose   string
 	// cloneModel replaces a clone's model list with this one model.
 	cloneModel string
+	// cloneModels replaces a clone's model list with this list, unless
+	// cloneModel is set.
+	cloneModels []string
 	// cardPrompt is a clone's own rendered character card (Spec.CardPrompt).
 	cardPrompt string
 	// The fresh-agent options.
@@ -101,6 +106,19 @@ func WithPurpose(purpose string) Option { return func(o *createOptions) { o.purp
 // of its source's list.
 func CloneModel(model string) CloneOption {
 	return cloneOnly(func(o *createOptions) { o.cloneModel = strings.TrimSpace(model) })
+}
+
+// CloneModels makes a clone run on models, in order, instead of its source's
+// list: the source's worker models. Entries are trimmed and blank ones
+// dropped; a CloneModel wins over it.
+func CloneModels(models []string) CloneOption {
+	var list []string
+	for _, m := range models {
+		if m = strings.TrimSpace(m); m != "" {
+			list = append(list, m)
+		}
+	}
+	return cloneOnly(func(o *createOptions) { o.cloneModels = list })
 }
 
 // WithCardPrompt gives a clone its own character card: text, the card
@@ -278,12 +296,13 @@ func (r *Registry[T]) newTempSpec(cfg config.AgentConfig, o createOptions, src *
 			return Spec{}, err
 		}
 		spec.CardPrompt = o.cardPrompt
-		if o.cloneModel != "" {
-			// The caller checks the model is one of the source's; create
-			// checks it is configured.
-			spec.CloneModel = o.cloneModel
-			spec.Config.Models = cloneModels(spec.Config.Models, o.cloneModel)
+		// The caller checks the models are the source's; create checks
+		// they are configured.
+		spec.CloneModel = o.cloneModel
+		if o.cloneModel == "" {
+			spec.CloneModels = slices.Clone(o.cloneModels)
 		}
+		spec.Config.Models = cloneModels(spec.Config.Models, spec.CloneModel, spec.CloneModels)
 		return spec, nil
 	}
 	ac, err := copyAgentConfig(cfg)
@@ -324,13 +343,17 @@ func cloneSpec(src Spec, id, stateDir string, ephemeral bool) (Spec, error) {
 	}, nil
 }
 
-// cloneModels is a clone's model list: its source's, or only model when one
-// is set.
-func cloneModels(source []string, model string) []string {
-	if model == "" {
+// cloneModels is a clone's model list: only model when one is set, else a
+// copy of models when it names any, else its source's.
+func cloneModels(source []string, model string, models []string) []string {
+	switch {
+	case model != "":
+		return []string{model}
+	case len(models) > 0:
+		return slices.Clone(models)
+	default:
 		return source
 	}
-	return []string{model}
 }
 
 // freshWorkspace is a fresh temporary agent's own workspace.

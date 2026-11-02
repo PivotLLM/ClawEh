@@ -153,7 +153,7 @@ func TestHumanProblems(t *testing.T) {
 		}, want: []HumanProblemKind{HumanModelMisused}, text: "can't be a default model."},
 		{name: "sub-agent models", mutate: func(c *Config) {
 			c.Agents.List[0].Subagents = &SubagentsConfig{Models: []string{"Bob (human)"}}
-		}, want: []HumanProblemKind{HumanModelMisused}, text: "can't be a sub-agent model."},
+		}, want: []HumanProblemKind{HumanModelMisused}, text: "can't be a worker model."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := humanTestConfig()

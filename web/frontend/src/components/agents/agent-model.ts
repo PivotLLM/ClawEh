@@ -46,6 +46,9 @@ export interface AgentEntry {
   /** subagents.allow_agents: the agents this one may message ("*" = every
    *  agent); absent or [] = none. */
   allow_agents?: string[]
+  /** subagents.models: the worker model chain every worker this agent starts
+   *  runs on; absent or [] = the agent's own models. */
+  subagent_models?: string[]
   /** The agent exactly as loaded. A save starts from it, so every key this
    *  page does not edit (workspace, subagents, memory, compression, …) is
    *  written back unchanged. Absent for an agent added on this page. */
@@ -410,6 +413,9 @@ export function parseAgent(value: unknown): AgentEntry {
     mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     deny_tools: asArray(r.deny_tools).map(asString).filter(Boolean),
     allow_agents: asArray(asRecord(r.subagents).allow_agents).map(asString),
+    subagent_models: asArray(asRecord(r.subagents).models)
+      .map(asString)
+      .filter(Boolean),
     message:
       cbMins > 0
         ? {
@@ -716,7 +722,7 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     // Always sent so clearing the list persists; blank rows (an entry being
     // typed) are dropped. The backend drops an empty slice on save.
     deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
-    ...subagentsPayload(raw, a.allow_agents),
+    ...subagentsPayload(raw, a.allow_agents, a.subagent_models),
     // Always sent (like tools) so removing all mounts persists; the backend
     // drops an empty slice on save (omitempty).
     mounts: (a.mounts ?? [])
@@ -731,19 +737,23 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
 }
 
 // subagentsPayload is the subagents block as saved: the loaded block with
-// allow_agents replaced by the page's list (absent when empty), and no block
-// at all when nothing is left in it.
+// allow_agents and models replaced by the page's lists (each absent when
+// empty), and no block at all when nothing is left in it.
 function subagentsPayload(
   raw: Record<string, unknown>,
   allow: string[] | undefined,
+  models: string[] | undefined,
 ): Record<string, unknown> {
   const loaded = asRecord(raw.subagents)
-  if (allow === undefined) {
+  if (allow === undefined && models === undefined) {
     return raw.subagents === undefined ? {} : { subagents: raw.subagents }
   }
+  const allowList = allow ?? asArray(loaded.allow_agents).map(asString)
+  const modelList = models ?? asArray(loaded.models).map(asString)
   const block = {
-    ...withoutKeys(loaded, ["allow_agents"]),
-    ...(allow.length > 0 ? { allow_agents: allow } : {}),
+    ...withoutKeys(loaded, ["allow_agents", "models"]),
+    ...(allowList.length > 0 ? { allow_agents: allowList } : {}),
+    ...(modelList.length > 0 ? { models: modelList } : {}),
   }
   return Object.keys(block).length > 0 ? { subagents: block } : {}
 }
