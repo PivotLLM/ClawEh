@@ -37,13 +37,13 @@ func TestAgentTools_OnlyWhatTheListNames(t *testing.T) {
 		if n := inst.Tools.Count(); n != 0 {
 			t.Errorf("%s has %d tools, want none: %v", id, n, inst.Tools.List())
 		}
-		if _, ok := inst.Tools.GetForHost("agent_message"); ok {
-			t.Errorf("%s reaches agent_message through the MCP host", id)
+		if _, ok := inst.Tools.Get("agent_message"); ok {
+			t.Errorf("%s has agent_message registered", id)
 		}
-		res := inst.Tools.ExecuteForHost(context.Background(), "agent_message",
+		res := inst.Tools.ExecuteWithContext(context.Background(), "agent_message",
 			map[string]any{"agent": "bob", "message": "hi"}, "cli", "direct", nil)
 		if !res.IsError {
-			t.Errorf("%s ran agent_message through the MCP host: %+v", id, res)
+			t.Errorf("%s ran agent_message: %+v", id, res)
 		}
 	}
 	helper, _ := al.GetRegistry().Get("helper")

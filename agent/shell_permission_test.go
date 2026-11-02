@@ -322,8 +322,6 @@ func TestShell_HumanAgentNever(t *testing.T) {
 	for _, res := range []*tools.ToolResult{
 		bob.Tools.ExecuteWithContext(context.Background(), "shell_exec",
 			map[string]any{"command": "echo shell-ok"}, "telegram", "chat-1", nil),
-		bob.Tools.ExecuteForHost(context.Background(), "shell_exec",
-			map[string]any{"command": "echo shell-ok"}, "telegram", "chat-1", nil),
 	} {
 		if !res.IsError {
 			t.Errorf("the human agent ran shell_exec: %+v", res)
@@ -361,11 +359,11 @@ func TestShell_ConfigSwitches(t *testing.T) {
 			if _, has := inst.Tools.Get("shell_exec"); has != tc.allowed {
 				t.Errorf("Alice has shell_exec = %v, want %v", has, tc.allowed)
 			}
-			// The MCP host path (session and service tokens) runs the same
-			// registry.
-			res := inst.Tools.ExecuteForHost(context.Background(), "shell_exec",
+			// A direct registry call, the path the MCP host (session and
+			// service tokens) uses too.
+			res := inst.Tools.ExecuteWithContext(context.Background(), "shell_exec",
 				map[string]any{"command": "echo shell-ok"}, "telegram", "chat-1", nil)
-			checkShell(t, "Alice through the host", res.ForLLM, tc.allowed)
+			checkShell(t, "Alice by direct call", res.ForLLM, tc.allowed)
 			msg := inbound("chat-1", "m1", "run it")
 			msg.Channel = "telegram"
 			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "alice"}

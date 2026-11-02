@@ -40,8 +40,8 @@ export interface MCPServerForm {
   // http
   url: string
   headers: string // "Header: value" per line
-  // Under progressive discovery, reveal all of this server's tools as soon as one
-  // is discovered (for small, cohesive servers). Ignored when discovery is off.
+  // Under progressive discovery, get_tool_details on one of this server's tools
+  // loads all of them (for small, cohesive servers). Ignored when discovery is off.
   revealTogether: boolean
 }
 

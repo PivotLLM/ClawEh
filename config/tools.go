@@ -4,11 +4,11 @@ type ToolDiscoveryConfig struct {
 	// Enabled is the single global switch for progressive tool discovery, applied
 	// uniformly to every agent's IN-LOOP tool list. Default OFF. When on,
 	// discovery-eligible tools (the fusion and maestro suites and all upstream MCP
-	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
-	// native tools and the cogmem suite stay always-on. A tool revealed by
-	// get_tool_details stays in the list until the agent's context is cleared or
-	// compacted. The MCP host is never subject to discovery — external clients
-	// always receive the full tool list.
+	// tools) are hidden behind the search_tools / get_tool_details meta-tools:
+	// offered deferred on every call and loaded once one of those names them;
+	// native tools and the cogmem suite stay always-on. A hidden tool may be
+	// called at any time. The MCP host is never subject to discovery — external
+	// clients always receive the full tool list.
 	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
 	// AlwaysShownNamespaces pins discovery-eligible tool namespaces (matched by
 	// MatchVisibility: "file", "maestro", "fusion", a "<server>" for an upstream MCP
@@ -176,9 +176,9 @@ type MCPServerConfig struct {
 	URL string `json:"url,omitempty"`
 	// Headers are HTTP headers to send with requests (sse/http only)
 	Headers map[string]string `json:"headers,omitempty"`
-	// RevealTogether, under progressive discovery, reveals all of this server's
-	// tools as soon as one is discovered, so a small cohesive server is unlocked in
-	// a single search instead of tool-by-tool. Ignored when discovery is off.
+	// RevealTogether, under progressive discovery, makes get_tool_details on one
+	// of this server's tools load all of them, so a small cohesive server is
+	// loaded in one call instead of tool-by-tool. Ignored when discovery is off.
 	RevealTogether bool `json:"reveal_together,omitempty"`
 }
 

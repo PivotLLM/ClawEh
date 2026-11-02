@@ -325,8 +325,8 @@ Folders your file tools can reach: %s.
 // discoveryRule is appended to the identity rules when progressive tool
 // discovery is active.
 const discoveryRule = "**Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call " +
-	"`search_tools(query)`" + " with a natural-language description of what you need. It returns matching tool names; then call " +
-	"`get_tool_details(name)`" + " on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing."
+	"`search_tools(query)`" + " with a natural-language description of what you need. It returns matching tools and makes them available, so you can call one right away; " +
+	"`get_tool_details(name)`" + " shows a tool's full schema. Do not refuse a request unless the search returns nothing."
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	if cb.fixedPrompt != "" {

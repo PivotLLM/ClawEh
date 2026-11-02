@@ -16,12 +16,13 @@ const (
 	MaxRegexPatternLength = 200
 )
 
-// SearchTool (search_tools) is layer 1 of progressive discovery: it returns the
-// names and one-line descriptions of hidden tools matching a query, WITHOUT loading
-// their schemas or unlocking them. The model then calls get_tool_details on a chosen
-// name (layer 2) to load its schema and reveal it, then calls it (layer 3). BM25
-// natural-language search is the default; pass regex:true to match a regular
-// expression over tool name/description instead.
+// SearchTool (search_tools) is the entry point of progressive discovery: it
+// returns the hidden tools matching a query, one line each (name and first
+// line of description), and references them (ToolResult.ToolReferences), which
+// loads their deferred definitions so the model can call them right away.
+// get_tool_details shows one tool's full schema. BM25 natural-language search
+// is the default; pass regex:true to match a regular expression over tool
+// name/description instead. ToProviderDefs marks it as the tool-search tool.
 type SearchTool struct {
 	registry         *ToolRegistry
 	maxSearchResults int
@@ -39,7 +40,9 @@ func NewSearchTool(r *ToolRegistry, maxSearchResults int) *SearchTool {
 func (t *SearchTool) Name() string { return "search_tools" }
 
 func (t *SearchTool) Description() string {
-	desc := "Search for available tools by capability. Returns matching tool names and one-line descriptions only — call get_tool_details on a result's name to load its full schema and unlock it before use. Natural-language query by default; set regex:true to match a regular expression if the natural-language search can't find the tool."
+	// The namespace list changes only when the registered tools do, never
+	// with what a conversation has searched, so the tool list stays stable.
+	desc := "Search for available tools by capability. Returns matching tool names with one-line descriptions and makes those tools available: call one directly, or call get_tool_details on a name to see its full schema. Natural-language query by default; set regex:true to match a regular expression if the natural-language search can't find the tool."
 	if ns := t.registry.HiddenNamespaces(); len(ns) > 0 {
 		desc += " Discoverable tool groups: " + strings.Join(ns, ", ") + "."
 	}
@@ -100,18 +103,32 @@ func (t *SearchTool) Execute(_ context.Context, args map[string]any) *ToolResult
 	logger.InfoCF("discovery", "Tool search completed",
 		map[string]any{"query": query, "regex": useRegex, "results": len(results)})
 
-	b, err := json.Marshal(results)
-	if err != nil {
-		return ErrorResult("Failed to format search results: " + err.Error())
+	var b strings.Builder
+	fmt.Fprintf(&b, "Found %d tool(s):\n", len(results))
+	refs := make([]string, 0, len(results))
+	for _, r := range results {
+		fmt.Fprintf(&b, "- %s: %s\n", r.Name, firstLine(r.Description))
+		refs = append(refs, r.Name)
 	}
-	return SilentResult(fmt.Sprintf(
-		"Found %d tool(s):\n%s\n\nCall get_tool_details(name) on the one you need to load its schema and unlock it, then call it.",
-		len(results), string(b)))
+	b.WriteString("\nThese tools can be called now. Call get_tool_details(name) to see a tool's full schema.")
+	res := SilentResult(b.String())
+	res.ToolReferences = refs
+	return res
 }
 
-// ToolDetailsTool (get_tool_details) is layer 2 of progressive discovery: it loads
-// the full schema for a single tool discovered via search_tools and reveals it,
-// so it stays callable until the agent's context is cleared or compacted.
+// firstLine returns the first non-empty line of s, trimmed.
+func firstLine(s string) string {
+	for line := range strings.SplitSeq(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// ToolDetailsTool (get_tool_details) returns the full schema of one tool and,
+// for a hidden tool, references it (with the rest of its group when the group
+// is reveal-together), which loads its deferred definition.
 type ToolDetailsTool struct {
 	registry *ToolRegistry
 }
@@ -123,7 +140,7 @@ func NewToolDetailsTool(r *ToolRegistry) *ToolDetailsTool {
 func (t *ToolDetailsTool) Name() string { return "get_tool_details" }
 
 func (t *ToolDetailsTool) Description() string {
-	return "Load the full input schema for a tool found via search_tools and unlock it so you can call it. Pass the exact tool name from the search results."
+	return "Show the full input schema of a tool found via search_tools. Pass the exact tool name from the search results."
 }
 
 func (t *ToolDetailsTool) Parameters() map[string]any {
@@ -146,7 +163,7 @@ func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolR
 	}
 	name = strings.TrimSpace(name)
 
-	schema, advertised, _, ok := t.registry.revealTool(name)
+	schema, published, refs, ok := t.registry.toolDetails(name)
 	if !ok {
 		return ErrorResult(fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", name))
 	}
@@ -155,14 +172,15 @@ func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolR
 	if err != nil {
 		return ErrorResult("Failed to format tool schema: " + err.Error())
 	}
-	logger.InfoCF("discovery", "Tool details revealed", map[string]any{"tool": advertised})
-	return SilentResult(fmt.Sprintf(
-		"%s\n\nThis tool is now unlocked. Call it as `%s` in your next response.",
-		string(b), advertised))
+	logger.InfoCF("discovery", "Tool details returned", map[string]any{"tool": published, "references": len(refs)})
+	res := SilentResult(fmt.Sprintf("%s\n\nCall it as `%s`.", string(b), published))
+	res.ToolReferences = refs
+	return res
 }
 
-// ToolSearchResult represents a search hit returned to the LLM. Schemas are omitted
-// to save context tokens; the LLM loads a schema via get_tool_details on demand.
+// ToolSearchResult represents a search hit returned to the LLM. Schemas are
+// omitted to save context tokens: the hit is referenced, which loads its
+// definition, and get_tool_details shows the schema as text on demand.
 type ToolSearchResult struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -183,14 +201,15 @@ func (r *ToolRegistry) SearchRegex(pattern string, maxSearchResults int) ([]Tool
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	published := r.publishedNamesLocked()
 	var results []ToolSearchResult
 	// Iterate in sorted order for deterministic results across calls.
 	for _, name := range r.sortedToolNames() {
 		entry := r.tools[name]
 		if entry.IsCore {
-			continue // core tools are already visible
+			continue // core tools are already loaded
 		}
-		adv := advertisedName(entry.Tool, name)
+		adv := published[name]
 		desc := entry.Tool.Description()
 		if regex.MatchString(adv) || regex.MatchString(desc) {
 			results = append(results, ToolSearchResult{Name: adv, Description: desc})

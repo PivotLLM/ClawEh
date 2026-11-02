@@ -331,6 +331,9 @@ func (t *llmTurn) toolResultMessage(r toolCallResult) providers.Message {
 		Role:       "tool",
 		Content:    contentForLLM,
 		ToolCallID: r.tc.ID,
+		// The tools a discovery result found: spawnllm loads their deferred
+		// definitions for every later request of this conversation.
+		ToolReferences: r.result.ToolReferences,
 	}
 	// A failed write leaves the file unchanged, so the eviction sweep must
 	// never treat it as superseding the read needed to correct it.

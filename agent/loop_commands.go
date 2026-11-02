@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -273,10 +272,8 @@ func (al *AgentLoop) addHistoryHooks(rt *commands.Runtime, agent *AgentInstance,
 		cm, releaseCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		defer releaseCM()
 		err := cm.Compact(ctx)
-		r := cm.LastCompactionReport()
-		resetRevealedOnCompaction(agent, r)
 		report := ""
-		if r != nil {
+		if r := cm.LastCompactionReport(); r != nil {
 			report = r.String()
 		}
 		return report, err
@@ -289,17 +286,6 @@ func (al *AgentLoop) addHistoryHooks(rt *commands.Runtime, agent *AgentInstance,
 	}
 	rt.RetriggerLastMessage = func(ctx context.Context) error {
 		return al.retriggerLastMessage(ctx, agent, opts, msg)
-	}
-}
-
-// resetRevealedOnCompaction hides the tools discovery revealed when r reports
-// that a compaction replaced the session's history, which held what showed
-// them to the model. The tool registry belongs to the agent instance, so the
-// agent's other sessions lose them too and re-reveal what they need. The
-// automatic compaction path does the same in its reporter (buildSessionEntry).
-func resetRevealedOnCompaction(agent *AgentInstance, r *ctxengine.CompactionReport) {
-	if r != nil && (r.Outcome == "success" || r.Outcome == "partial") {
-		agent.Tools.ResetRevealed()
 	}
 }
 
@@ -321,9 +307,6 @@ func (al *AgentLoop) clearHistory(agent *AgentInstance, opts *processOptions, ms
 		})
 		return err
 	}
-	// The cleared history was what showed the model the tools discovery
-	// revealed (per agent instance, so for its other sessions too).
-	agent.Tools.ResetRevealed()
 	// The model receives the fresh session token in the next dispatch's
 	// system prompt.
 	al.reissueSessionToken(agent, opts.SessionKey)

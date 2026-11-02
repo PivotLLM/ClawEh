@@ -532,7 +532,7 @@ export function ServerFields({
 
       <SwitchCardField
         label="Reveal together"
-        hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
+        hint="Under progressive discovery, make all of this server's tools available together when the model looks one of them up. Use only for small, cohesive servers."
         checked={s.revealTogether}
         onCheckedChange={(c) => onChange({ revealTogether: c })}
         layout="setting-row"

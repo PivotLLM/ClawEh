@@ -56,13 +56,13 @@ observe does not need an entry.
   shrinks for the `openai-chat`, `openai-responses` and `azure` protocols and
   the Codex CLI, which previously counted cached tokens in it. `cost` is `unknown` only when the provider
   returned no cost; a reported 0 prints as 0.
-- **A tool found through discovery stays available until the agent's context
-  is cleared or compacted.** Once `get_tool_details` reveals a tool it remains
-  in the agent's tool list until a clear or a compaction in any of the agent's
-  conversations (scheduled and internal ones included); nothing expires after
-  a number of turns and nothing is evicted over a budget. Calling a tool that
-  is still hidden now answers `tool "<name>" is hidden; call
-  get_tool_details("<name>") first` instead of `not found`.
+- **With tool discovery on, every tool is offered on every call.** Hidden
+  tools are marked for on-demand loading: Anthropic (Claude 4.5 and later)
+  models load a hidden tool when `search_tools` or `get_tool_details` names
+  it, and OpenAI Responses (gpt-5.4 and later) models when `search_tools`
+  names it; other providers receive it as an ordinary tool from then on;
+  command-line providers see the search text only. A hidden tool may be called at any time. The tool list no longer
+  changes between calls, so prompt caching holds.
 
 ### Removed
 

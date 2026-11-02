@@ -33,8 +33,8 @@ func unknownConfigKeys(doc any) []string {
 
 // silentlyRemovedKeys are removed settings that an existing config.json may
 // still hold and that are ignored without a warning: the discovery TTL and
-// visible budget (and the older name of the TTL) stopped mattering when a
-// revealed tool began staying visible for the whole conversation.
+// visible budget (and the older name of the TTL) stopped mattering when every
+// tool began to be offered on every call, hidden ones deferred.
 var silentlyRemovedKeys = map[string]bool{
 	"tools.discovery.ttl":            true,
 	"tools.discovery.ttl_max":        true,

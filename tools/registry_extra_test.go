@@ -47,11 +47,11 @@ func TestToolRegistry_GetSummaries_WithHidden(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(&mockTool{name: "alpha"})
 	r.Register(&mockTool{name: "beta"})
-	r.RegisterHidden(&mockTool{name: "hidden"}) // not revealed, should not appear
+	r.RegisterHidden(&mockTool{name: "hidden"}) // not core, should not appear
 
 	summaries := r.GetSummaries()
 	if len(summaries) != 2 {
-		t.Errorf("GetSummaries() len = %d, want 2 (unrevealed hidden tool not shown)", len(summaries))
+		t.Errorf("GetSummaries() len = %d, want 2 (hidden tool not shown)", len(summaries))
 	}
 }
 
@@ -95,29 +95,16 @@ func TestToolRegistry_CountWithRegistrations(t *testing.T) {
 	}
 }
 
-func TestToolRegistry_HiddenTool_NotCallableUntilRevealed(t *testing.T) {
+func TestToolRegistry_HiddenTool_Gettable(t *testing.T) {
 	r := NewToolRegistry()
 	r.RegisterHidden(&mockTool{name: "hidden"})
 
-	_, ok := r.Get("hidden")
-	if ok {
-		t.Error("an unrevealed hidden tool should not be callable")
-	}
-}
-
-func TestToolRegistry_HiddenTool_CallableAfterReveal(t *testing.T) {
-	r := NewToolRegistry()
-	r.RegisterHidden(&mockTool{name: "revealed"})
-	if _, _, _, ok := r.revealTool("revealed"); !ok {
-		t.Fatal("revealTool did not find the tool")
-	}
-
-	tool, ok := r.Get("revealed")
+	tool, ok := r.Get("hidden")
 	if !ok {
-		t.Fatal("revealed tool should be callable")
+		t.Fatal("a hidden tool must be resolvable without any discovery call")
 	}
-	if tool.Name() != "revealed" {
-		t.Errorf("Name() = %q, want revealed", tool.Name())
+	if tool.Name() != "hidden" {
+		t.Errorf("Name() = %q, want hidden", tool.Name())
 	}
 }
 
@@ -169,8 +156,7 @@ func TestToolRegistry_Version_IncreasesOnRegister(t *testing.T) {
 
 // TestToolRegistry_ShellIsAnOrdinaryTool: an unregistered shell_exec gets the
 // same not-found result as any other unregistered tool; one registered but
-// hidden by progressive discovery is refused as hidden in the loop and runs
-// for the host, like any other hidden tool.
+// hidden by progressive discovery runs, like any other hidden tool.
 func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
 	ctx := context.Background()
 	missing := NewToolRegistry()
@@ -184,11 +170,7 @@ func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
 	hidden := NewToolRegistry()
 	hidden.RegisterHidden(&mockTool{name: config.ShellExecTool})
 	res := hidden.Execute(ctx, config.ShellExecTool, nil)
-	if want := fmt.Sprintf("tool %q is hidden; call get_tool_details(%q) first", config.ShellExecTool, config.ShellExecTool); !res.IsError || res.ForLLM != want {
-		t.Errorf("hidden in the loop: %+v, want %q", res, want)
-	}
-	res = hidden.ExecuteForHost(ctx, config.ShellExecTool, nil, "", "", nil)
 	if res.IsError || res.ForLLM != "tool executed: "+config.ShellExecTool {
-		t.Errorf("hidden for the host: %+v, want it run", res)
+		t.Errorf("hidden: %+v, want it run", res)
 	}
 }

@@ -244,7 +244,7 @@ func (t *llmTurn) toolDefinitions() []providers.ToolDefinition {
 // It returns the engine's estimate of the request's prompt tokens, which the
 // provider's reported count calibrates after the call; 0 when assembly failed.
 func (t *llmTurn) assemble(ctx context.Context, defs []providers.ToolDefinition) int {
-	asm, err := t.cm.Assemble(ctx, t.al.assembleRequestWithDefs(ctx, t.agent, t.mem, t.opts, defs))
+	asm, err := t.cm.Assemble(ctx, t.al.assembleRequestWithDefs(ctx, t.agent, t.mem, t.opts, defs, t.messages))
 	if err != nil {
 		logger.WarnCF("agent", "assemble failed (continuing with current slice)", map[string]any{
 			"agent_id": t.agent.ID,

@@ -233,10 +233,8 @@ func (al *AgentLoop) compactFn(agent *AgentInstance) func(ctx context.Context, s
 		cm, release := al.getContextManager(agent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		defer release()
 		err := cm.Compact(ctx)
-		r := cm.LastCompactionReport()
-		resetRevealedOnCompaction(agent, r)
 		report := ""
-		if r != nil {
+		if r := cm.LastCompactionReport(); r != nil {
 			report = r.String()
 		}
 		return report, cm.RenderedSummary(), err
@@ -311,7 +309,7 @@ func (al *AgentLoop) registerProviderTools(currentAgent *AgentInstance, cfg *con
 				currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
 			case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
 				// fusion/maestro behind discovery; carry any reveal-together group
-				// (e.g. a fusion service) so the whole set unlocks in one search.
+				// (e.g. a fusion service) so get_tool_details loads the whole set.
 				// A namespace pinned via always_shown_namespaces skips this and
 				// falls through to RegisterSuite (always visible to the model).
 				if g, ok := t.(tools.DiscoveryGrouped); ok {

@@ -46,6 +46,12 @@ type ToolResult struct {
 	// OpenAI-compatible API rejects image content in tool messages, so they cannot
 	// ride on the tool result itself.
 	Images []string `json:"images,omitempty"`
+
+	// ToolReferences names the tools this result surfaces (search_tools hits,
+	// the tool get_tool_details describes), as offered in the tool list. It
+	// becomes the tool message's ToolReferences, from which spawnllm loads the
+	// deferred tools a message references.
+	ToolReferences []string `json:"tool_references,omitempty"`
 }
 
 // NewToolResult creates a basic ToolResult with content for the LLM.

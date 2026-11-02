@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -76,7 +77,7 @@ func TestSearchTool_RegexMode(t *testing.T) {
 		}
 	})
 
-	t.Run("Match returns names but does NOT promote (3-layer)", func(t *testing.T) {
+	t.Run("Match names and references the hits", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"query": "system", "regex": true})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
@@ -84,14 +85,14 @@ func TestSearchTool_RegexMode(t *testing.T) {
 		if !strings.Contains(res.ForLLM, "get_tool_details") {
 			t.Errorf("Expected search to point at get_tool_details, got: %v", res.ForLLM)
 		}
-		if !strings.Contains(res.ForLLM, "mcp_read_file") {
-			t.Errorf("Expected 'mcp_read_file' in results")
+		want := []string{"mcp_list_dir", "mcp_read_file"}
+		if !slices.Equal(res.ToolReferences, want) {
+			t.Errorf("ToolReferences = %v, want %v", res.ToolReferences, want)
 		}
-		// Search must NOT reveal — that's get_tool_details' job.
-		reg.mu.RLock()
-		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].Revealed {
-			t.Errorf("search_tools must not reveal a tool")
+		for _, name := range want {
+			if !strings.Contains(res.ForLLM, "- "+name+": ") {
+				t.Errorf("result text lacks a line for %s: %q", name, res.ForLLM)
+			}
 		}
 	})
 }
@@ -115,23 +116,26 @@ func TestSearchTool_BM25Mode(t *testing.T) {
 		}
 	})
 
-	t.Run("Match returns names, no reveal", func(t *testing.T) {
+	t.Run("Match names and references the hits", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"query": "read files"})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
 		}
-		if !strings.Contains(res.ForLLM, "mcp_read_file") {
-			t.Errorf("Expected 'mcp_read_file' in BM25 results")
+		if !strings.Contains(res.ForLLM, "- mcp_read_file: Read the contents of a system file") {
+			t.Errorf("Expected a line for mcp_read_file in BM25 results, got: %q", res.ForLLM)
 		}
-		reg.mu.RLock()
-		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].Revealed {
-			t.Errorf("search_tools must not reveal a tool")
+		if !slices.Contains(res.ToolReferences, "mcp_read_file") {
+			t.Errorf("ToolReferences = %v, want mcp_read_file among them", res.ToolReferences)
+		}
+		for _, ref := range res.ToolReferences {
+			if !strings.Contains(res.ForLLM, "- "+ref+": ") {
+				t.Errorf("reference %s has no line in the text %q", ref, res.ForLLM)
+			}
 		}
 	})
 }
 
-func TestToolDetailsTool_Reveals(t *testing.T) {
+func TestToolDetailsTool_Details(t *testing.T) {
 	reg := setupPopulatedRegistry()
 	details := NewToolDetailsTool(reg)
 	ctx := context.Background()
@@ -143,21 +147,26 @@ func TestToolDetailsTool_Reveals(t *testing.T) {
 		}
 	})
 
-	t.Run("Reveals schema and tool", func(t *testing.T) {
+	t.Run("Schema text and one reference", func(t *testing.T) {
 		res := details.Execute(ctx, map[string]any{"name": "mcp_read_file"})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
 		}
-		if !strings.Contains(res.ForLLM, "unlocked") || !strings.Contains(res.ForLLM, "mcp_read_file") {
-			t.Errorf("Expected unlock message with tool name, got: %v", res.ForLLM)
+		if !strings.Contains(res.ForLLM, `"name":"mcp_read_file"`) || !strings.Contains(res.ForLLM, "Read the contents of a system file") {
+			t.Errorf("Expected the tool's schema in the text, got: %v", res.ForLLM)
 		}
-		reg.mu.RLock()
-		defer reg.mu.RUnlock()
-		if !reg.tools["mcp_read_file"].Revealed {
-			t.Errorf("Expected get_tool_details to reveal 'mcp_read_file'")
+		if want := []string{"mcp_read_file"}; !slices.Equal(res.ToolReferences, want) {
+			t.Errorf("ToolReferences = %v, want %v", res.ToolReferences, want)
 		}
-		if reg.tools["mcp_fetch_net"].Revealed {
-			t.Errorf("Expected 'mcp_fetch_net' to remain hidden")
+	})
+
+	t.Run("Core tool: schema, no reference", func(t *testing.T) {
+		res := details.Execute(ctx, map[string]any{"name": "core_search"})
+		if res.IsError {
+			t.Fatalf("Unexpected error: %v", res.ForLLM)
+		}
+		if len(res.ToolReferences) != 0 {
+			t.Errorf("ToolReferences = %v, want none for a core tool", res.ToolReferences)
 		}
 	})
 }

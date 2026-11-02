@@ -7,12 +7,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/spawnllm/common"
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -220,8 +222,6 @@ func (al *AgentLoop) prepareSession(ctx context.Context, agent *AgentInstance, c
 		}
 		// The cleared history no longer references any media; let its files age out.
 		al.releaseSessionPins(opts.SessionKey)
-		// Nor shows the model the tools discovery revealed.
-		agent.Tools.ResetRevealed()
 		al.reissueSessionToken(agent, opts.SessionKey)
 	}
 
@@ -232,7 +232,6 @@ func (al *AgentLoop) prepareSession(ctx context.Context, agent *AgentInstance, c
 		if err := cm.Reset(ctx); err != nil {
 			return fmt.Errorf("single-shot reset: %w", err)
 		}
-		agent.Tools.ResetRevealed()
 		opts.IsRetry = false
 	}
 
@@ -591,19 +590,40 @@ func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, 
 	if agent.NoTools {
 		defs = nil
 	}
-	return al.assembleRequestWithDefs(ctx, agent, mem, opts, defs)
+	// The turn's request is not built yet: the stored history is what it
+	// will carry. Read only when a deferred tool makes the history matter.
+	var history []providers.Message
+	if hasDeferredTool(defs) && agent.Sessions != nil {
+		history = agent.Sessions.GetHistory(opts.SessionKey)
+	}
+	return al.assembleRequestWithDefs(ctx, agent, mem, opts, defs, history)
 }
 
 // assembleRequestWithDefs is assembleRequest for a caller that already holds
-// this dispatch's tool definitions.
-func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions, defs []providers.ToolDefinition) ctxengine.AssembleRequest {
+// this dispatch's tool definitions and the messages it will send (history).
+func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions, defs []providers.ToolDefinition, history []providers.Message) ctxengine.AssembleRequest {
 	return ctxengine.AssembleRequest{
-		ToolDefinitionTokens: ctxengine.EstimateToolDefinitionTokens(defs),
+		ToolDefinitionTokens: ctxengine.EstimateToolDefinitionTokens(sentToolDefs(defs, history)),
 		Layers:               al.promptLayers(agent, opts),
 		Injections:           recallInjections(ctx, mem, opts.UserMessage),
 		Channel:              opts.Channel,
 		ChatID:               opts.ChatID,
 	}
+}
+
+// sentToolDefs is the part of defs a request with history actually carries,
+// and so what its tool schemas cost: the tools that are not deferred, plus
+// the deferred ones a message in history references. An unreferenced
+// deferred tool is not sent at all (a provider without native deferred tools
+// leaves it out; a native one loads only referenced ones). This is the
+// selection spawnllm makes on the non-native path.
+func sentToolDefs(defs []providers.ToolDefinition, history []providers.Message) []providers.ToolDefinition {
+	return common.RequestTools(defs, history)
+}
+
+// hasDeferredTool reports whether any definition is deferred.
+func hasDeferredTool(defs []providers.ToolDefinition) bool {
+	return slices.ContainsFunc(defs, common.IsDeferred)
 }
 
 // promptLayers is the system prompt for one dispatch: the agent's static and
