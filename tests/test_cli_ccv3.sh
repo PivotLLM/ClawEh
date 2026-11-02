@@ -21,6 +21,10 @@
 # (main's), CLAW_HOME (the gateway's), GATEWAY_LOG.
 set -uo pipefail
 
+# A test gateway must never alert the operator: no ALERTER_* channel from ~/.alerter.
+# shellcheck source=tests/lib/gateway_env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/gateway_env.sh"
+
 for v in PROBE_PATH MCP_URL SESSION_TOKEN CLAW_HOME GATEWAY_LOG; do
     if [ -z "${!v:-}" ]; then
         echo "FAIL: $v is not set" >&2

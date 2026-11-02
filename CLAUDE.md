@@ -634,6 +634,7 @@ Hard-won learnings (don't relearn these):
 - **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
 - **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
 - **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral ClawEh instance. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
+- **A test gateway must never alert the operator.** Any script that starts a gateway outside production sources `tests/lib/gateway_env.sh` (or exports the same `ALERTER_*` variables empty), so the operator's `~/.alerter` is not used and alerts go only to `<CLAW_HOME>/logs/alerts.log`.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
 ### Capability changes — the golden fixture and the BREAKING entry
