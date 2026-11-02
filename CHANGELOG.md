@@ -58,10 +58,10 @@ observe does not need an entry.
   returned no cost; a reported 0 prints as 0.
 - **With tool discovery on, every tool is offered on every call.** Hidden
   tools are marked for on-demand loading: Anthropic (Claude 4.5 and later)
-  models load a hidden tool when `search_tools` or `get_tool_details` names
-  it, and OpenAI Responses (gpt-5.4 and later) models when `search_tools`
-  names it; other providers receive it as an ordinary tool from then on;
-  command-line providers see the search text only. A hidden tool may be called at any time. The tool list no longer
+  and OpenAI Responses (gpt-5.4 and later) models load a hidden tool when
+  `search_tools` or `get_tool_details` names it; other providers receive it as
+  an ordinary tool from then on; command-line providers see the search text
+  only (spawnllm 0.1.21). A hidden tool may be called at any time. The tool list no longer
   changes between calls, so prompt caching holds.
 
 ### Removed
