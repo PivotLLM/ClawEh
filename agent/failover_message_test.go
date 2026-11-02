@@ -75,17 +75,14 @@ func TestRenderFailoverErrorShowsProviderMessage(t *testing.T) {
 	}
 }
 
-func TestLogFallbackAttemptsLogsProviderMessage(t *testing.T) {
+func TestLogPassedLogsProviderMessage(t *testing.T) {
 	var buf bytes.Buffer
 	restore := logger.RedirectForTest(&buf)
 	defer restore()
 
 	turn := &llmTurn{agent: &AgentInstance{ID: "alice"}}
-	turn.logFallbackAttempts(&providers.FallbackResult{
-		Provider: "Anthropic", Model: "claude-opus-5-5",
-		Attempts: []providers.FallbackAttempt{
-			{Provider: "Anthropic", Model: "claude-fable-5-1", Reason: providers.FailoverFormat, Error: fable400()},
-		},
+	turn.logPassed([]providers.FallbackAttempt{
+		{Provider: "Anthropic", Model: "claude-fable-5-1", Reason: providers.FailoverFormat, Error: fable400()},
 	})
 	if !strings.Contains(buf.String(), "thinking.type: adaptive is required for this model.") {
 		t.Fatalf("log does not carry the provider's message:\n%s", buf.String())
@@ -141,15 +138,18 @@ func TestProviderMessageRedactsSecrets(t *testing.T) {
 			restore := logger.RedirectForTest(&buf)
 			defer restore()
 			turn := &llmTurn{agent: &AgentInstance{ID: "alice"}}
-			turn.logFallbackAttempts(&providers.FallbackResult{
-				Provider: "OpenAI", Model: "gpt-4o",
-				Attempts: []providers.FallbackAttempt{
-					{Provider: "Anthropic", Model: "claude-opus-5-5", Reason: providers.FailoverAuth, Error: fe},
-					{Provider: "Anthropic", Model: "claude-fable-5-1", Reason: providers.FailoverAuth, Skipped: true, Error: fe},
-				},
+			turn.logPassed([]providers.FallbackAttempt{
+				{Provider: "Anthropic", Model: "claude-opus-5-5", Reason: providers.FailoverAuth, Error: fe},
 			})
 			if strings.Contains(buf.String(), secret) || !strings.Contains(buf.String(), secretRedaction) {
-				t.Fatalf("log carries the secret or no redaction:\n%s", buf.String())
+				t.Fatalf("failure log carries the secret or no redaction:\n%s", buf.String())
+			}
+			buf.Reset()
+			turn.logPassed([]providers.FallbackAttempt{
+				{Provider: "Anthropic", Model: "claude-fable-5-1", Reason: providers.FailoverAuth, Skipped: true, Error: fe},
+			})
+			if strings.Contains(buf.String(), secret) || !strings.Contains(buf.String(), secretRedaction) {
+				t.Fatalf("skip log carries the secret or no redaction:\n%s", buf.String())
 			}
 		})
 	}

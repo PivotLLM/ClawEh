@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/cogmem/consolidate"
 	"github.com/PivotLLM/ctxengine"
@@ -230,9 +231,8 @@ func TestLLMTurnEmitFinish_MainAgent(t *testing.T) {
 		iteration: 2,
 		opts:      processOptions{SessionKey: "agent:alice:main", Channel: "telegram", ChatID: "42"},
 	}
-	d := &llmDispatch{provider: "Claude CLI"}
 	resp := &providers.LLMResponse{Status: &providers.DispatchStatus{Success: true, Model: "claude-sonnet-4-5", InputTokens: 7}}
-	turn.emitFinish(withTurnID(context.Background(), "abcd1234"), d, 10, resp, nil)
+	turn.emitFinish(withTurnID(context.Background(), "abcd1234"), "Claude CLI", "Sonnet", "Sonnet", 10*time.Millisecond, resp, nil)
 
 	records := finishRecords(t, buf)
 	if len(records) != 1 {
@@ -263,7 +263,7 @@ func TestLLMTurnEmitFinish_Subagent(t *testing.T) {
 	buf := &bytes.Buffer{}
 	restore := logger.RedirectForTest(buf)
 	defer restore()
-	turn.emitFinish(context.Background(), &llmDispatch{provider: "Anthropic"}, 5, nil, nil)
+	turn.emitFinish(context.Background(), "Anthropic", "Haiku", "Haiku", 5*time.Millisecond, nil, nil)
 
 	records := finishRecords(t, buf)
 	if len(records) != 1 {
@@ -295,8 +295,8 @@ func (failoverProvider) Chat(_ context.Context, _ []providers.Message, _ []provi
 
 func (failoverProvider) GetDefaultModel() string { return "primary-wire" }
 
-// After a failover the line names the candidate that answered: its provider
-// and its model_name, not the primary's.
+// After a failover each call has its line, and the answering one names the
+// candidate that answered: its provider and its model_name, not the primary's.
 func TestRequestModel_FailoverNamesAnsweringModel(t *testing.T) {
 	al := &AgentLoop{cfg: &config.Config{}, fallback: providers.NewFallbackChain(providers.NewCooldownTracker())}
 	turn := &llmTurn{
@@ -323,10 +323,17 @@ func TestRequestModel_FailoverNamesAnsweringModel(t *testing.T) {
 	}
 
 	records := finishRecords(t, buf)
-	if len(records) != 1 {
-		t.Fatalf("finish records = %d, want 1: %v", len(records), records)
+	if len(records) != 2 {
+		t.Fatalf("finish records = %d, want one per call (2): %v", len(records), records)
 	}
 	assertFields(t, records[0], map[string]any{
+		"our_provider": "Primary Co",
+		"our_model":    "Primary",
+		"model":        "primary-wire",
+		"success":      false,
+		"error":        "status 429: rate limit exceeded",
+	})
+	assertFields(t, records[1], map[string]any{
 		"our_provider": "Backup Co",
 		"our_model":    "Backup",
 		"model":        "backup-wire-2026",
