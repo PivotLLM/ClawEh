@@ -212,13 +212,29 @@ func (t *llmTurn) compressForRetry(ctx context.Context, d *llmDispatch, err erro
 	prevMsgCount := len(t.messages)
 	comprMgr, releaseComprMgr := t.al.getContextManager(t.agent, t.opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	t.releases = append(t.releases, releaseComprMgr)
+	// ForceCompress does not call the compaction reporter, so a report newer
+	// than the one before it is how this path learns that a compaction ran.
+	// Without a summarizer ForceCompress drops the oldest messages and writes
+	// no report, so the revealed tools stay listed in that configuration;
+	// harmless, since their schemas are still sent.
+	prevReport := comprMgr.LastCompactionReport()
 	if ferr := comprMgr.ForceCompress(ctx); ferr != nil {
 		logger.WarnCF("agent", "force compression failed",
 			map[string]any{"error": ferr.Error(), "session": t.opts.SessionKey})
 	}
+	if r := comprMgr.LastCompactionReport(); r != prevReport {
+		resetRevealedOnCompaction(t.agent, r)
+	}
+	// The compaction may have hidden revealed tools: the retry advertises
+	// the current list, not the one this dispatch was built with.
+	d.defs = t.toolDefinitions()
 	if asm, berr := comprMgr.Assemble(ctx, t.al.assembleRequestWithDefs(ctx, t.agent, t.mem, t.opts, d.defs)); berr == nil {
 		t.messages = asm.Messages
 		d.promptEstimate = asm.PromptTokenEstimate
+		if asm.Compacted {
+			// A safety-net compaction inside Assemble resets them too.
+			d.defs = t.toolDefinitions()
+		}
 	}
 
 	if len(t.messages) < prevMsgCount {

@@ -638,8 +638,6 @@
       "always_shown_namespaces": [
         "x"
       ],
-      "ttl_max": 1,
-      "visible_budget": 1,
       "max_search_results": 1
     },
     "read_file": {

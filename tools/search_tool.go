@@ -19,7 +19,7 @@ const (
 // SearchTool (search_tools) is layer 1 of progressive discovery: it returns the
 // names and one-line descriptions of hidden tools matching a query, WITHOUT loading
 // their schemas or unlocking them. The model then calls get_tool_details on a chosen
-// name (layer 2) to load its schema and promote it, then calls it (layer 3). BM25
+// name (layer 2) to load its schema and reveal it, then calls it (layer 3). BM25
 // natural-language search is the default; pass regex:true to match a regular
 // expression over tool name/description instead.
 type SearchTool struct {
@@ -110,16 +110,14 @@ func (t *SearchTool) Execute(_ context.Context, args map[string]any) *ToolResult
 }
 
 // ToolDetailsTool (get_tool_details) is layer 2 of progressive discovery: it loads
-// the full schema for a single tool discovered via search_tools and promotes it so
-// it becomes callable for the next TTL turns.
+// the full schema for a single tool discovered via search_tools and reveals it,
+// so it stays callable until the agent's context is cleared or compacted.
 type ToolDetailsTool struct {
-	registry      *ToolRegistry
-	ttl           int
-	visibleBudget int
+	registry *ToolRegistry
 }
 
-func NewToolDetailsTool(r *ToolRegistry, ttl, visibleBudget int) *ToolDetailsTool {
-	return &ToolDetailsTool{registry: r, ttl: ttl, visibleBudget: visibleBudget}
+func NewToolDetailsTool(r *ToolRegistry) *ToolDetailsTool {
+	return &ToolDetailsTool{registry: r}
 }
 
 func (t *ToolDetailsTool) Name() string { return "get_tool_details" }
@@ -148,7 +146,7 @@ func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolR
 	}
 	name = strings.TrimSpace(name)
 
-	schema, advertised, _, ok := t.registry.revealTool(name, t.ttl, t.visibleBudget)
+	schema, advertised, _, ok := t.registry.revealTool(name)
 	if !ok {
 		return ErrorResult(fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", name))
 	}
@@ -157,7 +155,7 @@ func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolR
 	if err != nil {
 		return ErrorResult("Failed to format tool schema: " + err.Error())
 	}
-	logger.InfoCF("discovery", "Tool details revealed", map[string]any{"tool": advertised, "ttl": t.ttl})
+	logger.InfoCF("discovery", "Tool details revealed", map[string]any{"tool": advertised})
 	return SilentResult(fmt.Sprintf(
 		"%s\n\nThis tool is now unlocked. Call it as `%s` in your next response.",
 		string(b), advertised))

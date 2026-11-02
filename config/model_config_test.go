@@ -390,6 +390,7 @@ func TestModelConfig_ExtraBody_CollisionRejected(t *testing.T) {
 		"model", "messages", "stream", "tools", "tool_choice",
 		"parallel_tool_calls", "reasoning_effort", "temperature",
 		"max_tokens", "max_completion_tokens", "top_p", "n",
+		"session_id", "cache_control",
 	}
 	for _, key := range cases {
 		cfg := ModelConfig{

@@ -314,8 +314,6 @@ func DefaultConfig() *Config {
 			// Progressive tool discovery: single global switch, default OFF.
 			Discovery: ToolDiscoveryConfig{
 				Enabled:          false,
-				TTLMax:           DefaultDiscoveryTTLMax,
-				VisibleBudget:    DefaultDiscoveryVisibleBudget,
 				MaxSearchResults: DefaultDiscoveryMaxSearchHits,
 			},
 			ReadFile: ReadFileToolConfig{

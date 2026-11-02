@@ -514,7 +514,14 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 	// Reporter delivers the compaction report to the user on the automatic path.
 	// Internal channels (e.g. cron-internal) are skipped to avoid loops; manual
 	// /compact returns the report directly instead of using this.
+	//
+	// The engine calls it after every automatic compaction pass that did
+	// something (success, partial or failed; never "nothing to compress"), so
+	// it is also where the tools discovery revealed are hidden again: the
+	// history that showed them to the model has been replaced by a summary.
+	// The callback carries no outcome, so a failed pass hides them too.
 	reporter := func(channel, chatID, text string) {
+		agent.Tools.ResetRevealed()
 		if text == "" || channel == "" || al.bus == nil || constants.IsInternalChannel(channel) {
 			return
 		}

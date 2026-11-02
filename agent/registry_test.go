@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"os"
+	osuser "os/user"
+	"path/filepath"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -24,10 +27,26 @@ func (m *mockRegistryProvider) GetDefaultModel() string {
 	return "mock-model"
 }
 
+// testRegistryBaseDir is the agents directory the registry tests write to:
+// /tmp/<user>-claw-test-registry, so two accounts on one machine never share
+// (and cannot lock each other out of) the same directory.
+func testRegistryBaseDir() string {
+	user := os.Getenv("USER")
+	if user == "" {
+		if u, err := osuser.Current(); err == nil {
+			user = u.Username
+		}
+	}
+	if user == "" {
+		user = "unknown"
+	}
+	return filepath.Join(os.TempDir(), user+"-claw-test-registry")
+}
+
 func testCfg(agents []config.AgentConfig) *config.Config {
 	return &config.Config{
 		Agents: config.AgentsConfig{
-			BaseDir: "/tmp/claw-test-registry",
+			BaseDir: testRegistryBaseDir(),
 			Defaults: config.AgentDefaults{
 				Models:            []string{"gpt-4"},
 				MaxTokens:         8192,

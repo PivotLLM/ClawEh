@@ -87,11 +87,11 @@ func TestSearchTool_RegexMode(t *testing.T) {
 		if !strings.Contains(res.ForLLM, "mcp_read_file") {
 			t.Errorf("Expected 'mcp_read_file' in results")
 		}
-		// Search must NOT promote — that's get_tool_details' job.
+		// Search must NOT reveal — that's get_tool_details' job.
 		reg.mu.RLock()
 		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].TTL != 0 {
-			t.Errorf("search_tools must not promote; TTL should stay 0, got %d", reg.tools["mcp_read_file"].TTL)
+		if reg.tools["mcp_read_file"].Revealed {
+			t.Errorf("search_tools must not reveal a tool")
 		}
 	})
 }
@@ -115,7 +115,7 @@ func TestSearchTool_BM25Mode(t *testing.T) {
 		}
 	})
 
-	t.Run("Match returns names, no promotion", func(t *testing.T) {
+	t.Run("Match returns names, no reveal", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"query": "read files"})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
@@ -125,15 +125,15 @@ func TestSearchTool_BM25Mode(t *testing.T) {
 		}
 		reg.mu.RLock()
 		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].TTL != 0 {
-			t.Errorf("search_tools must not promote; TTL should stay 0")
+		if reg.tools["mcp_read_file"].Revealed {
+			t.Errorf("search_tools must not reveal a tool")
 		}
 	})
 }
 
-func TestToolDetailsTool_RevealsAndPromotes(t *testing.T) {
+func TestToolDetailsTool_Reveals(t *testing.T) {
 	reg := setupPopulatedRegistry()
-	details := NewToolDetailsTool(reg, 4, 0)
+	details := NewToolDetailsTool(reg)
 	ctx := context.Background()
 
 	t.Run("Unknown tool errors", func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestToolDetailsTool_RevealsAndPromotes(t *testing.T) {
 		}
 	})
 
-	t.Run("Reveals schema and promotes", func(t *testing.T) {
+	t.Run("Reveals schema and tool", func(t *testing.T) {
 		res := details.Execute(ctx, map[string]any{"name": "mcp_read_file"})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
@@ -153,11 +153,11 @@ func TestToolDetailsTool_RevealsAndPromotes(t *testing.T) {
 		}
 		reg.mu.RLock()
 		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].TTL != 4 {
-			t.Errorf("Expected get_tool_details to promote TTL to 4, got %d", reg.tools["mcp_read_file"].TTL)
+		if !reg.tools["mcp_read_file"].Revealed {
+			t.Errorf("Expected get_tool_details to reveal 'mcp_read_file'")
 		}
-		if reg.tools["mcp_fetch_net"].TTL != 0 {
-			t.Errorf("Expected 'mcp_fetch_net' to remain hidden (TTL=0)")
+		if reg.tools["mcp_fetch_net"].Revealed {
+			t.Errorf("Expected 'mcp_fetch_net' to remain hidden")
 		}
 	})
 }
@@ -276,40 +276,6 @@ func TestToolRegistry_SearchLimitsAndCoreFiltering(t *testing.T) {
 	})
 }
 
-func TestGet_HiddenToolTTLLifecycle(t *testing.T) {
-	reg := NewToolRegistry()
-	reg.RegisterHidden(&mockSearchableTool{name: "hidden_tool", desc: "test"})
-
-	// TTL=0 at registration → not gettable
-	_, ok := reg.Get("hidden_tool")
-	if ok {
-		t.Error("Expected hidden tool with TTL=0 to NOT be gettable")
-	}
-
-	// Promote → gettable
-	reg.PromoteTools([]string{"hidden_tool"}, 3, 0)
-	_, ok = reg.Get("hidden_tool")
-	if !ok {
-		t.Error("Expected promoted hidden tool to be gettable")
-	}
-
-	// Tick down to 0 → not gettable again
-	reg.TickTTL() // 3→2
-	reg.TickTTL() // 2→1
-	reg.TickTTL() // 1→0
-	_, ok = reg.Get("hidden_tool")
-	if ok {
-		t.Error("Expected hidden tool with TTL ticked to 0 to NOT be gettable")
-	}
-
-	// Core tools remain always gettable
-	reg.Register(&mockSearchableTool{name: "core_tool", desc: "core"})
-	_, ok = reg.Get("core_tool")
-	if !ok {
-		t.Error("Expected core tool to always be gettable")
-	}
-}
-
 func TestBM25CacheInvalidation(t *testing.T) {
 	reg := NewToolRegistry()
 	reg.RegisterHidden(&mockSearchableTool{name: "tool_alpha", desc: "alpha functionality"})
@@ -331,33 +297,4 @@ func TestBM25CacheInvalidation(t *testing.T) {
 	if !strings.Contains(res.ForLLM, "tool_beta") {
 		t.Errorf("Expected 'tool_beta' after cache invalidation, got: %v", res.ForLLM)
 	}
-}
-
-func TestPromoteTools_ConcurrentWithTickTTL(t *testing.T) {
-	reg := NewToolRegistry()
-	for i := range 20 {
-		reg.RegisterHidden(&mockSearchableTool{
-			name: fmt.Sprintf("concurrent_tool_%d", i),
-			desc: "concurrent test tool",
-		})
-	}
-
-	names := make([]string, 20)
-	for i := range 20 {
-		names[i] = fmt.Sprintf("concurrent_tool_%d", i)
-	}
-
-	// Hammer PromoteTools and TickTTL concurrently to detect races
-	done := make(chan struct{})
-	go func() {
-		for range 1000 {
-			reg.PromoteTools(names, 5, 0)
-		}
-		close(done)
-	}()
-
-	for range 1000 {
-		reg.TickTTL()
-	}
-	<-done
 }

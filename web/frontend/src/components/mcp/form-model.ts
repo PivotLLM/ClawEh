@@ -15,10 +15,6 @@ export interface MCPHostForm {
   // model when it's on (native tools, search_tools/get_tool_details, and cogmem
   // are always shown by rule).
   discoveryEnabled: boolean
-  // ttlMax: turns a revealed tool stays visible without use (reset on use).
-  // visibleBudget: max revealed tools before lowest-TTL-first pruning kicks in.
-  ttlMax: number
-  visibleBudget: number
   alwaysShownNamespaces: string[]
   // Outbound MCP client resilience (tools.mcp.*). reconnectCooldownSeconds and
   // callTimeoutSeconds fall back to backend defaults (30 / 300) when 0;
@@ -72,8 +68,6 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   internalToolPatterns: ["*"],
   externalToolPatterns: ["*"],
   discoveryEnabled: false,
-  ttlMax: 50,
-  visibleBudget: 100,
   alwaysShownNamespaces: [],
   reconnectCooldownSeconds: 30,
   callTimeoutSeconds: 300,
@@ -130,12 +124,6 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     discoveryEnabled: asBool(
       discovery.enabled,
       EMPTY_MCP_FORM.discoveryEnabled,
-    ),
-    // Honor the legacy "ttl" key as a fallback so an older config still displays.
-    ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
-    visibleBudget: asNumber(
-      discovery.visible_budget,
-      EMPTY_MCP_FORM.visibleBudget,
     ),
     alwaysShownNamespaces: asStringArray(
       discovery.always_shown_namespaces,

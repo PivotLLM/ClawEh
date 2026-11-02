@@ -35,6 +35,11 @@ observe does not need an entry.
   behaviour clear **Worker models** on the agent's card, or remove
   `subagents.models` from the agent in `config.json`.
 - Improved LLM use logging.
+- **`extra_body` may no longer set `session_id` or `cache_control`.** spawnllm
+  0.1.20 sets both itself on OpenRouter requests and would skip an operator's
+  value with only a log warning, so a model whose `extra_body` names either
+  key is now refused at load and on save, like the other reserved request
+  fields.
 - **Prompt caching on Anthropic API and OpenRouter Claude models.** Requests
   to the Anthropic API, and to Claude models through an OpenRouter provider
   on the `openai-chat` protocol (the "OpenRouter Chat" providers, not
@@ -51,6 +56,19 @@ observe does not need an entry.
   shrinks for the `openai-chat`, `openai-responses` and `azure` protocols and
   the Codex CLI, which previously counted cached tokens in it. `cost` is `unknown` only when the provider
   returned no cost; a reported 0 prints as 0.
+- **A tool found through discovery stays available until the agent's context
+  is cleared or compacted.** Once `get_tool_details` reveals a tool it remains
+  in the agent's tool list until a clear or a compaction in any of the agent's
+  conversations (scheduled and internal ones included); nothing expires after
+  a number of turns and nothing is evicted over a budget. Calling a tool that
+  is still hidden now answers `tool "<name>" is hidden; call
+  get_tool_details("<name>") first` instead of `not found`.
+
+### Removed
+
+- **`tools.discovery.ttl_max` and `tools.discovery.visible_budget`** (and the
+  older `ttl`) are gone, with their environment variables and the fields on
+  the MCP page. A value still in `config.json` is ignored.
 
 ## [0.6.2]
 

@@ -101,14 +101,15 @@ func TestIntegration_DispatchStatus_CodexCLI(t *testing.T) {
 	}
 }
 
-// TestIntegration_DispatchStatus_GeminiCLI runs the real gemini CLI and
-// confirms the parser prefers the model whose roles map contains "main".
-func TestIntegration_DispatchStatus_GeminiCLI(t *testing.T) {
-	if _, err := exec.LookPath("gemini"); err != nil {
-		t.Skip("gemini CLI not found in PATH")
+// TestIntegration_DispatchStatus_AntigravityCLI runs the real Antigravity CLI
+// (agy) and confirms the dispatch status carries the traffic counters. The
+// CLI reports no per-model breakdown, so the model is not asserted.
+func TestIntegration_DispatchStatus_AntigravityCLI(t *testing.T) {
+	if _, err := exec.LookPath("agy"); err != nil {
+		t.Skip("agy CLI not found in PATH")
 	}
 
-	p := NewGeminiCliProvider("", t.TempDir(), []string{"--skip-trust", "--yolo"}, nil)
+	p := NewAntigravityCliProvider("", t.TempDir(), nil, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -121,15 +122,6 @@ func TestIntegration_DispatchStatus_GeminiCLI(t *testing.T) {
 	}
 	t.Logf("DispatchStatus: %+v", resp.Status)
 
-	if resp.Status.Model == "" {
-		t.Error("Model is empty; expected primary (main role) model name")
-	}
-	if strings.Contains(strings.ToLower(resp.Status.Model), "utility_router") {
-		t.Errorf("Model = %q; utility_router should never win — main role must be preferred", resp.Status.Model)
-	}
-	if resp.Status.NumTurns < 1 {
-		t.Errorf("NumTurns = %d, want >= 1 (totalRequests of main role)", resp.Status.NumTurns)
-	}
 	if resp.Status.BytesSent == 0 {
 		t.Error("BytesSent = 0; expected non-zero")
 	}

@@ -220,6 +220,8 @@ func (al *AgentLoop) prepareSession(ctx context.Context, agent *AgentInstance, c
 		}
 		// The cleared history no longer references any media; let its files age out.
 		al.releaseSessionPins(opts.SessionKey)
+		// Nor shows the model the tools discovery revealed.
+		agent.Tools.ResetRevealed()
 		al.reissueSessionToken(agent, opts.SessionKey)
 	}
 
@@ -230,6 +232,7 @@ func (al *AgentLoop) prepareSession(ctx context.Context, agent *AgentInstance, c
 		if err := cm.Reset(ctx); err != nil {
 			return fmt.Errorf("single-shot reset: %w", err)
 		}
+		agent.Tools.ResetRevealed()
 		opts.IsRetry = false
 	}
 

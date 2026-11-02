@@ -47,11 +47,11 @@ func TestToolRegistry_GetSummaries_WithHidden(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(&mockTool{name: "alpha"})
 	r.Register(&mockTool{name: "beta"})
-	r.RegisterHidden(&mockTool{name: "hidden"}) // TTL=0, should not appear
+	r.RegisterHidden(&mockTool{name: "hidden"}) // not revealed, should not appear
 
 	summaries := r.GetSummaries()
 	if len(summaries) != 2 {
-		t.Errorf("GetSummaries() len = %d, want 2 (hidden not shown when TTL=0)", len(summaries))
+		t.Errorf("GetSummaries() len = %d, want 2 (unrevealed hidden tool not shown)", len(summaries))
 	}
 }
 
@@ -95,42 +95,29 @@ func TestToolRegistry_CountWithRegistrations(t *testing.T) {
 	}
 }
 
-func TestToolRegistry_HiddenTool_NotCallableAfterTTLExpired(t *testing.T) {
+func TestToolRegistry_HiddenTool_NotCallableUntilRevealed(t *testing.T) {
 	r := NewToolRegistry()
 	r.RegisterHidden(&mockTool{name: "hidden"})
 
-	// TTL starts at 0 — hidden tool should not be callable.
 	_, ok := r.Get("hidden")
 	if ok {
-		t.Error("hidden tool with TTL=0 should not be callable")
+		t.Error("an unrevealed hidden tool should not be callable")
 	}
 }
 
-func TestToolRegistry_HiddenTool_CallableAfterPromotion(t *testing.T) {
+func TestToolRegistry_HiddenTool_CallableAfterReveal(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterHidden(&mockTool{name: "promoted"})
-	r.PromoteTools([]string{"promoted"}, 2, 0)
+	r.RegisterHidden(&mockTool{name: "revealed"})
+	if _, _, _, ok := r.revealTool("revealed"); !ok {
+		t.Fatal("revealTool did not find the tool")
+	}
 
-	tool, ok := r.Get("promoted")
+	tool, ok := r.Get("revealed")
 	if !ok {
-		t.Fatal("promoted tool should be callable")
+		t.Fatal("revealed tool should be callable")
 	}
-	if tool.Name() != "promoted" {
-		t.Errorf("Name() = %q, want promoted", tool.Name())
-	}
-}
-
-func TestToolRegistry_TickTTL_DecrementsHiddenTools(t *testing.T) {
-	r := NewToolRegistry()
-	r.RegisterHidden(&mockTool{name: "ticking"})
-	r.PromoteTools([]string{"ticking"}, 1, 0)
-
-	// After 1 tick, TTL should reach 0.
-	r.TickTTL()
-
-	_, ok := r.Get("ticking")
-	if ok {
-		t.Error("tool should not be callable after TTL expires")
+	if tool.Name() != "revealed" {
+		t.Errorf("Name() = %q, want revealed", tool.Name())
 	}
 }
 
@@ -182,8 +169,8 @@ func TestToolRegistry_Version_IncreasesOnRegister(t *testing.T) {
 
 // TestToolRegistry_ShellIsAnOrdinaryTool: an unregistered shell_exec gets the
 // same not-found result as any other unregistered tool; one registered but
-// hidden by progressive discovery is not found in the loop and runs for the
-// host, like any other hidden tool.
+// hidden by progressive discovery is refused as hidden in the loop and runs
+// for the host, like any other hidden tool.
 func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
 	ctx := context.Background()
 	missing := NewToolRegistry()
@@ -197,7 +184,7 @@ func TestToolRegistry_ShellIsAnOrdinaryTool(t *testing.T) {
 	hidden := NewToolRegistry()
 	hidden.RegisterHidden(&mockTool{name: config.ShellExecTool})
 	res := hidden.Execute(ctx, config.ShellExecTool, nil)
-	if want := fmt.Sprintf("tool %q not found", config.ShellExecTool); !res.IsError || res.ForLLM != want {
+	if want := fmt.Sprintf("tool %q is hidden; call get_tool_details(%q) first", config.ShellExecTool, config.ShellExecTool); !res.IsError || res.ForLLM != want {
 		t.Errorf("hidden in the loop: %+v, want %q", res, want)
 	}
 	res = hidden.ExecuteForHost(ctx, config.ShellExecTool, nil, "", "", nil)

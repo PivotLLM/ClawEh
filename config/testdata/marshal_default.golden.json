@@ -672,8 +672,6 @@
     },
     "discovery": {
       "enabled": false,
-      "ttl_max": 50,
-      "visible_budget": 100,
       "max_search_results": 10
     },
     "read_file": {

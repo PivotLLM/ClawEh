@@ -411,7 +411,7 @@ func firstToolNamed(agentRegistries map[string]*tools.ToolRegistry, name string)
 			continue
 		}
 		// GetForHost: the host catalogue lists every registered tool regardless of
-		// progressive-discovery TTL state, so a TTL-hidden tool still supplies a
+		// progressive-discovery visibility, so a discovery-hidden tool still supplies a
 		// schema for tools/list.
 		if t, ok := reg.GetForHost(name); ok {
 			return t, true
@@ -496,7 +496,7 @@ func dispatchToolCall(
 	}
 
 	// GetForHost (not Get): a valid, authorized call must never be denied because
-	// progressive discovery has the tool TTL-hidden — discovery is an in-loop
+	// progressive discovery has the tool hidden — discovery is an in-loop
 	// context optimization, not an access control. Authorization is enforced below
 	// by the ACL policy and the primary-only check.
 	toolInstance, toolOK := reg.GetForHost(toolName)
@@ -565,7 +565,7 @@ func dispatchToolCall(
 		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
 		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r, spawnDepth)
 	}
-	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
+	// ExecuteForHost: resolve/execute regardless of discovery visibility — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
 	result := reg.ExecuteForHost(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
 	if result == nil {

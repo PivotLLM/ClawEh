@@ -28,6 +28,8 @@ const sample = {
     external_tools: ["*"],
   },
   tools: {
+    // ttl_max and visible_budget are keys the backend no longer knows; a config
+    // that still carries them must not have them written back.
     discovery: { enabled: true, ttl_max: 20, visible_budget: 40 },
     mcp: {
       reconnect_cooldown_seconds: 45,
@@ -71,7 +73,7 @@ describe("MCPConfigPage with the config already cached", () => {
     await waitFor(() => expect(configFetch).not.toHaveBeenCalled())
   })
 
-  it("an edit saves the configured values with the change, and never the server list", async () => {
+  it("an edit saves the configured values with the change, never the server list, and drops the removed discovery keys", async () => {
     renderCached()
 
     const path = await screen.findByDisplayValue("/tools")
@@ -90,11 +92,12 @@ describe("MCPConfigPage with the config already cached", () => {
       internal_tools: ["file_"],
       external_tools: ["*"],
     })
+    const discovery = (patch.tools as { discovery: unknown }).discovery
+    expect(discovery).not.toHaveProperty("ttl_max")
+    expect(discovery).not.toHaveProperty("visible_budget")
     expect(patch.tools).toEqual({
       discovery: {
         enabled: true,
-        ttl_max: 20,
-        visible_budget: 40,
         always_shown_namespaces: [],
       },
       mcp: {

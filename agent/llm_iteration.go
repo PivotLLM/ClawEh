@@ -430,14 +430,6 @@ func (t *llmTurn) runToolCalls(ctx context.Context, response *providers.LLMRespo
 		return false, err
 	}
 	t.steerFromRepeatedBatch(toolNames)
-
-	// Tick down the TTL of discovered tools once tool results are in. Safe
-	// because a session's turns run one at a time; per-agent concurrency would
-	// need the TTL consistency between ToProviderDefs and Get re-evaluated.
-	t.agent.Tools.TickTTL()
-	logger.DebugCF("agent", "TTL tick after tool execution", map[string]any{
-		"agent_id": t.agent.ID, "iteration": t.iteration,
-	})
 	return false, nil
 }
 

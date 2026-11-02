@@ -233,8 +233,10 @@ func (al *AgentLoop) compactFn(agent *AgentInstance) func(ctx context.Context, s
 		cm, release := al.getContextManager(agent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		defer release()
 		err := cm.Compact(ctx)
+		r := cm.LastCompactionReport()
+		resetRevealedOnCompaction(agent, r)
 		report := ""
-		if r := cm.LastCompactionReport(); r != nil {
+		if r != nil {
 			report = r.String()
 		}
 		return report, cm.RenderedSummary(), err
@@ -403,8 +405,6 @@ func discoveryPins(cfg *config.Config, agentCfg *config.AgentConfig) []string {
 // points. They are suite-exempt (gated by the discovery decision, not the per-tool
 // allowlist) and present only when discovery is active for the agent.
 func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *config.Config) {
-	ttlMax := cfg.DiscoveryTTLMax()
-	visibleBudget := cfg.DiscoveryVisibleBudget()
 	maxHits := cfg.Tools.Discovery.MaxSearchResults
 	if maxHits <= 0 {
 		maxHits = config.DefaultDiscoveryMaxSearchHits
@@ -412,7 +412,7 @@ func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *confi
 	// Suite-exempt from the allow list, but the agent's deny list still applies.
 	for _, t := range []tools.Tool{
 		tools.NewSearchTool(agent.Tools, maxHits),
-		tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget),
+		tools.NewToolDetailsTool(agent.Tools),
 	} {
 		if agent.Config.IsToolDenied(t.Name()) {
 			continue

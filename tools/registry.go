@@ -18,19 +18,18 @@ import (
 type ToolEntry struct {
 	Tool   Tool
 	IsCore bool
-	TTL    int
+	// Revealed marks a hidden (non-core) tool that get_tool_details has unlocked:
+	// it is in the model's tool list and callable until ResetRevealed hides it
+	// again. Always false for core tools, which are visible by definition.
+	Revealed bool
 	// SuiteExempt marks a tool that belongs to an all-or-nothing suite (cogmem,
 	// maestro). Suites are gated as a unit by the per-agent suite flag at
 	// registration time, so their tools must also bypass the execution-time
 	// per-tool allowlist check (which has no entry for them).
 	SuiteExempt bool
-	// promoteTTL records the TTL a hidden tool was last promoted with (via
-	// PromoteTools). ExecuteWithContext resets TTL to this on each use so a
-	// discovered tool doesn't get re-hidden mid-task. Zero until first promoted.
-	promoteTTL int
 	// Group names the discovery set this tool belongs to (MCP server or fusion
-	// service). RevealTogether, when set, promotes every hidden tool sharing the
-	// Group as soon as one is promoted, so a small cohesive set unlocks in one
+	// service). RevealTogether, when set, reveals every hidden tool sharing the
+	// Group as soon as one is revealed, so a small cohesive set unlocks in one
 	// search. Both empty/false for ungrouped tools.
 	Group          string
 	RevealTogether bool
@@ -59,7 +58,6 @@ func (r *ToolRegistry) Register(tool Tool) {
 	r.tools[name] = &ToolEntry{
 		Tool:   tool,
 		IsCore: true,
-		TTL:    0, // Core tools do not use TTL
 	}
 	r.version.Add(1)
 	logger.DebugCF("tools", "Registered core tool", map[string]any{"name": name})
@@ -79,7 +77,6 @@ func (r *ToolRegistry) RegisterSuite(tool Tool) {
 	r.tools[name] = &ToolEntry{
 		Tool:        tool,
 		IsCore:      true,
-		TTL:         0,
 		SuiteExempt: true,
 	}
 	r.version.Add(1)
@@ -88,8 +85,8 @@ func (r *ToolRegistry) RegisterSuite(tool Tool) {
 
 // RegisterSuiteHidden registers a suite tool that is ALSO hidden behind
 // progressive discovery: suite-exempt from the per-tool allowlist (the suite flag
-// is the allow decision) yet TTL-gated like a hidden tool, so it stays out of the
-// advertised set until search/get_tool_details promotes it. Used for the fusion
+// is the allow decision) yet hidden like any discovery tool, so it stays out of
+// the advertised set until get_tool_details reveals it. Used for the fusion
 // and maestro suites when an agent has progressive discovery on.
 func (r *ToolRegistry) RegisterSuiteHidden(tool Tool) {
 	r.RegisterSuiteHiddenGroup(tool, "", false)
@@ -107,9 +104,8 @@ func (r *ToolRegistry) RegisterSuiteHiddenGroup(tool Tool, group string, revealT
 	}
 	r.tools[name] = &ToolEntry{
 		Tool:           tool,
-		IsCore:         false, // TTL-gated (hidden) until promoted
-		TTL:            0,
-		SuiteExempt:    true, // gated by the suite flag, not the per-tool allowlist
+		IsCore:         false, // hidden until revealed
+		SuiteExempt:    true,  // gated by the suite flag, not the per-tool allowlist
 		Group:          group,
 		RevealTogether: revealTogether,
 	}
@@ -119,12 +115,12 @@ func (r *ToolRegistry) RegisterSuiteHiddenGroup(tool Tool, group string, revealT
 
 // DiscoveryGrouped is implemented by tools that belong to a reveal-together
 // discovery group (an MCP server or a fusion service). Registration reads it to
-// tag the hidden entry so promoting one member reveals the whole group.
+// tag the hidden entry so revealing one member reveals the whole group.
 type DiscoveryGrouped interface {
 	DiscoveryGroup() (group string, revealTogether bool)
 }
 
-// RegisterHidden saves hidden tools (visible only via TTL)
+// RegisterHidden saves a hidden tool, visible only once revealed.
 func (r *ToolRegistry) RegisterHidden(tool Tool) {
 	r.RegisterHiddenGroup(tool, "", false)
 }
@@ -142,7 +138,6 @@ func (r *ToolRegistry) RegisterHiddenGroup(tool Tool, group string, revealTogeth
 	r.tools[name] = &ToolEntry{
 		Tool:           tool,
 		IsCore:         false,
-		TTL:            0,
 		Group:          group,
 		RevealTogether: revealTogether,
 	}
@@ -176,21 +171,31 @@ func (r *ToolRegistry) RemoveByPrefix(prefix string) int {
 // entries, in one step: a concurrent reader (a turn listing its tools, a tool
 // call) sees the old set or the new one, never neither. An entry whose name
 // lacks the prefix is registered all the same; the caller keeps them in step.
-// Returns how many tools were removed. The version is bumped when anything was
-// removed or added.
+// A hidden tool that was revealed before the swap and is still in entries
+// stays revealed, so a refreshed tool list never hides what the model was
+// shown. Returns how many tools were removed. The version is bumped when
+// anything was removed or added.
 func (r *ToolRegistry) ReplaceByPrefix(prefix string, entries []ToolEntry) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	removed := 0
-	for name := range r.tools {
+	revealed := make(map[string]bool)
+	for name, entry := range r.tools {
 		if strings.HasPrefix(name, prefix) {
+			if entry.Revealed {
+				revealed[name] = true
+			}
 			delete(r.tools, name)
 			removed++
 		}
 	}
 	for i := range entries {
 		entry := entries[i]
-		r.tools[entry.Tool.Name()] = &entry
+		name := entry.Tool.Name()
+		if !entry.IsCore && revealed[name] {
+			entry.Revealed = true
+		}
+		r.tools[name] = &entry
 	}
 	if removed > 0 || len(entries) > 0 {
 		r.version.Add(1)
@@ -200,107 +205,65 @@ func (r *ToolRegistry) ReplaceByPrefix(prefix string, entries []ToolEntry) int {
 	return removed
 }
 
-// PromoteTools atomically reveals the named non-core tools with the given TTL,
-// expands to whole reveal-together groups, then prunes the revealed set back to
-// visibleBudget by hiding the lowest-remaining-TTL tools. Holding the lock across
-// all three steps prevents a concurrent TickTTL from racing between them. A
-// non-positive visibleBudget disables pruning.
-func (r *ToolRegistry) PromoteTools(names []string, ttl, visibleBudget int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	promoted := r.promoteLocked(names, ttl)
-	evicted := r.pruneLocked(visibleBudget)
-	logger.DebugCF(
-		"tools",
-		"PromoteTools completed",
-		map[string]any{"requested": len(names), "promoted": promoted, "evicted": evicted, "ttl": ttl, "budget": visibleBudget},
-	)
-}
-
-// promoteLocked sets TTL (and the reset-on-use baseline) for the named non-core
-// tools, plus every hidden sibling of any tool flagged RevealTogether. Returns
-// the number of tools promoted. Caller holds r.mu.
-func (r *ToolRegistry) promoteLocked(names []string, ttl int) int {
-	toPromote := make(map[string]bool, len(names))
+// revealLocked marks the named hidden tools revealed, plus every hidden sibling
+// of any tool flagged RevealTogether. A revealed tool stays revealed until
+// ResetRevealed, which runs when the agent's context is cleared or compacted
+// in any of its sessions: nothing expires and nothing is evicted, so between
+// those events the model's tool list only grows. Returns the number of tools
+// newly revealed. Caller holds r.mu.
+func (r *ToolRegistry) revealLocked(names []string) int {
+	toReveal := make(map[string]bool, len(names))
 	for _, name := range names {
 		entry, ok := r.tools[name]
 		if !ok || entry.IsCore {
 			continue
 		}
-		toPromote[name] = true
+		toReveal[name] = true
 		// Reveal-together: unlock the whole group so a cohesive set is discovered
 		// in one search. Within a group the flag is uniform (one server/service),
 		// so a single pass over siblings suffices.
 		if entry.RevealTogether && entry.Group != "" {
 			for sibName, sib := range r.tools {
 				if !sib.IsCore && sib.Group == entry.Group {
-					toPromote[sibName] = true
+					toReveal[sibName] = true
 				}
 			}
 		}
 	}
-	for name := range toPromote {
-		entry := r.tools[name]
-		entry.TTL = ttl
-		entry.promoteTTL = ttl
-	}
-	return len(toPromote)
-}
-
-// pruneLocked keeps the total number of tools the model sees at or below
-// visibleBudget. The count includes the always-on (core) tools — native tools,
-// the cogmem suite, and the search_tools/get_tool_details meta-tools — because
-// they occupy the model's tool list too. Core tools can't be hidden, so only
-// revealed (non-core, TTL>0) tools are evicted, lowest-remaining-TTL first (ties
-// broken by name). Just-promoted tools sit at the max TTL, so pruning never
-// evicts what was just revealed. If the always-on set alone meets or exceeds the
-// budget, every revealed tool is hidden (the floor). Caller holds r.mu. Returns
-// the number evicted.
-func (r *ToolRegistry) pruneLocked(visibleBudget int) int {
-	if visibleBudget <= 0 {
-		return 0
-	}
-	type visibleTool struct {
-		name  string
-		entry *ToolEntry
-	}
-	alwaysOn := 0
-	var revealed []visibleTool
-	for name, entry := range r.tools {
-		switch {
-		case entry.IsCore:
-			alwaysOn++
-		case entry.TTL > 0:
-			revealed = append(revealed, visibleTool{name, entry})
+	revealed := 0
+	for name := range toReveal {
+		if entry := r.tools[name]; !entry.Revealed {
+			entry.Revealed = true
+			revealed++
 		}
 	}
-	if alwaysOn+len(revealed) <= visibleBudget {
-		return 0
-	}
-	evict := min(alwaysOn+len(revealed)-visibleBudget,
-		// core can't be evicted; revealed floor is 0
-		len(revealed))
-	sort.Slice(revealed, func(i, j int) bool {
-		if revealed[i].entry.TTL != revealed[j].entry.TTL {
-			return revealed[i].entry.TTL < revealed[j].entry.TTL
-		}
-		return revealed[i].name < revealed[j].name
-	})
-	for i := range evict {
-		revealed[i].entry.TTL = 0
-	}
-	return evict
+	return revealed
 }
 
-// TickTTL decreases TTL only for non-core tools
-func (r *ToolRegistry) TickTTL() {
+// ResetRevealed hides every revealed tool again. It is called when a
+// conversation's context is cleared or compacted, since the history that
+// showed the model those tools is gone. The registry belongs to the agent
+// instance, not to one session, so this hides them for every session of the
+// agent; the others re-reveal what they need through get_tool_details.
+func (r *ToolRegistry) ResetRevealed() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	hidden := 0
 	for _, entry := range r.tools {
-		if !entry.IsCore && entry.TTL > 0 {
-			entry.TTL--
+		if entry.Revealed {
+			entry.Revealed = false
+			hidden++
 		}
 	}
+	if hidden > 0 {
+		logger.DebugCF("tools", "Revealed tools hidden again", map[string]any{"count": hidden})
+	}
+}
+
+// visibleLocked reports whether the model sees entry: core tools always,
+// hidden tools once revealed. Caller holds at least r.mu.RLock.
+func visibleLocked(entry *ToolEntry) bool {
+	return entry.IsCore || entry.Revealed
 }
 
 // Version returns the current registry version (atomically).
@@ -378,20 +341,20 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Hidden tools with expired TTL are not callable.
-	if !entry.IsCore && entry.TTL <= 0 {
+	// Hidden tools are not callable until revealed.
+	if !visibleLocked(entry) {
 		return nil, false
 	}
 	return entry.Tool, true
 }
 
 // GetForHost resolves a registered tool by name REGARDLESS of progressive-
-// discovery visibility (TTL). Progressive discovery is a model-context
+// discovery visibility. Progressive discovery is a model-context
 // optimization for the in-loop path only; it must never gate the MCP host, where
 // an external client asks for the full tool list and calls whatever it is
 // authorized for. Authorization on the host path is enforced separately (the ACL
 // policy plus suite/primary-only checks), so this returns any registered tool —
-// visible or currently TTL-hidden. Returns the tool and whether it is registered.
+// visible or currently hidden. Returns the tool and whether it is registered.
 func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -404,17 +367,17 @@ func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
 
 // resolveWith looks name up by internal key or ExternalName, once. entry is
 // nil when no such tool is registered; callable is false when it is
-// registered but hidden by progressive discovery (TTL expired) and ignoreTTL
-// is false. The host path passes ignoreTTL true: progressive discovery never
-// gates the MCP host, where authorization is the ACL policy.
-func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (entry *ToolEntry, canonical string, callable bool) {
+// registered but hidden by progressive discovery and ignoreHidden is false.
+// The host path passes ignoreHidden true: progressive discovery never gates
+// the MCP host, where authorization is the ACL policy.
+func (r *ToolRegistry) resolveWith(name string, ignoreHidden bool) (entry *ToolEntry, canonical string, callable bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	entry, canonical = r.findAnyLocked(name)
 	if entry == nil {
 		return nil, "", false
 	}
-	return entry, canonical, ignoreTTL || entry.IsCore || entry.TTL > 0
+	return entry, canonical, ignoreHidden || visibleLocked(entry)
 }
 
 // advertisedName is the model-facing name for a tool: the bare ExternalName for
@@ -429,7 +392,7 @@ func advertisedName(t Tool, internal string) string {
 }
 
 // findAnyLocked returns the entry and internal name for a tool by internal key or
-// ExternalName, IGNORING TTL so hidden (unpromoted) tools are found. Caller holds
+// ExternalName, including hidden (unrevealed) tools. Caller holds
 // at least r.mu.RLock.
 func (r *ToolRegistry) findAnyLocked(name string) (*ToolEntry, string) {
 	if entry, ok := r.tools[name]; ok {
@@ -443,11 +406,11 @@ func (r *ToolRegistry) findAnyLocked(name string) (*ToolEntry, string) {
 	return nil, ""
 }
 
-// revealTool promotes a hidden tool by name (ignoring current TTL) and returns its
-// provider schema, the model-facing (advertised) name, and the internal dispatch
-// name. name may be the internal registry key or a bare ExternalName. ok=false if
-// there is no such tool.
-func (r *ToolRegistry) revealTool(name string, ttl, visibleBudget int) (schema map[string]any, advertised, internal string, ok bool) {
+// revealTool reveals a hidden tool (and its reveal-together group) by name and
+// returns its provider schema, the model-facing (advertised) name, and the
+// internal dispatch name. name may be the internal registry key or a bare
+// ExternalName. ok=false if there is no such tool.
+func (r *ToolRegistry) revealTool(name string) (schema map[string]any, advertised, internal string, ok bool) {
 	r.mu.Lock()
 	entry, in := r.findAnyLocked(name)
 	if entry == nil {
@@ -455,10 +418,7 @@ func (r *ToolRegistry) revealTool(name string, ttl, visibleBudget int) (schema m
 		return nil, "", "", false
 	}
 	if !entry.IsCore {
-		// Promote this tool (and its reveal-together group), then prune the revealed
-		// set back to the budget so a fanned-out session stays bounded.
-		r.promoteLocked([]string{in}, ttl)
-		r.pruneLocked(visibleBudget)
+		r.revealLocked([]string{in})
 	}
 	tool := entry.Tool
 	r.mu.Unlock()
@@ -467,17 +427,6 @@ func (r *ToolRegistry) revealTool(name string, ttl, visibleBudget int) (schema m
 
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) *ToolResult {
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
-}
-
-// repromoteOnUse resets a discovered tool's TTL to its promotion baseline so
-// active use keeps it visible instead of letting it decay mid-task. No-op for
-// always-on (core) tools and tools that were never promoted.
-func (r *ToolRegistry) repromoteOnUse(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if entry, ok := r.tools[name]; ok && !entry.IsCore && entry.promoteTTL > 0 {
-		entry.TTL = entry.promoteTTL
-	}
 }
 
 // ExecuteWithContext executes a tool with channel/chatID context and optional async callback.
@@ -495,10 +444,10 @@ func (r *ToolRegistry) ExecuteWithContext(
 }
 
 // ExecuteForHost is ExecuteWithContext for the MCP host path: it resolves the
-// tool regardless of progressive-discovery TTL state, since discovery must never
-// gate the host. Authorization is enforced by the caller's ACL policy; this is
-// not an access-control bypass. The in-loop ExecuteWithContext keeps TTL-gated
-// resolution.
+// tool regardless of progressive-discovery visibility, since discovery must
+// never gate the host. Authorization is enforced by the caller's ACL policy;
+// this is not an access-control bypass. The in-loop ExecuteWithContext only
+// resolves visible tools.
 func (r *ToolRegistry) ExecuteForHost(
 	ctx context.Context,
 	name string,
@@ -515,7 +464,7 @@ func (r *ToolRegistry) executeWithContext(
 	args map[string]any,
 	channel, chatID string,
 	asyncCallback AsyncCallback,
-	ignoreTTL bool,
+	ignoreHidden bool,
 ) *ToolResult {
 	// Tool arguments are intentionally NOT logged: they routinely contain memory
 	// content, file contents, and other user data that must not leak into logs.
@@ -526,7 +475,16 @@ func (r *ToolRegistry) executeWithContext(
 
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
-	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
+	entry, canonical, ok := r.resolveWith(name, ignoreHidden)
+	if !ok && entry != nil {
+		// Registered but hidden by progressive discovery: say how to unlock it.
+		logger.WarnCF("tool", "Tool call refused: hidden by discovery",
+			map[string]any{
+				"tool": name,
+			})
+		return ErrorResult(fmt.Sprintf("tool %q is hidden; call get_tool_details(%q) first", name, name)).
+			WithError(Refusal(errors.New("tool hidden by discovery")))
+	}
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
 			map[string]any{
@@ -552,10 +510,6 @@ func (r *ToolRegistry) executeWithContext(
 	}
 
 	tool := entry.Tool
-
-	// Keep a discovered tool alive across a task: using it resets its TTL to the
-	// promotion baseline so it isn't re-hidden mid-use. No-op for always-on tools.
-	r.repromoteOnUse(canonical)
 
 	// Inject channel/chatID into ctx so tools read them via ToolChannel(ctx)/ToolChatID(ctx).
 	// Always inject — tools validate what they require.
@@ -632,7 +586,7 @@ func (r *ToolRegistry) GetDefinitions() []map[string]any {
 	for _, name := range sorted {
 		entry := r.tools[name]
 
-		if !entry.IsCore && entry.TTL <= 0 {
+		if !visibleLocked(entry) {
 			continue
 		}
 
@@ -676,7 +630,7 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	for _, name := range sorted {
 		entry := r.tools[name]
 
-		if !entry.IsCore && entry.TTL <= 0 {
+		if !visibleLocked(entry) {
 			continue
 		}
 
@@ -742,7 +696,7 @@ func (r *ToolRegistry) GetSummaries() []string {
 	for _, name := range sorted {
 		entry := r.tools[name]
 
-		if !entry.IsCore && entry.TTL <= 0 {
+		if !visibleLocked(entry) {
 			continue
 		}
 

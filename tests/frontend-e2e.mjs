@@ -1673,6 +1673,7 @@ if (useGroup("I", "Models and providers")) {
   await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const configured = clis.find((c) => c.configured)
+    if (!configured) return "skipped: no CLI provider configured on this instance"
     const { close, page, problems } = await open("/providers")
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()

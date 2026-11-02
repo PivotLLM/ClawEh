@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next"
 
-// Mirror of config/config.go reservedRequestBodyKeys. Keep in sync.
+// Mirror of config/providers.go reservedRequestBodyKeys. Keep in sync.
 export const RESERVED_REQUEST_BODY_KEYS: readonly string[] = [
   "model",
   "messages",
@@ -14,6 +14,8 @@ export const RESERVED_REQUEST_BODY_KEYS: readonly string[] = [
   "max_completion_tokens",
   "top_p",
   "n",
+  "session_id",
+  "cache_control",
 ] as const
 
 export const REASONING_EFFORT_OPTIONS = [

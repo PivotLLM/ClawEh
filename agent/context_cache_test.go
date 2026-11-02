@@ -447,6 +447,9 @@ Updated content.`
 func TestGlobalSkillFileContentChange(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	// The global skills dir is $CLAW_HOME/skills when CLAW_HOME is set; an
+	// inherited one would point the builder away from this test's home.
+	t.Setenv("CLAW_HOME", "")
 
 	tmpDir := setupWorkspace(t, nil)
 	defer removeAll(t, tmpDir)

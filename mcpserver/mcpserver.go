@@ -84,7 +84,7 @@ type MCPServer struct {
 
 	// NOTE: progressive tool discovery is intentionally NOT applied on the host.
 	// It is an in-loop model-context optimization only; the MCP host always
-	// advertises the full allowed catalogue and never TTL-gates a dispatch, so an
+	// advertises the full allowed catalogue and never hides a tool from a dispatch, so an
 	// external client gets every authorized tool and runs its own tool handling.
 	listen       string
 	endpointPath string // bearer endpoint (/mcp)

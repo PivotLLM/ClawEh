@@ -10,7 +10,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// withoutInstallRoot points the system install location at an empty temp
+// dir, so a real /opt/claw on the test machine does not take over.
+func withoutInstallRoot(t *testing.T) {
+	t.Helper()
+	saved := installRoot
+	installRoot = t.TempDir()
+	t.Cleanup(func() { installRoot = saved })
+}
+
 func TestGetConfigPath(t *testing.T) {
+	withoutInstallRoot(t)
+	// Empty, and restored after: GetClawHome may set it.
+	t.Setenv("CLAW_HOME", "")
 	t.Setenv("HOME", "/tmp/home")
 
 	got := GetConfigPath()
@@ -20,6 +32,7 @@ func TestGetConfigPath(t *testing.T) {
 }
 
 func TestGetConfigPath_WithCLAW_HOME(t *testing.T) {
+	withoutInstallRoot(t)
 	t.Setenv("CLAW_HOME", "/custom/claw")
 	t.Setenv("HOME", "/tmp/home")
 
