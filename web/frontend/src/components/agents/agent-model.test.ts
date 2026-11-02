@@ -332,7 +332,7 @@ describe("agentsPayload", () => {
     expect(none.list?.[0].subagent_models).toEqual([])
   })
 
-  it("writes Worker models into subagents.models and omits it when empty, keeping the rest", () => {
+  it("writes Sub-Agent models into subagents.models and omits it when empty, keeping the rest", () => {
     // A block with a key neither box edits: it must survive both ways.
     const cfg = parseAgentsConfig({
       agents: {
@@ -369,7 +369,7 @@ describe("agentsPayload", () => {
     })
   })
 
-  it("adds no subagents block when Worker models and May message are both empty", () => {
+  it("adds no subagents block when Sub-Agent models and May message are both empty", () => {
     const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
     const out = agentsPayload({
       ...cfg,

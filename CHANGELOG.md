@@ -14,8 +14,8 @@ observe does not need an entry.
 
 ### Added
 
-- **Worker models for an agent.** `subagents.models` on an agent (the
-  **Worker models (tried in order)** list on the Agents page) is now the model
+- **Sub-agent models for an agent.** `subagents.models` on an agent (the
+  **Sub-Agent models (tried in order)** list on the Agents page) is now the model
   chain its workers run on: every sub-agent it starts through `agent_spawn`
   and every Maestro task it dispatches uses the first worker model, falling
   back along the list, and a `model` given to `agent_spawn` must be one of
@@ -32,7 +32,7 @@ observe does not need an entry.
   to `agent_spawn`, or a Maestro `llm_model_id`, that is not in it is refused,
   and when no model in it is enabled every spawn and dispatch of that agent is
   refused with "no worker model is available". To restore the previous
-  behaviour clear **Worker models** on the agent's card, or remove
+  behaviour clear **Sub-Agent models** on the agent's card, or remove
   `subagents.models` from the agent in `config.json`.
 - Improved LLM use logging.
 - **`extra_body` may no longer set `session_id` or `cache_control`.** spawnllm

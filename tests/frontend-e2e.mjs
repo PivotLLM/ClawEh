@@ -926,7 +926,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(12, "Worker models: adding a model saves subagents.models, removing it drops the key, allow_agents kept", async () => {
+  await check(12, "Sub-Agent models: adding a model saves subagents.models, removing it drops the key, allow_agents kept", async () => {
     const ID = "e2e-wrk"
     const before = await config()
     const model = (before.models ?? []).find((m) => m.enabled)?.model_name
@@ -943,9 +943,9 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       const { close, page } = await open("/agents")
       await page.getByRole("button", { name: ID, exact: true }).click()
       await page.waitForTimeout(400)
-      const section = page.locator("div", { has: page.getByText("Worker models (tried in order)", { exact: true }) }).last()
-      const add = section.getByRole("combobox").filter({ hasText: /Add worker model/ })
-      assert((await add.count()) > 0, "no Add worker model… control under Worker models")
+      const section = page.locator("div", { has: page.getByText("Sub-Agent models (tried in order)", { exact: true }) }).last()
+      const add = section.getByRole("combobox").filter({ hasText: /Add sub-agent model/ })
+      assert((await add.count()) > 0, "no Add sub-agent model… control under Sub-Agent models")
       await add.click()
       await page.waitForTimeout(400)
       await page.locator(`[role=option]:has-text("${model}")`).first().click()

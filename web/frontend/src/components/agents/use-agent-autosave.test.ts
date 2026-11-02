@@ -55,7 +55,7 @@ describe("editsFromAgent", () => {
     })
   })
 
-  it("seeds Worker models from subagent_models", () => {
+  it("seeds Sub-Agent models from subagent_models", () => {
     expect(
       editsFromAgent(agent("a", { subagent_models: ["fast", "slow"] }))
         .subagentModels,

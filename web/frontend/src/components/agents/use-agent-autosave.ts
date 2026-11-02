@@ -34,7 +34,7 @@ export interface AgentEdits {
   denyTools: string[]
   /** subagents.allow_agents ("May message"); [] = none. */
   allowAgents: string[]
-  /** subagents.models ("Worker models"); [] = the agent's own models. */
+  /** subagents.models ("Sub-Agent models"); [] = the agent's own models. */
   subagentModels: string[]
   maestro: MaestroRunnerEdits
 }

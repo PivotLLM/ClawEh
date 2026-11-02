@@ -7,7 +7,7 @@ A sub-agent is a short-lived copy of an agent that works on one task and reports
 When Alice spawns a sub-agent, ClawEh makes a temporary **clone** of Alice. The clone has:
 
 - Alice's folder, instruction files, tools and skills, including shell commands if Alice has them;
-- Alice's **worker models**, or her own models when none are set (see [Worker models](#worker-models));
+- Alice's **sub-agent models**, or her own models when none are set (see [Sub-agent models](#sub-agent-models));
 - a fresh conversation that starts with the task, without Alice's chat history;
 - a copy of Alice's long-term memory. What it writes to memory stays in the copy and is thrown away; Alice's memory is never changed by it.
 
@@ -30,20 +30,20 @@ The `agent_spawn` tool takes:
 | `mode` | `callback` (default): run in the background and notify the agent when done. `wait`: run to the end and return the result directly. |
 | `name` | A short label for the task; required in `callback` mode. |
 | `agent_id` | Another agent to copy instead of itself; needs `allow_agents`. |
-| `model` | One of the copied agent's worker models to run instead of the first one. |
+| `model` | One of the copied agent's sub-agent models to run instead of the first one. |
 | `character_card` | A [character card](./character-cards.md) the sub-agent runs as, instead of the copied agent's own. The card must exist. |
 
 In `callback` mode the result is written to the agent's `tasks/` folder and the agent is told where; `agent_status` and `agent_list` show progress.
 
 [Maestro](../maestro.md) tasks also run as sub-agents of the agent that dispatches them.
 
-## Worker models
+## Sub-agent models
 
-**Worker models (tried in order)** on the agent's card (`subagents.models`) is the model chain its sub-agents run on. A sub-agent starts on the first worker model and falls back along the list; a `model` given to `agent_spawn` must be one of them, and a sub-agent of another agent (`agent_id`) uses that agent's worker models. Maestro tasks follow the same rule.
+**Sub-Agent models (tried in order)** on the agent's card (`subagents.models`) is the model chain its sub-agents run on. A sub-agent starts on the first worker model and falls back along the list; a `model` given to `agent_spawn` must be one of them, and a sub-agent of another agent (`agent_id`) uses that agent's worker models. Maestro tasks follow the same rule.
 
 Leave the list empty and sub-agents use the agent's own **Models** list, as the card says.
 
-Set worker models when the agent itself should answer on one kind of model and delegate on another. A manager on a fast API model, for example, can hand its work to command-line models that run in the source tree with the development tools, which an API model confined to the agent's folder cannot reach. A spawn is refused, and the agent told, when the worker list names no enabled model.
+Set sub-agent models when the agent itself should answer on one kind of model and delegate on another. A manager on a fast API model, for example, can hand its work to command-line models that run in the source tree with the development tools, which an API model confined to the agent's folder cannot reach. A spawn is refused, and the agent told, when the sub-agent model list names no enabled model.
 
 ## The depth limit
 

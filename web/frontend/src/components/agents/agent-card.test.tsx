@@ -102,7 +102,7 @@ const personIgnores = [
   "Rotating Tokens",
   "Mounts (external folders, beside files/)",
   "Memory models (optional)",
-  "Worker models (tried in order)",
+  "Sub-Agent models (tried in order)",
 ]
 
 describe("AgentCard mounts", () => {
@@ -335,7 +335,7 @@ describe("AgentCard May message", () => {
   })
 })
 
-describe("AgentCard Worker models", () => {
+describe("AgentCard Sub-Agent models", () => {
   const model = (name: string, index: number) =>
     ({
       index,
@@ -355,7 +355,7 @@ describe("AgentCard Worker models", () => {
       onSubagentModelsChange: () => {},
     })
     const section = screen
-      .getByText("Worker models (tried in order)")
+      .getByText("Sub-Agent models (tried in order)")
       .closest("div")!
     const rows = [...section.querySelectorAll(".font-mono")].map(
       (el) => el.textContent,
@@ -363,16 +363,16 @@ describe("AgentCard Worker models", () => {
     expect(rows).toEqual(["slow", "fast"])
     expect(
       screen.queryByText(
-        "Workers this agent starts run on these models and no others.",
+        "Sub-agents this agent starts run on these models and no others.",
       ),
     ).not.toBeNull()
-    expect(screen.queryByText("Workers use the models above.")).toBeNull()
+    expect(screen.queryByText("Sub-agents use the models above.")).toBeNull()
   })
 
   it("says workers use the agent's own models when the list is empty", () => {
     renderCard([], { models, onSubagentModelsChange: () => {} })
-    expect(screen.queryByText("Workers use the models above.")).not.toBeNull()
-    expect(screen.queryByText("Add worker model…")).not.toBeNull()
+    expect(screen.queryByText("Sub-agents use the models above.")).not.toBeNull()
+    expect(screen.queryByText("Add sub-agent model…")).not.toBeNull()
   })
 
   it("adding a model reports the new list", () => {
@@ -383,7 +383,7 @@ describe("AgentCard Worker models", () => {
       onSubagentModelsChange: onChange,
     })
     const section = screen
-      .getByText("Worker models (tried in order)")
+      .getByText("Sub-Agent models (tried in order)")
       .closest("div")!
     const add = within(section).getByRole("combobox")
     fireEvent.keyDown(add, { key: "ArrowDown" })
@@ -399,7 +399,7 @@ describe("AgentCard Worker models", () => {
       onSubagentModelsChange: onChange,
     })
     const section = screen
-      .getByText("Worker models (tried in order)")
+      .getByText("Sub-Agent models (tried in order)")
       .closest("div")!
     fireEvent.click(within(section).getAllByTitle("Remove")[0])
     expect(onChange).toHaveBeenCalledWith(["slow"])
