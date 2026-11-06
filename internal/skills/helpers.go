@@ -9,6 +9,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/skills"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -82,7 +83,7 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if err = os.MkdirAll(cfg.SkillsPath(), 0o700); err != nil {
+	if err = perms.PolicyFor(cfg).MkdirAll(cfg.SkillsPath()); err != nil {
 		return fmt.Errorf("\u2717 failed to create skills directory: %w", err)
 	}
 

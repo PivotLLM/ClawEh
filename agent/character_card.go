@@ -11,6 +11,7 @@ import (
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -27,7 +28,8 @@ var ErrCardNotFound = errors.New("character card does not exist")
 
 // cardStore is the library of cfg.
 func cardStore(cfg *config.Config) (*ccv3.Store, error) {
-	return ccv3.Open(cfg.CardsPath())
+	m := perms.CardModes(cfg)
+	return ccv3.Open(cfg.CardsPath(), ccv3.WithModes(m.Dir, m.File))
 }
 
 // cardExists reports whether card id is in the library of cfg.

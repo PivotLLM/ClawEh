@@ -31,6 +31,7 @@ func newForumService(host *agent.ForumHost) *forum.Service {
 		Cards:     host,
 		OnStuck:   host.OnStuck,
 		Cooldown:  host.Cooldown,
+		Modes:     host.Modes,
 	}, forum.WithCeilings(host.Ceilings))
 	toolsforum.SetService(svc)
 	return svc

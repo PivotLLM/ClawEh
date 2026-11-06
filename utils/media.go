@@ -294,13 +294,25 @@ func registeredDomain(hostname string) string {
 	return strings.Join(parts[len(parts)-2:], ".")
 }
 
-// mkdirExact creates dir (and its parents) when it is missing and gives dir
-// exactly mode, whatever the umask. An existing dir is left as it is.
+// mkdirExact creates dir and any missing parents, giving each folder it
+// creates exactly mode, whatever the umask. Existing folders keep theirs.
 func mkdirExact(dir string, mode os.FileMode) error {
-	if _, err := os.Stat(dir); err == nil {
-		return nil
+	dir = filepath.Clean(dir)
+	if fi, err := os.Stat(dir); err == nil {
+		if fi.IsDir() {
+			return nil
+		}
+		return &os.PathError{Op: "mkdir", Path: dir, Err: os.ErrExist}
 	}
-	if err := os.MkdirAll(dir, mode); err != nil {
+	if parent := filepath.Dir(dir); parent != dir {
+		if err := mkdirExact(parent, mode); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, mode); err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
 		return err
 	}
 	return os.Chmod(dir, mode)

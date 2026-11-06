@@ -72,7 +72,7 @@ func (s *Service) removeIncomplete(scope Scope) {
 		return
 	}
 	for _, id := range ids {
-		switch err := newForumHandle(scope.BaseDirectory, id).Remove(); {
+		switch err := newForumHandle(scope.BaseDirectory, id).withPerms(s.permsFor(scope.BaseDirectory)).Remove(); {
 		case errors.Is(err, ErrLocked):
 		case err != nil:
 			s.host.Logger.Warnf("forum %s: removing an incomplete forum: %v", id, err)

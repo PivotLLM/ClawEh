@@ -40,12 +40,13 @@ func (s *Service) NewForum(_ context.Context, scope Scope) (string, error) {
 		return "", fmt.Errorf("new forum: base directory %q is not absolute", scope.BaseDirectory)
 	}
 	id := uuid.NewString()
-	guard := newForumHandle(scope.BaseDirectory, id)
+	perm := s.permsFor(scope.BaseDirectory)
+	guard := newForumHandle(scope.BaseDirectory, id).withPerms(perm)
 	if err := guard.Lock(); err != nil {
 		return "", err
 	}
 	defer guard.Unlock()
-	store, err := createStore(scope.BaseDirectory, id)
+	store, err := createStoreWith(scope.BaseDirectory, id, perm)
 	if err != nil {
 		return "", err
 	}

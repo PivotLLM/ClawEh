@@ -13,6 +13,7 @@ import (
 	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -335,7 +336,7 @@ func prepareWorkspace(spec agentreg.Spec, cfg *config.Config) error {
 		agentws.Populate(spec.Workspace, m.Dir, m.File, cfg.ChannelKindsInUse(), cfg.ChannelKind)
 		return nil
 	}
-	if err := os.MkdirAll(spec.Workspace, m.Dir); err != nil {
+	if err := fileutil.MkdirAllExact(spec.Workspace, m.Dir); err != nil {
 		return fmt.Errorf("create workspace %s: %w", spec.Workspace, err)
 	}
 	return nil

@@ -18,7 +18,9 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -198,7 +200,7 @@ func readSeen(marker string) (map[string]bool, bool) {
 // writeSeen persists the set of mount-relative file paths to the marker.
 func (w *Watcher) writeSeen(mountPath, marker string, paths []string) {
 	sort.Strings(paths)
-	if err := os.WriteFile(marker, []byte(strings.Join(paths, "\n")+"\n"), 0o600); err != nil {
+	if err := fileutil.WriteFileExact(marker, []byte(strings.Join(paths, "\n")+"\n"), perms.CurrentPolicy().ModesFor(marker).File); err != nil {
 		logger.WarnCF("mountwatch", "Failed to write seen-files marker", map[string]any{"path": marker, "error": err.Error()})
 		w.alerter.Send(alerter.Alert{
 			Title:       "Mount marker not written",

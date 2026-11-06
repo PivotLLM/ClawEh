@@ -95,9 +95,18 @@ const (
 	lockSuffix       = ".run"
 	commitSeqWidth   = 8
 
-	dirPerm  os.FileMode = 0o700
-	filePerm os.FileMode = 0o600
+	defaultDirPerm  os.FileMode = 0o700
+	defaultFilePerm os.FileMode = 0o600
 )
+
+// filePerms are the exact modes a store creates its folders and files with
+// (Host.Modes for the forum base; 0700/0600 by default).
+type filePerms struct {
+	dir, file os.FileMode
+}
+
+// defaultPerms are the modes of a store whose host sets none.
+var defaultPerms = filePerms{dir: defaultDirPerm, file: defaultFilePerm}
 
 // forumStore is one forum directory (run 0) or one run of it. It is safe for
 // concurrent use by the goroutines of one controller; cross-process
@@ -118,6 +127,8 @@ type forumStore struct {
 	// is not trusted for whose forum it is.
 	owner string
 	lk    *forumLock
+	// perm are the modes new folders and files take.
+	perm filePerms
 
 	mu  sync.Mutex // guards idx, cfg and snap, and serialises commits and transcript writes
 	idx commitIndex
@@ -129,14 +140,23 @@ type forumStore struct {
 
 // newForumHandle is the run-0 forumStore of <base>/<id>, with a lock of its own.
 func newForumHandle(base, id string) *forumStore {
-	return &forumStore{base: base, id: id, dir: filepath.Join(base, id), lk: &forumLock{}}
+	return &forumStore{base: base, id: id, dir: filepath.Join(base, id), lk: &forumLock{}, perm: defaultPerms}
+}
+
+// withPerms sets the modes the store creates folders and files with and
+// returns it.
+func (s *forumStore) withPerms(p filePerms) *forumStore {
+	if p.dir != 0 && p.file != 0 {
+		s.perm = p
+	}
+	return s
 }
 
 // Run returns the handle of run n of the forum, sharing this handle's lock
 // and owner. It does not touch the disk; see OpenRun and CreateRun.
 func (s *forumStore) Run(n int) *forumStore {
 	return &forumStore{
-		base: s.base, id: s.id, dir: s.dir, run: n, owner: s.owner, lk: s.lk,
+		base: s.base, id: s.id, dir: s.dir, run: n, owner: s.owner, lk: s.lk, perm: s.perm,
 		root: filepath.Join(s.dir, dirRuns, strconv.Itoa(n)),
 	}
 }
@@ -157,6 +177,12 @@ func validForumID(id string) bool {
 // collision is an error, never a reuse), base is not an absolute path or
 // forumID is not a canonical UUID.
 func createStore(base, forumID string) (*forumStore, error) {
+	return createStoreWith(base, forumID, defaultPerms)
+}
+
+// createStoreWith is createStore creating every folder with exactly p.dir
+// and handing back a store that creates with p.
+func createStoreWith(base, forumID string, p filePerms) (*forumStore, error) {
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("create forum store: base directory %q is not absolute", base)
 	}
@@ -164,15 +190,15 @@ func createStore(base, forumID string) (*forumStore, error) {
 		return nil, fmt.Errorf("create forum store: %q is not a forum ID", forumID)
 	}
 	for _, d := range []string{base, filepath.Join(base, forumfs.LocksDir), filepath.Join(base, dirCleanup)} {
-		if err := os.MkdirAll(d, dirPerm); err != nil {
+		if err := mkdirAllExact(d, p.dir); err != nil {
 			return nil, fmt.Errorf("create forum store: %w", err)
 		}
 	}
-	s := newForumHandle(base, forumID)
-	if err := os.Mkdir(s.dir, dirPerm); err != nil {
+	s := newForumHandle(base, forumID).withPerms(p)
+	if err := mkdirExact(s.dir, p.dir); err != nil {
 		return nil, fmt.Errorf("create forum store: %w", err)
 	}
-	if err := os.Mkdir(filepath.Join(s.dir, dirRuns), dirPerm); err != nil {
+	if err := mkdirExact(filepath.Join(s.dir, dirRuns), p.dir); err != nil {
 		return nil, fmt.Errorf("create forum store: %w", err)
 	}
 	if err := syncDir(s.dir); err != nil {
@@ -327,14 +353,14 @@ func (s *forumStore) CreateRun(n int) (*forumStore, error) {
 	r := s.Run(n)
 	err := s.inDir(func(root *os.Root) error {
 		rel := path.Join(dirRuns, strconv.Itoa(n))
-		if err := mkdirAt(root, dirRuns); err != nil {
+		if err := mkdirAt(root, dirRuns, s.perm); err != nil {
 			return err
 		}
-		if err := root.Mkdir(rel, dirPerm); err != nil {
+		if err := rootMkdirExact(root, rel, s.perm.dir); err != nil {
 			return err
 		}
 		for _, d := range []string{dirSources, dirLayers, dirCommits} {
-			if err := root.Mkdir(path.Join(rel, d), dirPerm); err != nil {
+			if err := rootMkdirExact(root, path.Join(rel, d), s.perm.dir); err != nil {
 				return err
 			}
 		}

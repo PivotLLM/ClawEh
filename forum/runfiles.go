@@ -47,7 +47,7 @@ func (s *forumStore) ReadConfig() ([]byte, error) {
 // WriteForumConfig replaces the forum's current configuration
 // (<dir>/forum.json) with raw, atomically.
 func (s *forumStore) WriteForumConfig(raw []byte) error {
-	err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileConfig, raw, false) })
+	err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileConfig, raw, false, s.perm) })
 	if err != nil {
 		return fmt.Errorf("write the configuration of forum %s: %w", s.id, err)
 	}
@@ -60,7 +60,7 @@ func (s *forumStore) WriteForumMeta(m *ForumMeta) error {
 	if err != nil {
 		return fmt.Errorf("write %s: %w", fileMeta, err)
 	}
-	if err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileMeta, data, true) }); err != nil {
+	if err := s.inDir(func(r *os.Root) error { return writeFileAt(r, fileMeta, data, true, s.perm) }); err != nil {
 		return fmt.Errorf("write the owner of forum %s: %w", s.id, err)
 	}
 	return nil
@@ -179,7 +179,7 @@ func (s *forumStore) WriteLayerInputs(in *LayerInputs) error {
 	if !validID(in.LayerID) {
 		return fmt.Errorf("write layer inputs: %q is not a layer ID", in.LayerID)
 	}
-	if err := s.inRoot(func(r *os.Root) error { return mkdirAt(r, path.Join(dirLayers, in.LayerID)) }); err != nil {
+	if err := s.inRoot(func(r *os.Root) error { return mkdirAt(r, path.Join(dirLayers, in.LayerID), s.perm) }); err != nil {
 		return fmt.Errorf("write layer inputs: %w", err)
 	}
 	return s.writeJSON(path.Join(dirLayers, in.LayerID, fileInputs), in, true)
@@ -239,16 +239,16 @@ func (s *forumStore) WriteAttemptRequest(req *AttemptRequest) error {
 	}
 	err = s.inRoot(func(r *os.Root) error {
 		turnDir := path.Dir(rel)
-		if mkErr := mkdirAt(r, turnDir); mkErr != nil {
+		if mkErr := mkdirAt(r, turnDir, s.perm); mkErr != nil {
 			return mkErr
 		}
 		tmp := path.Join(turnDir, forumfs.TempPrefix+"attempt-"+uuid.NewString())
-		if mkErr := r.Mkdir(tmp, dirPerm); mkErr != nil {
+		if mkErr := rootMkdirExact(r, tmp, s.perm.dir); mkErr != nil {
 			return mkErr
 		}
 		// Each step's failure removes the temporary directory as well.
 		for _, step := range []func() error{
-			func() error { return writeFileAt(r, path.Join(tmp, fileRequest), data, true) },
+			func() error { return writeFileAt(r, path.Join(tmp, fileRequest), data, true, s.perm) },
 			func() error { return r.RemoveAll(rel) }, // an unreserved orphan, see above
 			func() error { return r.Rename(tmp, rel) },
 		} {
@@ -559,9 +559,14 @@ func (s *forumStore) writeTranscript(mode int, data []byte) error {
 		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 			return statErr
 		}
-		f, err := r.OpenFile(fileTranscript, mode|os.O_CREATE|os.O_WRONLY, filePerm)
+		f, err := r.OpenFile(fileTranscript, mode|os.O_CREATE|os.O_WRONLY, s.perm.file)
 		if err != nil {
 			return err
+		}
+		if statErr != nil { // created now: exactly the file mode, whatever the umask
+			if err := f.Chmod(s.perm.file); err != nil {
+				return errors.Join(err, f.Close())
+			}
 		}
 		if _, err := f.Write(data); err != nil {
 			return errors.Join(err, f.Close())

@@ -222,7 +222,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	case errors.Is(err, ErrCorrupt) && validForumID(id):
 		// A directory too damaged to open as a forum can never run; it
 		// is still refused when its owner record names another agent.
-		store = newForumHandle(scope.BaseDirectory, id)
+		store = newForumHandle(scope.BaseDirectory, id).withPerms(s.permsFor(scope.BaseDirectory))
 		store.owner = scope.AgentID
 		if ownerErr := checkForumOwner(store); errors.Is(ownerErr, errForeign) {
 			return ownerErr

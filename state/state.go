@@ -42,17 +42,19 @@ type Manager struct {
 	state     *State
 	mu        sync.RWMutex
 	stateFile string
+	fileMode  os.FileMode
 }
 
 // NewManager creates a new state manager for the given workspace. The state
-// directory is created with dirMode (the agents area's mode).
-func NewManager(workspace string, dirMode os.FileMode) *Manager {
+// directory is created with exactly dirMode and the state file written with
+// exactly fileMode (the agents area's modes).
+func NewManager(workspace string, dirMode, fileMode os.FileMode) *Manager {
 	stateDir := filepath.Join(workspace, "state")
 	stateFile := filepath.Join(stateDir, "state.json")
 	oldStateFile := filepath.Join(workspace, "state.json")
 
 	// Create state directory if it doesn't exist
-	if err := os.MkdirAll(stateDir, dirMode); err != nil { //nolint:gosec // workspace path from agent config
+	if err := fileutil.MkdirAllExact(stateDir, dirMode); err != nil {
 		logger.WarnCF("state", "failed to create state directory",
 			map[string]any{"path": stateDir, "error": err.Error()})
 	}
@@ -61,6 +63,7 @@ func NewManager(workspace string, dirMode os.FileMode) *Manager {
 		workspace: workspace,
 		stateFile: stateFile,
 		state:     &State{},
+		fileMode:  fileMode,
 	}
 
 	// Try to load from new location first
@@ -153,14 +156,14 @@ func (sm *Manager) GetTimestamp() time.Time {
 //
 // Must be called with the lock held.
 func (sm *Manager) saveAtomic() error {
-	// Use unified atomic write utility with explicit sync for flash storage reliability.
-	// Using 0o600 (owner read/write only) for secure default permissions.
+	// Use unified atomic write utility with explicit sync for flash storage
+	// reliability, with the agents area's file mode.
 	data, err := json.MarshalIndent(sm.state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	return fileutil.WriteFileAtomic(sm.stateFile, data, 0o600)
+	return fileutil.WriteFileAtomic(sm.stateFile, data, sm.fileMode)
 }
 
 // load loads the state from disk.

@@ -49,7 +49,7 @@ func runBackup(cmd *cobra.Command, dest string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	perms.SetPolicy(perms.PolicyFor(cfg))
 	res, err := RunForConfig(cfg, configPath, time.Now(), Options{Dest: dest})
 	if err != nil {
 		return err

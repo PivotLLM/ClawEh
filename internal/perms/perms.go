@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 )
 
@@ -45,6 +46,9 @@ func (f Finding) Looser() bool { return f.Mode&^f.Want != 0 }
 
 // Policy is what Enforce and Check hold the data directory to.
 type Policy struct {
+	// DataDir is the data directory the policy describes (its configured
+	// spelling).
+	DataDir string
 	// Root governs the data directory itself (Dir) and the regular files
 	// directly in it that no area claims (File).
 	Root config.Modes
@@ -104,6 +108,7 @@ var secretDirs = []string{global.InternalDir, "tls", "tokens"}
 // databases follow the area's file mode); and the secrets-only folders.
 func PolicyFor(cfg *config.Config) Policy {
 	p := Policy{
+		DataDir: filepath.Clean(cfg.DataDir()),
 		Root:    cfg.PermissionModes(config.AreaRoot),
 		Secrets: cfg.PermissionModes(config.AreaSecrets),
 		Default: cfg.PermissionModes(config.AreaDefault),
@@ -176,6 +181,52 @@ func (p Policy) fileMode(dataDir, path string) fs.FileMode {
 		return p.Root.File
 	}
 	return p.Default.File
+}
+
+// ModesFor returns the modes something new at path takes: Dir if it is a
+// folder, File if it is a regular file (by its name and area, as Enforce
+// would set it). A path outside every area and outside the data directory
+// takes the default area's modes. A zero Policy gives 0700/0600.
+func (p Policy) ModesFor(path string) config.Modes {
+	if p.Default == (config.Modes{}) {
+		return config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	}
+	path = filepath.Clean(path)
+	m := config.Modes{Dir: p.dirMode(path), File: p.fileMode(p.DataDir, path)}
+	if path == p.DataDir {
+		m.Dir = p.Root.Dir
+	}
+	return m
+}
+
+// ModesFor is PolicyFor(cfg).ModesFor(path): the modes something new at path
+// takes under cfg.
+func ModesFor(cfg *config.Config, path string) config.Modes {
+	return PolicyFor(cfg).ModesFor(path)
+}
+
+// CardModes are the modes the character-card library (cfg.CardsPath) and its
+// card files take, for ccv3.WithModes.
+func CardModes(cfg *config.Config) config.Modes {
+	return ModesFor(cfg, filepath.Join(cfg.CardsPath(), "card.json"))
+}
+
+// DirMode is ModesFor(path).Dir, for fileutil.MkdirAllWith.
+func (p Policy) DirMode(path string) fs.FileMode { return p.ModesFor(path).Dir }
+
+// MkdirAll creates path and any missing parents, each with exactly the
+// folder mode its area gives it (fileutil.MkdirAllWith).
+func (p Policy) MkdirAll(path string) error {
+	return fileutil.MkdirAllWith(path, p.DirMode)
+}
+
+// WriteFile writes data to path atomically with exactly the file mode its
+// area gives it, creating missing parent folders with their areas' modes.
+func (p Policy) WriteFile(path string, data []byte) error {
+	if err := p.MkdirAll(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(path, data, p.ModesFor(path).File)
 }
 
 // ErrTruncated is returned by Check when the walk hit the entry cap before
@@ -331,6 +382,32 @@ var (
 	secretModesMu sync.RWMutex
 	secretModes   = config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
 )
+
+// current is the process default policy for files and folders ClawEh creates
+// from code that has no configuration in hand (SetPolicy, CurrentPolicy).
+var (
+	policyMu sync.RWMutex
+	current  Policy
+)
+
+// SetPolicy sets the process default policy (CurrentPolicy) and the secrets
+// modes (SecretModes) from it. Every process sets it from the config it
+// loads: the gateway at start and on every reload, the CLI commands through
+// internal.LoadConfig or their own load.
+func SetPolicy(p Policy) {
+	policyMu.Lock()
+	current = p
+	policyMu.Unlock()
+	SetSecretModes(p.Secrets)
+}
+
+// CurrentPolicy returns the policy SetPolicy installed; before that, a zero
+// Policy, whose ModesFor gives 0700/0600.
+func CurrentPolicy() Policy {
+	policyMu.RLock()
+	defer policyMu.RUnlock()
+	return current
+}
 
 // SetSecretModes sets the process default secrets modes (SecretModes). A
 // zero mode keeps the current one.

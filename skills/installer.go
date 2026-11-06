@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -209,18 +210,18 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 	}
 	defer removeTempFile(tmpPath)
 
-	if err := os.MkdirAll(localDir, 0o700); err != nil {
+	localPath := filepath.Join(localDir, "SKILL.md")
+	policy := perms.CurrentPolicy()
+	if err := policy.MkdirAll(localDir); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
 	}
-
-	localPath := filepath.Join(localDir, "SKILL.md")
 
 	// Atomic move from temp to final location.
 	if err := os.Rename(tmpPath, localPath); err != nil {
 		return fmt.Errorf("failed to write skill file: %w", err)
 	}
 
-	return os.Chmod(localPath, 0o600)
+	return os.Chmod(localPath, policy.ModesFor(localPath).File)
 }
 
 func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath string) error {
@@ -236,7 +237,8 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 	}
 	defer removeTempFile(tmpPath)
 
-	if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
+	policy := perms.CurrentPolicy()
+	if err := policy.MkdirAll(filepath.Dir(localPath)); err != nil {
 		return err
 	}
 
@@ -245,7 +247,7 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 		return fmt.Errorf("failed to move downloaded file: %w", err)
 	}
 
-	return os.Chmod(localPath, 0o600)
+	return os.Chmod(localPath, policy.ModesFor(localPath).File)
 }
 
 // shouldDownload determines if a file should be downloaded

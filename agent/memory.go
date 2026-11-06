@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -42,8 +43,9 @@ func (ms *MemoryStore) ReadLongTerm() string {
 
 // WriteLongTerm overwrites MEMORY.md atomically.
 func (ms *MemoryStore) WriteLongTerm(content string) error {
-	// 0o600: owner read/write only. Atomic write with sync for flash reliability.
-	return fileutil.WriteFileAtomic(ms.memoryFile, []byte(content), 0o600)
+	// Atomic write with sync for flash reliability, with the file mode of the
+	// workspace's area (security.permissions).
+	return fileutil.WriteFileAtomic(ms.memoryFile, []byte(content), perms.CurrentPolicy().ModesFor(ms.memoryFile).File)
 }
 
 // GetMemoryContext returns MEMORY.md formatted for the agent prompt, or "" when

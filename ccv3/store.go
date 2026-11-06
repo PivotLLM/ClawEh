@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	dirPerm    = 0o700
-	cardExt    = ".json"
-	tempPrefix = ".tmp-"
+	defaultDirPerm  os.FileMode = 0o700
+	defaultFilePerm os.FileMode = 0o600
+	cardExt                     = ".json"
+	tempPrefix                  = ".tmp-"
 )
 
 // Store is the card library in one directory: one file <id>.json per card,
@@ -38,7 +39,30 @@ type Store struct {
 	Now func() time.Time
 
 	dir string
-	mu  sync.Mutex
+	mu  sync.Mutex // serializes writes; guards dirPerm and filePerm too
+
+	// dirPerm and filePerm are the exact modes new folders and card files
+	// take (WithModes).
+	dirPerm, filePerm os.FileMode
+}
+
+// Option configures Open.
+type Option func(*Store)
+
+// WithModes sets the exact modes the store creates its folder and card files
+// with, whatever the umask (security.permissions for the library's area).
+// Every Open applies it to the shared store, so a caller passing its current
+// configuration's modes keeps the store following reloads. A zero mode keeps
+// the current one (0700/0600 by default).
+func WithModes(dir, file os.FileMode) Option {
+	return func(s *Store) {
+		if dir != 0 {
+			s.dirPerm = dir.Perm()
+		}
+		if file != 0 {
+			s.filePerm = file.Perm()
+		}
+	}
 }
 
 // The one handle per directory, so every user in the process shares its
@@ -48,10 +72,11 @@ var (
 	stores   = map[string]*Store{}
 )
 
-// Open returns the process-wide store for dir, creating the directory (0700)
-// when it is missing. Every call for the same directory returns the same
-// *Store.
-func Open(dir string) (*Store, error) {
+// Open returns the process-wide store for dir, creating the directory with
+// exactly its folder mode (0700 unless WithModes says otherwise) when it is
+// missing. Every call for the same directory returns the same *Store, with
+// opts applied to it.
+func Open(dir string, opts ...Option) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("open card store: no directory")
 	}
@@ -61,13 +86,27 @@ func Open(dir string) (*Store, error) {
 	}
 	storesMu.Lock()
 	defer storesMu.Unlock()
-	if s, ok := stores[abs]; ok {
+	s, ok := stores[abs]
+	if !ok {
+		s = &Store{dir: abs, dirPerm: defaultDirPerm, filePerm: defaultFilePerm}
+	}
+	s.mu.Lock()
+	for _, opt := range opts {
+		opt(s)
+	}
+	dirPerm := s.dirPerm
+	s.mu.Unlock()
+	if ok {
 		return s, nil
 	}
-	if err := os.MkdirAll(abs, dirPerm); err != nil {
-		return nil, fmt.Errorf("open card store %s: %w", abs, err)
+	if _, err := os.Stat(abs); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(abs, dirPerm); err != nil {
+			return nil, fmt.Errorf("open card store %s: %w", abs, err)
+		}
+		if err := os.Chmod(abs, dirPerm); err != nil {
+			return nil, fmt.Errorf("open card store %s: %w", abs, err)
+		}
 	}
-	s := &Store{dir: abs}
 	stores[abs] = s
 	return s, nil
 }
@@ -388,22 +427,24 @@ func (s *Store) write(id string, data json.RawMessage, mode stampMode) (*Card, e
 	if len(out) > MaxCardBytes {
 		return nil, refuse(ErrTooLarge, "The card is larger than %d MiB.", MaxCardBytes>>20)
 	}
-	if err := atomicWrite(s.dir, s.path(id), out); err != nil {
+	if err := atomicWrite(s.dir, s.path(id), out, s.filePerm); err != nil {
 		return nil, fmt.Errorf("write card %q: %w", id, err)
 	}
 	return readCard(s.path(id))
 }
 
-// atomicWrite writes data to path through a temporary file in dir.
-// os.CreateTemp creates the file 0600, so the card is never
-// readable by others, not even while it is written.
-func atomicWrite(dir, path string, data []byte) error {
+// atomicWrite writes data to path through a temporary file in dir, which
+// takes exactly mode before anything is written to it.
+func atomicWrite(dir, path string, data []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
-	_, err = f.Write(data)
+	err = f.Chmod(mode)
+	if err == nil {
+		_, err = f.Write(data)
+	}
 	if err == nil {
 		err = f.Sync()
 	}

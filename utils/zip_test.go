@@ -46,7 +46,7 @@ func TestExtractZipFile_OwnerOnlyModes(t *testing.T) {
 	}
 
 	target := filepath.Join(tmp, "out", "skill")
-	if err = ExtractZipFile(zipPath, target); err != nil {
+	if err = ExtractZipFile(zipPath, target, 0o700, 0o600); err != nil {
 		t.Fatalf("ExtractZipFile: %v", err)
 	}
 

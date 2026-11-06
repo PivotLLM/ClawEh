@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -64,7 +65,8 @@ func strArg(args map[string]any, key string) (string, bool) {
 }
 
 // copyFile copies src to dst, creating intermediate directories for dst with
-// modes.Dir and dst with modes.File (the destination area's modes).
+// exactly modes.Dir and dst with exactly modes.File (the destination area's
+// modes), whatever the umask.
 func copyFile(src, dst string, modes config.Modes) error {
 	in, err := os.Open(src) //nolint:gosec // src confined to the common dir by confine()
 	if err != nil {
@@ -72,11 +74,15 @@ func copyFile(src, dst string, modes config.Modes) error {
 	}
 	defer utils.CloseQuietly(in)
 
-	if mkErr := os.MkdirAll(filepath.Dir(dst), modes.Dir); mkErr != nil {
+	if mkErr := fileutil.MkdirAllExact(filepath.Dir(dst), modes.Dir); mkErr != nil {
 		return mkErr
 	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, modes.File) //nolint:gosec // dst confined to the common dir by confine()
 	if err != nil {
+		return err
+	}
+	if err := out.Chmod(modes.File); err != nil {
+		utils.CloseQuietly(out)
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
@@ -194,7 +200,7 @@ func putCommon(commonDir, workspace string, commonModes config.Modes, args map[s
 	}
 
 	// Create the common directory on first write.
-	if err := os.MkdirAll(commonDir, commonModes.Dir); err != nil {
+	if err := fileutil.MkdirAllExact(commonDir, commonModes.Dir); err != nil {
 		return errResult("common_put: %v", err)
 	}
 	if err := copyFile(srcAbs, dstAbs, commonModes); err != nil {

@@ -16,7 +16,7 @@ import (
 // It reads entries one at a time from disk, keeping memory usage minimal.
 //
 // Security: rejects path traversal attempts and symlinks.
-func ExtractZipFile(zipPath string, targetDir string) error {
+func ExtractZipFile(zipPath string, targetDir string, dirMode, fileMode os.FileMode) error {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("invalid ZIP: %w", err)
@@ -29,7 +29,7 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 		"entries":    len(reader.File),
 	})
 
-	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+	if err := mkdirExact(targetDir, dirMode); err != nil {
 		return fmt.Errorf("failed to create target dir: %w", err)
 	}
 
@@ -57,18 +57,18 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, 0o700); err != nil {
+			if err := mkdirExact(destPath, dirMode); err != nil {
 				return err
 			}
 			continue
 		}
 
 		// Ensure parent directory exists.
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
+		if err := mkdirExact(filepath.Dir(destPath), dirMode); err != nil {
 			return err
 		}
 
-		if err := extractSingleFile(f, destPath); err != nil {
+		if err := extractSingleFile(f, destPath, fileMode); err != nil {
 			return err
 		}
 	}
@@ -77,7 +77,7 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 }
 
 // extractSingleFile extracts one zip.File entry to destPath, with a size check.
-func extractSingleFile(f *zip.File, destPath string) error {
+func extractSingleFile(f *zip.File, destPath string, fileMode os.FileMode) error {
 	const maxFileSize = 5 * 1024 * 1024 // 5MB, adjust as appropriate
 
 	// Check the uncompressed size from the header, if available.
@@ -91,9 +91,15 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	}
 	defer CloseQuietly(rc)
 
-	outFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
+	outFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fileMode) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
 	if err != nil {
 		return fmt.Errorf("failed to create file %q: %w", destPath, err)
+	}
+	// Exactly fileMode, whatever the umask or the archive says.
+	if err = outFile.Chmod(fileMode); err != nil {
+		CloseQuietly(outFile)
+		removePartial(destPath)
+		return fmt.Errorf("failed to set mode of %q: %w", destPath, err)
 	}
 	// We don't return the close error via return, since it's not a named error return.
 	// Instead, we log to stderr and remove the partially written file as defensive cleanup.

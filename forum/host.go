@@ -7,6 +7,7 @@ package forum
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 )
@@ -292,4 +293,9 @@ type Host struct {
 	// Clock, when set, replaces the system clock for the runs' holds, call
 	// timeouts and run deadline (tests).
 	Clock Clock
+	// Modes, when set, gives the exact folder and file modes a forum under
+	// base (a scope's BaseDirectory) creates its folders and files with. It
+	// is read whenever a forum is created or opened, so a host can follow
+	// its current configuration. Unset or zero means 0700/0600.
+	Modes func(base string) (dir, file os.FileMode)
 }

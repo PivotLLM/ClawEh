@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/internal/perms"
@@ -208,7 +209,7 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 	}
 	mediaDir := utils.MediaTempDir()
 	dirMode, fileMode := utils.MediaModes()
-	if err := os.MkdirAll(mediaDir, dirMode); err != nil {
+	if err := fileutil.MkdirAllExact(mediaDir, dirMode); err != nil {
 		logger.WarnCF("device", "create media dir failed; dropping attachments", map[string]any{"dir": mediaDir, "error": err.Error()})
 		return nil
 	}
@@ -223,7 +224,7 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 			continue
 		}
 		_, werr := f.Write(data)
-		if werr == nil && fileMode != 0o600 { // CreateTemp makes it 0600
+		if werr == nil { // exactly the media file mode, whatever CreateTemp gave
 			werr = f.Chmod(fileMode)
 		}
 		if closeErr := f.Close(); closeErr != nil && werr == nil {

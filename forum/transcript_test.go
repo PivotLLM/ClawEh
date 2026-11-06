@@ -26,7 +26,7 @@ func TestTranscriptOrderAndContent(t *testing.T) {
 	if got, want := string(data), strings.Join(r.public, ""); got != want {
 		t.Fatalf("transcript:\n%s\nwant:\n%s", got, want)
 	}
-	stIsPerm(t, r.s.Path(fileTranscript), filePerm)
+	stIsPerm(t, r.s.Path(fileTranscript), defaultFilePerm)
 }
 
 // Private material (instructions, the messages sent, rejected attempts,

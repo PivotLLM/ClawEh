@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -270,7 +272,10 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 	defer removeTempFile(tmpPath)
 
 	// Step 4: Extract from file on disk.
-	if err := utils.ExtractZipFile(tmpPath, targetDir); err != nil {
+	// The skill takes its area's modes (shared skills/ is the default area,
+	// an agent's own skills the agents area).
+	m := perms.CurrentPolicy().ModesFor(filepath.Join(targetDir, "SKILL.md"))
+	if err := utils.ExtractZipFile(tmpPath, targetDir, m.Dir, m.File); err != nil {
 		return nil, err
 	}
 

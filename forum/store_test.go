@@ -209,9 +209,9 @@ func TestCreateStoreLayout(t *testing.T) {
 		s.Dir(), filepath.Join(s.Dir(), dirRuns), s.Root(), filepath.Join(base, forumfs.LocksDir), filepath.Join(base, dirCleanup),
 		s.Path(dirSources), s.Path(dirLayers), s.Path(dirCommits),
 	} {
-		stIsPerm(t, d, dirPerm)
+		stIsPerm(t, d, defaultDirPerm)
 	}
-	stIsPerm(t, filepath.Join(s.Dir(), fileConfig), filePerm)
+	stIsPerm(t, filepath.Join(s.Dir(), fileConfig), defaultFilePerm)
 	if s.ID() != filepath.Base(s.Dir()) || s.Root() != filepath.Join(s.Dir(), dirRuns, "1") || s.RunNumber() != 1 {
 		t.Errorf("forum %s, run %d in %s", s.ID(), s.RunNumber(), s.Root())
 	}
@@ -240,7 +240,7 @@ func TestStoreRuns(t *testing.T) {
 	if _, err := f.CreateRun(2); err == nil {
 		t.Error("CreateRun of an existing run succeeded")
 	}
-	if err := os.Mkdir(filepath.Join(f.Dir(), dirRuns, "notes"), dirPerm); err != nil {
+	if err := os.Mkdir(filepath.Join(f.Dir(), dirRuns, "notes"), defaultDirPerm); err != nil {
 		t.Fatal(err)
 	}
 	if runs, err := f.Runs(); err != nil || !slices.Equal(runs, []int{1, 2, 10}) {
@@ -326,7 +326,7 @@ func TestOpenStore(t *testing.T) {
 	// A root that is a file, a run missing commits/ and a forum missing
 	// runs/ are corrupt.
 	fileRoot := uuid.NewString()
-	if err := os.WriteFile(filepath.Join(base, fileRoot), nil, filePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(base, fileRoot), nil, defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := openStore(base, fileRoot); !errors.Is(err, ErrCorrupt) {
@@ -394,10 +394,10 @@ func TestListForums(t *testing.T) {
 	if _, err := createStore(base, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(base, "notes"), dirPerm); err != nil {
+	if err := os.Mkdir(filepath.Join(base, "notes"), defaultDirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(base, uuid.NewString()), nil, filePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(base, uuid.NewString()), nil, defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	got, err := listForums(base)
@@ -525,7 +525,7 @@ func TestStoreRecordsRoundTrip(t *testing.T) {
 	}
 
 	// A record that does not decode is corrupt, not missing.
-	if err := os.WriteFile(s.Path(fileSnapshot), []byte("{"), filePerm); err != nil {
+	if err := os.WriteFile(s.Path(fileSnapshot), []byte("{"), defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ReadSnapshot(); !errors.Is(err, ErrCorrupt) {
@@ -631,7 +631,7 @@ func TestStoreOrphanAttemptRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The crash also left an attempt directory being assembled.
-	if err := os.Mkdir(filepath.Join(s.Path("layers/debate/calls/"+turn), forumfs.TempPrefix+"attempt-crash"), dirPerm); err != nil {
+	if err := os.Mkdir(filepath.Join(s.Path("layers/debate/calls/"+turn), forumfs.TempPrefix+"attempt-crash"), defaultDirPerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -704,13 +704,13 @@ func TestStoreResendAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.Path(rel), []byte(strings.Replace(string(data), `"resent": true,`, "", 1)), filePerm); err != nil {
+	if err := os.WriteFile(s.Path(rel), []byte(strings.Replace(string(data), `"resent": true,`, "", 1)), defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := verify(stReopen(s)); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "without being resent") {
 		t.Errorf("verify of an unmarked repeat: %v, want ErrCorrupt", err)
 	}
-	if err := os.WriteFile(s.Path(rel), data, filePerm); err != nil {
+	if err := os.WriteFile(s.Path(rel), data, defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WriteAttemptRequest(resend); !errors.Is(err, os.ErrExist) {
@@ -789,19 +789,19 @@ func TestStoreListAttemptsCorrupt(t *testing.T) {
 		}},
 		{"request truncated", func(t *testing.T, dir string) {
 			t.Helper()
-			if err := os.WriteFile(filepath.Join(dir, fileRequest), []byte(`{"layer":`), filePerm); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, fileRequest), []byte(`{"layer":`), defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"request names another attempt", func(t *testing.T, dir string) {
 			t.Helper()
-			if err := os.WriteFile(filepath.Join(dir, fileRequest), []byte(`{"layer":"debate","turn":"r001-bob","attempt":1}`), filePerm); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, fileRequest), []byte(`{"layer":"debate","turn":"r001-bob","attempt":1}`), defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"reply truncated", func(t *testing.T, dir string) {
 			t.Helper()
-			if err := os.WriteFile(filepath.Join(dir, fileReply), []byte(`{"outcome`), filePerm); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, fileReply), []byte(`{"outcome`), defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -1127,13 +1127,13 @@ func TestStoreReadCommitsCorrupt(t *testing.T) {
 		}},
 		{"seq differs from name", func(t *testing.T, s *forumStore) {
 			t.Helper()
-			if err := os.WriteFile(s.Path(commitRel(3)), []byte(`{"seq":9,"kind":"paused"}`), filePerm); err != nil {
+			if err := os.WriteFile(s.Path(commitRel(3)), []byte(`{"seq":9,"kind":"paused"}`), defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"stray file", func(t *testing.T, s *forumStore) {
 			t.Helper()
-			if err := os.WriteFile(s.Path("commits/notes.txt"), nil, filePerm); err != nil {
+			if err := os.WriteFile(s.Path("commits/notes.txt"), nil, defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -1173,7 +1173,7 @@ func TestStoreCrashLeftovers(t *testing.T) {
 	s := stNewStore(t)
 	stLaunch(t, s, stConfig())
 	for _, dir := range []string{dirCommits, "."} {
-		if err := os.WriteFile(filepath.Join(s.Path(dir), forumfs.TempPrefix+"123"), []byte(`{"seq":2,"kind":"pau`), filePerm); err != nil {
+		if err := os.WriteFile(filepath.Join(s.Path(dir), forumfs.TempPrefix+"123"), []byte(`{"seq":2,"kind":"pau`), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1201,7 +1201,7 @@ func TestStoreLock(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(pid)) != strconv.Itoa(os.Getpid()) {
 		t.Errorf("lock file holds %q, %v", pid, err)
 	}
-	stIsPerm(t, s.lockPath(), filePerm)
+	stIsPerm(t, s.lockPath(), defaultFilePerm)
 	if err := other.Lock(); !errors.Is(err, ErrLocked) {
 		t.Errorf("second holder: %v, want ErrLocked", err)
 	}
@@ -1289,7 +1289,7 @@ func TestStoreCleanupMarkers(t *testing.T) {
 	if err := s.SetCleanup(cleanupAgents, []byte(`["a"]`)); err != nil {
 		t.Fatal(err)
 	}
-	stIsPerm(t, s.cleanupPath(cleanupAgents), filePerm)
+	stIsPerm(t, s.cleanupPath(cleanupAgents), defaultFilePerm)
 	data, ok, err := s.Cleanup(cleanupAgents)
 	if !ok || err != nil || string(data) != `["a"]` {
 		t.Errorf("Cleanup = %q, %v, %v", data, ok, err)
@@ -1421,7 +1421,7 @@ func TestStoreStagedRemoval(t *testing.T) {
 func TestStoreReadFileConfined(t *testing.T) {
 	s := stNewStore(t)
 	outside := filepath.Join(t.TempDir(), "secret")
-	if err := os.WriteFile(outside, []byte("secret"), filePerm); err != nil {
+	if err := os.WriteFile(outside, []byte("secret"), defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, s.Path("sources/link.txt")); err != nil {
@@ -1477,9 +1477,9 @@ func TestStorePermissions(t *testing.T) {
 		if p == base {
 			return nil
 		}
-		want := filePerm
+		want := defaultFilePerm
 		if d.IsDir() {
-			want = dirPerm
+			want = defaultDirPerm
 		} else {
 			files++
 		}
@@ -1559,7 +1559,7 @@ func TestStoreWritesFollowNoSymlink(t *testing.T) {
 	outsideFile := filepath.Join(outsideDir, "victim")
 	stWriteVictim := func(t *testing.T) {
 		t.Helper()
-		if err := os.WriteFile(outsideFile, []byte("untouched"), filePerm); err != nil {
+		if err := os.WriteFile(outsideFile, []byte("untouched"), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1642,7 +1642,7 @@ func TestStoreWritesFollowNoSymlink(t *testing.T) {
 	t.Run("record read through a link", func(t *testing.T) {
 		s := stNewStore(t)
 		inside := s.Path("sources/state-copy.json")
-		if err := os.WriteFile(inside, []byte(`{"status":"running"}`), filePerm); err != nil {
+		if err := os.WriteFile(inside, []byte(`{"status":"running"}`), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(inside, s.Path(fileState)); err != nil {
@@ -1660,10 +1660,10 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 	s := stNewStore(t)
 	stLaunch(t, s, stConfig())
 	turnDir := s.Path("layers/debate/calls/" + turnID(1, "alice"))
-	if err := os.MkdirAll(filepath.Join(turnDir, forumfs.TempPrefix+"attempt-x"), dirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Join(turnDir, forumfs.TempPrefix+"attempt-x"), defaultDirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(turnDir, forumfs.TempPrefix+"attempt-x", fileRequest), []byte("{}"), filePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(turnDir, forumfs.TempPrefix+"attempt-x", fileRequest), []byte("{}"), defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	other, err := newForumHandle(s.base, s.id).CreateRun(2)
@@ -1671,7 +1671,7 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	untouched := filepath.Join(other.Path(dirCommits), forumfs.TempPrefix+"other-run")
-	if err := os.WriteFile(untouched, []byte("partial"), filePerm); err != nil {
+	if err := os.WriteFile(untouched, []byte("partial"), defaultFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	leftovers := [...]string{
@@ -1683,7 +1683,7 @@ func TestStoreLockSweepsTemporaries(t *testing.T) {
 		filepath.Join(turnDir, forumfs.TempPrefix+"attempt-x"), // a directory, created above
 	}
 	for _, p := range leftovers[:5] {
-		if err := os.WriteFile(p, []byte("partial"), filePerm); err != nil {
+		if err := os.WriteFile(p, []byte("partial"), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 	}

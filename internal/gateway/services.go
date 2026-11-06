@@ -587,7 +587,7 @@ func handleConfigReload(
 ) error {
 	logger.Info("🔄 Config file changed, reloading...")
 	// Secret stores opened from here on keep the reloaded secrets modes.
-	perms.SetSecretModes(newCfg.PermissionModes(config.AreaSecrets))
+	perms.SetPolicy(perms.PolicyFor(newCfg))
 
 	newModel := newCfg.Agents.Defaults.DefaultModelName()
 

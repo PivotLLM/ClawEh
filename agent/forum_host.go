@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -75,6 +76,19 @@ func (h *ForumHost) registry() (*AgentRegistry, error) {
 		return nil, errors.New("agent registry is not available")
 	}
 	return r, nil
+}
+
+// Modes is forum.Host.Modes: the modes a forum under base takes, its area's
+// in the loop's current config (the agents area for an agent's workspace);
+// 0700/0600 before the loop is bound.
+func (h *ForumHost) Modes(base string) (dir, file os.FileMode) {
+	if al := h.loop.Load(); al != nil {
+		if cfg := al.GetConfig(); cfg != nil {
+			m := cfg.AgentModes(base)
+			return m.Dir, m.File
+		}
+	}
+	return config.DefaultDirMode, config.DefaultFileMode
 }
 
 // Ceilings returns the install's forum maximums from the loop's current

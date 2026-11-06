@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -53,7 +54,8 @@ func (h *Handler) cardStore() (*config.Config, *ccv3.Store, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config: %w", err)
 	}
-	store, err := ccv3.Open(cfg.CardsPath())
+	m := perms.CardModes(cfg)
+	store, err := ccv3.Open(cfg.CardsPath(), ccv3.WithModes(m.Dir, m.File))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open the card library: %w", err)
 	}

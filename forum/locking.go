@@ -62,14 +62,17 @@ func (s *forumStore) Lock() error {
 	if s.lk.f != nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(s.base, forumfs.LocksDir), dirPerm); err != nil { // #nosec G703 -- the lock directory under the forum base
+	if err := mkdirAllExact(filepath.Join(s.base, forumfs.LocksDir), s.perm.dir); err != nil { // #nosec G703 -- the lock directory under the forum base
 		return fmt.Errorf("lock forum %s: %w", s.id, err)
 	}
 	p := s.lockPath()
 	for range lockAttempts {
-		f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, filePerm) //nolint:gosec // lock file under the forum base
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, s.perm.file) //nolint:gosec // lock file under the forum base
 		if err != nil {
 			return fmt.Errorf("lock forum %s: %w", s.id, err)
+		}
+		if err := f.Chmod(s.perm.file); err != nil {
+			return fmt.Errorf("lock forum %s: %w", s.id, errors.Join(err, f.Close()))
 		}
 		if err := tryLockFile(f); err != nil {
 			closeErr := f.Close()

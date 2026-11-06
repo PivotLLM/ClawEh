@@ -72,12 +72,17 @@
   lacking owner `rw` (`r` for `bin`) is used with those bits added, with a
   warning naming the key and both values at each load; `config.json` keeps
   what you wrote.
-- **Files ClawEh creates take exactly their mode, whatever the umask**: log
-  files (also when the logs roll), the alerts log, dumps, downloaded media,
-  backup archives, the folders created at start, the self-signed TLS
-  certificate and key (both now take `secrets.file_mode`; the certificate
-  was `0644`), and the token stores, databases and other files in
-  `internal/`, which take the `secrets` modes.
+- **Files and folders ClawEh creates take their area's mode at once,
+  exactly, whatever the umask**, instead of `0600`/`0700` until the next
+  start: agent files written by the file tools, workspaces and their prompt
+  files, task, state, forum and cron stores, installed and imported skills,
+  character cards, the common folder, log files (also when the logs roll),
+  the alerts log, dumps, downloaded media, backup archives, the folders
+  created at start, the self-signed TLS certificate and key (both now take
+  `secrets.file_mode`; the certificate was `0644`), and the token stores,
+  databases and other files in `internal/`. After a config reload, new files
+  take the new modes, except logs, dumps, downloaded media and an agent's
+  restart-recovery state, which keep the modes from start.
 - Updated dependencies
 
 ## [0.6.3]

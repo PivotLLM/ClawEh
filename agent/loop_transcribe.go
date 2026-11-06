@@ -15,6 +15,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -140,7 +141,7 @@ func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *Agen
 	}
 	tmpDir := filepath.Join(agent.Workspace, "tmp")
 	modes := agentModes(al.GetConfig(), tmpDir)
-	if err := os.MkdirAll(tmpDir, modes.Dir); err != nil {
+	if err := fileutil.MkdirAllExact(tmpDir, modes.Dir); err != nil {
 		logger.WarnCF("agent", "received media: create tmp dir failed", map[string]any{"error": err.Error()})
 		return ""
 	}
@@ -223,6 +224,10 @@ func copyFileContents(src, dst string, mode os.FileMode) error {
 	defer utils.CloseQuietly(in)
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
 	if err != nil {
+		return err
+	}
+	if err := out.Chmod(mode); err != nil { // exactly mode, whatever the umask
+		utils.CloseQuietly(out)
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {

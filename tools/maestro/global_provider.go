@@ -4,7 +4,6 @@
 package maestro
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -82,7 +82,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 
 	// Make sure the base dir exists before Maestro touches it (defensive: Prepare
 	// also creates the subdirs, but never hand Maestro a missing base).
-	if err := os.MkdirAll(base, 0o700); err != nil {
+	if err := fileutil.MkdirAllExact(base, c.AgentModes(base).Dir); err != nil {
 		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
 		alertMaestroDisabled(deps.AgentID, base, err)

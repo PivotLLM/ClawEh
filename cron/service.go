@@ -15,7 +15,7 @@ import (
 	"github.com/adhocore/gronx"
 	"github.com/tenebris-tech/alerter"
 
-	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -556,8 +556,9 @@ func (cs *CronService) saveStoreUnsafe() error {
 		return err
 	}
 
-	// Use unified atomic write utility with explicit sync for flash storage reliability.
-	if err := fileutil.WriteFileAtomic(cs.storePath, data, 0o600); err != nil {
+	// Atomic write with explicit sync for flash storage reliability; the file
+	// (and its folder, when created) take exactly their area's modes.
+	if err := perms.CurrentPolicy().WriteFile(cs.storePath, data); err != nil {
 		return err
 	}
 	if info, err := os.Stat(cs.storePath); err == nil {

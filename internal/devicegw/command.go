@@ -45,7 +45,7 @@ func openStore() (*device.Store, *config.Config, error) {
 		return nil, nil, err
 	}
 	// The pairing database is a secret store: it keeps the configured mode.
-	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	perms.SetPolicy(perms.PolicyFor(cfg))
 	stateDir := filepath.Join(cfg.DataDir(), global.InternalDir)
 	if mkErr := os.MkdirAll(stateDir, perms.SecretModes().Dir); mkErr != nil {
 		return nil, nil, mkErr

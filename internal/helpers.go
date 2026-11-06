@@ -90,7 +90,7 @@ func LoadConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	perms.SetPolicy(perms.PolicyFor(cfg))
 	return cfg, nil
 }
 

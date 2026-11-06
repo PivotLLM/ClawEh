@@ -19,7 +19,9 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -240,7 +242,7 @@ func (r *Registry[T]) create(cfg config.AgentConfig, o createOptions, inTurn boo
 	if missing := missingModels(current, spec.Config); len(missing) > 0 {
 		return "", nil, fmt.Errorf("agentreg: model(s) %v are not configured", missing)
 	}
-	if err = os.MkdirAll(spec.StateDir, 0o700); err != nil {
+	if err = fileutil.MkdirAllExact(spec.StateDir, perms.SecretModes().Dir); err != nil {
 		removeDir(spec.StateDir) // whatever part of it was made
 		return "", nil, fmt.Errorf("agentreg: create %s: %w", spec.StateDir, err)
 	}
@@ -378,7 +380,7 @@ func snapshotMemory(src, dst Spec) {
 		return
 	}
 	dir := cogmemhost.Dir(dst.StateDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fileutil.MkdirAllExact(dir, perms.SecretModes().Dir); err != nil {
 		logger.WarnCF("agent", "clone memory snapshot dir failed",
 			map[string]any{"agent": dst.Label(), "error": err.Error()})
 		return

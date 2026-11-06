@@ -432,7 +432,7 @@ func TestLoadStateCache(t *testing.T) {
 	for name, damage := range map[string]func() error{
 		"stale":     func() error { cached.Seq = last - 1; return r.s.WriteState(&cached) },
 		"missing":   func() error { return os.Remove(r.s.Path(fileState)) },
-		"truncated": func() error { return os.WriteFile(r.s.Path(fileState), []byte(`{"status":`), filePerm) },
+		"truncated": func() error { return os.WriteFile(r.s.Path(fileState), []byte(`{"status":`), defaultFilePerm) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := damage(); err != nil {
@@ -519,10 +519,10 @@ func TestRecoveryAtEveryCommitBoundary(t *testing.T) {
 			if err := os.Remove(r.s.Path(fileState)); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := os.WriteFile(r.s.Path(fileState), []byte(r.states[k-2]), filePerm); err != nil {
+		} else if err := os.WriteFile(r.s.Path(fileState), []byte(r.states[k-2]), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), forumfs.TempPrefix+"crash"), []byte(`{"seq":`), filePerm); err != nil {
+		if err := os.WriteFile(filepath.Join(r.s.Path(dirCommits), forumfs.TempPrefix+"crash"), []byte(`{"seq":`), defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 
@@ -615,7 +615,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 					t.Fatal(err)
 				}
 				data = data[:len(data)/2] // a torn write
-				if err := os.WriteFile(target, data, filePerm); err != nil {
+				if err := os.WriteFile(target, data, defaultFilePerm); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -643,7 +643,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 				t.Fatal(err)
 			}
 			outside := filepath.Join(t.TempDir(), "copy")
-			if err := os.WriteFile(outside, data, filePerm); err != nil {
+			if err := os.WriteFile(outside, data, defaultFilePerm); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Remove(target); err != nil {
@@ -666,7 +666,7 @@ func TestVerifyDetectsDamage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(r.s.Path(fileSnapshot), data, filePerm); err != nil {
+		if err := os.WriteFile(r.s.Path(fileSnapshot), data, defaultFilePerm); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, err := verify(r.s); !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "names forum") {

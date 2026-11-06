@@ -132,7 +132,7 @@ func (s *forumStore) SetCleanup(name string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("write cleanup marker %s: %w", name, err)
 	}
-	err = writeFileAt(r, filepath.Base(p), data, false)
+	err = writeFileAt(r, filepath.Base(p), data, false, s.perm)
 	if closeErr := r.Close(); err == nil {
 		err = closeErr
 	}
@@ -188,7 +188,7 @@ func (s *forumStore) Remove() error {
 // stageAndRemove is Remove's work while the lock is held.
 func (s *forumStore) stageAndRemove() error {
 	cleanup := filepath.Join(s.base, dirCleanup)
-	if err := os.MkdirAll(cleanup, dirPerm); err != nil {
+	if err := mkdirAllExact(cleanup, s.perm.dir); err != nil {
 		return fmt.Errorf("remove forum %s: %w", s.id, err)
 	}
 	staged := filepath.Join(cleanup, s.id)

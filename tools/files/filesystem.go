@@ -20,6 +20,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -800,10 +801,16 @@ func (h *hostFs) ReadDir(path string) ([]os.DirEntry, error) {
 }
 
 func (h *hostFs) WriteFile(path string, data []byte) error {
-	return fileutil.WriteFileAtomic(path, data, 0o600)
+	if err := modePolicy().MkdirAll(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(path, data, modePolicy().ModesFor(path).File)
 }
 
 func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	if err := modePolicy().MkdirAll(filepath.Dir(path)); err != nil {
+		return err
+	}
 	return fileutil.WriteFileAtomic(path, data, mode)
 }
 
@@ -821,11 +828,11 @@ func (h *hostFs) Remove(path string) error {
 }
 
 func (h *hostFs) MkdirAll(path string) error {
-	return os.MkdirAll(path, 0o700)
+	return modePolicy().MkdirAll(path)
 }
 
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := modePolicy().MkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
@@ -932,7 +939,42 @@ func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
 }
 
 func (r *sandboxFs) WriteFile(path string, data []byte) error {
-	return r.WriteFileMode(path, data, 0o600)
+	return r.WriteFileMode(path, data, modePolicy().ModesFor(r.abs(path)).File)
+}
+
+// abs is path as an absolute path under the sandbox's workspace, for the
+// mode policy.
+func (r *sandboxFs) abs(path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(r.workspace, path)
+}
+
+// mkdirAll creates relPath under root and any missing parents, each with
+// exactly the folder mode its area gives it, never leaving the root.
+func (r *sandboxFs) mkdirAll(root *os.Root, relPath string) error {
+	relPath = filepath.Clean(relPath)
+	if relPath == "." || relPath == string(filepath.Separator) {
+		return nil
+	}
+	if fi, err := root.Stat(relPath); err == nil {
+		if fi.IsDir() {
+			return nil
+		}
+		return &os.PathError{Op: "mkdir", Path: relPath, Err: os.ErrExist}
+	}
+	if err := r.mkdirAll(root, filepath.Dir(relPath)); err != nil {
+		return err
+	}
+	mode := modePolicy().ModesFor(filepath.Join(r.workspace, relPath)).Dir
+	if err := root.Mkdir(relPath, mode); err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return err
+	}
+	return root.Chmod(relPath, mode)
 }
 
 // tmpFileSeq makes atomic-write temp filenames unique across concurrent
@@ -944,7 +986,7 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
-			if err := root.MkdirAll(dir, 0o700); err != nil {
+			if err := r.mkdirAll(root, dir); err != nil {
 				return fmt.Errorf("failed to create parent directories: %w", err)
 			}
 		}
@@ -999,7 +1041,7 @@ func (r *sandboxFs) WriteFileExclMode(path string, data []byte, mode os.FileMode
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
-			if err := root.MkdirAll(dir, 0o700); err != nil {
+			if err := r.mkdirAll(root, dir); err != nil {
 				return fmt.Errorf("failed to create parent directories: %w", err)
 			}
 		}
@@ -1084,7 +1126,7 @@ func (r *sandboxFs) Remove(path string) error {
 
 func (r *sandboxFs) MkdirAll(path string) error {
 	return r.execute(path, func(root *os.Root, relPath string) error {
-		return root.MkdirAll(relPath, 0o700)
+		return r.mkdirAll(root, relPath)
 	})
 }
 
@@ -1231,6 +1273,11 @@ func buildBaseFs(workspace string, restrict bool, patterns []*regexp.Regexp) fil
 	}
 	return inner
 }
+
+// modePolicy is the policy new files and folders follow: the process default
+// (perms.CurrentPolicy), which the gateway sets from the config at start and
+// on every reload, before the tools are rebuilt.
+func modePolicy() perms.Policy { return perms.CurrentPolicy() }
 
 // readScopeSubdirs, when non-empty, confines agent file reads to these workspace
 // subdirectories (plus any allow-listed host paths). It is a single process-wide

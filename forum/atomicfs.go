@@ -100,7 +100,7 @@ func (s *forumStore) writeRel(rel string, data []byte, exclusive bool) error {
 	if err != nil {
 		return fmt.Errorf("write forum file: %w", err)
 	}
-	return s.inRoot(func(r *os.Root) error { return writeFileAt(r, clean, data, exclusive) })
+	return s.inRoot(func(r *os.Root) error { return writeFileAt(r, clean, data, exclusive, s.perm) })
 }
 
 // rootRel cleans a root-relative path, refusing one that is absolute or
@@ -157,10 +157,11 @@ func lstatRegular(r *os.Root, rel string) error {
 	return nil
 }
 
-// mkdirAt creates the root-relative dir (and missing parents, 0700),
+// mkdirAt creates the root-relative dir (and missing parents, each with
+// exactly p.dir),
 // fsyncing the parent of each directory it creates. An existing component
 // that is a symbolic link or not a directory fails.
-func mkdirAt(r *os.Root, dir string) error {
+func mkdirAt(r *os.Root, dir string, p filePerms) error {
 	clean, err := rootRel(dir)
 	if err != nil {
 		return err
@@ -174,7 +175,7 @@ func mkdirAt(r *os.Root, dir string) error {
 		fi, err := r.Lstat(cur)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			if err = r.Mkdir(cur, dirPerm); err != nil {
+			if err = rootMkdirExact(r, cur, p.dir); err != nil {
 				return err
 			}
 			if err = syncDirAt(r, parent); err != nil {
@@ -200,14 +201,14 @@ func mkdirAt(r *os.Root, dir string) error {
 // with os.ErrExist if target exists (even when created by a racing
 // writer an instant earlier), and then removed. The target's directory
 // must exist and no directory on the way may be a symbolic link.
-func writeFileAt(r *os.Root, target string, data []byte, exclusive bool) error {
+func writeFileAt(r *os.Root, target string, data []byte, exclusive bool, p filePerms) error {
 	name := filepath.Base(target)
 	if err := noSymlinks(r, target); err != nil {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
 	dir := filepath.Dir(target)
 	tmpPath := filepath.Join(dir, forumfs.TempPrefix+uuid.NewString())
-	tmp, err := r.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
+	tmp, err := r.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, p.file)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
@@ -222,7 +223,7 @@ func writeFileAt(r *os.Root, target string, data []byte, exclusive bool) error {
 		}
 		return fmt.Errorf("write %s: %w", name, err)
 	}
-	if err := tmp.Chmod(filePerm); err != nil {
+	if err := tmp.Chmod(p.file); err != nil {
 		return abandon(err, true)
 	}
 	if _, err := tmp.Write(data); err != nil {
@@ -269,4 +270,46 @@ func syncDir(dir string) error {
 		return fmt.Errorf("sync %s: %w", dir, errors.Join(err, d.Close()))
 	}
 	return d.Close()
+}
+
+// rootMkdirExact creates the r-relative dir with exactly mode, whatever the
+// umask.
+func rootMkdirExact(r *os.Root, dir string, mode os.FileMode) error {
+	if err := r.Mkdir(dir, mode); err != nil {
+		return err
+	}
+	return r.Chmod(dir, mode)
+}
+
+// mkdirExact creates dir (its parent must exist) with exactly mode, whatever
+// the umask.
+func mkdirExact(dir string, mode os.FileMode) error {
+	if err := os.Mkdir(dir, mode); err != nil {
+		return err
+	}
+	return os.Chmod(dir, mode)
+}
+
+// mkdirAllExact creates dir and any missing parents, each with exactly mode;
+// folders that exist keep theirs.
+func mkdirAllExact(dir string, mode os.FileMode) error {
+	dir = filepath.Clean(dir)
+	if fi, err := os.Stat(dir); err == nil { // #nosec G703 -- a folder under the forum base the host configured
+		if fi.IsDir() {
+			return nil
+		}
+		return &os.PathError{Op: "mkdir", Path: dir, Err: os.ErrExist}
+	}
+	if parent := filepath.Dir(dir); parent != dir {
+		if err := mkdirAllExact(parent, mode); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, mode); err != nil { // #nosec G703 -- as above
+		if errors.Is(err, fs.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	return os.Chmod(dir, mode) // #nosec G703 -- as above
 }

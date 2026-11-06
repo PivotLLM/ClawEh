@@ -162,7 +162,7 @@ func openBootConfig(baseDir, configPath string) (*config.Store, *config.Config, 
 		return nil, nil, modelRefPrune{}, fmt.Errorf("error loading config: %w", err)
 	}
 	warnOtherAccess(cfg)
-	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	perms.SetPolicy(perms.PolicyFor(cfg))
 	if err := enforceDataDirPerms(baseDir, perms.PolicyFor(cfg)); err != nil {
 		return nil, nil, modelRefPrune{}, err
 	}

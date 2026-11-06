@@ -249,7 +249,7 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	require.NoError(t, os.WriteFile(tmpZip, buf.Bytes(), 0o644))
 
 	tmpDir := t.TempDir()
-	err = utils.ExtractZipFile(tmpZip, tmpDir)
+	err = utils.ExtractZipFile(tmpZip, tmpDir, 0o700, 0o600)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsafe path")
 }
@@ -268,7 +268,7 @@ func TestExtractZipWithSubdirectories(t *testing.T) {
 	tmpDir := t.TempDir()
 	targetDir := filepath.Join(tmpDir, "my-skill")
 
-	err := utils.ExtractZipFile(tmpZip, targetDir)
+	err := utils.ExtractZipFile(tmpZip, targetDir, 0o700, 0o600)
 	require.NoError(t, err)
 
 	// Verify nested file.

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -96,15 +96,16 @@ func statusPath(dir, uuid string) string  { return filepath.Join(dir, uuid+statu
 func resultsPath(dir, uuid string) string { return filepath.Join(dir, uuid+resultsSuf) }
 func runPath(dir, uuid string) string     { return filepath.Join(dir, uuid+runSuf) }
 
-// writeJSONAtomic writes v as indented JSON to path via fileutil.WriteFileAtomic
-// (temp file in the same dir + fsync + rename) so a crash never leaves a
-// half-written file.
+// writeJSONAtomic writes v as indented JSON to path atomically (temp file in
+// the same dir + fsync + rename) so a crash never leaves a half-written file.
+// The file, and the tasks folder when it is created, take exactly their
+// area's modes (perms.CurrentPolicy).
 func writeJSONAtomic(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(path, data, 0o600)
+	return perms.CurrentPolicy().WriteFile(path, data)
 }
 
 // writeStatus persists a task record.
@@ -132,7 +133,7 @@ func writeResults(dir string, res *TaskResults) error {
 
 // markRun creates the <uuid>.run liveness marker.
 func markRun(dir, uuid string) error {
-	return fileutil.WriteFileAtomic(runPath(dir, uuid), nil, 0o600)
+	return perms.CurrentPolicy().WriteFile(runPath(dir, uuid), nil)
 }
 
 // clearRun deletes the <uuid>.run marker (idempotent).

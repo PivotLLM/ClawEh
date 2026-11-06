@@ -202,6 +202,18 @@ func (s *Service) Close(ctx context.Context) error {
 	}
 }
 
+// permsFor is the modes forums under base create with (Host.Modes).
+func (s *Service) permsFor(base string) filePerms {
+	if s.host.Modes == nil {
+		return defaultPerms
+	}
+	dir, file := s.host.Modes(base)
+	if dir == 0 || file == 0 {
+		return defaultPerms
+	}
+	return filePerms{dir: dir.Perm(), file: file.Perm()}
+}
+
 func (s *Service) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,6 +230,7 @@ func (s *Service) open(scope Scope, id string) (*forumStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	store.withPerms(s.permsFor(scope.BaseDirectory))
 	store.owner = scope.AgentID
 	if err := checkForumOwner(store); err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/skills"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -135,11 +135,12 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := os.MkdirAll(skillDir, 0o700); err != nil { //nolint:gosec // skillName validated by normalizeImportedSkillName (^[a-z0-9]+(-[a-z0-9]+)*$)
+	policy := perms.PolicyFor(cfg)
+	if err := policy.MkdirAll(skillDir); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create skill directory: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := fileutil.WriteFileAtomic(skillFile, content, 0o600); err != nil {
+	if err := policy.WriteFile(skillFile, content); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save skill: %v", err), http.StatusInternalServerError)
 		return
 	}

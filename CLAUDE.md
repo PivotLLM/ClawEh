@@ -115,9 +115,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   beyond `root.file_mode` (naming the `chmod`) and sets a tighter one to it, then
   `Store.SavePermissionDefaults` writes the completed block into the raw file (only that
   block: env-sourced values, unknown keys and the rest stay as they are; one INFO line), `Store.Update` also completes it on every save, a mode giving other
-  users access is a WARN per key and a Check Up row (`OtherAccess`), `perms.SetSecretModes`
-  sets the process default secrets modes (also set by `internal.LoadConfig`, `claw devicegw`,
-  `claw backup` and every config reload), and `internal/perms.Enforce` sets `CLAW_HOME`
+  users access is a WARN per key and a Check Up row (`OtherAccess`), `perms.SetPolicy`
+  sets the process default policy and secrets modes (also set by `internal.LoadConfig`,
+  `claw devicegw`, `claw backup` and every config reload), and `internal/perms.Enforce` sets `CLAW_HOME`
   and every folder and regular file in it (logs/ and media/ included) to EXACTLY its
   area's mode per `perms.PolicyFor(cfg)` (deepest area wins; secrets by name/location;
   agent DBs follow the agents file mode; logs/ and media/ files ignore secret names;
@@ -128,11 +128,14 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   changed). `perms.Check` (Check Up) reports only paths more open than configured. Config saves write `root.file_mode`;
   the credentials file and `file:` references may grant nothing beyond
   `secrets.file_mode`. ctxengine and cogmem set an agent's databases (with -wal/-shm and
-  snapshots) to exactly the configured mode on every open. What ClawEh creates takes the
-  same modes (`config.PermissionModes(area)`, `cfg.AgentModes(path)` for agent state:
-  the agents area for configured agents, the secrets area for temporary ones;
-  `perms.SecretModes()` / `perms.EnsureSecretFile` for secret stores opened without a
-  config); ctxengine and cogmem get them through their permission options, and every
+  snapshots) to exactly the configured mode on every open. Everything ClawEh creates takes
+  its area's mode at once, exactly (umask-proof; `fileutil.MkdirAllExact`/`WriteFileExact`):
+  injected where the writer has the config (`config.PermissionModes(area)`,
+  `cfg.AgentModes(path)` — agents area for configured agents, secrets for temporary ones;
+  `perms.ModesFor`/`CardModes`; `forum.Host.Modes`; `ccv3.WithModes`;
+  `state.NewManager` modes), else from the process default (`perms.CurrentPolicy()`
+  `.ModesFor/MkdirAll/WriteFile` for the file tools, task/cron stores, skills, mount
+  markers; `perms.SecretModes()` / `perms.EnsureSecretFile` for secret stores); ctxengine and cogmem get them through their permission options, and every
   opener of an agent's cogmem store passes `cogmemhost.StoreOptions`, since opening
   resets the database files to the given mode.
 - **Audit log:** `internal/audit` (`<CLAW_HOME>/internal/audit.db`) records tool calls, config

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	skillspkg "github.com/PivotLLM/ClawEh/skills"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -126,7 +126,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *to
 	}
 
 	// Ensure skills directory exists.
-	if err := os.MkdirAll(skillsDir, 0o700); err != nil {
+	if err := perms.CurrentPolicy().MkdirAll(skillsDir); err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to create skills directory: %v", err))
 	}
 
@@ -213,6 +213,7 @@ func writeOriginMeta(targetDir, registryName, slug, version string) error {
 		return err
 	}
 
-	// Use unified atomic write utility with explicit sync for flash storage reliability.
-	return fileutil.WriteFileAtomic(filepath.Join(targetDir, ".skill-origin.json"), data, 0o600)
+	// Atomic write with explicit sync for flash storage reliability, with the
+	// file mode of the skill's area.
+	return perms.CurrentPolicy().WriteFile(filepath.Join(targetDir, ".skill-origin.json"), data)
 }
