@@ -1,14 +1,10 @@
 # Changelog
 
-All notable changes to ClawEh are recorded here.
+## [0.6.4]
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
-version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Changed
 
-Entries describe what changed for someone **running or integrating with** ClawEh
-— config keys, tool names, API shapes, protocol behaviour, defaults — not the
-internal refactors behind them. A change nobody outside the repository can
-observe does not need an entry.
+- Updated dependencies
 
 ## [0.6.3]
 
