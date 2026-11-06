@@ -73,6 +73,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `skills/` | You | Shared skills; an agent uses only the ones it is granted. |
 | `cards/` | You and the agents you allow | Character cards; an agent uses only the one attached to it. |
 | `cli/` | claw | The working directory for CLI providers whose model sets no workspace. |
+| `bin/` | You | Your scripts and programs; files here keep their execute bits, which every other folder's files lose at start. |
 | `internal/` | claw | claw's own state: service and message tokens, the device pairing database and Fusion's OAuth tokens. |
 | `internal/audit.db` | claw | The audit log of tool calls, configuration changes and logins. |
 | `internal/claw.pid`, `internal/claw.lock` | claw | Mark the running instance, so a second one refuses to start. |

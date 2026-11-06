@@ -251,7 +251,7 @@ func TestAuthStore_RefreshGeneration(t *testing.T) {
 
 	// `claw admin` rewrites the file: Refresh reloads it at once, with no
 	// Watch poll, and the generation moves.
-	if err := admin.Write(path, testUser, "a different fine password"); err != nil {
+	if err := admin.Write(path, testUser, "a different fine password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(path, time.Now(), time.Now().Add(2*time.Second)); err != nil {

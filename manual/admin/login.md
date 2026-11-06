@@ -43,7 +43,7 @@ With `sudo`, keep them with `sudo --preserve-env=CLAW_ADMIN_USER,CLAW_ADMIN_PASS
 
 ClawEh still starts and every channel works. The WebUI shows **No admin account** with the command to run (`claw admin`) and a **Check again** button.
 
-If the credentials file can be read by other users, ClawEh refuses it and the log names the fix: `chmod 600 <path>`.
+If the credentials file allows more than `security.permissions.secrets.file_mode` (`0600` by default), ClawEh refuses it and the log names the fix, such as `chmod 600 <path>`.
 
 ## Sign in and sign out
 

@@ -165,9 +165,9 @@ const (
 const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 
 func OpenStore(ctx context.Context, path string) (*Store, error) {
-	// Pairing tokens live in here: make the file private before SQLite
-	// creates it, so the -wal/-shm side files inherit that mode too.
-	if err := perms.EnsurePrivateFile(path); err != nil {
+	// Pairing tokens live in here: give the file the secrets mode before
+	// SQLite creates it, so the -wal/-shm side files inherit that mode too.
+	if err := perms.EnsureSecretFile(path); err != nil {
 		return nil, fmt.Errorf("device: %w", err)
 	}
 	db, err := sql.Open("sqlite", path+"?"+connectionPragmas)

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,7 +20,8 @@ import (
 // Any secret-bearing string in config.json may be written as a reference
 // instead of a literal: "env:NAME" reads the environment variable NAME, and
 // "file:/abs/path" reads the file (contents trimmed of surrounding whitespace;
-// the file must be private, 0600 or tighter). References are resolved when
+// the file may grant nothing beyond security.permissions.secrets.file_mode,
+// 0600 by default). References are resolved when
 // the config is loaded, so the running Config carries the real value, and the
 // reference string is put back when the config is saved, so the secret never
 // lands in config.json.
@@ -139,16 +141,17 @@ func joinPath(prefix, key string) string {
 }
 
 // resolveSecretRefs replaces every secret reference in doc with its value and
-// returns the references it resolved. A missing variable or an unreadable or
-// loose file is an error naming the config key.
-func resolveSecretRefs(doc any) ([]secretRef, error) {
+// returns the references it resolved. A missing variable, an unreadable file
+// or one granting bits beyond allowed (security.permissions.secrets.file_mode)
+// is an error naming the config key.
+func resolveSecretRefs(doc any, allowed fs.FileMode) ([]secretRef, error) {
 	var refs []secretRef
 	var firstErr error
 	walkSecrets(doc, "", func(path, s string) string {
 		if !IsSecretRef(s) || firstErr != nil {
 			return s
 		}
-		v, err := resolveSecretRef(s)
+		v, err := resolveSecretRef(s, allowed)
 		if err != nil {
 			firstErr = fmt.Errorf("%s: %w", path, err)
 			return s
@@ -162,8 +165,9 @@ func resolveSecretRefs(doc any) ([]secretRef, error) {
 	return refs, nil
 }
 
-// resolveSecretRef dereferences one "env:NAME" or "file:/abs/path" string.
-func resolveSecretRef(ref string) (string, error) {
+// resolveSecretRef dereferences one "env:NAME" or "file:/abs/path" string. A
+// file whose mode grants any bit allowed does not is refused.
+func resolveSecretRef(ref string, allowed fs.FileMode) (string, error) {
 	if name, ok := strings.CutPrefix(ref, SecretRefEnvPrefix); ok {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -187,8 +191,9 @@ func resolveSecretRef(ref string) (string, error) {
 		return "", fmt.Errorf("secret reference %q: %s is a directory", ref, path)
 	}
 	if runtime.GOOS != "windows" {
-		if mode := fi.Mode().Perm(); mode&0o077 != 0 {
-			return "", fmt.Errorf("secret reference %q: %s is readable by group or other (mode %04o); run: chmod 600 %s", ref, path, mode, path)
+		if mode := fi.Mode().Perm(); mode&^allowed.Perm() != 0 {
+			return "", fmt.Errorf("secret reference %q: %s has mode %04o, more than security.permissions.secrets.file_mode allows (%04o); run: chmod %03o %s",
+				ref, path, mode, allowed.Perm(), allowed.Perm(), path)
 		}
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // the operator named this file in config.json
@@ -274,7 +279,7 @@ func resolveConfigSecrets(cfg *Config) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	refs, err := resolveSecretRefs(doc)
+	refs, err := resolveSecretRefs(doc, cfg.PermissionModes(AreaSecrets).File)
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ const (
 func loginCookie(t *testing.T, h *httpHost) *http.Cookie {
 	t.Helper()
 	path := admin.Path(t.TempDir())
-	if err := admin.Write(path, testAdminUser, testAdminPass); err != nil {
+	if err := admin.Write(path, testAdminUser, testAdminPass, admin.DefaultFileMode); err != nil {
 		t.Fatalf("admin.Write: %v", err)
 	}
 	store := middleware.NewAuthStore(path)

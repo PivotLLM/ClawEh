@@ -60,7 +60,7 @@ func TestPrintAccess_HTTPSOff(t *testing.T) {
 // generated yet), and a configured admin account named.
 func TestPrintAccess_DefaultWithAdmin(t *testing.T) {
 	cfg := accessConfig(t, "127.0.0.1", "")
-	if err := admin.Write(admin.Path(cfg.DataDir()), "alice", "correct horse battery"); err != nil {
+	if err := admin.Write(admin.Path(cfg.DataDir()), "alice", "correct horse battery", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	got := accessReport(cfg)

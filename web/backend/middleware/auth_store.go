@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"sync"
@@ -61,6 +62,9 @@ type AuthStore struct {
 	// stamp or its account); the login limiter clears its locks when it moves.
 	generation uint64
 	sessions   map[[sha256.Size]byte]*authSession
+	// fileMode returns the mode the credentials file is checked against;
+	// nil means admin.DefaultFileMode.
+	fileMode func() fs.FileMode
 }
 
 type fileStamp struct {
@@ -83,6 +87,14 @@ func WithSessionLifetimes(idle, absolute time.Duration) AuthOption {
 		s.idle = idle
 		s.absolute = absolute
 	}
+}
+
+// WithCredentialsMode makes the store check the credentials file against the
+// mode mode returns, read on every load (security.permissions.secrets.
+// file_mode in the current config). Without it the store checks against
+// admin.DefaultFileMode.
+func WithCredentialsMode(mode func() fs.FileMode) AuthOption {
+	return func(s *AuthStore) { s.fileMode = mode }
 }
 
 // NewAuthStore creates the store for the credentials file at credentialsPath
@@ -131,7 +143,11 @@ func (s *AuthStore) Username() string {
 // password takes effect at once. The credentials poller calls this on a file
 // change; anything else that wants a re-read (the TLS watcher) may call it too.
 func (s *AuthStore) Reload() {
-	creds, err := admin.Load(s.path)
+	mode := admin.DefaultFileMode
+	if s.fileMode != nil {
+		mode = s.fileMode()
+	}
+	creds, err := admin.Load(s.path, mode)
 	stamp := statFile(s.path)
 
 	s.mu.Lock()
@@ -159,7 +175,7 @@ func (s *AuthStore) Reload() {
 			"path": s.path,
 		})
 	case errors.As(err, &perr):
-		logger.ErrorCF("auth", "Credentials file ignored: other accounts can read it", map[string]any{
+		logger.ErrorCF("auth", "Credentials file ignored: more open than security.permissions.secrets.file_mode allows", map[string]any{
 			"path": s.path, "fix": perr.Fix(),
 		})
 	default:

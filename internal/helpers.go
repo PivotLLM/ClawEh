@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -79,10 +80,18 @@ func GetConfigPath() string {
 	return filepath.Join(GetClawHome(), "config.json")
 }
 
+// LoadConfig seeds and loads the config, and sets the process default
+// secrets modes (perms.SetSecretModes) from it, so the secret stores a
+// command opens keep security.permissions.secrets.
 func LoadConfig() (*config.Config, error) {
 	path := GetConfigPath()
 	SeedConfig(path)
-	return config.LoadConfig(path)
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	return cfg, nil
 }
 
 // SeedConfig writes a default config to path when no file exists there yet.

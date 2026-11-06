@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -153,7 +154,7 @@ func (m *Manager) ensureSelfSigned(force bool) (*loaded, error) {
 			return l, nil
 		}
 	}
-	if err := writeSelfSigned(certPath, keyPath, names, now); err != nil {
+	if err := writeSelfSigned(certPath, keyPath, names, now, m.opts.secretModes()); err != nil {
 		return nil, fmt.Errorf("generate self-signed certificate: %w", err)
 	}
 	l, err := loadPair(certPath, keyPath, SourceSelfSigned, now)
@@ -168,20 +169,32 @@ func (m *Manager) ensureSelfSigned(force bool) (*loaded, error) {
 }
 
 // writeSelfSigned generates an ECDSA P-256 key and a one-year self-signed
-// certificate for names and writes them: the directory 0700, the key 0600,
-// the certificate 0644, each file replaced atomically.
-func writeSelfSigned(certPath, keyPath string, names certNames, now time.Time) error {
+// certificate for names and writes them with the secrets area's modes (tls/
+// is a secrets folder): the directory, when created, modes.Dir, and both
+// files exactly modes.File, each replaced atomically.
+func writeSelfSigned(certPath, keyPath string, names certNames, now time.Time, modes config.Modes) error {
 	certPEM, keyPEM, err := generateSelfSigned(names, now)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(certPath), 0o700); err != nil {
+	if dir := filepath.Dir(certPath); !dirExists(dir) {
+		if err := os.MkdirAll(dir, modes.Dir); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, modes.Dir); err != nil {
+			return err
+		}
+	}
+	if err := writeAtomic(keyPath, keyPEM, modes.File); err != nil {
 		return err
 	}
-	if err := writeAtomic(keyPath, keyPEM, 0o600); err != nil {
-		return err
-	}
-	return writeAtomic(certPath, certPEM, 0o644) // the certificate is public
+	return writeAtomic(certPath, certPEM, modes.File)
+}
+
+// dirExists reports whether path names an existing directory.
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // generateSelfSigned builds the PEM pair. The subject CN is the first DNS

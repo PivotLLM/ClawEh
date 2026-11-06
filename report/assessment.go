@@ -36,6 +36,10 @@ const (
 	itemMCPHost     = "MCP host (local tools)"
 )
 
+// itemOtherAccess is the marked row listing every security.permissions mode
+// that gives other users of the machine access.
+const itemOtherAccess = "Access for other users"
+
 // itemProxy is the neutral row naming the proxies the install is behind.
 const itemProxy = "Proxy"
 
@@ -210,6 +214,9 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 
 	findings, permErr := perms.Check(dd, env.ConfigPath, perms.PolicyFor(cfg))
 	add(len(findings) > 0, "Data directory permissions", permsStatus(findings, permErr, cfg.Security.Permissions.Summary()))
+	if other := cfg.Security.Permissions.OtherAccess(); len(other) > 0 {
+		add(true, itemOtherAccess, "Other users of this machine get access: "+strings.Join(other, ", ")+".")
+	}
 
 	wu := cfg.Channels.WebUI
 	add(wu.Enabled && wu.Token == "", "WebUI chat token",
@@ -408,15 +415,15 @@ func permsStatus(findings []perms.Finding, err error, summary string) string {
 	}
 	var s string
 	if len(findings) == 0 {
-		s = "Within the configured modes (" + summary + ")."
+		s = "Matches the configured modes (" + summary + ")."
 	} else {
 		f := findings[0]
-		noun := "files under CLAW_HOME are"
+		noun := "paths under CLAW_HOME are"
 		if len(findings) == 1 {
-			noun = "file under CLAW_HOME is"
+			noun = "path under CLAW_HOME is"
 		}
-		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o); "+
-			"ClawEh tightens them at start — run it, or chmod it to %04o.", len(findings), noun, f.Path, f.Mode, f.Want)
+		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o, configured %04o); ClawEh sets them at start.",
+			len(findings), noun, f.Path, f.Mode, f.Want)
 	}
 	if errors.Is(err, perms.ErrTruncated) {
 		s += " The check was truncated at the entry cap, so files beyond it were not examined."

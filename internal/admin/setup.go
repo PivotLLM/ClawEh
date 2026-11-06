@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -195,6 +196,10 @@ type EnsureOptions struct {
 	OpenTerminal func(out io.Writer) (*Terminal, error)
 	// Out receives prompts when stdin is the terminal; nil means os.Stdout.
 	Out io.Writer
+	// FileMode is security.permissions.secrets.file_mode, which the
+	// credentials file is written with and checked against; zero means
+	// DefaultFileMode.
+	FileMode fs.FileMode
 	// Chown, when set, hands the written file to the service account. If it
 	// fails the file is removed, so a rerun asks again instead of finding an
 	// account the service cannot read.
@@ -224,8 +229,12 @@ func EnsureAccount(opts EnsureOptions) (username string, created bool, err error
 		out = os.Stdout
 	}
 	path := Path(opts.Home)
+	mode := opts.FileMode
+	if mode == 0 {
+		mode = DefaultFileMode
+	}
 
-	creds, err := Load(path)
+	creds, err := Load(path, mode)
 	switch {
 	case err == nil:
 		return creds.Username, false, nil
@@ -253,7 +262,7 @@ func EnsureAccount(opts EnsureOptions) (username string, created bool, err error
 		}
 	}
 
-	if err := Write(path, username, password); err != nil {
+	if err := Write(path, username, password, mode); err != nil {
 		return "", false, err
 	}
 	if opts.Chown != nil {

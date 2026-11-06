@@ -131,7 +131,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 
 	mediaDir := MediaTempDir()
 	dirMode, fileMode := MediaModes()
-	if err := os.MkdirAll(mediaDir, dirMode); err != nil {
+	if err := mkdirExact(mediaDir, dirMode); err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create media directory", map[string]any{
 			"error": err.Error(),
 		})
@@ -249,6 +249,10 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 	_, err = io.Copy(out, resp.Body)
+	if err == nil {
+		// Exactly the media file mode, whatever the umask.
+		err = out.Chmod(fileMode)
+	}
 	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
@@ -288,4 +292,16 @@ func registeredDomain(hostname string) string {
 		return hostname
 	}
 	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// mkdirExact creates dir (and its parents) when it is missing and gives dir
+// exactly mode, whatever the umask. An existing dir is left as it is.
+func mkdirExact(dir string, mode os.FileMode) error {
+	if _, err := os.Stat(dir); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(dir, mode); err != nil {
+		return err
+	}
+	return os.Chmod(dir, mode)
 }

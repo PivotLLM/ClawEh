@@ -81,7 +81,7 @@ func TestValidateUsername(t *testing.T) {
 func TestEnsureAccount_ExistingFileUntouched(t *testing.T) {
 	home := t.TempDir()
 	path := Path(home)
-	if err := Write(path, "carol", "carol's long password"); err != nil {
+	if err := Write(path, "carol", "carol's long password", DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(path)
@@ -139,10 +139,10 @@ func TestEnsureAccount_FromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != FileMode {
-		t.Errorf("mode = %04o, want %04o", fi.Mode().Perm(), FileMode)
+	if fi.Mode().Perm() != DefaultFileMode {
+		t.Errorf("mode = %04o, want %04o", fi.Mode().Perm(), DefaultFileMode)
 	}
-	creds, err := Load(path)
+	creds, err := Load(path, DefaultFileMode)
 	if err != nil || !creds.Verify("erin", "erin's long password") {
 		t.Fatalf("Load/Verify: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestEnsureAccount_Interactive(t *testing.T) {
 			t.Errorf("terminal output lacks %q:\n%s", want, out)
 		}
 	}
-	creds, err := Load(Path(home))
+	creds, err := Load(Path(home), DefaultFileMode)
 	if err != nil || !creds.Verify("harry", "harry's long password") {
 		t.Fatalf("Load/Verify: %v", err)
 	}

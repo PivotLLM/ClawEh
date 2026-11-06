@@ -51,8 +51,14 @@ func Write(dir Dir, reason string, metadata map[string]any, input, output json.R
 		fileMode = 0o600
 	}
 
-	if err := os.MkdirAll(dumpsDir, dirMode); err != nil {
-		return "", fmt.Errorf("dump: create dir: %w", err)
+	if _, statErr := os.Stat(dumpsDir); os.IsNotExist(statErr) {
+		if err := os.MkdirAll(dumpsDir, dirMode); err != nil {
+			return "", fmt.Errorf("dump: create dir: %w", err)
+		}
+		// Exactly dirMode, whatever the umask.
+		if err := os.Chmod(dumpsDir, dirMode); err != nil {
+			return "", fmt.Errorf("dump: set dir mode: %w", err)
+		}
 	}
 
 	ts := time.Now().Format("20060102-150405")
@@ -78,17 +84,26 @@ func Write(dir Dir, reason string, metadata map[string]any, input, output json.R
 	if err := enc.Encode(doc); err != nil {
 		return "", fmt.Errorf("dump: marshal json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), fileMode); err != nil {
+	if err := writeExact(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), fileMode); err != nil {
 		return "", fmt.Errorf("dump: write json: %w", err)
 	}
 
 	// --- .txt file ---
 	txt := buildTxt(reason, meta, input, output)
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), fileMode); err != nil {
+	if err := writeExact(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), fileMode); err != nil {
 		return "", fmt.Errorf("dump: write txt: %w", err)
 	}
 
 	return basename, nil
+}
+
+// writeExact writes data to the new file path with exactly mode, whatever the
+// umask.
+func writeExact(path string, data []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, data, mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
 }
 
 // buildTxt produces a human-readable dump with three sections separated by

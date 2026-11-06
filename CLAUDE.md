@@ -102,18 +102,39 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   Handlers must not call `config.LoadConfig` themselves. Secret fields may hold
   `env:NAME` / `file:/path` references (`config/secrets.go`), resolved at load and written
   back on save; unknown keys are warned at load (`config/unknown_keys.go`).
-- **Startup guards:** a group/other-readable `config.json` aborts startup before the config
-  is read (`perms.CheckConfig`), with the `chmod 600` to run; then, with the config loaded,
-  `internal/perms.Enforce` holds `CLAW_HOME` to `perms.PolicyFor(cfg)`: every folder to its
-  area's `security.permissions` mode (default 0700; `internal/`, `tls/`, `tokens/` always
-  0700), secrets/DBs 0600 except the agents area's databases, which follow its file mode.
-  It only ever removes group/other bits; ctxengine and cogmem, by contrast, set an agent's
-  databases (with -wal/-shm and snapshots) to exactly the configured mode on every open, so
-  existing ones gain access when the agents mode allows it. What ClawEh creates takes the same modes
-  (`config.PermissionModes(area)`, `cfg.AgentModes(path)` for agent state: the agents
-  area for configured agents, 0700/0600 for temporary ones); ctxengine and cogmem get them
-  through their permission options, and every opener of an agent's cogmem store passes
-  `cogmemhost.StoreOptions`, since opening resets the database files to the given mode.
+- **Startup guards:** `security.permissions` (`config/permissions.go`) holds only areas,
+  each `{dir_mode, file_mode}`: `root` (the data dir itself and the files directly in it,
+  `config.json`), `secrets` (`internal/`, `tls/`, `tokens/`, and every secret file
+  anywhere), `bin` (`<data dir>/bin`, files 0700 so they keep exec), `default`
+  (everything else), `logs`, `agents`, `media`, `common`, `backup`; defaults 0700/0600.
+  Validation is format only (3–4 octal digits, leading 0); `Modes` adds an owner floor (rwx/rw, bin r-x/r--) to every mode, warned per key at load (`BelowFloor`). `LoadConfig` completes a
+  missing key with its default and notes unknown keys in the block, such as the old
+  top-level `dir_mode`/`file_mode`, which are ignored (`completePermissions`,
+  `unknownPermissionKeys`, `Config.PermissionsAdded`); at boot (`openBootConfig`) the
+  config is loaded, then `perms.CheckConfig` refuses a `config.json` granting a bit
+  beyond `root.file_mode` (naming the `chmod`) and sets a tighter one to it, then
+  `Store.SavePermissionDefaults` writes the completed block into the raw file (only that
+  block: env-sourced values, unknown keys and the rest stay as they are; one INFO line), `Store.Update` also completes it on every save, a mode giving other
+  users access is a WARN per key and a Check Up row (`OtherAccess`), `perms.SetSecretModes`
+  sets the process default secrets modes (also set by `internal.LoadConfig`, `claw devicegw`,
+  `claw backup` and every config reload), and `internal/perms.Enforce` sets `CLAW_HOME`
+  and every folder and regular file in it (logs/ and media/ included) to EXACTLY its
+  area's mode per `perms.PolicyFor(cfg)` (deepest area wins; secrets by name/location;
+  agent DBs follow the agents file mode; logs/ and media/ files ignore secret names;
+  files outside `bin/` lose exec bits; a symlinked `CLAW_HOME` is walked at its target;
+  the secrets folders and top-level files are walked first, each part with its own cap;
+  each change opens the entry with O_NOFOLLOW and requires it to be the walked file
+  (`chmodSafe`); hard-linked files, symlinks and the running executable are never
+  changed). `perms.Check` (Check Up) reports only paths more open than configured. Config saves write `root.file_mode`;
+  the credentials file and `file:` references may grant nothing beyond
+  `secrets.file_mode`. ctxengine and cogmem set an agent's databases (with -wal/-shm and
+  snapshots) to exactly the configured mode on every open. What ClawEh creates takes the
+  same modes (`config.PermissionModes(area)`, `cfg.AgentModes(path)` for agent state:
+  the agents area for configured agents, the secrets area for temporary ones;
+  `perms.SecretModes()` / `perms.EnsureSecretFile` for secret stores opened without a
+  config); ctxengine and cogmem get them through their permission options, and every
+  opener of an agent's cogmem store passes `cogmemhost.StoreOptions`, since opening
+  resets the database files to the given mode.
 - **Audit log:** `internal/audit` (`<CLAW_HOME>/internal/audit.db`) records tool calls, config
   writes and logins; every turn carries a `turn_id` on its log lines. See `manual/admin/audit.md`.
 - **Fail fast:** if the HTTP listener, the MCP host server or the agent loop dies after
@@ -132,7 +153,8 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   `claw.pid`, `claw.lock`, and the temporary agents: `internal/temp/<uuid>/` and
   their list `internal/temp_agents.json`, both left out of backups;
   `config.InternalPath()`,
-  `global.InternalDir`), `cli/` is the CLI providers' working dir when a model sets no
+  `global.InternalDir`), `bin/` holds the operator's scripts and binaries
+  (`config.BinPath()`), `cli/` is the CLI providers' working dir when a model sets no
   workspace (`config.CLIPath()`), `skills/` is the only shared skills root, `cards/` the
   character-card library (`config.CardsPath()`), `common/` the
   default common dir (`config.ResolveCommonDir()`); relative MCP `env_file` paths resolve

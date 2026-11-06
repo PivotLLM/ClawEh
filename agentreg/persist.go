@@ -16,6 +16,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
@@ -91,7 +92,7 @@ func (r *Registry[T]) persist() {
 
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err == nil {
-		err = fileutil.WriteFileAtomic(r.statePath, data, 0o600)
+		err = fileutil.WriteFileAtomic(r.statePath, data, perms.SecretModes().File)
 	}
 	if err != nil {
 		logger.WarnCF("agent", "Failed to save temporary agents", map[string]any{

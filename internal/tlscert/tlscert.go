@@ -81,6 +81,21 @@ type Options struct {
 	Alerter alerter.Alerter
 	// Now is the clock; nil means time.Now. Tests use it to age certificates.
 	Now func() time.Time
+	// SecretModes are security.permissions.secrets, which the self-signed
+	// pair under DataDir/tls is written with; a zero mode means 0700/0600.
+	SecretModes config.Modes
+}
+
+// secretModes returns o.SecretModes with each zero mode at its default.
+func (o Options) secretModes() config.Modes {
+	m := o.SecretModes
+	if m.Dir == 0 {
+		m.Dir = config.DefaultDirMode
+	}
+	if m.File == 0 {
+		m.File = config.DefaultFileMode
+	}
+	return m
 }
 
 // OptionsFromConfig maps the gateway config onto Options.
@@ -90,6 +105,8 @@ func OptionsFromConfig(cfg *config.Config) Options {
 		CertFile:   strings.TrimSpace(cfg.Gateway.TLS.CertFile),
 		KeyFile:    strings.TrimSpace(cfg.Gateway.TLS.KeyFile),
 		ExtraNames: cfg.Gateway.TLS.ExtraNames,
+
+		SecretModes: cfg.PermissionModes(config.AreaSecrets),
 	}
 	if u, err := url.Parse(cfg.Gateway.ExternalURL); err == nil {
 		o.ExternalHost = u.Hostname()

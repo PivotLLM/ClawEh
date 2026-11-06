@@ -21,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -165,7 +166,7 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	// Persisted Ed25519 device identity + issued device token (survives across the
 	// short-lived spawns rabbit-agent makes, so pairing happens only once).
 	idDir := filepath.Join(dataDir, global.InternalDir, "acp-bridge")
-	if mkErr := os.MkdirAll(idDir, 0o700); mkErr != nil {
+	if mkErr := os.MkdirAll(idDir, perms.SecretModes().Dir); mkErr != nil {
 		return nil, fmt.Errorf("acp: create identity dir: %w", mkErr)
 	}
 	idStore, err := identity.NewStore(idDir)

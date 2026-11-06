@@ -350,6 +350,7 @@ func DefaultConfig() *Config {
 			ExternalTools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
+		Security:                    SecurityConfig{Permissions: DefaultPermissions()},
 	}
 	cfg.dataDir = homePath
 	return cfg

@@ -672,8 +672,22 @@
   "security": {
     "message_prefix": "x",
     "permissions": {
-      "dir_mode": "x",
-      "file_mode": "x",
+      "root": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "secrets": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "bin": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
+      "default": {
+        "dir_mode": "x",
+        "file_mode": "x"
+      },
       "logs": {
         "dir_mode": "x",
         "file_mode": "x"

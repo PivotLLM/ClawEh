@@ -47,3 +47,41 @@ func TestNewAlerter_LogMode(t *testing.T) {
 		}
 	}
 }
+
+// An alerts log left at another mode by an earlier run is set to exactly the
+// logs file mode at start, widened as well as narrowed.
+func TestNewAlerter_SetsExistingLogMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "ALERTER_") {
+			t.Setenv(k, "")
+		}
+	}
+	t.Setenv(alerter.EnvLogFile, "")
+	for _, c := range []struct{ before, want os.FileMode }{{0o600, 0o640}, {0o644, 0o600}} {
+		base := t.TempDir()
+		path := filepath.Join(base, "logs", alertsFileName)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, c.before); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, c.before); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := newAlerter(base, c.want)
+		t.Cleanup(func() {
+			if err := a.Close(context.Background()); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		})
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != c.want {
+			t.Errorf("alerts log %04o → %04o, want %04o", c.before, got, c.want)
+		}
+	}
+}

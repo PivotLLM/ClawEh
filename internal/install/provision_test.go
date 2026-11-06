@@ -76,7 +76,7 @@ func TestProvisionAndRegister_EnvAccountThenService(t *testing.T) {
 	if err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("CLAW_HOME %v, err %v; want a 0700 directory", fi, err)
 	}
-	creds, err := admin.Load(admin.Path(clawHome))
+	creds, err := admin.Load(admin.Path(clawHome), admin.DefaultFileMode)
 	if err != nil || !creds.Verify("jane", "jane's long password") {
 		t.Fatalf("Load/Verify: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestProvisionAndRegister_ExistingAccountKept(t *testing.T) {
 	t.Setenv(admin.EnvPassword, "")
 	calls := stubInstallSeams(t, noTerminal) // must not be needed
 	clawHome := t.TempDir()
-	if err := admin.Write(admin.Path(clawHome), "kim", "kim's long password"); err != nil {
+	if err := admin.Write(admin.Path(clawHome), "kim", "kim's long password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 

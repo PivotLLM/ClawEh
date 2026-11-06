@@ -696,7 +696,46 @@
     "dump_all": false,
     "dump_failed_compressions": false
   },
-  "security": {},
+  "security": {
+    "permissions": {
+      "root": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "secrets": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "bin": {
+        "dir_mode": "0700",
+        "file_mode": "0700"
+      },
+      "default": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "logs": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "agents": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "media": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "common": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      },
+      "backup": {
+        "dir_mode": "0700",
+        "file_mode": "0600"
+      }
+    }
+  },
   "mcp_host": {
     "enabled": false,
     "auto_enable": true,

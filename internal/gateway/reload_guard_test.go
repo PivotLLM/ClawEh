@@ -168,7 +168,7 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 		t.Fatalf("tlscert.Load: %v", err)
 	}
 	credsPath := filepath.Join(t.TempDir(), admin.FileName)
-	if err = admin.Write(credsPath, "bob", "a long enough password"); err != nil {
+	if err = admin.Write(credsPath, "bob", "a long enough password", admin.DefaultFileMode); err != nil {
 		t.Fatalf("admin.Write: %v", err)
 	}
 	m, err := channels.NewManager(cfg, mb, nil, channels.WithBuildHook(channelBuildHook(al, certs, credsPath)))
@@ -206,7 +206,7 @@ func TestChannelBuildHook_AppliedToRebuiltDeviceChannel(t *testing.T) {
 		t.Fatalf("the rebuilt device channel's default user = %q, want the admin account's %q", got, "bob")
 	}
 	// The default user follows a changed admin account without a rebuild.
-	if werr := admin.Write(credsPath, "alice", "a long enough password"); werr != nil {
+	if werr := admin.Write(credsPath, "alice", "a long enough password", admin.DefaultFileMode); werr != nil {
 		t.Fatalf("admin.Write: %v", werr)
 	}
 	if got := rebuilt.DefaultUser(); got != "alice" {

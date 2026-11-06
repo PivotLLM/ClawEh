@@ -464,7 +464,13 @@ func provisionAndRegister(tu *TargetUser, targetBin, binDir, clawHome string, ho
 	if !homeExisted {
 		fixOwnership(clawHome, tu)
 	}
-	opts := admin.EnsureOptions{Home: clawHome, OpenTerminal: adminTerminal}
+	// The credentials file takes security.permissions.secrets.file_mode from
+	// an existing config; only that block is read.
+	perms, err := config.ReadPermissions(filepath.Join(clawHome, "config.json"))
+	if err != nil {
+		return "", fmt.Errorf("reading security.permissions: %w", err)
+	}
+	opts := admin.EnsureOptions{Home: clawHome, OpenTerminal: adminTerminal, FileMode: perms.Modes(config.AreaSecrets).File}
 	if tu.IsRoot {
 		opts.Chown = func(path string) error { return chownToTarget(path, tu) }
 	}

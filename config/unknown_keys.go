@@ -31,6 +31,33 @@ func unknownConfigKeys(doc any) []string {
 	return out
 }
 
+// UnknownPatchKeys returns, sorted, the dotted path of every key in a config
+// patch (PATCH /api/config) that the config schema does not have: the keys
+// unknownConfigKeys finds, the silently removed ones included. Free-form maps
+// (env, headers, ...) accept any key, and a type with its own UnmarshalJSON
+// is not looked into, as at load.
+func UnknownPatchKeys(patch map[string]any) []string {
+	var out []string
+	collectUnknownKeys(patch, reflect.TypeFor[Config](), "", &out)
+	sort.Strings(out)
+	return out
+}
+
+// permissionsPrefix is the path prefix of the security.permissions block.
+const permissionsPrefix = "security.permissions."
+
+// unknownPermissionKeys returns the unknown keys of a decoded config.json
+// that lie in its security.permissions block (the pre-0.6.4 top-level
+// dir_mode and file_mode, say): the startup write of the block leaves them
+// out.
+func unknownPermissionKeys(doc any) []string {
+	var out []string
+	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", &out)
+	out = slices.DeleteFunc(out, func(key string) bool { return !strings.HasPrefix(key, permissionsPrefix) })
+	sort.Strings(out)
+	return out
+}
+
 // silentlyRemovedKeys are removed settings that an existing config.json may
 // still hold and that are ignored without a warning: the discovery TTL and
 // visible budget (and the older name of the TTL) stopped mattering when every
@@ -43,6 +70,8 @@ var silentlyRemovedKeys = map[string]bool{
 
 var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
 
+// collectUnknownKeys appends to out the path of every key in doc that type t
+// has no field for.
 func collectUnknownKeys(doc any, t reflect.Type, path string, out *[]string) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()

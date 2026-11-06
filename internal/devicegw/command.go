@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -43,8 +44,10 @@ func openStore() (*device.Store, *config.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// The pairing database is a secret store: it keeps the configured mode.
+	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
 	stateDir := filepath.Join(cfg.DataDir(), global.InternalDir)
-	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
+	if mkErr := os.MkdirAll(stateDir, perms.SecretModes().Dir); mkErr != nil {
 		return nil, nil, mkErr
 	}
 	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))

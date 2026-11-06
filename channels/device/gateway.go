@@ -22,6 +22,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/identity"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -71,7 +72,7 @@ type DeviceChannel struct {
 // and extraHosts (reserved for TLS certificate names).
 func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus, gatewayExternalURL string, extraHosts []string) (*DeviceChannel, error) {
 	stateDir := filepath.Join(dataDir, global.InternalDir)
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	if err := os.MkdirAll(stateDir, perms.SecretModes().Dir); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
 	}
 	store, err := OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))

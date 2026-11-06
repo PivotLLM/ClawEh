@@ -24,7 +24,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -42,10 +44,10 @@ func Write(dataDir string) error {
 		return errors.New("pidfile: no data directory")
 	}
 	p := Path(dataDir)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), perms.SecretModes().Dir); err != nil {
 		return fmt.Errorf("pidfile: create %s: %w", filepath.Dir(p), err)
 	}
-	if err := os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(p, []byte(strconv.Itoa(os.Getpid())+"\n"), perms.SecretModes().File); err != nil {
 		return fmt.Errorf("pidfile: write %s: %w", p, err)
 	}
 	return nil

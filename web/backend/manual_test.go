@@ -15,7 +15,7 @@ import (
 func manualServer(t *testing.T) (http.Handler, *http.Cookie) {
 	t.Helper()
 	credPath := admin.Path(t.TempDir())
-	if err := admin.Write(credPath, "alice", "correct horse battery staple"); err != nil {
+	if err := admin.Write(credPath, "alice", "correct horse battery staple", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	store := middleware.NewAuthStore(credPath)

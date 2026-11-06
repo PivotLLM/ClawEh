@@ -11,9 +11,10 @@ import (
 )
 
 // With security.permissions.logs set, the dumps directory and both files of a
-// pair are created with the configured modes.
+// pair are created with exactly the configured modes, even under a umask
+// that would narrow them.
 func TestWrite_ConfiguredModes(t *testing.T) {
-	old := syscall.Umask(0o022)
+	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
 	dir := filepath.Join(t.TempDir(), "dumps")
 	base, err := Write(Dir{Path: dir, DirMode: 0o750, FileMode: 0o640}, "test", nil,

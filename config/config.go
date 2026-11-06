@@ -78,8 +78,8 @@ type SecurityConfig struct {
 	// endpoint before they reach the LLM. When empty, the global
 	// DefaultMessagePrefix constant is used.
 	MessagePrefix string `json:"message_prefix,omitempty"`
-	// Permissions sets the modes of what ClawEh creates under the data
-	// directory (see PermissionsConfig).
+	// Permissions sets the exact modes of the folders and files under the
+	// data directory, one pair per area (see PermissionsConfig).
 	Permissions PermissionsConfig `json:"permissions,omitzero"`
 }
 
@@ -122,6 +122,13 @@ type Config struct {
 	// loaded with, so a save writes the reference back rather than the value it
 	// resolved to. Runtime-only; see secrets.go.
 	secretRefs []secretRef
+
+	// permsAdded and permsDropped are the security.permissions keys the load
+	// filled with defaults and the unknown keys it found in the block: what
+	// the file differs by until the gateway writes the block at start.
+	// Runtime-only; see permissions.go.
+	permsAdded   []string
+	permsDropped []string
 }
 
 // MarshalJSON implements custom JSON marshaling for Config to omit the session

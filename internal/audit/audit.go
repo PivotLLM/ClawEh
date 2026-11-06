@@ -26,6 +26,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -182,24 +183,26 @@ CREATE INDEX IF NOT EXISTS idx_events_session ON events(session, id);
 `
 
 // Open creates or opens the audit database at path. The parent directory is
-// created 0700 when missing and the file is forced to 0600 (SQLite gives the
-// WAL and shm companions the database file's mode).
+// created with the secrets folder mode when missing and the file is set to
+// the secrets file mode (perms.SecretModes; SQLite gives the WAL and shm
+// companions the database file's mode).
 func Open(ctx context.Context, path string, opts ...Option) (*Store, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("audit: resolve %s: %w", path, err)
 	}
-	if mkErr := os.MkdirAll(filepath.Dir(abs), 0o700); mkErr != nil {
+	modes := perms.SecretModes()
+	if mkErr := os.MkdirAll(filepath.Dir(abs), modes.Dir); mkErr != nil {
 		return nil, fmt.Errorf("audit: create directory: %w", mkErr)
 	}
-	// Create the file ourselves so the mode is 0600 from the first byte; the
-	// chmod covers a database created by an earlier run under a laxer umask.
-	f, err := os.OpenFile(abs, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // path is <CLAW_HOME>/internal/audit.db
+	// Create the file ourselves so the mode is right from the first byte; the
+	// chmod makes it exact whatever the umask or an earlier run left.
+	f, err := os.OpenFile(abs, os.O_RDWR|os.O_CREATE, modes.File) //nolint:gosec // path is <CLAW_HOME>/internal/audit.db
 	if err != nil {
 		return nil, fmt.Errorf("audit: create %s: %w", abs, err)
 	}
 	utils.CloseQuietly(f)
-	if chErr := os.Chmod(abs, 0o600); chErr != nil {
+	if chErr := os.Chmod(abs, modes.File); chErr != nil {
 		return nil, fmt.Errorf("audit: chmod %s: %w", abs, chErr)
 	}
 

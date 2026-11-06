@@ -101,7 +101,7 @@ func certificateLines(b *strings.Builder, cfg *config.Config) {
 // only the "run claw admin" page.
 func adminLine(b *strings.Builder, cfg *config.Config) {
 	path := admin.Path(cfg.DataDir())
-	creds, err := admin.Load(path)
+	creds, err := admin.Load(path, cfg.PermissionModes(config.AreaSecrets).File)
 	switch {
 	case err == nil:
 		fmt.Fprintf(b, "  Admin account:      %s ✓ (%s)\n", creds.Username, path)
@@ -109,7 +109,7 @@ func adminLine(b *strings.Builder, cfg *config.Config) {
 		fmt.Fprintf(b, "  Admin account:      none — run: claw admin  (%s)\n", path)
 	default:
 		if perr, ok := errors.AsType[*admin.PermissionError](err); ok {
-			fmt.Fprintf(b, "  Admin account:      ignored, file readable by others — run: %s\n", perr.Fix())
+			fmt.Fprintf(b, "  Admin account:      ignored, file more open than allowed — run: %s\n", perr.Fix())
 			return
 		}
 		fmt.Fprintf(b, "  Admin account:      unreadable: %v\n", err)

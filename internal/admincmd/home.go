@@ -4,9 +4,12 @@
 package admincmd
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/install"
 )
@@ -30,4 +33,16 @@ func ResolveHome() (string, *install.ExistingInstall) {
 		return inst.ClawHome, inst
 	}
 	return filepath.Join(userHome, global.DefaultDataDir), inst
+}
+
+// SecretsFileMode is security.permissions.secrets.file_mode from the config
+// file in home (its built-in default when there is none), the mode the
+// credentials file is written with. Only that block is read: the rest of the
+// config may reference secrets this shell cannot resolve.
+func SecretsFileMode(home string) (fs.FileMode, error) {
+	p, err := config.ReadPermissions(filepath.Join(home, "config.json"))
+	if err != nil {
+		return 0, fmt.Errorf("read security.permissions from %s: %w", filepath.Join(home, "config.json"), err)
+	}
+	return p.Modes(config.AreaSecrets).File, nil
 }

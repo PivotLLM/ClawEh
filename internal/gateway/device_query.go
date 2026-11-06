@@ -2,11 +2,13 @@ package gateway
 
 import (
 	"crypto/tls"
+	"io/fs"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -108,7 +110,7 @@ func injectDeviceDefaultUser(ch channels.Channel, al *agent.AgentLoop, credentia
 			if name := operatorName(al); name != "" {
 				return name
 			}
-			return adminUsername(credentialsPath)
+			return adminUsername(credentialsPath, secretsFileMode(al))
 		})
 	}
 }
@@ -130,10 +132,20 @@ func operatorName(al *agent.AgentLoop) string {
 	return ""
 }
 
+// secretsFileMode is security.permissions.secrets.file_mode in the agent
+// loop's current config, or the built-in default without one.
+func secretsFileMode(al *agent.AgentLoop) fs.FileMode {
+	if cfg := al.GetConfig(); cfg != nil {
+		return cfg.PermissionModes(config.AreaSecrets).File
+	}
+	return config.DefaultFileMode
+}
+
 // adminUsername is the username in the credentials file at path, or "" when
-// there is no usable admin account.
-func adminUsername(path string) string {
-	creds, err := admin.Load(path)
+// there is no usable admin account (none, unreadable, or more open than
+// allowed, the secrets file mode, permits).
+func adminUsername(path string, allowed fs.FileMode) string {
+	creds, err := admin.Load(path, allowed)
 	if err != nil {
 		return ""
 	}

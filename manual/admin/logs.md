@@ -87,18 +87,17 @@ grep 1a2b3c4d ~/.claw/logs/claw.log
 
 ## Startup permission checks
 
-The data directory holds keys and tokens, so at every start ClawEh checks it before using anything in it:
+The data directory holds keys and tokens, so at every start ClawEh sets every folder and file in it to the mode `security.permissions` gives it (see [File permissions](#file-permissions)):
 
-- The data directory and every folder in it are set to owner-only (`700`), or to the modes set under `security.permissions` (see [Letting another user read logs or agents](#letting-another-user-read-logs-or-agents)).
-- Files holding secrets (credentials, tokens, keys, databases) are set to owner-only (`600`).
-- Each change is logged as a warning naming the file.
+- The data directory itself, and every folder and file in it, are set to exactly their area's mode. This adds access as well as removing it.
+- Files outside `bin/` lose execute bits their mode does not have. Keep scripts and programs in `bin/`.
+- A data directory that is itself a symbolic link is followed to its folder. Inside it, symbolic links are never followed or changed, a file with more than one hard link is left alone with a warning, and the running `claw` program keeps its mode wherever it is.
+- Each change is logged at INFO, naming the file and the old and new modes.
 
-The check only removes access. It never adds any.
-
-It does not change `config.json`. If other users can read it, ClawEh refuses to start with a message like:
+`config.json` is never loosened or tightened past its mode silently. If it allows more than `root.file_mode`, ClawEh refuses to start with a message like:
 
 ```
-<CLAW_HOME>/config.json is readable by other users (mode 0644); it holds credentials, so refusing to start. Fix with: chmod 600 <CLAW_HOME>/config.json
+<CLAW_HOME>/config.json has mode 0644, more than security.permissions.root.file_mode allows (0600); it holds credentials, so refusing to start. Fix with: chmod 600 <CLAW_HOME>/config.json
 ```
 
 To fix it:
@@ -111,37 +110,53 @@ To fix it:
 
 2. Start ClawEh again.
 
+A `config.json` that allows less than `root.file_mode` is set to it.
+
 The message appears in the service's output (`systemctl status claw`, or `journalctl -u claw`), or in the terminal when ClawEh was started by hand.
 
-The same applies to the admin credentials file: if other users can read it, ClawEh refuses the account and logs the `chmod 600` to run. See [Signing in](./login.md#no-account-yet).
+The admin credentials file and any `file:` secret reference are checked against `secrets.file_mode` the same way: one that allows more is refused, and the log names the `chmod` to run. See [Signing in](./login.md#no-account-yet).
 
-[Check Up](./checkup.md) shows the **Data directory permissions** row for files that have become readable since the last start.
+[Check Up](./checkup.md) shows the **Data directory permissions** row for anything that has become more open than its mode since the last start.
 
-### Letting another user read logs or agents
+### File permissions
 
-`security.permissions` in `config.json` sets the modes of the folders and files ClawEh creates in the data directory. For example, to let a second user in ClawEh's group read the logs and the agents' folders:
+`security.permissions` in `config.json` sets the exact modes of the folders and files in the data directory, one pair per area. Every key is written to the file: if one is missing at start, ClawEh adds it with its default and logs the keys it added. Deleting the whole block and restarting writes the defaults back.
+
+| Area | Folders | Files |
+|---|---|---|
+| `root` | the data directory itself | files directly in it, such as `config.json` |
+| `secrets` | `internal/`, `tls/`, `tokens/` | every secret: the credentials file, TLS files, token stores, everything in `internal/`, any file named for a token or secret, and `file:` secret references |
+| `bin` | `bin/` | your scripts and programs; they keep execute bits |
+| `logs` | `logs/` | logs, the alerts log and dumps |
+| `agents` | the agents folder and every agent's own workspace | agent files, session archives and memory databases |
+| `media` | `media/` | downloaded attachments |
+| `common` | the common folder | shared files |
+| `backup` | the backup folder | backup archives |
+| `default` | everything else (`cli/`, `skills/`, `cards/`, …) | everything else |
+
+Every folder defaults to `0700` and every file to `0600`, except `bin` files, which default to `0700`.
+
+For example, to let a second user in ClawEh's group read the logs and the agents' folders:
 
 ```json
 "security": {
   "permissions": {
-    "dir_mode": "0750",
-    "logs":   { "dir_mode": "0750", "file_mode": "0640" },
-    "agents": { "dir_mode": "0750", "file_mode": "0640" }
+    "root":    { "dir_mode": "0750", "file_mode": "0600" },
+    "secrets": { "dir_mode": "0700", "file_mode": "0600" },
+    "bin":     { "dir_mode": "0700", "file_mode": "0700" },
+    "default": { "dir_mode": "0700", "file_mode": "0600" },
+    "logs":    { "dir_mode": "0750", "file_mode": "0640" },
+    "agents":  { "dir_mode": "0750", "file_mode": "0640" },
+    "media":   { "dir_mode": "0700", "file_mode": "0600" },
+    "common":  { "dir_mode": "0700", "file_mode": "0600" },
+    "backup":  { "dir_mode": "0700", "file_mode": "0600" }
   }
 }
 ```
 
-- `dir_mode` and `file_mode` at the top are the default for everything, `0700` and `0600` when left out. The top-level `dir_mode` also sets the data directory itself, so the group can only reach `logs` and `agents` when it grants the group access too.
-- Each area can set its own pair: `logs`, `agents` (the agents folder and any agent's own workspace), `media`, `common` and `backup`. A key left out uses the top-level value. An area is matched by the paths ClawEh is configured with, not by another spelling through a symbolic link.
-- A mode is 3 or 4 octal digits. Folders must give the owner `7` and files `6`, and other users may never write. A wrong value stops ClawEh from starting, with a message naming the key.
-- Secrets stay `600` whatever is set: `config.json`, the credentials file, TLS keys, everything in `internal/`, and any file named for a token or secret. The agents' session archives and memory databases follow the agents modes.
-- `config.json` is read before these modes apply, so its own check is unchanged.
-
-The modes apply to what ClawEh creates from the next start. The startup check only removes access, so existing folders and files keep their modes, with one exception: the agents' session archives and memory databases take the agents modes the next time they are opened, existing ones included. `logs/`, `claw.log` and `error.log` are created before the config is read, so on a first start they are `0700`/`0600` until you run the commands below. After allowing more, give the existing folders and files access once, as the user ClawEh runs as. For the example above:
-
-```
-chmod g+rX ~/.claw
-chmod -R g+rX ~/.claw/logs ~/.claw/agents
-```
-
-Any secret this makes readable is set back to `600` at the next start.
+- `root.dir_mode` must give the group access too, or it cannot reach `logs/` and `agents/`.
+- A mode is 3 or 4 octal digits; a fourth (leading) digit must be `0`. A wrong value stops ClawEh from starting, with a message naming the key.
+- The owner always keeps access: a folder mode without owner `rwx` (`r-x` for `bin`) or a file mode without owner `rw` (`r` for `bin`) is used with those bits added, and a warning names the key.
+- A mode that gives other users any access is marked on the [Check Up](./checkup.md) page and logged as a warning at start.
+- An area is matched by the paths ClawEh is configured with, not by another spelling through a symbolic link. Agent workspaces and a backup folder outside the data directory are not walked.
+- Existing folders and files are set at the next start. After a config reload, files ClawEh creates in `internal/`, `tls/` and `tokens/` take the new `secrets` modes, and the credentials file and `file:` secret references are checked against the new `secrets.file_mode` at once: lowering it makes a file that is more open fail until you `chmod` it.

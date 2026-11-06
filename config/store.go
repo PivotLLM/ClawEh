@@ -124,6 +124,9 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if next.secretRefs == nil {
 		next.secretRefs = s.cur.secretRefs
 	}
+	// security.permissions is always written in full: a save that dropped a
+	// key (a raw edit, a PUT without the block) puts its default back.
+	completePermissions(&next.Security.Permissions)
 
 	// A reference to a model that does not exist is refused only when this
 	// update introduces it: one already in the file (left by an older release)
@@ -149,8 +152,37 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	if err := SaveConfig(s.path, resolved); err != nil {
 		return err
 	}
+	// A mode this save brings below its owner floor is used with the floor
+	// added; say so once, as a load would.
+	warnPermissionFloor(resolved.Security.Permissions, &s.cur.Security.Permissions)
 	s.cur = resolved
 	return nil
+}
+
+// SavePermissionDefaults writes the security.permissions block when the file
+// differs from the current config's (Config.PermissionsAdded): keys the load
+// filled with their defaults, or keys the config does not have, which the
+// written block leaves out. Only that block is written: every other key of
+// the file, unknown ones included, stays exactly as the file holds it, and
+// nothing taken from the environment or resolved from a secret reference is
+// written. It returns the keys added and dropped; nothing is written when
+// there are none.
+func (s *Store) SavePermissionDefaults() (added, dropped []string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	added, dropped = s.cur.PermissionsAdded()
+	if len(added) == 0 && len(dropped) == 0 {
+		return nil, nil, nil
+	}
+	if err = writePermissionsBlock(s.path, s.cur.Security.Permissions); err != nil {
+		return nil, nil, err
+	}
+	next, err := s.cur.Clone() // a copy without the pending keys
+	if err != nil {
+		return nil, nil, fmt.Errorf("copy config: %w", err)
+	}
+	s.cur = next
+	return added, dropped, nil
 }
 
 // Reload re-reads the file and makes it current, returning the new config.

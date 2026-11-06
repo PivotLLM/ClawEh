@@ -47,7 +47,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	warnUnknownKeys(doc)
-	refs, err := resolveSecretRefs(doc)
+	// A "file:" reference may grant no more than the secrets file mode, read
+	// from the same document before anything else is decoded.
+	refs, err := resolveSecretRefs(doc, permissionsFromJSON(data).Modes(AreaSecrets).File)
 	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -84,11 +86,18 @@ func LoadConfig(path string) (*Config, error) {
 	if len(tmp.Providers) > 0 {
 		cfg.Providers = nil
 	}
+	// security.permissions is completed from the file's own keys, so a key
+	// the file lacks is known to be missing (and saved at start) rather than
+	// silently inherited from the defaults.
+	cfg.Security.Permissions = PermissionsConfig{}
 
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 	cfg.secretRefs = refs
+	cfg.permsAdded = completePermissions(&cfg.Security.Permissions)
+	cfg.permsDropped = unknownPermissionKeys(doc)
+	warnPermissionFloor(cfg.Security.Permissions, nil)
 
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
@@ -317,8 +326,9 @@ func writeConfig(path string, cfg *Config) error {
 		return err
 	}
 
-	// Use unified atomic write utility with explicit sync for flash storage reliability.
-	return fileutil.WriteFileAtomic(path, data.Bytes(), 0o600)
+	// Atomic write with explicit sync for flash storage reliability; the file
+	// takes exactly the root area's file mode, whatever the umask.
+	return fileutil.WriteFileAtomic(path, data.Bytes(), cfg.PermissionModes(AreaRoot).File)
 }
 
 // fileExists reports whether path names an existing file.

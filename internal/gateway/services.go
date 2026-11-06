@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tlscert"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
@@ -386,7 +388,7 @@ func startHTTPHost(services *gatewayServices, cfg *config.Config, agentLoop *age
 	if err := services.HTTPHost.ApplyPolicy(cfg.Gateway); err != nil {
 		return err
 	}
-	if err := startWebAuth(services, cfg); err != nil {
+	if err := startWebAuth(services, cfg, agentLoop); err != nil {
 		return err
 	}
 	rebuildSharedHTTPServer(services, "127.0.0.1", cfg.Gateway.EffectivePort(), services.ChannelManager, services.HTTPHost, agentLoop)
@@ -409,9 +411,11 @@ func startHTTPHost(services *gatewayServices, cfg *config.Config, agentLoop *age
 // startWebAuth sets up the WebUI login: one session store shared by the Auth
 // middleware on the listener, the login endpoints and the WebUI channel's
 // WebSocket handshake. Created once, like the listener; its poller picks up
-// `claw admin` changes to the credentials file for the life of the process.
-func startWebAuth(services *gatewayServices, cfg *config.Config) error {
-	authStore := middleware.NewAuthStore(admin.Path(cfg.DataDir()))
+// `claw admin` changes to the credentials file for the life of the process,
+// checking the file against the secrets file mode of the current config.
+func startWebAuth(services *gatewayServices, cfg *config.Config, al *agent.AgentLoop) error {
+	authStore := middleware.NewAuthStore(admin.Path(cfg.DataDir()),
+		middleware.WithCredentialsMode(func() fs.FileMode { return secretsFileMode(al) }))
 	services.AuthStore = authStore
 	services.HTTPHost.SetAuth(authStore)
 	services.WebServer.APIHandler().SetAuth(authStore)
@@ -582,6 +586,8 @@ func handleConfigReload(
 	msgBus *bus.MessageBus,
 ) error {
 	logger.Info("🔄 Config file changed, reloading...")
+	// Secret stores opened from here on keep the reloaded secrets modes.
+	perms.SetSecretModes(newCfg.PermissionModes(config.AreaSecrets))
 
 	newModel := newCfg.Agents.Defaults.DefaultModelName()
 

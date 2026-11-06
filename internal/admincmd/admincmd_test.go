@@ -64,7 +64,7 @@ func TestRun_WritesAccountFromTerminal(t *testing.T) {
 	if err := run(&out, ""); err != nil {
 		t.Fatalf("run() = %v", err)
 	}
-	creds, err := admin.Load(admin.Path(home))
+	creds, err := admin.Load(admin.Path(home), admin.DefaultFileMode)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

@@ -31,14 +31,15 @@ const connectionPragmas = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&
 
 // NewSQLiteDataStore opens (or creates) the fusion token store at path with WAL
 // mode and returns it as a toolspec.DataStore. Pure Go (modernc.org/sqlite), no
-// CGO. The parent directory is created (0700) since it holds OAuth secrets.
+// CGO. The parent directory is created with the secrets folder mode since it
+// holds OAuth secrets.
 func NewSQLiteDataStore(path string) (toolspec.DataStore, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), perms.SecretModes().Dir); err != nil {
 		return nil, fmt.Errorf("fusion datastore: create dir: %w", err)
 	}
-	// OAuth tokens live in here: make the file private before SQLite creates
-	// it, so the -wal/-shm side files inherit that mode too.
-	if err := perms.EnsurePrivateFile(path); err != nil {
+	// OAuth tokens live in here: give the file the secrets mode before SQLite
+	// creates it, so the -wal/-shm side files inherit that mode too.
+	if err := perms.EnsureSecretFile(path); err != nil {
 		return nil, fmt.Errorf("fusion datastore: %w", err)
 	}
 	// The pragmas travel in the DSN so the driver applies them to EVERY

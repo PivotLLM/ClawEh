@@ -11,9 +11,10 @@ import (
 )
 
 // With security.permissions.logs set, the log directory, claw.log, error.log
-// and the archives a roll produces are created with the configured modes.
+// and the archives a roll produces are created with exactly the configured
+// modes, even under a umask that would narrow them.
 func TestFileLogging_ConfiguredModes(t *testing.T) {
-	old := syscall.Umask(0o022)
+	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
 	SetFileModes(0o750, 0o640)
 	defer SetFileModes(0o700, 0o600)

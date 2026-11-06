@@ -24,7 +24,7 @@ const (
 func writeCreds(t *testing.T) string {
 	t.Helper()
 	path := admin.Path(t.TempDir())
-	if err := admin.Write(path, testUser, testPass); err != nil {
+	if err := admin.Write(path, testUser, testPass, admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -194,7 +194,7 @@ func TestAuthStore_Username(t *testing.T) {
 	if got := s.Username(); got != "" {
 		t.Fatalf("Username() with no credentials file = %q, want empty", got)
 	}
-	if err := admin.Write(path, "bob", testPass); err != nil {
+	if err := admin.Write(path, "bob", testPass, admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.Username(); got != "bob" {
@@ -214,7 +214,7 @@ func TestAuthStore_ReloadRevokesOnChange(t *testing.T) {
 	}
 
 	// New password: everyone is signed out and only the new password works.
-	if err := admin.Write(path, testUser, "a different fine password"); err != nil {
+	if err := admin.Write(path, testUser, "a different fine password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	s.Reload()
@@ -249,7 +249,7 @@ func TestAuthStore_WatchReloadsOnFileChange(t *testing.T) {
 
 	go s.Watch(t.Context(), 5*time.Millisecond)
 
-	if err := admin.Write(path, testUser, "a different fine password"); err != nil {
+	if err := admin.Write(path, testUser, "a different fine password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	// mtime resolution can be coarse; make the change unmistakable.

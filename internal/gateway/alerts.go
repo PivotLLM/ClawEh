@@ -33,9 +33,9 @@ func newAlerter(baseDir string, fileMode os.FileMode) (alerter.Alerter, string) 
 	if path == "" {
 		path = filepath.Join(baseDir, "logs", alertsFileName)
 		opts = append(opts, alerter.WithLogFile(path))
-		// The alerter would create the log 0644; created first, it has the
-		// logs file mode (0600 by default). A missing logs directory is left
-		// to alerter.New to report.
+		// The alerter would create the log 0644; created (or set) here first,
+		// it has exactly the logs file mode (0600 by default). A missing logs
+		// directory is left to alerter.New to report.
 		if _, err := os.Stat(filepath.Dir(path)); err == nil {
 			if err := perms.EnsureFileMode(path, fileMode); err != nil {
 				logger.WarnCF("gateway", "Failed to create the alerts log with its mode", map[string]any{"path": path, "error": err.Error()})

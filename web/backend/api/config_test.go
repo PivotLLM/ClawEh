@@ -215,3 +215,123 @@ func TestHandlePatchConfig_NullRemovesDefaultsTemperature(t *testing.T) {
 		t.Fatalf("config file agents.defaults.temperature = %s, want no key", v)
 	}
 }
+
+// The WebUI has no controls for security.permissions, so its saves must
+// carry the block through unchanged: a PATCH of another field (the System
+// page) and a PUT of what GET returned (the raw config page).
+func TestConfigSavesKeepPermissions(t *testing.T) {
+	configPath := setupTestEnv(t)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Security.Permissions.Logs = config.AreaPermissions{DirMode: "0750", FileMode: "0640"}
+	cfg.Security.Permissions.Agents = config.AreaPermissions{DirMode: "0770", FileMode: "0660"}
+	if err = config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := cfg.Security.Permissions
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	serve := func(method, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/config", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body=%s", method, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+	check := func(step string) {
+		t.Helper()
+		got, err := config.ReadPermissions(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: security.permissions = %+v, want %+v", step, got, want)
+		}
+	}
+
+	serve(http.MethodPatch, `{"logging":{"level":"warn"}}`)
+	check("PATCH")
+	got := serve(http.MethodGet, "")
+	serve(http.MethodPut, got.Body.String())
+	check("PUT of GET")
+}
+
+// PATCH /api/config refuses a body naming any key the config does not have,
+// anywhere in the document, with 400 naming every such key, and applies
+// nothing; free-form maps take any key, and a valid patch is unaffected.
+func TestHandlePatchConfig_UnknownKeys(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr string // "" = accepted
+	}{
+		{"unknown top-level key", `{"logging":{"level":"warn"},"nonsense":1}`, "Unknown config key: nonsense"},
+		{"unknown nested key", `{"logging":{"level":"warn","colour":true}}`, "Unknown config key: logging.colour"},
+		{
+			"removed permission keys", `{"security":{"permissions":{"dir_mode":"0750","file_mode":"0640"}}}`,
+			"Unknown config keys: security.permissions.dir_mode, security.permissions.file_mode",
+		},
+		{
+			"several at once", `{"zz":1,"gateway":{"prot":1},"logging":{"level":"warn"}}`,
+			"Unknown config keys: gateway.prot, zz",
+		},
+		{
+			"unknown key inside a list entry", `{"agents":{"list":[{"id":"alice","colour":"red"}]}}`,
+			"Unknown config key: agents.list[0].colour",
+		},
+		{"valid patch", `{"logging":{"level":"warn"}}`, ""},
+		{"null deletes a known key", `{"agents":{"defaults":{"temperature":null}}}`, ""},
+		{"free-form maps take any key", `{"tools":{"mcp":{"servers":{"alice-files":{"enabled":false,"command":"true",` +
+			`"env":{"ANY_NAME":"1"},"headers":{"X-Custom":"y"}}}}}}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			configPath := setupTestEnv(t)
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := NewHandler(configPath)
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux)
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(c.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if c.wantErr == "" {
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Errors []string `json:"errors"`
+			}
+			if err = json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if len(resp.Errors) != 1 || resp.Errors[0] != c.wantErr {
+				t.Errorf("errors = %q, want [%q]", resp.Errors, c.wantErr)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("a refused patch changed config.json")
+			}
+		})
+	}
+}

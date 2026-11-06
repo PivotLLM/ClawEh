@@ -15,6 +15,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 )
 
 // NewBackupCommand returns `claw backup [--dest DIR]`: the nightly backup, on
@@ -48,6 +49,7 @@ func runBackup(cmd *cobra.Command, dest string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
 	res, err := RunForConfig(cfg, configPath, time.Now(), Options{Dest: dest})
 	if err != nil {
 		return err

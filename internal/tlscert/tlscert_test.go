@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
@@ -22,7 +23,7 @@ import (
 func writePair(t *testing.T, dir string, names certNames, now time.Time) (string, string) {
 	t.Helper()
 	certPath, keyPath := filepath.Join(dir, "user.crt"), filepath.Join(dir, "user.key")
-	if err := writeSelfSigned(certPath, keyPath, names, now); err != nil {
+	if err := writeSelfSigned(certPath, keyPath, names, now, config.Modes{Dir: 0o700, File: 0o600}); err != nil {
 		t.Fatalf("writeSelfSigned: %v", err)
 	}
 	return certPath, keyPath
@@ -38,6 +39,28 @@ func touch(t *testing.T, path string) {
 	}
 	if err := os.Chtimes(path, time.Now(), fi.ModTime().Add(2*time.Second)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestLoad_SelfSignedSecretModes: the generated pair and its folder take the
+// configured secrets modes exactly, the certificate as well as the key.
+func TestLoad_SelfSignedSecretModes(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Load(Options{DataDir: dir, SecretModes: config.Modes{Dir: 0o750, File: 0o640}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	info := m.Info()
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(dir, DirName): 0o750, info.KeyFile: 0o640, info.CertFile: 0o640,
+	} {
+		fi, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %04o, want %04o", path, got, want)
+		}
 	}
 }
 

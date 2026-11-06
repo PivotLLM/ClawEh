@@ -22,13 +22,13 @@ Find the line that starts with `Error:` or contains `gateway exited with error`.
 
 | Message | Cause | Fix |
 |---|---|---|
-| `perms: <path>/config.json is readable by other users (mode 0644); it holds credentials, so refusing to start. Fix with: chmod 600 <path>/config.json` | The configuration file can be read by other users. | Run the `chmod 600` command the message gives, then start the service. |
+| `perms: <path>/config.json has mode 0644, more than security.permissions.root.file_mode allows (0600); it holds credentials, so refusing to start. Fix with: chmod 600 <path>/config.json` | The configuration file allows more than its configured mode. | Run the `chmod` command the message gives, then start the service. |
 | `error loading config: Agent id "Alice.Smith" may use only letters, digits, - and _; use "Alice-Smith".` | An agent id breaks the id rule. | Change the id to the suggested form in `agents.list` and everywhere it is named: `bindings`, `agent_mentions`, other agents' `allow_agents`. |
 | `error loading config: Agent ids "Bob" and "bob" name the same agent; give each agent its own id.` | Two ids differ only by case. Ids are case-insensitive. | Rename one of the agents. |
 | `error loading config: Agent id "alice" is used twice; give each agent its own id.` | Two agents share an id. | Rename one of the agents. |
 | `error loading config: unexpected EOF`, or another JSON error | `config.json` is not valid JSON, usually after a hand edit. | Fix the file, or restore the copy from the latest backup. |
 | `error loading config: gateway.tls.mode "…": must be "all", "localhost" or "off"` | A listener setting has an invalid value. Other listener errors name their key the same way. | Correct the named key. |
-| `secret reference "file:…": … is readable by group or other …; run: chmod 600 …` | A secret file named in `config.json` is not private. | Run the `chmod 600` command the message gives. |
+| `secret reference "file:…": … has mode …, more than security.permissions.secrets.file_mode allows …; run: chmod 600 …` | A secret file named in `config.json` allows more than the secrets mode. | Run the `chmod` command the message gives. |
 | `startup aborted: another instance is already running (lock held on "…")` | ClawEh is already running on this data directory, often a copy started by hand. | Stop the other copy, or use the running one. |
 
 If ClawEh starts but the WebUI shows "No admin account. On the server run: claw admin", run `claw admin`. See [Signing in](../admin/login.md).

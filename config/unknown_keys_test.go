@@ -4,7 +4,11 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -98,5 +102,47 @@ func TestUnknownConfigKeys_RemovedSettings(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)
+	}
+}
+
+// UnknownPatchKeys reports what the load warning reports plus the silently
+// removed keys; the old top-level permission keys are plain unknown keys;
+// free-form maps take any key.
+func TestUnknownPatchKeys(t *testing.T) {
+	doc := map[string]any{
+		"nonsense": 1,
+		"tools": map[string]any{
+			"discovery": map[string]any{"ttl": 5},
+			"mcp": map[string]any{"servers": map[string]any{"bob": map[string]any{
+				"env": map[string]any{"ANY": "1"}, "headers": map[string]any{"X-Any": "1"},
+			}}},
+		},
+		"security": map[string]any{"permissions": map[string]any{"dir_mode": "0750", "logs": map[string]any{"file_mode": "0640"}}},
+	}
+	want := []string{"nonsense", "security.permissions.dir_mode", "tools.discovery.ttl"}
+	if got := UnknownPatchKeys(doc); !slices.Equal(got, want) {
+		t.Errorf("UnknownPatchKeys = %v, want %v", got, want)
+	}
+	if got := unknownConfigKeys(any(doc)); !slices.Equal(got, []string{"nonsense", "security.permissions.dir_mode"}) {
+		t.Errorf("unknownConfigKeys = %v, want nonsense and security.permissions.dir_mode", got)
+	}
+	if got := unknownPermissionKeys(any(doc)); !slices.Equal(got, []string{"security.permissions.dir_mode"}) {
+		t.Errorf("unknownPermissionKeys = %v", got)
+	}
+}
+
+// Everything GET /api/config returns may be sent back in a PATCH: a fully
+// populated config has no key UnknownPatchKeys refuses.
+func TestUnknownPatchKeys_FullConfigAccepted(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "marshal_full.golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err = json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := UnknownPatchKeys(doc); len(got) != 0 {
+		t.Errorf("UnknownPatchKeys on a full config = %v, want none", got)
 	}
 }

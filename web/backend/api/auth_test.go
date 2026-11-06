@@ -37,7 +37,7 @@ func newAuthEnv(t *testing.T, withCreds bool) *authEnv {
 	t.Helper()
 	path := admin.Path(t.TempDir())
 	if withCreds {
-		if err := admin.Write(path, authTestUser, authTestPass); err != nil {
+		if err := admin.Write(path, authTestUser, authTestPass, admin.DefaultFileMode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -338,7 +338,7 @@ func TestAuthLogin_CredentialsChangeClearsAllLocks(t *testing.T) {
 	assertLocked(t, env.login("other", "x", "192.0.2.1"), "600")
 
 	const newPass = "the operator's brand new password"
-	if err := admin.Write(env.store.Path(), authTestUser, newPass); err != nil {
+	if err := admin.Write(env.store.Path(), authTestUser, newPass, admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(env.store.Path(), time.Now(), time.Now().Add(2*time.Second)); err != nil {

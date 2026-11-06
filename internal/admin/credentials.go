@@ -22,9 +22,10 @@ import (
 // FileName is the credentials file's name inside CLAW_HOME.
 const FileName = "credentials.json"
 
-// FileMode is the only permission the gateway accepts on the credentials
-// file: owner read/write, nothing for group or others.
-const FileMode fs.FileMode = 0o600
+// DefaultFileMode is the credentials file's mode when
+// security.permissions.secrets.file_mode is not known: owner read/write,
+// nothing for group or others.
+const DefaultFileMode fs.FileMode = 0o600
 
 // MinPasswordLength is the shortest password `claw admin` accepts.
 const MinPasswordLength = 12
@@ -33,20 +34,22 @@ const MinPasswordLength = 12
 // been created with `claw admin`.
 var ErrNotConfigured = errors.New("no admin account")
 
-// PermissionError reports a credentials file that other accounts on the host
-// can read. The gateway refuses to use such a file; Fix is the command that
-// repairs it.
+// PermissionError reports a credentials file whose mode grants bits the
+// secrets file mode (security.permissions.secrets.file_mode) does not. The
+// gateway refuses to use such a file; Fix is the command that repairs it.
 type PermissionError struct {
-	Path string
-	Mode fs.FileMode
+	Path    string
+	Mode    fs.FileMode // the file's mode
+	Allowed fs.FileMode // the secrets file mode
 }
 
 func (e *PermissionError) Error() string {
-	return fmt.Sprintf("credentials file %s has mode %04o; it must be 0600 (run: %s)", e.Path, e.Mode, e.Fix())
+	return fmt.Sprintf("credentials file %s has mode %04o, more than security.permissions.secrets.file_mode allows (%04o) (run: %s)",
+		e.Path, e.Mode, e.Allowed, e.Fix())
 }
 
 // Fix is the shell command that repairs the permissions.
-func (e *PermissionError) Fix() string { return "chmod 600 " + e.Path }
+func (e *PermissionError) Fix() string { return fmt.Sprintf("chmod %03o %s", e.Allowed, e.Path) }
 
 // Credentials is the content of credentials.json: one admin account.
 type Credentials struct {
@@ -62,9 +65,10 @@ func Path(clawHome string) string {
 
 // Load reads and validates the credentials file at path. It returns
 // ErrNotConfigured when the file does not exist, a *PermissionError when the
-// file is group- or world-accessible, and ErrInvalidHash (wrapped) when the
-// stored hash is malformed. It never logs; the caller decides how loud to be.
-func Load(path string) (*Credentials, error) {
+// file's mode grants any bit allowed (the secrets file mode) does not, and
+// ErrInvalidHash (wrapped) when the stored hash is malformed. It never logs;
+// the caller decides how loud to be.
+func Load(path string, allowed fs.FileMode) (*Credentials, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -75,8 +79,8 @@ func Load(path string) (*Credentials, error) {
 	if fi.IsDir() {
 		return nil, fmt.Errorf("credentials path %s is a directory", path)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, &PermissionError{Path: path, Mode: fi.Mode().Perm()}
+	if mode := fi.Mode().Perm(); mode&^allowed.Perm() != 0 {
+		return nil, &PermissionError{Path: path, Mode: mode, Allowed: allowed.Perm()}
 	}
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is <CLAW_HOME>/credentials.json, chosen by the operator
@@ -96,9 +100,10 @@ func Load(path string) (*Credentials, error) {
 	return &c, nil
 }
 
-// Write hashes password and writes the credentials file atomically with mode
-// 0600, replacing any existing account. The directory is created if missing.
-func Write(path, username, password string) error {
+// Write hashes password and writes the credentials file atomically with
+// exactly mode (the secrets file mode), replacing any existing account. The
+// directory is created if missing.
+func Write(path, username, password string, mode fs.FileMode) error {
 	hash, err := HashPassword(password)
 	if err != nil {
 		return err
@@ -127,8 +132,8 @@ func Write(path, username, password string) error {
 			logger.WarnCF("admin", "could not remove temp credentials file", map[string]any{"path": tmpName, "error": rmErr.Error()})
 		}
 	}
-	// CreateTemp uses 0600 already; make it explicit so a umask cannot widen it.
-	if err := tmp.Chmod(FileMode); err != nil {
+	// Exactly mode, whatever CreateTemp and the umask gave it.
+	if err := tmp.Chmod(mode.Perm()); err != nil {
 		utils.CloseQuietly(tmp)
 		cleanup()
 		return fmt.Errorf("chmod temp file: %w", err)

@@ -291,6 +291,11 @@ func writeArchive(path string, mode fs.FileMode, m Manifest, body func(*tar.Writ
 	if err != nil {
 		return fmt.Errorf("backup: create %s: %w", path, err)
 	}
+	// Exactly mode, whatever the umask.
+	if err = f.Chmod(mode); err != nil {
+		utils.CloseQuietly(f)
+		return fmt.Errorf("backup: chmod %s: %w", path, err)
+	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	defer func() {

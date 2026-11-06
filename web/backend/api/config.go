@@ -152,6 +152,7 @@ func (h *Handler) saveValidatedConfig(w http.ResponseWriter, r *http.Request, mu
 
 // handlePatchConfig partially updates the system configuration using JSON Merge Patch (RFC 7396).
 // Only the fields present in the request body will be updated; all other fields remain unchanged.
+// A body naming any key the config does not have is refused with 400 and nothing is applied.
 //
 //	PATCH /api/config
 func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +167,13 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	var patch map[string]any
 	if err = json.Unmarshal(patchBody, &patch); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// A key the config does not have is refused, nothing applied: the merge
+	// would otherwise drop it silently and report success.
+	if unknown := config.UnknownPatchKeys(patch); len(unknown) > 0 {
+		writeValidationErrors(w, []string{unknownKeysMessage(unknown)})
 		return
 	}
 
@@ -214,6 +222,14 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, map[string]string{"status": "ok"})
+}
+
+// unknownKeysMessage names the unknown keys of a refused patch.
+func unknownKeysMessage(keys []string) string {
+	if len(keys) == 1 {
+		return "Unknown config key: " + keys[0]
+	}
+	return "Unknown config keys: " + strings.Join(keys, ", ")
 }
 
 // validateConfig checks the config for common errors before saving.

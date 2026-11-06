@@ -9,94 +9,40 @@ package perms
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
-// fixture lays out a data directory with every kind of file the walk must
-// tighten and every kind it must leave alone, all created 0644 under a 0755
-// directory. It returns the directory and the config path (0600 unless the
-// caller loosens it).
-func fixture(t *testing.T) (dir, config string) {
+// place creates rel under dir with mode m (a directory when rel ends in "/"),
+// pinning the mode against the umask. Missing parents are created 0700.
+func place(t *testing.T, dir, rel string, m fs.FileMode) string {
 	t.Helper()
-	dir = t.TempDir()
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, rel := range append(sensitiveFiles, harmlessFiles...) {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	p := filepath.Join(dir, filepath.FromSlash(strings.TrimSuffix(rel, "/")))
+	if strings.HasSuffix(rel, "/") {
+		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+	} else {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		// Umask may have narrowed the create mode; pin it.
-		if err := os.Chmod(p, 0o644); err != nil {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// A symlink named like a database, pointing at a harmless file: the walk
-	// must neither follow it nor chmod through it.
-	if err := os.Symlink(filepath.Join(dir, "agents/alice/notes.md"), filepath.Join(dir, "link.db")); err != nil {
+	if err := os.Chmod(p, m); err != nil {
 		t.Fatal(err)
 	}
-	config = filepath.Join(dir, "config.json")
-	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(config, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return dir, config
+	return p
 }
 
-var sensitiveFiles = []string{
-	"internal/gateway.db",
-	"internal/gateway.db-wal",
-	"internal/gateway.db-shm",
-	"internal/fusion-tokens.db",
-	"internal/devices.json",
-	"credentials.json",
-	"tokens/webui",
-	"tokens/nested/service",
-	"tls/server.key",
-	"agents/alice/sessions/archive.sqlite3",
-	"agents/alice/workspace/my-secret.txt",
-	"agents/bob/API_TOKEN",
-}
-
-// walkedDirs are the fixture's directories the walk tightens: every one it
-// creates except the skipped media/ and logs/ trees.
-var walkedDirs = []string{
-	"internal",
-	"internal/nested",
-	"tokens",
-	"tokens/nested",
-	"tls",
-	"agents",
-	"agents/alice",
-	"agents/alice/sessions",
-	"agents/alice/workspace",
-	"agents/bob",
-}
-
-// skippedDirs are the fixture's directories inside skipped trees, left alone.
-var skippedDirs = []string{"media", "logs", "agents/alice/logs", "agents/alice/workspace/media"}
-
-var harmlessFiles = []string{
-	"media/attachment.db",    // media tree is skipped
-	"logs/token.log",         // logs tree is skipped
-	"agents/alice/notes.md",  // no sensitive pattern
-	"tls/server.crt",         // certs are public
-	"internal/nested/x.json", // only internal/*.json, one level
-	"agents/alice/logs/token.log",
-	"agents/alice/workspace/media/secret.db",
-}
-
-func mode(t *testing.T, p string) os.FileMode {
+func modeOf(t *testing.T, p string) fs.FileMode {
 	t.Helper()
 	fi, err := os.Lstat(p)
 	if err != nil {
@@ -105,114 +51,230 @@ func mode(t *testing.T, p string) os.FileMode {
 	return fi.Mode().Perm()
 }
 
-type logRec struct {
-	msgs []string
-}
+// recorder collects what Enforce logs, one line per call with its path.
+type recorder struct{ info, warn []string }
 
-func (l *logRec) log(msg string, fields map[string]any) {
-	if path, ok := fields["path"].(string); ok {
-		msg += " " + path
+func (r *recorder) logger() Logger {
+	line := func(msg string, f map[string]any) string {
+		if p, ok := f["path"].(string); ok {
+			return msg + " " + p
+		}
+		return msg
 	}
-	l.msgs = append(l.msgs, msg)
+	return Logger{
+		Info: func(msg string, f map[string]any) { r.info = append(r.info, line(msg, f)) },
+		Warn: func(msg string, f map[string]any) { r.warn = append(r.warn, line(msg, f)) },
+	}
 }
 
-func TestEnforceTightensSensitiveFilesAndDir(t *testing.T) {
-	dir, config := fixture(t)
-	var rec logRec
+// noExecutable makes the running executable unfindable, so a test's tree is
+// walked without it.
+func noExecutable(t *testing.T) {
+	t.Helper()
+	old := executable
+	executable = func() (string, error) { return "", errors.New("none") }
+	t.Cleanup(func() { executable = old })
+}
 
-	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
+// operatorConfig is a config for the data directory home whose areas all
+// differ, so each path's expected mode shows which area governed it: a group
+// may read the root, logs, agents and common areas, the secrets stay
+// owner-only, bin is the default 0700/0700 and media grants nothing to the
+// group.
+func operatorConfig(t *testing.T, home string) *config.Config {
+	t.Helper()
+	t.Setenv("CLAW_HOME", home)
+	cfg := config.DefaultConfig()
+	cfg.Security.Permissions = config.PermissionsConfig{
+		Root:    config.AreaPermissions{DirMode: "0750", FileMode: "0640"},
+		Secrets: config.AreaPermissions{DirMode: "0700", FileMode: "0600"},
+		Default: config.AreaPermissions{DirMode: "0710", FileMode: "0604"},
+		Logs:    config.AreaPermissions{DirMode: "0750", FileMode: "0640"},
+		Agents:  config.AreaPermissions{DirMode: "0770", FileMode: "0660"},
+		Media:   config.AreaPermissions{DirMode: "0700", FileMode: "0600"},
+		Common:  config.AreaPermissions{DirMode: "0775", FileMode: "0664"},
+		Backup:  config.AreaPermissions{DirMode: "0700", FileMode: "0640"},
+	}
+	return cfg
+}
+
+// tree is the fixture: each path, its mode before Enforce, and the mode
+// Enforce must leave it with under operatorConfig.
+var tree = []struct {
+	rel        string
+	before     fs.FileMode
+	want       fs.FileMode
+	whyChanged string
+}{
+	{"config.json", 0o600, 0o640, "root file widened"},
+	{"credentials.json", 0o644, 0o600, "a secret directly in the data dir"},
+	{"notes.txt", 0o755, 0o640, "root file loses its exec bit"},
+	{"internal/", 0o755, 0o700, "secrets folder"},
+	{"internal/gateway.db", 0o644, 0o600, "everything in internal/ is a secret"},
+	{"internal/nested/", 0o755, 0o700, "whole subtree"},
+	{"internal/nested/state.txt", 0o644, 0o600, "whole subtree"},
+	{"tls/", 0o755, 0o700, "secrets folder"},
+	{"tls/server.crt", 0o644, 0o600, "every file in tls/"},
+	{"tokens/", 0o711, 0o700, "secrets folder"},
+	{"tokens/webui", 0o400, 0o600, "secret widened to the secrets mode"},
+	{"bin/", 0o755, 0o700, "bin folder"},
+	{"bin/backup.sh", 0o755, 0o700, "bin keeps exec, loses group/other"},
+	{"bin/get-token", 0o600, 0o700, "bin wins over a secret name"},
+	{"logs/", 0o700, 0o750, "logs folder widened (logs are walked)"},
+	{"logs/claw.log", 0o600, 0o640, "log widened"},
+	{"logs/dumps/", 0o755, 0o750, "logs subtree"},
+	{"logs/token.log", 0o644, 0o640, "a secret name does not override logs"},
+	{"media/", 0o755, 0o700, "media folder tightened (media is walked)"},
+	{"media/a.png", 0o644, 0o600, "media file"},
+	{"media/secret-plan.db", 0o600, 0o600, "a secret or database name does not override media"},
+	{"agents/", 0o700, 0o770, "agents folder"},
+	{"agents/alice/sessions/archive.db", 0o600, 0o660, "agent database follows agents"},
+	{"agents/alice/sessions/archive.db-wal", 0o644, 0o660, "side file follows agents"},
+	{"agents/alice/notes.md", 0o700, 0o660, "agent file loses exec"},
+	{"agents/alice/API_TOKEN", 0o644, 0o600, "secret name inside agents"},
+	{"agents/alice/fusion-tokens.db", 0o660, 0o600, "secret-named database"},
+	{"common/", 0o700, 0o775, "common folder"},
+	{"common/shared.txt", 0o600, 0o664, "common file"},
+	{"backup/", 0o755, 0o700, "backup folder"},
+	{"backup/claw-backup.tar.gz", 0o600, 0o640, "backup file"},
+	{"skills/", 0o755, 0o710, "default folder"},
+	{"skills/demo/run.sh", 0o755, 0o604, "default file loses exec"},
+	{"cards/x.db", 0o644, 0o600, "a database outside the agents is a secret"},
+}
+
+// TestEnforceExactModes: every folder and file is set to exactly its area's
+// mode, widened or tightened, and files outside bin/ lose execute bits.
+func TestEnforceExactModes(t *testing.T) {
+	noExecutable(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range tree {
+		place(t, home, e.rel, e.before)
+	}
+	// A symlink in a walked tree, to a file outside the data dir: neither it
+	// nor its target is changed.
+	outside := place(t, t.TempDir(), "target.txt", 0o644)
+	link := filepath.Join(home, "logs", "link.log")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := operatorConfig(t, home)
+
+	var rec recorder
+	if err := Enforce(home, PolicyFor(cfg), rec.logger()); err != nil {
 		t.Fatalf("Enforce: %v", err)
 	}
-
-	if got := mode(t, dir); got != 0o700 {
-		t.Errorf("data dir mode = %04o, want 0700", got)
+	if got := modeOf(t, home); got != 0o750 {
+		t.Errorf("data dir = %04o, want root dir_mode 0750", got)
 	}
-	for _, rel := range sensitiveFiles {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if got := mode(t, p); got != 0o600 {
-			t.Errorf("%s mode = %04o, want 0600", rel, got)
+	for _, e := range tree {
+		if got := modeOf(t, filepath.Join(home, filepath.FromSlash(strings.TrimSuffix(e.rel, "/")))); got != e.want {
+			t.Errorf("%s = %04o, want %04o (%s)", e.rel, got, e.want, e.whyChanged)
 		}
 	}
-	for _, rel := range harmlessFiles {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if got := mode(t, p); got != 0o644 {
-			t.Errorf("%s mode = %04o, want untouched 0644", rel, got)
+	if got := modeOf(t, outside); got != 0o644 {
+		t.Errorf("symlink target = %04o, want 0644 untouched", got)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("symlink replaced or removed: %v", err)
+	}
+	joined := strings.Join(rec.info, "\n")
+	for _, want := range []string{"set file permissions " + filepath.Join(home, "logs", "claw.log"), "set file permissions " + home} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("INFO log lacks %q:\n%s", want, joined)
 		}
 	}
-	for _, rel := range walkedDirs {
-		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o700 {
-			t.Errorf("dir %s mode = %04o, want 0700", rel, got)
-		}
-	}
-	for _, rel := range skippedDirs {
-		if got := mode(t, filepath.Join(dir, filepath.FromSlash(rel))); got != 0o755 {
-			t.Errorf("skipped dir %s mode = %04o, want untouched 0755", rel, got)
-		}
-	}
-	// The symlink's target is harmless and must not have been chmod'ed via the link.
-	if got := mode(t, filepath.Join(dir, "agents/alice/notes.md")); got != 0o644 {
-		t.Errorf("symlink target mode = %04o, want 0644: the walk followed link.db", got)
+	if len(rec.warn) != 0 {
+		t.Errorf("unexpected WARN: %v", rec.warn)
 	}
 
-	wantLogged := len(sensitiveFiles) + len(walkedDirs) + 1 // files, subdirectories and the data directory
-	if len(rec.msgs) != wantLogged {
-		t.Errorf("logged %d changes, want %d:\n%s", len(rec.msgs), wantLogged, strings.Join(rec.msgs, "\n"))
-	}
-
-	// Second run: nothing left to do, nothing logged.
-	rec.msgs = nil
-	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
+	// A second run finds nothing to change.
+	rec = recorder{}
+	if err := Enforce(home, PolicyFor(cfg), rec.logger()); err != nil {
 		t.Fatalf("second Enforce: %v", err)
 	}
-	if len(rec.msgs) != 0 {
-		t.Errorf("second run logged %d changes, want 0: %v", len(rec.msgs), rec.msgs)
+	if len(rec.info) != 0 {
+		t.Errorf("second Enforce changed: %v", rec.info)
 	}
 }
 
-func TestEnforceRefusesLooseConfig(t *testing.T) {
-	for _, m := range []os.FileMode{0o644, 0o640, 0o604, 0o660} {
-		t.Run(m.String(), func(t *testing.T) {
-			dir, config := fixture(t)
-			if err := os.Chmod(config, m); err != nil {
+// TestEnforceLeavesRunningExecutable: the running binary keeps its mode
+// wherever it lies; outside bin/ a WARN names it, inside bin/ nothing is
+// said.
+func TestEnforceLeavesRunningExecutable(t *testing.T) {
+	for _, c := range []struct {
+		rel      string
+		wantWarn bool
+	}{
+		{"claw", true},
+		{"bin/claw", false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			home := t.TempDir()
+			exe := place(t, home, c.rel, 0o755)
+			old := executable
+			executable = func() (string, error) { return exe, nil }
+			t.Cleanup(func() { executable = old })
+
+			var rec recorder
+			if err := Enforce(home, PolicyFor(operatorConfig(t, home)), rec.logger()); err != nil {
+				t.Fatalf("Enforce: %v", err)
+			}
+			if got := modeOf(t, exe); got != 0o755 {
+				t.Errorf("executable = %04o, want 0755 untouched", got)
+			}
+			warned := strings.Contains(strings.Join(rec.warn, "\n"), "running executable")
+			if warned != c.wantWarn {
+				t.Errorf("warned = %v, want %v (%v)", warned, c.wantWarn, rec.warn)
+			}
+			findings, err := Check(home, "", PolicyFor(operatorConfig(t, home)))
+			if err != nil {
 				t.Fatal(err)
 			}
-			err := Enforce(dir, config, Policy{}, nil)
-			if err == nil {
-				t.Fatalf("Enforce accepted a %04o config", m)
-			}
-			want := "chmod 600 " + config
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error %q does not carry the fix %q", err, want)
-			}
-			// Refusal happens before the walk: nothing else was changed.
-			if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
-				t.Errorf("gateway.db mode = %04o after a refused start, want 0644", got)
-			}
-			// The config itself is never chmod'ed on the operator's behalf.
-			if got := mode(t, config); got != m {
-				t.Errorf("config mode = %04o, want %04o left alone", got, m)
+			for _, f := range findings {
+				if f.Path == exe {
+					t.Errorf("Check reported the running executable: %+v", f)
+				}
 			}
 		})
 	}
 }
 
-func TestEnforceMissingConfigAndDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "fresh")
-	if err := Enforce(dir, filepath.Join(dir, "config.json"), Policy{}, nil); err != nil {
-		t.Fatalf("Enforce on a fresh install: %v", err)
+// TestEnforceCreatesDataDir: a missing data directory is created with exactly
+// the root folder mode, whatever the umask.
+func TestEnforceCreatesDataDir(t *testing.T) {
+	noExecutable(t)
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	home := filepath.Join(t.TempDir(), "claw")
+	cfg := operatorConfig(t, home)
+	if err := Enforce(home, PolicyFor(cfg), Logger{}); err != nil {
+		t.Fatalf("Enforce: %v", err)
 	}
-	if got := mode(t, dir); got != 0o700 {
-		t.Errorf("created data dir mode = %04o, want 0700", got)
+	if got := modeOf(t, home); got != 0o750 {
+		t.Errorf("created data dir = %04o, want 0750", got)
 	}
 }
 
+// TestCheckReportsWithoutChanging: Check lists every path more open than
+// its configured mode, including a config file outside the data dir, leaves
+// out paths tighter than configured, and changes nothing.
 func TestCheckReportsWithoutChanging(t *testing.T) {
-	dir, config := fixture(t)
-	if err := os.Chmod(config, 0o644); err != nil {
+	noExecutable(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	place(t, home, "logs/claw.log", 0o600)     // tighter than 0640: not reported
+	place(t, home, "internal/audit.db", 0o644) // looser than 0600: reported
+	place(t, home, "logs/", 0o750)
+	place(t, home, "internal/", 0o700)
+	elsewhere := place(t, t.TempDir(), "config.json", 0o644) // looser than 0640
+	cfg := operatorConfig(t, home)
 
-	findings, err := Check(dir, config, Policy{})
+	findings, err := Check(home, elsewhere, PolicyFor(cfg))
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -220,166 +282,326 @@ func TestCheckReportsWithoutChanging(t *testing.T) {
 	for _, f := range findings {
 		got[f.Path] = f
 	}
-
-	want := make([]string, 0, 2+len(sensitiveFiles)+len(walkedDirs))
-	want = append(want, dir, config)
-	for _, rel := range append(append([]string{}, sensitiveFiles...), walkedDirs...) {
-		want = append(want, filepath.Join(dir, filepath.FromSlash(rel)))
-	}
-	for _, p := range want {
-		f, ok := got[p]
-		if !ok {
-			t.Errorf("missing finding for %s", p)
-			continue
+	for path, want := range map[string]Finding{
+		home:      {Mode: 0o755, Want: 0o750},
+		elsewhere: {Mode: 0o644, Want: 0o640},
+		filepath.Join(home, "internal", "audit.db"): {Mode: 0o644, Want: 0o600},
+	} {
+		f, ok := got[path]
+		if !ok || f.Mode != want.Mode || f.Want != want.Want {
+			t.Errorf("finding for %s = %+v (present %v), want %04o→%04o", path, f, ok, want.Mode, want.Want)
 		}
-		if f.Want&0o077 != 0 {
-			t.Errorf("%s: Want %04o still grants group/other", p, f.Want)
-		}
-		delete(got, p)
 	}
-	for p := range got {
-		t.Errorf("unexpected finding %s", p)
+	if len(findings) != 3 {
+		t.Errorf("got %d findings, want 3: %+v", len(findings), findings)
 	}
-
-	// Report-only: every mode is as the fixture left it.
-	if got := mode(t, dir); got != 0o755 {
-		t.Errorf("Check changed the data dir to %04o", got)
-	}
-	if got := mode(t, filepath.Join(dir, "internal/gateway.db")); got != 0o644 {
-		t.Errorf("Check changed gateway.db to %04o", got)
-	}
-	if got := mode(t, filepath.Join(dir, "agents")); got != 0o755 {
-		t.Errorf("Check changed agents/ to %04o", got)
+	if modeOf(t, home) != 0o755 || modeOf(t, filepath.Join(home, "internal", "audit.db")) != 0o644 {
+		t.Error("Check changed a mode")
 	}
 }
 
-func TestCheckCleanInstall(t *testing.T) {
-	dir, config := fixture(t)
-	if err := Enforce(dir, config, Policy{}, nil); err != nil {
+// TestChmodSafeRefusesSwappedEntry: an entry replaced between the walk and
+// the change, by a symlink or by another file, is not changed, and neither is
+// what replaced it.
+func TestChmodSafeRefusesSwappedEntry(t *testing.T) {
+	dir := t.TempDir()
+	outside := place(t, t.TempDir(), "victim", 0o600)
+
+	p := place(t, dir, "a.txt", 0o600)
+	walked, err := os.Lstat(p)
+	if err != nil {
 		t.Fatal(err)
 	}
-	findings, err := Check(dir, config, Policy{})
-	if err != nil {
-		t.Fatalf("Check: %v", err)
+	if err = os.Remove(p); err != nil {
+		t.Fatal(err)
 	}
-	if len(findings) != 0 {
-		t.Errorf("Check after Enforce found %d offenders: %+v", len(findings), findings)
+	if err = os.Symlink(outside, p); err != nil {
+		t.Fatal(err)
+	}
+	if err = chmodSafe(p, 0o666, walked); err == nil {
+		t.Error("chmod through a swapped-in symlink was accepted")
+	}
+	if got := modeOf(t, outside); got != 0o600 {
+		t.Errorf("file outside the data dir changed to %04o", got)
+	}
+
+	q := place(t, dir, "b.txt", 0o600)
+	walked, err = os.Lstat(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := place(t, dir, "other.txt", 0o600)
+	if err = os.Rename(other, q); err != nil {
+		t.Fatal(err)
+	}
+	if err = chmodSafe(q, 0o666, walked); !errors.Is(err, errReplaced) {
+		t.Errorf("chmod of a replaced file = %v, want errReplaced", err)
+	}
+	if got := modeOf(t, q); got != 0o600 {
+		t.Errorf("replacement changed to %04o", got)
+	}
+
+	d := place(t, dir, "sub/", 0o700)
+	walked, err = os.Lstat(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = chmodSafe(d, 0o750, walked); err != nil {
+		t.Fatalf("chmod of an unchanged directory: %v", err)
+	}
+	if got := modeOf(t, d); got != 0o750 {
+		t.Errorf("directory = %04o, want 0750", got)
+	}
+}
+
+// TestEnforceSkipsHardLinks: a file with a second hard link (which may lie
+// outside the data dir) keeps its mode, and a WARN names it.
+func TestEnforceSkipsHardLinks(t *testing.T) {
+	noExecutable(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	outside := place(t, t.TempDir(), "shadow", 0o644)
+	linked := filepath.Join(home, "logs", "linked.log")
+	place(t, home, "logs/", 0o750)
+	if err := os.Link(outside, linked); err != nil {
+		t.Skipf("hard links unavailable here: %v", err)
+	}
+	var rec recorder
+	if err := Enforce(home, PolicyFor(operatorConfig(t, home)), rec.logger()); err != nil {
+		t.Fatalf("Enforce: %v", err)
+	}
+	if got := modeOf(t, outside); got != 0o644 {
+		t.Errorf("hard-linked file = %04o, want 0644 untouched", got)
+	}
+	if !strings.Contains(strings.Join(rec.warn, "\n"), "hard link; its mode is left alone "+linked) {
+		t.Errorf("no WARN naming %s: %v", linked, rec.warn)
+	}
+}
+
+// TestEnforceSecretsBeforeCap: with the entry cap used up by a large agents
+// tree, the secrets folders and the files directly in the data dir are still
+// set.
+func TestEnforceSecretsBeforeCap(t *testing.T) {
+	noExecutable(t)
+	home := t.TempDir()
+	for i := range 20 {
+		place(t, home, filepath.Join("agents", "alice", strings.Repeat("x", i+1)), 0o644)
+	}
+	secret := place(t, home, "tokens/webui", 0o644)
+	key := place(t, home, "tls/server.key", 0o644)
+	creds := place(t, home, "credentials.json", 0o644)
+	old := walkLimit
+	walkLimit = 5
+	t.Cleanup(func() { walkLimit = old })
+	if err := Enforce(home, PolicyFor(operatorConfig(t, home)), Logger{}); err != nil {
+		t.Fatalf("Enforce: %v", err)
+	}
+	for _, p := range []string{secret, key, creds} {
+		if got := modeOf(t, p); got != 0o600 {
+			t.Errorf("%s = %04o, want 0600 despite the cap", p, got)
+		}
+	}
+}
+
+// TestEnforceSymlinkedDataDir: a data directory that is a symbolic link is
+// walked at its target, with the areas matched by the configured spelling.
+func TestEnforceSymlinkedDataDir(t *testing.T) {
+	noExecutable(t)
+	target := t.TempDir()
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(t.TempDir(), "claw")
+	if err := os.Symlink(target, home); err != nil {
+		t.Fatal(err)
+	}
+	logFile := place(t, target, "logs/claw.log", 0o600)
+	secret := place(t, target, "internal/gateway.db", 0o644)
+	if err := Enforce(home, PolicyFor(operatorConfig(t, home)), Logger{}); err != nil {
+		t.Fatalf("Enforce: %v", err)
+	}
+	for p, want := range map[string]fs.FileMode{target: 0o750, logFile: 0o640, secret: 0o600} {
+		if got := modeOf(t, p); got != want {
+			t.Errorf("%s = %04o, want %04o", p, got, want)
+		}
+	}
+	if fi, err := os.Lstat(home); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("the data dir link itself was replaced")
 	}
 }
 
 func TestWalkCap(t *testing.T) {
-	dir, config := fixture(t)
+	noExecutable(t)
+	home := t.TempDir()
+	for _, e := range tree {
+		place(t, home, e.rel, e.before)
+	}
 	old := walkLimit
 	walkLimit = 3
 	t.Cleanup(func() { walkLimit = old })
+	cfg := operatorConfig(t, home)
 
-	findings, err := Check(dir, config, Policy{})
+	findings, err := Check(home, "", PolicyFor(cfg))
 	if !errors.Is(err, ErrTruncated) {
 		t.Fatalf("Check err = %v, want ErrTruncated", err)
 	}
-	// dir and config are reported regardless; the walk itself stopped early.
-	if len(findings) < 1 || len(findings) > 3+1 {
-		t.Errorf("got %d findings under a cap of 3, want between 1 and 4", len(findings))
+	walkLimit = old
+	all, err := Check(home, "", PolicyFor(cfg))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	var rec logRec
-	if err := Enforce(dir, config, Policy{}, rec.log); err != nil {
+	if len(findings) >= len(all) {
+		t.Errorf("got %d findings under a cap of 3, the same as without it (%d)", len(findings), len(all))
+	}
+	walkLimit = 3
+	var rec recorder
+	if err := Enforce(home, PolicyFor(cfg), rec.logger()); err != nil {
 		t.Fatalf("Enforce under cap: %v", err)
 	}
-	if !strings.Contains(strings.Join(rec.msgs, "\n"), "entry cap") {
-		t.Errorf("Enforce did not log the truncation: %v", rec.msgs)
+	if !strings.Contains(strings.Join(rec.warn, "\n"), "entry cap") {
+		t.Errorf("Enforce did not log the truncation: %v", rec.warn)
 	}
 }
 
-func TestEnsurePrivateFile(t *testing.T) {
+// TestCheckConfig: a config granting a bit the root file mode does not is
+// refused with the chmod to that mode; a tighter one is set to it; a symlink
+// is never changed; a missing one is fine.
+func TestCheckConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	fresh := filepath.Join(dir, "fresh.db")
-	if err := EnsurePrivateFile(fresh); err != nil {
-		t.Fatalf("fresh: %v", err)
+	loose := place(t, dir, "loose.json", 0o644)
+	err := CheckConfig(loose, 0o640, Logger{})
+	if err == nil || !strings.Contains(err.Error(), "chmod 640 "+loose) {
+		t.Errorf("loose: err = %v, want a refusal naming chmod 640", err)
 	}
-	if got := mode(t, fresh); got != 0o600 {
-		t.Errorf("fresh file mode = %04o, want 0600", got)
-	}
-	if fi, err := os.Stat(fresh); err != nil || fi.Size() != 0 {
-		t.Errorf("fresh file: size=%d err=%v, want an empty file", fi.Size(), err)
+	if got := modeOf(t, loose); got != 0o644 {
+		t.Errorf("loose config changed to %04o", got)
 	}
 
-	existing := filepath.Join(dir, "existing.db")
-	if err := os.WriteFile(existing, []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
+	ownerExec := place(t, dir, "exec.json", 0o700)
+	if err := CheckConfig(ownerExec, 0o600, Logger{}); err == nil {
+		t.Error("a config with a bit beyond the mode (owner exec) was accepted")
 	}
-	if err := os.Chmod(existing, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsurePrivateFile(existing); err != nil {
-		t.Fatalf("existing: %v", err)
-	}
-	if got := mode(t, existing); got != 0o600 {
-		t.Errorf("existing file mode = %04o, want 0600", got)
-	}
-	if data, err := os.ReadFile(existing); err != nil || string(data) != "payload" {
-		t.Errorf("existing file content = %q err=%v, want untouched payload", data, err)
-	}
-}
 
-// A symbolic link is refused: its target is neither created nor tightened.
-func TestEnsurePrivateFile_RefusesSymlink(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "elsewhere.db")
-	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	tight := place(t, dir, "tight.json", 0o600)
+	var rec recorder
+	if err := CheckConfig(tight, 0o640, rec.logger()); err != nil {
+		t.Fatalf("tight: %v", err)
 	}
-	if err := os.Chmod(target, 0o644); err != nil {
-		t.Fatal(err)
+	if got := modeOf(t, tight); got != 0o640 {
+		t.Errorf("tight config = %04o, want 0640", got)
 	}
-	link := filepath.Join(dir, "link.db")
+	if len(rec.info) != 1 {
+		t.Errorf("tight config change not logged once: %v", rec.info)
+	}
+
+	link := filepath.Join(dir, "link.json")
+	target := place(t, dir, "target.json", 0o600)
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsurePrivateFile(link); err == nil {
-		t.Fatal("a symbolic link must be refused")
+	if err := CheckConfig(link, 0o640, Logger{}); err != nil {
+		t.Fatalf("symlink: %v", err)
 	}
-	if got := mode(t, target); got != 0o644 {
-		t.Errorf("the link's target was changed to %04o", got)
+	if got := modeOf(t, target); got != 0o600 {
+		t.Errorf("config changed through a symlink to %04o", got)
 	}
 
-	dangling := filepath.Join(dir, "dangling.db")
-	if err := os.Symlink(filepath.Join(dir, "missing.db"), dangling); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsurePrivateFile(dangling); err == nil {
-		t.Fatal("a dangling symbolic link must be refused")
-	}
-	if _, err := os.Lstat(filepath.Join(dir, "missing.db")); !os.IsNotExist(err) {
-		t.Error("a file was created through a dangling link")
+	if err := CheckConfig(filepath.Join(dir, "missing.json"), 0o600, Logger{}); err != nil {
+		t.Errorf("missing config: %v", err)
 	}
 }
 
-func TestIsSensitive(t *testing.T) {
-	cases := map[string]bool{
-		"internal/gateway.db":          true,
-		"internal/gateway.db-wal":      true,
-		"internal/gateway.db-shm":      true,
-		"x/y/z.sqlite":                 true,
-		"x/y/z.sqlite3":                true,
-		"x/y/z.sqlite-wal":             true,
-		"credentials.json":             true,
-		"deep/credentials.json":        true,
-		"internal/devices.json":        true,
-		"internal/deeper/devices.json": false,
-		"internal/notes.txt":           false,
-		"tokens/anything":              true,
-		"tokens/sub/anything":          true,
-		"tls/server.key":               true,
-		"tls/server.crt":               false,
-		"agents/alice/Secret-Notes":    true,
-		"agents/alice/api_token.txt":   true,
-		"agents/alice/notes.md":        false,
+// TestEnsureFileMode: a new file is created with exactly the mode whatever
+// the umask, an existing one is widened or narrowed to it, and a symlink is
+// refused.
+func TestEnsureFileMode(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	dir := t.TempDir()
+
+	fresh := filepath.Join(dir, "fresh.db")
+	if err := EnsureFileMode(fresh, 0o640); err != nil {
+		t.Fatalf("fresh: %v", err)
 	}
-	for rel, want := range cases {
-		if got := isSensitive(filepath.FromSlash(rel)); got != want {
-			t.Errorf("isSensitive(%q) = %v, want %v", rel, got, want)
+	if got := modeOf(t, fresh); got != 0o640 {
+		t.Errorf("fresh = %04o, want 0640", got)
+	}
+	for _, before := range []fs.FileMode{0o600, 0o666} {
+		p := place(t, dir, "existing.db", before)
+		if err := EnsureFileMode(p, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if got := modeOf(t, p); got != 0o640 {
+			t.Errorf("existing %04o = %04o, want 0640", before, got)
+		}
+	}
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(fresh, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureFileMode(link, 0o600); err == nil {
+		t.Error("a symlink was accepted")
+	}
+	if got := modeOf(t, fresh); got != 0o640 {
+		t.Errorf("symlink target changed to %04o", got)
+	}
+}
+
+// TestSecretModes: the process default starts at 0700/0600, follows
+// SetSecretModes, and EnsureSecretFile uses it.
+func TestSecretModes(t *testing.T) {
+	t.Cleanup(func() { SetSecretModes(config.Modes{Dir: 0o700, File: 0o600}) })
+	if got := SecretModes(); got != (config.Modes{Dir: 0o700, File: 0o600}) {
+		t.Fatalf("default = %v, want 0700/0600", got)
+	}
+	SetSecretModes(config.Modes{Dir: 0o750, File: 0o640})
+	p := filepath.Join(t.TempDir(), "store.db")
+	if err := EnsureSecretFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if got := modeOf(t, p); got != 0o640 {
+		t.Errorf("secret file = %04o, want 0640", got)
+	}
+	SetSecretModes(config.Modes{})
+	if got := SecretModes(); got != (config.Modes{Dir: 0o750, File: 0o640}) {
+		t.Errorf("zero modes changed the default to %v", got)
+	}
+}
+
+// TestPolicyFor: the policy carries the root, secrets and default modes and
+// one area per subtree, the agents area with its databases, bin flagged.
+func TestPolicyFor(t *testing.T) {
+	home := t.TempDir()
+	cfg := operatorConfig(t, home)
+	ws := filepath.Join(t.TempDir(), "bob")
+	cfg.Agents.List = []config.AgentConfig{{ID: "bob", Workspace: ws}}
+	p := PolicyFor(cfg)
+	if p.Root != (config.Modes{Dir: 0o750, File: 0o640}) || p.Secrets != (config.Modes{Dir: 0o700, File: 0o600}) ||
+		p.Default != (config.Modes{Dir: 0o710, File: 0o604}) {
+		t.Errorf("root/secrets/default = %v %v %v", p.Root, p.Secrets, p.Default)
+	}
+	byRoot := map[string]Area{}
+	for _, a := range p.Areas {
+		byRoot[a.Root] = a
+	}
+	for root, want := range map[string]Area{
+		filepath.Join(home, "logs"):     {Modes: config.Modes{Dir: 0o750, File: 0o640}, Plain: true},
+		filepath.Join(home, "media"):    {Modes: config.Modes{Dir: 0o700, File: 0o600}, Plain: true},
+		filepath.Join(home, "common"):   {Modes: config.Modes{Dir: 0o775, File: 0o664}},
+		filepath.Join(home, "backup"):   {Modes: config.Modes{Dir: 0o700, File: 0o640}},
+		filepath.Join(home, "bin"):      {Modes: config.Modes{Dir: 0o700, File: 0o700}, Bin: true},
+		filepath.Join(home, "agents"):   {Modes: config.Modes{Dir: 0o770, File: 0o660}, Databases: true},
+		ws:                              {Modes: config.Modes{Dir: 0o770, File: 0o660}, Databases: true},
+		filepath.Join(home, "internal"): {Modes: config.Modes{Dir: 0o700, File: 0o600}, Secret: true},
+		filepath.Join(home, "tls"):      {Modes: config.Modes{Dir: 0o700, File: 0o600}, Secret: true},
+		filepath.Join(home, "tokens"):   {Modes: config.Modes{Dir: 0o700, File: 0o600}, Secret: true},
+	} {
+		want.Root = root
+		if got, ok := byRoot[root]; !ok || got != want {
+			t.Errorf("area %s = %+v (present %v), want %+v", root, got, ok, want)
 		}
 	}
 }

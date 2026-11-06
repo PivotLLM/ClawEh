@@ -1,50 +1,26 @@
 package gateway
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 )
 
-// TestEnforceDataDirPerms_LooseConfigAbortsStartup: a CLAW_HOME whose
-// config.json other users can read refuses to start and names the chmod.
-func TestEnforceDataDirPerms_LooseConfigAbortsStartup(t *testing.T) {
-	home := t.TempDir()
-	configPath := filepath.Join(home, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(configPath, 0o644); err != nil { // umask-proof
-		t.Fatal(err)
-	}
-
-	err := enforceDataDirPerms(home, configPath, perms.Policy{})
-	if err == nil {
-		t.Fatal("startup proceeded with a world-readable config.json")
-	}
-	for _, want := range []string{"startup aborted", "chmod 600 " + configPath} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q lacks %q", err, want)
-		}
-	}
-}
-
-// TestEnforceDataDirPerms_PrivateConfigStarts: a private config passes, and
-// the data directory itself is tightened to 0700 on the way.
-func TestEnforceDataDirPerms_PrivateConfigStarts(t *testing.T) {
+// TestEnforceDataDirPerms_SetsDataDirMode: the data directory itself is set
+// to exactly the root folder mode, here narrowing a 0755 one to 0700.
+func TestEnforceDataDirPerms_SetsDataDirMode(t *testing.T) {
 	home := t.TempDir()
 	if err := os.Chmod(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(home, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := enforceDataDirPerms(home, configPath, perms.Policy{}); err != nil {
+	cfg := config.DefaultConfig()
+	if err := enforceDataDirPerms(home, perms.PolicyFor(cfg)); err != nil {
 		t.Fatalf("enforceDataDirPerms: %v", err)
 	}
 	fi, err := os.Stat(home)
@@ -69,21 +45,112 @@ func writeBootConfig(t *testing.T, home, body string, mode os.FileMode) string {
 	return path
 }
 
-// TestOpenBootConfig_LooseConfigRefusedBeforeRead: a config other users can
-// read is refused before it is parsed, so even an unreadable one gets the
-// chmod, not a parse error.
-func TestOpenBootConfig_LooseConfigRefusedBeforeRead(t *testing.T) {
+// TestOpenBootConfig_LooseConfigRefused: a config granting bits the root file
+// mode does not is refused with the chmod to the configured mode, and the
+// file is not rewritten (the missing permission keys are not added).
+func TestOpenBootConfig_LooseConfigRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAW_HOME", home)
-	configPath := writeBootConfig(t, home, `{not json`, 0o644)
+	body := `{"security":{"permissions":{"root":{"dir_mode":"0700","file_mode":"0640"}}}}`
+	configPath := writeBootConfig(t, home, body, 0o644)
 	store, _, _, err := openBootConfig(home, configPath)
 	if err == nil {
 		t.Fatalf("startup proceeded with a world-readable config.json (%s)", store.Path())
 	}
-	for _, want := range []string{"startup aborted", "chmod 600 " + configPath} {
+	for _, want := range []string{"startup aborted", "chmod 640 " + configPath} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
+	}
+	if got, rerr := os.ReadFile(configPath); rerr != nil || string(got) != body {
+		t.Errorf("config.json = %q (%v), want it untouched", got, rerr)
+	}
+}
+
+// TestOpenBootConfig_TighterConfigWidened: a config tighter than the root
+// file mode is set to exactly that mode.
+func TestOpenBootConfig_TighterConfigWidened(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAW_HOME", home)
+	configPath := writeBootConfig(t, home,
+		`{"security":{"permissions":{"root":{"dir_mode":"0750","file_mode":"0640"}}}}`, 0o600)
+	if _, _, _, err := openBootConfig(home, configPath); err != nil {
+		t.Fatalf("openBootConfig: %v", err)
+	}
+	for path, want := range map[string]os.FileMode{configPath: 0o640, home: 0o750} {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %04o, want %04o", path, got, want)
+		}
+	}
+}
+
+// TestOpenBootConfig_WritesPermissionDefaults: a config without the full
+// security.permissions block gets every key written at start, with the old
+// top-level pair ignored and left out of the file, and a second start writes
+// nothing.
+func TestOpenBootConfig_WritesPermissionDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAW_HOME", home)
+	configPath := writeBootConfig(t, home,
+		`{"default_config":true,"security":{"permissions":{"dir_mode":"0750","logs":{"file_mode":"0640"}}}}`, 0o600)
+	if _, _, _, err := openBootConfig(home, configPath); err != nil {
+		t.Fatalf("openBootConfig: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		DefaultConfig bool `json:"default_config"`
+		Security      struct {
+			Permissions map[string]any `json:"permissions"`
+		} `json:"security"`
+	}
+	if err = json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !doc.DefaultConfig {
+		t.Error("default_config cleared by the defaults write; the setup wizard would not open")
+	}
+	p := doc.Security.Permissions
+	for _, gone := range []string{"dir_mode", "file_mode"} {
+		if _, ok := p[gone]; ok {
+			t.Errorf("old top-level %s still in the file", gone)
+		}
+	}
+	want := map[string][2]string{
+		"root": {"0700", "0600"}, "secrets": {"0700", "0600"}, "bin": {"0700", "0700"},
+		"default": {"0700", "0600"}, "logs": {"0700", "0640"}, "agents": {"0700", "0600"},
+		"media": {"0700", "0600"}, "common": {"0700", "0600"}, "backup": {"0700", "0600"},
+	}
+	for area, modes := range want {
+		got, ok := p[area].(map[string]any)
+		if !ok || got["dir_mode"] != modes[0] || got["file_mode"] != modes[1] {
+			t.Errorf("%s = %v, want dir_mode %s file_mode %s", area, got, modes[0], modes[1])
+		}
+	}
+
+	before, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _, _, err := openBootConfig(home, configPath)
+	if err != nil {
+		t.Fatalf("second openBootConfig: %v", err)
+	}
+	if added, dropped := store.Current().PermissionsAdded(); len(added)+len(dropped) != 0 {
+		t.Errorf("second start found keys to add or drop: %v %v", added, dropped)
+	}
+	after, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Error("second start rewrote config.json")
 	}
 }
 
@@ -129,7 +196,7 @@ func TestOpenBootConfig_InvalidModeStops(t *testing.T) {
 	if err := os.Chmod(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configPath := writeBootConfig(t, home, `{"security":{"permissions":{"logs":{"file_mode":"0666"}}}}`, 0o600)
+	configPath := writeBootConfig(t, home, `{"security":{"permissions":{"logs":{"file_mode":"4640"}}}}`, 0o600)
 	store, _, _, err := openBootConfig(home, configPath)
 	if err == nil {
 		t.Fatalf("startup proceeded with an invalid mode (%s)", store.Path())

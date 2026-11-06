@@ -13,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -194,7 +195,7 @@ func (m *Manager) save() error {
 		return err
 	}
 
-	if err := fileutil.WriteFileAtomic(m.storePath, data, 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(m.storePath, data, perms.SecretModes().File); err != nil {
 		logger.WarnCF("message", "Failed to write message-token store",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		alertTokenStoreNotWritten(m.storePath, m.agentID, "token changes are lost on restart", err)

@@ -56,7 +56,7 @@ func listDevices(t *testing.T, mux *http.ServeMux) []pairedDeviceView {
 func TestDeviceUser_RoundTrip(t *testing.T) {
 	h := NewHandler(setupTestEnv(t))
 	credsPath := admin.Path(t.TempDir())
-	if err := admin.Write(credsPath, "bob", "a long enough password"); err != nil {
+	if err := admin.Write(credsPath, "bob", "a long enough password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	h.SetAuth(middleware.NewAuthStore(credsPath))
@@ -128,7 +128,7 @@ func TestDeviceList_NoAdminAccountNoDefaultUser(t *testing.T) {
 func TestDeviceList_OperatorNameIsDefaultUser(t *testing.T) {
 	h := NewHandler(setupTestEnv(t))
 	credsPath := admin.Path(t.TempDir())
-	if err := admin.Write(credsPath, "bob", "a long enough password"); err != nil {
+	if err := admin.Write(credsPath, "bob", "a long enough password", admin.DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	h.SetAuth(middleware.NewAuthStore(credsPath))

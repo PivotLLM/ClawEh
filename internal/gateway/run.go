@@ -137,27 +137,33 @@ func gatewayCmd(debug bool) error {
 	return run.loop(ctx)
 }
 
-// openBootConfig refuses a config file other users can read, opens the config
-// store and builds the runtime copy the gateway starts on, then holds the data
-// directory to the permission modes that config sets. The store is the live
-// configuration from here on, shared with the WebUI API so a save through it
-// and the gateway's own reads never disagree. The runtime works on a pruned
-// private copy; the store keeps the full on-disk config so invalid entries can
-// be repaired through the WebUI. References to models that no longer exist
-// are removed from the file.
+// openBootConfig opens the config store, refuses a config file more open than
+// security.permissions.root.file_mode allows (a tighter one is set to it),
+// writes any security.permissions key the file lacks, builds the runtime copy
+// the gateway starts on, then holds the data directory to the permission
+// modes that config sets. The store is the live configuration from here on,
+// shared with the WebUI API so a save through it and the gateway's own reads
+// never disagree. The runtime works on a pruned private copy; the store keeps
+// the full on-disk config so invalid entries can be repaired through the
+// WebUI. References to models that no longer exist are removed from the file.
 func openBootConfig(baseDir, configPath string) (*config.Store, *config.Config, modelRefPrune, error) {
-	if err := perms.CheckConfig(configPath); err != nil {
-		return nil, nil, modelRefPrune{}, fmt.Errorf("startup aborted: %w", err)
-	}
 	store, err := openConfigStore(configPath)
 	if err != nil {
 		return nil, nil, modelRefPrune{}, fmt.Errorf("error loading config: %w", err)
 	}
+	// Before anything writes the file: a save would replace a loose file
+	// with a correct one and hide that something else changed it.
+	if err = perms.CheckConfig(configPath, store.Current().PermissionModes(config.AreaRoot).File, permsLogger()); err != nil {
+		return nil, nil, modelRefPrune{}, fmt.Errorf("startup aborted: %w", err)
+	}
+	savePermissionDefaults(store)
 	cfg, dangling, err := runtimeConfig(store)
 	if err != nil {
 		return nil, nil, modelRefPrune{}, fmt.Errorf("error loading config: %w", err)
 	}
-	if err := enforceDataDirPerms(baseDir, configPath, perms.PolicyFor(cfg)); err != nil {
+	warnOtherAccess(cfg)
+	perms.SetSecretModes(cfg.PermissionModes(config.AreaSecrets))
+	if err := enforceDataDirPerms(baseDir, perms.PolicyFor(cfg)); err != nil {
 		return nil, nil, modelRefPrune{}, err
 	}
 	return store, cfg, dangling, nil

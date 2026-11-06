@@ -179,6 +179,38 @@ func TestLoadConfig_LooseSecretFileIsRefusedWithChmodFix(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_SecretFileFollowsSecretsMode: a "file:" reference may grant
+// what security.permissions.secrets.file_mode grants, and no more; the
+// refusal names the chmod to that mode.
+func TestLoadConfig_SecretFileFollowsSecretsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not checked on windows")
+	}
+	keyFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(keyFile, []byte("tok"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyFile, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"security": {"permissions": {"secrets": {"dir_mode": "0750", "file_mode": "0640"}}},
+		"channels": {"telegram": [{"id": "b1", "token": "file:` + keyFile + `"}]}}`
+	cfg, err := LoadConfig(writeSecretConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig at the secrets mode: %v", err)
+	}
+	if got := cfg.Channels.Telegram[0].Token; got != "tok" {
+		t.Errorf("token = %q, want tok", got)
+	}
+	if err = os.Chmod(keyFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadConfig(writeSecretConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "chmod 640 "+keyFile) {
+		t.Fatalf("LoadConfig = %v, want a refusal naming chmod 640", err)
+	}
+}
+
 func TestLoadConfig_FileReferenceMustBeAbsolute(t *testing.T) {
 	p := writeSecretConfig(t, `{"channels": {"discord": {"token": "file:relative/token"}}}`)
 	if _, err := LoadConfig(p); err == nil || !strings.Contains(err.Error(), "absolute") {
@@ -249,7 +281,7 @@ func TestProbePass_PreservesLargeIntegers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = resolveSecretRefs(doc); err != nil {
+	if _, err = resolveSecretRefs(doc, DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	out, err := json.Marshal(doc)

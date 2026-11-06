@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	_ "github.com/PivotLLM/ClawEh/channels/device"
@@ -144,14 +145,55 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 }
 
 // enforceDataDirPerms holds CLAW_HOME to policy (the configured modes) before
-// anything else in it is read: the directory, its folders and its
-// secret-bearing files are tightened, and a config file other users can read
-// is a refusal to start, with the chmod that fixes it.
-func enforceDataDirPerms(baseDir, configPath string, policy perms.Policy) error {
-	if err := perms.Enforce(baseDir, configPath, policy, func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) }); err != nil {
+// anything else in it is read: the directory, its folders and its files are
+// set to exactly their area's modes (perms.Enforce).
+func enforceDataDirPerms(baseDir string, policy perms.Policy) error {
+	if err := perms.Enforce(baseDir, policy, permsLogger()); err != nil {
 		return fmt.Errorf("startup aborted: %w", err)
 	}
 	return nil
+}
+
+// permsLogger routes the perms package's changes to INFO and its failures to
+// WARN.
+func permsLogger() perms.Logger {
+	return perms.Logger{
+		Info: func(msg string, f map[string]any) { logger.InfoCF("perms", msg, f) },
+		Warn: func(msg string, f map[string]any) { logger.WarnCF("perms", msg, f) },
+	}
+}
+
+// savePermissionDefaults writes the security.permissions block when
+// config.json lacks keys of it (filled with their defaults at load) or holds
+// keys the config does not have, logging one INFO line naming them. A failed
+// write is logged at WARN; the gateway runs on the completed config either
+// way.
+func savePermissionDefaults(store *config.Store) {
+	added, dropped, err := store.SavePermissionDefaults()
+	if err != nil {
+		logger.WarnCF("perms", "could not write the security.permissions defaults to the config file",
+			map[string]any{"path": store.Path(), "error": err.Error()})
+		return
+	}
+	if len(added) == 0 && len(dropped) == 0 {
+		return
+	}
+	fields := map[string]any{"path": store.Path()}
+	if len(added) > 0 {
+		fields["added"] = strings.Join(added, ", ")
+	}
+	if len(dropped) > 0 {
+		fields["removed"] = strings.Join(dropped, ", ")
+	}
+	logger.InfoCF("perms", "wrote security.permissions defaults to the config file", fields)
+}
+
+// warnOtherAccess logs one WARN per configured mode that gives other users
+// access; Check Up marks the same keys.
+func warnOtherAccess(cfg *config.Config) {
+	for _, key := range cfg.Security.Permissions.OtherAccess() {
+		logger.WarnCF("perms", "a configured mode gives other users access", map[string]any{"setting": key})
+	}
 }
 
 // openAuditLog opens <CLAW_HOME>/internal/audit.db as the process-wide audit store. A

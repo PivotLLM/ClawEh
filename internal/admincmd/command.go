@@ -64,7 +64,11 @@ func run(out io.Writer, username string) (err error) {
 
 	home, inst := ResolveHome()
 	path := admin.Path(home)
-	if err = admin.Write(path, username, password); err != nil {
+	mode, err := SecretsFileMode(home)
+	if err != nil {
+		return err
+	}
+	if err = admin.Write(path, username, password, mode); err != nil {
 		return err
 	}
 	if err = chownToService(path, inst); err != nil {

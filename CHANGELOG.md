@@ -2,8 +2,82 @@
 
 ## [0.6.4]
 
+### Security
+
+- **A mode in `security.permissions` that gives other users access is
+  reported.** Any configured mode with a non-zero last digit is marked on the
+  Check Up page (**Access for other users**, naming each setting and its mode)
+  and in the PDF report, and logged as a warning at every start. The
+  **Data directory permissions** row reports only paths more open than
+  their configured mode.
+
+### Added
+
+- **`security.permissions` areas `root`, `secrets`, `bin` and `default`.**
+  `root` sets the data directory itself and the files directly in it
+  (`config.json`); `secrets` sets `internal/`, `tls/`, `tokens/` and every
+  secret file (credentials, TLS files, token stores, files named for a token
+  or secret, `file:` secret references); `bin` is a new `<data dir>/bin`
+  folder, created at start, for your scripts and programs, whose files
+  default to `0700` and keep their execute bits; `default` is everything no
+  other area covers (`cli/`, `skills/`, `cards/`, …). Every folder defaults
+  to `0700` and every file to `0600`. See the manual's File permissions
+  section.
+- **Every `security.permissions` key is written to `config.json`.** New
+  installs get the full block. The first start after the upgrade adds the
+  block to `config.json`: any missing area or key is added with its default,
+  with one INFO log line listing the keys added. Only that block is written;
+  the rest of the file is left as it is. Deleting the block and restarting
+  writes the defaults back.
+
 ### Changed
 
+- **BREAKING: the data directory is set to exactly the configured modes at
+  every start.** Before, the startup check only removed group and other
+  access and only touched folders and secret files. Now every folder and
+  every regular file is set to its area's mode, which also adds access where
+  the mode allows more, and `logs/` and `media/` are walked too. A data
+  directory that is a symbolic link is now walked at its target; a file with
+  more than one hard link is left alone with a warning. Files
+  outside `bin/` lose execute bits their mode does not have: move scripts and
+  programs you keep in the data directory into `<data dir>/bin` before
+  upgrading (the running `claw` program is never changed, and a warning names
+  it when it is in the data directory outside `bin/`). Symbolic links are
+  never followed or changed. Each change is logged at INFO.
+- **BREAKING** The top-level `security.permissions.dir_mode` and `file_mode`
+  are no longer used and are ignored. Any permission setting not present in
+  `config.json` is set to its default at startup. If you customized
+  permissions, update them in the config file after upgrading.
+- **BREAKING: `config.json`, the credentials file and `file:` secret
+  references follow the configured modes instead of a fixed `0600`.**
+  `config.json` may allow no more than `root.file_mode` (ClawEh refuses to
+  start otherwise, naming the `chmod`), and one that allows less is set to
+  it; config saves write it with exactly that mode. The credentials file and
+  every `file:` reference may allow no more than `secrets.file_mode`. With the
+  defaults nothing changes. After a config reload these checks use the new
+  `secrets.file_mode` at once.
+- **BREAKING for API callers: `PATCH /api/config` refuses unknown keys.** A
+  body naming any key the configuration does not have, anywhere in the
+  document, now gets HTTP 400 with `Unknown config key: <path>` (or
+  `Unknown config keys: <path>, <path>` for several), and nothing is applied.
+  Before, such keys were dropped silently and the request succeeded. This
+  includes the removed `security.permissions.dir_mode` and `file_mode`.
+  Free-form maps (an MCP server's `env` and `headers`, for example) still
+  take any key. Remove the named keys from the request.
+- **Mode validation is format plus an owner floor.** A mode must still be 3
+  or 4 octal digits with a leading `0` when there are four. Other-user write
+  is no longer refused; a mode that gives other users access is reported
+  instead (see Security). A mode without owner access is no longer refused
+  either: a folder mode lacking owner `rwx` (`r-x` for `bin`) or a file mode
+  lacking owner `rw` (`r` for `bin`) is used with those bits added, with a
+  warning naming the key and both values at each load; `config.json` keeps
+  what you wrote.
+- **Files ClawEh creates take exactly their mode, whatever the umask**: log
+  files (also when the logs roll), the alerts log, dumps, downloaded media,
+  backup archives, the folders created at start, the self-signed TLS
+  certificate and key (both now take `secrets.file_mode`; the certificate
+  was `0644`), and the token stores, databases and other files in
+  `internal/`, which take the `secrets` modes.
 - Updated dependencies
 
 ## [0.6.3]

@@ -75,17 +75,17 @@ func TestVerifyPassword_RejectsMalformed(t *testing.T) {
 
 func TestWriteAndLoad(t *testing.T) {
 	path := Path(filepath.Join(t.TempDir(), "home"))
-	if err := Write(path, "alice", "a long enough password"); err != nil {
+	if err := Write(path, "alice", "a long enough password", DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != FileMode {
+	if fi.Mode().Perm() != DefaultFileMode {
 		t.Fatalf("mode = %04o, want 0600", fi.Mode().Perm())
 	}
-	c, err := Load(path)
+	c, err := Load(path, DefaultFileMode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +106,10 @@ func TestWriteAndLoad(t *testing.T) {
 	}
 
 	// Running `claw admin` again replaces the account.
-	if err = Write(path, "bob", "another long password"); err != nil {
+	if err = Write(path, "bob", "another long password", DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Load(path)
+	c, err = Load(path, DefaultFileMode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,18 +128,18 @@ func TestWriteAndLoad(t *testing.T) {
 func TestLoad_Errors(t *testing.T) {
 	dir := t.TempDir()
 
-	if _, err := Load(Path(dir)); !errors.Is(err, ErrNotConfigured) {
+	if _, err := Load(Path(dir), DefaultFileMode); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("missing file: err = %v, want ErrNotConfigured", err)
 	}
 
 	loose := Path(filepath.Join(dir, "loose"))
-	if err := Write(loose, "alice", "a long enough password"); err != nil {
+	if err := Write(loose, "alice", "a long enough password", DefaultFileMode); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(loose, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(loose)
+	_, err := Load(loose, DefaultFileMode)
 	var perr *PermissionError
 	if !errors.As(err, &perr) {
 		t.Fatalf("group-readable file: err = %v, want *PermissionError", err)
@@ -155,7 +155,7 @@ func TestLoad_Errors(t *testing.T) {
 	if err := os.WriteFile(corrupt, []byte(`{"username":"alice","password_hash":"$2b$nope"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(corrupt); !errors.Is(err, ErrInvalidHash) {
+	if _, err := Load(corrupt, DefaultFileMode); !errors.Is(err, ErrInvalidHash) {
 		t.Fatalf("corrupt hash: err = %v, want ErrInvalidHash", err)
 	}
 
@@ -166,7 +166,7 @@ func TestLoad_Errors(t *testing.T) {
 	if err := os.WriteFile(noUser, []byte(`{"username":" ","password_hash":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(noUser); err == nil {
+	if _, err := Load(noUser, DefaultFileMode); err == nil {
 		t.Fatal("empty username accepted")
 	}
 }

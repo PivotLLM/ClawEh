@@ -135,11 +135,11 @@ func NewNamedStore(path string) (*NamedStore, error) {
 		return nil, fmt.Errorf("msgtoken: read %s: %w", path, err)
 	}
 	// The file holds the tokens themselves — the WebUI must be able to show
-	// them again — so it has to stay private. Tighten one left loose by an
-	// earlier release or a copy; a failure is logged, not fatal, since the
-	// store still works.
-	if permErr := perms.EnsurePrivateFile(path); permErr != nil {
-		logger.WarnCF("msgtoken", "Could not tighten token store permissions",
+	// them again — so it takes the secrets file mode, set exactly here in case
+	// an earlier release or a copy left it otherwise; a failure is logged,
+	// not fatal, since the store still works.
+	if permErr := perms.EnsureSecretFile(path); permErr != nil {
+		logger.WarnCF("msgtoken", "Could not set token store permissions",
 			map[string]any{"path": path, "error": permErr.Error()})
 	}
 	if err := json.Unmarshal(data, &s.tokens); err != nil || s.tokens == nil {
@@ -442,14 +442,14 @@ func (s *NamedStore) saveLocked() error {
 	if s.path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), perms.SecretModes().Dir); err != nil {
 		return fmt.Errorf("msgtoken: mkdir %s: %w", filepath.Dir(s.path), err)
 	}
 	data, err := json.MarshalIndent(s.tokens, "", "  ")
 	if err != nil {
 		return fmt.Errorf("msgtoken: marshal: %w", err)
 	}
-	if err := fileutil.WriteFileAtomic(s.path, data, 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(s.path, data, perms.SecretModes().File); err != nil {
 		return fmt.Errorf("msgtoken: write %s: %w", s.path, err)
 	}
 	return nil

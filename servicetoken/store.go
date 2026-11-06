@@ -24,6 +24,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 )
 
@@ -92,17 +93,17 @@ func Load(path string) (map[string]string, error) {
 	return out, nil
 }
 
-// Save atomically writes the agentID→hashed-token map to path (0o600), creating
+// Save atomically writes the agentID→hashed-token map to path (the secrets file mode, perms.SecretModes), creating
 // the parent internal/ directory if needed.
 func Save(path string, tokens map[string]string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), perms.SecretModes().Dir); err != nil {
 		return fmt.Errorf("servicetoken: mkdir %s: %w", filepath.Dir(path), err)
 	}
 	data, err := json.MarshalIndent(tokens, "", "  ")
 	if err != nil {
 		return fmt.Errorf("servicetoken: marshal: %w", err)
 	}
-	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, perms.SecretModes().File); err != nil {
 		return fmt.Errorf("servicetoken: write %s: %w", path, err)
 	}
 	return nil
