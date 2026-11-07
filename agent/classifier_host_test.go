@@ -26,6 +26,7 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
+	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
 )
 
 // classifierTool is a tool registered straight on an agent's registry.
@@ -472,5 +473,74 @@ func TestClassifierHost_CloneActsAsOwner(t *testing.T) {
 	m := cfg.AgentModes(path)
 	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != m.File {
 		t.Errorf("definition mode = %v (%v), want %o", fi.Mode().Perm(), err, m.File)
+	}
+}
+
+// hangingTool never answers until its call is cancelled.
+type hangingTool struct{ classifierTool }
+
+func (h *hangingTool) Execute(ctx context.Context, _ map[string]any) *tools.ToolResult {
+	<-ctx.Done()
+	return tools.ErrorResult(ctx.Err().Error())
+}
+
+// A classifier tool call is bounded by the watch probe's timeout; one that
+// runs past it fails with the tool named.
+func TestClassifierHost_ToolCallTimeout(t *testing.T) {
+	al, host, _ := newClassifierHostLoop(t, classifierHostConfig(t, "http://127.0.0.1:0"))
+	fc := fakeClock(al)
+	registerOn(t, al, "alice", &hangingTool{classifierTool{name: "inbox_list"}})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := host.Call(context.Background(), "alice", "inbox_list", map[string]any{})
+		done <- err
+	}()
+	advanceWhenWaiting(t, fc, 1, toolschedule.WatchProbeTimeout)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "tool inbox_list did not answer within 1m0s") {
+			t.Fatalf("Call = %v, want the timeout naming the tool", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the call did not end at the timeout")
+	}
+}
+
+// A classifier model call's cost counts toward the daily spend alert like
+// any other model call.
+func TestClassifierHost_CountsTowardDailySpend(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	body := "#!/bin/sh\ncat > /dev/null\n" +
+		"printf '%s' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"urgent\",\"total_cost_usd\":0.75}'\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := classifierHostConfig(t, "http://127.0.0.1:0")
+	cfg.Providers = append(cfg.Providers, config.Provider{Name: "Claude CLI", Protocol: "claude-cli", Command: script})
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "cc", Model: "claude-cli", Provider: "Claude CLI", Enabled: true})
+	cfg.Agents.List[0].Models = []string{"cc"}
+	cfg.Agents.List[0].Classifiers.Model = "cc"
+	cfg.Agents.Defaults.DailySpendAlertUSD = 1.0
+	al, host, _ := newClassifierHostLoop(t, cfg)
+	rec := &alertRecorder{}
+	al.SetAlerter(rec)
+
+	alerts := func() int {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.alerts)
+	}
+	if _, _, err := host.Complete(context.Background(), "alice", "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if n := alerts(); n != 0 {
+		t.Fatalf("alerts after $0.75 = %d, want 0", n)
+	}
+	if _, _, err := host.Complete(context.Background(), "alice", "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if n := alerts(); n != 1 {
+		t.Fatalf("alerts after $1.50 = %d, want 1", n)
 	}
 }

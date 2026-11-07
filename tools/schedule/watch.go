@@ -205,7 +205,7 @@ func (t *CronTool) runWatch(ctx context.Context, job *cron.CronJob) watchOutcome
 // that agent is allowed to use, re-checked on every run rather than only when
 // the watch was created — a tool revoked in config must stop being probed.
 func (t *CronTool) probe(ctx context.Context, agentID string, w *cron.CronWatch) (string, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, watchProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, WatchProbeTimeout)
 	defer cancel()
 	return t.probeWithContext(probeCtx, agentID, w)
 }
@@ -230,9 +230,10 @@ func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron
 	return out, err
 }
 
-// watchProbeTimeout bounds a single probe. A watch runs unattended and on a
+// WatchProbeTimeout bounds a single probe. A watch runs unattended and on a
 // schedule, so a hung tool must not accumulate goroutines run after run.
-const watchProbeTimeout = 60 * time.Second
+// Classifiers bound each of their tool calls by it too.
+const WatchProbeTimeout = 60 * time.Second
 
 // parseWatchArgs builds a watch spec from the tool arguments, or nil when no
 // watch was requested. Validation happens here, at creation, so a malformed

@@ -23,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
 )
 
 // ClassifierHost is ClawEh's side of the classifier package's host contract
@@ -175,14 +176,24 @@ func (h *ClassifierHost) Has(agentID, tool string) error {
 }
 
 // Call implements classifier.ToolRunner: tool runs as agentID through the
-// agent's own registry, unattended (no session, no chat), exactly as a
-// scheduled watch probe does.
+// agent's own registry, unattended (no session, no chat) and bounded by the
+// same timeout, exactly as a scheduled watch probe does. A call that times
+// out fails with the tool named.
 func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args map[string]any) (string, error) {
+	al, _, err := h.bound()
+	if err != nil {
+		return "", err
+	}
 	reg, err := h.registryFor(agentID)
 	if err != nil {
 		return "", err
 	}
-	out, err := reg.ExecuteUnattended(ctx, tool, args)
+	callCtx, cancel := al.clk().WithTimeout(ctx, toolschedule.WatchProbeTimeout)
+	defer cancel()
+	out, err := reg.ExecuteUnattended(callCtx, tool, args)
+	if ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("tool %s did not answer within %s", tool, toolschedule.WatchProbeTimeout)
+	}
 	switch {
 	case errors.Is(err, tools.ErrToolNotRegistered):
 		return "", fmt.Errorf("tool %s is not available to agent %s", tool, agentID)
@@ -198,7 +209,8 @@ func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args ma
 // refused with a *classifier.CooldownError, and a failure is recorded against
 // the shared cooldown policy like any other call. A CLI model runs isolated:
 // in an empty folder of its own, removed afterwards, and never with the
-// provider's bypass flags.
+// provider's bypass flags. Its cost counts toward the daily spend alert like
+// any other model call.
 func (h *ClassifierHost) Complete(ctx context.Context, agentID, system, user string) (string, string, error) {
 	al, cfg, err := h.bound()
 	if err != nil {
@@ -264,6 +276,9 @@ func (h *ClassifierHost) Complete(ctx context.Context, agentID, system, user str
 		err:            chatErr,
 	})
 	if chatErr != nil {
+		if resp != nil && resp.Status != nil && resp.Status.CostUSD != nil {
+			al.recordSpend(*resp.Status.CostUSD)
+		}
 		if ctx.Err() == nil && tracker != nil {
 			if fe := providers.ClassifyError(chatErr, mc.Provider, mc.Model); fe != nil {
 				tracker.MarkFailure(mc.Provider, mc.Model, fe.Reason, fe.Status, fe.RetryAfter)
@@ -279,6 +294,9 @@ func (h *ClassifierHost) Complete(ctx context.Context, agentID, system, user str
 	}
 	if tracker != nil {
 		tracker.MarkSuccess(mc.Provider, mc.Model)
+	}
+	if resp != nil && resp.Status != nil && resp.Status.CostUSD != nil {
+		al.recordSpend(*resp.Status.CostUSD)
 	}
 	if resp == nil {
 		return "", alias, fmt.Errorf("model %s returned no reply", alias)
