@@ -131,8 +131,9 @@ func TestUnknownPatchKeys(t *testing.T) {
 	}
 }
 
-// Everything GET /api/config returns may be sent back in a PATCH: a fully
-// populated config has no key UnknownPatchKeys refuses.
+// Everything GET /api/config returns may be sent back in a PATCH. A fully
+// populated config refuses only the keys kept just so a load can migrate
+// them, and a load clears those, so a loaded config refuses nothing.
 func TestUnknownPatchKeys_FullConfigAccepted(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "marshal_full.golden.json"))
 	if err != nil {
@@ -142,7 +143,45 @@ func TestUnknownPatchKeys_FullConfigAccepted(t *testing.T) {
 	if err = json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if got := UnknownPatchKeys(doc); len(got) != 0 {
-		t.Errorf("UnknownPatchKeys on a full config = %v, want none", got)
+	want := make([]string, 0, 17)
+	for _, scope := range []string{"agents.defaults.", "agents.list[0]."} {
+		for _, k := range []string{
+			"compress_chars_per_token", "compress_message_threshold", "compress_min_percent",
+			"compress_normal_percent", "compress_retain_min_messages", "compress_retain_token_percent",
+			"compress_safety_percent", "compress_token_safety_margin",
+		} {
+			want = append(want, scope+k)
+		}
+	}
+	want = append(want, "channels.discord.mention_only")
+	slices.Sort(want)
+	if got := UnknownPatchKeys(doc); !slices.Equal(got, want) {
+		t.Errorf("UnknownPatchKeys on a full config = %v, want exactly the migration-only keys %v", got, want)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	body := `{"agents":{"defaults":{"compress_min_percent":40},"list":[{"id":"alice","compress_retain_min_messages":4}]},` +
+		`"channels":{"discord":{"mention_only":true}}}`
+	if err = os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Channels.Discord.GroupTrigger.MentionOnly || cfg.Agents.Defaults.Compression == nil ||
+		cfg.Agents.Defaults.Compression.Trigger.MinPercent == nil || *cfg.Agents.Defaults.Compression.Trigger.MinPercent != 40 {
+		t.Fatal("the migration-only keys were not migrated at load")
+	}
+	out, err := MarshalWithSecretRefs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded map[string]any
+	if err = json.Unmarshal(out, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := UnknownPatchKeys(loaded); len(got) != 0 {
+		t.Errorf("UnknownPatchKeys on a loaded config = %v, want none", got)
 	}
 }

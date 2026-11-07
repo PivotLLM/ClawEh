@@ -530,7 +530,6 @@
       "token": "",
       "proxy": "",
       "allow_from": [],
-      "mention_only": false,
       "group_trigger": {},
       "typing": {},
       "placeholder": {},

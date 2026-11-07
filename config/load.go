@@ -297,6 +297,9 @@ func (c *Config) migrateChannelConfigs() {
 	if c.Channels.Discord.MentionOnly && !c.Channels.Discord.GroupTrigger.MentionOnly {
 		c.Channels.Discord.GroupTrigger.MentionOnly = true
 	}
+	// Cleared once moved, so nothing reads or writes the retired form again
+	// (and GET /api/config never shows it).
+	c.Channels.Discord.MentionOnly = false
 }
 
 // SaveConfig persists cfg. Any save through this path marks the config as

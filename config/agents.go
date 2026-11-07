@@ -131,14 +131,14 @@ type AgentConfig struct {
 	// migrateCompressionConfigs, which folds them into Compression at load time
 	// and clears them; nothing else in the codebase reads them. Delete once
 	// deployed configs have been rewritten.
-	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
-	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
-	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
-	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty"`
-	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty"`
-	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty"`
-	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
-	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
+	CompressMinPercent         *int     `json:"compress_min_percent,omitempty" removed:"true"`
+	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty" removed:"true"`
+	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty" removed:"true"`
+	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty" removed:"true"`
+	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty" removed:"true"`
+	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty" removed:"true"`
+	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty" removed:"true"`
+	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty" removed:"true"`
 
 	ArchiveMessageCount  *int `json:"archive_message_count,omitempty"`
 	ArchiveDays          *int `json:"archive_days,omitempty"`
@@ -822,14 +822,14 @@ type AgentDefaults struct {
 	// Legacy flat compress_* keys — see the matching note on AgentConfig. All
 	// pointers so migrateCompressionConfigs can tell "unset" from "set to 0";
 	// the old plain-int form could not express "off".
-	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
-	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
-	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
-	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty"`
-	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty"`
-	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty"`
-	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
-	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
+	CompressMinPercent         *int     `json:"compress_min_percent,omitempty" removed:"true"`
+	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty" removed:"true"`
+	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty" removed:"true"`
+	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty" removed:"true"`
+	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty" removed:"true"`
+	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty" removed:"true"`
+	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty" removed:"true"`
+	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty" removed:"true"`
 
 	ArchiveMessageCount    int `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
 	ArchiveDays            int `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`

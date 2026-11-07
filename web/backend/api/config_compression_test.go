@@ -5,8 +5,10 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -148,8 +150,33 @@ func TestPatchCompression_UntouchedSaveKeepsDefaults(t *testing.T) {
 func TestPatchCompression_SaveRewritesLegacyKeys(t *testing.T) {
 	configPath := setupTestEnv(t)
 
-	// Seed a pre-split config, then save something unrelated.
-	patchConfig(t, configPath, `{"agents":{"defaults":{"compress_min_percent":25}}}`)
+	// Seed a pre-split config file (PATCH refuses the flat key), then save
+	// something unrelated.
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err = json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	agents, ok := doc["agents"].(map[string]any)
+	if !ok {
+		agents = map[string]any{}
+		doc["agents"] = agents
+	}
+	defaults, ok := agents["defaults"].(map[string]any)
+	if !ok {
+		defaults = map[string]any{}
+		agents["defaults"] = defaults
+	}
+	defaults["compress_min_percent"] = 25
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := patchConfig(t, configPath, `{"gateway":{"port":19001}}`)
 
 	if cfg.Agents.Defaults.CompressMinPercent != nil {

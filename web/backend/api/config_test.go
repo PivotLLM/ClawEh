@@ -287,6 +287,19 @@ func TestHandlePatchConfig_UnknownKeys(t *testing.T) {
 			"unknown key inside a list entry", `{"agents":{"list":[{"id":"alice","colour":"red"}]}}`,
 			"Unknown config key: agents.list[0].colour",
 		},
+		{
+			"migration-only compress key in defaults", `{"agents":{"defaults":{"compress_min_percent":40}}}`,
+			"Unknown config key: agents.defaults.compress_min_percent",
+		},
+		{
+			"migration-only compress key on an agent", `{"agents":{"list":[{"id":"alice","compress_retain_min_messages":4}]}}`,
+			"Unknown config key: agents.list[0].compress_retain_min_messages",
+		},
+		{
+			"migration-only discord mention_only", `{"channels":{"discord":{"mention_only":true}}}`,
+			"Unknown config key: channels.discord.mention_only",
+		},
+		{"discord group trigger accepted", `{"channels":{"discord":{"group_trigger":{"mention_only":true}}}}`, ""},
 		{"valid patch", `{"logging":{"level":"warn"}}`, ""},
 		{"null deletes a known key", `{"agents":{"defaults":{"temperature":null}}}`, ""},
 		{"free-form maps take any key", `{"tools":{"mcp":{"servers":{"alice-files":{"enabled":false,"command":"true",` +

@@ -197,15 +197,17 @@ func (a SecMsgAccountConfig) ChannelName(daemon SecMsgConfig) string {
 }
 
 type DiscordConfig struct {
-	Enabled            bool                `json:"enabled"                 env:"CLAW_CHANNELS_DISCORD_ENABLED"`
-	Token              string              `json:"token"                   env:"CLAW_CHANNELS_DISCORD_TOKEN"`
-	Proxy              string              `json:"proxy"                   env:"CLAW_CHANNELS_DISCORD_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"CLAW_CHANNELS_DISCORD_ALLOW_FROM"`
-	MentionOnly        bool                `json:"mention_only"            env:"CLAW_CHANNELS_DISCORD_MENTION_ONLY"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
-	Typing             TypingConfig        `json:"typing,omitempty"`
-	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"CLAW_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
+	Enabled   bool                `json:"enabled"                 env:"CLAW_CHANNELS_DISCORD_ENABLED"`
+	Token     string              `json:"token"                   env:"CLAW_CHANNELS_DISCORD_TOKEN"`
+	Proxy     string              `json:"proxy"                   env:"CLAW_CHANNELS_DISCORD_PROXY"`
+	AllowFrom FlexibleStringSlice `json:"allow_from"              env:"CLAW_CHANNELS_DISCORD_ALLOW_FROM"`
+	// MentionOnly is the retired flat form of GroupTrigger.MentionOnly, read
+	// only so a load can migrate it (migrateChannelConfigs clears it).
+	MentionOnly        bool               `json:"mention_only,omitempty"  env:"CLAW_CHANNELS_DISCORD_MENTION_ONLY" removed:"true"`
+	GroupTrigger       GroupTriggerConfig `json:"group_trigger,omitempty"`
+	Typing             TypingConfig       `json:"typing,omitempty"`
+	Placeholder        PlaceholderConfig  `json:"placeholder,omitempty"`
+	ReasoningChannelID string             `json:"reasoning_channel_id"    env:"CLAW_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
 }
 
 type SlackConfig struct {

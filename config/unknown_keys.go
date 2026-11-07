@@ -25,7 +25,7 @@ import (
 // what they accept. Keys in silentlyRemovedKeys are not reported either.
 func unknownConfigKeys(doc any) []string {
 	var out []string
-	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", &out)
+	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", false, &out)
 	out = slices.DeleteFunc(out, func(key string) bool { return silentlyRemovedKeys[key] })
 	sort.Strings(out)
 	return out
@@ -33,12 +33,14 @@ func unknownConfigKeys(doc any) []string {
 
 // UnknownPatchKeys returns, sorted, the dotted path of every key in a config
 // patch (PATCH /api/config) that the config schema does not have: the keys
-// unknownConfigKeys finds, the silently removed ones included. Free-form maps
-// (env, headers, ...) accept any key, and a type with its own UnmarshalJSON
-// is not looked into, as at load.
+// unknownConfigKeys finds, the silently removed ones included, and the removed
+// keys a load still reads only to migrate them (fields tagged
+// `removed:"true"`, such as the flat compress_* keys). Free-form maps (env,
+// headers, ...) accept any key, and a type with its own UnmarshalJSON is not
+// looked into, as at load.
 func UnknownPatchKeys(patch map[string]any) []string {
 	var out []string
-	collectUnknownKeys(patch, reflect.TypeFor[Config](), "", &out)
+	collectUnknownKeys(patch, reflect.TypeFor[Config](), "", true, &out)
 	sort.Strings(out)
 	return out
 }
@@ -52,7 +54,7 @@ const permissionsPrefix = "security.permissions."
 // out.
 func unknownPermissionKeys(doc any) []string {
 	var out []string
-	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", &out)
+	collectUnknownKeys(doc, reflect.TypeFor[Config](), "", false, &out)
 	out = slices.DeleteFunc(out, func(key string) bool { return !strings.HasPrefix(key, permissionsPrefix) })
 	sort.Strings(out)
 	return out
@@ -71,8 +73,9 @@ var silentlyRemovedKeys = map[string]bool{
 var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
 
 // collectUnknownKeys appends to out the path of every key in doc that type t
-// has no field for.
-func collectUnknownKeys(doc any, t reflect.Type, path string, out *[]string) {
+// has no field for; with strict, a field tagged `removed:"true"` (kept only so
+// a load can migrate it) counts as unknown too.
+func collectUnknownKeys(doc any, t reflect.Type, path string, strict bool, out *[]string) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -87,12 +90,12 @@ func collectUnknownKeys(doc any, t reflect.Type, path string, out *[]string) {
 		}
 		fields := jsonFields(t)
 		for k, v := range m {
-			ft, known := fields[k]
-			if !known {
+			f, known := fields[k]
+			if !known || (strict && f.removed) {
 				*out = append(*out, joinPath(path, k))
 				continue
 			}
-			collectUnknownKeys(v, ft, joinPath(path, k), out)
+			collectUnknownKeys(v, f.typ, joinPath(path, k), strict, out)
 		}
 	case reflect.Map:
 		m, ok := doc.(map[string]any)
@@ -100,7 +103,7 @@ func collectUnknownKeys(doc any, t reflect.Type, path string, out *[]string) {
 			return
 		}
 		for k, v := range m {
-			collectUnknownKeys(v, t.Elem(), joinPath(path, k), out)
+			collectUnknownKeys(v, t.Elem(), joinPath(path, k), strict, out)
 		}
 	case reflect.Slice, reflect.Array:
 		list, ok := doc.([]any)
@@ -108,17 +111,24 @@ func collectUnknownKeys(doc any, t reflect.Type, path string, out *[]string) {
 			return
 		}
 		for i, v := range list {
-			collectUnknownKeys(v, t.Elem(), path+"["+strconv.Itoa(i)+"]", out)
+			collectUnknownKeys(v, t.Elem(), path+"["+strconv.Itoa(i)+"]", strict, out)
 		}
 	default:
 		// Scalars have no keys to descend into.
 	}
 }
 
-// jsonFields maps the JSON names a struct decodes to their field types,
+// jsonField is one field a struct decodes: its type, and whether it is a
+// removed key kept only so a load can migrate it (tag `removed:"true"`).
+type jsonField struct {
+	typ     reflect.Type
+	removed bool
+}
+
+// jsonFields maps the JSON names a struct decodes to their fields,
 // flattening embedded structs the way encoding/json does.
-func jsonFields(t reflect.Type) map[string]reflect.Type {
-	out := map[string]reflect.Type{}
+func jsonFields(t reflect.Type) map[string]jsonField {
+	out := map[string]jsonField{}
 	for f := range t.Fields() {
 		tag := f.Tag.Get("json")
 		if tag == "-" {
@@ -141,7 +151,7 @@ func jsonFields(t reflect.Type) map[string]reflect.Type {
 		if name == "" {
 			name = f.Name
 		}
-		out[name] = f.Type
+		out[name] = jsonField{typ: f.Type, removed: f.Tag.Get("removed") == "true"}
 	}
 	return out
 }

@@ -61,7 +61,11 @@
   document, now gets HTTP 400 with `Unknown config key: <path>` (or
   `Unknown config keys: <path>, <path>` for several), and nothing is applied.
   Before, such keys were dropped silently and the request succeeded. This
-  includes the removed `security.permissions.dir_mode` and `file_mode`.
+  includes the removed `security.permissions.dir_mode` and `file_mode`, the
+  flat `compress_*` keys (in `agents.defaults` and on an agent; use the
+  `compression` block) and `channels.discord.mention_only` (use
+  `channels.discord.group_trigger.mention_only`). A `config.json` that still
+  holds those older keys loads and is migrated as before.
   Free-form maps (an MCP server's `env` and `headers`, for example) still
   take any key. Remove the named keys from the request.
 - **Mode validation is format plus an owner floor.** A mode must still be 3
