@@ -64,6 +64,7 @@ type runnerSpec struct {
 	base    string
 	runCfg  mconfig.Runner
 	refDirs []mconfig.ReferenceDir
+	modes   config.Modes // the folder and file modes it creates with
 }
 
 // cachedRunner is an agent's Maestro runner, the spec it was built from and
@@ -81,9 +82,9 @@ type cachedRunner struct {
 // lives on the runner. So every registration of the agent's tools (at boot and
 // on each reload) gets the cached runner, and tools a turn still holds from
 // before a reload share it with the new ones, unless the runner has to be
-// rebuilt: the base directory changed, or the Maestro runner settings or the
-// reference directories (the agent's mounts) changed while no run was in
-// progress. In that residual case a turn still holding the old tools can start
+// rebuilt: the base directory changed, or the Maestro runner settings, the
+// reference directories (the agent's mounts) or the agents area's modes
+// changed while no run was in progress. In that residual case a turn still holding the old tools can start
 // a run on the old runner, which the new tools do not see.
 var runners = struct {
 	mu      sync.Mutex
@@ -92,8 +93,8 @@ var runners = struct {
 
 // runnerFor returns the Maestro runner and dispatcher the agent's tools use,
 // and points that dispatcher at disp. The cached runner is kept unless the
-// base directory changed, or its runner settings or reference directories
-// changed while it is idle; then a new one is built outside the lock and the
+// base directory changed, or its runner settings, reference directories or
+// modes changed while it is idle; then a new one is built outside the lock and the
 // decision is re-checked before it is cached.
 func runnerFor(agentID string, spec runnerSpec, disp *dispatcher, cfg *mconfig.Config, l *mlogging.Logger) (*runner.Runner, *swapDispatcher) {
 	if r, sw, ok := reuseRunner(agentID, spec, disp); ok {
@@ -163,7 +164,8 @@ func keepRunner(prev *cachedRunner, cached bool, spec runnerSpec) (bool, string)
 		return false, "first registration"
 	case prev.spec.base != spec.base:
 		return false, "base directory changed"
-	case reflect.DeepEqual(prev.spec.runCfg, spec.runCfg) && slices.Equal(prev.spec.refDirs, spec.refDirs):
+	case reflect.DeepEqual(prev.spec.runCfg, spec.runCfg) && slices.Equal(prev.spec.refDirs, spec.refDirs) &&
+		prev.spec.modes == spec.modes:
 		return true, "configuration unchanged"
 	case prev.runner.IsRunning():
 		return true, reasonChangedWhileRunning
@@ -212,7 +214,8 @@ func newRunner(cfg *mconfig.Config, l *mlogging.Logger, disp mllm.Dispatcher) *r
 		reference.WithExternalDirs(externalDirs),
 		reference.WithLogger(l),
 	)
-	playbooksSvc := playbooks.NewService(cfg.PlaybooksDir(), l)
+	playbooksSvc := playbooks.NewService(cfg.PlaybooksDir(), l,
+		playbooks.WithFileModes(cfg.DirMode(), cfg.FileMode()))
 	projectsSvc := projects.NewService(cfg, l)
 	tasksSvc := tasks.NewService(cfg, projectsSvc, l)
 	return runner.New(cfg, l, nil, playbooksSvc, refSvc, disp, tasksSvc, projectsSvc)

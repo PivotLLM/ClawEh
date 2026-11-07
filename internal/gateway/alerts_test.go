@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestShortHostname(t *testing.T) {
@@ -31,11 +33,12 @@ func TestNewAlerter(t *testing.T) {
 		}
 	}
 	t.Setenv(alerter.EnvLogFile, "")
+	logModes := config.Modes{Dir: 0o700, File: 0o600}
 	base := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(base, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a, path := newAlerter(base, 0o600)
+	a, path := newAlerter(base, logModes)
 	if path != filepath.Join(base, "logs", alertsFileName) {
 		t.Errorf("path = %q", path)
 	}
@@ -50,7 +53,7 @@ func TestNewAlerter(t *testing.T) {
 
 	envPath := filepath.Join(base, "env-alerts.log")
 	t.Setenv(alerter.EnvLogFile, envPath)
-	a, path = newAlerter(base, 0o600)
+	a, path = newAlerter(base, logModes)
 	if path != envPath {
 		t.Errorf("ALERTER_LOG not honoured: path = %q", path)
 	}
@@ -59,7 +62,11 @@ func TestNewAlerter(t *testing.T) {
 	}
 
 	t.Setenv(alerter.EnvLogFile, "")
-	a, path = newAlerter(filepath.Join(base, "missing"), 0o600)
+	notDir := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, path = newAlerter(notDir, logModes)
 	if _, ok := a.(alerter.Nop); !ok || path != "" {
 		t.Errorf("unwritable default must disable alerting: %T %q", a, path)
 	}

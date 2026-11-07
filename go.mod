@@ -3,11 +3,11 @@ module github.com/PivotLLM/ClawEh
 go 1.27.3
 
 require (
-	github.com/PivotLLM/MCPFusion v0.4.6
-	github.com/PivotLLM/Maestro v0.5.5
+	github.com/PivotLLM/MCPFusion v0.4.7
+	github.com/PivotLLM/Maestro v0.5.6
 	github.com/PivotLLM/cogmem v0.0.9
 	github.com/PivotLLM/ctxengine v0.0.10
-	github.com/PivotLLM/spawnllm v0.1.21
+	github.com/PivotLLM/spawnllm v0.1.22
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.6
@@ -27,7 +27,7 @@ require (
 	github.com/slack-go/slack v0.35.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/tenebris-tech/alerter v0.1.5
+	github.com/tenebris-tech/alerter v0.1.6
 	github.com/tenebris-tech/mlogger v0.0.5
 	github.com/tenebris-tech/secmsg v0.1.2
 	golang.org/x/crypto v0.58.0

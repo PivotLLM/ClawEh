@@ -86,7 +86,11 @@
   `secrets.file_mode`; the certificate was `0644`), and the token stores,
   databases and other files in `internal/`. After a config reload, new files
   take the new modes, except logs, dumps, downloaded media and an agent's
-  restart-recovery state, which keep the modes from start.
+  restart-recovery state, which keep the modes from start. Maestro's files
+  in an agent's `maestro/` folder (the agents area) and a model's
+  `response_log_file` (the area it lies in, `logs` under `logs/`) are now
+  created with their area's mode too, instead of fixed modes (Maestro's
+  were `0755`/`0644`); for these the umask still applies.
 - Updated dependencies
 
 ## [0.6.3]

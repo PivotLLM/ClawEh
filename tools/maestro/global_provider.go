@@ -82,7 +82,8 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 
 	// Make sure the base dir exists before Maestro touches it (defensive: Prepare
 	// also creates the subdirs, but never hand Maestro a missing base).
-	if err := fileutil.MkdirAllExact(base, c.AgentModes(base).Dir); err != nil {
+	modes := c.AgentModes(base)
+	if err := fileutil.MkdirAllExact(base, modes.Dir); err != nil {
 		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
 		alertMaestroDisabled(deps.AgentID, base, err)
@@ -100,6 +101,8 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
 		mconfig.WithRunner(runCfg),
 		mconfig.WithReferenceDirs(refDirs),
+		// What Maestro creates under base takes the agents area's modes.
+		mconfig.WithFileModes(modes.Dir, modes.File),
 	)
 	if err := mcfg.Prepare(); err != nil {
 		logger.WarnCF("maestro", "failed to prepare maestro config; tools disabled",
@@ -136,7 +139,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if cd.TempAgent {
 		run, swap = sharedRunner(deps.AgentID, disp, mcfg, mlog)
 	} else {
-		run, swap = runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs},
+		run, swap = runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs, modes: modes},
 			disp, mcfg, mlog)
 	}
 	p := &mmaestro.Provider{}

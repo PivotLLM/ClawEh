@@ -69,7 +69,7 @@ func gatewayCmd(debug bool) error {
 	// before anything that can raise one at startup: the dispatcher below
 	// alerts for a CLI provider running without its bypass flag, and an alert
 	// sent before Set reaches the no-op default and is lost.
-	operatorAlerter, alertsPath := newAlerter(baseDir, cfg.PermissionModes(config.AreaLogs).File)
+	operatorAlerter, alertsPath := newAlerter(baseDir, cfg.PermissionModes(config.AreaLogs))
 	alerts.Set(operatorAlerter)
 	refAlerts.report(operatorAlerter, bootDanglingRefs)
 

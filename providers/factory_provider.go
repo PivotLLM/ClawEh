@@ -18,12 +18,14 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
+	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // compatOpts builds the openai_compat options from the endpoint-scoped provider
 // knobs and the model-scoped request knobs.
 func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compat.Option {
+	logModes := responseLogModes(model.ResponseLogFile)
 	return []openai_compat.Option{
 		openai_compat.WithMaxTokensField(model.MaxTokensField),
 		openai_compat.WithRequestTimeout(time.Duration(model.RequestTimeout) * time.Second),
@@ -31,6 +33,7 @@ func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compa
 		openai_compat.WithNoParallelToolCalls(prov.NoParallelToolCalls),
 		openai_compat.WithStrictAlternation(model.StrictAlternation),
 		openai_compat.WithResponseLogFile(model.ResponseLogFile),
+		openai_compat.WithFileModes(logModes.Dir, logModes.File),
 		openai_compat.WithReasoningEffort(model.ReasoningEffort),
 		openai_compat.WithExtraBody(model.ExtraBody),
 		openai_compat.WithDropParams(model.DropParams),
@@ -44,6 +47,7 @@ func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compa
 // model-scoped knobs that apply to the Responses API (a subset of compatOpts —
 // no max_tokens_field/strict_compat/strict_alternation, which are chat-only).
 func responsesOpts(model *config.ModelConfig, prov *config.Provider) []openai_responses.Option {
+	logModes := responseLogModes(model.ResponseLogFile)
 	return []openai_responses.Option{
 		openai_responses.WithRequestTimeout(time.Duration(model.RequestTimeout) * time.Second),
 		openai_responses.WithNoParallelToolCalls(prov.NoParallelToolCalls),
@@ -54,7 +58,20 @@ func responsesOpts(model *config.ModelConfig, prov *config.Provider) []openai_re
 		openai_responses.WithProtocol(prov.Protocol),
 		openai_responses.WithResponseFormatJSONCapable(prov.ResponseFormatJSON),
 		openai_responses.WithResponseLogFile(model.ResponseLogFile),
+		openai_responses.WithFileModes(logModes.Dir, logModes.File),
 	}
+}
+
+// responseLogModes are the modes a model's response_log_file, and any folders
+// created for it, take: those of the security.permissions area it lies in (the
+// logs area for a file under <CLAW_HOME>/logs), from the policy the current
+// config installed. Providers are rebuilt on every reload, so a changed mode
+// applies to the next file created.
+func responseLogModes(path string) config.Modes {
+	if path == "" {
+		return config.Modes{Dir: config.DefaultDirMode, File: config.DefaultFileMode}
+	}
+	return perms.CurrentPolicy().ModesFor(path)
 }
 
 // CreateProviderFromConfig builds the LLM provider for a model reached through

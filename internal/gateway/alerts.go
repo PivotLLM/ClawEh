@@ -11,6 +11,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -23,22 +24,24 @@ const alertsFileName = "alerts.log"
 // <baseDir>/logs/alerts.log unless ALERTER_LOG is set, in which case the
 // module's own precedence applies. A log that cannot be opened disables
 // alerting (with a warning) rather than stopping the gateway. The path
-// returned is the one alerts are written to, for the WebUI to read.
-func newAlerter(baseDir string, fileMode os.FileMode) (alerter.Alerter, string) {
+// returned is the one alerts are written to, for the WebUI to read. The log
+// file and any folders the alerter creates for it take exactly modes, the logs
+// area's (security.permissions).
+func newAlerter(baseDir string, modes config.Modes) (alerter.Alerter, string) {
 	opts := []alerter.Option{
 		alerter.WithAppName(app.Name()),
 		alerter.WithInstanceName(shortHostname()),
+		alerter.WithFileModes(modes.Dir, modes.File),
 	}
 	path := strings.TrimSpace(os.Getenv(alerter.EnvLogFile))
 	if path == "" {
 		path = filepath.Join(baseDir, "logs", alertsFileName)
 		opts = append(opts, alerter.WithLogFile(path))
-		// The alerter would create the log 0644; created (or set) here first,
-		// it has exactly the logs file mode (0600 by default). A missing logs
-		// directory is left to alerter.New to report.
-		if _, err := os.Stat(filepath.Dir(path)); err == nil {
-			if err := perms.EnsureFileMode(path, fileMode); err != nil {
-				logger.WarnCF("gateway", "Failed to create the alerts log with its mode", map[string]any{"path": path, "error": err.Error()})
+		// The alerter keeps an existing log's mode; one an earlier run left
+		// at another mode is set to exactly the logs file mode here.
+		if _, err := os.Lstat(path); err == nil {
+			if err := perms.EnsureFileMode(path, modes.File); err != nil {
+				logger.WarnCF("gateway", "Failed to set the alerts log mode", map[string]any{"path": path, "error": err.Error()})
 			}
 		}
 	}

@@ -11,11 +11,13 @@ import (
 	"testing"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
-// The default alerts log is created with the logs file mode (0600 unless
-// security.permissions.logs says otherwise), whatever the umask, not only
-// tightened at the next start.
+// The default alerts log, and a logs folder the alerter creates for it, take
+// exactly the logs area's modes (security.permissions.logs), even under a
+// umask that would narrow them.
 func TestNewAlerter_LogMode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, kv := range os.Environ() {
@@ -24,13 +26,10 @@ func TestNewAlerter_LogMode(t *testing.T) {
 		}
 	}
 	t.Setenv(alerter.EnvLogFile, "")
-	for _, mode := range []os.FileMode{0o600, 0o640} {
+	for _, modes := range []config.Modes{{Dir: 0o700, File: 0o600}, {Dir: 0o750, File: 0o640}} {
 		base := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(base, "logs"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		old := syscall.Umask(0o022)
-		a, path := newAlerter(base, mode)
+		old := syscall.Umask(0o077)
+		a, path := newAlerter(base, modes)
 		syscall.Umask(old)
 		t.Cleanup(func() {
 			if err := a.Close(context.Background()); err != nil {
@@ -42,8 +41,15 @@ func TestNewAlerter_LogMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat alerts log: %v", err)
 		}
-		if got := info.Mode().Perm(); got != mode {
-			t.Errorf("alerts log mode = %04o, want %04o", got, mode)
+		if got := info.Mode().Perm(); got != modes.File {
+			t.Errorf("alerts log mode = %04o, want %04o", got, modes.File)
+		}
+		info, err = os.Stat(filepath.Dir(path))
+		if err != nil {
+			t.Fatalf("stat logs folder: %v", err)
+		}
+		if got := info.Mode().Perm(); got != modes.Dir {
+			t.Errorf("logs folder mode = %04o, want %04o", got, modes.Dir)
 		}
 	}
 }
@@ -70,7 +76,7 @@ func TestNewAlerter_SetsExistingLogMode(t *testing.T) {
 		if err := os.Chmod(path, c.before); err != nil {
 			t.Fatal(err)
 		}
-		a, _ := newAlerter(base, c.want)
+		a, _ := newAlerter(base, config.Modes{Dir: 0o700, File: c.want})
 		t.Cleanup(func() {
 			if err := a.Close(context.Background()); err != nil {
 				t.Errorf("Close: %v", err)
