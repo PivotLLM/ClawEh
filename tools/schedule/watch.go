@@ -16,55 +16,21 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/cron"
+	"github.com/PivotLLM/ClawEh/internal/dotpath"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// extractField walks a dot-path through a decoded JSON value and returns what it
-// selects.
-//
-// A path segment indexes an object. When the path meets an array, the remaining
-// path is applied to every element and the results are collected, so
-// "messages.id" over {"messages":[{"id":1},{"id":2}]} yields [1,2]. That fan-out
-// is what makes a single path express "the set of things currently there",
-// which is the shape almost every change probe needs.
+// extractField selects a dot-path from a decoded JSON value (dotpath.Get: an
+// object segment indexes, an array fans out, so "messages.id" yields every
+// message's id — the set of things currently there, which is the shape almost
+// every change probe needs).
 //
 // A path that does not resolve returns nil. That is deliberate rather than an
 // error: a field being absent is itself a state worth detecting, and a probe
 // whose field disappears should register as a change, not as a broken job.
 func extractField(v any, path string) any {
-	if path == "" {
-		return v
-	}
-	return extractSegments(v, strings.Split(path, "."))
-}
-
-func extractSegments(v any, segs []string) any {
-	if len(segs) == 0 {
-		return v
-	}
-	switch node := v.(type) {
-	case map[string]any:
-		next, ok := node[segs[0]]
-		if !ok {
-			return nil
-		}
-		return extractSegments(next, segs[1:])
-	case []any:
-		// Fan out: apply the remaining path to each element.
-		out := make([]any, 0, len(node))
-		for _, item := range node {
-			if got := extractSegments(item, segs); got != nil {
-				out = append(out, got)
-			}
-		}
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	default:
-		return nil
-	}
+	return dotpath.Get(v, path)
 }
 
 // watchSnapshot is the selected state of a probe: the value of each watched
@@ -254,22 +220,14 @@ func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron
 	if registry == nil {
 		return "", fmt.Errorf("agent %q has no tool registry", agentID)
 	}
-	tool, ok := registry.Get(w.Tool)
-	if !ok {
+	out, err := registry.ExecuteUnattended(ctx, w.Tool, w.Args)
+	switch {
+	case errors.Is(err, tools.ErrToolNotRegistered):
 		return "", fmt.Errorf("tool %q is not available to agent %q", w.Tool, agentID)
-	}
-	if scoped, isScoped := tool.(tools.SessionScoped); isScoped && scoped.IsSessionScoped() {
+	case errors.Is(err, tools.ErrToolSessionScoped):
 		return "", fmt.Errorf("tool %q is session-scoped and cannot be used as a watch probe", w.Tool)
 	}
-
-	res := registry.ExecuteWithContext(ctx, w.Tool, w.Args, "", "", nil)
-	if res == nil {
-		return "", fmt.Errorf("tool %q returned no result", w.Tool)
-	}
-	if res.IsError {
-		return "", fmt.Errorf("tool %q failed: %s", w.Tool, res.ForLLM)
-	}
-	return res.ForLLM, nil
+	return out, err
 }
 
 // watchProbeTimeout bounds a single probe. A watch runs unattended and on a

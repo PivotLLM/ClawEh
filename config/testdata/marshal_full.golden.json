@@ -89,6 +89,10 @@
         "fusion": true,
         "forum": true,
         "ccv3": true,
+        "classifiers": {
+          "enabled": true,
+          "model": "x"
+        },
         "character_card": "x",
         "cogmem": true,
         "share_common": true,
@@ -741,6 +745,17 @@
       "max_duration_seconds": 1,
       "call_timeout_seconds": 1,
       "max_parallel_calls": 1
+    }
+  },
+  "classifiers": {
+    "processed_days": 1,
+    "limits": {
+      "max_rules": 1,
+      "max_prompt_chars": 1,
+      "max_item_chars": 1,
+      "max_items_per_run": 1,
+      "max_parallel": 1,
+      "max_activity_hours": 1
     }
   },
   "operator": {

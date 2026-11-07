@@ -25,6 +25,7 @@
        "fusion": true,
        "forum": true,
        "ccv3": true,
+       "classifiers": {"enabled": true, "model": "Claude CLI Opus"},
        "mcp_tools": ["simpledoc"]},
       {"id": "carol", "name": "Carol",
        "tools": ["file_read_lines"],

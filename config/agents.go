@@ -94,6 +94,13 @@ type AgentConfig struct {
 	// WebUI checkbox is "Allow character card tools".
 	CCv3 bool `json:"ccv3,omitempty"`
 
+	// Classifiers lets the agent create and run classifiers (the classifier
+	// package): the classifier_* tool suite, gated as a unit, and the one model
+	// its classifiers use. Absent or disabled: no classifier tools and none of
+	// its classifiers run (their definitions are kept). Definitions and state
+	// live under <workspace>/classifiers.
+	Classifiers *AgentClassifiersConfig `json:"classifiers,omitempty"`
+
 	// CharacterCard names a card in the character-card library
 	// (<CLAW_HOME>/cards/<id>.json, Config.CardsPath) that is rendered into
 	// the agent's system prompt. Empty: none. Clones inherit it. A human agent
@@ -653,8 +660,8 @@ func (c *Config) AgentHasFusion(agentID string) bool {
 
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
 // enabled for the agent. Suites are gated as a unit by a per-agent flag rather
-// than the per-tool allowlist. cogmem defaults ON; maestro, fusion and forum
-// default OFF.
+// than the per-tool allowlist. cogmem defaults ON; maestro, fusion, forum,
+// ccv3 and classifiers default OFF.
 func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 	for i := range c.Agents.List {
 		if SameAgentID(c.Agents.List[i].ID, agentID) {
@@ -668,6 +675,8 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 				return a.Forum
 			case "ccv3":
 				return a.CCv3
+			case "classifiers":
+				return a.ClassifiersEnabled()
 			case "cogmem":
 				return a.CognitiveMemoryEnabled()
 			default:

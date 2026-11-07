@@ -94,9 +94,10 @@ func render(t *testing.T, cfg *config.Config) string {
 	for i := range agents {
 		a := &agents[i]
 		w("agent %s\n", a.ID)
-		w("  suites: cogmem=%s maestro=%s fusion=%s forum=%s ccv3=%s\n",
+		w("  suites: cogmem=%s maestro=%s fusion=%s forum=%s ccv3=%s classifiers=%s\n",
 			onOff(cfg.AgentSuiteEnabled(a.ID, "cogmem")), onOff(cfg.AgentSuiteEnabled(a.ID, "maestro")), onOff(cfg.AgentSuiteEnabled(a.ID, "fusion")),
-			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")), onOff(cfg.AgentSuiteEnabled(a.ID, "ccv3")))
+			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")), onOff(cfg.AgentSuiteEnabled(a.ID, "ccv3")),
+			onOff(cfg.AgentSuiteEnabled(a.ID, "classifiers")))
 		w("  character card: %s\n", orNone(a.CharacterCard))
 
 		var native []string

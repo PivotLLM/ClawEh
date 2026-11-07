@@ -99,6 +99,8 @@ const (
 	HumanModelMisused
 	// HumanSharedName: a human model's model_name is also another model's.
 	HumanSharedName
+	// HumanClassifiers: a human agent has its classifiers switch on.
+	HumanClassifiers
 )
 
 // HumanProblem is one way the configuration breaks the human-agent rules.
@@ -127,7 +129,7 @@ func (p HumanProblem) key() string {
 // (PruneHumanProblems disables it). The others are a value ignored where it
 // is set.
 func (p HumanProblem) SetsAgentAside() bool {
-	return p.Kind != HumanModelMisused && p.Kind != HumanSharedName
+	return p.Kind != HumanModelMisused && p.Kind != HumanSharedName && p.Kind != HumanClassifiers
 }
 
 // HumanProblems lists every way the configuration breaks the human-agent
@@ -138,6 +140,7 @@ func (p HumanProblem) SetsAgentAside() bool {
 //   - it has exactly one binding: its default, naming one chat;
 //   - that chat is bound to no other agent;
 //   - it is never the default agent;
+//   - it never runs classifiers;
 //   - a human model is never anyone's default, summarization, vision or
 //     sub-agent model, and its model_name is no other model's.
 func (c *Config) HumanProblems() []HumanProblem {
@@ -166,6 +169,9 @@ func (c *Config) HumanProblems() []HumanProblem {
 		}
 		if ac.Default {
 			add(HumanDefault, name+" represents a person and can't be the default agent.")
+		}
+		if ac.ClassifiersEnabled() {
+			add(HumanClassifiers, name+" represents a person and cannot run classifiers.")
 		}
 		if p, ok := c.humanChatProblem(ac, name); ok {
 			add(p.Kind, p.Message)
@@ -269,8 +275,9 @@ func newHumanProblems(before, next *Config) []error {
 
 // PruneHumanProblems makes the running copy obey the human-agent rules and
 // returns what it changed: an agent breaking them is disabled, a human model
-// used where a model must answer is removed from that site, and a model that
-// shares a human model's name is dropped. It mutates the in-memory config
+// used where a model must answer is removed from that site, a human agent's
+// classifiers switch is turned off, and a model that shares a human model's
+// name is dropped. It mutates the in-memory config
 // only; the file keeps the entries so the operator can repair them, and the
 // WebUI shows each problem where it is configured.
 func (c *Config) PruneHumanProblems() []HumanProblem {
@@ -280,6 +287,11 @@ func (c *Config) PruneHumanProblems() []HumanProblem {
 		if p.SetsAgentAside() {
 			if ac := c.AgentByID(p.Agent); ac != nil {
 				ac.Enabled = &off
+			}
+		}
+		if p.Kind == HumanClassifiers {
+			if ac := c.AgentByID(p.Agent); ac != nil {
+				ac.Classifiers.Enabled = false
 			}
 		}
 	}

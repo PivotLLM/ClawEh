@@ -44,6 +44,9 @@ func (c *Config) modelRefSites() []modelRef {
 		if a.Subagents != nil {
 			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].subagents.models", a.ID), agent: a.DisplayName(), slice: &a.Subagents.Models, role: "a worker model"})
 		}
+		if a.Classifiers != nil {
+			sites = append(sites, modelRef{where: fmt.Sprintf("agents.list[%s].classifiers.model", a.ID), agent: a.DisplayName(), scalar: &a.Classifiers.Model, role: "a classifier model"})
+		}
 	}
 	return sites
 }

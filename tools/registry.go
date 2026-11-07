@@ -377,6 +377,36 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
 }
 
+// ErrToolNotRegistered is ExecuteUnattended's refusal of a tool the registry
+// does not hold.
+var ErrToolNotRegistered = errors.New("tool not registered")
+
+// ErrToolSessionScoped is ExecuteUnattended's refusal of a SessionScoped tool.
+var ErrToolSessionScoped = errors.New("tool is session-scoped")
+
+// ExecuteUnattended runs a registered tool with no session behind it (a
+// scheduled watch probe, a classifier run): it refuses a tool the registry
+// does not hold (ErrToolNotRegistered) and a SessionScoped one
+// (ErrToolSessionScoped), passes no channel, chat or async callback, and turns
+// an IsError result into an error carrying the tool's ForLLM text.
+func (r *ToolRegistry) ExecuteUnattended(ctx context.Context, name string, args map[string]any) (string, error) {
+	tool, ok := r.Get(name)
+	if !ok {
+		return "", fmt.Errorf("tool %q: %w", name, ErrToolNotRegistered)
+	}
+	if scoped, isScoped := tool.(SessionScoped); isScoped && scoped.IsSessionScoped() {
+		return "", fmt.Errorf("tool %q: %w", name, ErrToolSessionScoped)
+	}
+	res := r.ExecuteWithContext(ctx, name, args, "", "", nil)
+	if res == nil {
+		return "", fmt.Errorf("tool %q returned no result", name)
+	}
+	if res.IsError {
+		return "", fmt.Errorf("tool %q failed: %s", name, res.ForLLM)
+	}
+	return res.ForLLM, nil
+}
+
 // ExecuteWithContext executes a registered tool, hidden by discovery or not,
 // with channel/chatID context and optional async callback.
 // If the tool implements AsyncExecutor and a non-nil callback is provided,

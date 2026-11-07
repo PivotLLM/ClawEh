@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -23,6 +24,7 @@ import (
 //   - tasks:    sub-agent results (tools/agents taskstore)
 //   - tmp:      inbound attachments and transcriptions (agent loop)
 //   - forums:   the agent's forums (forumfs.BaseDirName)
+//   - classifiers: the agent's classifiers (classifierfs.BaseDirName)
 //   - maestro:  Maestro data (MaestroMountName)
 //   - sessions: conversation archives (the session store)
 //   - cogmem:   cognitive memory (cogmemhost.DirName)
@@ -30,15 +32,16 @@ import (
 //     state.json) and the external-message tokens (message-tokens.json)
 //   - common:   the shared directory's tools namespace
 var ReservedWorkspaceNames = []string{
-	"files", "skills", "tasks", "tmp", forumfs.BaseDirName, MaestroMountName,
-	"sessions", "cogmem", "state", "common",
+	"files", "skills", "tasks", "tmp", forumfs.BaseDirName, classifierfs.BaseDirName,
+	MaestroMountName, "sessions", "cogmem", "state", "common",
 }
 
 // AlwaysReadableWorkspaceDirs are the workspace folders an agent may always
 // read when workspace_read_subdirs limits its reads: tasks/ (sub-agent
-// results), tmp/ (inbound attachments) and the forums folder (its forums'
-// results). Writes stay confined to the write area.
-var AlwaysReadableWorkspaceDirs = []string{"tasks", "tmp", forumfs.BaseDirName}
+// results), tmp/ (inbound attachments), the forums folder (its forums'
+// results) and the classifiers folder (its classifier definitions). Writes
+// stay confined to the write area.
+var AlwaysReadableWorkspaceDirs = []string{"tasks", "tmp", forumfs.BaseDirName, classifierfs.BaseDirName}
 
 // IsReservedWorkspaceName reports whether name, trimmed and in any case, is one
 // of ReservedWorkspaceNames.

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/ccv3"
+	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum/forumfs"
@@ -66,9 +67,10 @@ type folderAccess struct {
 
 // alwaysReadableNotes says what each of config.AlwaysReadableWorkspaceDirs holds.
 var alwaysReadableNotes = map[string]string{
-	"tasks":             "sub-agent results",
-	"tmp":               "inbound attachments",
-	forumfs.BaseDirName: "the agent's forums",
+	"tasks":                  "sub-agent results",
+	"tmp":                    "inbound attachments",
+	forumfs.BaseDirName:      "the agent's forums",
+	classifierfs.BaseDirName: "the agent's classifiers",
 }
 
 func (f *folderAccess) add(path string, read, write bool, note string) {

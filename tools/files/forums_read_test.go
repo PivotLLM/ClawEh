@@ -17,8 +17,8 @@ func TestEffectiveReadSubdirs_AddsAlwaysReadable(t *testing.T) {
 		configured []string
 		want       []string
 	}{
-		{name: "default scope", configured: []string{"files", "skills"}, want: []string{"files", "skills", "tasks", "tmp", "forums"}},
-		{name: "already listed", configured: []string{"files", "forums"}, want: []string{"files", "forums", "tasks", "tmp"}},
+		{name: "default scope", configured: []string{"files", "skills"}, want: []string{"files", "skills", "tasks", "tmp", "forums", "classifiers"}},
+		{name: "already listed", configured: []string{"files", "forums"}, want: []string{"files", "forums", "tasks", "tmp", "classifiers"}},
 		{name: "workspace-wide", configured: nil, want: nil},
 	}
 	for _, tt := range tests {
