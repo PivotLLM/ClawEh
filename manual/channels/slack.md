@@ -97,6 +97,22 @@ with a keyword, set `group_trigger` in `config.json`:
 
 or `"group_trigger": { "prefixes": ["!ask"] }`.
 
+## "Thinking..." message
+
+To show a short message as soon as a message arrives, updated with progress
+on long requests and then replaced by the reply, set `placeholder` in
+`config.json` (off by default; `text` is optional):
+
+```json
+{
+  "channels": {
+    "slack": {
+      "placeholder": { "enabled": true, "text": "Thinking... 💭" }
+    }
+  }
+}
+```
+
 ## Commands in Slack
 
 ClawEh commands such as `/model` can be run these ways:

@@ -13,6 +13,12 @@
 
 ### Added
 
+- **Slack shows a "Thinking..." message and progress updates on long
+  turns.** With `channels.slack.placeholder.enabled` set to `true` (off by
+  default; `placeholder.text` changes the message), the app posts
+  the message where the reply will go, edits it with progress on long turns,
+  replaces it with the reply and deletes it when a turn sends no reply, as
+  Telegram and Discord do. It needs no new Slack scope.
 - **Classifiers.** An agent can sort the items one of its tools lists
   (email, files, tickets) with one model call per item: a classifier lists
   the items, skips those already handled, reads each new one, asks the
@@ -121,6 +127,13 @@
   created with their area's mode too, instead of fixed modes (Maestro's
   were `0755`/`0644`).
 - Updated dependencies
+
+### Fixed
+
+- **Progress updates, the typing indicator and the reaction no longer
+  disappear after 5–10 minutes on a long turn.** They stay until the turn
+  ends, on every channel, so a long turn no longer looks dead and its
+  "Thinking..." message keeps receiving progress updates.
 
 ## [0.6.3]
 

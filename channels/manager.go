@@ -57,8 +57,10 @@ type typingEntry struct {
 }
 
 // reactionEntry wraps a reaction undo function with a creation timestamp for TTL eviction.
+// chatKey is the "channel:chatID" of the chat the reacted message is in.
 type reactionEntry struct {
 	undo      func()
+	chatKey   string
 	createdAt time.Time
 }
 
@@ -169,6 +171,11 @@ type Manager struct {
 	placeholders  sync.Map // "channel:chatID" → placeholderEntry
 	typingStops   sync.Map // "channel:chatID" → typingEntry
 	reactionUndos sync.Map // "channel:chatID:messageID" → reactionEntry
+	// turns counts the turns running for each "channel:chatID" and when the
+	// last one ended (see HoldChat); the janitor leaves a chat's typing,
+	// reaction and placeholder alone while it has a turn.
+	turnsMu sync.Mutex
+	turns   map[string]*chatTurns
 	// alerter, when set, hears about channels that give up (start or send).
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter
@@ -218,7 +225,7 @@ type asyncTask struct {
 // Implements PlaceholderRecorder.
 func (m *Manager) RecordPlaceholder(channel, chatID, placeholderID string) {
 	key := channel + ":" + chatID
-	m.placeholders.Store(key, placeholderEntry{id: placeholderID, createdAt: time.Now()})
+	m.placeholders.Store(key, placeholderEntry{id: placeholderID, createdAt: m.clk().Now()})
 }
 
 // UpdatePlaceholder edits the active placeholder for channel/chatID in place to
@@ -277,7 +284,7 @@ func (m *Manager) SendPlaceholder(ctx context.Context, channel, chatID string) b
 // Implements PlaceholderRecorder.
 func (m *Manager) RecordTypingStop(channel, chatID string, stop func()) {
 	key := channel + ":" + chatID
-	entry := typingEntry{stop: stop, createdAt: time.Now()}
+	entry := typingEntry{stop: stop, createdAt: m.clk().Now()}
 	if previous, loaded := m.typingStops.Swap(key, entry); loaded {
 		if oldEntry, ok := previous.(typingEntry); ok && oldEntry.stop != nil {
 			oldEntry.stop()
@@ -375,8 +382,8 @@ func (m *Manager) StreamDelta(ctx context.Context, channel, chatID, delta string
 // RecordReactionUndo registers a reaction undo function for later invocation.
 // Implements PlaceholderRecorder.
 func (m *Manager) RecordReactionUndo(channel, chatID, messageID string, undo func()) {
-	key := channel + ":" + chatID + ":" + messageID
-	m.reactionUndos.Store(key, reactionEntry{undo: undo, createdAt: time.Now()})
+	chatKey := channel + ":" + chatID
+	m.reactionUndos.Store(chatKey+":"+messageID, reactionEntry{undo: undo, chatKey: chatKey, createdAt: m.clk().Now()})
 }
 
 // preSend handles typing stop, reaction undo, and placeholder editing before sending a message.
@@ -402,12 +409,16 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 	// 3. Try editing placeholder
 	if v, loaded := m.placeholders.LoadAndDelete(key); loaded {
 		if entry, ok := v.(placeholderEntry); ok && entry.id != "" {
-			if editor, ok := ch.(MessageEditor); ok {
+			if replacer, ok := ch.(PlaceholderReplacer); ok {
+				if err := replacer.ReplacePlaceholder(ctx, entry.id, msg); err == nil {
+					return true // replaced successfully, skip Send
+				}
+			} else if editor, ok := ch.(MessageEditor); ok {
 				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
 					return true // edited successfully, skip Send
 				}
-				// edit failed → fall through to normal Send
 			}
+			// edit failed → fall through to normal Send
 		}
 	}
 
@@ -1047,48 +1058,117 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 	}
 }
 
-// runTTLJanitor periodically scans the typingStops and placeholders maps
-// and evicts entries that have exceeded their TTL. This prevents memory
-// accumulation when outbound paths fail to trigger preSend (e.g. LLM errors).
+// runTTLJanitor periodically evicts typing, reaction and placeholder entries
+// that outlived their TTL (sweepExpired). This prevents memory accumulation
+// when outbound paths fail to trigger preSend (e.g. LLM errors).
 func (m *Manager) runTTLJanitor(ctx context.Context) {
-	ticker := time.NewTicker(janitorInterval)
+	ticker := m.clk().NewTicker(janitorInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			m.typingStops.Range(func(key, value any) bool {
-				if entry, ok := value.(typingEntry); ok {
-					if now.Sub(entry.createdAt) > typingStopTTL {
-						if _, loaded := m.typingStops.LoadAndDelete(key); loaded {
-							entry.stop() // idempotent, safe
-						}
-					}
-				}
-				return true
-			})
-			m.reactionUndos.Range(func(key, value any) bool {
-				if entry, ok := value.(reactionEntry); ok {
-					if now.Sub(entry.createdAt) > typingStopTTL {
-						if _, loaded := m.reactionUndos.LoadAndDelete(key); loaded {
-							entry.undo() // idempotent, safe
-						}
-					}
-				}
-				return true
-			})
-			m.placeholders.Range(func(key, value any) bool {
-				if entry, ok := value.(placeholderEntry); ok {
-					if now.Sub(entry.createdAt) > placeholderTTL {
-						m.placeholders.Delete(key)
-					}
-				}
-				return true
-			})
+		case now := <-ticker.C():
+			m.sweepExpired(now)
 		}
 	}
+}
+
+// chatTurns is what HoldChat keeps for one chat: the turns running in it and
+// when the last of them ended.
+type chatTurns struct {
+	running int
+	endedAt time.Time
+}
+
+// HoldChat marks a turn running in channel/chatID until the returned release
+// is called (once; later calls do nothing). While a chat has a turn, the
+// janitor leaves its typing indicator, reaction and placeholder alone however
+// long the turn takes, so progress edits keep landing and the turn never looks
+// dead. A chat's entries age from when its last turn ended, so the reply
+// published at the end still finds them. Entries nothing consumes are evicted
+// a full TTL after that.
+func (m *Manager) HoldChat(channel, chatID string) (release func()) {
+	key := channel + ":" + chatID
+	m.turnsMu.Lock()
+	if m.turns == nil {
+		m.turns = make(map[string]*chatTurns)
+	}
+	t := m.turns[key]
+	if t == nil {
+		t = &chatTurns{}
+		m.turns[key] = t
+	}
+	t.running++
+	m.turnsMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.turnsMu.Lock()
+			t.running--
+			t.endedAt = m.clk().Now()
+			m.turnsMu.Unlock()
+		})
+	}
+}
+
+// sweepExpired evicts the entries older than their TTL at now. An entry of a
+// chat with a running turn is kept; one of a chat whose turns have ended ages
+// from the later of its creation and the end of the last turn.
+func (m *Manager) sweepExpired(now time.Time) {
+	m.turnsMu.Lock()
+	running := make(map[string]bool, len(m.turns))
+	ended := make(map[string]time.Time, len(m.turns))
+	for key, t := range m.turns {
+		switch {
+		case t.running > 0:
+			running[key] = true
+		case now.Sub(t.endedAt) > placeholderTTL:
+			// Longer than any TTL: no entry can still age from it.
+			delete(m.turns, key)
+		default:
+			ended[key] = t.endedAt
+		}
+	}
+	m.turnsMu.Unlock()
+
+	expired := func(chatKey string, createdAt time.Time, ttl time.Duration) bool {
+		if running[chatKey] {
+			return false
+		}
+		since := createdAt
+		if e, ok := ended[chatKey]; ok && e.After(since) {
+			since = e
+		}
+		return now.Sub(since) > ttl
+	}
+
+	m.typingStops.Range(func(key, value any) bool {
+		chatKey, isKey := key.(string)
+		if entry, ok := value.(typingEntry); ok && isKey && expired(chatKey, entry.createdAt, typingStopTTL) {
+			if _, loaded := m.typingStops.LoadAndDelete(key); loaded {
+				entry.stop() // idempotent, safe
+			}
+		}
+		return true
+	})
+	m.reactionUndos.Range(func(key, value any) bool {
+		if entry, ok := value.(reactionEntry); ok && expired(entry.chatKey, entry.createdAt, typingStopTTL) {
+			if _, loaded := m.reactionUndos.LoadAndDelete(key); loaded {
+				entry.undo() // idempotent, safe
+			}
+		}
+		return true
+	})
+	m.placeholders.Range(func(key, value any) bool {
+		chatKey, isKey := key.(string)
+		if entry, ok := value.(placeholderEntry); ok && isKey && expired(chatKey, entry.createdAt, placeholderTTL) {
+			m.placeholders.Delete(key)
+		}
+		return true
+	})
 }
 
 func (m *Manager) GetChannel(name string) (Channel, bool) {

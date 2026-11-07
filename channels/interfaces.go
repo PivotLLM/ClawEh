@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/commands"
 )
 
@@ -39,6 +40,15 @@ type ReactionCapable interface {
 // Manager.preSend can later edit it via MessageEditor.EditMessage.
 type PlaceholderCapable interface {
 	SendPlaceholder(ctx context.Context, chatID string) (messageID string, err error)
+}
+
+// PlaceholderReplacer — a PlaceholderCapable channel that needs the whole reply
+// when its placeholder becomes the final reply (Slack acknowledges the inbound
+// message then, as its Send does). The manager uses it instead of
+// MessageEditor.EditMessage for the final reply; progress edits still go
+// through EditMessage.
+type PlaceholderReplacer interface {
+	ReplacePlaceholder(ctx context.Context, placeholderID string, msg bus.OutboundMessage) error
 }
 
 // PlaceholderRecorder is injected into channels by Manager.

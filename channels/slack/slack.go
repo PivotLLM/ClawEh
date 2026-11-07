@@ -254,25 +254,99 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		return sendErr
 	}
 
-	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
-	if msgRef, ok := ref.(slackMessageRef); ok {
-		go func() {
-			if err := c.api.AddReaction("white_check_mark", slack.ItemRef{
-				Channel:   msgRef.ChannelID,
-				Timestamp: msgRef.Timestamp,
-			}); err != nil {
-				logger.DebugCF("slack", "Failed to add reaction", map[string]any{
-					"channel_id": msgRef.ChannelID, "error": err.Error(),
-				})
-			}
-		}()
-	}
+	c.acknowledge(msg.OriginalMessageID)
 
 	logger.DebugCF("slack", "Message sent", map[string]any{
 		"channel_id": channelID,
 		"thread_ts":  threadTS,
 	})
 
+	return nil
+}
+
+// acknowledge marks the inbound message a reply answered with a check mark,
+// once.
+func (c *SlackChannel) acknowledge(originalMessageID string) {
+	ref, _ := c.pendingAcks.LoadAndDelete(originalMessageID)
+	msgRef, ok := ref.(slackMessageRef)
+	if !ok {
+		return
+	}
+	go func() {
+		if err := c.api.AddReaction("white_check_mark", slack.ItemRef{
+			Channel:   msgRef.ChannelID,
+			Timestamp: msgRef.Timestamp,
+		}); err != nil {
+			logger.DebugCF("slack", "Failed to add reaction", map[string]any{
+				"channel_id": msgRef.ChannelID, "error": err.Error(),
+			})
+		}
+	}()
+}
+
+// defaultPlaceholderText is the placeholder shown when the config sets none.
+const defaultPlaceholderText = "Thinking... 💭"
+
+// SendPlaceholder implements channels.PlaceholderCapable. It posts the
+// placeholder where the reply will go (the thread, when the chat is one), to
+// be edited into progress updates and then the reply.
+func (c *SlackChannel) SendPlaceholder(ctx context.Context, chatID string) (string, error) {
+	if !c.config.Placeholder.Enabled {
+		return "", nil
+	}
+	text := c.config.Placeholder.Text
+	if text == "" {
+		text = defaultPlaceholderText
+	}
+	channelID, threadTS := parseSlackChatID(chatID)
+	if channelID == "" {
+		return "", fmt.Errorf("invalid slack chat ID: %s", chatID)
+	}
+	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+	_, ts, err := c.api.PostMessageContext(ctx, channelID, opts...)
+	if err != nil {
+		return "", classifySendErr("slack placeholder", err)
+	}
+	return ts, nil
+}
+
+// EditMessage implements channels.MessageEditor: it replaces the text of a
+// message the app posted (a placeholder) with content.
+func (c *SlackChannel) EditMessage(ctx context.Context, chatID, messageID, content string) error {
+	channelID, _ := parseSlackChatID(chatID)
+	if channelID == "" {
+		return fmt.Errorf("invalid slack chat ID: %s", chatID)
+	}
+	text := slack.MsgOptionText(mdhelper.FormatTables(markdownToMrkdwn(content)), false)
+	if _, _, _, err := c.api.UpdateMessageContext(ctx, channelID, messageID, text); err != nil {
+		return classifySendErr("slack edit", err)
+	}
+	return nil
+}
+
+// ReplacePlaceholder implements channels.PlaceholderReplacer: the reply
+// replaces the placeholder and acknowledges the inbound message, as Send does.
+func (c *SlackChannel) ReplacePlaceholder(ctx context.Context, placeholderID string, msg bus.OutboundMessage) error {
+	if err := c.EditMessage(ctx, msg.ChatID, placeholderID, msg.Content); err != nil {
+		return err
+	}
+	c.acknowledge(msg.OriginalMessageID)
+	return nil
+}
+
+// DeleteMessage implements channels.MessageDeleter: it removes a message the
+// app posted (a placeholder whose turn sent no reply).
+func (c *SlackChannel) DeleteMessage(ctx context.Context, chatID, messageID string) error {
+	channelID, _ := parseSlackChatID(chatID)
+	if channelID == "" {
+		return fmt.Errorf("invalid slack chat ID: %s", chatID)
+	}
+	if _, _, err := c.api.DeleteMessageContext(ctx, channelID, messageID); err != nil {
+		return classifySendErr("slack delete", err)
+	}
 	return nil
 }
 
