@@ -187,7 +187,7 @@ func mark(action bool) string {
 // collectAssessment is the table a reviewer reads first: the items that most
 // often need attention, each with the fact and, where action is recommended,
 // a mark. It opens with one row per listener (see listenerRows).
-func collectAssessment(_ context.Context, cfg *config.Config, env Environment) Section {
+func collectAssessment(ctx context.Context, cfg *config.Config, env Environment) Section {
 	t := Table{Columns: []string{"Action", "Item", "Status"}}
 	add := func(action bool, item, status string) {
 		t.Rows = append(t.Rows, row(mark(action), item, status))
@@ -262,6 +262,12 @@ func collectAssessment(_ context.Context, cfg *config.Config, env Environment) S
 	// A mount named after a workspace folder is set aside at load.
 	for _, m := range cfg.IgnoredMounts() {
 		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
+	}
+
+	// A classifier model the agent cannot use, or a definition file that is
+	// not run: its classifiers do nothing until the operator fixes it.
+	for _, r := range classifierAssessment(ctx, cfg) {
+		add(r.action, r.item, r.status)
 	}
 
 	// Awareness only: the file tools honour restrict_to_workspace, the shell

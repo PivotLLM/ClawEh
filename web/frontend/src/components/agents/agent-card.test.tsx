@@ -76,6 +76,7 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
   onShareCommonChange: () => {},
   onGlobalCronChange: () => {},
   onMaestroChange: () => {},
+  onClassifiersChange: () => {},
   onFusionChange: () => {},
   onForumChange: () => {},
   onCharacterCardChange: () => {},
@@ -88,6 +89,7 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
 
 // Settings that do nothing for an agent that represents a person.
 const personIgnores = [
+  "Allow classifiers",
   "Allow forum",
   "Allow character card tools",
   "Character card",
@@ -147,6 +149,40 @@ describe("AgentCard character card", () => {
   it("shows no warning when no card is set", () => {
     renderCard([], { ...allSettings, characterCard: "" })
     expect(screen.queryByTestId("character-card-missing")).toBeNull()
+  })
+})
+
+describe("AgentCard classifiers", () => {
+  const withSwitch = (
+    classifiers: boolean,
+    classifierModel: string,
+  ): Partial<React.ComponentProps<typeof AgentCard>> => ({
+    ...allSettings,
+    classifiers,
+    classifierModel,
+    classifierModels: ["fast", "slow"],
+    onClassifierModelChange: () => {},
+  })
+
+  it("shows the model selector only while the switch is on", () => {
+    renderCard([], withSwitch(false, ""))
+    expect(screen.queryByText("Classifier model")).toBeNull()
+  })
+
+  it("shows the model with no warning when the agent can use it", () => {
+    renderCard([], withSwitch(true, "fast"))
+    expect(screen.queryByText("Classifier model")).not.toBeNull()
+    expect(screen.queryByTestId("classifier-model-unusable")).toBeNull()
+  })
+
+  it("marks a model the agent cannot use where it is set", () => {
+    renderCard([], withSwitch(true, "gone"))
+    expect(screen.getByTestId("classifier-model-unusable").textContent).toBe(
+      "Not one of this agent's models, so its classifiers fail. Pick another.",
+    )
+    expect(
+      screen.queryByText("gone (not one of this agent's models)"),
+    ).not.toBeNull()
   })
 })
 

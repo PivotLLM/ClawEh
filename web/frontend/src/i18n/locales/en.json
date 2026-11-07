@@ -43,6 +43,12 @@
     "maestroAllowParallelHint": "Runs are sequential unless the LLM asks for parallel; turn this off to refuse such requests.",
     "fusion": "Fusion (REST-API tools)",
     "fusionHint": "Lets this agent use the Fusion services ticked under Tools. Off by default.",
+    "classifiers": "Allow classifiers",
+    "classifiersHint": "Lets this agent sort items from its tools into categories with one model call each.",
+    "classifierModel": "Classifier model",
+    "classifierModelNone": "None set",
+    "classifierModelUnusableOption": "{{model}} (not one of this agent's models)",
+    "classifierModelUnusable": "Not one of this agent's models, so its classifiers fail. Pick another.",
     "forum": "Allow forum",
     "forumHint": "Lets this agent hold forums with the other agents it may message.",
     "characterCard": "Character card",
@@ -642,7 +648,9 @@
         "auth": "Auth",
         "restart": "Restart",
         "card_import": "Card import",
-        "card_delete": "Card delete"
+        "card_delete": "Card delete",
+        "classifier_write": "Classifier change",
+        "classification": "Classification"
       },
       "col": {
         "time": "Time",

@@ -255,7 +255,7 @@ func agentMCPTable(cfg *config.Config, a *config.AgentConfig) Table {
 	return t
 }
 
-func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Section {
+func agentSection(ctx context.Context, cfg *config.Config, env Environment, a *config.AgentConfig) Section {
 	d := cfg.Agents.Defaults
 	models := a.Models
 	modelsNote := ""
@@ -287,6 +287,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 			card += " (missing: no such card in the library)"
 		}
 	}
+	classifierModel, classifierModelMarked := classifierModelState(cfg, a)
 	settings := pairs("Settings",
 		row("Enabled", yesNo(a.IsEnabled())),
 		row("Routing default", yesNo(config.SameAgentID(a.ID, defaultAgentID(cfg)))),
@@ -297,21 +298,34 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		row("Sub-agents", sub),
 		row("Suites", "Maestro "+onOff(a.MaestroEnabled())+", Fusion "+onOff(a.Fusion)),
 		row("Forum (sets up forums with other agents)", onOff(a.Forum)),
+		row("Allow classifiers", classifiersSwitch(a, human)),
+		row("Classifier model", classifierModel),
 		row("Character card", card),
 		row("Character card tools (edits the card library)", onOff(a.CCv3)),
 		row("Shared common directory", onOff(a.SharesCommon())),
 		row("Global cron (schedules for other agents)", onOff(a.GlobalCron)),
 	)
+	if classifierModelMarked {
+		for i, r := range settings.Rows {
+			if r[0] == "Classifier model" {
+				settings.Highlight = append(settings.Highlight, i)
+			}
+		}
+	}
 	if len(a.DenyTools) > 0 {
 		settings.Rows = append(settings.Rows, row("Denied tools (deny_tools, wins over every grant incl. suites)", joinLines(a.DenyTools, none)))
 	}
+	tables := []Table{settings, agentToolsTable(a), agentMCPTable(cfg, a), agentFolderAccess(cfg, env, a)}
+	if t, ok := classifiersTable(ctx, cfg, a); ok {
+		tables = append(tables, t)
+	}
 	return Section{
 		Title:  title,
-		Tables: []Table{settings, agentToolsTable(a), agentMCPTable(cfg, a), agentFolderAccess(cfg, env, a)},
+		Tables: tables,
 	}
 }
 
-func collectAgents(_ context.Context, cfg *config.Config, env Environment) Section {
+func collectAgents(ctx context.Context, cfg *config.Config, env Environment) Section {
 	d := cfg.Agents.Defaults
 	readSubdirs := append([]string{}, d.WorkspaceReadSubdirs...)
 	if len(readSubdirs) > 0 {
@@ -340,7 +354,7 @@ func collectAgents(_ context.Context, cfg *config.Config, env Environment) Secti
 	}
 	sort.SliceStable(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	for _, a := range agents {
-		s.Subsections = append(s.Subsections, agentSection(cfg, env, a))
+		s.Subsections = append(s.Subsections, agentSection(ctx, cfg, env, a))
 	}
 	if len(agents) == 0 {
 		s.Notes = append(s.Notes, "No agents are configured.")

@@ -58,6 +58,7 @@ Each archive is complete on its own.
 | `agents/<agent>/sessions/` | Conversations. |
 | `agents/<agent>/cogmem/` | Memory. |
 | `agents/<agent>/forums/` | Each [forum](../forums/results.md#where-the-files-are)'s setup and every run's files. |
+| `agents/<agent>/classifiers/` | Each agent's [classifiers](../agents/classifiers.md) and what they have handled. |
 | `agents/<agent>/maestro/` | [Maestro](../maestro.md#where-its-data-lives) projects and playbooks. Lock and temporary files are left out. |
 | Any other database under the data directory | |
 
@@ -76,7 +77,7 @@ A forum that is running during the backup is copied file by file. After a restor
 
 Only agents in the usual agents folder are fully covered. For an agent whose workspace is set to another folder:
 
-- inside the data directory: its conversations and memory are backed up, its forums and Maestro data are not;
+- inside the data directory: its conversations and memory are backed up, its forums, classifiers and Maestro data are not;
 - outside the data directory: nothing of it is backed up.
 
 Back such a folder up yourself, or move the agent back into the agents folder.

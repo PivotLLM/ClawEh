@@ -518,7 +518,7 @@ func TestInspect(t *testing.T) {
 	if err := os.WriteFile(e.scope.BaseDirectory+"/.tmp-123", []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sums, err := Inspect(e.scope.BaseDirectory)
+	sums, err := Inspect(t.Context(), e.scope.BaseDirectory, Ceilings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,17 @@ func TestInspect(t *testing.T) {
 	if s := byID["bobs"]; s.Owner != "bob" || s.Invalid != "" {
 		t.Errorf("bobs = %+v", s)
 	}
-	if sums, err := Inspect(t.TempDir() + "/none"); err != nil || len(sums) != 0 {
+	// A definition above the install's maximums is invalid, as a run finds it.
+	tight, err := Inspect(t.Context(), e.scope.BaseDirectory, Ceilings{MaxPromptChars: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range tight {
+		if s.ID == "inbox-priority" && !strings.Contains(s.Invalid, "this install allows 10") {
+			t.Errorf("inbox-priority above the maximums = %+v", s)
+		}
+	}
+	if sums, err := Inspect(t.Context(), t.TempDir()+"/none", Ceilings{}); err != nil || len(sums) != 0 {
 		t.Errorf("Inspect(missing folder) = %v, %v", sums, err)
 	}
 }

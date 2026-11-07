@@ -18,6 +18,7 @@ import {
   skillsSummary,
   toggleAccessEntry,
   toggleAllowAgent,
+  toggleClassifiers,
   toolGranted,
   withAllAgents,
   withShellAllowed,
@@ -469,6 +470,63 @@ describe("agentsPayload", () => {
       agents: { list: Record<string, unknown>[] }
     }
     expect(kept.agents.list[0].ccv3).toBe(true)
+  })
+
+  it("toggling Allow classifiers writes the agent's first model, and off drops the block", () => {
+    const toggle = (cfg: ReturnType<typeof parseAgentsConfig>, id: string) =>
+      // As handleToggleClassifiers applies it.
+      Object.fromEntries(
+        (
+          agentsPayload({
+            ...cfg,
+            list: (cfg.list ?? []).map((a) =>
+              a.id === id ? toggleClassifiers(a, cfg.defaults.models ?? []) : a,
+            ),
+          }) as { agents: { list: Record<string, unknown>[] } }
+        ).agents.list.map((a) => [a.id, a]),
+      )
+
+    const cfg = parseAgentsConfig(loaded)
+    const on = toggle(cfg, "alice")
+    expect(on.alice.classifiers).toEqual({ enabled: true, model: "fast" })
+    expect(on.alice).toMatchObject(unedited("alice"))
+    expect(on.bob).not.toHaveProperty("classifiers")
+    // Bob has no models of his own: the first default model.
+    expect(toggle(cfg, "bob").bob.classifiers).toEqual({
+      enabled: true,
+      model: "fast",
+    })
+
+    // A model already set is kept when the switch goes on.
+    const withModel = structuredClone(loaded)
+    Object.assign(withModel.agents.list[0], {
+      classifiers: { enabled: false, model: "slow" },
+    })
+    expect(
+      toggle(parseAgentsConfig(withModel), "alice").alice.classifiers,
+    ).toEqual({ enabled: true, model: "slow" })
+
+    // Loaded on, the switch reads it, a save keeps it and turning it off
+    // removes the block.
+    const enabled = structuredClone(loaded)
+    Object.assign(enabled.agents.list[0], {
+      classifiers: { enabled: true, model: "slow" },
+    })
+    const cfgOn = parseAgentsConfig(enabled)
+    expect(cfgOn.list?.[0].classifiers).toEqual({
+      enabled: true,
+      model: "slow",
+    })
+    const kept = agentsPayload(cfgOn) as {
+      agents: { list: Record<string, unknown>[] }
+    }
+    expect(kept.agents.list[0].classifiers).toEqual({
+      enabled: true,
+      model: "slow",
+    })
+    const off = toggle(cfgOn, "alice")
+    expect(off.alice).not.toHaveProperty("classifiers")
+    expect(off.alice).toMatchObject(unedited("alice"))
   })
 
   it("setting a character card on Alice writes it and clearing it omits the key", () => {

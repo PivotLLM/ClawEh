@@ -1016,6 +1016,53 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       throw new Error("UI delete did not remove the agent (cleaned up via API)")
     }
   })
+
+  await check(14, "Allow classifiers writes the agent's first model, turning it off drops the block", async () => {
+    const ID = "e2e-cls"
+    const before = await config()
+    // A person's model would hide the switch: pick a model on any other protocol.
+    const human = new Set((before.providers ?? []).filter((p) => p.protocol === "human").map((p) => p.name))
+    const model = (before.models ?? []).find((m) => m.enabled && !human.has(m.provider))?.model_name
+    if (!model) return "skipped, no enabled model for the agent"
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, models: [model], tools: [] }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    const toggle = async () => {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("switch", { name: "Allow classifiers", exact: true }).click()
+      await page.waitForTimeout(2000)
+      const selector = await page.getByRole("combobox", { name: "Classifier model", exact: true }).count()
+      await close()
+      return selector
+    }
+    try {
+      const shownOn = await toggle()
+      let a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(a?.classifiers?.enabled === true, `classifiers = ${JSON.stringify(a?.classifiers)} after turning it on`)
+      assert(a.classifiers.model === model, `classifiers.model = ${JSON.stringify(a.classifiers.model)}; expected the agent's first model ${model}`)
+      assert(shownOn > 0, "no Classifier model selector with the switch on")
+      const shownOff = await toggle()
+      a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(a && a.classifiers === undefined, `classifiers = ${JSON.stringify(a?.classifiers)} after turning it off, want absent`)
+      assert(shownOff === 0, "the Classifier model selector is still shown with the switch off")
+      assert(JSON.stringify(a.models) === JSON.stringify([model]), "models changed with the toggle")
+      return `${ID}: classifiers on with model ${model}, then removed`
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
 }
 
 // G. System page (the old Config page minus the listeners, which are group R)

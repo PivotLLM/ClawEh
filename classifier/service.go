@@ -551,10 +551,11 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 }
 
 // Inspect lists the classifiers in base for the configuration report,
-// without a service: every definition file, invalid ones and ones owned by
-// another agent included, with the last run read from state.db (opened read
-// only; none when it does not exist).
-func Inspect(base string) ([]Summary, error) {
+// without a service: every definition file, invalid ones (checked against
+// the install's maximums c, as a run checks them) and ones owned by another
+// agent included, with the last run read from state.db (opened read only;
+// none when it does not exist).
+func Inspect(ctx context.Context, base string, c Ceilings) ([]Summary, error) {
 	files, err := definitionFiles(base)
 	if err != nil {
 		return nil, err
@@ -568,9 +569,9 @@ func Inspect(base string) ([]Summary, error) {
 	}
 	out := []Summary{}
 	for _, path := range files {
-		sum := summaryOf(path, readFile(path, Ceilings{}))
+		sum := summaryOf(path, readFile(path, c))
 		if db != nil {
-			if r, runErr := lastRunFrom(context.Background(), db, NormalizeID(sum.ID)); runErr == nil {
+			if r, runErr := lastRunFrom(ctx, db, NormalizeID(sum.ID)); runErr == nil {
 				sum.LastRun = r
 			}
 		}

@@ -56,6 +56,7 @@ These rows are information only:
 - **File confinement vs shell (agent)**: the agent's file tools are confined, but it can run shell commands, which are not.
 - **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).
 - **No tools (agent)**: the agent has no tools. See [Tools and skills](../agents/tools-and-skills.md).
+- **Classifier model (agent)** and **Classifier (agent: id)**: the agent's classifier model is not set or not one of its models, or a classifier definition is invalid and not run. See [Classifiers](../agents/classifiers.md#check-up).
 - **MCP servers running local programs**: [MCP servers](../mcp.md#external-mcp-servers) started as programs on this machine.
 - **Sub-agent spawning**: how deep [sub-agents](../agents/subagents.md) may nest.
 
@@ -75,10 +76,10 @@ The PDF has these sections, in order:
 | Providers and models | API and CLI providers, enabled models, and which model does what. |
 | Credentials and tokens | Each credential as set or not set. |
 | Channels | Enabled channels, who may message them, and which agents answer. |
-| Agents | Per agent: its settings (models, memory, sub-agents, suites, **Forum**, **Character card** with a missing or ignored card marked, **Character card tools**), tools (with `forum_launch` listed when **Allow forum** is on), folder access, MCP access. |
+| Agents | Per agent: its settings (models, memory, sub-agents, suites, **Forum**, **Character card** with a missing or ignored card marked, **Character card tools**, **Allow classifiers**, **Classifier model** with an unusable model marked), tools (with `forum_launch` listed when **Allow forum** is on), folder access, MCP access, and its [classifiers](../agents/classifiers.md#check-up) with invalid ones marked. |
 | External services | MCP servers and skills. |
 | Devices | Paired devices and pending pairings. |
-| Data | Where the config, logs, conversations, memory, character cards and other data are stored. |
+| Data | Where the config, logs, conversations, memory, character cards, classifiers and other data are stored. |
 | Scheduled activity | Scheduled jobs, task orchestration, and background tasks. |
 
 A part that cannot be read shows as "unavailable" with the reason; the rest of the report is still produced.

@@ -22,6 +22,7 @@ import {
   type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
+  agentModelList,
   agentsPayload,
   applyMaestroEdits,
   asString,
@@ -34,6 +35,7 @@ import {
   parseAgentsConfig,
   sameAgentId,
   sortAgentList,
+  toggleClassifiers,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -267,6 +269,15 @@ export function AgentsPage() {
         ...(a.maestro ?? { enabled: false }),
         enabled: a.maestro?.enabled !== true,
       },
+    }))
+  const handleToggleClassifiers = (index: number) =>
+    toggleFlag(index, "classifiers", (a) =>
+      toggleClassifiers(a, agentsCfg.defaults.models ?? []),
+    )
+  const handleClassifierModelChange = (index: number, model: string) =>
+    toggleFlag(index, "classifiers", (a) => ({
+      ...a,
+      classifiers: { enabled: true, model },
     }))
   const handleToggleFusion = (index: number) =>
     toggleFlag(index, "fusion", (a) => ({ ...a, fusion: !a.fusion }))
@@ -534,6 +545,16 @@ export function AgentsPage() {
                       onMaestroChange={() => handleToggleMaestro(i)}
                       maestroSettings={e.maestro}
                       onMaestroSettingsChange={(ms) => edit(i, { maestro: ms })}
+                      classifiers={agent.classifiers?.enabled === true}
+                      onClassifiersChange={() => handleToggleClassifiers(i)}
+                      classifierModel={agent.classifiers?.model ?? ""}
+                      classifierModels={agentModelList(
+                        agent,
+                        agentsCfg.defaults.models ?? [],
+                      )}
+                      onClassifierModelChange={(m) =>
+                        handleClassifierModelChange(i, m)
+                      }
                       fusion={agent.fusion === true}
                       onFusionChange={() => handleToggleFusion(i)}
                       forum={agent.forum === true}

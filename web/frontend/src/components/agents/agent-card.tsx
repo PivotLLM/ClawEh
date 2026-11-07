@@ -85,6 +85,14 @@ export interface AgentCardProps {
   maestro?: boolean
   maestroSettings?: MaestroRunnerEdits
   onMaestroSettingsChange?: (v: MaestroRunnerEdits) => void
+  /** The classifiers switch ("Allow classifiers"). */
+  classifiers?: boolean
+  onClassifiersChange?: (v: boolean) => void
+  /** The classifier model ("" = none set). */
+  classifierModel?: string
+  /** The models the agent can use: its own, else the default models. */
+  classifierModels?: string[]
+  onClassifierModelChange?: (model: string) => void
   fusion?: boolean
   forum?: boolean
   /** The agent's character_card ("" = none). */
@@ -159,6 +167,11 @@ export function AgentCard({
   maestro = false,
   maestroSettings = undefined,
   onMaestroSettingsChange = undefined,
+  classifiers = false,
+  onClassifiersChange = undefined,
+  classifierModel = "",
+  classifierModels = [],
+  onClassifierModelChange = undefined,
   fusion = false,
   forum = false,
   characterCard = "",
@@ -217,6 +230,9 @@ export function AgentCard({
   // operator sees the value where it lives rather than in a log.
   const cardMissing =
     characterCard !== "" && !availableCards.some((c) => c.id === characterCard)
+  // A classifier model the agent can no longer use stays selectable, marked.
+  const classifierModelUnusable =
+    classifierModel !== "" && !classifierModels.includes(classifierModel)
 
   return (
     <div className="space-y-4">
@@ -786,6 +802,64 @@ export function AgentCard({
                 value={maestroSettings}
                 onChange={onMaestroSettingsChange}
               />
+            )}
+          </div>
+        )}
+
+        {!human && onClassifiersChange !== undefined && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-foreground text-sm font-semibold">
+                {t("agents.classifiers")}
+              </p>
+              <Switch
+                checked={classifiers}
+                onCheckedChange={onClassifiersChange}
+                aria-label={t("agents.classifiers")}
+              />
+            </div>
+            <p className="text-muted-foreground text-xs">
+              {t("agents.classifiersHint")}
+            </p>
+            {classifiers && onClassifierModelChange && (
+              <div className="space-y-1.5">
+                <p className="text-foreground text-sm font-semibold">
+                  {t("agents.classifierModel")}
+                </p>
+                <Select
+                  value={classifierModel}
+                  onValueChange={onClassifierModelChange}
+                >
+                  <SelectTrigger
+                    className="w-full"
+                    aria-label={t("agents.classifierModel")}
+                  >
+                    <SelectValue placeholder={t("agents.classifierModelNone")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classifierModels.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                    {classifierModelUnusable && (
+                      <SelectItem value={classifierModel}>
+                        {t("agents.classifierModelUnusableOption", {
+                          model: classifierModel,
+                        })}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {classifierModelUnusable && (
+                  <p
+                    data-testid="classifier-model-unusable"
+                    className="text-xs text-amber-600 dark:text-amber-400"
+                  >
+                    {t("agents.classifierModelUnusable")}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}

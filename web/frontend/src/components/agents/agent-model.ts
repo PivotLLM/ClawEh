@@ -31,6 +31,9 @@ export interface AgentEntry {
   share_common?: boolean
   global_cron?: boolean
   maestro?: MaestroSettings
+  /** The per-agent `classifiers` block: the switch and the one model every
+   *  classifier the agent owns uses. Absent = off. */
+  classifiers?: ClassifiersSettings
   fusion?: boolean
   forum?: boolean
   /** The character card (cards/<id>.json) rendered into the system prompt;
@@ -438,6 +441,7 @@ export function parseAgent(value: unknown): AgentEntry {
     share_common: r.share_common === false ? false : true,
     global_cron: r.global_cron === true,
     maestro: maestroFromRaw(r.maestro),
+    classifiers: classifiersFromRaw(r.classifiers),
     fusion: r.fusion === true,
     forum: r.forum === true,
     character_card: asString(r.character_card) || undefined,
@@ -532,6 +536,48 @@ export async function fetchSkills(): Promise<SkillInfo[]> {
   if (!res.ok) return []
   const data = (await res.json()) as { skills?: SkillInfo[] }
   return data.skills ?? []
+}
+
+/** The per-agent `classifiers` config block. */
+export interface ClassifiersSettings {
+  enabled: boolean
+  /** The classifier model; absent = none set. */
+  model?: string
+}
+
+/** classifiersFromRaw parses the saved block; anything but an object reads
+ *  as absent. */
+export function classifiersFromRaw(
+  v: unknown,
+): ClassifiersSettings | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined
+  const r = asRecord(v)
+  return {
+    enabled: r.enabled === true,
+    model: asString(r.model).trim() || undefined,
+  }
+}
+
+/** agentModelList is the models an agent runs on: its own, else the default
+ *  models. The classifier model must be one of them. */
+export function agentModelList(
+  a: Pick<AgentEntry, "models">,
+  defaultModels: string[],
+): string[] {
+  return a.models && a.models.length > 0 ? a.models : defaultModels
+}
+
+/** toggleClassifiers turns the agent's classifiers switch over. Turning it
+ *  on with no model set writes the agent's first model; turning it off drops
+ *  the block. */
+export function toggleClassifiers(
+  a: AgentEntry,
+  defaultModels: string[],
+): AgentEntry {
+  if (a.classifiers?.enabled) return { ...a, classifiers: undefined }
+  const model =
+    a.classifiers?.model || agentModelList(a, defaultModels)[0] || undefined
+  return { ...a, classifiers: { enabled: true, model } }
 }
 
 /** The per-agent `maestro` config block. Absent means Maestro is off. */
@@ -640,6 +686,7 @@ const AGENT_PAGE_KEYS = [
   "share_common",
   "global_cron",
   "maestro",
+  "classifiers",
   "fusion",
   "forum",
   "character_card",
@@ -708,6 +755,16 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
           maestro: {
             ...withoutKeys(asRecord(raw.maestro), MAESTRO_PAGE_KEYS),
             ...maestroPayload(a.maestro),
+          },
+        }
+      : {}),
+    // Only an agent with the switch on keeps the block; turning it off drops
+    // it, model included.
+    ...(a.classifiers?.enabled
+      ? {
+          classifiers: {
+            enabled: true,
+            ...(a.classifiers.model ? { model: a.classifiers.model } : {}),
           },
         }
       : {}),

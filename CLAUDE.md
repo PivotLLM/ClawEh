@@ -146,7 +146,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - **Backup:** `internal/backup` writes one `claw-backup-<ts>.tar.gz` nightly (every SQLite
   DB via `VACUUM INTO`, `internal/`, credentials, TLS, `cards/`, every agent's `forums/` without
   `.locks/` and `.tmp-*`, `collectForums`; every agent's `maestro/` without
-  `*.lock`/`*.tmp`, databases there via `VACUUM INTO`, `collectMaestro`; both
+  `*.lock`/`*.tmp`, databases there via `VACUUM INTO`, `collectMaestro`; every
+  agent's `classifiers/` without `.tmp-*` and database sidecars, `state.db` via
+  `VACUUM INTO`, `collectClassifiers`; all
   through `collectAgentFolder`, which never follows a symlink); `claw backup` / `claw restore`. See
   `manual/admin/backup.md`.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
@@ -259,7 +261,7 @@ production instance directly; test against a dev instance.
   implicit default set and no install-wide per-tool switch (no Tools page).
   `tools.DefaultEnabledToolNames()` (each tool's `DefaultAllow`) is only what the Agents
   page's "Default tools" button writes into a list (`GET /api/agents/tools`
-  `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`, `ccv3`) and
+  `default_tools`). Suites (`forum`, `fusion`, `maestro`, `cogmem`, `ccv3`, `classifiers`) and
   `mcp_tools` have their own switches. Check Up lists each enabled agent with no
   tools. An agent whose registry is empty (no native, suite or MCP tool) gets
   `noToolsNotice` in its dynamic prompt layer (`ContextBuilder.WithToolsGranted`,
@@ -409,6 +411,59 @@ production instance directly; test against a dev instance.
   runs keep their launched limits). Preflight refuses a limit or a layer's
   `max_calls` above them ("... is more than this install allows (N)"), and
   `forum_readme` ends with the current maximums.
+- **Classifiers** (`classifier/`, design in `private/classifier-design.md`, plan
+  `private/classifier-impl.md` whose §12 Decisions win; `manual/agents/classifiers.md`):
+  an agent with the per-agent switch `classifiers` (`agents.list[].classifiers`
+  `{enabled, model}`, `AgentSuiteEnabled` case "classifiers", default off, WebUI
+  "Allow classifiers" + "Classifier model" on the Agents page) gets the eleven
+  `classifier_*` tools from `tools/classifier` (suite provider, namespace
+  `classifier`; `SetService` installs the one `*classifier.Service`, built by
+  `internal/gateway/classifier.go` BEFORE `NewAgentLoop`, started once the loop
+  has `Started()`, closed in `shutdownGateway` right after the forum, `Reload()`
+  on every config reload). A classifier lists items with a source tool, skips
+  ids already handled, fetches the named fields, asks the agent's ONE classifier
+  model (no fallback; the model never has tools: one `Chat` with no tool
+  definitions, reply parsed strictly, one retry, else `unclassified`) and runs
+  the category's action. Definitions are `<workspace>/classifiers/<id>.json`
+  (owner written by ClawEh, compared with `sameAgent`, the third copy of the
+  agent-id rule, `classifier/agentid.go`); run state (processed ids, dry-run
+  decisions, activity log, last run) is `classifiers/state.db`, agents-area
+  modes. The on-disk names are in the import-free leaf
+  `classifier/classifierfs` (`BaseDirName`, `StateFile`, `DefinitionExt`,
+  `TempPrefix`; config, backup, file tools, Check Up use it); the folder is in
+  `ReservedWorkspaceNames` and `AlwaysReadableWorkspaceDirs` (read, never
+  written, by the file tools). **Invariant: `classifier` imports no ClawEh
+  package but `classifier/classifierfs`, `internal/mergepatch` and
+  `internal/dotpath`** (`classifier/imports_test.go`); `internal/dotpath` is
+  the one path rule shared with watch probes. The host is
+  `agent.ClassifierHost` (`agent/classifier_host.go`): every source, fetch and
+  action tool runs through the owner's own registry with
+  `ToolRegistry.ExecuteUnattended` (session-scoped tools refused, grants
+  re-read every call), a CLI model through `ProviderDispatcher.GetIsolated` in
+  a per-call empty folder `internal/temp/classifier-<id>-*` (no bypass flags),
+  cooldowns honoured, the summary posted directly to the owner's default chat
+  (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
+  `never`), audit kinds `classifier_write` and `classification`. A clone acts
+  as its source (`Scope.Clone` in audit details). Decisions: interval trigger
+  only (`trigger.every_seconds`, the core's own timer, nothing in cron);
+  create/update also call the source tool once; `classifier_*` tools are
+  refused as source, fetch or action; per-definition defaults parallel 1,
+  stop_after_failures 5, items_per_run = `max_items_per_run`, `fetch.max_chars`
+  = `max_item_chars`, `activity_hours` 72. Hand edits are re-read on mtime/size
+  change and validated the same way; an invalid file is logged once, never run
+  or deleted. Install-wide `classifiers` (`config.ClassifiersConfig`,
+  `config/classifiers.go`: `processed_days` 30, `limits.max_rules` 100,
+  `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,
+  `max_parallel` 8, `max_activity_hours` 720; 0/absent = default, negative
+  refused) is `config.json` only, no WebUI. `Store.Update` writes the agent's
+  first model when a save turns the switch on with none
+  (`completeClassifierModels`), refuses a new unusable model
+  (`newClassifierModelProblems`) and a human agent with the switch on
+  (`HumanClassifiers`). Check Up (`report/classifiers.go`, reading the folders
+  with `classifier.Inspect(ctx, base, ceilings)`): per-agent "Allow classifiers" and
+  "Classifier model" rows (unusable marked), a "Classifiers" table per agent
+  (invalid and foreign-owned files marked), assessment rows "Classifier model
+  (<agent>)" and "Classifier (<agent>: <id>)", a Data row.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.
@@ -716,12 +771,13 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 155 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 156 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
 - **Dev only.** Groups F, G, N, S and T write (F creates an agent and, in F11, a
-  throwaway agent whose May message it ticks, G edits a config field, N
+  throwaway agent whose May message it ticks, and in F14 one whose
+  classifiers switch it toggles, G edits a config field, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent
   it attaches the card to; I12 adds a temporary model only when no model's

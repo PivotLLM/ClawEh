@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-154 checks in all; the runner prints the same tally at the end.
+156 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -112,7 +112,7 @@ attaches on its own. No token is fetched or sent by the page.
 
 ## F. Agents — autosave and list realignment
 
-Creates an agent called `e2e-probe` and deletes it at the end; F11 and F12 each create a second one (`e2e-msg`, `e2e-wrk`) through the API and remove it again.
+Creates an agent called `e2e-probe` and deletes it at the end; F11, F12 and F14 each create a second one (`e2e-msg`, `e2e-wrk`, `e2e-cls`) through the API and remove it again.
 
 | ID | Process | Expected |
 |---|---|---|
@@ -129,6 +129,7 @@ Creates an agent called `e2e-probe` and deletes it at the end; F11 and F12 each 
 | F11 | Create a throwaway agent `e2e-msg` through the API with `subagents.models` set to an enabled model; select it on `/agents` and under **May message** tick the first other agent (by its displayed name), wait ~2s; remove `e2e-msg` through the API | `subagents.allow_agents` is exactly that agent's id and `subagents.models` is unchanged: the box writes one key of the block and keeps the rest. Skipped when there is no other agent or no enabled model |
 | F12 | Create a throwaway agent `e2e-wrk` through the API with `subagents.allow_agents: ["e2e-wrk"]`; select it on `/agents` and under **Sub-Agent models** pick an enabled model from **Add sub-agent model…**, wait ~2s; then click that entry's **Remove** button, wait ~2s; remove `e2e-wrk` through the API | After the add, `subagents.models` is exactly `[that model]` and `subagents.allow_agents` is unchanged; after the remove, `subagents.models` is absent and `allow_agents` is still unchanged: the box writes one key of the block, drops it when empty, and keeps the rest. Skipped when there is no enabled model |
 | F13 | With `e2e-probe` selected, click the trash button in the card header, then Delete in the confirmation dialog | The agent is gone from `GET /api/config` |
+| F14 | Create a throwaway agent `e2e-cls` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and turn on **Allow classifiers**, wait ~2s; turn it off, wait ~2s; remove `e2e-cls` through the API | After turning it on, `classifiers` is `{enabled: true, model: <that model>}` and a **Classifier model** selector is shown; after turning it off, `classifiers` is absent, the selector is gone and `models` is unchanged. Skipped when there is no enabled model |
 
 ## G. System page
 

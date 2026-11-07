@@ -59,6 +59,7 @@ export default defineConfig({
           { text: "Messages between agents", link: "/agents/messaging" },
           { text: "Human agents", link: "/agents/human-agents" },
           { text: "Character cards", link: "/agents/character-cards" },
+          { text: "Classifiers", link: "/agents/classifiers" },
           { text: "Sub-agents", link: "/agents/subagents" },
           { text: "Scheduled jobs", link: "/agents/scheduling" },
         ],

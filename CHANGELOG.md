@@ -13,16 +13,31 @@
 
 ### Added
 
-- **Classifier settings.** `agents.list[].classifiers` (`enabled`, off by
-  default, and `model`, the one model the agent's classifiers use) and the
-  install-wide `classifiers` section (`processed_days`, default 30, and
-  `limits`: `max_rules` 100, `max_prompt_chars` 20000, `max_item_chars`
-  50000, `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours`
-  720; 0 or absent uses the default, a negative value is refused). A save
-  that leaves the switch on with no model sets the agent's first model; a
-  model the agent cannot use is refused, and a person's agent cannot run
-  classifiers. The classifiers that use these settings are not yet
-  available.
+- **Classifiers.** An agent can sort the items one of its tools lists
+  (email, files, tickets) with one model call per item: a classifier lists
+  the items, skips those already handled, reads each new one, asks the
+  agent's classifier model for one of a fixed set of categories, and runs
+  that category's action with the agent's own tools. The classifying model
+  never has tools. Turn it on per agent with **Allow classifiers** on the
+  Agents page (`agents.list[].classifiers.enabled`, off by default) and pick
+  the **Classifier model** (`agents.list[].classifiers.model`; turning the
+  switch on with no model sets the agent's first model; a model the agent
+  cannot use is refused, and a person's agent cannot run classifiers). The
+  agent manages its classifiers with eleven tools: `classifier_readme`,
+  `classifier_list`, `classifier_get`, `classifier_create`,
+  `classifier_update`, `classifier_delete`, `classifier_validate`,
+  `classifier_status`, `classifier_test`, `classifier_rerun` and
+  `classifier_activity`. Definitions are JSON files in the agent's
+  `classifiers/` folder, readable and editable by hand, and the folder is
+  in the nightly backup. Install-wide limits are in the `classifiers`
+  section of `config.json` (`processed_days`, default 30, and `limits`:
+  `max_rules` 100, `max_prompt_chars` 20000, `max_item_chars` 50000,
+  `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours` 720; 0
+  or absent uses the default, a negative value is refused). Changes and
+  handled items are recorded in the audit log (**Classifier change**,
+  **Classification**). Check Up marks a missing or unusable classifier
+  model and an invalid definition, and the full report lists each agent's
+  classifiers. See the manual's Classifiers page.
 - **`security.permissions` areas `root`, `secrets`, `bin` and `default`.**
   `root` sets the data directory itself and the files directly in it
   (`config.json`); `secrets` sets `internal/`, `tls/`, `tokens/` and every
