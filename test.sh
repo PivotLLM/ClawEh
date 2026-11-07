@@ -583,6 +583,7 @@ PY
         "fusion": true,
         "forum": true,
         "ccv3": true,
+        "classifiers": { "enabled": true },
         $CLI_LIVE_ALLOW
         "mcp_tools": ["wxca"]
       },
@@ -710,6 +711,17 @@ PY
       "forum_cancel",
       "forum_results",
       "forum_delete",
+      "classifier_readme",
+      "classifier_list",
+      "classifier_get",
+      "classifier_create",
+      "classifier_update",
+      "classifier_delete",
+      "classifier_validate",
+      "classifier_status",
+      "classifier_test",
+      "classifier_rerun",
+      "classifier_activity",
       "wxca"
     ]
   }

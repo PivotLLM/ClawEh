@@ -30,12 +30,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsccv3 "github.com/PivotLLM/ClawEh/tools/ccv3"
+	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
 	"github.com/PivotLLM/ClawEh/tools/fusion"
 )
@@ -59,6 +61,14 @@ func TestEffectiveCapabilities(t *testing.T) {
 		toolsforum.SetService(nil)
 		if closeErr := svc.Close(context.Background()); closeErr != nil {
 			t.Errorf("forum service Close: %v", closeErr)
+		}
+	})
+	classifierSvc := classifier.New(classifier.Host{Tools: nopClassifierHost{}, Model: nopClassifierHost{}, Logger: nopForumHost{}})
+	toolsclassifier.SetService(classifierSvc)
+	t.Cleanup(func() {
+		toolsclassifier.SetService(nil)
+		if closeErr := classifierSvc.Close(context.Background()); closeErr != nil {
+			t.Errorf("classifier service Close: %v", closeErr)
 		}
 	})
 
@@ -147,6 +157,20 @@ func render(t *testing.T, cfg *config.Config) string {
 		}
 		sort.Strings(cardTools)
 		w("  ccv3 tool: %s\n", list(cardTools))
+
+		classifierDefs := toolsclassifier.GlobalProvider.RegisterTools(global.Deps{
+			Cfg: cfg, AgentID: a.ID, Host: tools.ToolDeps{Cfg: cfg, AgentID: a.ID, Workspace: t.TempDir()},
+		})
+		classifierTools := make([]string, 0, len(classifierDefs))
+		for _, d := range classifierDefs {
+			name := toolsclassifier.Namespace + "_" + d.Name
+			if a.IsToolDenied(name) {
+				name += " (denied)"
+			}
+			classifierTools = append(classifierTools, name)
+		}
+		sort.Strings(classifierTools)
+		w("  classifier tools: %s\n", list(classifierTools))
 
 		mcp := make([]string, 0, len(servers))
 		for _, s := range servers {
@@ -309,3 +333,16 @@ func (nopForumHost) Debugf(string, ...any) {}
 func (nopForumHost) Infof(string, ...any)  {}
 func (nopForumHost) Warnf(string, ...any)  {}
 func (nopForumHost) Errorf(string, ...any) {}
+
+// nopClassifierHost lets the classifier service exist so the classifier
+// tools register; it runs nothing.
+type nopClassifierHost struct{}
+
+func (nopClassifierHost) Has(string, string) error { return errors.New("unused") }
+func (nopClassifierHost) Call(context.Context, string, string, map[string]any) (string, error) {
+	return "", errors.New("unused")
+}
+
+func (nopClassifierHost) Complete(context.Context, string, string, string) (string, string, error) {
+	return "", "", errors.New("unused")
+}

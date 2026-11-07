@@ -30,6 +30,7 @@ type fakeTools struct {
 
 type toolCall struct {
 	agent, tool string
+	classifier  string // ClassifierID of the call's context
 	args        map[string]any
 }
 
@@ -42,10 +43,10 @@ func (f *fakeTools) Has(agentID, tool string) error {
 	return nil
 }
 
-func (f *fakeTools) Call(_ context.Context, agentID, tool string, args map[string]any) (string, error) {
+func (f *fakeTools) Call(ctx context.Context, agentID, tool string, args map[string]any) (string, error) {
 	f.mu.Lock()
 	h, ok := f.handlers[tool]
-	f.calls = append(f.calls, toolCall{agent: agentID, tool: tool, args: args})
+	f.calls = append(f.calls, toolCall{agent: agentID, tool: tool, classifier: ClassifierID(ctx), args: args})
 	f.mu.Unlock()
 	if !ok {
 		return "", fmt.Errorf("tool %s is not available to agent %s", tool, agentID)
@@ -80,15 +81,17 @@ func (f *fakeTools) callsOf(tool string) []toolCall {
 
 // fakeModel answers with reply(user) and counts its calls.
 type fakeModel struct {
-	mu      sync.Mutex
-	reply   func(system, user string) (string, error)
-	calls   []string // the user messages
-	systems []string // the system prompts
+	mu          sync.Mutex
+	reply       func(system, user string) (string, error)
+	calls       []string // the user messages
+	systems     []string // the system prompts
+	classifiers []string // ClassifierID of each call's context
 }
 
-func (m *fakeModel) Complete(_ context.Context, _, system, user string) (string, string, error) {
+func (m *fakeModel) Complete(ctx context.Context, _, system, user string) (string, string, error) {
 	m.mu.Lock()
 	m.calls = append(m.calls, user)
+	m.classifiers = append(m.classifiers, ClassifierID(ctx))
 	m.systems = append(m.systems, system)
 	reply := m.reply
 	m.mu.Unlock()

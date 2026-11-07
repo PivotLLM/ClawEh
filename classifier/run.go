@@ -136,6 +136,7 @@ func nonNilArgs(args map[string]any) map[string]any {
 // classification that cannot be recorded fails the item before its action
 // runs, so a later run never repeats an action it did not know had run.
 func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, st *stateDB, item listedItem, reuse *processedRow, mode itemMode) decision {
+	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	dry := mode == modeDry || (mode == modeRerun && def.DryRun)
 	d := s.decide(ctx, scope, def, item, reuse)
 	now := s.host.clock().Now().UTC()
@@ -452,7 +453,7 @@ func (s *Service) summarise(ctx context.Context, scope Scope, def *Definition, r
 			return
 		}
 	}
-	if err := s.host.Notifier.Summary(ctx, scope.AgentID, summaryText(def, rec)); err != nil {
+	if err := s.host.Notifier.Summary(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, summaryText(def, rec)); err != nil {
 		s.host.Logger.Warnf("classifier=%s agent=%s: summary not delivered: %v", def.ID, scope.AgentID, err)
 	}
 }

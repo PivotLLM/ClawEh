@@ -38,6 +38,17 @@ func TestRunEndToEnd(t *testing.T) {
 			t.Errorf("action ran as %q, want alice", c.agent)
 		}
 	}
+	// Every tool and model call names the classifier it is made for.
+	for _, c := range e.tools.calls {
+		if c.classifier != "inbox-priority" {
+			t.Errorf("%s called for classifier %q, want inbox-priority", c.tool, c.classifier)
+		}
+	}
+	for _, c := range e.model.classifiers {
+		if c != "inbox-priority" {
+			t.Errorf("model called for classifier %q, want inbox-priority", c)
+		}
+	}
 	if got := e.tools.callsOf("mail_list")[0].args["folder"]; got != "Inbox" {
 		t.Errorf("source args = %v", e.tools.callsOf("mail_list")[0].args)
 	}

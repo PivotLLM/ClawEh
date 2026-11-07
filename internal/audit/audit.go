@@ -46,6 +46,12 @@ const (
 	KindCardImport = "card_import"
 	// KindCardDelete is a character card deleted through the API.
 	KindCardDelete = "card_delete"
+	// KindClassifierWrite is a classifier definition created, changed or
+	// deleted through the classifier tools.
+	KindClassifierWrite = "classifier_write"
+	// KindClassification is one item a classifier handled: its category and
+	// the action that ran.
+	KindClassification = "classification"
 )
 
 // Outcome values.

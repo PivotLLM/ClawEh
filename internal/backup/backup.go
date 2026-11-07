@@ -4,7 +4,7 @@
 // Package backup writes a dated tarball of everything ClawEh needs to come back
 // on a new host — config.json, the cron jobs file, internal/ (tokens and the device
 // pairing database), credentials.json, tls/ and cards/ (the character-card
-// library) when present, each agent's forums and Maestro data, and every SQLite
+// library) when present, each agent's forums, Maestro data and classifiers, and every SQLite
 // database under CLAW_HOME (session archives, cognitive memory, the fusion
 // OAuth store) — and restores one. It is driven on a nightly schedule by the
 // gateway, on demand from the WebUI, and by `claw backup` / `claw restore`.
@@ -31,6 +31,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
+	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/forum/forumfs"
 	"github.com/PivotLLM/ClawEh/global"
@@ -410,7 +411,7 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 			return nil, false, err
 		}
 	}
-	// Every agent's forums and Maestro data, before the database walk so a
+	// Every agent's forums, Maestro data and classifiers, before the database walk so a
 	// forum file with a database extension (a materialised source) is copied
 	// as it is.
 	external := src.AgentsDir != "" && !within(src.Home, src.AgentsDir)
@@ -432,6 +433,11 @@ func collect(src Source, dest string) ([]entry, bool, error) {
 			return nil, false, err
 		}
 		if err := collectMaestro(src.AgentsDir, agentsPrefix, dest, func(path, name string, db bool) {
+			add(entry{src: path, name: name, db: db})
+		}); err != nil {
+			return nil, false, err
+		}
+		if err := collectClassifiers(src.AgentsDir, agentsPrefix, dest, func(path, name string, db bool) {
 			add(entry{src: path, name: name, db: db})
 		}); err != nil {
 			return nil, false, err
@@ -498,6 +504,24 @@ func collectMaestro(agentsDir, prefix, skip string, fn func(path, name string, d
 			}
 			n := d.Name()
 			return strings.HasSuffix(n, maestroLockSuffix) || strings.HasSuffix(n, maestroTempSuffix) || isDBSidecar(n)
+		}, func(path, name string) {
+			fn(path, name, isDB(path))
+		})
+}
+
+// collectClassifiers calls fn(path, archiveName, db) for every file of every
+// agent's classifiers directory (<agentsDir>/<agent>/classifiers/: the
+// definitions and state.db) with archive name
+// prefix+<agent>/classifiers/<rel>. The temporary files of a definition write
+// in progress (.tmp-*) and SQLite sidecars are skipped; state.db is reported
+// with db set so it is copied with VACUUM INTO. Definitions are written whole
+// (a temporary file renamed into place), so a plain copy reads each one before
+// or after a write, never torn.
+func collectClassifiers(agentsDir, prefix, skip string, fn func(path, name string, db bool)) error {
+	return collectAgentFolder(agentsDir, prefix, classifierfs.BaseDirName, skip,
+		func(_ string, d fs.DirEntry) bool {
+			n := d.Name()
+			return strings.HasPrefix(n, classifierfs.TempPrefix) || (!d.IsDir() && isDBSidecar(n))
 		}, func(path, name string) {
 			fn(path, name, isDB(path))
 		})

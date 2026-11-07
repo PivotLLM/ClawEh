@@ -1095,6 +1095,71 @@ else
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 
+    #---------------------------------------------------------------------------
+    # Section 4i: Classifier tools (classifier_*). The test config switches
+    # `classifiers` on for main (no classifier model: the test config has no
+    # models). Every tool is probed hermetically. The classifier's source is
+    # forum_status, which main has and which lists no forums (an empty list),
+    # so creating it makes its one live call and its runs make no model call.
+    # readme, list, create, get, update (and an update over max_rules, refused,
+    # nothing written), validate, status and activity succeed; test and rerun
+    # refuse (no items); get, update and delete refuse an unknown classifier;
+    # create refuses a source tool main does not have and an unknown argument;
+    # delete removes the classifier.
+    #---------------------------------------------------------------------------
+
+    if echo "$LIST_OUT" | grep -qw "classifier_create"; then
+        print_section "4i. Classifier tools (classifiers)"
+        CLS_ID="probe-cls-$(printf '%06d' "$$")"
+        CLS_DEF="{\"id\":\"$CLS_ID\",\"enabled\":true,\"trigger\":{\"every_seconds\":3600},\"source\":{\"tool\":\"forum_status\",\"items\":\"\",\"id\":\"id\"},\"classify\":{\"instructions\":\"Sort the forums.\",\"categories\":[{\"name\":\"keep\"},{\"name\":\"drop\"}]}}"
+        CLS_MANY_RULES=$(for i in $(seq 1 101); do printf '"Rule %d.",' "$i"; done)
+        CLS_MANY_RULES="[${CLS_MANY_RULES%,}]"
+
+        run_test_ok_auth "4i.1 classifier_readme returns the guide" \
+            "classifier_readme" '{}' "## Substitution"
+        run_test_ok_auth "4i.2 classifier_list lists no classifiers" \
+            "classifier_list" '{}' "[]"
+        run_test_ok_auth "4i.3 classifier_create saves a classifier" \
+            "classifier_create" "{\"definition\":$CLS_DEF}" "Classifier $CLS_ID created."
+        run_test_ok_auth "4i.4 classifier_get returns the definition with its owner" \
+            "classifier_get" "{\"id\":\"$CLS_ID\"}" "\"owner\": \"main\""
+        run_test_ok_auth "4i.5 classifier_update applies a merge patch" \
+            "classifier_update" "{\"id\":\"$CLS_ID\",\"changes\":{\"classify\":{\"rules\":[\"Forums about probes are keep.\"]}}}" "Classifier $CLS_ID updated."
+        run_test_err_msg_auth "4i.6 classifier_update refuses more rules than max_rules" \
+            "classifier_update" "{\"id\":\"$CLS_ID\",\"changes\":{\"classify\":{\"rules\":$CLS_MANY_RULES}}}" "classify.rules has 101 rules; this install allows 100."
+        run_test_ok_auth "4i.7 classifier_get shows the rule from the update" \
+            "classifier_get" "{\"id\":\"$CLS_ID\"}" "Forums about probes are keep."
+        run_test_ok_auth "4i.8 classifier_validate checks a definition and calls its source" \
+            "classifier_validate" "{\"definition\":$CLS_DEF}" "The definition is valid."
+        run_test_ok_auth "4i.9 classifier_status reports the classifier" \
+            "classifier_status" "{\"id\":\"$CLS_ID\"}" "\"id\": \"$CLS_ID\""
+        run_test_ok_auth "4i.10 classifier_activity has no entries" \
+            "classifier_activity" "{\"id\":\"$CLS_ID\"}" "[]"
+        run_test_err_msg_auth "4i.11 classifier_test refuses a source with no items" \
+            "classifier_test" "{\"id\":\"$CLS_ID\"}" "The source lists no items."
+        run_test_err_msg_auth "4i.12 classifier_rerun refuses an item while the source lists none" \
+            "classifier_rerun" "{\"id\":\"$CLS_ID\",\"item_id\":\"nosuch\"}" "The source lists no items."
+        run_test_err_msg_auth "4i.13 classifier_create refuses a source tool main does not have" \
+            "classifier_create" "{\"definition\":{\"id\":\"probe-cls-missing\",\"enabled\":true,\"trigger\":{\"every_seconds\":60},\"source\":{\"tool\":\"nosuch_list\",\"items\":\"\",\"id\":\"id\"},\"classify\":{\"instructions\":\"x\",\"categories\":[{\"name\":\"keep\"}]}}}" "tool nosuch_list is not available to agent main"
+        run_test_err_msg_auth "4i.14 classifier_list refuses an unknown argument" \
+            "classifier_list" '{"nosuch":1}' "Unknown argument nosuch"
+        run_test_ok_auth "4i.15 classifier_delete removes the classifier" \
+            "classifier_delete" "{\"id\":\"$CLS_ID\"}" "Classifier $CLS_ID deleted."
+        run_test_err_msg_auth "4i.16 classifier_get refuses an unknown classifier" \
+            "classifier_get" "{\"id\":\"$CLS_ID\"}" "does not exist"
+        run_test_err_msg_auth "4i.17 classifier_update refuses an unknown classifier" \
+            "classifier_update" "{\"id\":\"$CLS_ID\",\"changes\":{\"enabled\":false}}" "does not exist"
+        run_test_err_msg_auth "4i.18 classifier_delete refuses an unknown classifier" \
+            "classifier_delete" "{\"id\":\"$CLS_ID\"}" "does not exist"
+    else
+        # The test config switches classifiers on for main: missing tools are
+        # a regression, not an optional host feature.
+        echo "  4i. Classifier tools"
+        echo "    ${RED}FAIL${NC}: classifier_create is not in the catalogue although main has classifiers on"
+        TIER2_FAIL=$((TIER2_FAIL + 1))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
 fi  # end SESSION_TOKEN block
 
 ################################################################################

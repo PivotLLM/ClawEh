@@ -4,6 +4,7 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/tools/agents"
 	ccv3tools "github.com/PivotLLM/ClawEh/tools/ccv3"
+	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
 	cogmem "github.com/PivotLLM/ClawEh/tools/cogmem"
 	common "github.com/PivotLLM/ClawEh/tools/common"
 	"github.com/PivotLLM/ClawEh/tools/files"
@@ -34,6 +35,7 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("time", timetool.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("maestro", maestro.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider(toolsforum.Suite, toolsforum.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider(toolsclassifier.Namespace, toolsclassifier.GlobalProvider))
 	// Bare names: fusion tool names are already service-prefixed (e.g.
 	// microsoft365_mail_read_inbox), so publish them without a "fusion_" prefix.
 	// "fusion" still identifies the per-agent suite toggle. Service configs must

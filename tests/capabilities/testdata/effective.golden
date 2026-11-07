@@ -5,6 +5,7 @@ agent alice
   fusion tools: wxca_city_current, wxca_city_get, wxca_city_hourly (denied), wxca_city_list, wxca_city_near_coordinates, wxca_city_schema, wxca_city_search
   forum tools: (none)
   ccv3 tool: (none)
+  classifier tools: (none)
   mcp servers: github=yes, simpledoc=no, wxca=yes
   mcp_tools: github, wxca, simpledoc_document
   deny_tools: shell_exec, wxca_city_hourly
@@ -15,6 +16,7 @@ agent bob
   fusion tools: (none)
   forum tools: forum_cancel, forum_config_export, forum_config_import, forum_config_template, forum_config_update, forum_delete, forum_launch, forum_models, forum_new, forum_pause, forum_readme, forum_results, forum_resume, forum_status, forum_validate
   ccv3 tool: ccv3
+  classifier tools: classifier_activity, classifier_create, classifier_delete, classifier_get, classifier_list, classifier_readme, classifier_rerun, classifier_status, classifier_test, classifier_update, classifier_validate
   mcp servers: github=no, simpledoc=yes, wxca=no
   mcp_tools: simpledoc
   deny_tools: (none)
@@ -25,6 +27,7 @@ agent carol
   fusion tools: (none)
   forum tools: (none)
   ccv3 tool: (none)
+  classifier tools: (none)
   mcp servers: github=no, simpledoc=no, wxca=yes
   mcp_tools: wxca
   deny_tools: (none)

@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/webui"
+	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 	"github.com/PivotLLM/ClawEh/devices"
@@ -76,6 +77,9 @@ type gatewayServices struct {
 	// Forum is the forum service. Like HTTPHost it lives for the whole
 	// process; shutdownGateway closes it before the agent loop stops.
 	Forum *forum.Service
+	// Classifiers is the classifier service. Like Forum it lives for the
+	// whole process; shutdownGateway closes it before the agent loop stops.
+	Classifiers *classifier.Service
 	// AuthStore holds the WebUI login sessions and the admin credentials;
 	// stopAuthWatch ends its credentials-file poller at shutdown.
 	AuthStore     *middleware.AuthStore
@@ -530,6 +534,11 @@ func shutdownGateway(
 		closeForums(services.Forum)
 		phases.done("forums stopped")
 	}
+	// Classifier runs too: their tool and model calls need the loop.
+	if services.Classifiers != nil {
+		closeClassifiers(services.Classifiers)
+		phases.done("classifiers stopped")
+	}
 	agentLoop.BeginMCPShutdown()
 
 	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
@@ -727,6 +736,12 @@ func restartServices(
 	// startup initOnce), so without this a reload silently drops every agent's
 	// mcp_* tools and webui edits to mcp_tools would not take effect.
 	al.ReinitMCP(runCtx)
+
+	// The classifiers follow the reloaded switches, models, maximums and
+	// tools; a run in progress continues on the rebuilt registry.
+	if services.Classifiers != nil {
+		services.Classifiers.Reload()
+	}
 
 	// Restart MCP server — it was shut down as part of stopAndCleanupServices.
 	if err := startMCPServer(cfg, al, msgBus, services); err != nil {

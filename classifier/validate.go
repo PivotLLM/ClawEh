@@ -242,6 +242,7 @@ type listedItem struct {
 // source.items is not a list, or when an element's source.id resolves to
 // nothing (naming the element's index).
 func listItems(ctx context.Context, def *Definition, agentID string, tools ToolRunner) ([]listedItem, error) {
+	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	result, err := tools.Call(ctx, agentID, def.Source.Tool, plainArgs(def.Source.Args))
 	if err != nil {
 		return nil, fmt.Errorf("source %s: %w", def.Source.Tool, err)

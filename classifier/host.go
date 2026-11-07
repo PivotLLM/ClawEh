@@ -32,6 +32,24 @@ type ToolRunner interface {
 	Call(ctx context.Context, agentID, tool string, args map[string]any) (result string, err error)
 }
 
+// classifierKey is the context key of the classifier a call is made for.
+type classifierKey struct{}
+
+// withClassifier marks ctx as a call made for classifier id.
+func withClassifier(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, classifierKey{}, id)
+}
+
+// ClassifierID returns the id of the classifier a tool or model call is
+// made for, "" when ctx carries none. The host uses it to name the
+// classifier in its log lines and in the folder of an isolated CLI call.
+func ClassifierID(ctx context.Context) string {
+	if id, ok := ctx.Value(classifierKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
 // ModelCaller asks agentID's classifier model one question, with no tools.
 type ModelCaller interface {
 	// Complete sends one request and returns the reply and the model name.

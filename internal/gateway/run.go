@@ -90,7 +90,16 @@ func gatewayCmd(debug bool) error {
 			closeForums(forumSvc)
 		}
 	}()
-	agentLoop, err := newGatewayAgentLoop(cfg, msgBus, provider, dispatcher, forumHost, operatorAlerter)
+	// So does the classifier service, closed the same way.
+	classifierHost := agent.NewClassifierHost()
+	classifierSvc := newClassifierService(classifierHost)
+	classifierOwned := true
+	defer func() {
+		if classifierOwned {
+			closeClassifiers(classifierSvc)
+		}
+	}()
+	agentLoop, err := newGatewayAgentLoop(cfg, msgBus, provider, dispatcher, forumHost, classifierHost, operatorAlerter)
 	if err != nil {
 		return err
 	}
@@ -114,6 +123,8 @@ func gatewayCmd(debug bool) error {
 	}
 	services.Forum = forumSvc
 	forumOwned = false
+	services.Classifiers = classifierSvc
+	classifierOwned = false
 	wireGatewayAPI(services, agentLoop, fatal, alertsPath)
 
 	logger.InfoF("claw started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
@@ -131,6 +142,7 @@ func gatewayCmd(debug bool) error {
 		}
 	}()
 	recoverForums(ctx, forumSvc, forumHost.Scopes, agentLoop.Started(), nil)
+	startClassifiers(ctx, classifierSvc, agentLoop.Started())
 
 	run, stopWatchers := startGatewayRun(cfg, debug, agentLoop, services, msgBus, provider, store, refAlerts, fatal)
 	defer stopWatchers()
@@ -265,15 +277,16 @@ func bootProvider(cfg *config.Config) providers.LLMProvider {
 	return provider
 }
 
-// newGatewayAgentLoop creates the agent loop, binds the forum host to it and
-// logs what it started with. It refuses a configuration without a default
-// agent.
+// newGatewayAgentLoop creates the agent loop, binds the forum and classifier
+// hosts to it and logs what it started with. It refuses a configuration
+// without a default agent.
 func newGatewayAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
 	forumHost *agent.ForumHost,
+	classifierHost *agent.ClassifierHost,
 	operatorAlerter alerter.Alerter,
 ) (*agent.AgentLoop, error) {
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher, agent.OwnsDataDir())
@@ -281,6 +294,7 @@ func newGatewayAgentLoop(
 		return nil, fmt.Errorf("error creating agent loop: %w", err)
 	}
 	forumHost.Bind(agentLoop)
+	classifierHost.Bind(agentLoop)
 	agentLoop.SetAlerter(operatorAlerter)
 	logModes := cfg.PermissionModes(config.AreaLogs)
 	agentLoop.SetDumpsDir(dump.Dir{
