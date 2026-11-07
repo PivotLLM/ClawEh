@@ -3,11 +3,11 @@ module github.com/PivotLLM/ClawEh
 go 1.27.3
 
 require (
-	github.com/PivotLLM/MCPFusion v0.4.7
-	github.com/PivotLLM/Maestro v0.5.6
+	github.com/PivotLLM/MCPFusion v0.4.8
+	github.com/PivotLLM/Maestro v0.5.7
 	github.com/PivotLLM/cogmem v0.0.9
 	github.com/PivotLLM/ctxengine v0.0.10
-	github.com/PivotLLM/spawnllm v0.1.22
+	github.com/PivotLLM/spawnllm v0.1.23
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.6
