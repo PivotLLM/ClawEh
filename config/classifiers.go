@@ -129,6 +129,15 @@ func (c *Config) firstAgentModel(a *AgentConfig) string {
 	return ""
 }
 
+// ClassifierModelUsable reports whether model is one of the agent's models
+// (its own models, else the default models), whatever its classifiers
+// switch says.
+func (c *Config) ClassifierModelUsable(a *AgentConfig, model string) bool {
+	model = strings.TrimSpace(model)
+	return a != nil && model != "" &&
+		slices.ContainsFunc(c.agentModelList(a), func(m string) bool { return strings.TrimSpace(m) == model })
+}
+
 // ClassifierModelProblem is an agent whose classifiers are on and whose
 // classifier model is not usable: none is set (Missing), or Model is not one
 // of the agent's models.
@@ -153,7 +162,7 @@ func (c *Config) ClassifierModelProblems() []ClassifierModelProblem {
 		switch {
 		case model == "":
 			out = append(out, ClassifierModelProblem{Agent: a.ID, Missing: true})
-		case !slices.ContainsFunc(c.agentModelList(a), func(m string) bool { return strings.TrimSpace(m) == model }):
+		case !c.ClassifierModelUsable(a, model):
 			out = append(out, ClassifierModelProblem{Agent: a.ID, Model: model})
 		}
 	}

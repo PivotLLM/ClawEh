@@ -40,9 +40,13 @@ func newClassifierService(host *agent.ClassifierHost) *classifier.Service {
 
 // startClassifiers starts the classifiers' scheduler once the agent loop
 // runs (started is closed), so their tools and models are there. It returns
-// at once.
-func startClassifiers(ctx context.Context, svc *classifier.Service, started <-chan struct{}) {
+// at once; done (when set) is called once the scheduler has started or the
+// start was abandoned (ctx ended first).
+func startClassifiers(ctx context.Context, svc *classifier.Service, started <-chan struct{}, done func()) {
 	go func() {
+		if done != nil {
+			defer done()
+		}
 		select {
 		case <-started:
 		case <-ctx.Done():

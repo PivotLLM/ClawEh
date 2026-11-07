@@ -72,6 +72,10 @@ func TestToolHostScope(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("Scope = %+v, %v; want %+v", got, err, want)
 	}
+	clone := &toolHost{cfg: scopeConfig(), agentID: "alice", workspace: ws, clone: "1a2b3c4d"}
+	if got, err := clone.Scope(&global.ToolCall{}); err != nil || got.AgentID != "alice" || got.Clone != "1a2b3c4d" {
+		t.Errorf("Scope of a clone = %+v, %v; want alice with the clone named", got, err)
+	}
 	bob := &toolHost{cfg: scopeConfig(), agentID: "bob", workspace: ws}
 	if _, err := bob.Scope(&global.ToolCall{}); err == nil {
 		t.Error("Scope of an agent with classifiers off succeeded")

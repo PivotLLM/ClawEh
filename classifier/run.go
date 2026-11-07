@@ -199,7 +199,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 	storeErr(st.addActivity(wctx, cls, ActivityEntry{Decision: d.Decision, Fields: fields}))
 	s.host.audit(AuditEvent{
 		Kind: AuditClassification, Agent: scope.AgentID, Classifier: def.ID, ItemID: item.id,
-		Category: d.Category, Action: d.Action, Outcome: d.Outcome,
+		Category: d.Category, Action: d.Action, Outcome: d.Outcome, Clone: scope.Clone,
 		Details: map[string]any{"reason": d.Reason, "model": d.Model, "error": d.Error, "dry_run": d.DryRun, "rerun": d.Rerun},
 	})
 	if d.Outcome == OutcomeFailed {

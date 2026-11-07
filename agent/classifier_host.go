@@ -224,10 +224,10 @@ func (h *ClassifierHost) Complete(ctx context.Context, agentID, system, user str
 	if alias == "" {
 		return "", "", fmt.Errorf("agent %s has no classifier model: %w", a.DisplayName(), classifier.ErrNoModel)
 	}
-	for _, p := range cfg.ClassifierModelProblems() {
-		if config.SameAgentID(p.Agent, a.ID) {
-			return "", "", fmt.Errorf("model %s is not one of agent %s's models: %w", alias, a.DisplayName(), classifier.ErrNoModel)
-		}
+	// Checked whatever the switch says: an item still in flight after the
+	// switch was turned off is held to the same rule.
+	if !cfg.ClassifierModelUsable(a, alias) {
+		return "", "", fmt.Errorf("model %s is not one of agent %s's models: %w", alias, a.DisplayName(), classifier.ErrNoModel)
 	}
 	mc, err := cfg.GetModelConfig(alias)
 	if err != nil || mc == nil {
@@ -377,7 +377,8 @@ func (h *ClassifierHost) Summary(ctx context.Context, agentID, text string) erro
 
 // Record implements classifier.Auditor: a definition written is a
 // classifier_write row, an item handled a classification row, both under
-// the owning agent and summarised as <agent>/<classifier>.
+// the owning agent and summarised as <agent>/<classifier>. A change a clone
+// made names the clone in the details ("clone": "1a2b3c4d").
 func (h *ClassifierHost) Record(ev classifier.AuditEvent) {
 	store := audit.Default()
 	if store == nil {
@@ -385,6 +386,9 @@ func (h *ClassifierHost) Record(ev classifier.AuditEvent) {
 	}
 	details := make(map[string]any, len(ev.Details)+3)
 	maps.Copy(details, ev.Details)
+	if ev.Clone != "" {
+		details["clone"] = ev.Clone
+	}
 	outcome := audit.OutcomeOK
 	kind := audit.KindClassifierWrite
 	if ev.Kind == classifier.AuditClassification {

@@ -61,6 +61,9 @@ type ToolDeps struct {
 	// TempPurpose is what a temporary agent was created for (TempPurposeForum
 	// for a forum participant); empty for every other agent.
 	TempPurpose string
+	// CloneMarker is the short id of a clone (whose tools act as AgentID),
+	// for the audit rows its calls write; "" for every other agent.
+	CloneMarker string
 
 	// Spawn/subagent
 	Provider          providers.LLMProvider

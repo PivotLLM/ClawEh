@@ -105,6 +105,7 @@ func (al *AgentLoop) registerAgentTools(
 		EphemeralMemory:   currentAgent.Spec.Ephemeral,
 		TempAgent:         currentAgent.IsTemp(),
 		TempPurpose:       currentAgent.Spec.Purpose,
+		CloneMarker:       cloneMarker(currentAgent),
 		Provider:          provider,
 		Dispatcher:        dispatcher,
 		Fallback:          fallbackChain,

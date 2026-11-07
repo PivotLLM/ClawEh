@@ -83,18 +83,20 @@ func (globalClassifierProvider) RegisterTools(deps global.Deps) []global.ToolDef
 		agentID:   deps.AgentID,
 		workspace: host.Workspace,
 		purpose:   host.TempPurpose,
+		clone:     host.CloneMarker,
 	})
 }
 
 // toolHost is classifier.ToolHost for one agent instance. agentID is the
 // identity its tools act as (a clone's is its source's), workspace the
 // agent's (a clone shares its source's); purpose marks a temporary agent a
-// forum created.
+// forum created; clone is a clone's short id, named in the audit rows.
 type toolHost struct {
 	cfg       *config.Config
 	agentID   string
 	workspace string
 	purpose   string
+	clone     string
 }
 
 var _ classifierpkg.ToolHost = (*toolHost)(nil)
@@ -113,5 +115,5 @@ func (h *toolHost) Scope(*global.ToolCall) (classifierpkg.Scope, error) {
 	if err != nil {
 		return classifierpkg.Scope{}, fmt.Errorf("classifier directory of agent %s: %w", h.agentID, err)
 	}
-	return classifierpkg.Scope{AgentID: h.agentID, BaseDirectory: base}, nil
+	return classifierpkg.Scope{AgentID: h.agentID, BaseDirectory: base, Clone: h.clone}, nil
 }

@@ -19,6 +19,9 @@ import (
 type Scope struct {
 	AgentID       string
 	BaseDirectory string
+	// Clone is the short id of the clone of AgentID whose tool call this
+	// is, "" otherwise. It is recorded in the audit rows the call writes.
+	Clone string
 }
 
 // ToolRunner runs the tools a classifier names as the owning agent.
@@ -81,6 +84,7 @@ type AuditEvent struct {
 	Category   string
 	Action     string // the action tool, "" when none ran
 	Outcome    string
+	Clone      string // the short id of the clone that made the change, "" for the agent itself
 	Details    map[string]any
 }
 

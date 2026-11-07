@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
@@ -249,17 +250,31 @@ func TestClassifierHost_Complete(t *testing.T) {
 	}
 	al.cooldownTracker().MarkSuccess("p", "alpha-wire")
 
+	// An item still in flight after the switch was turned off is asked on
+	// the agent's model as before.
+	cfg.Agents.List[0].Classifiers.Enabled = false
+	srv.mu.Lock()
+	srv.status = 0
+	srv.mu.Unlock()
+	if _, model, err := host.Complete(ctx, "alice", "s", "u"); err != nil || model != "alpha" {
+		t.Fatalf("Complete with the switch off = %q, %v", model, err)
+	}
+	cfg.Agents.List[0].Classifiers.Enabled = true
+
 	for _, tc := range []struct {
 		name  string
 		model string
+		off   bool // the switch was turned off while an item was in flight
 		want  string
 	}{
-		{"no model", "", "has no classifier model"},
-		{"not one of the agent's models", "beta", "model beta is not one of agent Alice's models"},
+		{"no model", "", false, "has no classifier model"},
+		{"not one of the agent's models", "beta", false, "model beta is not one of agent Alice's models"},
+		{"not one of the agent's models, switch off", "beta", true, "model beta is not one of agent Alice's models"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := classifierHostConfig(t, ts.URL)
 			cfg.Agents.List[0].Classifiers.Model = tc.model
+			cfg.Agents.List[0].Classifiers.Enabled = !tc.off
 			_, host, _ := newClassifierHostLoop(t, cfg)
 			before := srv.count()
 			_, _, err := host.Complete(ctx, "alice", "s", "u")
@@ -391,7 +406,8 @@ func TestClassifierHost_Record(t *testing.T) {
 	if err != nil || len(writes) != 1 {
 		t.Fatalf("classifier_write rows = %v, %v", writes, err)
 	}
-	if w := writes[0]; w.Summary != "alice/inbox-sort" || w.Outcome != audit.OutcomeOK || !strings.Contains(w.Details, `"op":"update"`) {
+	if w := writes[0]; w.Summary != "alice/inbox-sort" || w.Outcome != audit.OutcomeOK || !strings.Contains(w.Details, `"op":"update"`) ||
+		strings.Contains(w.Details, `"clone"`) {
 		t.Errorf("write row = %+v", w)
 	}
 	rows, err := audit.Default().Query(context.Background(), audit.Filter{Kind: audit.KindClassification, Agent: "alice"})
@@ -414,15 +430,24 @@ func TestClassifierHost_Record(t *testing.T) {
 }
 
 // A clone's classifier tools act as the agent it copies: what it creates is
-// in the source's folder, owned by the source.
+// in the source's folder, owned by the source, and its audit row is under
+// the source with the clone named in the details.
 func TestClassifierHost_CloneActsAsOwner(t *testing.T) {
+	if err := audit.Init(t.TempDir()); err != nil {
+		t.Fatalf("audit.Init: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := audit.Close(); err != nil {
+			t.Errorf("audit.Close: %v", err)
+		}
+	})
 	cfg := classifierHostConfig(t, "http://127.0.0.1:0")
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 	tools.RegisterProvider(tools.NamespacedProvider(toolsclassifier.Namespace, toolsclassifier.GlobalProvider))
 	// As the gateway does: the service exists before the loop builds the
 	// agents' tools, and the host is bound afterwards.
 	host := NewClassifierHost()
-	svc := classifier.New(classifier.Host{Tools: host, Model: host, Logger: logger.NewLogger("classifier"), Modes: host.Modes, Scopes: host.Scopes})
+	svc := classifier.New(classifier.Host{Tools: host, Model: host, Auditor: host, Logger: logger.NewLogger("classifier"), Modes: host.Modes, Scopes: host.Scopes})
 	toolsclassifier.SetService(svc)
 	t.Cleanup(func() {
 		toolsclassifier.SetService(nil)
@@ -466,8 +491,24 @@ func TestClassifierHost_CloneActsAsOwner(t *testing.T) {
 	var def struct {
 		Owner string `json:"owner"`
 	}
-	if err := json.Unmarshal(raw, &def); err != nil || def.Owner != "alice" {
+	if err = json.Unmarshal(raw, &def); err != nil || def.Owner != "alice" {
 		t.Fatalf("owner = %q (%v), want alice", def.Owner, err)
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err = audit.Default().Flush(flushCtx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	rows, err := audit.Default().Query(context.Background(), audit.Filter{Kind: audit.KindClassifierWrite, Agent: "alice"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("classifier_write rows under alice = %v, %v", rows, err)
+	}
+	var details map[string]any
+	if err := json.Unmarshal([]byte(rows[0].Details), &details); err != nil {
+		t.Fatalf("details not JSON: %v", err)
+	}
+	if details["clone"] != agentreg.ShortID(cloneID) || details["op"] != "create" {
+		t.Errorf("details = %s, want op create by clone %s", rows[0].Details, agentreg.ShortID(cloneID))
 	}
 	// Created with the agents area's exact modes.
 	m := cfg.AgentModes(path)

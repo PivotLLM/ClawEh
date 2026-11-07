@@ -407,6 +407,7 @@ func TestRunParallel(t *testing.T) {
 	inFlight, peak := 0, 0
 	release := make(chan struct{})
 	reached := make(chan struct{})
+	var reachedOnce sync.Once
 	e.model.setReply(func(string, string) (string, error) {
 		mu.Lock()
 		inFlight++
@@ -414,7 +415,8 @@ func TestRunParallel(t *testing.T) {
 			peak = inFlight
 		}
 		if inFlight == 3 {
-			close(reached)
+			// Three in flight again after the release is fine; report once.
+			reachedOnce.Do(func() { close(reached) })
 		}
 		mu.Unlock()
 		<-release

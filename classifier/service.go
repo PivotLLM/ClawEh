@@ -301,7 +301,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, raw []byte) (string, 
 		return "", err
 	}
 	s.host.audit(AuditEvent{
-		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok",
+		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok", Clone: scope.Clone,
 		Details: map[string]any{"op": "create", "definition": json.RawMessage(data)},
 	})
 	s.host.Logger.Infof("classifier=%s agent=%s: created", def.ID, scope.AgentID)
@@ -353,7 +353,7 @@ func (s *Service) Update(ctx context.Context, scope Scope, id string, patch []by
 		return err
 	}
 	s.host.audit(AuditEvent{
-		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok",
+		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok", Clone: scope.Clone,
 		Details: map[string]any{"op": "update", "patch": json.RawMessage(patch)},
 	})
 	s.host.Logger.Infof("classifier=%s agent=%s: updated", def.ID, scope.AgentID)
@@ -392,7 +392,7 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 		}
 	}
 	s.host.audit(AuditEvent{
-		Kind: AuditWrite, Agent: scope.AgentID, Classifier: id, Outcome: "ok",
+		Kind: AuditWrite, Agent: scope.AgentID, Classifier: id, Outcome: "ok", Clone: scope.Clone,
 		Details: map[string]any{"op": "delete"},
 	})
 	s.host.Logger.Infof("classifier=%s agent=%s: deleted", id, scope.AgentID)
