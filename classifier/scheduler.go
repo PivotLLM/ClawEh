@@ -53,7 +53,7 @@ func (e *entry) stopRun() {
 // again does nothing.
 func (s *Service) Start(ctx context.Context) {
 	s.mu.Lock()
-	if s.started || s.closed {
+	if s.started || s.closing {
 		s.mu.Unlock()
 		return
 	}
@@ -222,7 +222,7 @@ func (s *Service) scanBase(ctx context.Context, base string, scopes []Scope, see
 		}
 		if !known {
 			if st, err := s.state(ctx, base); err == nil {
-				s.prune(ctx, st, fi.def)
+				s.prune(ctx, st, fi.def, false)
 			}
 		}
 	}
@@ -236,6 +236,9 @@ func filepathStem(path string) string {
 // startLocked starts a run of e, unless a rerun holds the classifier's lock
 // (then it runs right after). s.mu is held.
 func (s *Service) startLocked(ctx context.Context, e *entry) {
+	if s.closing {
+		return
+	}
 	l, ok := s.locks[e.key]
 	if !ok {
 		l = make(chan struct{}, 1)

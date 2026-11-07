@@ -149,11 +149,26 @@ func (a *fakeAuditor) kinds(kind string) []AuditEvent {
 	return out
 }
 
-// testLogger keeps warnings for assertions.
+// testLogger keeps warnings for assertions. An error log fails the test
+// unless expectErrors was called; the errors are then kept.
 type testLogger struct {
-	t     *testing.T
-	mu    sync.Mutex
-	warns []string
+	t            *testing.T
+	mu           sync.Mutex
+	warns        []string
+	errs         []string
+	errorsWanted bool
+}
+
+func (l *testLogger) expectErrors() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errorsWanted = true
+}
+
+func (l *testLogger) errors() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.errs...)
 }
 
 func (l *testLogger) Debugf(string, ...any) {}
@@ -165,7 +180,13 @@ func (l *testLogger) Warnf(format string, v ...any) {
 }
 
 func (l *testLogger) Errorf(format string, v ...any) {
-	l.t.Errorf("unexpected error log: "+format, v...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.errorsWanted {
+		l.t.Errorf("unexpected error log: "+format, v...)
+		return
+	}
+	l.errs = append(l.errs, fmt.Sprintf(format, v...))
 }
 
 func (l *testLogger) warnings(sub string) int {

@@ -13,6 +13,16 @@
 
 ### Added
 
+- **Classifier settings.** `agents.list[].classifiers` (`enabled`, off by
+  default, and `model`, the one model the agent's classifiers use) and the
+  install-wide `classifiers` section (`processed_days`, default 30, and
+  `limits`: `max_rules` 100, `max_prompt_chars` 20000, `max_item_chars`
+  50000, `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours`
+  720; 0 or absent uses the default, a negative value is refused). A save
+  that leaves the switch on with no model sets the agent's first model; a
+  model the agent cannot use is refused, and a person's agent cannot run
+  classifiers. The classifiers that use these settings are not yet
+  available.
 - **`security.permissions` areas `root`, `secrets`, `bin` and `default`.**
   `root` sets the data directory itself and the files directly in it
   (`config.json`); `secrets` sets `internal/`, `tls/`, `tokens/` and every
@@ -32,6 +42,10 @@
 
 ### Changed
 
+- **BREAKING: `classifiers` is a reserved workspace folder name.** A mount
+  named `classifiers` (any case) is refused on save, and one already in
+  `config.json` is ignored at start and marked on the Agents page and Check
+  Up. To keep it, rename the mount in `agents.list[].mounts`.
 - **BREAKING: the data directory is set to exactly the configured modes at
   every start.** Before, the startup check only removed group and other
   access and only touched folders and secret files. Now every folder and

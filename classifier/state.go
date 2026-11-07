@@ -105,11 +105,11 @@ CREATE TABLE IF NOT EXISTS processed (
   status TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT,
   classified_at INTEGER, acted_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT, updated_at INTEGER NOT NULL,
+  error TEXT, updated_at INTEGER NOT NULL, last_seen INTEGER NOT NULL,
   PRIMARY KEY (classifier, item_id));
 CREATE TABLE IF NOT EXISTS dry_run (
   classifier TEXT NOT NULL, item_id TEXT NOT NULL, category TEXT, reason TEXT, model TEXT,
-  decided_at INTEGER NOT NULL, PRIMARY KEY (classifier, item_id));
+  decided_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (classifier, item_id));
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT NOT NULL,
   fields TEXT NOT NULL,
@@ -215,42 +215,53 @@ func (s *stateDB) processed(ctx context.Context, cls string) (_ map[string]proce
 // setClassified records the model's answer for an item (its action pending).
 func (s *stateDB) setClassified(ctx context.Context, cls, item, category, reason, model string, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, acted_at, attempts, error, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?)
+INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, acted_at, attempts, error, updated_at, last_seen)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?)
 ON CONFLICT (classifier, item_id) DO UPDATE SET status = excluded.status, category = excluded.category,
   reason = excluded.reason, model = excluded.model, classified_at = excluded.classified_at,
   acted_at = NULL, error = NULL, updated_at = excluded.updated_at`,
-		cls, item, StatusClassified, category, reason, model, ms(now), ms(now))
+		cls, item, StatusClassified, category, reason, model, ms(now), ms(now), ms(now))
 	return err
 }
 
-// setActed marks an item done.
+// setActed marks an item done. Its row must exist (setClassified wrote it);
+// anything but exactly one row changed is an error.
 func (s *stateDB) setActed(ctx context.Context, cls, item string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE processed SET status = ?, acted_at = ?, error = NULL, updated_at = ? WHERE classifier = ? AND item_id = ?`,
 		StatusActed, ms(now), ms(now), cls, item)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("mark %s acted: %d rows changed, want 1", item, n)
+	}
+	return nil
 }
 
 // setFailed records a failure for an item, keeping any category it has, and
 // counts the attempt.
 func (s *stateDB) setFailed(ctx context.Context, cls, item, errText string, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO processed (classifier, item_id, status, attempts, error, updated_at) VALUES (?, ?, ?, 1, ?, ?)
+INSERT INTO processed (classifier, item_id, status, attempts, error, updated_at, last_seen) VALUES (?, ?, ?, 1, ?, ?, ?)
 ON CONFLICT (classifier, item_id) DO UPDATE SET status = excluded.status, attempts = processed.attempts + 1,
   error = excluded.error, updated_at = excluded.updated_at`,
-		cls, item, StatusFailed, errText, ms(now))
+		cls, item, StatusFailed, errText, ms(now), ms(now))
 	return err
 }
 
 // setUnclassified records that the model named no category for an item.
 func (s *stateDB) setUnclassified(ctx context.Context, cls, item, model string, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, attempts, error, updated_at)
-VALUES (?, ?, ?, NULL, NULL, ?, ?, 0, NULL, ?)
+INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, attempts, error, updated_at, last_seen)
+VALUES (?, ?, ?, NULL, NULL, ?, ?, 0, NULL, ?, ?)
 ON CONFLICT (classifier, item_id) DO UPDATE SET status = excluded.status, category = NULL, reason = NULL,
   model = excluded.model, classified_at = excluded.classified_at, acted_at = NULL, error = NULL, updated_at = excluded.updated_at`,
-		cls, item, StatusUnclassified, model, ms(now), ms(now))
+		cls, item, StatusUnclassified, model, ms(now), ms(now), ms(now))
 	return err
 }
 
@@ -275,12 +286,42 @@ func (s *stateDB) dryDecided(ctx context.Context, cls string) (_ map[string]bool
 // setDry records a dry-run decision.
 func (s *stateDB) setDry(ctx context.Context, cls, item, category, reason, model string, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO dry_run (classifier, item_id, category, reason, model, decided_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO dry_run (classifier, item_id, category, reason, model, decided_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (classifier, item_id) DO UPDATE SET category = excluded.category, reason = excluded.reason,
   model = excluded.model, decided_at = excluded.decided_at`,
-		cls, item, category, reason, model, ms(now))
+		cls, item, category, reason, model, ms(now), ms(now))
 	return err
 }
+
+// markSeen sets last_seen to now for every id of cls that the source lists
+// now, in table processed or dry_run, in one statement, so an item is kept
+// while it stays listed (design 7.1c: retention runs from when it leaves).
+func (s *stateDB) markSeen(ctx context.Context, table, cls string, ids []string, now time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if table != "processed" && table != "dry_run" {
+		return fmt.Errorf("unknown table %s", table)
+	}
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), markSeenChunk)]
+		ids = ids[len(chunk):]
+		args := make([]any, 0, len(chunk)+2)
+		args = append(args, ms(now), cls)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		if _, err := s.db.ExecContext(ctx, `UPDATE `+table+` SET last_seen = ? WHERE classifier = ? AND item_id IN (`+placeholders+`)`, args...); err != nil { // #nosec G202 -- a fixed table name and placeholders
+			return err
+		}
+	}
+	return nil
+}
+
+// markSeenChunk keeps one statement under SQLite's limit on parameters; a
+// list of up to this many ids is marked in one statement.
+const markSeenChunk = 10000
 
 // addActivity appends an activity entry; each field value is cut to
 // ActivityValueMax characters.
@@ -352,17 +393,21 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// prune deletes cls's processed and dry-run rows last changed before
-// processedBefore and its activity before activityBefore.
+// prune deletes cls's processed and dry-run rows whose item the source last
+// listed before processedBefore, and its activity before activityBefore. A
+// zero time prunes nothing of that kind.
 func (s *stateDB) prune(ctx context.Context, cls string, processedBefore, activityBefore time.Time) error {
 	for _, q := range []struct {
 		sql string
 		at  time.Time
 	}{
-		{`DELETE FROM processed WHERE classifier = ? AND updated_at < ?`, processedBefore},
-		{`DELETE FROM dry_run WHERE classifier = ? AND decided_at < ?`, processedBefore},
+		{`DELETE FROM processed WHERE classifier = ? AND last_seen < ?`, processedBefore},
+		{`DELETE FROM dry_run WHERE classifier = ? AND last_seen < ?`, processedBefore},
 		{`DELETE FROM activity WHERE classifier = ? AND at < ?`, activityBefore},
 	} {
+		if q.at.IsZero() {
+			continue
+		}
 		if _, err := s.db.ExecContext(ctx, q.sql, cls, ms(q.at)); err != nil {
 			return err
 		}

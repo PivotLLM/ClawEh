@@ -178,23 +178,35 @@ func TestStoreUpdate_ClassifierModelCompletedOnSwitchOn(t *testing.T) {
 	}
 }
 
-// A switch that is already on in the file with no model (a hand edit) is
-// not filled by an unrelated save: only a save that turns it on is.
-func TestStoreUpdate_ClassifierModelNotCompletedWhenAlreadyOn(t *testing.T) {
+// Every save fills a missing model for an agent whose switch is on: a hand
+// edit that left it out, and a save that clears it.
+func TestStoreUpdate_ClassifierModelCompletedOnEverySave(t *testing.T) {
 	cfg := classifierTestConfig()
 	cfg.AgentByID("alice").Classifiers = &AgentClassifiersConfig{Enabled: true}
 	s := storeFor(t, cfg)
+	if got := s.Current().ClassifierModelProblems(); len(got) != 1 || !got[0].Missing || got[0].Agent != "alice" {
+		t.Errorf("ClassifierModelProblems() at load = %+v, want alice missing", got)
+	}
 	if err := s.Update(func(c *Config) error {
 		c.AgentByID("bob").Name = "Bob B"
 		return nil
 	}); err != nil {
 		t.Fatalf("an unrelated save was refused: %v", err)
 	}
-	if got := s.Current().AgentByID("alice").ClassifierModel(); got != "" {
-		t.Errorf("classifier model = %q, want it left unset", got)
+	if got := s.Current().AgentByID("alice").ClassifierModel(); got != "cheap" {
+		t.Errorf("after an unrelated save = %q, want cheap", got)
 	}
-	if got := s.Current().ClassifierModelProblems(); len(got) != 1 || !got[0].Missing || got[0].Agent != "alice" {
-		t.Errorf("ClassifierModelProblems() = %+v, want alice missing", got)
+	if err := s.Update(func(c *Config) error {
+		c.AgentByID("alice").Classifiers.Model = ""
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := s.Current().AgentByID("alice").ClassifierModel(); got != "cheap" {
+		t.Errorf("after clearing the model = %q, want cheap", got)
+	}
+	if got := s.Current().ClassifierModelProblems(); len(got) != 0 {
+		t.Errorf("ClassifierModelProblems() = %+v", got)
 	}
 }
 
@@ -211,6 +223,16 @@ func TestStoreUpdate_ClassifierSwitchOnWithoutModelsRefused(t *testing.T) {
 	}
 	if s.Current().AgentByID("bob").Classifiers != nil {
 		t.Error("a refused update was applied")
+	}
+
+	// One already in the file does not block an unrelated save.
+	cfg.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true}
+	s = storeFor(t, cfg)
+	if err := s.Update(func(c *Config) error {
+		c.AgentByID("alice").Name = "Alice B"
+		return nil
+	}); err != nil {
+		t.Errorf("an unrelated save was refused: %v", err)
 	}
 }
 

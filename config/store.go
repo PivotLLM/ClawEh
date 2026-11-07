@@ -127,8 +127,8 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// security.permissions is always written in full: a save that dropped a
 	// key (a raw edit, a PUT without the block) puts its default back.
 	completePermissions(&next.Security.Permissions)
-	// An agent whose classifiers switch this save turns on with no model gets
-	// its first model (classifiers.go), before the model checks below see it.
+	// An agent whose classifiers switch is on with no model gets its first
+	// model (classifiers.go), before the model checks below see it.
 	refusals = append(refusals, completeClassifierModels(s.cur, next)...)
 
 	// A reference to a model that does not exist is refused only when this

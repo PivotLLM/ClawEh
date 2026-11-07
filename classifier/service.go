@@ -35,7 +35,8 @@ type Service struct {
 	states  map[string]*stateDB      // by base directory
 	locks   map[string]chan struct{} // one run at a time per classifier, by entry key
 	entries map[string]*entry        // the scheduler's table, by entry key
-	closed  bool
+	closing bool                     // Close has begun: no run or rerun starts
+	closed  bool                     // the state databases are closed
 
 	fileMu sync.Mutex // serialises definition writes
 
@@ -361,20 +362,30 @@ func (s *Service) Update(ctx context.Context, scope Scope, id string, patch []by
 }
 
 // Delete removes a classifier's definition and its state. A run in progress
-// finishes the items in flight and starts no more.
+// finishes the items in flight and starts no more; Delete waits for it (and
+// for a rerun) to end before it removes anything, so nothing is written
+// after the state is forgotten.
 func (s *Service) Delete(ctx context.Context, scope Scope, id string) error {
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
 	if _, err := s.owned(scope, id); err != nil {
 		return err
 	}
+	key := entryKey(scope.BaseDirectory, id)
+	s.stopEntry(key)
+	lock := s.lockFor(key)
+	select {
+	case lock <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-lock }()
 	if err := os.Remove(definitionPath(scope.BaseDirectory, id)); err != nil {
 		return err
 	}
 	if err := syncDir(scope.BaseDirectory); err != nil {
 		return err
 	}
-	s.stopEntry(entryKey(scope.BaseDirectory, id))
 	if st, err := s.state(ctx, scope.BaseDirectory); err == nil {
 		if err := st.forget(ctx, NormalizeID(id)); err != nil {
 			s.host.Logger.Errorf("classifier=%s agent=%s: forget state: %v", id, scope.AgentID, err)
@@ -517,6 +528,10 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 	if err != nil {
 		return Decision{}, err
 	}
+	if !s.beginWork() {
+		return Decision{}, ErrClosed
+	}
+	defer s.wg.Done()
 	lock := s.lockFor(entryKey(scope.BaseDirectory, id))
 	select {
 	case lock <- struct{}{}:
@@ -582,10 +597,25 @@ func closeQuietly(c io.Closer) {
 	}
 }
 
-// Close stops the scheduler and every run (their context is cancelled),
-// waits for them, and closes the state databases.
+// beginWork counts one more run or rerun for Close to wait for; false once
+// Close has begun.
+func (s *Service) beginWork() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
+// Close stops the scheduler and every run (their context is cancelled), lets
+// no run or rerun start, waits for those in progress, and then closes the
+// state databases. When ctx ends first, the databases are left open (a run
+// may still use them) and ctx's error is returned.
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
+	s.closing = true
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -595,15 +625,15 @@ func (s *Service) Close(ctx context.Context) error {
 		s.wg.Wait()
 		close(done)
 	}()
-	var err error
 	select {
 	case <-done:
 	case <-ctx.Done():
-		err = ctx.Err()
+		return ctx.Err()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	var err error
 	for base, st := range s.states {
 		err = errors.Join(err, st.close())
 		delete(s.states, base)

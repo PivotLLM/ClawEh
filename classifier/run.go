@@ -61,7 +61,8 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, item
 		}
 	}
 
-	system, user := buildPrompt(def, d.data, "")
+	delim := newDelimiter()
+	system, user := buildPrompt(def, d.data, "", delim)
 	reply, model, err := s.host.Model.Complete(ctx, scope.AgentID, system, user)
 	if err != nil {
 		return d.modelFailed(err)
@@ -69,7 +70,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, item
 	d.Model = model
 	category, reason, ok := parseReply(reply, def)
 	if !ok {
-		system, user = buildPrompt(def, d.data, reply)
+		system, user = buildPrompt(def, d.data, reply, newDelimiter())
 		reply, model, err = s.host.Model.Complete(ctx, scope.AgentID, system, user)
 		if err != nil {
 			return d.modelFailed(err)
@@ -129,12 +130,18 @@ func nonNilArgs(args map[string]any) map[string]any {
 
 // handleItem decides one item and, by mode, acts and stores the outcome.
 // The activity entry and the audit row are written for every mode but test.
+//
+// State is written with a context that is not cancelled with ctx, so an
+// action that ran is recorded even when the run is stopped meanwhile; a
+// classification that cannot be recorded fails the item before its action
+// runs, so a later run never repeats an action it did not know had run.
 func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, st *stateDB, item listedItem, reuse *processedRow, mode itemMode) decision {
 	dry := mode == modeDry || (mode == modeRerun && def.DryRun)
 	d := s.decide(ctx, scope, def, item, reuse)
 	now := s.host.clock().Now().UTC()
 	d.At, d.DryRun, d.Rerun = now, dry, mode == modeRerun
 	cls := NormalizeID(def.ID)
+	wctx := context.WithoutCancel(ctx)
 
 	storeErr := func(err error) {
 		if err != nil {
@@ -163,20 +170,24 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 				d.Action = a.Tool
 			}
 		}
-		storeErr(st.setDry(ctx, cls, item.id, category, d.Reason, d.Model, now))
+		storeErr(st.setDry(wctx, cls, item.id, category, d.Reason, d.Model, now))
 	case d.Outcome == OutcomeFailed:
-		storeErr(st.setFailed(ctx, cls, item.id, d.Error, now))
+		storeErr(st.setFailed(wctx, cls, item.id, d.Error, now))
 	case d.Outcome == OutcomeUnclassified:
-		storeErr(st.setUnclassified(ctx, cls, item.id, d.Model, now))
+		storeErr(st.setUnclassified(wctx, cls, item.id, d.Model, now))
 	default:
 		if reuse == nil || reuse.category != d.Category || mode == modeRerun {
-			storeErr(st.setClassified(ctx, cls, item.id, d.Category, d.Reason, d.Model, now))
+			if err := st.setClassified(wctx, cls, item.id, d.Category, d.Reason, d.Model, now); err != nil {
+				storeErr(err)
+				d.Outcome, d.Error = OutcomeFailed, "the classification could not be recorded; the action was not run"
+				break
+			}
 		}
 		s.act(ctx, scope, def, item, &d)
 		if d.Outcome == OutcomeFailed {
-			storeErr(st.setFailed(ctx, cls, item.id, d.Error, s.host.clock().Now().UTC()))
+			storeErr(st.setFailed(wctx, cls, item.id, d.Error, s.host.clock().Now().UTC()))
 		} else {
-			storeErr(st.setActed(ctx, cls, item.id, s.host.clock().Now().UTC()))
+			storeErr(st.setActed(wctx, cls, item.id, s.host.clock().Now().UTC()))
 		}
 	}
 
@@ -184,7 +195,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 	for _, f := range d.data.fields {
 		fields[f.Name] = f.Value
 	}
-	storeErr(st.addActivity(ctx, cls, ActivityEntry{Decision: d.Decision, Fields: fields}))
+	storeErr(st.addActivity(wctx, cls, ActivityEntry{Decision: d.Decision, Fields: fields}))
 	s.host.audit(AuditEvent{
 		Kind: AuditClassification, Agent: scope.AgentID, Classifier: def.ID, ItemID: item.id,
 		Category: d.Category, Action: d.Action, Outcome: d.Outcome,
@@ -215,11 +226,10 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		rec.Status, rec.Error, rec.EndedAt = RunError, "the classifier's state could not be opened", s.host.clock().Now().UTC()
 		return rec
 	}
-	s.prune(ctx, st, def)
 
 	finish := func() RunRecord {
 		rec.EndedAt = s.host.clock().Now().UTC()
-		if runErr := st.setRun(ctx, cls, rec); runErr != nil {
+		if runErr := st.setRun(context.WithoutCancel(ctx), cls, rec); runErr != nil {
 			s.host.Logger.Errorf("classifier=%s agent=%s: store run: %v", def.ID, scope.AgentID, runErr)
 		}
 		s.host.Logger.Infof("classifier=%s agent=%s: run %s: %d listed, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
@@ -253,6 +263,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		s.host.Logger.Errorf("classifier=%s agent=%s: read state: %v", def.ID, scope.AgentID, err)
 		return fail(errors.New("the classifier's state could not be read"))
 	}
+	// After pending marked every listed item seen: an item still listed is
+	// never pruned.
+	s.prune(ctx, st, def, true)
 	if limit := def.itemsPerRun(s.host.ceilings()); limit > 0 && len(todo) > limit {
 		todo = todo[:limit]
 	}
@@ -343,20 +356,39 @@ func errSuffix(e string) string {
 	return " (" + e + ")"
 }
 
-// pending returns the items a run takes, in source order (design 4.1d, 7.1):
-// a live run skips items acted or unclassified and takes again those
-// classified with the action pending (reusing their category) and failed;
-// a dry run skips items with a dry-run decision.
+// pending returns the items a run takes, in source order (design 4.1d, 7.1),
+// each id once: a live run skips items acted or unclassified and takes again
+// those classified with the action pending (reusing their category) and
+// failed; a dry run skips items with a dry-run decision. Every listed item's
+// row is marked seen now, so retention runs from when it leaves the list.
 func (s *Service) pending(ctx context.Context, st *stateDB, def *Definition, items []listedItem) ([]listedItem, map[string]*processedRow, error) {
 	cls := NormalizeID(def.ID)
 	reuse := map[string]*processedRow{}
 	var todo []listedItem
+	var unique []listedItem
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		if seen[it.id] {
+			continue // a list naming an item twice handles it once
+		}
+		seen[it.id] = true
+		unique = append(unique, it)
+		ids = append(ids, it.id)
+	}
+	table := "processed"
+	if def.DryRun {
+		table = "dry_run"
+	}
+	if err := st.markSeen(ctx, table, cls, ids, s.host.clock().Now()); err != nil {
+		return nil, nil, err
+	}
 	if def.DryRun {
 		decided, err := st.dryDecided(ctx, cls)
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, it := range items {
+		for _, it := range unique {
 			if !decided[it.id] {
 				todo = append(todo, it)
 			}
@@ -367,12 +399,7 @@ func (s *Service) pending(ctx context.Context, st *stateDB, def *Definition, ite
 	if err != nil {
 		return nil, nil, err
 	}
-	seen := map[string]bool{}
-	for _, it := range items {
-		if seen[it.id] {
-			continue // a list naming an item twice handles it once
-		}
-		seen[it.id] = true
+	for _, it := range unique {
 		row, ok := rows[it.id]
 		if !ok {
 			todo = append(todo, it)
@@ -390,11 +417,16 @@ func (s *Service) pending(ctx context.Context, st *stateDB, def *Definition, ite
 	return todo, reuse, nil
 }
 
-// prune deletes processed and dry-run rows older than the processed-id
-// retention and activity older than the definition's activity_hours.
-func (s *Service) prune(ctx context.Context, st *stateDB, def *Definition) {
+// prune deletes activity older than the definition's activity_hours and,
+// with processed set (a run, once the listed items are marked seen),
+// processed and dry-run rows of items not listed within the processed-id
+// retention.
+func (s *Service) prune(ctx context.Context, st *stateDB, def *Definition, processed bool) {
 	now := s.host.clock().Now()
-	processedBefore := now.Add(-time.Duration(s.host.ceilings().processedDays()) * 24 * time.Hour)
+	var processedBefore time.Time
+	if processed {
+		processedBefore = now.Add(-time.Duration(s.host.ceilings().processedDays()) * 24 * time.Hour)
+	}
 	activityBefore := now.Add(-time.Duration(def.activityHours()) * time.Hour)
 	if err := st.prune(ctx, NormalizeID(def.ID), processedBefore, activityBefore); err != nil {
 		s.host.Logger.Errorf("classifier=%s: prune state: %v", def.ID, err)

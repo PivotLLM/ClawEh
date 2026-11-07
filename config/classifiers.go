@@ -163,7 +163,7 @@ func (c *Config) ClassifierModelProblems() []ClassifierModelProblem {
 // newClassifierModelProblems is Store.Update's refusal of a classifier model
 // the agent cannot use: one error per agent whose problem next introduces
 // (same agent and model). A missing model is not refused here:
-// completeClassifierModels fills it when a save turns the switch on.
+// completeClassifierModels fills it on every save.
 func newClassifierModelProblems(before, next *Config) []error {
 	key := func(p ClassifierModelProblem) string { return NormalizeAgentID(p.Agent) + "|" + p.Model }
 	return newProblems(before.ClassifierModelProblems(), next.ClassifierModelProblems(), key,
@@ -176,11 +176,13 @@ func newClassifierModelProblems(before, next *Config) []error {
 		})
 }
 
-// completeClassifierModels gives every agent whose classifiers switch this
-// save turns on (off or absent in before, on in next) and that names no
-// classifier model the agent's first model at this moment. It is refused
-// when the agent has no model. A human agent is left alone: it cannot run
-// classifiers (HumanClassifiers).
+// completeClassifierModels gives every agent whose classifiers switch is on
+// and that names no classifier model (a save that turns the switch on, or
+// one that clears the model) the agent's first model at this moment. An
+// agent with no model at all is refused only when this save brings it about
+// (as for the other rules, one already in the file does not block an
+// unrelated save). A human agent is left alone: it cannot run classifiers
+// (HumanClassifiers).
 func completeClassifierModels(before, next *Config) []error {
 	var errs []error
 	for i := range next.Agents.List {
@@ -188,14 +190,14 @@ func completeClassifierModels(before, next *Config) []error {
 		if !a.ClassifiersEnabled() || a.ClassifierModel() != "" {
 			continue
 		}
-		if before.AgentByID(a.ID).ClassifiersEnabled() {
-			continue
-		}
 		if _, human := next.HumanModelOf(a); human {
 			continue
 		}
 		model := next.firstAgentModel(a)
 		if model == "" {
+			if was := before.AgentByID(a.ID); was.ClassifiersEnabled() && was.ClassifierModel() == "" && before.firstAgentModel(was) == "" {
+				continue
+			}
 			errs = append(errs, errors.New("Agent "+a.DisplayName()+
 				" has no model for its classifiers; set agents.list[].classifiers.model."))
 			continue

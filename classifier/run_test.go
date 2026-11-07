@@ -103,7 +103,7 @@ func TestRunReducesHTML(t *testing.T) {
 	e.create(definition())
 	e.run("inbox-priority")
 	user := e.model.calls[0]
-	if !strings.Contains(user, "### body\nHello Alice\n") {
+	if !strings.Contains(user, "field \"body\"\nHello Alice\n") {
 		t.Errorf("body not reduced to text:\n%s", user)
 	}
 	if strings.Contains(user, "<p>") || strings.Contains(user, "x()") {
@@ -313,24 +313,73 @@ func TestRunPrunes(t *testing.T) {
 	e.run("inbox-priority")
 
 	e.clock.Advance(3 * time.Hour)
-	e.setInbox([]string{"m1"}) // nothing new
+	e.setInbox([]string{"m1"}) // m2 and m3 leave the list
 	e.run("inbox-priority")
-	entries := e.activity(ActivityQuery{})
-	if len(entries) != 0 {
+	if entries := e.activity(ActivityQuery{}); len(entries) != 0 {
 		t.Errorf("activity older than activity_hours kept: %d entries", len(entries))
 	}
 	if len(e.processed("inbox-priority")) != 3 {
 		t.Error("processed ids pruned before processed_days")
 	}
 
+	// m1 is still listed after processed_days: kept, never reprocessed. m2
+	// and m3 left the list more than processed_days ago: pruned.
+	e.clock.Advance(31 * 24 * time.Hour)
+	calls, moves := e.model.count(), len(e.tools.callsOf("mail_move"))
+	rec := e.run("inbox-priority")
+	if rec.NewItems != 0 || e.model.count() != calls || len(e.tools.callsOf("mail_move")) != moves {
+		t.Errorf("an item still listed was reprocessed: %+v", rec)
+	}
+	rows := e.processed("inbox-priority")
+	if len(rows) != 1 || rows["m1"].status != StatusActed {
+		t.Errorf("processed rows after pruning = %v, want m1 only", rows)
+	}
+
+	// An item that returns after it was pruned is new again.
+	e.setInbox([]string{"m1", "m2"})
+	if rec = e.run("inbox-priority"); rec.NewItems != 1 || e.model.count() != calls+1 {
+		t.Errorf("a returning pruned item = %+v", rec)
+	}
+}
+
+// Dry-run decisions follow the same rule: kept while listed, pruned after
+// leaving the list for processed_days.
+func TestRunPrunesDryRun(t *testing.T) {
+	e := newEnv(t)
+	def := definition()
+	def["dry_run"] = true
+	e.create(def)
+	e.run("inbox-priority")
+	e.setInbox([]string{"m1"})
 	e.clock.Advance(31 * 24 * time.Hour)
 	calls := e.model.count()
-	rec := e.run("inbox-priority")
-	if rec.NewItems != 1 || e.model.count() != calls+1 {
-		t.Errorf("an item past processed_days was not taken again: %+v", rec)
+	if rec := e.run("inbox-priority"); rec.NewItems != 0 || e.model.count() != calls {
+		t.Errorf("a listed dry-run item was decided again: %+v", rec)
 	}
-	if rows := e.processed("inbox-priority"); len(rows) != 1 {
-		t.Errorf("processed rows after pruning = %d, want 1 (m1 again)", len(rows))
+	st, err := e.svc.state(context.Background(), e.scope.BaseDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decided, err := st.dryDecided(context.Background(), "inbox-priority")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decided) != 1 || !decided["m1"] {
+		t.Errorf("dry-run decisions after pruning = %v, want m1 only", decided)
+	}
+}
+
+// A list naming an item twice handles it once, live and in a dry run.
+func TestRunDeduplicatesIDs(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		e := newEnv(t)
+		e.setInbox([]string{"m1", "m1", "m2"})
+		def := definition()
+		def["dry_run"] = dry
+		e.create(def)
+		if rec := e.run("inbox-priority"); rec.NewItems != 2 || e.model.count() != 2 {
+			t.Errorf("dry_run=%v: run = %+v, model calls %d", dry, rec, e.model.count())
+		}
 	}
 }
 
@@ -447,7 +496,7 @@ func TestRunSubstitutionError(t *testing.T) {
 	if len(entries) != 1 || !strings.Contains(entries[0].Error, "{{fetched.cc}} resolves to nothing") {
 		t.Errorf("activity = %+v", entries)
 	}
-	if !strings.Contains(e.model.calls[0], "Fields not present: cc") {
+	if !strings.Contains(e.model.calls[0], "fields not present: \"cc\"") {
 		t.Errorf("the model was not told of the missing field:\n%s", e.model.calls[0])
 	}
 }
@@ -548,7 +597,7 @@ func TestRunWithoutFetch(t *testing.T) {
 	if rec.Classified != 3 || len(e.tools.callsOf("mail_read")) != 0 {
 		t.Fatalf("run = %+v", rec)
 	}
-	if !strings.Contains(e.model.calls[0], "### subject\nAbout m1") {
+	if !strings.Contains(e.model.calls[0], "field \"subject\"\nAbout m1") {
 		t.Errorf("element fields not sent:\n%s", e.model.calls[0])
 	}
 	// urgent has no action: recorded only, and done.
@@ -570,10 +619,10 @@ func TestRunTruncatesFields(t *testing.T) {
 	e.create(def)
 	e.run("inbox-priority")
 	user := e.model.calls[0]
-	if !strings.Contains(user, "### body (shortened)\n"+strings.Repeat("x", 100-len("bob@example.com")-len("short"))+"\n") {
+	if !strings.Contains(user, "field \"body\" (shortened)\n"+strings.Repeat("x", 100-len("bob@example.com")-len("short"))+"\n") {
 		t.Errorf("body not cut to the budget:\n%s", user)
 	}
-	if strings.Contains(user, "### subject (shortened)") || strings.Contains(user, "### from (shortened)") {
+	if strings.Contains(user, "field \"subject\" (shortened)") || strings.Contains(user, "field \"from\" (shortened)") {
 		t.Errorf("a short field was cut:\n%s", user)
 	}
 }
