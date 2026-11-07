@@ -1,9 +1,9 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/PivotLLM/MCPFusion v0.4.8 h1:udiqI86x9MbvZSq3b6Y6bKIbcAfGR9kPBgi7wM7KsDA=
-github.com/PivotLLM/MCPFusion v0.4.8/go.mod h1:6ZMze7MK449x3n+3val+pVzfVjVlnBhmTpoupb8255o=
-github.com/PivotLLM/Maestro v0.5.7 h1:jfLB43SPudNYrb5l6vHx0QphPPCgnASC3J8Ys8a8ZV0=
-github.com/PivotLLM/Maestro v0.5.7/go.mod h1:txwfJ0n2tVD4RyQZ55lCzKr6ObSvgWgMKfC86MZn68I=
+github.com/PivotLLM/MCPFusion v0.4.9 h1:8O97nGzWSVES1SO2d12l2DFgkdepEUm6KGuhBxjMLLk=
+github.com/PivotLLM/MCPFusion v0.4.9/go.mod h1:6ZMze7MK449x3n+3val+pVzfVjVlnBhmTpoupb8255o=
+github.com/PivotLLM/Maestro v0.5.8 h1:fw6lHdy47YWjlXO88TR9EsgNsW5QjXihoTNe3IMs+JM=
+github.com/PivotLLM/Maestro v0.5.8/go.mod h1:txwfJ0n2tVD4RyQZ55lCzKr6ObSvgWgMKfC86MZn68I=
 github.com/PivotLLM/cogmem v0.0.9 h1:dFDi0yT08NP8mgRd28XmFFOL7/ZPg9hBC0iDiTc7AZQ=
 github.com/PivotLLM/cogmem v0.0.9/go.mod h1:UQO989cyn+D36QX7Gc60NKNULS5KN92YYLZTtU4JdJ4=
 github.com/PivotLLM/ctxengine v0.0.10 h1:mt1x73q3MEXfHV+s95HDJtSZOn51lPPtUZNXEcILgNs=
