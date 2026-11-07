@@ -40,6 +40,26 @@ func decodeDefinition(raw []byte) (*Definition, error) {
 	return &def, nil
 }
 
+// ToolPrefix starts the name of every classifier tool as the host mounts
+// them (classifier_list, classifier_update, ...).
+const ToolPrefix = "classifier_"
+
+// IsClassifierTool reports whether tool is one of the classifier tools,
+// which a classifier may not call: not as its source, fetch or any action.
+func IsClassifierTool(tool string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(tool)), ToolPrefix)
+}
+
+// ClassifierToolRefusal is the sentence refusing a classifier tool where a
+// classifier names one. field is where the definition names it (source,
+// fetch, actions.<category>); "" when it is not known.
+func ClassifierToolRefusal(tool, field string) string {
+	if field == "" {
+		return tool + " can't be used by a classifier."
+	}
+	return tool + " can't be used by a classifier (" + field + ")."
+}
+
 // idRuleText is the id rule for messages.
 const idRuleText = "letters, digits, - and _, starting with a letter or digit, at most 64 characters"
 
@@ -75,6 +95,8 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 	// Source.
 	if strings.TrimSpace(def.Source.Tool) == "" {
 		add("source.tool is required.")
+	} else if IsClassifierTool(def.Source.Tool) {
+		add("%s", ClassifierToolRefusal(def.Source.Tool, "source"))
 	}
 	if strings.TrimSpace(def.Source.ID) == "" {
 		add("source.id is required.")
@@ -92,6 +114,8 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 		fields = f.Fields
 		if strings.TrimSpace(f.Tool) == "" {
 			add("fetch.tool is required.")
+		} else if IsClassifierTool(f.Tool) {
+			add("%s", ClassifierToolRefusal(f.Tool, "fetch"))
 		}
 		if len(f.Fields) == 0 {
 			add("fetch.fields needs at least one field.")
@@ -161,6 +185,8 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 		}
 		if strings.TrimSpace(a.Tool) == "" {
 			add("actions.%s.tool is required.", name)
+		} else if IsClassifierTool(a.Tool) {
+			add("%s", ClassifierToolRefusal(a.Tool, "actions."+name))
 		}
 		issues = append(issues, checkPlaceholders(a.Args, "actions."+name+".args",
 			[]string{placeholderItem, placeholderFetched, placeholderCategory}, fields)...)

@@ -1141,6 +1141,8 @@ else
             "classifier_rerun" "{\"id\":\"$CLS_ID\",\"item_id\":\"nosuch\"}" "The source lists no items."
         run_test_err_msg_auth "4i.13 classifier_create refuses a source tool main does not have" \
             "classifier_create" "{\"definition\":{\"id\":\"probe-cls-missing\",\"enabled\":true,\"trigger\":{\"every_seconds\":60},\"source\":{\"tool\":\"nosuch_list\",\"items\":\"\",\"id\":\"id\"},\"classify\":{\"instructions\":\"x\",\"categories\":[{\"name\":\"keep\"}]}}}" "tool nosuch_list is not available to agent main"
+        run_test_err_msg_auth "4i.19 classifier_create refuses a classifier tool as its source" \
+            "classifier_create" "{\"definition\":{\"id\":\"probe-cls-self\",\"enabled\":true,\"trigger\":{\"every_seconds\":60},\"source\":{\"tool\":\"classifier_list\",\"items\":\"\",\"id\":\"id\"},\"classify\":{\"instructions\":\"x\",\"categories\":[{\"name\":\"keep\"}]}}}" "classifier_list can't be used by a classifier (source)."
         run_test_err_msg_auth "4i.14 classifier_list refuses an unknown argument" \
             "classifier_list" '{"nosuch":1}' "Unknown argument nosuch"
         run_test_ok_auth "4i.15 classifier_delete removes the classifier" \

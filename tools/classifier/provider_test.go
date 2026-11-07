@@ -135,6 +135,9 @@ func TestMountedSuite(t *testing.T) {
 	cfg := scopeConfig()
 	p := tools.NamespacedProvider(Namespace, GlobalProvider)
 	sp, ok := p.(tools.SuiteProvider)
+	if Namespace+"_" != classifierpkg.ToolPrefix {
+		t.Fatalf("tools are mounted as %s_*, the core refuses %s*", Namespace, classifierpkg.ToolPrefix)
+	}
 	if !ok || sp.Suite() != Suite || Suite != "classifiers" {
 		t.Fatalf("suite = %v (%v), want classifiers", sp, ok)
 	}

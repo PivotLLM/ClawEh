@@ -189,6 +189,15 @@ func TestClassifierHost_Tools(t *testing.T) {
 	if _, err := host.Call(ctx, "nobody", "inbox_list", map[string]any{}); err == nil {
 		t.Error("Call for an unknown agent succeeded")
 	}
+	// A classifier tool is refused at run time even when the agent has it.
+	registerOn(t, al, "alice", &classifierTool{name: "classifier_update", out: "updated"})
+	const refusal = "classifier_update can't be used by a classifier."
+	if err := host.Has("alice", "classifier_update"); err == nil || err.Error() != refusal {
+		t.Errorf("Has(classifier_update) = %v, want %q", err, refusal)
+	}
+	if _, err := host.Call(ctx, "alice", "classifier_update", map[string]any{}); err == nil || err.Error() != refusal {
+		t.Errorf("Call(classifier_update) = %v, want %q", err, refusal)
+	}
 	if err := NewClassifierHost().Has("alice", "inbox_list"); !errors.Is(err, errLoopNotReady) {
 		t.Errorf("Has before Bind = %v", err)
 	}

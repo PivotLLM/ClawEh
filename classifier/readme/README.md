@@ -7,8 +7,9 @@ fixed set of categories, and runs the action you named for the answer. The
 model never calls tools: it only picks a category. One model call per item.
 
 Every classifier you create belongs to you and runs as you: the source,
-fetch and action tools must be tools you have. Its model is the classifier
-model the operator set for you; a definition does not name one.
+fetch and action tools must be tools you have. They can't be classifier
+tools (`classifier_*`). Its model is the classifier model the operator set
+for you; a definition does not name one.
 
 ## A definition
 

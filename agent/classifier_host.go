@@ -159,8 +159,12 @@ func (h *ClassifierHost) registryFor(agentID string) (*tools.ToolRegistry, error
 }
 
 // Has implements classifier.ToolRunner: the agent has tool registered and
-// it may run with no session behind it.
+// it may run with no session behind it. A classifier tool is refused here
+// too, whatever the definition's validation said.
 func (h *ClassifierHost) Has(agentID, tool string) error {
+	if classifier.IsClassifierTool(tool) {
+		return errors.New(classifier.ClassifierToolRefusal(tool, ""))
+	}
 	reg, err := h.registryFor(agentID)
 	if err != nil {
 		return err
@@ -180,6 +184,9 @@ func (h *ClassifierHost) Has(agentID, tool string) error {
 // same timeout, exactly as a scheduled watch probe does. A call that times
 // out fails with the tool named.
 func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args map[string]any) (string, error) {
+	if classifier.IsClassifierTool(tool) {
+		return "", errors.New(classifier.ClassifierToolRefusal(tool, ""))
+	}
 	al, _, err := h.bound()
 	if err != nil {
 		return "", err

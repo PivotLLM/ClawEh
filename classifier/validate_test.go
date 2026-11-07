@@ -49,6 +49,11 @@ func TestValidateStatic(t *testing.T) {
 		{"placeholder in source", func(m map[string]any) {
 			obj(m["source"])["args"] = map[string]any{"q": "{{item.id}}"}
 		}, "source.args.q: {{item.id}} cannot be used in source.args; no placeholder is allowed there."},
+		{"classifier tool as source", func(m map[string]any) { obj(m["source"])["tool"] = "classifier_list" }, "classifier_list can't be used by a classifier (source)."},
+		{"classifier tool as fetch", func(m map[string]any) { obj(m["fetch"])["tool"] = "classifier_get" }, "classifier_get can't be used by a classifier (fetch)."},
+		{"classifier tool as action", func(m map[string]any) {
+			obj(obj(m["actions"])["urgent"])["tool"] = "Classifier_Update"
+		}, "Classifier_Update can't be used by a classifier (actions.urgent)."},
 		{"no fetch tool", func(m map[string]any) { delete(obj(m["fetch"]), "tool") }, "fetch.tool is required."},
 		{"no fields", func(m map[string]any) { obj(m["fetch"])["fields"] = map[string]any{} }, "fetch.fields needs at least one field."},
 		{"bad field name", func(m map[string]any) { obj(m["fetch"])["fields"] = map[string]any{"a b": "x"} }, `fetch.fields name "a b" must use only`},
