@@ -14,11 +14,11 @@
 ### Added
 
 - **Slack shows a "Thinking..." message and progress updates on long
-  turns.** With `channels.slack.placeholder.enabled` set to `true` (off by
-  default; `placeholder.text` changes the message), the app posts
-  the message where the reply will go, edits it with progress on long turns,
-  replaces it with the reply and deletes it when a turn sends no reply, as
-  Telegram and Discord do. It needs no new Slack scope.
+  turns, on by default.** The app posts the message where the reply will go,
+  edits it with progress on long turns, replaces it with the reply and
+  deletes it when a turn sends no reply, as Telegram does. It needs no new
+  Slack scope. To turn it off, set `channels.slack.placeholder.enabled` to
+  `false`; `placeholder.text` changes the message.
 - **Classifiers.** An agent can sort the items one of its tools lists
   (email, files, tickets) with one model call per item: a classifier lists
   the items, skips those already handled, reads each new one, asks the
@@ -134,6 +134,10 @@
   disappear after 5–10 minutes on a long turn.** They stay until the turn
   ends, on every channel, so a long turn no longer looks dead and its
   "Thinking..." message keeps receiving progress updates.
+- **A placeholder switched off stays off.** `placeholder.enabled: false` on
+  a channel whose default is on (Matrix, Slack, a Telegram bot) was dropped
+  when the config was saved and read back as on at the next start. It is now
+  always written to `config.json`.
 
 ## [0.6.3]
 

@@ -104,6 +104,10 @@ func DefaultConfig() *Config {
 				BotToken:  "",
 				AppToken:  "",
 				AllowFrom: FlexibleStringSlice{},
+				Placeholder: PlaceholderConfig{
+					Enabled: true,
+					Text:    "Thinking... 💭",
+				},
 			},
 			Matrix: MatrixConfig{
 				Enabled:      false,

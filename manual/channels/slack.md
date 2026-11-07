@@ -99,19 +99,21 @@ or `"group_trigger": { "prefixes": ["!ask"] }`.
 
 ## "Thinking..." message
 
-To show a short message as soon as a message arrives, updated with progress
-on long requests and then replaced by the reply, set `placeholder` in
-`config.json` (off by default; `text` is optional):
+As soon as a message arrives the app posts a short message ("Thinking...
+💭"), updates it with progress on long requests, then replaces it with the
+reply. To change the text or turn it off, set `placeholder` in `config.json`:
 
 ```json
 {
   "channels": {
     "slack": {
-      "placeholder": { "enabled": true, "text": "Thinking... 💭" }
+      "placeholder": { "enabled": false }
     }
   }
 }
 ```
+
+or `"placeholder": { "enabled": true, "text": "Working on it..." }`.
 
 ## Commands in Slack
 

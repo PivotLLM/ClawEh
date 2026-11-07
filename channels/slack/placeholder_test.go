@@ -91,7 +91,7 @@ func newPlaceholderChannel(t *testing.T, ph config.PlaceholderConfig, replies ma
 
 const postedPlaceholder = `{"ok":true,"channel":"C1","ts":"1700000001.000200"}`
 
-// With the placeholder off (the config default) nothing is posted.
+// With the placeholder switched off nothing is posted.
 func TestSendPlaceholder_Disabled(t *testing.T) {
 	c, api := newPlaceholderChannel(t, config.PlaceholderConfig{}, nil)
 	id, err := c.SendPlaceholder(context.Background(), "C1")

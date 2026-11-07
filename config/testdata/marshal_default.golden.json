@@ -532,7 +532,9 @@
       "allow_from": [],
       "group_trigger": {},
       "typing": {},
-      "placeholder": {},
+      "placeholder": {
+        "enabled": false
+      },
       "reasoning_channel_id": ""
     },
     "slack": {
@@ -542,7 +544,10 @@
       "allow_from": [],
       "group_trigger": {},
       "typing": {},
-      "placeholder": {},
+      "placeholder": {
+        "enabled": true,
+        "text": "Thinking... 💭"
+      },
       "reasoning_channel_id": ""
     },
     "matrix": {
@@ -569,7 +574,9 @@
       "write_timeout": 10,
       "max_connections": 100,
       "allow_from": [],
-      "placeholder": {}
+      "placeholder": {
+        "enabled": false
+      }
     },
     "device": {
       "enabled": false,

@@ -28,8 +28,10 @@ type TypingConfig struct {
 }
 
 // PlaceholderConfig controls placeholder message behavior (Phase 10).
+// Enabled is always written: several channels default it on, so an omitted
+// false would be read back as on.
 type PlaceholderConfig struct {
-	Enabled bool   `json:"enabled,omitempty"`
+	Enabled bool   `json:"enabled"`
 	Text    string `json:"text,omitempty"`
 }
 
