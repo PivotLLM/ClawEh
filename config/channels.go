@@ -17,14 +17,18 @@ type ChannelsConfig struct {
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
+// MentionOnly is always written: Matrix defaults it on, so an omitted false
+// would be read back as on.
 type GroupTriggerConfig struct {
-	MentionOnly bool     `json:"mention_only,omitempty"`
+	MentionOnly bool     `json:"mention_only"`
 	Prefixes    []string `json:"prefixes,omitempty"`
 }
 
 // TypingConfig controls typing indicator behavior (Phase 10).
+// Enabled is always written: a Telegram bot defaults it on, so an omitted
+// false would be read back as on.
 type TypingConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled bool `json:"enabled"`
 }
 
 // PlaceholderConfig controls placeholder message behavior (Phase 10).

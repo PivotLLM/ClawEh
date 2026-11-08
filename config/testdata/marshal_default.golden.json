@@ -511,7 +511,9 @@
         "id": "default",
         "enabled": false,
         "token": "",
-        "group_trigger": {},
+        "group_trigger": {
+          "mention_only": false
+        },
         "typing": {
           "enabled": true
         },
@@ -530,8 +532,12 @@
       "token": "",
       "proxy": "",
       "allow_from": [],
-      "group_trigger": {},
-      "typing": {},
+      "group_trigger": {
+        "mention_only": false
+      },
+      "typing": {
+        "enabled": false
+      },
       "placeholder": {
         "enabled": false
       },
@@ -542,8 +548,12 @@
       "bot_token": "",
       "app_token": "",
       "allow_from": [],
-      "group_trigger": {},
-      "typing": {},
+      "group_trigger": {
+        "mention_only": false
+      },
+      "typing": {
+        "enabled": false
+      },
       "placeholder": {
         "enabled": true,
         "text": "Thinking... 💭"

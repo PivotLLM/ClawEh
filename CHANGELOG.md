@@ -137,7 +137,9 @@
 - **A placeholder switched off stays off.** `placeholder.enabled: false` on
   a channel whose default is on (Matrix, Slack, a Telegram bot) was dropped
   when the config was saved and read back as on at the next start. It is now
-  always written to `config.json`.
+  always written to `config.json`. The same applied to a Telegram bot's
+  `typing.enabled: false` and Matrix's `group_trigger.mention_only: false`,
+  which are now always written too.
 
 ## [0.6.3]
 
