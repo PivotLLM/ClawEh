@@ -34,12 +34,18 @@ func TestDispatch_SessionClearRefusedInAskedTurn(t *testing.T) {
 			map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, nil, nil)
 	}
 
-	st.SetSource("agent:alice:main", constants.AgentMessageChannel, "ask-1")
+	endAsk := st.BeginTurn("agent:alice:main", constants.AgentMessageChannel, "ask-1")
 	if out, isErr := call(); !isErr || !strings.Contains(out, "not available while answering another agent's message") || cleared != 0 {
 		t.Fatalf("asked turn: %q isErr=%v cleared=%d, want the refusal", out, isErr, cleared)
 	}
-	st.SetSource("agent:alice:main", "telegram", "chat-1")
+	// A chat turn beside the ask: the call can't be tied to one of them.
+	endChat := st.BeginTurn("agent:alice:main", "telegram", "chat-1")
+	if out, isErr := call(); !isErr || !strings.Contains(out, "answering more than one conversation") || cleared != 0 {
+		t.Fatalf("ask and chat turn: %q isErr=%v cleared=%d, want the refusal", out, isErr, cleared)
+	}
+	endAsk()
 	if out, isErr := call(); isErr || cleared != 1 {
 		t.Fatalf("chat turn: %q isErr=%v cleared=%d, want the clear queued", out, isErr, cleared)
 	}
+	endChat()
 }

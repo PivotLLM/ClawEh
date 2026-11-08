@@ -327,6 +327,8 @@ func TestSendFiles_TurnRecordsReplyChat(t *testing.T) {
 		{"telegram", "42"},
 		{"cli", "direct"},
 		{"system", "x"},
+		{"subagent", "agent:main:task"},
+		{"agent_message", ""},
 	} {
 		t.Run(tt.channel, func(t *testing.T) {
 			al := newTestAgentLoop(t).al

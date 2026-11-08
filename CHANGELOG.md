@@ -161,6 +161,18 @@
 
 ### Fixed
 
+- **Messages and notices from an agent on a CLI model go to the chat it is
+  answering.** `msg_send`, tool notices, `/tools on` progress lines and
+  background results from an agent on a Claude, Codex, Antigravity or Cursor
+  model went to the chat its conversation last heard from, so they could land
+  in the wrong chat while the agent answered another agent, ran from
+  `claw agent`, or handled a tool result. They now go where that turn's reply
+  goes, as for other models. When the agent is answering more than one
+  conversation at once, `msg_send` is refused ("Messages can't be sent now:
+  this agent is answering more than one conversation."), as are
+  `session_clear` and a background `agent_spawn`, and notices are not sent.
+  `msg_send` in a turn with no chat (`claw agent`, a service token) is now
+  refused instead of reporting the message queued.
 - **`msg_send_file` works.** It always answered "media store not
   configured" and sent nothing; agents on CLI models (Claude, Codex,
   Antigravity, Cursor) had their files dropped too. Both now send.

@@ -2,10 +2,12 @@ package agents
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // GlobalProvider exposes the subagent task tools through the transport-neutral
@@ -129,6 +131,11 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				}
 
 				mode, onResult := resolveSpawnMode(modeStr, call)
+				// A background result returns to the chat of the spawning
+				// turn; a call that can't be tied to one turn has none.
+				if _, problem := tools.TurnChat(call.Ctx); mode == global.SpawnCallback && problem == tools.ChatAmbiguous {
+					return &global.Result{IsError: true, ForLLM: spawnAmbiguousText, Err: tools.Refusal(errSpawnAmbiguous)}, nil
+				}
 				return sp.Spawn(call.Ctx, global.SpawnRequest{
 					Mode:          mode,
 					Task:          task,
@@ -222,6 +229,12 @@ func parseMediaArg(v any) ([]string, string) {
 	}
 	return out, ""
 }
+
+// spawnAmbiguousText refuses a background spawn over the MCP host while more
+// than one turn of the session runs: its result would have no chat to return to.
+const spawnAmbiguousText = "A background task can't be started now: this agent is answering more than one conversation. Use mode \"wait\"."
+
+var errSpawnAmbiguous = errors.New("background spawn while the agent answers more than one conversation")
 
 // resolveSpawnMode maps the tool's "mode" argument to a global.SpawnMode and, for
 // callback mode, the OnResult sink that delivers the worker's completion pointer

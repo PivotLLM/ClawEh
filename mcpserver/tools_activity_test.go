@@ -32,8 +32,8 @@ func collectOutbound(t *testing.T, msgBus *bus.MessageBus) <-chan bus.OutboundMe
 }
 
 // TestDispatch_ToolActivityBreadcrumbPublished confirms that when a tool activity
-// notifier returns a line and the session has a recorded channel + chatID, the MCP
-// dispatch path publishes the breadcrumb to the originating user before the tool's
+// notifier returns a line and a turn runs on the token, the MCP
+// dispatch path publishes the breadcrumb to the turn's chat before the tool's
 // own result — parity with the agent loop's "/tools on" breadcrumb.
 func TestDispatch_ToolActivityBreadcrumbPublished(t *testing.T) {
 	rf := &mockTool{
@@ -45,7 +45,7 @@ func TestDispatch_ToolActivityBreadcrumbPublished(t *testing.T) {
 
 	st := newSessionTokenStore()
 	tok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
-	st.SetSource("agent:alice:main", "slack", "C123")
+	defer st.BeginTurn("agent:alice:main", "slack", "C123")()
 
 	msgBus := bus.NewMessageBus()
 	defer msgBus.Close()
@@ -95,7 +95,7 @@ func TestDispatch_ToolActivityOffPublishesNothing(t *testing.T) {
 
 	st := newSessionTokenStore()
 	tok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
-	st.SetSource("agent:alice:main", "slack", "C123")
+	defer st.BeginTurn("agent:alice:main", "slack", "C123")()
 
 	msgBus := bus.NewMessageBus()
 	defer msgBus.Close()

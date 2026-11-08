@@ -725,6 +725,10 @@ else
     run_test_not_auth_err "4b.4b msg_send — token accepted (no longer hard-excluded)" \
         "msg_send" '{"content":"probe"}'
 
+    # Like msg_send_file, msg_send goes only to the chat of a running turn.
+    run_test_err_msg_auth "4b.4e msg_send — no chat for a token without a turn" \
+        "msg_send" '{"content":"probe"}' 'There is no chat to send messages to.'
+
     run_test_not_auth_err "4b.5 skill_find — token accepted" \
         "skill_find" '{"query":"github"}'
 

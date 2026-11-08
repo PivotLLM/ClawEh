@@ -528,15 +528,18 @@ func dispatchToolCall(
 	// Likewise the turn's ask chain (SetTurnScope).
 	ctx = tools.WithAskChain(ctx, rec.askChain)
 
-	// Carry the session's source channel/chatID so tools that re-inject a turn
-	// (e.g. session_clear) can route the follow-up back to the originating user
-	// on the MCP path, which otherwise has no channel/chatID in context.
-	ctx = tools.WithToolContext(ctx, rec.channel, rec.chatID)
-	// The chat the call's turn replies to (msg_send_file), kept per turn so
-	// a concurrent turn of the session never lends its chat.
-	if rc, ok := sessionTokens.ReplyChat(rec); ok {
-		ctx = tools.WithReplyChat(ctx, rc)
+	// Everything the call sends to "the current chat" (msg_send,
+	// msg_send_file, ForUser, breadcrumbs, background results, a
+	// session_clear restart) goes to the chat of the turn the call belongs
+	// to, as in the agent loop: kept per turn, so a concurrent turn of the
+	// session never lends its chat. A service token, a session with no turn
+	// running and one with several have no chat (dest's Target is empty).
+	dest, inTurn := sessionTokens.ReplyChat(rec)
+	if inTurn {
+		ctx = tools.WithReplyChat(ctx, dest)
 	}
+	destChannel, destChatID := dest.Target()
+	ctx = tools.WithToolContext(ctx, destChannel, destChatID)
 
 	logger.InfoCF("mcpserver", "MCP tool authorized",
 		map[string]any{"agent": agentName, "tool": toolName, "workspace": tracker.workspace(agentName)})
@@ -550,7 +553,7 @@ func dispatchToolCall(
 	// tool calls made by CLI providers over MCP are no longer silent.
 	if toolActivity != nil {
 		if line := toolActivity(agentName, rec.sessionKey, toolName, args); line != "" {
-			publishMCPToolActivity(ctx, msgBus, rec, toolName, line)
+			publishMCPToolActivity(ctx, msgBus, rec, dest, toolName, line)
 		}
 	}
 
@@ -566,12 +569,12 @@ func dispatchToolCall(
 		// The originating request may be long gone when a background tool
 		// finishes; deliver on its values but not its cancellation.
 		deliverCtx := context.WithoutCancel(cbCtx)
-		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
-		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r, spawnDepth)
+		publishMCPForUser(deliverCtx, msgBus, rec, dest, toolName, r)
+		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, dest, toolName, r, spawnDepth)
 	}
 	// Authorization was enforced by the ACL policy above; discovery never gates
 	// execution.
-	result := reg.ExecuteWithContext(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
+	result := reg.ExecuteWithContext(ctx, toolName, args, destChannel, destChatID, asyncCb)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})
@@ -580,9 +583,9 @@ func dispatchToolCall(
 
 	// Side-channel publish of the immediate ForUser to the originating user. The
 	// MCP response envelope to the caller carries only ForLLM; ForUser is delivered
-	// out-of-band over the message bus to the session's recorded inbound source.
+	// out-of-band over the message bus to the chat of the call's turn.
 	// (Async completions are handled by asyncCb above.)
-	publishMCPForUser(ctx, msgBus, rec, toolName, result)
+	publishMCPForUser(ctx, msgBus, rec, dest, toolName, result)
 
 	out = agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
@@ -591,10 +594,10 @@ func dispatchToolCall(
 // publishMCPAsyncToLLM re-injects an async tool's completion (ForLLM, or the
 // error) into the agent's session as a "system" message, so the primary LLM is
 // notified of the result without polling. Mirrors the agent-loop async path
-// (agent/loop.go). No-op when there is nothing to inject; when there is no
-// recorded channel source to route to, it logs the drop rather than failing
-// silently.
-func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult, spawnDepth int) {
+// (agent/tool_exec.go): the result answers the chat of the call's turn, dest.
+// No-op when there is nothing to inject; when the call had no turn chat to
+// route to, it logs the drop rather than failing silently.
+func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, dest tools.ReplyChat, toolName string, r *tools.ToolResult, spawnDepth int) {
 	if r == nil || msgBus == nil {
 		return
 	}
@@ -605,16 +608,17 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 	if content == "" {
 		return
 	}
-	if rec.channel == "" || rec.chatID == "" {
-		// No recorded channel for this session, so we cannot route the re-injected
-		// completion. Log it rather than dropping silently — a headless/pure-MCP
-		// agent that never processed a channel message will not be notified.
+	channel, chatID := dest.Target()
+	if channel == "" || chatID == "" {
+		// The call had no turn chat (a service token, no turn, several turns),
+		// so the re-injected completion cannot be routed. Log it rather than
+		// dropping silently.
 		logger.WarnCF("mcpserver", "mcp.async.reinject_dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
-				"reason":      "no_active_channel",
+				"reason":      noChatReason(dest),
 			})
 		return
 	}
@@ -630,11 +634,11 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 		Channel:    "system",
 		SenderID:   "async:" + toolName,
 		Internal:   true,
-		ChatID:     rec.chatID,
+		ChatID:     chatID,
 		Content:    content,
 		SessionKey: targetSession,
 		Metadata: bus.SetSpawnDepth(map[string]string{
-			"preresolved_agent_id": targetAgent, bus.MetaOriginChannel: rec.channel,
+			"preresolved_agent_id": targetAgent, bus.MetaOriginChannel: channel,
 		}, spawnDepth),
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
@@ -646,24 +650,25 @@ func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessi
 			"tool":        toolName,
 			"agent":       rec.agentID,
 			"session_key": rec.sessionKey,
-			"channel":     rec.channel,
+			"channel":     channel,
 			"content_len": len(content),
 		})
 }
 
-// publishMCPToolActivity sends a "/tools on" breadcrumb line to the originating
-// user's channel/chatID over the outbound bus. No-op when the bus is absent or the
-// session has no recorded source (best-effort, like the ForUser side channel).
-func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName, line string) {
-	// An internal source (an asked turn's) has no chat to show it in.
-	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" || constants.IsInternalChannel(rec.channel) {
+// publishMCPToolActivity sends a "/tools on" breadcrumb line to the chat of
+// the call's turn, dest, over the outbound bus. No-op when the bus is absent or
+// the call has no chat (best-effort, like the ForUser side channel).
+func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, dest tools.ReplyChat, toolName, line string) {
+	// An internal turn (an asked one's) has no chat to show it in.
+	channel, chatID := dest.Target()
+	if msgBus == nil || channel == "" || chatID == "" || line == "" || constants.IsInternalChannel(channel) {
 		return
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
-		Channel: rec.channel,
-		ChatID:  rec.chatID,
+		Channel: channel,
+		ChatID:  chatID,
 		Content: line,
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.toolactivity.publish_failed",
@@ -671,14 +676,15 @@ func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec ses
 	}
 }
 
-// publishMCPForUser sends a tool's ForUser payload to the originating user's
-// channel/chatID via the outbound message bus, when a payload exists, the
-// result is not Silent, and the session has a recorded source. Silent drop in
-// every other case — the MCP caller's ForLLM response is unaffected.
+// publishMCPForUser sends a tool's ForUser payload to the chat of the call's
+// turn, dest, via the outbound message bus, when a payload exists, the result
+// is not Silent, and the call has a chat. Logged drop in every other case —
+// the MCP caller's ForLLM response is unaffected.
 func publishMCPForUser(
 	ctx context.Context,
 	msgBus *bus.MessageBus,
 	rec sessionRecord,
+	dest tools.ReplyChat,
 	toolName string,
 	result *tools.ToolResult,
 ) {
@@ -695,25 +701,27 @@ func publishMCPForUser(
 			})
 		return
 	}
-	if rec.channel == "" || rec.chatID == "" {
+	channel, chatID := dest.Target()
+	if channel == "" || chatID == "" {
 		logger.WarnCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
-				"reason":      "no_active_channel",
+				"reason":      noChatReason(dest),
 			})
 		return
 	}
-	if constants.IsInternalChannel(rec.channel) {
-		// An asked turn's source: its output goes to the asker, never a chat.
+	if constants.IsInternalChannel(channel) {
+		// An internal turn (an asked one's, claw agent's): its output goes to
+		// the asker or nowhere, never a chat.
 		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
 				"reason":      "internal_channel",
-				"channel":     rec.channel,
+				"channel":     channel,
 			})
 		return
 	}
@@ -721,8 +729,8 @@ func publishMCPForUser(
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
-		Channel: rec.channel,
-		ChatID:  rec.chatID,
+		Channel: channel,
+		ChatID:  chatID,
 		Content: result.ForUser,
 	}); err != nil {
 		logger.WarnCF("mcpserver", "mcp.foruser.publish_failed",
@@ -730,7 +738,7 @@ func publishMCPForUser(
 				"tool":        toolName,
 				"agent":       rec.agentID,
 				"session_key": rec.sessionKey,
-				"channel":     rec.channel,
+				"channel":     channel,
 				"error":       err.Error(),
 			})
 		return
@@ -740,9 +748,20 @@ func publishMCPForUser(
 			"tool":        toolName,
 			"agent":       rec.agentID,
 			"session_key": rec.sessionKey,
-			"channel":     rec.channel,
+			"channel":     channel,
 			"content_len": len(result.ForUser),
 		})
+}
+
+// noChatReason names, for the log, why a call had no chat to send to.
+func noChatReason(dest tools.ReplyChat) string {
+	switch {
+	case dest.Ambiguous:
+		return "several_turns_running"
+	case dest.Channel != "":
+		return "turn_has_no_chat"
+	}
+	return "no_turn_running"
 }
 
 // injectSessionTokenParam returns a deep-copied schema with `session_token` added

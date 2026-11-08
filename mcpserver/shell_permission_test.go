@@ -15,7 +15,7 @@ import (
 // TestDispatch_ShellFollowsTheTokensAgent: a shell_exec call over MCP runs
 // when the token's agent has shell_exec, and is refused like any other tool
 // the agent does not have when it does not, for a session token and a
-// service token alike. The channel the session last heard from plays no part.
+// service token alike. The chat plays no part.
 func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
 	exec, err := shell.NewExecTool("", false)
 	if err != nil {
@@ -28,8 +28,6 @@ func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
 	st := newSessionTokenStore()
 	aliceTok := st.Issue("alice", "agent:alice:main", "/ws")
 	bobTok := st.Issue("bob", "agent:bob:main", "/ws")
-	st.SetSource("agent:alice:main", "telegram", "chat-1")
-	st.SetSource("agent:bob:main", "telegram", "chat-2")
 	aliceSvc := "SST" + strings.Repeat("ab", 32)
 	bobSvc := "SST" + strings.Repeat("cd", 32)
 	st.RegisterService(aliceSvc, "alice", "/ws")

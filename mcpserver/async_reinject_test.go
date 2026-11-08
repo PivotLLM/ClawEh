@@ -14,10 +14,11 @@ import (
 
 // TestPublishMCPAsyncToLLM_ReinjectsCompletion verifies an async tool's
 // completion (ForLLM) is re-injected as a "system" message routed to the
-// session's recorded channel, so the primary LLM is notified without polling.
+// chat of the call's turn, so the primary LLM is notified without polling.
 func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	msgBus := bus.NewMessageBus()
-	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main", channel: "slack", chatID: "C9"}
+	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main"}
+	dest := tools.ReplyChat{Channel: "slack", ChatID: "C9"}
 
 	got := make(chan bus.InboundMessage, 1)
 	go func() {
@@ -30,7 +31,7 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	// give the consumer a moment to subscribe
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn",
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, dest, "agent_spawn",
 		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`}, 3)
 
 	select {
@@ -62,10 +63,17 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 }
 
 // TestPublishMCPAsyncToLLM_DropsWithoutChannel verifies no message is published
-// when the session has no recorded channel (nothing to route to).
+// when the call had no turn chat (no turn, or several): nothing to route to.
 func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
+	for _, dest := range []tools.ReplyChat{{}, {Ambiguous: true}} {
+		assertNoReinject(t, dest)
+	}
+}
+
+func assertNoReinject(t *testing.T, dest tools.ReplyChat) {
+	t.Helper()
 	msgBus := bus.NewMessageBus()
-	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main"} // no channel/chatID
+	rec := sessionRecord{agentID: "alice", sessionKey: "agent:alice:main"}
 
 	published := make(chan struct{}, 1)
 	go func() {
@@ -77,11 +85,11 @@ func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
 	}()
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"}, 0)
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, dest, "agent_spawn", &tools.ToolResult{ForLLM: "x"}, 0)
 
 	select {
 	case <-published:
-		t.Fatal("should not publish when there is no recorded channel")
+		t.Fatalf("published with %+v, want nothing when there is no turn chat", dest)
 	case <-time.After(400 * time.Millisecond):
 		// expected: nothing published
 	}

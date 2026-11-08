@@ -66,8 +66,8 @@ func (h *sendFileHost) call(tok string) (string, bool) {
 // and never to the chat the session last heard from.
 func TestDispatch_SendFileGoesToTheTurnsChat(t *testing.T) {
 	h := newSendFileHost(t)
-	// The session last heard from a chat; no turn runs.
-	h.st.SetSource("agent:alice:main", "telegram", "42")
+	// An earlier turn answered a chat; no turn runs.
+	h.st.BeginTurn("agent:alice:main", "telegram", "42")()
 	if out, isErr := h.call(h.tok); !isErr || !strings.Contains(out, "There is no chat to send files to.") {
 		t.Fatalf("no turn: dispatch = %q (error %v), want the refusal", out, isErr)
 	}
@@ -89,7 +89,7 @@ func TestDispatch_SendFileInternalTurn(t *testing.T) {
 	for _, channel := range []string{"cli", "recovery", "system"} {
 		t.Run(channel, func(t *testing.T) {
 			h := newSendFileHost(t)
-			h.st.SetSource("agent:alice:main", "telegram", "42")
+			h.st.BeginTurn("agent:alice:main", "telegram", "42")() // an earlier chat turn
 			end := h.st.BeginTurn("agent:alice:main", channel, "direct")
 			defer end()
 			if out, isErr := h.call(h.tok); !isErr || !strings.Contains(out, "This chat can't receive files.") {

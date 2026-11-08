@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -104,15 +103,15 @@ func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		return refused(problem)
 	}
 
-	dest, ok := tools.ReplyChatOf(ctx)
+	dest, chat := tools.TurnChat(ctx)
 	switch {
-	case !ok:
+	case chat == tools.ChatNone:
 		return refused("There is no chat to send files to.")
-	case dest.Ambiguous:
+	case chat == tools.ChatAmbiguous:
 		return refused("Files can't be sent now: this agent is answering more than one conversation.")
-	case constants.RepliesToAgent(dest.Channel):
+	case chat == tools.ChatAgent:
 		return refused("Files can't be sent to another agent.")
-	case dest.Channel == "" || dest.ChatID == "" || constants.IsInternalChannel(dest.Channel):
+	case chat == tools.ChatInternal:
 		return refused("This chat can't receive files.")
 	case !t.canRead:
 		return refused("You can only send files you're allowed to read.")

@@ -18,7 +18,6 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -104,8 +103,8 @@ func (al *AgentLoop) runAgentLoop(
 	defer releaseCtxMgr()
 
 	// After the session context, so the session's token exists.
-	ctx, restoreSource := al.scopeSessionToken(ctx, agent, opts)
-	defer restoreSource()
+	ctx, endTokenTurn := al.scopeSessionToken(ctx, agent, opts)
+	defer endTokenTurn()
 
 	if err = al.prepareSession(ctx, agent, cm, &opts); err != nil {
 		return "", err
@@ -171,8 +170,8 @@ func (al *AgentLoop) beginAgentTurn(agent *AgentInstance, sessionKey string) (*A
 // turn's sub-agent depth (every turn, so a later ordinary turn resets it),
 // the agents waiting on the turn (none of which may be asked from it; see
 // Ask), and the chat to send user-facing output to. It returns ctx with the
-// running agent added to the ask chain, and the function that puts the
-// token's source back after an asked turn.
+// running agent added to the ask chain, and the function that ends the
+// turn on the token.
 func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance, opts processOptions) (context.Context, func()) {
 	al.mu.RLock()
 	sti := al.sessionTokenIssuer
@@ -185,27 +184,10 @@ func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance
 		return ctx, func() {}
 	}
 	sti.SetTurnScope(opts.SessionKey, tools.AskChain(ctx))
-	endTurn := sti.BeginTurn(opts.SessionKey, opts.Channel, opts.ChatID)
-
-	// The source follows the user across channels. Internal channels have no
-	// channel handler, so they are not recorded: the MCP ForUser publish path
-	// drops on the empty channel/chat guard instead.
-	if !constants.IsInternalChannel(opts.Channel) {
-		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
-	}
-	if !constants.RepliesToAgent(opts.Channel) {
-		return ctx, endTurn
-	}
-	// An asked or sub-agent turn's MCP output (ForUser, breadcrumbs, msg_send
-	// with no target, msg_send_file, background results) belongs to the agent
-	// it answers, never to the chat the session last heard from: the source
-	// points at the ask or task for the turn and is put back after it.
-	prevChannel, prevChatID := sti.Source(opts.SessionKey)
-	sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
-	return ctx, func() {
-		endTurn()
-		sti.SetSource(opts.SessionKey, prevChannel, prevChatID)
-	}
+	// The turn's MCP output (msg_send, msg_send_file, ForUser, breadcrumbs,
+	// background results) goes to the chat this turn replies to, recorded
+	// per turn, never to the chat the session last heard from.
+	return ctx, sti.BeginTurn(opts.SessionKey, opts.Channel, opts.ChatID)
 }
 
 // prepareSession readies the session for the turn's message, adjusting opts:

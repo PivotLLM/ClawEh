@@ -144,24 +144,17 @@ func (al *AgentLoop) newMessageTool() tools.Tool {
 	mt.SetSendCallback(func(ctx context.Context, channel, chatID, content string) error {
 		pubCtx, pubCancel := context.WithTimeout(ctx, publishTimeout)
 		defer pubCancel()
-		msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content}
-		// Internal channels never reach the channel manager, which
-		// reports deliveries.
-		internal := constants.IsInternalChannel(channel)
+		// The tool sends only to a chat (never an internal channel), whose
+		// channel reports the delivery.
 		delivered := make(chan error, 1)
-		if !internal {
-			msg.OnDelivery = func(err error) {
-				select {
-				case delivered <- err:
-				default:
-				}
+		msg := bus.OutboundMessage{Channel: channel, ChatID: chatID, Content: content, OnDelivery: func(err error) {
+			select {
+			case delivered <- err:
+			default:
 			}
-		}
+		}}
 		if err := al.bus.PublishOutbound(pubCtx, msg); err != nil {
 			return err
-		}
-		if internal {
-			return toolsmsg.ErrQueued
 		}
 		select {
 		case err := <-delivered:

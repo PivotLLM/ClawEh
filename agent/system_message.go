@@ -48,8 +48,8 @@ func (al *AgentLoop) processSystemMessage(
 
 	// A background result of an asked turn: the asker has its reply already,
 	// so the result goes to the agent's own main conversation only. The turn
-	// runs on the ask channel (no chat id): nothing is sent to any chat, no
-	// chat becomes the session's source, and no recovery record is kept.
+	// runs on the ask channel (no chat id): nothing is sent to any chat, the
+	// turn has no chat for MCP output, and no recovery record is kept.
 	askOrigin := originChannel == constants.AgentMessageChannel
 	if askOrigin {
 		originChatID = ""

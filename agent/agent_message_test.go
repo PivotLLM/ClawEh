@@ -276,7 +276,6 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 	release := make(chan struct{})
 	al.RegisterTool(asyncTool{release: release})
 	sti := &scopeSTI{}
-	sti.SetSource("agent:bob:main", "telegram", "chat-1")
 	al.SetSessionTokenIssuer(sti)
 
 	reply, err := al.Ask(context.Background(), "Alice", "bob", "start it", 5*time.Second)
@@ -307,13 +306,12 @@ func TestAsk_BackgroundResultReachesMainConversation(t *testing.T) {
 		t.Fatal("the background result is not in Bob's main conversation")
 	}
 	noOutbound(t, msgBus)
+	// Neither the ask nor the result's turn answered a chat, so a CLI
+	// agent's MCP output in them reaches none.
 	for _, c := range sti.calls() {
-		if c.sessionKey == "agent:bob:main" && !constants.IsInternalChannel(c.channel) && (c.channel != "telegram" || c.chatID != "chat-1") {
-			t.Fatalf("the session source was moved to a chat: %+v", c)
+		if c.sessionKey == "agent:bob:main" && !constants.IsInternalChannel(c.channel) {
+			t.Fatalf("a turn was recorded on a chat: %+v", c)
 		}
-	}
-	if ch, chat := sti.Source("agent:bob:main"); ch != "telegram" || chat != "chat-1" {
-		t.Fatalf("source after = %s/%s, want telegram/chat-1 unchanged", ch, chat)
 	}
 }
 
@@ -442,7 +440,7 @@ func TestAsk_WithOneTurnSlot(t *testing.T) {
 	}
 }
 
-// scopeSTI records the turn scope and sources the loop sets on the token.
+// scopeSTI records the turn scope and turns the loop sets on the token.
 type scopeSTI struct {
 	recordingSTI
 	scopeMu sync.Mutex
@@ -458,15 +456,14 @@ func (s *scopeSTI) SetTurnScope(sessionKey string, chain []string) {
 	s.scopes[sessionKey] = chain
 }
 
-// TestAsk_SessionTokenScope: an asked turn points its session token's source
-// at the ask while it runs and restores the chat it had after, and records
-// the ask chain on the token for a CLI agent's MCP calls.
+// TestAsk_SessionTokenScope: an asked turn records itself on its session
+// token as a turn answering the ask (no chat) while it runs, ends it after,
+// and records the ask chain on the token for a CLI agent's MCP calls.
 func TestAsk_SessionTokenScope(t *testing.T) {
 	t.Cleanup(logger.RedirectForTest(&safeBufLoop{}))
 
 	al, _ := messagingLoop(t, messagingConfig(t), &recordingProvider{})
 	sti := &scopeSTI{}
-	sti.SetSource("agent:bob:main", "telegram", "chat-1")
 	al.SetSessionTokenIssuer(sti)
 
 	if _, err := al.Ask(tools.WithAskChain(context.Background(), []string{"alice"}), "Alice", "bob", "hi", 5*time.Second); err != nil {
@@ -478,9 +475,11 @@ func TestAsk_SessionTokenScope(t *testing.T) {
 			bobSources = append(bobSources, c)
 		}
 	}
-	if len(bobSources) != 3 || bobSources[1].channel != constants.AgentMessageChannel ||
-		bobSources[2].channel != "telegram" || bobSources[2].chatID != "chat-1" {
-		t.Fatalf("bob's sources = %+v, want telegram, the ask, then telegram again", bobSources)
+	if len(bobSources) != 1 || bobSources[0].channel != constants.AgentMessageChannel {
+		t.Fatalf("bob's turns = %+v, want the ask", bobSources)
+	}
+	if left := sti.activeTurns(); len(left) != 0 {
+		t.Fatalf("turns after the ask = %+v, want none", left)
 	}
 	sti.scopeMu.Lock()
 	defer sti.scopeMu.Unlock()

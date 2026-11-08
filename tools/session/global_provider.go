@@ -78,9 +78,15 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 // to a fresh turn the asker is not waiting for.
 var errClearInAsk = errors.New("session_clear is not available while answering another agent's message")
 
+// errClearAmbiguous refuses session_clear over the MCP host while more than
+// one turn of the conversation runs: the restarted turn would have no chat to
+// answer.
+var errClearAmbiguous = errors.New("the conversation can't be cleared now: this agent is answering more than one conversation")
+
 // refuseClearInAsk wraps the clear tool's handler so it is refused, as an
 // expected refusal, in an asked turn (its tool channel is the ask),
-// in-process and over MCP alike.
+// in-process and over MCP alike, and over MCP while the call can't be tied
+// to one turn.
 func refuseClearInAsk(defs []global.ToolDefinition) []global.ToolDefinition {
 	for i := range defs {
 		if defs[i].Name != "clear" || defs[i].Handler == nil {
@@ -90,6 +96,9 @@ func refuseClearInAsk(defs []global.ToolDefinition) []global.ToolDefinition {
 		defs[i].Handler = func(call *global.ToolCall) (*global.Result, error) {
 			if tools.ToolChannel(call.Ctx) == constants.AgentMessageChannel {
 				return &global.Result{IsError: true, ForLLM: errClearInAsk.Error(), Err: tools.Refusal(errClearInAsk)}, nil
+			}
+			if _, problem := tools.TurnChat(call.Ctx); problem == tools.ChatAmbiguous {
+				return &global.Result{IsError: true, ForLLM: errClearAmbiguous.Error(), Err: tools.Refusal(errClearAmbiguous)}, nil
 			}
 			return next(call)
 		}

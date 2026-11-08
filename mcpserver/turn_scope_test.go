@@ -67,17 +67,13 @@ func TestDispatch_CarriesTurnScope(t *testing.T) {
 	}
 }
 
-// While an asked turn holds the token its source is the ask: a tool's
-// ForUser output is dropped rather than sent to the chat the session last
-// heard from. Source reports what SetSource recorded.
+// While an asked turn is the one turn on the token, a tool's ForUser output
+// is dropped rather than sent to the chat an earlier turn answered.
 func TestDispatch_AskSourceNeverReachesAChat(t *testing.T) {
 	st := newSessionTokenStore()
 	tok := st.Issue("alice", "agent:alice:main", "/ws")
-	st.SetSource("agent:alice:main", "telegram", "chat-1")
-	if ch, chat := st.Source("agent:alice:main"); ch != "telegram" || chat != "chat-1" {
-		t.Fatalf("Source = %s/%s, want telegram/chat-1", ch, chat)
-	}
-	st.SetSource("agent:alice:main", constants.AgentMessageChannel, "ask-1")
+	st.BeginTurn("agent:alice:main", "telegram", "chat-1")() // an earlier chat turn
+	defer st.BeginTurn("agent:alice:main", constants.AgentMessageChannel, "ask-1")()
 
 	msgBus := bus.NewMessageBus()
 	defer msgBus.Close()

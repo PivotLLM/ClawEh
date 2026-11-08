@@ -153,7 +153,7 @@ func TestDispatch_AgentSpawnRefusedAtDepthLimit(t *testing.T) {
 func TestDispatch_AsyncReinjectCarriesTurnDepth(t *testing.T) {
 	st := newSessionTokenStore()
 	tok := st.Issue("alice", "agent:alice:main", "/ws")
-	st.SetSource("agent:alice:main", "telegram", "42")
+	defer st.BeginTurn("agent:alice:main", "telegram", "42")()
 	st.SetDepth("agent:alice:main", 2)
 
 	msgBus := bus.NewMessageBus()

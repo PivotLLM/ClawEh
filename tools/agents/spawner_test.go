@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 func newTestSpawner(t *testing.T) *Spawner {
@@ -204,5 +205,31 @@ func TestGlobalProvider_TaskToolsWiredToDeps(t *testing.T) {
 	}
 	if res == nil || res.IsError {
 		t.Fatalf("expected successful wait-mode spawn via handler, got %+v", res)
+	}
+}
+
+// A background spawn whose call can't be tied to one turn (over the MCP host,
+// while more than one turn of the session runs) is refused: its result would
+// have no chat to return to. A waited spawn still runs.
+func TestSpawnTool_CallbackRefusedWhenTurnAmbiguous(t *testing.T) {
+	var spawn global.ToolDefinition
+	for _, d := range (globalAgentProvider{}).RegisterTools(global.Deps{Spawn: newTestSpawner(t)}) {
+		if d.Name == "spawn" {
+			spawn = d
+		}
+	}
+	ambiguous := tools.WithReplyChat(context.Background(), tools.ReplyChat{Ambiguous: true})
+	res, err := spawn.Handler(&global.ToolCall{Ctx: ambiguous, Args: map[string]any{"task": "x", "name": "bg"}})
+	if err != nil || !res.IsError || res.ForLLM != spawnAmbiguousText || !tools.IsExpectedRefusal(res.Err) {
+		t.Fatalf("callback = %+v, %v, want the refusal", res, err)
+	}
+	res, err = spawn.Handler(&global.ToolCall{Ctx: ambiguous, Args: map[string]any{"task": "x", "mode": "wait"}})
+	if err != nil || res.IsError {
+		t.Fatalf("wait = %+v, %v, want it run", res, err)
+	}
+	chat := tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: "telegram", ChatID: "42"})
+	res, err = spawn.Handler(&global.ToolCall{Ctx: chat, Args: map[string]any{"task": "x", "name": "bg"}})
+	if err != nil || res.IsError {
+		t.Fatalf("callback in one turn = %+v, %v, want it started", res, err)
 	}
 }

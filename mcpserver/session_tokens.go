@@ -24,19 +24,13 @@ const sessionTokenPrefix = "SST"
 // schemas. The MCP server strips it before dispatching to the tool implementation.
 const sessionTokenParam = "session_token"
 
-// sessionRecord holds the mapping from a session token to its session.
-//
-// channel/chatID are the "most recent inbound source for this session" used by
-// MCP-routed tool dispatch to publish a tool's ForUser payload back to the
-// originating user. They are populated by the agent loop on every inbound user
-// message via SetSource. Empty values mean no user channel is bound — the
-// MCP publish step silently drops in that case.
+// sessionRecord holds the mapping from a session token to its session. The
+// chat a call's output goes to is not kept here: it is the chat of the turn
+// running on the session (BeginTurn, ReplyChat).
 type sessionRecord struct {
 	agentID    string
 	sessionKey string
 	archiveDir string
-	channel    string
-	chatID     string
 	// homeID, when set, is the agent a late async result of this session is
 	// delivered to instead of agentID: a temporary clone's source, resolved
 	// when the token is issued, so it holds after the clone is deleted.
@@ -148,12 +142,7 @@ func (s *SessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		if s.tokens[old].pinned {
 			return old
 		}
-		// Preserve the last-known inbound source (channel/chatID) across rotation
-		// so MCP-routed tools — notably cron_schedule, which delivers to the
-		// session's own channel — keep their target. Otherwise a reissue between
-		// the inbound SetSource and the tool call would wipe it.
-		rec.channel = s.tokens[old].channel
-		rec.chatID = s.tokens[old].chatID
+		// Keep the running turn's scope across rotation.
 		rec.depth = s.tokens[old].depth
 		rec.askChain = s.tokens[old].askChain
 		delete(s.tokens, old)
@@ -249,19 +238,6 @@ func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 	}
 }
 
-// SetSource records the most recent inbound user-message source (channel +
-// chatID) on the session record identified by sessionKey. Called from the
-// agent loop on every inbound user message so MCP-routed tool dispatch can
-// publish a tool's ForUser payload back to the originating user. No-op if
-// the sessionKey is unknown — Issue() may not yet have been called for this
-// session, which is normal during early startup.
-func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
-	s.updateRecord(sessionKey, func(rec *sessionRecord) {
-		rec.channel = channel
-		rec.chatID = chatID
-	})
-}
-
 // turnDest is the chat a running turn's final reply goes to.
 type turnDest struct {
 	channel, chatID string
@@ -270,9 +246,10 @@ type turnDest struct {
 // BeginTurn records a turn starting on sessionKey whose final reply goes to
 // chatID on channel, until the returned end is called (once; later calls do
 // nothing). A conversation-token call while exactly one turn of its session
-// runs has that turn's reply chat (ReplyChat); turns are kept per turn, not
-// per session, so concurrent turns (an ask beside a chat turn) never take
-// each other's chat.
+// runs has that turn's reply chat (ReplyChat), where all of the call's
+// output for "the current chat" goes; turns are kept per turn, not per
+// session, so concurrent turns (an ask beside a chat turn) never take each
+// other's chat.
 func (s *SessionTokenStore) BeginTurn(sessionKey, channel, chatID string) (end func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -357,19 +334,6 @@ func (s *SessionTokenStore) updateRecord(sessionKey string, update func(*session
 	}
 	update(&rec)
 	s.tokens[tok] = rec
-}
-
-// Source returns the inbound source SetSource last recorded for sessionKey
-// (empty when none, or the session has no token).
-func (s *SessionTokenStore) Source(sessionKey string) (channel, chatID string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	tok, ok := s.bySess[sessionKey]
-	if !ok {
-		return "", ""
-	}
-	rec := s.tokens[tok]
-	return rec.channel, rec.chatID
 }
 
 // Resolve looks up a presented token. Returns the record and true if found.

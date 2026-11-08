@@ -14,7 +14,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -672,7 +671,6 @@ func TestMsgSend_ReportsDelivery(t *testing.T) {
 		{"not found", "device", "device:abc", fmt.Errorf("%w: no paired device", channels.ErrRecipientNotFound), "Not sent: device:abc can't be reached."},
 		{"not set up", "device", "device:abc", fmt.Errorf("%w: device", channels.ErrUnknownChannel), "Not sent: device:abc is not set up."},
 		{"not running", "device", "device:abc", fmt.Errorf("%w: device", channels.ErrNotRunning), "Not sent: device:abc is unavailable."},
-		{"internal channel", "cli", "direct", nil, "Message queued for delivery to cli:direct."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tools.RegisterProvider(tools.NamespacedProvider("msg", toolsmsg.GlobalProvider))
@@ -686,20 +684,16 @@ func TestMsgSend_ReportsDelivery(t *testing.T) {
 			}
 			results := make(chan *tools.ToolResult, 1)
 			go func() {
-				results <- agent.Tools.ExecuteWithContext(context.Background(), "msg_send",
+				// The turn's chat, as runToolCall gives it.
+				ctx := tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: tc.channel, ChatID: tc.chatID})
+				results <- agent.Tools.ExecuteWithContext(ctx, "msg_send",
 					map[string]any{"content": "hi"}, tc.channel, tc.chatID, nil)
 			}()
 			out := nextOutbound(t, msgBus)
 			if out.Channel != tc.channel || out.ChatID != tc.chatID || out.Content != "hi" {
 				t.Fatalf("outbound = %+v", out)
 			}
-			if constants.IsInternalChannel(tc.channel) {
-				if out.OnDelivery != nil {
-					t.Error("a message to an internal channel waits for a delivery report")
-				}
-			} else {
-				out.OnDelivery(tc.delivery)
-			}
+			out.OnDelivery(tc.delivery)
 			select {
 			case res := <-results:
 				if res.ForLLM != tc.want || res.IsError != (tc.delivery != nil) {

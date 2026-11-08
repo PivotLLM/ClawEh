@@ -243,11 +243,6 @@ type SessionTokenIssuer interface {
 	Revoke(sessionKey string)
 	// RevokeAgent removes all tokens for a given agent.
 	RevokeAgent(agentID string)
-	// SetSource records the most recent inbound user-message source (channel +
-	// chatID) on the session record so MCP-routed tool dispatch can publish a
-	// tool's ForUser payload back to the originating user. No-op when the
-	// sessionKey is unknown.
-	SetSource(sessionKey, channel, chatID string)
 	// SetDepth records the sub-agent depth of the turn starting on sessionKey,
 	// so MCP tool calls made with the session's token (CLI providers) run at
 	// it. No-op when the sessionKey is unknown.
@@ -256,12 +251,11 @@ type SessionTokenIssuer interface {
 	// (see tools.AskChain), so MCP tool calls made with the session's token
 	// carry it. No-op when the sessionKey is unknown.
 	SetTurnScope(sessionKey string, askChain []string)
-	// Source returns the source SetSource last recorded for sessionKey (empty
-	// when none or unknown).
-	Source(sessionKey string) (channel, chatID string)
 	// BeginTurn records a turn of sessionKey whose final reply goes to chatID
 	// on channel until the returned end is called, so MCP tool calls made
-	// with the session's token (CLI providers) send files to that chat.
+	// with the session's token (CLI providers) send their output for "the
+	// current chat" (msg_send, msg_send_file, ForUser text, background
+	// results) to that chat, as in-process tool calls do.
 	BeginTurn(sessionKey, channel, chatID string) (end func())
 }
 

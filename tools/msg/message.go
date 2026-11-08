@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/PivotLLM/ClawEh/channels"
-	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -78,21 +77,24 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 		return &tools.ToolResult{ForLLM: "content is empty: nothing to send", IsError: true}
 	}
 
-	// Security: the target is always the session's own source channel/chat. The
+	// Security: the target is always the chat of the call's own turn. The
 	// model cannot choose where a message goes — any channel/chat_id in args is
 	// ignored, so an agent cannot be coaxed into sending into another channel or
 	// to another user's chat.
-	channel := tools.ToolChannel(ctx)
-	chatID := tools.ToolChatID(ctx)
-
-	if channel == "" || chatID == "" {
-		return refused("No target channel/chat specified")
+	dest, problem := tools.TurnChat(ctx)
+	switch problem {
+	case tools.ChatNone:
+		return refused("There is no chat to send messages to.")
+	case tools.ChatAmbiguous:
+		return refused("Messages can't be sent now: this agent is answering more than one conversation.")
+	case tools.ChatAgent:
+		// An asked or sub-agent turn's only output is its final reply.
+		return refused("Messages can't be sent to another agent: your final reply goes to it.")
+	case tools.ChatInternal:
+		return refused("This chat can't receive messages.")
+	case tools.ChatOK:
 	}
-	// An asked turn's own "chat" is the ask, whose only output is the final
-	// reply: a message sent there would reach no one.
-	if channel == constants.AgentMessageChannel {
-		return refused("msg_send needs a target in an asked turn")
-	}
+	channel, chatID := dest.Channel, dest.ChatID
 
 	if t.sendCallback == nil {
 		return &tools.ToolResult{ForLLM: "Message sending not configured", IsError: true}

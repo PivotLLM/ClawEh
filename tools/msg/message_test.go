@@ -23,7 +23,7 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 		return nil
 	})
 
-	ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+	ctx := turnCtx("test-channel", "test-chat-id")
 	args := map[string]any{
 		"content": "Hello, world!",
 	}
@@ -76,7 +76,7 @@ func TestMessageTool_Execute_IgnoresSuppliedChannel(t *testing.T) {
 		return nil
 	})
 
-	ctx := tools.WithToolContext(context.Background(), "session-channel", "session-chat-id")
+	ctx := turnCtx("session-channel", "session-chat-id")
 	args := map[string]any{
 		"content": "Test message",
 		"channel": "other-channel", // must be ignored
@@ -109,7 +109,7 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 		return sendErr
 	})
 
-	ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+	ctx := turnCtx("test-channel", "test-chat-id")
 	args := map[string]any{
 		"content": "Test message",
 	}
@@ -164,7 +164,7 @@ func TestMessageTool_Execute_Outcomes(t *testing.T) {
 			tool := NewMessageTool()
 			tool.SetSendCallback(func(context.Context, string, string, string) error { return tc.err })
 			var sent atomic.Bool
-			ctx := tools.WithRoundSentFlag(tools.WithToolContext(context.Background(), "device", tc.chatID), &sent)
+			ctx := tools.WithRoundSentFlag(turnCtx("device", tc.chatID), &sent)
 			result := tool.Execute(ctx, map[string]any{"content": "hi"})
 			if result.ForLLM != tc.want || result.IsError != tc.isError {
 				t.Errorf("result = %q (error %v), want %q (error %v)", result.ForLLM, result.IsError, tc.want, tc.isError)
@@ -182,7 +182,7 @@ func TestMessageTool_Execute_Outcomes(t *testing.T) {
 func TestMessageTool_Execute_MissingContent(t *testing.T) {
 	tool := NewMessageTool()
 
-	ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+	ctx := turnCtx("test-channel", "test-chat-id")
 	args := map[string]any{} // content missing
 
 	result := tool.Execute(ctx, args)
@@ -208,7 +208,7 @@ func TestMessageTool_Execute_EmptyContent(t *testing.T) {
 				return nil
 			})
 
-			ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+			ctx := turnCtx("test-channel", "test-chat-id")
 			result := tool.Execute(ctx, map[string]any{"content": content})
 
 			if sent {
@@ -224,30 +224,41 @@ func TestMessageTool_Execute_EmptyContent(t *testing.T) {
 	}
 }
 
-func TestMessageTool_Execute_NoTargetChannel(t *testing.T) {
-	tool := NewMessageTool()
-	// No WithToolContext — channel/chatID are empty
+// turnCtx is the context of a call whose turn replies to chatID on channel.
+func turnCtx(channel, chatID string) context.Context {
+	return tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: channel, ChatID: chatID})
+}
 
-	tool.SetSendCallback(func(_ context.Context, channel, chatID, content string) error {
-		return nil
-	})
-
-	ctx := context.Background()
-	args := map[string]any{
-		"content": "Test message",
-	}
-
-	result := tool.Execute(ctx, args)
-
-	// Verify error when no target channel specified
-	if !result.IsError {
-		t.Error("Expected IsError=true when no target channel")
-	}
-	if result.ForLLM != "No target channel/chat specified" {
-		t.Errorf("Expected ForLLM 'No target channel/chat specified', got '%s'", result.ForLLM)
-	}
-	if !tools.IsExpectedRefusal(result.Err) {
-		t.Errorf("Err = %v, want an expected refusal (logged at WARN)", result.Err)
+// TestMessageTool_Destination: a message goes only to the chat of the call's
+// turn; without one, when the call can't be tied to one turn, in a turn that
+// answers an agent and on an internal channel, it is refused and nothing is
+// sent. The tool context alone (the channel a tool runs for) is not a chat.
+func TestMessageTool_Destination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"no turn (service token)", context.Background(), "There is no chat to send messages to."},
+		{"tool context only", tools.WithToolContext(context.Background(), "telegram", "42"), "There is no chat to send messages to."},
+		{"more than one turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Ambiguous: true}), "Messages can't be sent now: this agent is answering more than one conversation."},
+		{"asked turn", turnCtx(constants.AgentMessageChannel, "ask-1"), "Messages can't be sent to another agent: your final reply goes to it."},
+		{"sub-agent turn", turnCtx(constants.SubagentChannel, "agent:alice:task"), "Messages can't be sent to another agent: your final reply goes to it."},
+		{"claw agent (cli) turn", turnCtx("cli", "direct"), "This chat can't receive messages."},
+		{"recovery turn", turnCtx("recovery", "x"), "This chat can't receive messages."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sent := false
+			tool := NewMessageTool()
+			tool.SetSendCallback(func(context.Context, string, string, string) error { sent = true; return nil })
+			res := tool.Execute(tc.ctx, map[string]any{"content": "hi"})
+			if !res.IsError || res.ForLLM != tc.want || sent {
+				t.Fatalf("result = %+v sent=%v, want %q and nothing sent", res, sent, tc.want)
+			}
+			if !tools.IsExpectedRefusal(res.Err) {
+				t.Fatalf("Err = %v, want an expected refusal (logged at WARN)", res.Err)
+			}
+		})
 	}
 }
 
@@ -255,7 +266,7 @@ func TestMessageTool_Execute_NotConfigured(t *testing.T) {
 	tool := NewMessageTool()
 	// No SetSendCallback called
 
-	ctx := tools.WithToolContext(context.Background(), "test-channel", "test-chat-id")
+	ctx := turnCtx("test-channel", "test-chat-id")
 	args := map[string]any{
 		"content": "Test message",
 	}
@@ -323,25 +334,5 @@ func TestMessageTool_Parameters(t *testing.T) {
 	}
 	if _, present := props["chat_id"]; present {
 		t.Error("'chat_id' must not be a model-facing parameter (target is locked to the session)")
-	}
-}
-
-// TestMessageTool_RefusedInAskedTurn: in an asked turn msg_send has no chat to
-// send to and says so instead of reporting success.
-func TestMessageTool_RefusedInAskedTurn(t *testing.T) {
-	sent := false
-	tool := NewMessageTool()
-	tool.SetSendCallback(func(context.Context, string, string, string) error { sent = true; return nil })
-	ctx := tools.WithToolContext(context.Background(), constants.AgentMessageChannel, "ask-1")
-	res := tool.Execute(ctx, map[string]any{"content": "hi"})
-	if !res.IsError || res.ForLLM != "msg_send needs a target in an asked turn" || sent {
-		t.Fatalf("result = %+v sent=%v, want the refusal and nothing sent", res, sent)
-	}
-	if !tools.IsExpectedRefusal(res.Err) {
-		t.Fatalf("Err = %v, want an expected refusal (logged at WARN)", res.Err)
-	}
-	ctx = tools.WithToolContext(context.Background(), "telegram", "chat-1")
-	if res := tool.Execute(ctx, map[string]any{"content": "hi"}); res.IsError || !sent {
-		t.Fatalf("result on a chat = %+v sent=%v, want it sent", res, sent)
 	}
 }

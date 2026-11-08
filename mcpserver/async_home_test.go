@@ -25,8 +25,6 @@ func TestPublishMCPAsyncToLLM_CloneResultGoesHome(t *testing.T) {
 	})
 	cloneTok := st.Issue("c1", "agent:c1:main", "/tmp/c1/sessions")
 	bobTok := st.Issue("bob", "agent:bob:main", "/tmp/bob/sessions")
-	st.SetSource("agent:c1:main", "telegram", "42")
-	st.SetSource("agent:bob:main", "telegram", "43")
 
 	// The resolver no longer knows the clone (it was deleted): the record
 	// keeps what it resolved at issue time.
@@ -52,7 +50,7 @@ func TestPublishMCPAsyncToLLM_CloneResultGoesHome(t *testing.T) {
 			}
 		}()
 		time.Sleep(20 * time.Millisecond)
-		publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "done"}, 0)
+		publishMCPAsyncToLLM(context.Background(), msgBus, rec, tools.ReplyChat{Channel: "telegram", ChatID: "42"}, "agent_spawn", &tools.ToolResult{ForLLM: "done"}, 0)
 		select {
 		case m := <-got:
 			if m.Metadata["preresolved_agent_id"] != tc.wantAgent || m.SessionKey != tc.wantSession {

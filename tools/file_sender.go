@@ -39,28 +39,3 @@ var (
 	// or failed when the wait ended.
 	ErrDeliveryUnconfirmed = errors.New("not confirmed yet: still sending")
 )
-
-// ReplyChat is where the final reply of the turn a tool call belongs to
-// goes: the chat files are sent to.
-type ReplyChat struct {
-	Channel string
-	ChatID  string
-	// Ambiguous marks a call that cannot be tied to one turn: over the MCP
-	// host, a conversation token while more than one turn of its session
-	// runs.
-	Ambiguous bool
-}
-
-type replyChatKey struct{}
-
-// WithReplyChat returns ctx carrying the reply chat of the call's turn.
-func WithReplyChat(ctx context.Context, rc ReplyChat) context.Context {
-	return context.WithValue(ctx, replyChatKey{}, rc)
-}
-
-// ReplyChatOf returns the reply chat of the call's turn; false when the call
-// belongs to no turn (a service token, a call outside a turn).
-func ReplyChatOf(ctx context.Context) (ReplyChat, bool) {
-	rc, ok := ctx.Value(replyChatKey{}).(ReplyChat)
-	return rc, ok
-}
