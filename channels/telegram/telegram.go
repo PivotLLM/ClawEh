@@ -797,7 +797,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				"ref":   part.Ref,
 				"error": err.Error(),
 			})
-			continue
+			return fmt.Errorf("telegram send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 
 		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
@@ -806,7 +806,12 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				"path":  localPath,
 				"error": err.Error(),
 			})
-			continue
+			return fmt.Errorf("telegram send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
+		}
+		// The chat shows the part's file name, not the staged file's.
+		upload := telego.InputFile{File: file}
+		if part.Filename != "" {
+			upload = telego.InputFile{File: tu.NameReader(file, part.Filename)}
 		}
 
 		switch part.Type {
@@ -814,7 +819,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			params := &telego.SendPhotoParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
-				Photo:           telego.InputFile{File: file},
+				Photo:           upload,
 				Caption:         part.Caption,
 			}
 			_, err = c.bot.SendPhoto(ctx, params)
@@ -822,7 +827,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			params := &telego.SendAudioParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
-				Audio:           telego.InputFile{File: file},
+				Audio:           upload,
 				Caption:         part.Caption,
 			}
 			_, err = c.bot.SendAudio(ctx, params)
@@ -830,7 +835,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			params := &telego.SendVideoParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
-				Video:           telego.InputFile{File: file},
+				Video:           upload,
 				Caption:         part.Caption,
 			}
 			_, err = c.bot.SendVideo(ctx, params)
@@ -838,7 +843,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			params := &telego.SendDocumentParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
-				Document:        telego.InputFile{File: file},
+				Document:        upload,
 				Caption:         part.Caption,
 			}
 			_, err = c.bot.SendDocument(ctx, params)

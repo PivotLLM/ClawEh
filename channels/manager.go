@@ -1002,7 +1002,7 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 		func(w *channelWorker) chan bus.OutboundMediaMessage { return w.mediaQueue },
 		func(w *channelWorker) <-chan struct{} { return w.mediaDone },
 		holdMedia,
-		func(bus.OutboundMediaMessage, error) {},
+		reportMediaDelivery,
 		"Outbound media dispatcher started",
 		"Outbound media dispatcher stopped",
 		"Unknown channel for outbound media message",
@@ -1016,10 +1016,11 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 	backlog := w.mediaBacklog
 	w.mediaBacklog = nil
 	for _, msg := range backlog {
-		if ctx.Err() != nil {
-			break
+		if err := ctx.Err(); err != nil {
+			reportMediaDelivery(msg, err)
+			continue
 		}
-		m.sendMediaWithRetry(ctx, name, w, msg)
+		reportMediaDelivery(msg, m.sendMediaWithRetry(ctx, name, w, msg))
 	}
 	for {
 		select {
@@ -1027,35 +1028,68 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 			if !ok {
 				return
 			}
-			m.sendMediaWithRetry(ctx, name, w, msg)
+			reportMediaDelivery(msg, m.sendMediaWithRetry(ctx, name, w, msg))
 		case <-ctx.Done():
-			return
+			// Files still queued are not sent: tell their senders.
+			for {
+				select {
+				case msg, ok := <-w.mediaQueue:
+					if !ok {
+						return
+					}
+					reportMediaDelivery(msg, ctx.Err())
+				default:
+					return
+				}
+			}
 		}
 	}
 }
 
+// reportMediaDelivery tells msg's sender, when it asked (OnDelivery), how the
+// delivery ended.
+func reportMediaDelivery(msg bus.OutboundMediaMessage, err error) {
+	if msg.OnDelivery != nil {
+		msg.OnDelivery(err)
+	}
+}
+
+// SupportsMedia reports whether the channel named channel exists and can
+// send files (implements MediaSender).
+func (m *Manager) SupportsMedia(channel string) bool {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	_, ok = ch.(MediaSender)
+	return ok
+}
+
 // sendMediaWithRetry sends a media message through the channel with rate
 // limiting and the same retry and failure reporting as text
-// (sendWithRetry). If the channel does not implement MediaSender, it
-// silently skips.
-func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) {
+// (sendWithRetry), and returns how it ended. A channel that does not
+// implement MediaSender sends nothing (ErrNoFileSupport).
+func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) error {
 	ms, ok := w.ch.(MediaSender)
 	if !ok {
 		logger.DebugCF("channels", "Channel does not support MediaSender, skipping media", map[string]any{
 			"channel": name,
 		})
-		return
+		return fmt.Errorf("%w: %s", ErrNoFileSupport, name)
 	}
 
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
-		return
+		return err
 	}
 
 	retries, err := m.retrySend(ctx, func() error { return ms.SendMedia(ctx, msg) })
 	if err != nil && ctx.Err() == nil {
 		m.reportSendFailure(name, msg.ChatID, "file", err, retries)
 	}
+	return err
 }
 
 // runTTLJanitor periodically evicts typing, reaction and placeholder entries

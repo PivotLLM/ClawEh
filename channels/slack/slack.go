@@ -379,7 +379,8 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 		return channels.ErrNotRunning
 	}
 
-	channelID, _ := parseSlackChatID(msg.ChatID)
+	// Files go where the text reply goes: into the thread, when the chat is one.
+	channelID, threadTS := parseSlackChatID(msg.ChatID)
 	if channelID == "" {
 		return fmt.Errorf("invalid slack chat ID: %s", msg.ChatID)
 	}
@@ -390,18 +391,18 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 	}
 
 	for _, part := range msg.Parts {
+		filename := part.Filename
+		if filename == "" {
+			filename = "file"
+		}
+
 		localPath, err := store.Resolve(part.Ref)
 		if err != nil {
 			logger.ErrorCF("slack", "Failed to resolve media ref", map[string]any{
 				"ref":   part.Ref,
 				"error": err.Error(),
 			})
-			continue
-		}
-
-		filename := part.Filename
-		if filename == "" {
-			filename = "file"
+			return fmt.Errorf("slack send media: %w: %s is no longer available", channels.ErrSendFailed, filename)
 		}
 
 		title := part.Caption
@@ -426,7 +427,7 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return classifySendErr("slack send media", uploadErr)
+			return classifyMediaErr(uploadErr)
 		}
 		if uploadErr = c.api.UploadToURL(ctx, slack.UploadToURLParameters{
 			UploadURL: urlResp.UploadURL,
@@ -437,21 +438,38 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return classifySendErr("slack send media", uploadErr)
+			return classifyMediaErr(uploadErr)
 		}
 		if _, uploadErr = c.api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{
-			Files:   []slack.FileSummary{{ID: urlResp.FileID, Title: title}},
-			Channel: channelID,
+			Files:           []slack.FileSummary{{ID: urlResp.FileID, Title: title}},
+			Channel:         channelID,
+			ThreadTimestamp: threadTS,
 		}); uploadErr != nil {
 			logger.DebugCF("slack", "Failed to complete media upload", map[string]any{
 				"filename": filename,
 				"error":    uploadErr.Error(),
 			})
-			return classifySendErr("slack send media", uploadErr)
+			return classifyMediaErr(uploadErr)
 		}
 	}
 
 	return nil
+}
+
+// missingFilesScopeErrors are the Slack API errors of a Bot Token that may
+// not upload files: it lacks the files:write scope.
+var missingFilesScopeErrors = map[string]bool{
+	"missing_scope":          true,
+	"not_allowed_token_type": true,
+}
+
+// classifyMediaErr is classifySendErr for a file upload, with a missing
+// files:write scope named, since the operator has to add it.
+func classifyMediaErr(err error) error {
+	if apiErr, ok := errors.AsType[slack.SlackErrorResponse](err); ok && missingFilesScopeErrors[apiErr.Err] {
+		return fmt.Errorf("the Slack bot is missing the files:write permission: %w: %w", channels.ErrSendFailed, err)
+	}
+	return classifySendErr("slack send media", err)
 }
 
 // recipientNotFoundErrors are the Slack API error codes of a conversation the

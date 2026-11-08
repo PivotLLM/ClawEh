@@ -95,3 +95,23 @@ func TestSendMedia_UnknownChannelIsNotFound(t *testing.T) {
 		t.Fatalf("SendMedia = %v, want ErrRecipientNotFound", err)
 	}
 }
+
+// A part whose file is gone fails the send instead of being skipped, so the
+// sender never takes it for delivered.
+func TestSendMedia_MissingFileFails(t *testing.T) {
+	session, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &DiscordChannel{BaseChannel: channels.NewBaseChannel("discord", nil, nil, nil), session: session}
+	c.SetMediaStore(media.NewFileMediaStore())
+	c.SetRunning(true)
+
+	err = c.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		Channel: "discord", ChatID: "123",
+		Parts: []bus.MediaPart{{Type: "file", Ref: "media://missing", Filename: "a.txt"}},
+	})
+	if !errors.Is(err, channels.ErrSendFailed) {
+		t.Fatalf("SendMedia = %v, want ErrSendFailed", err)
+	}
+}

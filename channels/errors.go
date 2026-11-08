@@ -49,6 +49,10 @@ var (
 	// in a receive-only mode (e.g. secmsg/Signal stealth). This is an expected
 	// operator choice, not a fault: Manager will not retry and logs it at INFO.
 	ErrReceiveOnly = errors.New("recipient account is receive-only")
+
+	// ErrNoFileSupport indicates files were sent to a channel that cannot
+	// send files (no MediaSender). Manager will not retry.
+	ErrNoFileSupport = errors.New("this chat can't receive files")
 )
 
 // RetryAfterError is a failed send that carries the wait the platform asked

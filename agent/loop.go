@@ -182,6 +182,9 @@ type AgentLoop struct {
 	// turn's whole life: the channel manager (SetChannelManager); tests
 	// substitute a fake.
 	chatHolder chatHolder
+	// fileChannels says which channels can send files: the channel manager
+	// (SetChannelManager); tests substitute a fake.
+	fileChannels fileChannels
 }
 
 // clk is the clock the loop's timing runs on (AgentLoop.clock).
@@ -579,8 +582,10 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	if cm != nil {
 		al.dismisser = cm
 		al.chatHolder = cm
+		al.fileChannels = cm
 	} else {
 		al.chatHolder = nil
+		al.fileChannels = nil
 	}
 }
 
@@ -783,42 +788,10 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
-// SetMediaStore injects a MediaStore for media lifecycle management.
+// SetMediaStore injects a MediaStore for media lifecycle management. Tools
+// that send files reach it through the loop (SendFiles) when they run.
 func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
-
-	// Propagate store to send_file / msg_send_file tools in all agents.
-	registry := al.GetRegistry()
-	for _, toolName := range mediaStoreTools {
-		forEachTool(registry, toolName, func(t tools.Tool) {
-			if sf, ok := t.(mediaStoreSetter); ok {
-				sf.SetMediaStore(s)
-			}
-		})
-	}
-}
-
-// mediaStoreSetter is a tool that sends files and needs the media store.
-type mediaStoreSetter interface {
-	SetMediaStore(store media.MediaStore)
-}
-
-// mediaStoreTools are the tools SetMediaStore wires.
-var mediaStoreTools = []string{"send_file", "msg_send_file"}
-
-// applyMediaStore gives one agent's file-sending tools the media store, for an
-// agent built after SetMediaStore ran. No-op before it runs.
-func (al *AgentLoop) applyMediaStore(agent *AgentInstance) {
-	if al.mediaStore == nil {
-		return
-	}
-	for _, toolName := range mediaStoreTools {
-		if t, ok := agent.Tools.Get(toolName); ok {
-			if sf, ok := t.(mediaStoreSetter); ok {
-				sf.SetMediaStore(al.mediaStore)
-			}
-		}
-	}
 }
 
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.

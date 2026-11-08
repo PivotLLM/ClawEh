@@ -193,13 +193,13 @@ func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance
 	if !constants.IsInternalChannel(opts.Channel) {
 		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
 	}
-	if opts.Channel != constants.AgentMessageChannel {
+	if !constants.RepliesToAgent(opts.Channel) {
 		return ctx, func() {}
 	}
-	// An asked turn's MCP output (ForUser, breadcrumbs, msg_send with no
-	// target, background results) belongs to the ask, never to the chat the
-	// session last heard from: the source points at the ask for the turn and
-	// is put back after it.
+	// An asked or sub-agent turn's MCP output (ForUser, breadcrumbs, msg_send
+	// with no target, msg_send_file, background results) belongs to the agent
+	// it answers, never to the chat the session last heard from: the source
+	// points at the ask or task for the turn and is put back after it.
 	prevChannel, prevChatID := sti.Source(opts.SessionKey)
 	sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
 	return ctx, func() { sti.SetSource(opts.SessionKey, prevChannel, prevChatID) }

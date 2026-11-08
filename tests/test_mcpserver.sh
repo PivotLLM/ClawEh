@@ -709,7 +709,18 @@ else
         "web_fetch" '{"url":"https://example.com"}'
 
     run_test_not_auth_err "4b.4 msg_send_file — token accepted" \
-        "msg_send_file" '{"path":"no-such-file"}'
+        "msg_send_file" '{"files":[{"path":"no-such-file"}]}'
+
+    run_test_err_msg_auth "4b.4a msg_send_file — the old \"path\" argument is refused" \
+        "msg_send_file" '{"path":"no-such-file"}' 'is no longer accepted'
+
+    run_test_err_msg_auth "4b.4c msg_send_file — more than 10 files refused" \
+        "msg_send_file" '{"files":[{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"},{"path":"a"}]}' \
+        'At most 10 files can be sent at once.'
+
+    # The test token belongs to no turn, so there is no chat to send to.
+    run_test_err_msg_auth "4b.4d msg_send_file — no chat for a token without a turn" \
+        "msg_send_file" '{"files":[{"path":"no-such-file"}]}' 'There is no chat to send files to.'
 
     run_test_not_auth_err "4b.4b msg_send — token accepted (no longer hard-excluded)" \
         "msg_send" '{"content":"probe"}'

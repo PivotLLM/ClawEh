@@ -53,11 +53,9 @@ func (al *AgentLoop) agentBuilder(
 		al.registerAgentTools(inst, provider, dispatcher, fallbackChain, cfg)
 		if inst.IsTemp() {
 			// A config agent gets these after the registry is built (the gateway
-			// registers its tools, the media store is set at start); an agent
-			// created later gets them now. Its MCP tools come once it is
-			// registered (agentInserted).
+			// registers its tools); an agent created later gets them now. Its
+			// MCP tools come once it is registered (agentInserted).
 			al.registerExtraTools(inst)
-			al.applyMediaStore(inst)
 		}
 		return inst, nil
 	}
@@ -113,6 +111,7 @@ func (al *AgentLoop) registerAgentTools(
 		SpawnAllowlist:    spawnAllowlist,
 		Agents:            newAgentServices(al, currentAgentID),
 		Messenger:         al,
+		Files:             al,
 		CandidateResolver: candidateResolver,
 		Spawn:             spawner,
 		CompactFn:         al.compactFn(currentAgent),

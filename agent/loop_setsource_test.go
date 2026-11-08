@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -191,14 +192,15 @@ func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
 }
 
 // TestRunAgentLoop_SkipsSetSourceForInternalChannels verifies that runAgentLoop
-// does NOT record the inbound source for internal channels (cli, subagent,
-// recovery). Those channels have no user-facing channel handler, so recording
+// does NOT record the inbound source for internal channels (cli, recovery).
+// Those channels have no user-facing channel handler, so recording
 // them on the session record would cause the MCP-loopback ForUser publish path
 // to dispatch to a nonexistent handler instead of silently dropping at the
 // empty-channel guard. The control case (slack) confirms SetSource still fires
-// for real external channels.
+// for real external channels. A sub-agent turn is the exception, like an
+// asked one: see TestRunAgentLoop_SubagentTurnScopesSource.
 func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
-	internalChannels := []string{"cli", "subagent", "recovery"}
+	internalChannels := []string{"cli", "recovery"}
 	for _, channel := range internalChannels {
 		t.Run(channel, func(t *testing.T) {
 			al := newTestAgentLoop(t).al
@@ -239,4 +241,38 @@ func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
 	t.Run("slack_control", func(t *testing.T) {
 		assertRecordsSource(t, "agent:main:external-slack", "C-external")
 	})
+}
+
+// TestRunAgentLoop_SubagentTurnScopesSource verifies that a sub-agent turn
+// points its session token's source at the task for the turn and puts the
+// previous source back after it, as an asked turn does: a CLI sub-agent's
+// msg_send_file then refuses ("another agent") instead of sending to the
+// chat the session last heard from.
+func TestRunAgentLoop_SubagentTurnScopesSource(t *testing.T) {
+	al := newTestAgentLoop(t).al
+	agentInstance := al.registry.Default()
+	if agentInstance == nil {
+		t.Fatal("no default agent")
+	}
+	rec := &recordingSTI{}
+	al.SetSessionTokenIssuer(rec)
+	agentInstance.Provider = &sequenceProvider{
+		responses: []*providers.LLMResponse{{Content: "done"}},
+		errors:    []error{nil},
+	}
+
+	opts := processOptions{
+		SessionKey:  "agent:main:task",
+		Channel:     constants.SubagentChannel,
+		ChatID:      "agent:main:task",
+		UserMessage: "hello",
+	}
+	if _, err := al.runAgentLoop(context.Background(), agentInstance, opts); err != nil {
+		t.Fatalf("runAgentLoop returned error: %v", err)
+	}
+
+	calls := rec.calls()
+	if len(calls) != 2 || calls[0].channel != constants.SubagentChannel || calls[1].channel != "" {
+		t.Fatalf("SetSource calls = %+v, want the task, then the previous (empty) source", calls)
+	}
 }

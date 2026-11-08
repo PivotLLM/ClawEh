@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/agentreg"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -129,7 +130,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, task, model, 
 	res := &global.SyncResult{}
 	content, err := al.runAgentLoop(ctx, clone, processOptions{
 		SessionKey:    sessionKey,
-		Channel:       "subagent",
+		Channel:       constants.SubagentChannel,
 		ChatID:        sessionKey,
 		UserMessage:   task,
 		Media:         media,

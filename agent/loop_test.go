@@ -2074,15 +2074,6 @@ func TestProcessDirect_ReturnsResponse(t *testing.T) {
 	}
 }
 
-// TestSetMediaStore_PropagatesStore verifies that SetMediaStore propagates to
-// agent tools (specifically send_file if registered).
-func TestSetMediaStore_PropagatesStore(t *testing.T) {
-	al := newTestAgentLoop(t).al
-
-	// SetMediaStore should not panic even with a nil store.
-	al.SetMediaStore(nil)
-}
-
 // TestSetTranscriber_StoresTranscriber verifies SetTranscriber stores the value.
 func TestSetTranscriber_StoresTranscriber(t *testing.T) {
 	al := newTestAgentLoop(t).al

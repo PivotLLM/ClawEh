@@ -21,6 +21,7 @@ Token** (starts with `xapp-`).
    | `chat:write` | sending messages |
    | `reactions:write` | adding and removing reactions |
    | `files:read` | downloading files people share |
+   | `files:write` | sending files |
    | `channels:history` | reading public channels |
    | `groups:history` | reading private channels |
    | `im:history` | reading direct messages |
@@ -151,6 +152,8 @@ an ordinary message.
 - **Shared files cannot be read**, and the log mentions the Slack login page:
   the Bot Token lacks `files:read`. Add the scope, reinstall the app and paste
   the new token.
+- **The agent says the Slack bot is missing the files:write permission**: add
+  the `files:write` scope, reinstall the app and paste the new token.
 
 ## Related pages
 

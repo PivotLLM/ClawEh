@@ -224,7 +224,8 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 				"ref":   part.Ref,
 				"error": err.Error(),
 			})
-			continue
+			closeDiscordFiles(files)
+			return fmt.Errorf("discord send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 
 		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
@@ -233,7 +234,8 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 				"path":  localPath,
 				"error": err.Error(),
 			})
-			continue
+			closeDiscordFiles(files)
+			return fmt.Errorf("discord send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 		// Note: discordgo reads from the Reader and we can't close it before send
 
@@ -289,6 +291,15 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			}
 		}
 		return sendCtx.Err()
+	}
+}
+
+// closeDiscordFiles closes the files opened for a send that will not happen.
+func closeDiscordFiles(files []*discordgo.File) {
+	for _, f := range files {
+		if closer, ok := f.Reader.(*os.File); ok {
+			utils.CloseQuietly(closer)
+		}
 	}
 }
 

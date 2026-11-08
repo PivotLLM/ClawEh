@@ -18,6 +18,16 @@ var internalChannels = map[string]struct{}{
 // to the asker and anything else the turn publishes on it is dropped.
 const AgentMessageChannel = "agent_message"
 
+// SubagentChannel is the channel of a sub-agent's turn: its final reply is
+// the result handed to the agent that spawned it.
+const SubagentChannel = "subagent"
+
+// RepliesToAgent reports whether a turn on channel answers another agent (an
+// ask or a sub-agent task) rather than a chat.
+func RepliesToAgent(channel string) bool {
+	return channel == AgentMessageChannel || channel == SubagentChannel
+}
+
 // IsInternalChannel returns true if the channel is an internal channel.
 func IsInternalChannel(channel string) bool {
 	_, found := internalChannels[channel]

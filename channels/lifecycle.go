@@ -407,6 +407,9 @@ func dropHeld(name string, text []bus.OutboundMessage, media []bus.OutboundMedia
 	for _, msg := range text {
 		reportDelivery(msg, err)
 	}
+	for _, msg := range media {
+		reportMediaDelivery(msg, err)
+	}
 	logger.WarnCF("channels", "Dropped the messages held for a channel that is not running", map[string]any{
 		"channel":  name,
 		"reason":   why,

@@ -119,4 +119,8 @@ type OutboundMediaMessage struct {
 	Channel string      `json:"channel"`
 	ChatID  string      `json:"chat_id"`
 	Parts   []MediaPart `json:"parts"`
+	// OnDelivery, when set, is called once the channel manager has delivered
+	// the files (nil) or given up on them (the error), as
+	// OutboundMessage.OnDelivery is. It must not block.
+	OnDelivery func(error) `json:"-"`
 }

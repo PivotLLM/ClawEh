@@ -2,6 +2,7 @@ package msg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mime"
 	"os"
@@ -11,125 +12,220 @@ import (
 	"github.com/h2non/filetype"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// SendFileTool allows the LLM to send a local file (image, document, etc.)
-// to the user on the current chat channel via the MediaStore pipeline.
-type SendFileTool struct {
-	workspace   string
-	restrict    bool
-	maxFileSize int
-	mediaStore  media.MediaStore
+// MaxSendFiles is the most files one msg_send_file call sends.
+const MaxSendFiles = 10
 
-	defaultChannel string
-	defaultChatID  string
+// FileReader is the agent's file-reading permission, as the file tools apply
+// it (tools/files.Reader).
+type FileReader interface {
+	// Resolve returns the absolute host path of a path the agent may read.
+	Resolve(ref string) (string, error)
+	// Allowed reports whether the agent may read an absolute host path.
+	Allowed(abs string) error
 }
 
-func NewSendFileTool(workspace string, restrict bool, maxFileSize int, store media.MediaStore) *SendFileTool {
+// SendFileTool sends files the agent may read to the chat its turn answers:
+// where the turn's final reply goes.
+type SendFileTool struct {
+	reader      FileReader
+	maxFileSize int
+	sender      tools.FileSender
+}
+
+// NewSendFileTool returns the msg_send_file tool reading through reader and
+// sending through sender. A maxFileSize of 0 or less is the default media
+// size limit.
+func NewSendFileTool(reader FileReader, maxFileSize int, sender tools.FileSender) *SendFileTool {
 	if maxFileSize <= 0 {
 		maxFileSize = config.DefaultMaxMediaSize
 	}
-	return &SendFileTool{
-		workspace:   workspace,
-		restrict:    restrict,
-		maxFileSize: maxFileSize,
-		mediaStore:  store,
-	}
+	return &SendFileTool{reader: reader, maxFileSize: maxFileSize, sender: sender}
 }
 
 func (t *SendFileTool) Name() string { return "msg_send_file" }
+
 func (t *SendFileTool) Description() string {
-	return "Send a local file (image, document, etc.) to the user on the current chat channel."
+	return "Send files to the chat you are answering. Only files you can read with the file tools can be sent."
 }
 
 func (t *SendFileTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"path": map[string]any{
-				"type":        "string",
-				"description": "Path to the local file. Relative paths are resolved from workspace.",
-			},
-			"filename": map[string]any{
-				"type":        "string",
-				"description": "Optional display filename. Defaults to the basename of path.",
+			"files": map[string]any{
+				"type":        "array",
+				"description": fmt.Sprintf("The files to send, in order (1 to %d).", MaxSendFiles),
+				"minItems":    1,
+				"maxItems":    MaxSendFiles,
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{
+							"type":        "string",
+							"description": "Path of the file, as the file tools take it.",
+						},
+						"filename": map[string]any{
+							"type":        "string",
+							"description": "Name the chat shows. Defaults to the file's own name.",
+						},
+					},
+					"required":             []string{"path"},
+					"additionalProperties": false,
+				},
 			},
 		},
-		"required": []string{"path"},
+		"required":             []string{"files"},
+		"additionalProperties": false,
 	}
 }
 
-func (t *SendFileTool) SetContext(channel, chatID string) {
-	t.defaultChannel = channel
-	t.defaultChatID = chatID
-}
-
-func (t *SendFileTool) SetMediaStore(store media.MediaStore) {
-	t.mediaStore = store
+// fileRequest is one entry of the files argument.
+type fileRequest struct {
+	path     string
+	filename string
 }
 
 func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
-	path, ok := args["path"].(string)
-	if !ok || strings.TrimSpace(path) == "" {
-		return tools.ErrorResult("path is required")
+	requests, problem := parseFileRequests(args)
+	if problem != "" {
+		return refused(problem)
 	}
 
-	// Prefer context-injected channel/chatID (set by ExecuteWithContext), fall back to SetContext values.
-	channel := tools.ToolChannel(ctx)
-	if channel == "" {
-		channel = t.defaultChannel
-	}
-	chatID := tools.ToolChatID(ctx)
-	if chatID == "" {
-		chatID = t.defaultChatID
-	}
-	if channel == "" || chatID == "" {
-		return refused("no target channel/chat available")
+	channel, chatID := tools.ToolChannel(ctx), tools.ToolChatID(ctx)
+	switch {
+	case constants.RepliesToAgent(channel):
+		return refused("Files can't be sent to another agent.")
+	case channel == "" || chatID == "":
+		return refused("There is no chat to send files to.")
+	case t.sender == nil || t.reader == nil:
+		return tools.ErrorResult("Sending files is not available.")
 	}
 
-	if t.mediaStore == nil {
-		return tools.ErrorResult("media store not configured")
+	files := make([]tools.OutgoingFile, 0, len(requests))
+	for _, req := range requests {
+		f, problem := t.checkFile(req)
+		if problem != "" {
+			return refused(problem + " Nothing was sent.")
+		}
+		files = append(files, f)
 	}
 
-	resolved, err := validatePath(path, t.workspace, t.restrict)
+	results, err := t.sender.SendFiles(ctx, channel, chatID, files)
+	switch {
+	case errors.Is(err, tools.ErrNoFileSupport):
+		return refused("This chat can't receive files.")
+	case err != nil:
+		return tools.ErrorResult(fmt.Sprintf("The files could not be sent: %v.", err)).WithError(err)
+	}
+	return sendReport(files, results)
+}
+
+// parseFileRequests reads the files argument; problem is the refusal when it
+// is missing or malformed.
+func parseFileRequests(args map[string]any) (requests []fileRequest, problem string) {
+	if _, ok := args["path"]; ok {
+		return nil, `"path" is no longer accepted: pass "files", a list of {"path", "filename"}.`
+	}
+	raw, ok := args["files"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil, `"files" is required: a list of {"path", "filename"}.`
+	}
+	if len(raw) > MaxSendFiles {
+		return nil, fmt.Sprintf("At most %d files can be sent at once.", MaxSendFiles)
+	}
+	for i, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Sprintf(`files[%d] must be an object with "path".`, i)
+		}
+		for key := range entry {
+			if key != "path" && key != "filename" {
+				return nil, fmt.Sprintf(`files[%d] has an unknown field %q.`, i, key)
+			}
+		}
+		path, ok := entry["path"].(string)
+		if !ok || strings.TrimSpace(path) == "" {
+			return nil, fmt.Sprintf(`files[%d] needs a "path".`, i)
+		}
+		filename, ok := entry["filename"].(string)
+		if _, present := entry["filename"]; present && !ok {
+			return nil, fmt.Sprintf(`files[%d].filename must be a string.`, i)
+		}
+		filename = strings.TrimSpace(filename)
+		if filename != "" && (strings.ContainsAny(filename, `/\`) || filename == "." || filename == "..") {
+			return nil, fmt.Sprintf("files[%d].filename must be a plain file name, not a path.", i)
+		}
+		requests = append(requests, fileRequest{path: path, filename: filename})
+	}
+	return requests, ""
+}
+
+// checkFile applies the agent's file-reading permission to req, exactly as
+// the file tools do, to the path and to the file it finally names (a
+// symbolic link's target), and the size limit. problem names the path when
+// the file may not be sent.
+func (t *SendFileTool) checkFile(req fileRequest) (tools.OutgoingFile, string) {
+	cannotRead := fmt.Sprintf("Can't send %q: you can't read it, or it does not exist.", req.path)
+	abs, err := t.reader.Resolve(req.path)
 	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("invalid path: %v", err))
+		return tools.OutgoingFile{}, cannotRead
 	}
+	target, err := filepath.EvalSymlinks(abs)
+	if err != nil || t.reader.Allowed(target) != nil {
+		return tools.OutgoingFile{}, cannotRead
+	}
+	info, err := os.Stat(target)
+	switch {
+	case err != nil:
+		return tools.OutgoingFile{}, cannotRead
+	case info.IsDir():
+		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is a folder.", req.path)
+	case !info.Mode().IsRegular():
+		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
+	case info.Size() > int64(t.maxFileSize):
+		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is %d bytes, more than the limit of %d bytes.",
+			req.path, info.Size(), t.maxFileSize)
+	}
+	filename := req.filename
+	if filename == "" {
+		filename = filepath.Base(abs)
+	}
+	return tools.OutgoingFile{Path: target, Filename: filename, ContentType: detectMediaType(target)}, ""
+}
 
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("file not found: %v", err))
+// sendReport is the result of a send: every file sent, or each file's
+// outcome. It is an error when any file was not sent.
+func sendReport(files []tools.OutgoingFile, results []error) *tools.ToolResult {
+	var b strings.Builder
+	failed, pending := false, false
+	for i, f := range files {
+		var err error
+		if i < len(results) {
+			err = results[i]
+		}
+		switch {
+		case err == nil:
+			fmt.Fprintf(&b, "%s: sent\n", f.Filename)
+		case errors.Is(err, tools.ErrDeliveryUnconfirmed):
+			pending = true
+			fmt.Fprintf(&b, "%s: %v\n", f.Filename, err)
+		default:
+			failed = true
+			fmt.Fprintf(&b, "%s: not sent: %v\n", f.Filename, err)
+		}
 	}
-	if info.IsDir() {
-		return tools.ErrorResult("path is a directory, expected a file")
+	text := strings.TrimSuffix(b.String(), "\n")
+	if !failed && !pending {
+		return tools.NewToolResult("Sent to the chat:\n" + text)
 	}
-	if info.Size() > int64(t.maxFileSize) {
-		return tools.ErrorResult(fmt.Sprintf(
-			"file too large: %d bytes (max %d bytes)",
-			info.Size(), t.maxFileSize,
-		))
+	if failed {
+		return tools.ErrorResult(text)
 	}
-
-	filename, ok := args["filename"].(string)
-	if !ok || filename == "" {
-		filename = filepath.Base(resolved)
-	}
-
-	mediaType := detectMediaType(resolved)
-	scope := fmt.Sprintf("tool:send_file:%s:%s", channel, chatID)
-
-	ref, err := t.mediaStore.Store(resolved, media.MediaMeta{
-		Filename:    filename,
-		ContentType: mediaType,
-		Source:      "tool:send_file",
-	}, scope)
-	if err != nil {
-		return tools.ErrorResult(fmt.Sprintf("failed to register media: %v", err))
-	}
-
-	return tools.MediaResult(fmt.Sprintf("File %q sent to user", filename), []string{ref})
+	return tools.NewToolResult(text)
 }
 
 // detectMediaType determines the MIME type of a file.

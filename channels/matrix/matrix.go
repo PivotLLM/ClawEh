@@ -448,7 +448,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 				"ref":   part.Ref,
 				"error": err.Error(),
 			})
-			continue
+			return fmt.Errorf("matrix send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 
 		fileInfo, err := os.Stat(localPath)
@@ -457,7 +457,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 				"path":  localPath,
 				"error": err.Error(),
 			})
-			continue
+			return fmt.Errorf("matrix send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 
 		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
@@ -466,7 +466,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 				"path":  localPath,
 				"error": err.Error(),
 			})
-			continue
+			return fmt.Errorf("matrix send media: %w: %s is no longer available", channels.ErrSendFailed, part.Filename)
 		}
 
 		filename := strings.TrimSpace(part.Filename)

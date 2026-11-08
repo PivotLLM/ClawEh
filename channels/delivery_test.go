@@ -224,7 +224,9 @@ func TestSendMediaWithRetry_RecipientNotFound(t *testing.T) {
 	m.SetAlerter(rec)
 	ch := &mediaMock{err: fmt.Errorf("chat not found: %w", ErrRecipientNotFound)}
 	w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
-	m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+	if err := m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"}); !errors.Is(err, ErrRecipientNotFound) {
+		t.Fatalf("sendMediaWithRetry = %v, want ErrRecipientNotFound", err)
+	}
 	if ch.calls != 1 {
 		t.Fatalf("SendMedia called %d times, want 1", ch.calls)
 	}
@@ -331,7 +333,9 @@ func TestSendMediaWithRetry_FailureAlerts(t *testing.T) {
 			m.SetAlerter(rec)
 			ch := &mediaMock{err: fmt.Errorf("upload: %w", tt.err)}
 			w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
-			m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+			if err := m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"}); !errors.Is(err, tt.err) {
+				t.Fatalf("sendMediaWithRetry = %v, want %v", err, tt.err)
+			}
 			if ch.calls != tt.wantCalls {
 				t.Fatalf("SendMedia called %d times, want %d", ch.calls, tt.wantCalls)
 			}
@@ -354,7 +358,9 @@ func TestSendMediaWithRetry_ExpectedStatesDoNotAlert(t *testing.T) {
 		m.SetAlerter(rec)
 		ch := &mediaMock{err: fmt.Errorf("x: %w", sentinel)}
 		w := &channelWorker{ch: ch, limiter: rate.NewLimiter(rate.Inf, 1)}
-		m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"})
+		if err := m.sendMediaWithRetry(t.Context(), "test", w, bus.OutboundMediaMessage{Channel: "test", ChatID: "1"}); !errors.Is(err, sentinel) {
+			t.Fatalf("sendMediaWithRetry = %v, want %v", err, sentinel)
+		}
 		if ch.calls != 1 || len(rec.alerts) != 0 {
 			t.Fatalf("%v: calls = %d, alerts = %+v; want 1 call, no alert", sentinel, ch.calls, rec.alerts)
 		}

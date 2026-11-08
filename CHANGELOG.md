@@ -65,6 +65,15 @@
 
 ### Changed
 
+- **BREAKING: `msg_send_file` takes a list of files.** Its arguments are now
+  `files`, a list of 1 to 10 `{"path", "filename"}` entries sent in order;
+  the old `path` and `filename` arguments are refused. A file can be sent
+  only when the agent may read it with the file tools (workspace, mounts,
+  common and always-readable folders, `restrict_to_workspace`); the tool's
+  own path rule is gone. Files go to the chat the turn's reply goes to, never
+  to another agent, and the agent is told, per file, whether each was sent or
+  why not. A chat that cannot receive files (WebUI, devices, SecMsg) is
+  refused with "This chat can't receive files."
 - **BREAKING: `classifiers` is a reserved workspace folder name.** A mount
   named `classifiers` (any case) is refused on save, and one already in
   `config.json` is ignored at start and marked on the Agents page and Check
@@ -132,6 +141,16 @@
 
 ### Fixed
 
+- **`msg_send_file` works.** It always answered "media store not
+  configured" and sent nothing; agents on CLI models (Claude, Codex,
+  Antigravity, Cursor) had their files dropped too. Both now send.
+- **Files sent to a Slack thread arrive in that thread**, where the reply
+  goes, not in the channel. Sending files needs the `files:write` scope; when
+  it is missing, the agent is told "the Slack bot is missing the files:write
+  permission".
+- **A file that could not be read for sending fails the send** on Telegram,
+  Slack, Discord and Matrix instead of being skipped silently, and Telegram
+  shows the file's own name.
 - **Progress updates, the typing indicator and the reaction no longer
   disappear after 5–10 minutes on a long turn.** They stay until the turn
   ends, on every channel, so a long turn no longer looks dead and its
