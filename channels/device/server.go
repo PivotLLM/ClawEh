@@ -421,10 +421,9 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	release()
 	conn.SetReadLimit(gatewayproto.MaxPayloadBytes)
 
-	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
-		return
-	}
-
+	// Register before hello-ok, so a device removed (DisconnectDevice) or a
+	// channel stopped (CloseAll) once the client has seen hello-ok always
+	// finds this connection.
 	lc := &liveConn{cw: cw, deviceID: hello.deviceID, chatID: hello.chatID, tokens: hello.tokens}
 	if !s.register(lc) {
 		cw.closeWith(websocket.CloseGoingAway, "server shutdown")
@@ -432,6 +431,10 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.unregister(lc)
 	defer cw.close()
+
+	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
+		return
+	}
 	go cw.run()
 	s.conns.Store(lc.chatID, lc)
 	defer s.conns.CompareAndDelete(lc.chatID, lc)

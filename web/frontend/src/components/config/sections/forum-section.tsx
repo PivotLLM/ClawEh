@@ -57,7 +57,7 @@ export function ForumSection({ form, onFieldChange }: ForumSectionProps) {
           <Input
             data-testid={`forum-${def}`}
             type="number"
-            min={1}
+            min={0}
             placeholder={String(FORUM_LIMIT_DEFAULTS[def])}
             value={form[key]}
             onChange={(e) => onFieldChange(key, e.target.value)}

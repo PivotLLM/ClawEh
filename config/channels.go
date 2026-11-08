@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -123,6 +124,23 @@ type TelegramBotConfig struct {
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
 	Coalesce           CoalesceConfig      `json:"coalesce,omitempty"`
 	ReasoningChannelID string              `json:"reasoning_channel_id,omitempty"`
+}
+
+// UnmarshalJSON decodes one bot onto a fresh value carrying the per-bot
+// defaults (typing indicator and placeholder on), so every bot in the list
+// gets them, not only the one at the index the default config seeds, and an
+// explicit false is kept.
+func (b *TelegramBotConfig) UnmarshalJSON(data []byte) error {
+	type plain TelegramBotConfig
+	p := plain{
+		Typing:      TypingConfig{Enabled: true},
+		Placeholder: PlaceholderConfig{Enabled: true},
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*b = TelegramBotConfig(p)
+	return nil
 }
 
 // ChannelName returns the channel identifier for this bot.

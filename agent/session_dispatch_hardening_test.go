@@ -32,17 +32,19 @@ func TestRunQueuedTurn_NoChatNoHold(t *testing.T) {
 	}
 }
 
-// The channel manager is the loop's chat holder and file channels; without
-// one the loop holds nothing and sends no files.
+// The channel manager is the loop's dismisser, chat holder and file
+// channels; without one the loop dismisses and holds nothing and sends no
+// files.
 func TestSetChannelManager_WiresHoldAndFiles(t *testing.T) {
 	al := mustNewAgentLoop(t, newTestConfig(t), bus.NewMessageBus(), &countingProvider{}, nil)
 	cm := &channels.Manager{}
 	al.SetChannelManager(cm)
-	if al.chatHolder != chatHolder(cm) || al.fileChannels != fileChannels(cm) {
-		t.Fatal("channel manager not wired as chat holder and file channels")
+	if al.dismisser != inboundDismisser(cm) || al.chatHolder != chatHolder(cm) ||
+		al.fileChannels != fileChannels(cm) {
+		t.Fatal("channel manager not wired as dismisser, chat holder and file channels")
 	}
 	al.SetChannelManager(nil)
-	if al.chatHolder != nil || al.fileChannels != nil {
-		t.Fatal("chat holder or file channels kept after the manager was removed")
+	if al.dismisser != nil || al.chatHolder != nil || al.fileChannels != nil {
+		t.Fatal("dismisser, chat holder or file channels kept after the manager was removed")
 	}
 }

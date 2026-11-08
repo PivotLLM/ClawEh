@@ -582,6 +582,7 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 		al.chatHolder = cm
 		al.fileChannels = cm
 	} else {
+		al.dismisser = nil
 		al.chatHolder = nil
 		al.fileChannels = nil
 	}

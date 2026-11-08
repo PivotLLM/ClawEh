@@ -94,7 +94,7 @@ export function ClassifiersSection({
           <Input
             data-testid={`classifiers-${def}`}
             type="number"
-            min={1}
+            min={0}
             placeholder={String(classifierDefault(def))}
             value={form[key]}
             onChange={(e) => onFieldChange(key, e.target.value)}

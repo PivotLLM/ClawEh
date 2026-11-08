@@ -167,6 +167,12 @@
 
 ### Fixed
 
+- **Every Telegram bot gets the typing indicator and placeholder by default.**
+  Only the first bot in `channels.telegram` had `typing.enabled` and
+  `placeholder.enabled` on when its config left them out; the others had them
+  off. An explicit `false` on any bot is kept.
+- **The System page accepts 0 in the Classifiers and Forums fields.** 0 means
+  "use the default", as in the config, but the inputs would not allow it.
 - **`claw install` no longer mistakes a folder next to `/opt/claw` for it.**
   A binary or service in a folder such as `/opt/claw-old` or `/opt/clawdev`,
   or a unit whose `PATH` lists one, was taken for an `/opt/claw` install, so

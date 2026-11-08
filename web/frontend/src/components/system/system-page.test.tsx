@@ -255,6 +255,33 @@ describe("SystemPage forum maximums", () => {
     }
   })
 
+  // 0 means "use the default", as in the config, so the inputs allow it and
+  // it is saved.
+  it("allows 0 (the default) in every field and saves it", async () => {
+    renderPage()
+    await screen.findByTestId("forum-max_calls")
+    for (const key of [
+      "max_calls",
+      "max_duration_seconds",
+      "call_timeout_seconds",
+      "max_parallel_calls",
+    ]) {
+      expect(
+        (screen.getByTestId(`forum-${key}`) as HTMLInputElement).min,
+      ).toBe("0")
+    }
+    fireEvent.change(screen.getByTestId("forum-max_parallel_calls"), {
+      target: { value: "0" },
+    })
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    })
+    expect(
+      (lastForumPatch() as { limits: Record<string, unknown> }).limits
+        .max_parallel_calls,
+    ).toBe(0)
+  })
+
   it("refuses a negative value without saving", async () => {
     renderPage()
     const maxCalls = await screen.findByTestId("forum-max_calls")
@@ -392,6 +419,37 @@ describe("SystemPage classifier settings", () => {
       { timeout: 3000 },
     )
     expect(patched).not.toHaveBeenCalled()
+  })
+
+  // 0 means "use the default", as in the config, so the inputs allow it and
+  // it is saved.
+  it("allows 0 (the default) in every field and saves it", async () => {
+    renderPage()
+    await screen.findByTestId("classifiers-max_rules")
+    for (const key of [
+      "processed_days",
+      "max_rules",
+      "max_prompt_chars",
+      "max_item_chars",
+      "max_items_per_run",
+      "max_parallel",
+      "max_activity_hours",
+      "min_every_seconds",
+    ]) {
+      expect(
+        (screen.getByTestId(`classifiers-${key}`) as HTMLInputElement).min,
+      ).toBe("0")
+    }
+    fireEvent.change(screen.getByTestId("classifiers-max_parallel"), {
+      target: { value: "0" },
+    })
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    })
+    expect(
+      (lastClassifiersPatch() as { limits: Record<string, unknown> }).limits
+        .max_parallel,
+    ).toBe(0)
   })
 
   it("refuses a negative value without saving", async () => {
