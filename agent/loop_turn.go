@@ -130,8 +130,7 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}()
 
-	var reply modelReply
-	reply.content, reply.normal, reply.degenerate, reply.finishReason, reply.iterations, err = al.runLLMIteration(ctx, agent, messages, opts, cm, mem)
+	reply, err := al.runLLMIteration(ctx, agent, messages, opts, cm, mem)
 	if err != nil {
 		interrupted = shuttingDown(ctx)
 		return "", err
@@ -350,6 +349,14 @@ type modelReply struct {
 	degenerate   bool // the reply stayed empty after every poke
 	finishReason string
 	iterations   int
+	// images counts the images the model generated in the turn.
+	images int
+	// imageReplies are the lines the reply carries about them (saved paths,
+	// URLs, why one was not sent).
+	imageReplies []string
+	// imageNotes tell the model, in its stored reply, of the images of its
+	// last response that reached the chat.
+	imageNotes []string
 }
 
 // finishTurn turns the model's reply into the turn's: intentional silence
@@ -374,7 +381,26 @@ func (al *AgentLoop) finishTurn(
 		return "", nil
 	}
 
-	content := reply.content
+	content := withImageNotes(reply.content, reply.imageReplies)
+	if content == "" && reply.images > 0 {
+		// Images alone, all sent to the chat: a complete reply with no text
+		// to send.
+		opts.setOutcome(bus.OutcomeOK)
+		al.stopTyping(opts.Channel, opts.ChatID)
+		// The model's notes are its stored reply; images from an earlier
+		// iteration are already noted in that iteration's message.
+		if notes := withImageNotes("", reply.imageNotes); notes != "" {
+			if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, notes); err != nil {
+				return "", err
+			}
+		}
+		logger.InfoCF("agent", "Response",
+			map[string]any{"agent_id": agent.ID, "session_key": opts.SessionKey, "iterations": reply.iterations, "images": reply.images})
+		if opts.IterationsOut != nil {
+			*opts.IterationsOut = reply.iterations
+		}
+		return "", nil
+	}
 	isSystemError := false
 	if content == "" {
 		var outcome string
@@ -389,7 +415,7 @@ func (al *AgentLoop) finishTurn(
 
 	// A system error string is not the model's reply, so it is not saved.
 	if !isSystemError {
-		if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, content); err != nil {
+		if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, withImageNotes(content, reply.imageNotes)); err != nil {
 			return "", err
 		}
 	}

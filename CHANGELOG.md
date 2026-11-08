@@ -46,6 +46,16 @@
   **Classification**). Check Up marks a missing or unusable classifier
   model and an invalid definition, and the full report lists each agent's
   classifiers. See the manual's Classifiers page.
+- **Images a model generates are saved and sent.** When a model returns an
+  image with its reply (OpenRouter image models, OpenAI image generation),
+  the image is saved in the agent's workspace under
+  `files/generated/<date>/` and sent to the chat the agent is answering. A
+  reply to another agent, a chat that can't receive files (the WebUI chat,
+  devices, `claw agent`) or an image larger than
+  `agents.defaults.max_media_size` gets the saved path in the reply instead.
+  An image the model gives as a link is shown as "Image: <link>" and never
+  downloaded. The agent is told where each image was saved, so it can send
+  it again with `msg_send_file`. A reply of images alone is a complete reply.
 - **`security.permissions` areas `root`, `secrets`, `bin` and `default`.**
   `root` sets the data directory itself and the files directly in it
   (`config.json`); `secrets` sets `internal/`, `tls/`, `tokens/` and every

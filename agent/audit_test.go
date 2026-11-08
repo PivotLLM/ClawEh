@@ -209,7 +209,7 @@ func TestToolCall_AuditRecorded(t *testing.T) {
 
 	ctx := withTurnID(context.Background(), "cafe0001")
 	messages := []providers.Message{{Role: "user", Content: "go"}}
-	if _, _, _, _, _, err = al.runLLMIteration(ctx, agentInstance, messages, opts, cm, nil); err != nil {
+	if _, err = al.runLLMIteration(ctx, agentInstance, messages, opts, cm, nil); err != nil {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestToolCall_AuditOutcomeError(t *testing.T) {
 	cm, releaseCM := al.getContextManager(agentInstance, opts.SessionKey)
 	defer releaseCM()
 	messages := []providers.Message{{Role: "user", Content: "go"}}
-	if _, _, _, _, _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm, nil); err != nil {
+	if _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm, nil); err != nil {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 

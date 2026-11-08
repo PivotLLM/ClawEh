@@ -86,3 +86,13 @@ With `msg_send_file` granted, the agent sends up to 10 files at a time to the ch
 - Files are never sent to another agent: a request answering another agent, or a sub-agent's task, is refused.
 - A turn with no chat (`claw agent`, a service token) cannot send files.
 - A Slack app needs the `files:write` scope to send files (see [Slack](../channels/slack.md)).
+
+## Images the model generates
+
+Some models return images with their reply (OpenRouter image models, OpenAI image generation). Each image is saved in the agent's workspace under `files/generated/<date>/`, and then:
+
+- In a chat that can receive files, it is sent to that chat, like a file sent with `msg_send_file`.
+- In a reply to another agent (a question, a forum, a sub-agent's task), in a chat that can't receive files, or when it is larger than `agents.defaults.max_media_size`, it is not sent; the reply gives its path instead.
+- An image the model gives as a link is shown in the reply as "Image: <link>". It is never downloaded or saved.
+
+The agent is told where each image was saved, so it can refer to it later or send it again with `msg_send_file`. A clone saves in its source agent's workspace.

@@ -67,11 +67,11 @@ type iteration struct {
 // runIteration runs one runLLMIteration for the test and fails it on error.
 func runIteration(tb testing.TB, al *AgentLoop, agent *AgentInstance, messages []providers.Message, opts processOptions, cm ctxengine.ContextManager) iteration {
 	tb.Helper()
-	content, normal, degenerate, finish, n, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
+	r, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		tb.Fatalf("runLLMIteration: %v", err)
 	}
-	return iteration{content: content, normal: normal, degenerate: degenerate, finishReason: finish, iterations: n}
+	return iteration{content: r.content, normal: r.normal, degenerate: r.degenerate, finishReason: r.finishReason, iterations: r.iterations}
 }
 
 // testLoop bundles an agent loop with the config, bus and provider it was
@@ -1337,7 +1337,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	go func() {
 		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		defer releaseTestCM()
-		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm, nil)
+		_, err := al.runLLMIteration(ctx, agent, messages, opts, cm, nil)
 		done <- result{err: err}
 	}()
 

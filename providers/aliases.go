@@ -52,6 +52,7 @@ type (
 	ToolDefinition         = spawnllm.ToolDefinition
 	ToolFunctionDefinition = spawnllm.ToolFunctionDefinition
 	LLMResponse            = spawnllm.LLMResponse
+	GeneratedImage         = spawnllm.GeneratedImage
 	UsageInfo              = spawnllm.UsageInfo
 	DispatchStatus         = spawnllm.DispatchStatus
 	ContentBlock           = spawnllm.ContentBlock

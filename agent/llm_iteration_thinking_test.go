@@ -57,7 +57,7 @@ func TestRunLLMIteration_AnthropicThinkingReplayed(t *testing.T) {
 	defer releaseCM()
 
 	messages := []providers.Message{{Role: "user", Content: "go"}}
-	if _, _, _, _, _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm, nil); err != nil {
+	if _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm, nil); err != nil {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 

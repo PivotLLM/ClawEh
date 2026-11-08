@@ -76,11 +76,18 @@ type llmTurn struct {
 	// exact same tool-call batch.
 	lastToolSig          string
 	identicalToolBatches int
+
+	// imageCount counts the images the model generated in the turn.
+	imageCount int
+	// imageReplies are the lines the turn's reply carries about them.
+	imageReplies []string
+	// iterationNotes are the results for the images of the latest response
+	// not yet written into a stored assistant message.
+	iterationNotes []imageResult
 }
 
-// runLLMIteration executes the LLM call loop with tool handling. It returns
-// the final reply, whether the last response ended normally, whether it was a
-// degenerate empty reply, the finish reason and the number of iterations.
+// runLLMIteration executes the LLM call loop with tool handling and returns
+// how it ended.
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
 	agent *AgentInstance,
@@ -88,7 +95,7 @@ func (al *AgentLoop) runLLMIteration(
 	opts processOptions,
 	cm ctxengine.ContextManager,
 	mem *cogmem.Session,
-) (string, bool, bool, string, int, error) {
+) (modelReply, error) {
 	// Provider error logs name the agent without correlating timestamps.
 	ctx = providers.WithAgentID(ctx, agent.ID)
 	t := al.newLLMTurn(ctx, agent, messages, opts, cm, mem)
@@ -112,13 +119,22 @@ func (al *AgentLoop) runLLMIteration(
 		t.iteration++
 		done, err := t.iterate(ctx)
 		if err != nil {
-			return "", false, false, "", t.iteration, err
+			return modelReply{iterations: t.iteration}, err
 		}
 		if done {
 			break
 		}
 	}
-	return t.finalContent, t.lastNormal, t.degenerate, t.finishReason, t.iteration, nil
+	return modelReply{
+		content:      t.finalContent,
+		normal:       t.lastNormal,
+		degenerate:   t.degenerate,
+		finishReason: t.finishReason,
+		iterations:   t.iteration,
+		images:       t.imageCount,
+		imageReplies: t.imageReplies,
+		imageNotes:   sentNotesFor(t.iterationNotes),
+	}, nil
 }
 
 // newLLMTurn prepares the model loop of one turn.
@@ -217,6 +233,9 @@ func (t *llmTurn) iterate(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	t.recordResponse(ctx, response)
+	if len(response.Images) > 0 {
+		t.handleImages(ctx, response.Images)
+	}
 	if len(response.ToolCalls) == 0 {
 		return t.directAnswer(response), nil
 	}
@@ -366,7 +385,8 @@ func (t *llmTurn) directAnswer(response *providers.LLMResponse) bool {
 	t.lastNormal = response.Normal
 	t.finishReason = response.FinishReason
 
-	if t.finalContent == "" && reasoningText != "" {
+	// A reply of images alone is complete: it is not poked.
+	if t.finalContent == "" && reasoningText != "" && len(response.Images) == 0 {
 		if t.emptyRetries < maxEmptyRetries {
 			t.emptyRetries++
 			t.messages = append(t.messages, providers.Message{
@@ -421,7 +441,12 @@ func (t *llmTurn) runToolCalls(ctx context.Context, response *providers.LLMRespo
 		})
 	t.publishNarration(ctx, response.Content)
 
-	if err := t.keep(ctx, t.cm.AddToolCallMessage, assistantToolCallMessage(t.agent.ID, response, calls), "tool call message"); err != nil {
+	// The model is told what became of the images it generated alongside
+	// these calls, in the message that carried them.
+	callMsg := assistantToolCallMessage(t.agent.ID, response, calls)
+	callMsg.Content = withImageNotes(callMsg.Content, notesFor(t.iterationNotes))
+	t.iterationNotes = nil
+	if err := t.keep(ctx, t.cm.AddToolCallMessage, callMsg, "tool call message"); err != nil {
 		return false, err
 	}
 	results := t.executeToolCalls(ctx, calls)
