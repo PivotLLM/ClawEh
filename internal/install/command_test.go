@@ -310,47 +310,102 @@ func TestBuildLaunchdPlist_SystemMode(t *testing.T) {
 }
 
 func TestResolveBinDir(t *testing.T) {
-	tempHome := t.TempDir()
+	alice := func(root bool) *TargetUser { return &TargetUser{HomeDir: "/home/alice", IsRoot: root} }
+	cases := []struct {
+		name     string
+		files    []string // regular files to create first
+		dirs     []string // folders to create first
+		tu       *TargetUser
+		custom   string
+		existing *ExistingInstall
+		want     string
+	}{
+		{name: "custom dir", tu: alice(false), custom: "/srv/tools", want: "/srv/tools"},
+		{
+			name: "existing binary dir kept", dirs: []string{"/usr/local/sbin"}, tu: alice(true),
+			existing: &ExistingInstall{BinaryPath: "/usr/local/sbin/claw"}, want: "/usr/local/sbin",
+		},
+		{
+			name: "opt claw with bin binary", files: []string{"/opt/claw/bin/claw"}, tu: alice(true),
+			existing: &ExistingInstall{ClawHome: "/opt/claw", BinaryPath: "/opt/claw/bin/claw"}, want: "/opt/claw/bin",
+		},
+		{
+			name: "opt claw with old binary moves to bin", files: []string{"/opt/claw/claw"}, tu: alice(true),
+			existing: &ExistingInstall{ClawHome: "/opt/claw", BinaryPath: "/opt/claw/claw"}, want: "/opt/claw/bin",
+		},
+		{
+			name: "opt claw unit naming the old binary", tu: alice(true),
+			existing: &ExistingInstall{BinaryPath: "/opt/claw/claw"}, want: "/opt/claw/bin",
+		},
+		{
+			name: "opt claw without a binary", dirs: []string{"/opt/claw"}, tu: alice(true),
+			existing: &ExistingInstall{ClawHome: "/opt/claw"}, want: "/opt/claw/bin",
+		},
+		{name: "system mode", tu: alice(true), want: "/usr/local/bin"},
+		{name: "user mode without ~/bin", tu: alice(false), want: "/home/alice/.local/bin"},
+		{name: "user mode with ~/bin", dirs: []string{"/home/alice/bin"}, tu: alice(false), want: "/home/alice/bin"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := fakeHost(t)
+			for _, d := range tc.dirs {
+				if err := os.MkdirAll(h.path(d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, f := range tc.files {
+				writeHostFile(t, h, f, "x", 0o700)
+			}
+			got, err := h.resolveBinDir(tc.tu, tc.custom, tc.existing)
+			if err != nil || got != tc.want {
+				t.Fatalf("resolveBinDir() = %q, %v, want %q", got, err, tc.want)
+			}
+			if !h.dirExists(got) {
+				t.Errorf("%s was not created", got)
+			}
+		})
+	}
+}
 
-	// 1. Explicit custom dir
-	customDir := filepath.Join(tempHome, "custom", "bin")
-	dir, err := resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, customDir, nil)
-	if err != nil || dir != customDir {
-		t.Fatalf("resolveBinDir custom: got %v, %v, want %s", dir, err, customDir)
+// An /opt/claw install puts the binary and the openclaw alias in /opt/claw/bin,
+// and points at an older binary and alias in /opt/claw without removing them.
+func TestOptClawInstall_AliasInBinAndLeftovers(t *testing.T) {
+	h := fakeHost(t)
+	writeHostFile(t, h, "/opt/claw/claw", "x", 0o700)
+	if err := os.Symlink("claw", h.path("/opt/claw/openclaw")); err != nil {
+		t.Fatal(err)
+	}
+	existing := &ExistingInstall{ClawHome: "/opt/claw", BinaryPath: "/opt/claw/claw"}
+
+	binDir, err := h.resolveBinDir(&TargetUser{HomeDir: "/home/alice", IsRoot: true}, "", existing)
+	if err != nil || binDir != "/opt/claw/bin" {
+		t.Fatalf("resolveBinDir() = %q, %v, want /opt/claw/bin", binDir, err)
+	}
+	if info, err := os.Stat(h.path(binDir)); err != nil || info.Mode().Perm() != config.DefaultDirMode {
+		t.Errorf("/opt/claw/bin mode = %v, %v, want %v", info.Mode().Perm(), err, config.DefaultDirMode)
+	}
+	writeHostFile(t, h, filepath.Join(binDir, serviceName), "x", 0o700)
+	if err := linkOpenClawAlias(h.path(binDir), serviceName); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(h.path("/opt/claw/bin/openclaw")); err != nil || target != "claw" {
+		t.Errorf("/opt/claw/bin/openclaw -> %q, %v, want claw", target, err)
+	}
+	if unit := buildSystemUnit("alice", "alice", filepath.Join(binDir, serviceName), "/home/alice", binDir, "/opt/claw"); !strings.Contains(unit, "ExecStart=/opt/claw/bin/claw") {
+		t.Errorf("unit does not start /opt/claw/bin/claw:\n%s", unit)
 	}
 
-	// 2. Existing installation binary directory preservation
-	optClawDir := filepath.Join(tempHome, "opt", "claw")
-	if mkErr := os.MkdirAll(optClawDir, 0o755); mkErr != nil {
-		t.Fatal(mkErr)
+	leftovers := h.leftoverOptClawFiles(binDir)
+	if strings.Join(leftovers, " ") != "/opt/claw/claw /opt/claw/openclaw" {
+		t.Errorf("leftoverOptClawFiles() = %q, want the old binary and alias", leftovers)
 	}
-	existing := &ExistingInstall{BinaryPath: filepath.Join(optClawDir, "claw")}
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", existing)
-	if err != nil || dir != optClawDir {
-		t.Fatalf("resolveBinDir existing: got %v, want %s", dir, optClawDir)
+	for _, p := range leftovers {
+		if !h.exists(p) {
+			t.Errorf("%s was removed, want it left in place", p)
+		}
 	}
-
-	// 3. System Mode (IsRoot = true)
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: true}, "", nil)
-	if err != nil || dir != "/usr/local/bin" {
-		t.Fatalf("resolveBinDir system: got %v, %v, want /usr/local/bin", dir, err)
-	}
-
-	// 4. User Mode without ~/bin -> ~/.local/bin
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
-	expectedLocal := filepath.Join(tempHome, ".local", "bin")
-	if err != nil || dir != expectedLocal {
-		t.Fatalf("resolveBinDir user without ~/bin: got %v, want %s", dir, expectedLocal)
-	}
-
-	// 5. User Mode with existing ~/bin -> ~/bin
-	expectedBin := filepath.Join(tempHome, "bin")
-	if mkErr := os.MkdirAll(expectedBin, 0o755); mkErr != nil {
-		t.Fatal(mkErr)
-	}
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
-	if err != nil || dir != expectedBin {
-		t.Fatalf("resolveBinDir user with ~/bin: got %v, want %s", dir, expectedBin)
+	if got := h.leftoverOptClawFiles("/usr/local/bin"); got != nil {
+		t.Errorf("leftoverOptClawFiles(/usr/local/bin) = %q, want none", got)
 	}
 }
 
@@ -380,9 +435,9 @@ func TestResolveClawHome(t *testing.T) {
 		t.Errorf("resolveClawHome with existing.BinaryPath in /opt/claw = %q, want /opt/claw", got)
 	}
 
-	// 4. binDir == /opt/claw
-	got = resolveClawHome(tu, "/opt/claw", nil)
+	// 4. binDir == /opt/claw/bin
+	got = resolveClawHome(tu, "/opt/claw/bin", nil)
 	if got != "/opt/claw" {
-		t.Errorf("resolveClawHome with binDir = /opt/claw = %q, want /opt/claw", got)
+		t.Errorf("resolveClawHome with binDir = /opt/claw/bin = %q, want /opt/claw", got)
 	}
 }

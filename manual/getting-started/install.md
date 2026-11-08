@@ -83,7 +83,7 @@ If there is no account, no terminal and no variables, the installer stops withou
 
 | | User service | System service (`sudo`) |
 |---|---|---|
-| Binary | `~/bin` if it exists, else `~/.local/bin` | `/usr/local/bin` |
+| Binary | `~/bin` if it exists, else `~/.local/bin` | `/usr/local/bin`, or `/opt/claw/bin` when the data directory is `/opt/claw` |
 | Linux service | `~/.config/systemd/user/claw.service` | `/etc/systemd/system/claw.service` |
 | macOS service | `~/Library/LaunchAgents/com.pivotllm.claweh.plist` | `/Library/LaunchDaemons/com.pivotllm.claweh.plist` |
 
@@ -92,6 +92,7 @@ It also:
 - creates the data directory, `~/.claw` by default (`CLAW_HOME` overrides it; an existing `/opt/claw` is used if present);
 - writes a complete `config.json` there on first start;
 - creates an `openclaw` link next to `claw`, which the Rabbit R1 needs (see [Devices](../channels/devices.md));
+- on an `/opt/claw` install whose binary was in `/opt/claw` itself, names the old `/opt/claw/claw` and `/opt/claw/openclaw`, which are no longer used and can be removed;
 - prints the addresses where the WebUI can be opened.
 
 `--bin-dir` installs the binary somewhere else. `--user` picks the account the system service runs as (default: the user who ran `sudo`). `-y` skips the confirmation question but never the admin account.

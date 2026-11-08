@@ -196,31 +196,37 @@ func checkExistingMode(existing *ExistingInstall, isRoot bool) error {
 }
 
 // resolveBinDir selects the destination directory for the installed binary.
-func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
+// An /opt/claw install keeps it in the data directory's bin area,
+// /opt/claw/bin, also when an older install put it in /opt/claw itself.
+func (h *host) resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
 	if customDir != "" {
-		if err := os.MkdirAll(customDir, 0o755); err != nil {
+		if err := os.MkdirAll(h.path(customDir), 0o755); err != nil {
 			return "", fmt.Errorf("creating bin dir %s: %w", customDir, err)
 		}
 		return customDir, nil
 	}
 
-	// If an existing installation binary was detected, preserve that exact directory
+	// If an existing installation binary was detected, preserve that exact
+	// directory, except the data directory itself of an /opt/claw install.
 	if existing != nil && existing.BinaryPath != "" {
 		existingDir := filepath.Dir(existing.BinaryPath)
-		if dirExists(existingDir) {
+		if existingDir == optClawHome {
+			return h.ensureOptClawBinDir()
+		}
+		if h.dirExists(existingDir) {
 			return existingDir, nil
 		}
 	}
 
-	// If /opt/claw was configured as ClawHome in existing installation, preserve /opt/claw
-	if existing != nil && existing.ClawHome == "/opt/claw" {
-		return "/opt/claw", nil
+	// An existing /opt/claw install gets its binary in /opt/claw/bin.
+	if existing != nil && existing.ClawHome == optClawHome {
+		return h.ensureOptClawBinDir()
 	}
 
 	if tu.IsRoot {
 		// System Mode: standard system binary path
 		binDir := "/usr/local/bin"
-		if err := os.MkdirAll(binDir, 0o755); err != nil {
+		if err := os.MkdirAll(h.path(binDir), 0o755); err != nil {
 			return "", fmt.Errorf("creating %s: %w", binDir, err)
 		}
 		return binDir, nil
@@ -228,13 +234,22 @@ func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) 
 
 	// User Mode: ~/bin if it exists, else ~/.local/bin
 	binDir := filepath.Join(tu.HomeDir, "bin")
-	if !dirExists(binDir) {
+	if !h.dirExists(binDir) {
 		binDir = filepath.Join(tu.HomeDir, ".local", "bin")
-		if err := os.MkdirAll(binDir, 0o755); err != nil {
+		if err := os.MkdirAll(h.path(binDir), 0o755); err != nil {
 			return "", fmt.Errorf("creating %s: %w", binDir, err)
 		}
 	}
 	return binDir, nil
+}
+
+// ensureOptClawBinDir creates /opt/claw/bin, if missing, with the bin area's
+// default folder mode (the service sets the configured one at start).
+func (h *host) ensureOptClawBinDir() (string, error) {
+	if err := fileutil.MkdirAllExact(h.path(optClawBinDir), config.DefaultDirMode); err != nil {
+		return "", fmt.Errorf("creating %s: %w", optClawBinDir, err)
+	}
+	return optClawBinDir, nil
 }
 
 // confirmPrompt asks the user for confirmation on stdin.
@@ -263,6 +278,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	}
 
 	// Detect any pre-existing installation or service
+	h := realHost()
 	existing := DetectExistingInstall(tu.HomeDir)
 	if err = checkExistingMode(existing, tu.IsRoot); err != nil {
 		return err
@@ -282,9 +298,12 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		exePath = resolved
 	}
 
-	binDir, err := resolveBinDir(tu, customBinDir, existing)
+	binDir, err := h.resolveBinDir(tu, customBinDir, existing)
 	if err != nil {
 		return err
+	}
+	if binDir == optClawBinDir {
+		fixOwnership(binDir, tu)
 	}
 	targetBin := filepath.Join(binDir, serviceName)
 
@@ -358,6 +377,9 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		fixOwnership(filepath.Join(binDir, openClawAlias), tu)
 		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
 			filepath.Join(binDir, openClawAlias), serviceName)
+	}
+	for _, old := range h.leftoverOptClawFiles(binDir) {
+		fmt.Printf("%s is no longer used and can be removed.\n", old)
 	}
 
 	// 3. Ensure binDir is on PATH and CLAW_HOME is exported in shell rc
@@ -590,7 +612,7 @@ func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) s
 	if existing != nil && existing.ClawHome != "" {
 		return existing.ClawHome
 	}
-	if binDir == "/opt/claw" || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
+	if binDir == optClawBinDir || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
 		return "/opt/claw"
 	}
 	if dirExists("/opt/claw") {

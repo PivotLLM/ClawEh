@@ -65,6 +65,14 @@
 
 ### Changed
 
+- **An `/opt/claw` install puts the binary and the `openclaw` alias in
+  `/opt/claw/bin`.** `claw install` on a machine whose data directory is
+  `/opt/claw` now installs `/opt/claw/bin/claw` and the alias
+  `/opt/claw/bin/openclaw`, and the service starts `/opt/claw/bin/claw`,
+  also when an earlier install put them directly in `/opt/claw`. Re-run
+  `sudo claw install` to move an existing install. The old
+  `/opt/claw/claw` and `/opt/claw/openclaw` are left in place; the
+  installer names each one and says it can be removed.
 - **BREAKING: `msg_send_file` takes a list of files.** Its arguments are now
   `files`, a list of 1 to 10 `{"path", "filename"}` entries sent in order;
   the old `path` and `filename` arguments are refused. A file can be sent

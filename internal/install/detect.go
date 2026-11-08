@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -24,148 +25,200 @@ type ExistingInstall struct {
 	IsActive    bool
 }
 
+// optClawHome is the data directory of the standard system install. Its
+// binary and the openclaw alias live in its bin area, optClawBinDir.
+const optClawHome = "/opt/claw"
+
+// optClawBinDir is where an /opt/claw install keeps the binary and the alias.
+var optClawBinDir = filepath.Join(optClawHome, config.BinDirName)
+
+// host is the machine the installer inspects. Every path the installer works
+// with is the machine's own (/opt/claw, /etc/systemd/system/...); root, when
+// set, is prefixed to them on disk, so tests build a fake install in a temp
+// dir. The command hooks keep tests from consulting the real system.
+type host struct {
+	root       string
+	executable func() (string, error)
+	lookPath   func(file string) (string, error)
+	commandOK  func(name string, args ...string) bool
+}
+
+// realHost is the machine the installer runs on.
+func realHost() *host {
+	return &host{
+		executable: os.Executable,
+		lookPath:   exec.LookPath,
+		commandOK: func(name string, args ...string) bool {
+			return exec.Command(name, args...).Run() == nil //nolint:gosec // fixed systemctl binary and the installer's own unit name
+		},
+	}
+}
+
+// path maps one of the machine's paths to where it lies on disk.
+func (h *host) path(p string) string {
+	if h.root == "" {
+		return p
+	}
+	return filepath.Join(h.root, p)
+}
+
+func (h *host) fileExists(p string) bool { return fileExists(h.path(p)) }
+
+func (h *host) dirExists(p string) bool { return dirExists(h.path(p)) }
+
+// exists reports whether anything, a dangling symlink included, is at p.
+func (h *host) exists(p string) bool {
+	_, err := os.Lstat(h.path(p))
+	return err == nil
+}
+
+// ownerName is the name of the account owning p, or "" for root or when it
+// cannot be found.
+func (h *host) ownerName(p string) string {
+	fi, err := os.Stat(h.path(p))
+	if err != nil {
+		return ""
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	u, err := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10))
+	if err != nil || u.Username == "root" {
+		return ""
+	}
+	return u.Username
+}
+
+// optClawBinary is the binary of an /opt/claw install: bin/claw, else the
+// older /opt/claw/claw, else "".
+func (h *host) optClawBinary() string {
+	for _, p := range []string{filepath.Join(optClawBinDir, serviceName), filepath.Join(optClawHome, serviceName)} {
+		if h.fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// leftoverOptClawFiles lists the binary and alias an older /opt/claw install
+// kept directly in the data directory, which are no longer used once binDir
+// is optClawBinDir.
+func (h *host) leftoverOptClawFiles(binDir string) []string {
+	if binDir != optClawBinDir {
+		return nil
+	}
+	var out []string
+	for _, name := range []string{serviceName, openClawAlias} {
+		if p := filepath.Join(optClawHome, name); h.exists(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // DetectExistingInstall searches for an existing ClawEh installation on the system.
 // It inspects systemd unit files, launchd plists, running process paths, and PATH.
 func DetectExistingInstall(homeDir string) *ExistingInstall {
+	h := realHost()
 	switch runtime.GOOS {
 	case "linux":
-		return detectLinuxInstall(homeDir)
+		return h.detectLinuxInstall(homeDir)
 	case "darwin":
-		return detectDarwinInstall(homeDir)
+		return h.detectDarwinInstall(homeDir)
 	}
 	return nil
 }
 
-func detectLinuxInstall(homeDir string) *ExistingInstall {
+func (h *host) detectLinuxInstall(homeDir string) *ExistingInstall {
 	// 1. Check systemd system service (/etc/systemd/system/claw.service)
-	if fileExists(systemUnitPath) {
-		inst := parseSystemdUnit(systemUnitPath, "systemd-system")
-		inst.IsActive = exec.Command("systemctl", "is-active", "--quiet", serviceName).Run() == nil
+	if h.fileExists(systemUnitPath) {
+		inst := h.parseSystemdUnit(systemUnitPath, "systemd-system")
+		inst.IsActive = h.commandOK("systemctl", "is-active", "--quiet", serviceName)
 		return inst
 	}
 
 	// 2. Check systemd user service (~/.config/systemd/user/claw.service)
 	userPath := userUnitPath(homeDir)
-	if fileExists(userPath) {
-		inst := parseSystemdUnit(userPath, "systemd-user")
-		inst.IsActive = exec.Command("systemctl", "--user", "is-active", "--quiet", serviceName).Run() == nil
+	if h.fileExists(userPath) {
+		inst := h.parseSystemdUnit(userPath, "systemd-user")
+		inst.IsActive = h.commandOK("systemctl", "--user", "is-active", "--quiet", serviceName)
 		return inst
 	}
 
 	// 3. Check /opt/claw (standard production / system install location)
-	if dirExists("/opt/claw") {
-		inst := &ExistingInstall{
-			ClawHome: "/opt/claw",
-		}
-		if fileExists("/opt/claw/claw") {
-			inst.BinaryPath = "/opt/claw/claw"
-		}
-		if fi, err := os.Stat("/opt/claw"); err == nil {
-			if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-				if u, uErr := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10)); uErr == nil && u.Username != "root" {
-					inst.User = u.Username
-				}
-			}
-		}
-		return inst
-	}
-
-	// 4. Check running executable if not a temporary or build directory
-	if exePath, err := os.Executable(); err == nil {
-		if resolved, rerr := filepath.EvalSymlinks(exePath); rerr == nil {
-			if !isBuildOrTempPath(resolved) {
-				inst := &ExistingInstall{BinaryPath: resolved}
-				if strings.HasPrefix(resolved, "/opt/claw") {
-					inst.ClawHome = "/opt/claw"
-				}
-				return inst
-			}
+	if h.dirExists(optClawHome) {
+		return &ExistingInstall{
+			ClawHome:   optClawHome,
+			BinaryPath: h.optClawBinary(),
+			User:       h.ownerName(optClawHome),
 		}
 	}
 
-	// 5. Check system PATH
-	if p, err := exec.LookPath(serviceName); err == nil {
-		if resolved, rerr := filepath.EvalSymlinks(p); rerr == nil {
-			if !isBuildOrTempPath(resolved) {
-				inst := &ExistingInstall{BinaryPath: resolved}
-				if strings.HasPrefix(resolved, "/opt/claw") {
-					inst.ClawHome = "/opt/claw"
-				}
-				return inst
-			}
-		}
-	}
-
-	return nil
+	// 4. Check running executable, then the system PATH
+	return h.detectFromBinary()
 }
 
-func detectDarwinInstall(homeDir string) *ExistingInstall {
+func (h *host) detectDarwinInstall(homeDir string) *ExistingInstall {
 	// 1. Check LaunchDaemon (/Library/LaunchDaemons/com.pivotllm.claweh.plist)
-	if fileExists(systemLaunchdPath) {
-		inst := parseLaunchdPlist(systemLaunchdPath, "launchd-daemon")
+	if h.fileExists(systemLaunchdPath) {
+		inst := h.parseLaunchdPlist(systemLaunchdPath, "launchd-daemon")
 		inst.IsActive = isLaunchdServiceActive(launchdLabel)
 		return inst
 	}
 
 	// 2. Check LaunchAgent (~/Library/LaunchAgents/com.pivotllm.claweh.plist)
 	userPath := userLaunchdPath(homeDir)
-	if fileExists(userPath) {
-		inst := parseLaunchdPlist(userPath, "launchd-agent")
+	if h.fileExists(userPath) {
+		inst := h.parseLaunchdPlist(userPath, "launchd-agent")
 		inst.IsActive = isLaunchdServiceActive(launchdLabel)
 		return inst
 	}
 
 	// 3. Check /opt/claw
-	if dirExists("/opt/claw") {
-		inst := &ExistingInstall{
-			ClawHome: "/opt/claw",
+	if h.dirExists(optClawHome) {
+		return &ExistingInstall{
+			ClawHome:   optClawHome,
+			BinaryPath: h.optClawBinary(),
 		}
-		if fileExists("/opt/claw/claw") || fileExists("/opt/claw/bin/claw") {
-			if fileExists("/opt/claw/claw") {
-				inst.BinaryPath = "/opt/claw/claw"
-			} else {
-				inst.BinaryPath = "/opt/claw/bin/claw"
-			}
+	}
+
+	// 4. Check running executable, then the system PATH
+	return h.detectFromBinary()
+}
+
+// detectFromBinary finds an install by the running executable, else by claw
+// on PATH, ignoring build and temporary locations.
+func (h *host) detectFromBinary() *ExistingInstall {
+	candidates := []func() (string, error){
+		h.executable,
+		func() (string, error) { return h.lookPath(serviceName) },
+	}
+	for _, find := range candidates {
+		p, err := find()
+		if err != nil {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil || isBuildOrTempPath(resolved) {
+			continue
+		}
+		inst := &ExistingInstall{BinaryPath: resolved}
+		if strings.HasPrefix(resolved, optClawHome) {
+			inst.ClawHome = optClawHome
 		}
 		return inst
 	}
-
-	// 4. Check running executable
-	if exePath, err := os.Executable(); err == nil {
-		if resolved, rerr := filepath.EvalSymlinks(exePath); rerr == nil {
-			if !isBuildOrTempPath(resolved) {
-				inst := &ExistingInstall{BinaryPath: resolved}
-				if strings.HasPrefix(resolved, "/opt/claw") {
-					inst.ClawHome = "/opt/claw"
-				}
-				return inst
-			}
-		}
-	}
-
-	// 5. Check system PATH
-	if p, err := exec.LookPath(serviceName); err == nil {
-		if resolved, rerr := filepath.EvalSymlinks(p); rerr == nil {
-			if !isBuildOrTempPath(resolved) {
-				inst := &ExistingInstall{BinaryPath: resolved}
-				if strings.HasPrefix(resolved, "/opt/claw") {
-					inst.ClawHome = "/opt/claw"
-				}
-				return inst
-			}
-		}
-	}
-
 	return nil
 }
 
-func parseSystemdUnit(path, serviceType string) *ExistingInstall {
+func (h *host) parseSystemdUnit(path, serviceType string) *ExistingInstall {
 	inst := &ExistingInstall{
 		ServicePath: path,
 		ServiceType: serviceType,
 	}
 
-	f, err := os.Open(path) //nolint:gosec // fixed candidate service-file paths (systemUnitPath / userPath)
+	f, err := os.Open(h.path(path))
 	if err != nil {
 		return inst
 	}
@@ -217,41 +270,29 @@ func parseSystemdUnit(path, serviceType string) *ExistingInstall {
 			inst.ClawHome = workingDir
 		} else if strings.Contains(pathEnv, "/opt/claw") {
 			inst.ClawHome = "/opt/claw"
-		} else if dirExists("/opt/claw") {
-			inst.ClawHome = "/opt/claw"
+		} else if h.dirExists(optClawHome) {
+			inst.ClawHome = optClawHome
 		}
 	}
 
 	// Fallback inference for User
 	if inst.User == "" && inst.ClawHome != "" {
-		if fi, err := os.Stat(inst.ClawHome); err == nil {
-			if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-				if u, uErr := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10)); uErr == nil && u.Username != "root" {
-					inst.User = u.Username
-				}
-			}
-		}
+		inst.User = h.ownerName(inst.ClawHome)
 	}
 	if inst.User == "" && inst.BinaryPath != "" {
-		if fi, err := os.Stat(inst.BinaryPath); err == nil {
-			if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-				if u, uErr := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10)); uErr == nil && u.Username != "root" {
-					inst.User = u.Username
-				}
-			}
-		}
+		inst.User = h.ownerName(inst.BinaryPath)
 	}
 
 	return inst
 }
 
-func parseLaunchdPlist(path, serviceType string) *ExistingInstall {
+func (h *host) parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 	inst := &ExistingInstall{
 		ServicePath: path,
 		ServiceType: serviceType,
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // fixed candidate service-file paths (systemLaunchdPath / userPath)
+	data, err := os.ReadFile(h.path(path))
 	if err != nil {
 		return inst
 	}
@@ -291,8 +332,8 @@ func parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 	if inst.ClawHome == "" {
 		if strings.HasPrefix(inst.BinaryPath, "/opt/claw") {
 			inst.ClawHome = "/opt/claw"
-		} else if dirExists("/opt/claw") {
-			inst.ClawHome = "/opt/claw"
+		} else if h.dirExists(optClawHome) {
+			inst.ClawHome = optClawHome
 		}
 	}
 
