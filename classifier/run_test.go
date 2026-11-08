@@ -77,7 +77,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("activity = %d entries", len(entries))
 	}
 	for _, en := range entries {
-		if en.Outcome != OutcomeActed || en.Action != "mail_move" || en.Fields["from"] == "" || en.DryRun || en.Rerun {
+		if en.Outcome != OutcomeActed || en.Action != "mail_move" || en.ActionArgs != "" || en.Fields["from"] == "" || en.DryRun || en.Rerun {
 			t.Errorf("activity entry = %+v", en)
 		}
 	}
@@ -233,7 +233,7 @@ func TestRerunAndTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Category != "low" || d.Reason != "changed my mind" || d.Action != "mail_move" || d.Outcome != OutcomeRecorded {
+	if d.Category != "low" || d.Reason != "changed my mind" || d.Action != "mail_move" || d.ActionArgs != `{"destination":"low","id":"m1"}` || d.Outcome != OutcomeRecorded {
 		t.Errorf("Test = %+v", d)
 	}
 	if got := e.processed("inbox-priority")["m1"].category; got != "urgent" {

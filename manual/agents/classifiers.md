@@ -124,7 +124,7 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 
 ### Dry run
 
-With `dry_run` on, the classifier decides but runs no action. Dry-run decisions are kept apart: when you switch to live, every item is classified again with the current rules.
+With `dry_run` on, the classifier decides but runs no action; the log shows the action and the arguments it would have been given. Dry-run decisions are kept apart: when you switch to live, every item is classified again with the current rules.
 
 ### Activity log
 

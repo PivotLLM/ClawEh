@@ -40,18 +40,23 @@ const (
 )
 
 // Decision is one item handled: the category and reason the model gave, the
-// model, the action tool and how it ended.
+// model, the action tool (and, when it did not run, its arguments) and how
+// it ended.
 type Decision struct {
-	ItemID   string    `json:"item_id"`
-	Category string    `json:"category,omitempty"`
-	Reason   string    `json:"reason,omitempty"`
-	Model    string    `json:"model,omitempty"`
-	Action   string    `json:"action,omitempty"`
-	Outcome  string    `json:"outcome"`
-	Error    string    `json:"error,omitempty"`
-	DryRun   bool      `json:"dry_run,omitempty"`
-	Rerun    bool      `json:"rerun,omitempty"`
-	At       time.Time `json:"at"`
+	ItemID   string `json:"item_id"`
+	Category string `json:"category,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Action   string `json:"action,omitempty"`
+	// ActionArgs is the action's arguments after substitution, as compact
+	// JSON cut to ActivityValueMax characters: set in a dry run and by
+	// classifier_test only, since no action runs there.
+	ActionArgs string    `json:"action_args,omitempty"`
+	Outcome    string    `json:"outcome"`
+	Error      string    `json:"error,omitempty"`
+	DryRun     bool      `json:"dry_run,omitempty"`
+	Rerun      bool      `json:"rerun,omitempty"`
+	At         time.Time `json:"at"`
 }
 
 // ActivityEntry is one activity log row: a Decision and the fields sent to
@@ -85,7 +90,8 @@ const (
 
 // ActivityQuery selects activity entries: newest first, Limit (default
 // DefaultActivityLimit, at most MaxActivityLimit) after Offset, optionally
-// only those whose fields, item id, category or reason contain Search
+// only those whose fields, item id, category, reason or action arguments
+// contain Search
 // (case-insensitive).
 type ActivityQuery struct {
 	Limit  int
@@ -114,7 +120,7 @@ CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT NOT NULL,
   fields TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
-  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL);
+  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT);
 CREATE INDEX IF NOT EXISTS activity_by_time ON activity (classifier, at DESC);
 CREATE TABLE IF NOT EXISTS runs (
   classifier TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, status TEXT, error TEXT,
@@ -164,12 +170,29 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	if _, err := db.ExecContext(ctx, stateSchema); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
+	if err := addActionArgsColumn(ctx, db); err != nil {
+		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
+	}
 	for _, side := range []string{"-wal", "-shm"} {
 		if err := os.Chmod(path+side, fileMode); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, errors.Join(err, db.Close())
 		}
 	}
 	return &stateDB{db: db, path: path}, nil
+}
+
+// addActionArgsColumn adds activity.action_args to a state.db created
+// before the column existed.
+func addActionArgsColumn(ctx context.Context, db *sql.DB) error {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('activity') WHERE name = 'action_args'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, `ALTER TABLE activity ADD COLUMN action_args TEXT`)
+	return err
 }
 
 func (s *stateDB) close() error { return s.db.Close() }
@@ -335,10 +358,10 @@ func (s *stateDB) addActivity(ctx context.Context, cls string, e ActivityEntry) 
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO activity (classifier, at, item_id, fields, category, reason, model, action, outcome, error, dry_run, rerun)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO activity (classifier, at, item_id, fields, category, reason, model, action, action_args, outcome, error, dry_run, rerun)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cls, ms(e.At), e.ItemID, string(data), nullable(e.Category), nullable(e.Reason), nullable(e.Model),
-		nullable(e.Action), e.Outcome, nullable(e.Error), e.DryRun, e.Rerun)
+		nullable(e.Action), nullable(cutRunes(e.ActionArgs, ActivityValueMax)), e.Outcome, nullable(e.Error), e.DryRun, e.Rerun)
 	return err
 }
 
@@ -358,13 +381,14 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	limit = min(limit, MaxActivityLimit)
 	offset := max(q.Offset, 0)
 	query := `SELECT at, item_id, fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
-  COALESCE(action,''), outcome, COALESCE(error,''), dry_run, rerun FROM activity WHERE classifier = ?`
+  COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun FROM activity WHERE classifier = ?`
 	args := []any{cls}
 	if search := strings.TrimSpace(q.Search); search != "" {
 		pattern := "%" + likeEscaper.Replace(strings.ToLower(search)) + "%"
 		query += ` AND (LOWER(fields) LIKE ? ESCAPE '\' OR LOWER(item_id) LIKE ? ESCAPE '\'
-  OR LOWER(COALESCE(category,'')) LIKE ? ESCAPE '\' OR LOWER(COALESCE(reason,'')) LIKE ? ESCAPE '\')`
-		args = append(args, pattern, pattern, pattern, pattern)
+  OR LOWER(COALESCE(category,'')) LIKE ? ESCAPE '\' OR LOWER(COALESCE(reason,'')) LIKE ? ESCAPE '\'
+  OR LOWER(COALESCE(action_args,'')) LIKE ? ESCAPE '\')`
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	query += ` ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
@@ -379,7 +403,7 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 		var at int64
 		var fields string
 		if err := rows.Scan(&at, &e.ItemID, &fields, &e.Category, &e.Reason, &e.Model, &e.Action,
-			&e.Outcome, &e.Error, &e.DryRun, &e.Rerun); err != nil {
+			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun); err != nil {
 			return nil, err
 		}
 		e.At = time.UnixMilli(at).UTC()

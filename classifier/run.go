@@ -7,6 +7,7 @@ package classifier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -121,6 +122,31 @@ func (s *Service) act(ctx context.Context, scope Scope, def *Definition, item li
 	d.Outcome = OutcomeActed
 }
 
+// previewAction records, without running it, the action the decision's
+// category would run: its tool and its arguments after substitution, as
+// compact JSON cut to ActivityValueMax characters. A substitution error
+// fails the item as it would fail a live one.
+func previewAction(def *Definition, item listedItem, d *decision) {
+	action, ok := def.Actions[d.Category]
+	if !ok {
+		return
+	}
+	d.Action = action.Tool
+	args, err := substitute(action.Args, item.value, d.data.fetched, d.Category)
+	if err != nil {
+		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("actions.%s.args: %v", d.Category, err)
+		return
+	}
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(nonNilArgs(args)); err != nil {
+		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("actions.%s.args: %v", d.Category, err)
+		return
+	}
+	d.ActionArgs = cutRunes(strings.TrimSuffix(buf.String(), "\n"), ActivityValueMax)
+}
+
 func nonNilArgs(args map[string]any) map[string]any {
 	if args == nil {
 		return map[string]any{}
@@ -153,9 +179,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 	case mode == modeTest:
 		if d.Category != "" {
 			d.Outcome = OutcomeRecorded
-			if a, ok := def.Actions[d.Category]; ok {
-				d.Action = a.Tool
-			}
+			previewAction(def, item, &d)
 		}
 		return d
 	case dry:
@@ -167,8 +191,8 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 			category = Unclassified
 		} else {
 			d.Outcome = OutcomeRecorded
-			if a, ok := def.Actions[d.Category]; ok {
-				d.Action = a.Tool
+			if previewAction(def, item, &d); d.Outcome == OutcomeFailed {
+				break // the live action would fail; not recorded, so the next dry run tries it again
 			}
 		}
 		storeErr(st.setDry(wctx, cls, item.id, category, d.Reason, d.Model, now))

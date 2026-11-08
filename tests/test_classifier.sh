@@ -18,7 +18,8 @@
 #     unclassified and the action-less item in place, and state.db
 #     (processed, runs) and the activity log record every item;
 #   - later ticks reprocess nothing (no model call, no new activity row);
-#   - the dry-run classifier records its decision and moves nothing;
+#   - the dry-run classifier records its decision and the action's
+#     substituted arguments, and moves nothing;
 #   - the run with an unclassified item posts one summary to Alice's chat,
 #     naming the agent and the classifier;
 #   - a hand-edited invalid definition is never run, is logged, and is
@@ -274,6 +275,14 @@ DRYROW="$(sql "SELECT item_id, category FROM dry_run WHERE classifier='dry'")"
 if [ "$DRYROW" = "e|invoice" ]; then pass "the dry run recorded its decision"; else fail "dry_run rows: $DRYROW"; fi
 if [ "$(sql "SELECT COUNT(*) FROM processed WHERE classifier='dry'")" = 0 ]; then pass "the dry run recorded nothing as processed"; else fail "the dry run has processed rows"; fi
 if [ "$(sql "SELECT outcome, dry_run FROM activity WHERE classifier='dry'")" = "recorded|1" ]; then pass "the dry run's activity is marked dry"; else fail "dry activity: $(sql "SELECT outcome, dry_run FROM activity WHERE classifier='dry'")"; fi
+DRYARGS="$(sql "SELECT action_args FROM activity WHERE classifier='dry'")"
+if [ "$DRYARGS" = '{"destination_path":"files/invoice/e.json","source_path":"files/inbox-dry/e.json"}' ]; then pass "the dry run records the action's substituted arguments"; else fail "dry action_args: $DRYARGS"; fi
+OUT="$(mcp classifier_activity '{"id":"dry","search":"invoice/e.json"}')"
+if echo "$OUT" | grep -q 'destination_path' && echo "$OUT" | grep -qF 'files/invoice/e.json'; then
+    pass "classifier_activity shows and searches the dry run's action arguments"
+else
+    fail "classifier_activity (dry): $OUT"
+fi
 
 # ---- 5. The problem summary reached Alice's chat, once. ----
 SUMMARIES="$(grep 'telegram: chat=4242 ' "$STUB_LOG" | grep -c 'Classifier ' || true)"

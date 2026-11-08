@@ -108,7 +108,8 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - Changing the rules, categories or actions does not reprocess items already
   handled. Use `classifier_rerun` to reclassify one item on purpose.
 - `dry_run` records decisions without running actions, kept apart from the
-  live state: switching to live classifies everything again.
+  live state: switching to live classifies everything again. Its activity
+  entries show each action's arguments (`action_args`) after substitution.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
 

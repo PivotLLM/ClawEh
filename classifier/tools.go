@@ -67,7 +67,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 			id,
 			{Name: "limit", Type: "integer", Description: fmt.Sprintf("Entries to return; %d when omitted, at most %d", DefaultActivityLimit, MaxActivityLimit)},
 			{Name: "offset", Type: "integer", Description: "Entries to skip"},
-			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category or reason contain this text (case-insensitive)"},
+			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category, reason or action arguments contain this text (case-insensitive)"},
 		}},
 	}
 	for i := range defs {
