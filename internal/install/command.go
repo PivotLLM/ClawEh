@@ -325,7 +325,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		}
 	}
 
-	clawHome := resolveClawHome(tu, binDir, existing)
+	clawHome := h.resolveClawHome(tu, binDir, existing)
 	homeExisted := dirExists(clawHome)
 
 	// Explicitly set CLAW_HOME in process environment so any config access or helper uses clawHome
@@ -605,18 +605,18 @@ func serviceManagerName() string {
 // resolveClawHome determines the directory for CLAW_HOME.
 // It prioritizes explicit environment variables, detected existing installations,
 // /opt/claw if installed there or existing, or the user's ~/.claw directory.
-func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) string {
+func (h *host) resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) string {
 	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
 		return envHome
 	}
 	if existing != nil && existing.ClawHome != "" {
 		return existing.ClawHome
 	}
-	if binDir == optClawBinDir || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
+	if binDir == optClawBinDir || (existing != nil && inOptClaw(existing.BinaryPath)) {
 		return "/opt/claw"
 	}
-	if dirExists("/opt/claw") {
-		return "/opt/claw"
+	if h.dirExists(optClawHome) {
+		return optClawHome
 	}
 	return filepath.Join(tu.HomeDir, global.DefaultDataDir)
 }

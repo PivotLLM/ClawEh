@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,6 +32,12 @@ const optClawHome = "/opt/claw"
 
 // optClawBinDir is where an /opt/claw install keeps the binary and the alias.
 var optClawBinDir = filepath.Join(optClawHome, config.BinDirName)
+
+// inOptClaw reports whether p is /opt/claw or a path inside it (not a
+// sibling such as /opt/claw-old).
+func inOptClaw(p string) bool {
+	return p == optClawHome || strings.HasPrefix(p, optClawHome+"/")
+}
 
 // host is the machine the installer inspects. Every path the installer works
 // with is the machine's own (/opt/claw, /etc/systemd/system/...); root, when
@@ -204,7 +211,7 @@ func (h *host) detectFromBinary() *ExistingInstall {
 			continue
 		}
 		inst := &ExistingInstall{BinaryPath: resolved}
-		if strings.HasPrefix(resolved, optClawHome) {
+		if inOptClaw(resolved) {
 			inst.ClawHome = optClawHome
 		}
 		return inst
@@ -264,11 +271,11 @@ func (h *host) parseSystemdUnit(path, serviceType string) *ExistingInstall {
 
 	// Fallback inference for ClawHome
 	if inst.ClawHome == "" {
-		if strings.HasPrefix(inst.BinaryPath, "/opt/claw") {
+		if inOptClaw(inst.BinaryPath) {
 			inst.ClawHome = "/opt/claw"
 		} else if workingDir != "" && workingDir != "/" && !strings.HasPrefix(workingDir, "/home") {
 			inst.ClawHome = workingDir
-		} else if strings.Contains(pathEnv, "/opt/claw") {
+		} else if pathHasOptClaw(pathEnv) {
 			inst.ClawHome = "/opt/claw"
 		} else if h.dirExists(optClawHome) {
 			inst.ClawHome = optClawHome
@@ -284,6 +291,15 @@ func (h *host) parseSystemdUnit(path, serviceType string) *ExistingInstall {
 	}
 
 	return inst
+}
+
+// pathHasOptClaw reports whether a unit's PATH value lists a folder in
+// /opt/claw.
+func pathHasOptClaw(pathEnv string) bool {
+	dirs := strings.FieldsFunc(pathEnv, func(r rune) bool {
+		return r == ':' || r == '"' || r == '\'' || r == ' ' || r == '\t'
+	})
+	return slices.ContainsFunc(dirs, inOptClaw)
 }
 
 func (h *host) parseLaunchdPlist(path, serviceType string) *ExistingInstall {
@@ -330,7 +346,7 @@ func (h *host) parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 
 	// Fallback inference for ClawHome
 	if inst.ClawHome == "" {
-		if strings.HasPrefix(inst.BinaryPath, "/opt/claw") {
+		if inOptClaw(inst.BinaryPath) {
 			inst.ClawHome = "/opt/claw"
 		} else if h.dirExists(optClawHome) {
 			inst.ClawHome = optClawHome

@@ -228,8 +228,14 @@ func TestSpawnTool_CallbackRefusedWhenTurnAmbiguous(t *testing.T) {
 		t.Fatalf("wait = %+v, %v, want it run", res, err)
 	}
 	chat := tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: "telegram", ChatID: "42"})
-	res, err = spawn.Handler(&global.ToolCall{Ctx: chat, Args: map[string]any{"task": "x", "name": "bg"}})
+	// The background task finishes before the test removes its workspace.
+	finished := make(chan struct{})
+	res, err = spawn.Handler(&global.ToolCall{
+		Ctx: chat, Args: map[string]any{"task": "x", "name": "bg"},
+		Notify: func(*global.Result) { close(finished) },
+	})
 	if err != nil || res.IsError {
 		t.Fatalf("callback in one turn = %+v, %v, want it started", res, err)
 	}
+	<-finished
 }

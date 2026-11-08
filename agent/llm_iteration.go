@@ -79,6 +79,8 @@ type llmTurn struct {
 
 	// imageCount counts the images the model generated in the turn.
 	imageCount int
+	// lastImages counts the images of the latest response.
+	lastImages int
 	// imageReplies are the lines the turn's reply carries about them.
 	imageReplies []string
 	// iterationNotes are the results for the images of the latest response
@@ -133,7 +135,8 @@ func (al *AgentLoop) runLLMIteration(
 		iterations:   t.iteration,
 		images:       t.imageCount,
 		imageReplies: t.imageReplies,
-		imageNotes:   sentNotesFor(t.iterationNotes),
+		lastImages:   t.lastImages,
+		imageNotes:   notesFor(t.iterationNotes),
 	}, nil
 }
 
@@ -233,6 +236,7 @@ func (t *llmTurn) iterate(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	t.recordResponse(ctx, response)
+	t.lastImages = len(response.Images)
 	if len(response.Images) > 0 {
 		t.handleImages(ctx, response.Images)
 	}

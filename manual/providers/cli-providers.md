@@ -104,6 +104,8 @@ If you change **Listen Address**, use the new port in these commands. [MCP](../m
 
 ClawEh puts a session token in each agent's prompt, and the CLI sends it with every tool call. That is how one CLI installation can serve several agents: each call runs as the agent whose token it carries, with that agent's [tools](../agents/tools-and-skills.md), folders and permissions. The tools of external MCP servers that an agent is allowed reach the CLI the same way, through ClawEh.
 
+While another agent's request runs on the same agent, a CLI agent's chat output for that moment is refused rather than risk the wrong chat.
+
 ## Related
 
 - [Concepts](./concepts.md) for fallback chains and cooldowns, which apply to CLI models too: put an API model after a CLI model in an agent's list, and the agent still answers when the CLI fails.

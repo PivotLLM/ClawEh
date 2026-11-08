@@ -332,7 +332,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		case slots <- struct{}{}:
 		case <-ctx.Done():
 		}
-		if ctx.Err() != nil || stopping() {
+		// stopping first: it records why the run stopped (a shutdown while
+		// waiting for a slot included), so the run is not reported ok.
+		if stopping() {
 			break
 		}
 		wg.Add(1)

@@ -323,6 +323,77 @@ describe("SystemPage classifier settings", () => {
     }
   })
 
+  it("saves each field under its own key", async () => {
+    renderPage()
+    const values: Record<string, string> = {
+      processed_days: "11",
+      max_rules: "12",
+      max_prompt_chars: "13",
+      max_item_chars: "14",
+      max_items_per_run: "15",
+      max_parallel: "16",
+      max_activity_hours: "17",
+      min_every_seconds: "18",
+    }
+    await screen.findByTestId("classifiers-max_rules")
+    for (const [key, value] of Object.entries(values)) {
+      fireEvent.change(screen.getByTestId(`classifiers-${key}`), {
+        target: { value },
+      })
+    }
+    await waitFor(
+      () =>
+        expect(lastClassifiersPatch()).toEqual({
+          processed_days: 11,
+          limits: {
+            max_rules: 12,
+            max_prompt_chars: 13,
+            max_item_chars: 14,
+            max_items_per_run: 15,
+            max_parallel: 16,
+            max_activity_hours: 17,
+            min_every_seconds: 18,
+          },
+        }),
+      { timeout: 3000 },
+    )
+  })
+
+  it("clearing a value that was set saves null, so the default applies", async () => {
+    sample.classifiers = { processed_days: 10, limits: { max_parallel: 4 } }
+    try {
+      renderPage()
+      const days = (await screen.findByTestId(
+        "classifiers-processed_days",
+      )) as HTMLInputElement
+      expect(days.value).toBe("10")
+      fireEvent.change(days, { target: { value: "" } })
+      await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
+      })
+      const patch = lastClassifiersPatch() as {
+        processed_days: unknown
+        limits: Record<string, unknown>
+      }
+      expect(patch.processed_days).toBeNull()
+      expect(patch.limits.max_parallel).toBe(4)
+    } finally {
+      delete sample.classifiers
+    }
+  })
+
+  it("refuses a value that is not a whole number without saving", async () => {
+    renderPage()
+    const days = await screen.findByTestId("classifiers-processed_days")
+    fireEvent.change(days, { target: { value: "1.5" } })
+    await screen.findByText(
+      "pages.config.classifiers_processed_days must be an integer.",
+      undefined,
+      { timeout: 3000 },
+    )
+    expect(patched).not.toHaveBeenCalled()
+  })
+
   it("refuses a negative value without saving", async () => {
     renderPage()
     const interval = await screen.findByTestId("classifiers-min_every_seconds")

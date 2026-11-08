@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { AgentCard } from "./agent-card"
@@ -175,6 +181,28 @@ describe("AgentCard classifiers", () => {
     expect(screen.queryByTestId("classifier-model-unusable")).toBeNull()
   })
 
+  it("hands the switch over to the page, on and off", () => {
+    const changes: boolean[] = []
+    for (const on of [false, true]) {
+      renderCard([], {
+        ...withSwitch(on, on ? "fast" : ""),
+        onClassifiersChange: (v) => changes.push(v),
+      })
+      fireEvent.click(screen.getByRole("switch", { name: "Allow classifiers" }))
+      cleanup()
+    }
+    expect(changes).toEqual([true, false])
+  })
+
+  it("shows no classifier settings without a handler", () => {
+    renderCard([], {
+      ...withSwitch(true, "fast"),
+      onClassifiersChange: undefined,
+    })
+    expect(screen.queryByText("Allow classifiers")).toBeNull()
+    expect(screen.queryByText("Classifier model")).toBeNull()
+  })
+
   it("marks a model the agent cannot use where it is set", () => {
     renderCard([], withSwitch(true, "gone"))
     expect(screen.getByTestId("classifier-model-unusable").textContent).toBe(
@@ -315,7 +343,7 @@ describe("AgentCard May message", () => {
     expect(onChange).toHaveBeenLastCalledWith(["carol"])
   })
 
-  it("All agents writes [\"*\"] and ticks every agent", () => {
+  it('All agents writes ["*"] and ticks every agent', () => {
     const onChange = mayMessage({ allowAgents: ["bob"] })
     fireEvent.click(box("All agents"))
     expect(onChange).toHaveBeenLastCalledWith(["*"])
@@ -407,7 +435,9 @@ describe("AgentCard Sub-Agent models", () => {
 
   it("says workers use the agent's own models when the list is empty", () => {
     renderCard([], { models, onSubagentModelsChange: () => {} })
-    expect(screen.queryByText("Sub-agents use the models above.")).not.toBeNull()
+    expect(
+      screen.queryByText("Sub-agents use the models above."),
+    ).not.toBeNull()
     expect(screen.queryByText("Add sub-agent model…")).not.toBeNull()
   })
 

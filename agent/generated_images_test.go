@@ -110,7 +110,7 @@ func TestGeneratedImages_AgentReplySavesWithPath(t *testing.T) {
 			if len(savedImages(t, l.agent.Workspace)) != 1 {
 				t.Fatal("image not saved")
 			}
-			if !strings.HasPrefix(reply, "Done.\n\nImage saved as files/generated/") || !savedPathRe.MatchString(reply) {
+			if !strings.HasPrefix(reply, "Done.\n\nImage saved in Alice's workspace as files/generated/") || !savedPathRe.MatchString(reply) {
 				t.Fatalf("reply = %q, want the saved path", reply)
 			}
 		})

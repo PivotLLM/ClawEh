@@ -333,11 +333,14 @@ type modelReply struct {
 	iterations   int
 	// images counts the images the model generated in the turn.
 	images int
+	// lastImages counts the images of the last response.
+	lastImages int
 	// imageReplies are the lines the reply carries about them (saved paths,
-	// URLs, why one was not sent).
+	// URLs, why one was not sent), from every response of the turn.
 	imageReplies []string
 	// imageNotes tell the model, in its stored reply, of the images of its
-	// last response that reached the chat.
+	// last response; those of earlier responses are already noted in the
+	// tool-call message that carried them.
 	imageNotes []string
 }
 
@@ -363,16 +366,33 @@ func (al *AgentLoop) finishTurn(
 		return "", nil
 	}
 
+	// The chat is shown every image of the turn that did not reach it; the
+	// stored reply notes only the last response's images, since earlier
+	// ones are noted in the tool-call message that carried them.
 	content := withImageNotes(reply.content, reply.imageReplies)
-	if content == "" && reply.images > 0 {
+	stored := withImageNotes(reply.content, reply.imageNotes)
+	// A last response of images alone that ended normally is a complete
+	// reply; an empty, degenerate or cut-off one is not, whatever images
+	// earlier responses of the turn produced.
+	imagesOnly := reply.content == "" && reply.lastImages > 0 && reply.normal && !reply.degenerate
+	isSystemError := false
+	if reply.content == "" && !imagesOnly {
+		fallback, outcome := al.emptyReply(agent, opts, reply)
+		opts.setOutcome(outcome)
+		if fallback == "" {
+			al.stopTyping(opts.Channel, opts.ChatID)
+			return "", nil
+		}
+		content = withImageNotes(fallback, reply.imageReplies)
+		isSystemError = true
+	}
+	if content == "" {
 		// Images alone, all sent to the chat: a complete reply with no text
 		// to send.
 		opts.setOutcome(bus.OutcomeOK)
 		al.stopTyping(opts.Channel, opts.ChatID)
-		// The model's notes are its stored reply; images from an earlier
-		// iteration are already noted in that iteration's message.
-		if notes := withImageNotes("", reply.imageNotes); notes != "" {
-			if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, notes); err != nil {
+		if stored != "" {
+			if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, stored); err != nil {
 				return "", err
 			}
 		}
@@ -383,21 +403,11 @@ func (al *AgentLoop) finishTurn(
 		}
 		return "", nil
 	}
-	isSystemError := false
-	if content == "" {
-		var outcome string
-		content, outcome = al.emptyReply(agent, opts, reply)
-		opts.setOutcome(outcome)
-		if content == "" {
-			al.stopTyping(opts.Channel, opts.ChatID)
-			return "", nil
-		}
-		isSystemError = true
-	}
 
-	// A system error string is not the model's reply, so it is not saved.
-	if !isSystemError {
-		if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, withImageNotes(content, reply.imageNotes)); err != nil {
+	// A system error string is not the model's reply, so it is not saved;
+	// the notes on the last response's images still are.
+	if stored != "" {
+		if err := al.saveAssistantReply(ctx, agent, opts.SessionKey, cm, mem, stored); err != nil {
 			return "", err
 		}
 	}

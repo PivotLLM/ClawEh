@@ -416,7 +416,7 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 				"filename": filename,
 				"error":    statErr.Error(),
 			})
-			return fmt.Errorf("slack send media: %w: %w", channels.ErrTemporary, statErr)
+			return fmt.Errorf("slack send media: %w: %s is no longer available", channels.ErrSendFailed, filename)
 		}
 		urlResp, uploadErr := c.api.GetUploadURLExternalContext(ctx, slack.GetUploadURLExternalParameters{
 			FileName: filename,

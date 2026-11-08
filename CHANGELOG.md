@@ -52,10 +52,16 @@
   `files/generated/<date>/` and sent to the chat the agent is answering. A
   reply to another agent, a chat that can't receive files (the WebUI chat,
   devices, `claw agent`) or an image larger than
-  `agents.defaults.max_media_size` gets the saved path in the reply instead.
-  An image the model gives as a link is shown as "Image: <link>" and never
-  downloaded. The agent is told where each image was saved, so it can send
-  it again with `msg_send_file`. A reply of images alone is a complete reply.
+  `agents.defaults.max_media_size` gets the saved path in the reply instead;
+  a reply to another agent names whose workspace it is in ("Image saved in
+  Alice's workspace as …"), and a temporary agent made from scratch, whose
+  workspace is deleted with it, keeps no image when it answers another agent
+  or has no chat, and says so. An image the
+  model gives as a link is shown as "Image: <link>" (at most 500 characters)
+  and never downloaded. The agent is told where each image was saved, so it
+  can send it again with `msg_send_file`. A reply of images alone is a
+  complete reply; an empty, cut-off or failed final reply is still reported
+  as one even when an earlier step made an image.
 - **`security.permissions` areas `root`, `secrets`, `bin` and `default`.**
   `root` sets the data directory itself and the files directly in it
   (`config.json`); `secrets` sets `internal/`, `tls/`, `tokens/` and every
@@ -161,6 +167,11 @@
 
 ### Fixed
 
+- **`claw install` no longer mistakes a folder next to `/opt/claw` for it.**
+  A binary or service in a folder such as `/opt/claw-old` or `/opt/clawdev`,
+  or a unit whose `PATH` lists one, was taken for an `/opt/claw` install, so
+  the installer chose `/opt/claw` as the data directory. Only `/opt/claw`
+  itself and what is inside it count now.
 - **Messages and notices from an agent on a CLI model go to the chat it is
   answering.** `msg_send`, tool notices, `/tools on` progress lines and
   background results from an agent on a Claude, Codex, Antigravity or Cursor

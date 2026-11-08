@@ -57,7 +57,7 @@ func (t *llmTurn) handleImages(ctx context.Context, images []providers.Generated
 func (t *llmTurn) handleImage(ctx context.Context, img providers.GeneratedImage) imageResult {
 	fields := map[string]any{"agent_id": t.agent.ID, "agent": t.agent.Label(), "model": t.model, "size": img.Size}
 	if len(img.Data) == 0 {
-		if strings.HasPrefix(img.URL, "data:") {
+		if len(img.URL) >= len("data:") && strings.EqualFold(img.URL[:len("data:")], "data:") {
 			// Data the provider could not decode: nothing to save, and the
 			// raw text is no use in a chat.
 			fields["outcome"] = "not decodable"
@@ -65,11 +65,21 @@ func (t *llmTurn) handleImage(ctx context.Context, img providers.GeneratedImage)
 			line := "An image could not be read."
 			return imageResult{reply: line, note: "[" + line + "]"}
 		}
+		url := capImageURL(img.URL)
 		fields["outcome"] = "url"
-		fields["url"] = img.URL
+		fields["url"] = url
 		logger.InfoCF("agent", "Generated image", fields)
-		line := "Image: " + img.URL
+		line := "Image: " + url
 		return imageResult{reply: line, note: line}
+	}
+
+	if t.agent.Spec.Fresh && !t.imageCanReachChat() {
+		// A fresh temporary agent's workspace is deleted with it: a path
+		// there is no use to whoever reads the reply.
+		fields["outcome"] = "not kept, temporary agent"
+		logger.InfoCF("agent", "Generated image", fields)
+		line := fmt.Sprintf("An image was made but not kept: %s is a temporary agent.", t.agent.DisplayName())
+		return imageResult{reply: line, note: "[" + line + "]"}
 	}
 
 	path, err := t.saveImage(img)
@@ -95,7 +105,9 @@ func (t *llmTurn) deliverImage(ctx context.Context, img providers.GeneratedImage
 	channel, chatID := t.opts.Channel, t.opts.ChatID
 	switch {
 	case constants.RepliesToAgent(channel):
-		return "saved", imageResult{reply: saved, note: saved}
+		// The reply goes to another agent, whose workspace is not this one.
+		line := fmt.Sprintf("Image saved in %s's workspace as %s.", t.workspaceOwner(), path)
+		return "saved", imageResult{reply: line, note: line}
 	case channel == "" || chatID == "" || constants.IsInternalChannel(channel):
 		line := "This chat can't receive files. " + saved
 		return "saved, chat can't receive files", imageResult{reply: line, note: line}
@@ -129,6 +141,35 @@ func (t *llmTurn) deliverImage(ctx context.Context, img providers.GeneratedImage
 	}
 	line := fmt.Sprintf("Image not sent (%v). %s", err, saved)
 	return "saved, not sent: " + err.Error(), imageResult{reply: line, note: line}
+}
+
+// imageCanReachChat reports whether the turn answers a chat an image could
+// be sent to: not another agent, and not an internal channel.
+func (t *llmTurn) imageCanReachChat() bool {
+	channel := t.opts.Channel
+	return !constants.RepliesToAgent(channel) && channel != "" && t.opts.ChatID != "" &&
+		!constants.IsInternalChannel(channel)
+}
+
+// workspaceOwner names the agent whose workspace the images are saved in:
+// the agent's name, or for a clone its source's (whose workspace it uses).
+func (t *llmTurn) workspaceOwner() string {
+	if t.agent.Spec.IsClone() && strings.TrimSpace(t.agent.Name) == "" {
+		return t.agent.Spec.SourceID
+	}
+	return t.agent.DisplayName()
+}
+
+// maxImageURLChars caps an image URL shown in a reply or logged.
+const maxImageURLChars = 500
+
+// capImageURL is url cut to maxImageURLChars characters, then "…".
+func capImageURL(url string) string {
+	runes := []rune(url)
+	if len(runes) <= maxImageURLChars {
+		return url
+	}
+	return string(runes[:maxImageURLChars]) + "…"
 }
 
 // saveImage writes img's data in the agent's workspace, under a folder for
@@ -189,18 +230,6 @@ func notesFor(results []imageResult) []string {
 	notes := make([]string, 0, len(results))
 	for _, r := range results {
 		notes = append(notes, r.note)
-	}
-	return notes
-}
-
-// sentNotesFor is the model notes of the images among results that reached
-// the chat, which the reply does not mention.
-func sentNotesFor(results []imageResult) []string {
-	var notes []string
-	for _, r := range results {
-		if r.reply == "" {
-			notes = append(notes, r.note)
-		}
 	}
 	return notes
 }

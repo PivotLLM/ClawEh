@@ -92,7 +92,8 @@ With `msg_send_file` granted, the agent sends up to 10 files at a time to the ch
 Some models return images with their reply (OpenRouter image models, OpenAI image generation). Each image is saved in the agent's workspace under `files/generated/<date>/`, and then:
 
 - In a chat that can receive files, it is sent to that chat, like a file sent with `msg_send_file`.
-- In a reply to another agent (a question, a forum, a sub-agent's task), in a chat that can't receive files, or when it is larger than `agents.defaults.max_media_size`, it is not sent; the reply gives its path instead.
-- An image the model gives as a link is shown in the reply as "Image: <link>". It is never downloaded or saved.
+- In a reply to another agent (a question, a forum, a sub-agent's task), in a chat that can't receive files, or when it is larger than `agents.defaults.max_media_size`, it is not sent; the reply gives its path instead. A reply to another agent names whose workspace the image is in.
+- A temporary agent made from scratch keeps no image when it answers another agent or has no chat, since its workspace is deleted with it; its reply says so.
+- An image the model gives as a link is shown in the reply as "Image: <link>", cut to 500 characters. It is never downloaded or saved.
 
 The agent is told where each image was saved, so it can refer to it later or send it again with `msg_send_file`. A clone saves in its source agent's workspace.
