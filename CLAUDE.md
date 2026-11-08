@@ -454,8 +454,8 @@ production instance directly; test against a dev instance.
   or deleted. Install-wide `classifiers` (`config.ClassifiersConfig`,
   `config/classifiers.go`: `processed_days` 30, `limits.max_rules` 100,
   `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,
-  `max_parallel` 8, `max_activity_hours` 720; 0/absent = default, negative
-  refused) is `config.json` only, no WebUI. `Store.Update` writes the agent's
+  `max_parallel` 8, `max_activity_hours` 720, `min_every_seconds` 15, the
+  minimum `trigger.every_seconds`; 0/absent = default, negative refused) is `config.json` only, no WebUI. `Store.Update` writes the agent's
   first model when a save turns the switch on with none
   (`completeClassifierModels`), refuses a new unusable model
   (`newClassifierModelProblems`) and a human agent with the switch on

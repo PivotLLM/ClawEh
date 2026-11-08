@@ -81,7 +81,8 @@ for you; a definition does not name one.
 }
 ```
 
-- `trigger.every_seconds`: how often it runs. A run that finds nothing new
+- `trigger.every_seconds`: how often it runs, at least the install's
+  `min_every_seconds` (listed at the end). A run that finds nothing new
   costs no model call, but it always calls the source tool (see the
   workflow above for choosing it).
 - `source`: the tool that lists the items. `items` is the dot-path to the

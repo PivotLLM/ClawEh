@@ -20,7 +20,7 @@ type ClassifiersConfig struct {
 }
 
 // ClassifierLimitsConfig is the install's maximum for a classifier
-// definition's limits.
+// definition's limits, and its minimum for trigger.every_seconds.
 type ClassifierLimitsConfig struct {
 	MaxRules         int `json:"max_rules,omitempty"`
 	MaxPromptChars   int `json:"max_prompt_chars,omitempty"`
@@ -28,6 +28,7 @@ type ClassifierLimitsConfig struct {
 	MaxItemsPerRun   int `json:"max_items_per_run,omitempty"`
 	MaxParallel      int `json:"max_parallel,omitempty"`
 	MaxActivityHours int `json:"max_activity_hours,omitempty"`
+	MinEverySeconds  int `json:"min_every_seconds,omitempty"`
 }
 
 // The defaults of the classifiers section.
@@ -39,6 +40,7 @@ const (
 	DefaultClassifierMaxItemsPerRun   = 500
 	DefaultClassifierMaxParallel      = 8
 	DefaultClassifierMaxActivityHours = 720
+	DefaultClassifierMinEverySeconds  = 15
 )
 
 // Effective returns the section with every unset (0) field at its default.
@@ -59,6 +61,7 @@ func (c ClassifiersConfig) Effective() ClassifiersConfig {
 			MaxItemsPerRun:   orDefault(l.MaxItemsPerRun, DefaultClassifierMaxItemsPerRun),
 			MaxParallel:      orDefault(l.MaxParallel, DefaultClassifierMaxParallel),
 			MaxActivityHours: orDefault(l.MaxActivityHours, DefaultClassifierMaxActivityHours),
+			MinEverySeconds:  orDefault(l.MinEverySeconds, DefaultClassifierMinEverySeconds),
 		},
 	}
 }
@@ -78,6 +81,7 @@ func (c ClassifiersConfig) Validate() error {
 		{"maximum for max_items_per_run", l.MaxItemsPerRun},
 		{"maximum for max_parallel", l.MaxParallel},
 		{"maximum for max_activity_hours", l.MaxActivityHours},
+		{"minimum for min_every_seconds", l.MinEverySeconds},
 	} {
 		if f.value < 0 {
 			errs = append(errs, errors.New("The classifier "+f.what+" must be 0 (the default) or more."))

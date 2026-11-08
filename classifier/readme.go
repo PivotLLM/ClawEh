@@ -16,11 +16,11 @@ import (
 //go:embed readme/README.md
 var readme string
 
-// guide returns the classifier guide followed by the install's maximums.
+// guide returns the classifier guide followed by the install's limits.
 func guide(c Ceilings) string {
 	var b strings.Builder
 	b.WriteString(readme)
-	lines := make([]string, 0, 7)
+	lines := make([]string, 0, 8)
 	for _, f := range []struct {
 		name  string
 		value int
@@ -31,13 +31,14 @@ func guide(c Ceilings) string {
 		{"max_items_per_run", c.MaxItemsPerRun},
 		{"max_parallel", c.MaxParallel},
 		{"max_activity_hours", c.MaxActivityHours},
+		{"min_every_seconds", c.MinEverySeconds},
 	} {
 		if f.value > 0 {
 			lines = append(lines, fmt.Sprintf("- `%s`: %d\n", f.name, f.value))
 		}
 	}
 	if len(lines) > 0 {
-		b.WriteString("\n## This install's maximums\n\n")
+		b.WriteString("\n## This install's limits\n\n")
 		for _, l := range lines {
 			b.WriteString(l)
 		}

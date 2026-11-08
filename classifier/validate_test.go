@@ -25,7 +25,7 @@ func decodeMap(t *testing.T, m map[string]any) *Definition {
 	return def
 }
 
-var testCeilings = Ceilings{MaxRules: 3, MaxPromptChars: 200, MaxItemChars: 1000, MaxItemsPerRun: 50, MaxParallel: 4, MaxActivityHours: 100}
+var testCeilings = Ceilings{MaxRules: 3, MaxPromptChars: 200, MaxItemChars: 1000, MaxItemsPerRun: 50, MaxParallel: 4, MaxActivityHours: 100, MinEverySeconds: 15}
 
 func TestValidateStaticAcceptsExample(t *testing.T) {
 	if err := ValidateStatic(decodeMap(t, definition()), testCeilings); err != nil {
@@ -43,6 +43,7 @@ func TestValidateStatic(t *testing.T) {
 		{"bad id", func(m map[string]any) { m["id"] = "-inbox" }, `id "-inbox" must use only letters`},
 		{"no trigger", func(m map[string]any) { delete(m, "trigger") }, "trigger.every_seconds must be 1 or more."},
 		{"zero interval", func(m map[string]any) { m["trigger"] = map[string]any{"every_seconds": 0} }, "trigger.every_seconds must be 1 or more."},
+		{"interval below minimum", func(m map[string]any) { m["trigger"] = map[string]any{"every_seconds": 14} }, "trigger.every_seconds is 14 seconds; this install allows at least 15."},
 		{"no source tool", func(m map[string]any) { delete(obj(m["source"]), "tool") }, "source.tool is required."},
 		{"no source id", func(m map[string]any) { delete(obj(m["source"]), "id") }, "source.id is required."},
 		{"bad items path", func(m map[string]any) { obj(m["source"])["items"] = "a..b" }, `source.items "a..b" is not a dot-path.`},
@@ -119,11 +120,21 @@ func TestValidateStatic(t *testing.T) {
 	}
 }
 
+// An interval at the install's minimum is accepted.
+func TestValidateStaticIntervalAtMinimum(t *testing.T) {
+	m := definition()
+	m["trigger"] = map[string]any{"every_seconds": 15}
+	if err := ValidateStatic(decodeMap(t, m), testCeilings); err != nil {
+		t.Errorf("an interval at the minimum is refused: %v", err)
+	}
+}
+
 // Zero ceilings are no maximum.
 func TestValidateStaticWithoutCeilings(t *testing.T) {
 	m := definition()
 	obj(m["classify"])["rules"] = []any{"a", "b", "c", "d", "e"}
 	m["limits"] = map[string]any{"items_per_run": 10000, "parallel": 64}
+	m["trigger"] = map[string]any{"every_seconds": 1}
 	if err := ValidateStatic(decodeMap(t, m), Ceilings{}); err != nil {
 		t.Errorf("refused without ceilings: %v", err)
 	}
@@ -550,5 +561,34 @@ func TestInspect(t *testing.T) {
 	}
 	if sums, err := Inspect(t.Context(), t.TempDir()+"/none", Ceilings{}); err != nil || len(sums) != 0 {
 		t.Errorf("Inspect(missing folder) = %v, %v", sums, err)
+	}
+}
+
+// The install's minimum interval is read from the live configuration at every
+// validation: raising it refuses the definition at the next validation, and
+// an existing definition below it is listed invalid, as one over another
+// limit is.
+func TestMinimumIntervalFollowsLiveConfig(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	def := definition()
+	def["trigger"] = map[string]any{"every_seconds": 30}
+	if err := e.svc.Validate(ctx, e.scope, mustJSON(t, def), false); err != nil {
+		t.Fatalf("30 seconds under a minimum of 15: %v", err)
+	}
+	e.create(def)
+	e.mu.Lock()
+	e.ceilings.MinEverySeconds = 60
+	e.mu.Unlock()
+	const want = "trigger.every_seconds is 30 seconds; this install allows at least 60."
+	if err := e.svc.Validate(ctx, e.scope, mustJSON(t, def), false); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Validate after raising the minimum = %v, want %q", err, want)
+	}
+	sums, err := e.svc.List(e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sums) != 1 || !strings.Contains(sums[0].Invalid, want) {
+		t.Errorf("List after raising the minimum = %+v", sums)
 	}
 }

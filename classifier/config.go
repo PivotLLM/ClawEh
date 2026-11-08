@@ -113,9 +113,10 @@ const ActivityValueMax = 500
 // ReasonMax caps the reason kept from a model reply, in characters.
 const ReasonMax = 500
 
-// Ceilings are the install's maximums (config classifiers.limits) and the
-// processed-id retention (classifiers.processed_days). A zero field has no
-// maximum (ProcessedDays: ids are kept DefaultProcessedDays).
+// Ceilings are the install's maximums and minimum interval (config
+// classifiers.limits) and the processed-id retention
+// (classifiers.processed_days). A zero field has no limit (ProcessedDays: ids
+// are kept DefaultProcessedDays).
 type Ceilings struct {
 	MaxRules         int
 	MaxPromptChars   int
@@ -123,6 +124,7 @@ type Ceilings struct {
 	MaxItemsPerRun   int
 	MaxParallel      int
 	MaxActivityHours int
+	MinEverySeconds  int
 	ProcessedDays    int
 }
 

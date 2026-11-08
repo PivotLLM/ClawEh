@@ -142,7 +142,7 @@ func TestTools(t *testing.T) {
 	}
 
 	if res := call(t, defs, "readme", nil); res.IsError || !strings.Contains(res.ForLLM, "## Substitution") ||
-		!strings.Contains(res.ForLLM, "## This install's maximums") || !strings.Contains(res.ForLLM, "- `max_rules`: 100") {
+		!strings.Contains(res.ForLLM, "## This install's limits") || !strings.Contains(res.ForLLM, "- `max_rules`: 100") || !strings.Contains(res.ForLLM, "- `min_every_seconds`: 15") {
 		t.Errorf("readme = %s", res.ForLLM)
 	}
 	if res := call(t, defs, "list", map[string]any{}); res.IsError || strings.TrimSpace(res.ForLLM) != "[]" {

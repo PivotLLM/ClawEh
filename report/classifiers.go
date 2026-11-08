@@ -27,6 +27,7 @@ func classifierCeilings(cfg *config.Config) classifier.Ceilings {
 		MaxItemsPerRun:   c.Limits.MaxItemsPerRun,
 		MaxParallel:      c.Limits.MaxParallel,
 		MaxActivityHours: c.Limits.MaxActivityHours,
+		MinEverySeconds:  c.Limits.MinEverySeconds,
 		ProcessedDays:    c.ProcessedDays,
 	}
 }

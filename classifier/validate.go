@@ -64,7 +64,7 @@ func ClassifierToolRefusal(tool, field string) string {
 const idRuleText = "letters, digits, - and _, starting with a letter or digit, at most 64 characters"
 
 // ValidateStatic checks a definition on its own and against the install's
-// maximums c (a zero maximum is no maximum). It returns a *ValidationError
+// maximums and minimum interval c (a zero value is no limit). It returns a *ValidationError
 // with one sentence per issue, naming the key (and the maximum), or nil.
 func ValidateStatic(def *Definition, c Ceilings) error {
 	var issues []string
@@ -90,6 +90,8 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 	}
 	if def.Trigger.EverySeconds <= 0 {
 		add("trigger.every_seconds must be 1 or more.")
+	} else if c.MinEverySeconds > 0 && def.Trigger.EverySeconds < c.MinEverySeconds {
+		add("trigger.every_seconds is %d seconds; this install allows at least %d.", def.Trigger.EverySeconds, c.MinEverySeconds)
 	}
 
 	// Source.

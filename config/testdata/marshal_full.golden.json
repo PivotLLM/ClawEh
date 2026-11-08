@@ -755,7 +755,8 @@
       "max_item_chars": 1,
       "max_items_per_run": 1,
       "max_parallel": 1,
-      "max_activity_hours": 1
+      "max_activity_hours": 1,
+      "min_every_seconds": 1
     }
   },
   "operator": {

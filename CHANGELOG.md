@@ -38,7 +38,8 @@
   in the nightly backup. Install-wide limits are in the `classifiers`
   section of `config.json` (`processed_days`, default 30, and `limits`:
   `max_rules` 100, `max_prompt_chars` 20000, `max_item_chars` 50000,
-  `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours` 720; 0
+  `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours` 720, and
+  `min_every_seconds` 15, the shortest interval a classifier may run at; 0
   or absent uses the default, a negative value is refused). Changes and
   handled items are recorded in the audit log (**Classifier change**,
   **Classification**). Check Up marks a missing or unusable classifier

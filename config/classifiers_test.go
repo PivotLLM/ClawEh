@@ -17,17 +17,18 @@ func TestClassifiersEffective(t *testing.T) {
 		ProcessedDays: 30,
 		Limits: ClassifierLimitsConfig{
 			MaxRules: 100, MaxPromptChars: 20000, MaxItemChars: 50000,
-			MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720,
+			MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720, MinEverySeconds: 15,
 		},
 	}
 	if got := (ClassifiersConfig{}).Effective(); got != defaults {
 		t.Errorf("absent: Effective() = %+v, want %+v", got, defaults)
 	}
-	set := ClassifiersConfig{ProcessedDays: 7, Limits: ClassifierLimitsConfig{MaxRules: 5, MaxParallel: 2}}
+	set := ClassifiersConfig{ProcessedDays: 7, Limits: ClassifierLimitsConfig{MaxRules: 5, MaxParallel: 2, MinEverySeconds: 60}}
 	want := defaults
 	want.ProcessedDays = 7
 	want.Limits.MaxRules = 5
 	want.Limits.MaxParallel = 2
+	want.Limits.MinEverySeconds = 60
 	if got := set.Effective(); got != want {
 		t.Errorf("some set: Effective() = %+v, want %+v", got, want)
 	}
@@ -40,7 +41,7 @@ func TestClassifiersValidate(t *testing.T) {
 	if err := (ClassifiersConfig{ProcessedDays: 3, Limits: ClassifierLimitsConfig{MaxRules: 1}}).Validate(); err != nil {
 		t.Errorf("positive values: %v", err)
 	}
-	err := ClassifiersConfig{ProcessedDays: -1, Limits: ClassifierLimitsConfig{MaxRules: -1, MaxActivityHours: -2}}.Validate()
+	err := ClassifiersConfig{ProcessedDays: -1, Limits: ClassifierLimitsConfig{MaxRules: -1, MaxActivityHours: -2, MinEverySeconds: -3}}.Validate()
 	if err == nil {
 		t.Fatal("negative values accepted")
 	}
@@ -48,6 +49,7 @@ func TestClassifiersValidate(t *testing.T) {
 		"The classifier setting processed_days must be 0 (the default) or more.",
 		"The classifier maximum for max_rules must be 0 (the default) or more.",
 		"The classifier maximum for max_activity_hours must be 0 (the default) or more.",
+		"The classifier minimum for min_every_seconds must be 0 (the default) or more.",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
@@ -69,8 +71,17 @@ func TestLoadConfig_ClassifiersSection(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	got := cfg.Classifiers.Effective()
-	if got.ProcessedDays != 10 || got.Limits.MaxParallel != 2 || got.Limits.MaxRules != DefaultClassifierMaxRules {
+	if got.ProcessedDays != 10 || got.Limits.MaxParallel != 2 || got.Limits.MaxRules != DefaultClassifierMaxRules ||
+		got.Limits.MinEverySeconds != DefaultClassifierMinEverySeconds {
 		t.Errorf("Effective() = %+v", got)
+	}
+	write(`{"classifiers":{"limits":{"min_every_seconds":60}}}`)
+	if cfg, err = LoadConfig(path); err != nil || cfg.Classifiers.Effective().Limits.MinEverySeconds != 60 {
+		t.Errorf("LoadConfig with min_every_seconds 60 = %v, %v", cfg, err)
+	}
+	write(`{"classifiers":{"limits":{"min_every_seconds":-1}}}`)
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "The classifier minimum for min_every_seconds") {
+		t.Errorf("LoadConfig with a negative minimum = %v", err)
 	}
 	write(`{"classifiers":{"limits":{"max_items_per_run":-5}}}`)
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "The classifier maximum for max_items_per_run") {
@@ -90,6 +101,12 @@ func TestStore_ClassifiersSectionNegativeRefused(t *testing.T) {
 	}
 	if s.Current().Classifiers.ProcessedDays != 0 {
 		t.Error("a refused update was applied")
+	}
+	if err := s.Update(func(c *Config) error {
+		c.Classifiers.Limits.MinEverySeconds = -1
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "min_every_seconds must be 0") {
+		t.Errorf("Update with a negative min_every_seconds = %v", err)
 	}
 	if err := s.Update(func(c *Config) error {
 		c.Classifiers.Limits.MaxParallel = 3

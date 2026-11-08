@@ -238,7 +238,7 @@ func newEnv(t *testing.T) *env {
 		notifier: &fakeNotifier{},
 		auditor:  &fakeAuditor{},
 		clock:    clock.NewFake(testStart),
-		ceilings: Ceilings{MaxRules: 100, MaxPromptChars: 20000, MaxItemChars: 50000, MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720, ProcessedDays: 30},
+		ceilings: Ceilings{MaxRules: 100, MaxPromptChars: 20000, MaxItemChars: 50000, MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720, MinEverySeconds: 15, ProcessedDays: 30},
 	}
 	e.log = &testLogger{t: t}
 	e.scopes = []Scope{e.scope}

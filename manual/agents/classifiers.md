@@ -166,7 +166,8 @@ Install-wide, in `config.json` only:
     "max_item_chars": 50000,
     "max_items_per_run": 500,
     "max_parallel": 8,
-    "max_activity_hours": 720
+    "max_activity_hours": 720,
+    "min_every_seconds": 15
   }
 }
 ```
@@ -180,8 +181,9 @@ Install-wide, in `config.json` only:
 | `max_items_per_run` | 500 | `limits.items_per_run`. |
 | `max_parallel` | 8 | `limits.parallel`. |
 | `max_activity_hours` | 720 | `activity_hours`. |
+| `min_every_seconds` | 15 | The shortest `trigger.every_seconds`. |
 
-Absent or 0 uses the default; a negative value is refused. A definition above a limit is refused, naming the key and the limit. A change applies to the next save and run.
+Absent or 0 uses the default; a negative value is refused. A definition above a limit, or running more often than `min_every_seconds`, is refused, naming the key and the limit. A change applies to the next save and run.
 
 A definition that leaves its own settings out uses: `items_per_run` = `max_items_per_run`, `parallel` 1, `stop_after_failures` 5, `fetch.max_chars` = `max_item_chars`, `activity_hours` 72.
 

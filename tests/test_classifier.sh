@@ -173,6 +173,7 @@ cat >"$HOME_DIR/config.json" <<EOF
       {"id": "default", "enabled": true, "token": "$TG_TOKEN", "base_url": "http://127.0.0.1:$STUB_PORT"}
     ]
   },
+  "classifiers": {"limits": {"min_every_seconds": 1}},
   "security": {"permissions": {"agents": {"dir_mode": "0750", "file_mode": "0640"}}},
   "gateway": {"host": "127.0.0.1", "port": $GW_PORT, "tls": {"mode": "off"}},
   "mcp_host": {"enabled": true, "listen": "127.0.0.1:$MCP_PORT", "endpoint_path": "/mcp", "external_tools": ["*"]}

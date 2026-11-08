@@ -606,6 +606,7 @@ func TestClassifierHost_Ceilings(t *testing.T) {
 		MaxItemsPerRun:   config.DefaultClassifierMaxItemsPerRun,
 		MaxParallel:      config.DefaultClassifierMaxParallel,
 		MaxActivityHours: config.DefaultClassifierMaxActivityHours,
+		MinEverySeconds:  config.DefaultClassifierMinEverySeconds,
 		ProcessedDays:    config.DefaultClassifierProcessedDays,
 	}
 	if got := NewClassifierHost().Ceilings(); got != defaults {
@@ -624,12 +625,12 @@ func TestClassifierHost_Ceilings(t *testing.T) {
 	}
 
 	next := *cfg
-	next.Classifiers = config.ClassifiersConfig{Limits: config.ClassifierLimitsConfig{MaxRules: 9, MaxItemChars: 1000}}
+	next.Classifiers = config.ClassifiersConfig{Limits: config.ClassifierLimitsConfig{MaxRules: 9, MaxItemChars: 1000, MinEverySeconds: 60}}
 	if err := al.ReloadProviderAndConfig(context.Background(), &mockProvider{}, &next); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	want = defaults
-	want.MaxRules, want.MaxItemChars = 9, 1000
+	want.MaxRules, want.MaxItemChars, want.MinEverySeconds = 9, 1000, 60
 	if got := host.Ceilings(); got != want {
 		t.Fatalf("Ceilings after reload = %+v, want %+v", got, want)
 	}

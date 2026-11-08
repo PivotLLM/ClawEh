@@ -139,7 +139,7 @@ func TestSchedulerCoalescesTriggers(t *testing.T) {
 	e := newEnv(t)
 	e.setInbox([]string{"m1"})
 	def := definition()
-	def["trigger"] = map[string]any{"every_seconds": 10}
+	def["trigger"] = map[string]any{"every_seconds": 15}
 	e.create(def)
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
@@ -152,7 +152,7 @@ func TestSchedulerCoalescesTriggers(t *testing.T) {
 	<-entered // the first run is blocked in the model
 	eventually(t, "the scheduler to wait", func() bool { return e.clock.Waiters() > 0 })
 	for range 3 {
-		e.clock.Advance(10 * time.Second)
+		e.clock.Advance(15 * time.Second)
 		eventually(t, "a tick", func() bool { return e.clock.Waiters() > 0 })
 	}
 	if n := e.lists(); n != 2 {
