@@ -155,7 +155,7 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 
 ## Limits
 
-Install-wide, in `config.json` only:
+Install-wide, set on the System page (**Classifiers**) or in `config.json`:
 
 ```json
 "classifiers": {

@@ -16,6 +16,7 @@ import {
 import { AgentDefaultsSection } from "@/components/config/sections/agent-defaults-section"
 import { AgentModelDefaultsSection } from "@/components/config/sections/agent-model-defaults-section"
 import { BackupSection } from "@/components/config/sections/backup-section"
+import { ClassifiersSection } from "@/components/config/sections/classifiers-section"
 import { ContextManagementSection } from "@/components/config/sections/context-management-section"
 import { DevicesSection } from "@/components/config/sections/devices-section"
 import { ForumSection } from "@/components/config/sections/forum-section"
@@ -28,7 +29,7 @@ type SaveStatus = "saving" | "saved" | "error" | null
 
 // SystemPage is everything about the running system that is not a listener:
 // the operator's name, agent defaults, context management, runtime, logging,
-// backup, forum maximums and hardware devices. Listeners (ports, HTTPS, allowlists, the
+// backup, forum maximums, classifier settings and hardware devices. Listeners (ports, HTTPS, allowlists, the
 // device gateway) are on the Network page. Fields autosave on a debounce, as
 // a JSON merge patch.
 export function SystemPage() {
@@ -418,6 +419,53 @@ export function SystemPage() {
               ),
             }),
           },
+          // Blank (or 0) is the default; null removes the key from the file.
+          classifiers: {
+            ...nullableInts({
+              processed_days: parseOptionalIntField(
+                form.classifierProcessedDays,
+                t("pages.config.classifiers_processed_days"),
+                { min: 0 },
+              ),
+            }),
+            limits: nullableInts({
+              max_rules: parseOptionalIntField(
+                form.classifierMaxRules,
+                t("pages.config.classifiers_max_rules"),
+                { min: 0 },
+              ),
+              max_prompt_chars: parseOptionalIntField(
+                form.classifierMaxPromptChars,
+                t("pages.config.classifiers_max_prompt_chars"),
+                { min: 0 },
+              ),
+              max_item_chars: parseOptionalIntField(
+                form.classifierMaxItemChars,
+                t("pages.config.classifiers_max_item_chars"),
+                { min: 0 },
+              ),
+              max_items_per_run: parseOptionalIntField(
+                form.classifierMaxItemsPerRun,
+                t("pages.config.classifiers_max_items_per_run"),
+                { min: 0 },
+              ),
+              max_parallel: parseOptionalIntField(
+                form.classifierMaxParallel,
+                t("pages.config.classifiers_max_parallel"),
+                { min: 0 },
+              ),
+              max_activity_hours: parseOptionalIntField(
+                form.classifierMaxActivityHours,
+                t("pages.config.classifiers_max_activity_hours"),
+                { min: 0 },
+              ),
+              min_every_seconds: parseOptionalIntField(
+                form.classifierMinEverySeconds,
+                t("pages.config.classifiers_min_every_seconds"),
+                { min: 0 },
+              ),
+            }),
+          },
         }
       }
     } catch (err) {
@@ -506,6 +554,8 @@ export function SystemPage() {
               <BackupSection form={form} onFieldChange={updateField} />
 
               <ForumSection form={form} onFieldChange={updateField} />
+
+              <ClassifiersSection form={form} onFieldChange={updateField} />
 
               <DevicesSection form={form} onFieldChange={updateField} />
             </div>

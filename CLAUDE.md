@@ -455,7 +455,8 @@ production instance directly; test against a dev instance.
   `config/classifiers.go`: `processed_days` 30, `limits.max_rules` 100,
   `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,
   `max_parallel` 8, `max_activity_hours` 720, `min_every_seconds` 15, the
-  minimum `trigger.every_seconds`; 0/absent = default, negative refused) is `config.json` only, no WebUI. `Store.Update` writes the agent's
+  minimum `trigger.every_seconds`; 0/absent = default, negative refused; System page **Classifiers**, `classifiers-section.tsx`, defaults
+  shared with the frontend through `config/testdata/classifier_defaults.json`). `Store.Update` writes the agent's
   first model when a save turns the switch on with none
   (`completeClassifierModels`), refuses a new unusable model
   (`newClassifierModelProblems`) and a human agent with the switch on
@@ -771,13 +772,13 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 156 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 157 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
 - **Dev only.** Groups F, G, N, S and T write (F creates an agent and, in F11, a
   throwaway agent whose May message it ticks, and in F14 one whose
-  classifiers switch it toggles, G edits a config field, N
+  classifiers switch it toggles, G edits two config fields, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent
   it attaches the card to; I12 adds a temporary model only when no model's

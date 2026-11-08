@@ -269,6 +269,73 @@ describe("SystemPage forum maximums", () => {
   })
 })
 
+/** The `classifiers` block of the most recent PATCH. */
+function lastClassifiersPatch() {
+  const patch = patched.mock.calls.at(-1)?.[0] as
+    { classifiers?: Record<string, unknown> } | undefined
+  return patch?.classifiers
+}
+
+describe("SystemPage classifier settings", () => {
+  // A field left blank shows the default and is saved as null (the key is
+  // removed, so the default applies); a value set in the config is shown
+  // and saved as a number.
+  it("shows set values and defaults, and saves them", async () => {
+    sample.classifiers = { processed_days: 10, limits: { max_rules: 40 } }
+    try {
+      renderPage()
+      const maxRules = (await screen.findByTestId(
+        "classifiers-max_rules",
+      )) as HTMLInputElement
+      expect(maxRules.value).toBe("40")
+      expect(
+        (screen.getByTestId("classifiers-processed_days") as HTMLInputElement)
+          .value,
+      ).toBe("10")
+      const interval = screen.getByTestId(
+        "classifiers-min_every_seconds",
+      ) as HTMLInputElement
+      expect(interval.value).toBe("")
+      expect(interval.placeholder).toBe("15")
+      expect(
+        (screen.getByTestId("classifiers-max_item_chars") as HTMLInputElement)
+          .placeholder,
+      ).toBe("50000")
+
+      fireEvent.change(interval, { target: { value: "60" } })
+      await waitFor(() => expect(patched).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
+      })
+      expect(lastClassifiersPatch()).toEqual({
+        processed_days: 10,
+        limits: {
+          max_rules: 40,
+          max_prompt_chars: null,
+          max_item_chars: null,
+          max_items_per_run: null,
+          max_parallel: null,
+          max_activity_hours: null,
+          min_every_seconds: 60,
+        },
+      })
+    } finally {
+      delete sample.classifiers
+    }
+  })
+
+  it("refuses a negative value without saving", async () => {
+    renderPage()
+    const interval = await screen.findByTestId("classifiers-min_every_seconds")
+    fireEvent.change(interval, { target: { value: "-1" } })
+    await screen.findByText(
+      "pages.config.classifiers_min_every_seconds must be >= 0.",
+      undefined,
+      { timeout: 3000 },
+    )
+    expect(patched).not.toHaveBeenCalled()
+  })
+})
+
 describe("SystemPage refused save", () => {
   // The server's sentence is what the operator sees, not a status code.
   it("shows why the save was refused", async () => {

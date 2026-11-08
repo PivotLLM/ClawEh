@@ -583,7 +583,8 @@
         "runtime": "Runtime",
         "devices": "Devices",
         "backup": "Backup",
-        "forum": "Forums"
+        "forum": "Forums",
+        "classifiers": "Classifiers"
       },
       "open_raw": "Raw config",
       "back_to_visual": "System settings",
@@ -621,7 +622,17 @@
       "forum_max_duration_seconds": "Max run time (seconds)",
       "forum_call_timeout_seconds": "Call timeout (seconds)",
       "forum_max_parallel_calls": "Max parallel calls",
-      "forum_default": "Default {{value}}."
+      "forum_default": "Default {{value}}.",
+      "classifiers_desc": "Limits for every classifier on this install. Blank uses the default.",
+      "classifiers_processed_days": "Remember handled items (days)",
+      "classifiers_max_rules": "Max rules per classifier",
+      "classifiers_max_prompt_chars": "Max instructions length (characters)",
+      "classifiers_max_item_chars": "Max item size (characters)",
+      "classifiers_max_items_per_run": "Max items per run",
+      "classifiers_max_parallel": "Max items at once",
+      "classifiers_max_activity_hours": "Max activity history (hours)",
+      "classifiers_min_every_seconds": "Shortest run interval (seconds)",
+      "classifiers_default": "Default {{value}}."
     },
     "logs": {
       "empty": "Waiting for logs...",

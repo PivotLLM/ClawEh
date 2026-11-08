@@ -35,8 +35,9 @@
   `classifier_status`, `classifier_test`, `classifier_rerun` and
   `classifier_activity`. Definitions are JSON files in the agent's
   `classifiers/` folder, readable and editable by hand, and the folder is
-  in the nightly backup. Install-wide limits are in the `classifiers`
-  section of `config.json` (`processed_days`, default 30, and `limits`:
+  in the nightly backup. Install-wide limits are on the System page
+  (**Classifiers**) and in the `classifiers` section of `config.json`
+  (`processed_days`, default 30, and `limits`:
   `max_rules` 100, `max_prompt_chars` 20000, `max_item_chars` 50000,
   `max_items_per_run` 500, `max_parallel` 8, `max_activity_hours` 720, and
   `min_every_seconds` 15, the shortest interval a classifier may run at; 0

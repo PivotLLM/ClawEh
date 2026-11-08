@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-156 checks in all; the runner prints the same tally at the end.
+157 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -144,6 +144,7 @@ else is on **System**. `/config` still works and lands on `/system`;
 | G3 | Restore the original value, wait ~2s | `backup.dest` matches what G2 recorded |
 | G4 | Load `/config/raw` | The configuration document renders |
 | G5 | Load `/config` | The browser lands on `/system` and the System page renders (Backup section present), no console errors |
+| G6 | Note `classifiers.limits.min_every_seconds` (absent = blank), set **Shortest run interval (seconds)** in the Classifiers section to `77`, wait ~2s, then put the original back (blank if it was absent), wait ~2s | The field shows the default `15` as its placeholder; after the edit the config holds `77`; after the revert it matches the original (key absent if it was absent) |
 
 ## R. Network page
 

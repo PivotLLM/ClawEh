@@ -1,0 +1,12 @@
+{
+  "processed_days": 30,
+  "limits": {
+    "max_rules": 100,
+    "max_prompt_chars": 20000,
+    "max_item_chars": 50000,
+    "max_items_per_run": 500,
+    "max_parallel": 8,
+    "max_activity_hours": 720,
+    "min_every_seconds": 15
+  }
+}

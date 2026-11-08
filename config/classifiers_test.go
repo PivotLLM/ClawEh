@@ -4,6 +4,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -371,5 +373,25 @@ func TestReservedWorkspaceName_Classifiers(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("a mount named classifiers was accepted")
+	}
+}
+
+// testdata/classifier_defaults.json holds the defaults of the classifiers
+// section; the WebUI's CLASSIFIER_DEFAULTS (form-model.test.ts) is checked
+// against the same file, so the System page shows the defaults the server
+// applies.
+func TestClassifierDefaultsFixture(t *testing.T) {
+	b, err := os.ReadFile("testdata/classifier_defaults.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture ClassifiersConfig
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&fixture); err != nil {
+		t.Fatal(err)
+	}
+	if want := (ClassifiersConfig{}).Effective(); fixture != want {
+		t.Fatalf("classifier_defaults.json = %+v, want %+v", fixture, want)
 	}
 }

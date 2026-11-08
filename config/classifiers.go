@@ -31,7 +31,9 @@ type ClassifierLimitsConfig struct {
 	MinEverySeconds  int `json:"min_every_seconds,omitempty"`
 }
 
-// The defaults of the classifiers section.
+// The defaults of the classifiers section. The WebUI shows them from its own
+// copy (CLASSIFIER_DEFAULTS); both are checked against
+// testdata/classifier_defaults.json.
 const (
 	DefaultClassifierProcessedDays    = 30
 	DefaultClassifierMaxRules         = 100

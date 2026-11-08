@@ -1066,7 +1066,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
 }
 
 // G. System page (the old Config page minus the listeners, which are group R)
-if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
+if (useGroup("G", "System page — load, edit, persist, restore, redirect, classifiers")) {
   let original
   await check(1, "system page renders the moved sections", async () => {
     const { close, text, problems } = await open("/system")
@@ -1122,6 +1122,30 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect")) {
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     assert(body.includes("Backup"), "the System page did not render after the redirect")
+  })
+  await check(6, "a classifier setting saves and reverts", async () => {
+    const before = (await config())?.classifiers?.limits?.min_every_seconds
+    const original = before ? String(before) : ""
+    const { close, page } = await open("/system")
+    try {
+      const field = page.locator("[data-testid=classifiers-min_every_seconds]")
+      const placeholder = await field.getAttribute("placeholder")
+      assert(placeholder === "15", `placeholder = ${placeholder}, expected 15`)
+      await field.fill("77")
+      await page.waitForTimeout(2000)
+      const saved = (await config())?.classifiers?.limits?.min_every_seconds
+      assert(saved === 77, `min_every_seconds = ${saved}, expected 77`)
+      await field.fill(original)
+      await page.waitForTimeout(2000)
+    } finally {
+      await close()
+    }
+    const after = (await config())?.classifiers?.limits?.min_every_seconds
+    assert(
+      (after ? String(after) : "") === original,
+      `min_every_seconds = ${after}, expected ${original || "absent"}`,
+    )
+    return `restored to ${original || "absent"}`
   })
 }
 
