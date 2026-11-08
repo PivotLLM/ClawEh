@@ -78,10 +78,11 @@ Turn **Share common directory** off for an agent that must not see what other ag
 
 ## Sending files to the chat
 
-With `msg_send_file` granted, the agent sends up to 10 files at a time to the chat it is answering, where its reply goes. It can send only files it can read with the file tools, by the rules above. Each file must be within `agents.defaults.max_media_size` (20 MB by default).
+With `msg_send_file` granted, the agent sends up to 10 files at a time to the chat it is answering, where its reply goes. It can send only files it is allowed to read: it needs `file_read_lines` or `file_read_bytes` too, and the rules above apply. Each file must be within `agents.defaults.max_media_size` (20 MB by default).
 
 - Images go as pictures where the chat shows them (Telegram); other files, Markdown included, go as files, unchanged.
 - Telegram, Slack, Discord and Matrix chats can receive files. The WebUI chat, devices and SecMsg cannot; the agent is told so.
 - The agent learns, for each file, whether it was sent or why not.
 - Files are never sent to another agent: a request answering another agent, or a sub-agent's task, is refused.
+- A turn with no chat (`claw agent`, a service token) cannot send files.
 - A Slack app needs the `files:write` scope to send files (see [Slack](../channels/slack.md)).

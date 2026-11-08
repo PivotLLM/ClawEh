@@ -4,16 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-
-	"github.com/h2non/filetype"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // MaxSendFiles is the most files one msg_send_file call sends.
@@ -32,24 +31,34 @@ type FileReader interface {
 // where the turn's final reply goes.
 type SendFileTool struct {
 	reader      FileReader
+	canRead     bool
 	maxFileSize int
 	sender      tools.FileSender
 }
 
 // NewSendFileTool returns the msg_send_file tool reading through reader and
-// sending through sender. A maxFileSize of 0 or less is the default media
-// size limit.
-func NewSendFileTool(reader FileReader, maxFileSize int, sender tools.FileSender) *SendFileTool {
+// sending through sender. canRead says whether the agent has a file-reading
+// tool: without one it may send nothing. A maxFileSize of 0 or less is the
+// default media size limit.
+func NewSendFileTool(reader FileReader, canRead bool, maxFileSize int, sender tools.FileSender) *SendFileTool {
 	if maxFileSize <= 0 {
 		maxFileSize = config.DefaultMaxMediaSize
 	}
-	return &SendFileTool{reader: reader, maxFileSize: maxFileSize, sender: sender}
+	return &SendFileTool{reader: reader, canRead: canRead, maxFileSize: maxFileSize, sender: sender}
+}
+
+// ReadTools are the file tools whose grant lets an agent send files.
+var ReadTools = []string{"file_read_lines", "file_read_bytes"}
+
+// CanReadFiles reports whether agent has one of ReadTools.
+func CanReadFiles(agent *config.AgentConfig) bool {
+	return slices.ContainsFunc(ReadTools, agent.IsToolAllowed)
 }
 
 func (t *SendFileTool) Name() string { return "msg_send_file" }
 
 func (t *SendFileTool) Description() string {
-	return "Send files to the chat you are answering. Only files you can read with the file tools can be sent."
+	return "Send files to the chat you are answering. You can only send files you're allowed to read with the file tools."
 }
 
 func (t *SendFileTool) Parameters() map[string]any {
@@ -95,26 +104,39 @@ func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		return refused(problem)
 	}
 
-	channel, chatID := tools.ToolChannel(ctx), tools.ToolChatID(ctx)
+	dest, ok := tools.ReplyChatOf(ctx)
 	switch {
-	case constants.RepliesToAgent(channel):
-		return refused("Files can't be sent to another agent.")
-	case channel == "" || chatID == "":
+	case !ok:
 		return refused("There is no chat to send files to.")
+	case dest.Ambiguous:
+		return refused("Files can't be sent now: this agent is answering more than one conversation.")
+	case constants.RepliesToAgent(dest.Channel):
+		return refused("Files can't be sent to another agent.")
+	case dest.Channel == "" || dest.ChatID == "" || constants.IsInternalChannel(dest.Channel):
+		return refused("This chat can't receive files.")
+	case !t.canRead:
+		return refused("You can only send files you're allowed to read.")
 	case t.sender == nil || t.reader == nil:
 		return tools.ErrorResult("Sending files is not available.")
 	}
 
 	files := make([]tools.OutgoingFile, 0, len(requests))
+	opened := make([]*os.File, 0, len(requests))
+	defer func() {
+		for _, f := range opened {
+			utils.CloseQuietly(f)
+		}
+	}()
 	for _, req := range requests {
-		f, problem := t.checkFile(req)
+		f, out, problem := t.openFile(req)
 		if problem != "" {
 			return refused(problem + " Nothing was sent.")
 		}
-		files = append(files, f)
+		opened = append(opened, f)
+		files = append(files, out)
 	}
 
-	results, err := t.sender.SendFiles(ctx, channel, chatID, files)
+	results, err := t.sender.SendFiles(ctx, dest.Channel, dest.ChatID, files)
 	switch {
 	case errors.Is(err, tools.ErrNoFileSupport):
 		return refused("This chat can't receive files.")
@@ -164,37 +186,57 @@ func parseFileRequests(args map[string]any) (requests []fileRequest, problem str
 	return requests, ""
 }
 
-// checkFile applies the agent's file-reading permission to req, exactly as
+// openFile applies the agent's file-reading permission to req, exactly as
 // the file tools do, to the path and to the file it finally names (a
-// symbolic link's target), and the size limit. problem names the path when
-// the file may not be sent.
-func (t *SendFileTool) checkFile(req fileRequest) (tools.OutgoingFile, string) {
+// symbolic link's target), then opens that file once, without following a
+// link and without blocking, and checks the open file: it must be the file
+// checked, a regular file, and within the size limit. What is sent is read
+// from this descriptor, so the path cannot be swapped after the check.
+// problem names the path when the file may not be sent.
+func (t *SendFileTool) openFile(req fileRequest) (*os.File, tools.OutgoingFile, string) {
 	cannotRead := fmt.Sprintf("Can't send %q: you can't read it, or it does not exist.", req.path)
 	abs, err := t.reader.Resolve(req.path)
 	if err != nil {
-		return tools.OutgoingFile{}, cannotRead
+		return nil, tools.OutgoingFile{}, cannotRead
 	}
 	target, err := filepath.EvalSymlinks(abs)
 	if err != nil || t.reader.Allowed(target) != nil {
-		return tools.OutgoingFile{}, cannotRead
+		return nil, tools.OutgoingFile{}, cannotRead
 	}
-	info, err := os.Stat(target)
+	checked, err := os.Lstat(target)
+	if err != nil {
+		return nil, tools.OutgoingFile{}, cannotRead
+	}
+	if checked.IsDir() {
+		return nil, tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is a folder.", req.path)
+	}
+	if !checked.Mode().IsRegular() {
+		return nil, tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
+	}
+	f, err := openNoFollow(target)
+	if err != nil {
+		return nil, tools.OutgoingFile{}, cannotRead
+	}
+	info, err := f.Stat()
+	problem := ""
 	switch {
-	case err != nil:
-		return tools.OutgoingFile{}, cannotRead
-	case info.IsDir():
-		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is a folder.", req.path)
+	case err != nil || !os.SameFile(checked, info):
+		problem = fmt.Sprintf("Can't send %q: it changed while it was being checked.", req.path)
 	case !info.Mode().IsRegular():
-		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
+		problem = fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
 	case info.Size() > int64(t.maxFileSize):
-		return tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is %d bytes, more than the limit of %d bytes.",
+		problem = fmt.Sprintf("Can't send %q: it is %d bytes, more than the limit of %d bytes.",
 			req.path, info.Size(), t.maxFileSize)
+	}
+	if problem != "" {
+		utils.CloseQuietly(f)
+		return nil, tools.OutgoingFile{}, problem
 	}
 	filename := req.filename
 	if filename == "" {
 		filename = filepath.Base(abs)
 	}
-	return tools.OutgoingFile{Path: target, Filename: filename, ContentType: detectMediaType(target)}, ""
+	return f, tools.OutgoingFile{File: f, Filename: filename, MaxSize: int64(t.maxFileSize)}, ""
 }
 
 // sendReport is the result of a send: every file sent, or each file's
@@ -226,22 +268,4 @@ func sendReport(files []tools.OutgoingFile, results []error) *tools.ToolResult {
 		return tools.ErrorResult(text)
 	}
 	return tools.NewToolResult(text)
-}
-
-// detectMediaType determines the MIME type of a file.
-// Uses magic-bytes detection (h2non/filetype) first, then falls back to
-// extension-based lookup via mime.TypeByExtension.
-func detectMediaType(path string) string {
-	kind, err := filetype.MatchFile(path)
-	if err == nil && kind != filetype.Unknown {
-		return kind.MIME.Value
-	}
-
-	if ext := filepath.Ext(path); ext != "" {
-		if t := mime.TypeByExtension(ext); t != "" {
-			return t
-		}
-	}
-
-	return "application/octet-stream"
 }

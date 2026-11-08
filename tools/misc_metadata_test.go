@@ -69,7 +69,7 @@ func TestToolDetailsTool_Metadata(t *testing.T) {
 }
 
 func TestSendFileTool_Metadata(t *testing.T) {
-	tool := toolsmsg.NewSendFileTool(nil, 0, nil)
+	tool := toolsmsg.NewSendFileTool(nil, false, 0, nil)
 	if tool.Name() != "msg_send_file" {
 		t.Errorf("Name() = %q, want msg_send_file", tool.Name())
 	}

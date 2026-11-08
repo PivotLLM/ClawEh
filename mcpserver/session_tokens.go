@@ -13,6 +13,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/tokenhash"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // sessionTokenPrefix is the magic literal at the start of every session token.
@@ -49,6 +50,10 @@ type sessionRecord struct {
 	// (SetTurnScope), applied to tool calls presented with this token like
 	// depth. Service tokens have none.
 	askChain []string
+	// service marks a per-agent service token (RegisterService,
+	// SyncServiceTokens): it belongs to no turn, so a call with it has no
+	// reply chat whatever turns its session runs.
+	service bool
 	// pinned marks a token that Issue() must never rotate away: registered test
 	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
 	pinned bool
@@ -78,6 +83,10 @@ type SessionTokenStore struct {
 	// home maps an agent to the agent its late results go to (a clone's
 	// source); nil keeps every agent's own. Set once at startup.
 	home func(agentID string) string
+	// turns are the running turns per session key and the chat each replies
+	// to (BeginTurn); nextTurn numbers them.
+	turns    map[string]map[uint64]turnDest
+	nextTurn uint64
 }
 
 // SetHomeResolver installs the lookup from an agent to the agent its late
@@ -197,6 +206,7 @@ func (s *SessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 		sessionKey: sessionKey,
 		archiveDir: archiveDir,
 		pinned:     true,
+		service:    true,
 	}
 	s.bySvc[agentID] = token
 	logger.InfoCF("mcpserver", "service token registered",
@@ -232,6 +242,7 @@ func (s *SessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 			sessionKey: routing.BuildAgentMainSessionKey(agentID),
 			archiveDir: archiveDir,
 			pinned:     true,
+			service:    true,
 			hashed:     tokenhash.IsHashed(tok),
 		}
 		s.bySvc[agentID] = tok
@@ -249,6 +260,63 @@ func (s *SessionTokenStore) SetSource(sessionKey, channel, chatID string) {
 		rec.channel = channel
 		rec.chatID = chatID
 	})
+}
+
+// turnDest is the chat a running turn's final reply goes to.
+type turnDest struct {
+	channel, chatID string
+}
+
+// BeginTurn records a turn starting on sessionKey whose final reply goes to
+// chatID on channel, until the returned end is called (once; later calls do
+// nothing). A conversation-token call while exactly one turn of its session
+// runs has that turn's reply chat (ReplyChat); turns are kept per turn, not
+// per session, so concurrent turns (an ask beside a chat turn) never take
+// each other's chat.
+func (s *SessionTokenStore) BeginTurn(sessionKey, channel, chatID string) (end func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turns == nil {
+		s.turns = make(map[string]map[uint64]turnDest)
+	}
+	s.nextTurn++
+	id := s.nextTurn
+	if s.turns[sessionKey] == nil {
+		s.turns[sessionKey] = make(map[uint64]turnDest)
+	}
+	s.turns[sessionKey][id] = turnDest{channel: channel, chatID: chatID}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.turns[sessionKey], id)
+			if len(s.turns[sessionKey]) == 0 {
+				delete(s.turns, sessionKey)
+			}
+		})
+	}
+}
+
+// ReplyChat returns the reply chat of a call made with rec: the running
+// turn of its session when there is exactly one, Ambiguous when there are
+// more, and false for a service token or a session with no turn running.
+func (s *SessionTokenStore) ReplyChat(rec sessionRecord) (tools.ReplyChat, bool) {
+	if rec.service {
+		return tools.ReplyChat{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	turns := s.turns[rec.sessionKey]
+	switch len(turns) {
+	case 0:
+		return tools.ReplyChat{}, false
+	case 1:
+		for _, d := range turns {
+			return tools.ReplyChat{Channel: d.channel, ChatID: d.chatID}, true
+		}
+	}
+	return tools.ReplyChat{Ambiguous: true}, true
 }
 
 // SetDepth records the sub-agent depth of the turn now running on sessionKey

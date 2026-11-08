@@ -130,10 +130,15 @@ func (mb *MessageBus) Close() {
 			}
 		}
 	doneInbound:
+		// A sender waiting for a delivery report (OnDelivery) learns that
+		// its message was never sent.
 		for {
 			select {
-			case <-mb.outbound:
+			case msg := <-mb.outbound:
 				drained++
+				if msg.OnDelivery != nil {
+					msg.OnDelivery(ErrBusClosed)
+				}
 			default:
 				goto doneOutbound
 			}
@@ -141,8 +146,11 @@ func (mb *MessageBus) Close() {
 	doneOutbound:
 		for {
 			select {
-			case <-mb.outboundMedia:
+			case msg := <-mb.outboundMedia:
 				drained++
+				if msg.OnDelivery != nil {
+					msg.OnDelivery(ErrBusClosed)
+				}
 			default:
 				goto doneMedia
 			}

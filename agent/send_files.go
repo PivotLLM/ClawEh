@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/h2non/filetype"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/fileutil"
@@ -49,7 +52,7 @@ func (al *AgentLoop) SendFiles(ctx context.Context, channel, chatID string, file
 		return nil, errors.New("no media store")
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, sendFilesTimeout)
+	waitCtx, cancel := al.clk().WithTimeout(ctx, sendFilesTimeout)
 	defer cancel()
 
 	results := make([]error, len(files))
@@ -87,13 +90,17 @@ func (al *AgentLoop) SendFiles(ctx context.Context, channel, chatID string, file
 // publishFile stages f and publishes it to the chat; outcome receives the
 // channel's report.
 func (al *AgentLoop) publishFile(ctx context.Context, store media.MediaStore, channel, chatID string, f tools.OutgoingFile, outcome chan<- error) error {
-	staged, err := stageFile(f.Path, f.Filename)
+	staged, err := stageFile(f.File, f.Filename, f.MaxSize)
+	if errors.Is(err, errTooLarge) {
+		return fmt.Errorf("it is more than the limit of %d bytes", f.MaxSize)
+	}
 	if err != nil {
 		logger.WarnCF("agent", "File not staged for sending", map[string]any{"file": f.Filename, "error": err.Error()})
 		return errors.New("could not be read")
 	}
+	contentType := detectMediaType(staged)
 	scope := "tool:send_file:" + uuid.NewString()
-	ref, err := store.Store(staged, media.MediaMeta{Filename: f.Filename, ContentType: f.ContentType, Source: "tool:send_file"}, scope)
+	ref, err := store.Store(staged, media.MediaMeta{Filename: f.Filename, ContentType: contentType, Source: "tool:send_file"}, scope)
 	if err != nil {
 		removeStaged(staged)
 		return fmt.Errorf("could not be prepared: %w", err)
@@ -107,13 +114,17 @@ func (al *AgentLoop) publishFile(ctx context.Context, store media.MediaStore, ch
 		Channel: channel,
 		ChatID:  chatID,
 		Parts: []bus.MediaPart{{
-			Type:        sendFileType(f.ContentType),
+			Type:        sendFileType(contentType),
 			Ref:         ref,
 			Filename:    f.Filename,
-			ContentType: f.ContentType,
+			ContentType: contentType,
 		}},
 		OnDelivery: func(err error) {
-			outcome <- err // buffered, one report
+			// Never blocks: the buffer holds the one report SendFiles reads.
+			select {
+			case outcome <- err:
+			default:
+			}
 			go release()
 		},
 	}
@@ -136,24 +147,31 @@ func sendFileType(contentType string) string {
 	return "file"
 }
 
-// stageFile copies the file at path into the media staging folder and
-// returns the copy's path.
-func stageFile(path, filename string) (string, error) {
+// stagedPrefix starts the name of every staged copy in the media staging
+// folder, so copies a stop left behind are found at the next start
+// (RemoveStagedFileCopies).
+const stagedPrefix = "send-"
+
+// errTooLarge is a file that grew past its limit after it was checked.
+var errTooLarge = errors.New("file larger than its limit")
+
+// stageFile copies at most maxSize bytes of src into the media staging
+// folder and returns the copy's path; a src with more is refused
+// (errTooLarge).
+func stageFile(src io.Reader, filename string, maxSize int64) (string, error) {
 	dir := utils.MediaTempDir()
 	dirMode, fileMode := utils.MediaModes()
 	if err := fileutil.MkdirAllExact(dir, dirMode); err != nil {
 		return "", err
 	}
-	src, err := os.Open(path) //nolint:gosec // the tool checked the agent may read this path
+	dst, err := os.CreateTemp(dir, stagedPrefix+"*-"+utils.SanitizeFilename(filepath.Base(filename)))
 	if err != nil {
 		return "", err
 	}
-	defer utils.CloseQuietly(src)
-	dst, err := os.CreateTemp(dir, "send-*-"+utils.SanitizeFilename(filepath.Base(filename)))
-	if err != nil {
-		return "", err
+	n, err := io.Copy(dst, io.LimitReader(src, maxSize+1))
+	if err == nil && n > maxSize {
+		err = errTooLarge
 	}
-	_, err = io.Copy(dst, src)
 	if err == nil {
 		err = dst.Chmod(fileMode)
 	}
@@ -165,6 +183,46 @@ func stageFile(path, filename string) (string, error) {
 		return "", err
 	}
 	return dst.Name(), nil
+}
+
+// RemoveStagedFileCopies removes the staged copies of sent files a previous
+// run left in the media staging folder (a stop before their delivery was
+// reported). The gateway calls it once at start, after the staging folder is
+// set.
+func RemoveStagedFileCopies() {
+	dir := utils.MediaTempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.WarnCF("agent", "Staged file copies not checked", map[string]any{"dir": dir, "error": err.Error()})
+		}
+		return
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.Type().IsRegular() && strings.HasPrefix(e.Name(), stagedPrefix) {
+			removeStaged(filepath.Join(dir, e.Name()))
+			removed++
+		}
+	}
+	if removed > 0 {
+		logger.InfoCF("agent", "Removed staged copies of files left by an earlier run", map[string]any{"count": removed})
+	}
+}
+
+// detectMediaType determines the MIME type of a file: magic bytes
+// (h2non/filetype) first, then the extension.
+func detectMediaType(path string) string {
+	kind, err := filetype.MatchFile(path)
+	if err == nil && kind != filetype.Unknown {
+		return kind.MIME.Value
+	}
+	if ext := filepath.Ext(path); ext != "" {
+		if t := mime.TypeByExtension(ext); t != "" {
+			return t
+		}
+	}
+	return "application/octet-stream"
 }
 
 // removeStaged removes a staged copy that will not be sent.

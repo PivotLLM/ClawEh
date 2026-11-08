@@ -532,6 +532,11 @@ func dispatchToolCall(
 	// (e.g. session_clear) can route the follow-up back to the originating user
 	// on the MCP path, which otherwise has no channel/chatID in context.
 	ctx = tools.WithToolContext(ctx, rec.channel, rec.chatID)
+	// The chat the call's turn replies to (msg_send_file), kept per turn so
+	// a concurrent turn of the session never lends its chat.
+	if rc, ok := sessionTokens.ReplyChat(rec); ok {
+		ctx = tools.WithReplyChat(ctx, rc)
+	}
 
 	logger.InfoCF("mcpserver", "MCP tool authorized",
 		map[string]any{"agent": agentName, "tool": toolName, "workspace": tracker.workspace(agentName)})

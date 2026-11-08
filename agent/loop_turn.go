@@ -186,6 +186,7 @@ func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance
 		return ctx, func() {}
 	}
 	sti.SetTurnScope(opts.SessionKey, tools.AskChain(ctx))
+	endTurn := sti.BeginTurn(opts.SessionKey, opts.Channel, opts.ChatID)
 
 	// The source follows the user across channels. Internal channels have no
 	// channel handler, so they are not recorded: the MCP ForUser publish path
@@ -194,7 +195,7 @@ func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance
 		sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 	if !constants.RepliesToAgent(opts.Channel) {
-		return ctx, func() {}
+		return ctx, endTurn
 	}
 	// An asked or sub-agent turn's MCP output (ForUser, breadcrumbs, msg_send
 	// with no target, msg_send_file, background results) belongs to the agent
@@ -202,7 +203,10 @@ func (al *AgentLoop) scopeSessionToken(ctx context.Context, agent *AgentInstance
 	// points at the ask or task for the turn and is put back after it.
 	prevChannel, prevChatID := sti.Source(opts.SessionKey)
 	sti.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
-	return ctx, func() { sti.SetSource(opts.SessionKey, prevChannel, prevChatID) }
+	return ctx, func() {
+		endTurn()
+		sti.SetSource(opts.SessionKey, prevChannel, prevChatID)
+	}
 }
 
 // prepareSession readies the session for the turn's message, adjusting opts:

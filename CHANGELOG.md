@@ -77,8 +77,10 @@
   `files`, a list of 1 to 10 `{"path", "filename"}` entries sent in order;
   the old `path` and `filename` arguments are refused. A file can be sent
   only when the agent may read it with the file tools (workspace, mounts,
-  common and always-readable folders, `restrict_to_workspace`); the tool's
-  own path rule is gone. Files go to the chat the turn's reply goes to, never
+  common and always-readable folders, `restrict_to_workspace`), and only by
+  an agent granted `file_read_lines` or `file_read_bytes`: add one of them to
+  `agents.list[].tools` for an agent that sends files. The tool's own path
+  rule is gone. Files go to the chat the turn's reply goes to, never
   to another agent, and the agent is told, per file, whether each was sent or
   why not. A chat that cannot receive files (WebUI, devices, SecMsg) is
   refused with "This chat can't receive files."

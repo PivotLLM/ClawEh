@@ -899,8 +899,10 @@ func dispatchLoop[M any](
 
 		channel := getChannel(msg)
 
-		// Silently skip internal channels
+		// Internal channels have no channel to send to: a sender waiting
+		// for a report learns so.
 		if constants.IsInternalChannel(channel) {
+			drop(msg, fmt.Errorf("%w: %s is internal", ErrUnknownChannel, channel))
 			continue
 		}
 

@@ -105,6 +105,8 @@ func (t *llmTurn) runToolCall(ctx context.Context, slot *toolCallResult, toolTim
 	// tool allowlist again (defense in depth).
 	execCtx := tools.WithToolAllowChecker(ctx, t.agent.Config)
 	execCtx = tools.WithSessionKey(execCtx, t.opts.SessionKey)
+	// Files a tool sends go where this turn's reply goes.
+	execCtx = tools.WithReplyChat(execCtx, tools.ReplyChat{Channel: t.opts.Channel, ChatID: t.opts.ChatID})
 	if toolTimeout > 0 {
 		var toolCancel context.CancelFunc
 		execCtx, toolCancel = context.WithTimeout(execCtx, toolTimeout)

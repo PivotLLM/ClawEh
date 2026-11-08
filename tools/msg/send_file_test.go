@@ -4,28 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/tools/files"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
-// fakeSender records what it is asked to send and answers with results, or
-// err.
+// fakeSender records what it is asked to send, reading each file as the
+// agent loop would, and answers with results, or err.
 type fakeSender struct {
 	channel, chatID string
 	files           []tools.OutgoingFile
+	contents        []string
 	results         []error
 	err             error
 }
 
 func (s *fakeSender) SendFiles(_ context.Context, channel, chatID string, files []tools.OutgoingFile) ([]error, error) {
 	s.channel, s.chatID, s.files = channel, chatID, files
+	s.contents = nil
+	for _, f := range files {
+		data, err := io.ReadAll(f.File)
+		if err != nil {
+			return nil, err
+		}
+		s.contents = append(s.contents, string(data))
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -69,13 +81,13 @@ func newSendFixture(t *testing.T, maxSize int) *sendFixture {
 		workspace: workspace,
 		outside:   outside,
 		sender:    sender,
-		tool:      NewSendFileTool(files.NewReader(cfg, workspace), maxSize, sender),
+		tool:      NewSendFileTool(files.NewReader(cfg, workspace), true, maxSize, sender),
 	}
 }
 
 // chatCtx is the context of a turn answering chat 42 on telegram.
 func chatCtx() context.Context {
-	return tools.WithToolContext(context.Background(), "telegram", "42")
+	return tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: "telegram", ChatID: "42"})
 }
 
 func filesArg(entries ...map[string]any) map[string]any {
@@ -128,27 +140,85 @@ func TestSendFile_RefusesMalformedArguments(t *testing.T) {
 	}
 }
 
-// Files go only where the turn's reply goes: never to another agent, and
-// not at all without a chat.
+// Files go only where the turn's reply goes: never to another agent, not to
+// an internal channel, and not at all without a turn or when the call cannot
+// be tied to one turn.
 func TestSendFile_Destination(t *testing.T) {
 	tests := []struct {
-		name            string
-		channel, chatID string
-		want            string
+		name string
+		ctx  context.Context
+		want string
 	}{
-		{"asked turn", constants.AgentMessageChannel, "", "Files can't be sent to another agent."},
-		{"sub-agent turn", constants.SubagentChannel, "agent:alice:task", "Files can't be sent to another agent."},
-		{"no chat (service token)", "", "", "There is no chat to send files to."},
+		{"asked turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: constants.AgentMessageChannel}), "Files can't be sent to another agent."},
+		{"sub-agent turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: constants.SubagentChannel, ChatID: "agent:alice:task"}), "Files can't be sent to another agent."},
+		{"claw agent (cli) turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: "cli", ChatID: "direct"}), "This chat can't receive files."},
+		{"recovery turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Channel: "recovery", ChatID: "x"}), "This chat can't receive files."},
+		{"more than one turn", tools.WithReplyChat(context.Background(), tools.ReplyChat{Ambiguous: true}), "answering more than one conversation"},
+		{"no turn (service token)", context.Background(), "There is no chat to send files to."},
+		{"tool context only", tools.WithToolContext(context.Background(), "telegram", "42"), "There is no chat to send files to."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newSendFixture(t, 0)
-			ctx := tools.WithToolContext(context.Background(), tt.channel, tt.chatID)
-			requireRefusal(t, f.tool.Execute(ctx, filesArg(map[string]any{"path": "files/notes.md"})), tt.want)
+			requireRefusal(t, f.tool.Execute(tt.ctx, filesArg(map[string]any{"path": "files/notes.md"})), tt.want)
 			if f.sender.files != nil {
 				t.Fatalf("sent %v, want nothing", f.sender.files)
 			}
 		})
+	}
+}
+
+// An agent without a file-reading tool can send no file.
+func TestSendFile_RequiresReadGrant(t *testing.T) {
+	f := newSendFixture(t, 0)
+	f.tool.canRead = false
+	requireRefusal(t, f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/notes.md"})), "You can only send files you're allowed to read.")
+	if f.sender.files != nil {
+		t.Fatalf("sent %v, want nothing", f.sender.files)
+	}
+
+	for _, tt := range []struct {
+		tools []string
+		want  bool
+	}{
+		{[]string{"file_read_lines"}, true},
+		{[]string{"file_read_bytes"}, true},
+		{[]string{"file_*"}, true},
+		{[]string{"msg_send_file"}, false},
+		{nil, false},
+	} {
+		if got := CanReadFiles(&config.AgentConfig{Tools: tt.tools}); got != tt.want {
+			t.Errorf("CanReadFiles(%v) = %v, want %v", tt.tools, got, tt.want)
+		}
+	}
+	if CanReadFiles(&config.AgentConfig{Tools: []string{"file_read_lines"}, DenyTools: []string{"file_read_lines"}}) {
+		t.Error("CanReadFiles ignores a denied read tool")
+	}
+}
+
+// A FIFO is refused without blocking, and the open never follows a link.
+func TestSendFile_SpecialFiles(t *testing.T) {
+	f := newSendFixture(t, 0)
+	fifo := filepath.Join(f.workspace, "files", "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	requireRefusal(t, f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/pipe"})), "it is not a regular file")
+
+	// openNoFollow itself: a FIFO opens without waiting for a writer, and a
+	// link is not followed.
+	pf, err := openNoFollow(fifo)
+	if err != nil {
+		t.Fatalf("openNoFollow(fifo) = %v, want it open without blocking", err)
+	}
+	utils.CloseQuietly(pf)
+	link := filepath.Join(f.workspace, "files", "link.md")
+	if err := os.Symlink(filepath.Join(f.workspace, "files", "notes.md"), link); err != nil {
+		t.Fatal(err)
+	}
+	if lf, err := openNoFollow(link); err == nil {
+		utils.CloseQuietly(lf)
+		t.Fatal("openNoFollow followed a symbolic link")
 	}
 }
 
@@ -200,24 +270,15 @@ func TestSendFile_SendsInOrder(t *testing.T) {
 	if f.sender.channel != "telegram" || f.sender.chatID != "42" {
 		t.Fatalf("sent to %s/%s, want telegram/42", f.sender.channel, f.sender.chatID)
 	}
-	want := []tools.OutgoingFile{
-		{Path: filepath.Join(f.workspace, "files", "notes.md"), Filename: "notes.md"},
-		{Path: filepath.Join(f.workspace, "files", "chart.png"), Filename: "q3.png", ContentType: "image/png"},
-	}
+	wantNames := []string{"notes.md", "q3.png"}
+	wantContents := []string{"# notes", "\x89PNG\r\n\x1a\n"}
 	if len(f.sender.files) != 2 {
 		t.Fatalf("sent %d files, want 2", len(f.sender.files))
 	}
 	for i, got := range f.sender.files {
-		wantPath, err := filepath.EvalSymlinks(want[i].Path)
-		if err != nil {
-			t.Fatal(err)
+		if got.Filename != wantNames[i] || f.sender.contents[i] != wantContents[i] || got.MaxSize != config.DefaultMaxMediaSize {
+			t.Errorf("file %d = %+v (content %q), want %s", i, got, f.sender.contents[i], wantNames[i])
 		}
-		if got.Path != wantPath || got.Filename != want[i].Filename {
-			t.Errorf("file %d = %+v, want %s as %s", i, got, wantPath, want[i].Filename)
-		}
-	}
-	if f.sender.files[1].ContentType != "image/png" {
-		t.Errorf("chart.png content type = %q, want image/png", f.sender.files[1].ContentType)
 	}
 	for _, line := range []string{"notes.md: sent", "q3.png: sent"} {
 		if !strings.Contains(r.ForLLM, line) {
@@ -256,51 +317,4 @@ func TestSendFile_ChatWithoutFileSupport(t *testing.T) {
 	f := newSendFixture(t, 0)
 	f.sender.err = tools.ErrNoFileSupport
 	requireRefusal(t, f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/notes.md"})), "This chat can't receive files.")
-}
-
-func TestDetectMediaType_MagicBytes(t *testing.T) {
-	dir := t.TempDir()
-
-	// Minimal valid PNG header
-	pngHeader := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-	pngFile := filepath.Join(dir, "image.dat") // wrong extension, but valid PNG bytes
-	if err := os.WriteFile(pngFile, pngHeader, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got := detectMediaType(pngFile)
-	if got != "image/png" {
-		t.Errorf("expected image/png from magic bytes, got %q", got)
-	}
-}
-
-func TestDetectMediaType_FallbackToExtension(t *testing.T) {
-	dir := t.TempDir()
-
-	// File with unrecognizable content but known extension
-	txtFile := filepath.Join(dir, "readme.txt")
-	if err := os.WriteFile(txtFile, []byte("hello world"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got := detectMediaType(txtFile)
-	// text/plain or similar — just verify it's not application/octet-stream
-	if got == "application/octet-stream" {
-		t.Errorf("expected extension-based MIME for .txt, got %q", got)
-	}
-}
-
-func TestDetectMediaType_UnknownFallsToOctetStream(t *testing.T) {
-	dir := t.TempDir()
-
-	// File with no extension and random bytes
-	unknownFile := filepath.Join(dir, "mystery")
-	if err := os.WriteFile(unknownFile, []byte{0x00, 0x01, 0x02}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got := detectMediaType(unknownFile)
-	if got != "application/octet-stream" {
-		t.Errorf("expected application/octet-stream, got %q", got)
-	}
 }

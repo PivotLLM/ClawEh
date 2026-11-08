@@ -14,9 +14,11 @@ import (
 // test can assert the inbound-user-message path correctly records the
 // originating channel + chatID on the session record.
 type recordingSTI struct {
-	mu      sync.Mutex
-	sources []sourceCall
-	depths  []depthCall
+	mu       sync.Mutex
+	sources  []sourceCall
+	depths   []depthCall
+	turns    map[int]sourceCall
+	nextTurn int
 }
 
 type depthCall struct {
@@ -56,6 +58,34 @@ func (r *recordingSTI) SetDepth(sessionKey string, depth int) {
 }
 
 func (r *recordingSTI) SetTurnScope(string, []string) {}
+
+// BeginTurn records the turn's reply chat while it runs (activeTurns).
+func (r *recordingSTI) BeginTurn(sessionKey, channel, chatID string) func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.turns == nil {
+		r.turns = map[int]sourceCall{}
+	}
+	r.nextTurn++
+	id := r.nextTurn
+	r.turns[id] = sourceCall{sessionKey: sessionKey, channel: channel, chatID: chatID}
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.turns, id)
+	}
+}
+
+// activeTurns is the reply chats of the turns running now.
+func (r *recordingSTI) activeTurns() []sourceCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]sourceCall, 0, len(r.turns))
+	for _, c := range r.turns {
+		out = append(out, c)
+	}
+	return out
+}
 
 func (r *recordingSTI) Source(sessionKey string) (string, string) {
 	r.mu.Lock()

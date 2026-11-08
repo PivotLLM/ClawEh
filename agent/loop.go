@@ -259,6 +259,10 @@ type SessionTokenIssuer interface {
 	// Source returns the source SetSource last recorded for sessionKey (empty
 	// when none or unknown).
 	Source(sessionKey string) (channel, chatID string)
+	// BeginTurn records a turn of sessionKey whose final reply goes to chatID
+	// on channel until the returned end is called, so MCP tool calls made
+	// with the session's token (CLI providers) send files to that chat.
+	BeginTurn(sessionKey, channel, chatID string) (end func())
 }
 
 // publishTimeout bounds handing one message to the bus, so a full queue

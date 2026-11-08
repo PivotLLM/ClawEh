@@ -63,6 +63,30 @@ func TestDispatchOutboundMedia_ReportsUnknownChannel(t *testing.T) {
 	}
 }
 
+// Messages and files to an internal channel, which has nothing to send them
+// through, are reported as not sent.
+func TestDispatch_ReportsInternalChannel(t *testing.T) {
+	mb := bus.NewMessageBus()
+	defer mb.Close()
+	m := &Manager{channels: make(map[string]Channel), workers: make(map[string]*channelWorker), bus: mb}
+	go m.dispatchOutbound(t.Context())
+	go m.dispatchOutboundMedia(t.Context())
+
+	textReports, onText := deliveryReport()
+	mediaReports, onMedia := deliveryReport()
+	if err := mb.PublishOutbound(t.Context(), bus.OutboundMessage{Channel: "cli", ChatID: "1", OnDelivery: onText}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mb.PublishOutboundMedia(t.Context(), bus.OutboundMediaMessage{Channel: "cli", ChatID: "1", OnDelivery: onMedia}); err != nil {
+		t.Fatal(err)
+	}
+	for _, reports := range []chan error{textReports, mediaReports} {
+		if err := expectDelivery(t, reports); !errors.Is(err, ErrUnknownChannel) {
+			t.Fatalf("delivery error = %v, want ErrUnknownChannel", err)
+		}
+	}
+}
+
 // Files held for a channel that then does not start are reported as failed.
 func TestDropHeld_ReportsMedia(t *testing.T) {
 	reports, onDelivery := deliveryReport()

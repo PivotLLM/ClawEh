@@ -47,11 +47,13 @@ func (globalMsgProvider) RegisterTools(deps global.Deps) []global.ToolDefinition
 
 	// msg_send_file: construct the real instance only when real config is
 	// present. It reads with the file tools' permissions for this workspace
-	// (a clone's is its source's) and sends through the agent loop.
+	// (a clone's is its source's), only for an agent granted a file-reading
+	// tool, and sends through the agent loop.
 	var sendFile *SendFileTool
 	if c != nil {
 		sendFile = NewSendFileTool(
 			files.NewReader(c, cd.Workspace),
+			CanReadFiles(cd.AgentCfg),
 			c.Agents.Defaults.GetMaxMediaSize(),
 			cd.Files,
 		)

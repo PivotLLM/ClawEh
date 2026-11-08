@@ -117,6 +117,8 @@ func setupAndStartServices(
 	// instances on one host can't collide on a single dir.
 	mediaModes := cfg.PermissionModes(config.AreaMedia)
 	utils.SetMediaStagingDir(filepath.Join(cfg.DataDir(), "media"), mediaModes.Dir, mediaModes.File)
+	// Copies of sent files a stop left behind are no longer referenced.
+	agent.RemoveStagedFileCopies()
 	services.mediaCleanup = mediaCleanerConfig(cfg)
 	services.MediaStore = startMediaStore(services.mediaCleanup)
 	// Stopped here if setup fails before the channel manager takes it over.
