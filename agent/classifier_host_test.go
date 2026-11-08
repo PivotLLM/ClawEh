@@ -594,3 +594,43 @@ func TestClassifierHost_CountsTowardDailySpend(t *testing.T) {
 		t.Fatalf("alerts after $1.50 = %d, want 1", n)
 	}
 }
+
+// Ceilings are the install's maximums and the processed-id retention from
+// the loop's current configuration, the defaults for unset fields (and
+// before Bind); a reload applies to the next call.
+func TestClassifierHost_Ceilings(t *testing.T) {
+	defaults := classifier.Ceilings{
+		MaxRules:         config.DefaultClassifierMaxRules,
+		MaxPromptChars:   config.DefaultClassifierMaxPromptChars,
+		MaxItemChars:     config.DefaultClassifierMaxItemChars,
+		MaxItemsPerRun:   config.DefaultClassifierMaxItemsPerRun,
+		MaxParallel:      config.DefaultClassifierMaxParallel,
+		MaxActivityHours: config.DefaultClassifierMaxActivityHours,
+		ProcessedDays:    config.DefaultClassifierProcessedDays,
+	}
+	if got := NewClassifierHost().Ceilings(); got != defaults {
+		t.Fatalf("Ceilings before Bind = %+v, want the defaults %+v", got, defaults)
+	}
+
+	cfg := classifierHostConfig(t, "http://127.0.0.1:0")
+	cfg.Classifiers.ProcessedDays = 3
+	cfg.Classifiers.Limits.MaxRules = 7
+	cfg.Classifiers.Limits.MaxParallel = 2
+	al, host, _ := newClassifierHostLoop(t, cfg)
+	want := defaults
+	want.ProcessedDays, want.MaxRules, want.MaxParallel = 3, 7, 2
+	if got := host.Ceilings(); got != want {
+		t.Fatalf("Ceilings = %+v, want %+v", got, want)
+	}
+
+	next := *cfg
+	next.Classifiers = config.ClassifiersConfig{Limits: config.ClassifierLimitsConfig{MaxRules: 9, MaxItemChars: 1000}}
+	if err := al.ReloadProviderAndConfig(context.Background(), &mockProvider{}, &next); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	want = defaults
+	want.MaxRules, want.MaxItemChars = 9, 1000
+	if got := host.Ceilings(); got != want {
+		t.Fatalf("Ceilings after reload = %+v, want %+v", got, want)
+	}
+}

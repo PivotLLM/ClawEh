@@ -844,6 +844,17 @@ EOF
                         integ_fail "probe suite (tests/test_mcpserver.sh) reported failures; see its output above"
                     fi
 
+                    # Classifiers end to end: its own gateway, a stub model and
+                    # a stub Telegram chat (hermetic), driven over MCP.
+                    echo ""
+                    echo "${BOLD}--- Classifiers end to end ---${NC}"
+                    echo ""
+                    if PROBE_PATH="$PROBE_BIN" bash "$SCRIPT_DIR/tests/test_classifier.sh" "$INTEG_BIN"; then
+                        INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                    else
+                        integ_fail "classifiers end to end (tests/test_classifier.sh) failed; see its output above"
+                    fi
+
                     # ---- Workspace re-population: delete alice's dir and restart ----
                     if [ "${CLAW_TEST_CLI:-}" = "1" ]; then
                         echo ""

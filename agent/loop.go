@@ -178,6 +178,10 @@ type AgentLoop struct {
 	// no reply of its own: the channel manager (SetChannelManager); tests
 	// substitute a fake.
 	dismisser inboundDismisser
+	// chatHolder holds a chat's typing, reaction and placeholder for a
+	// turn's whole life: the channel manager (SetChannelManager); tests
+	// substitute a fake.
+	chatHolder chatHolder
 }
 
 // clk is the clock the loop's timing runs on (AgentLoop.clock).
@@ -574,6 +578,9 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
 	if cm != nil {
 		al.dismisser = cm
+		al.chatHolder = cm
+	} else {
+		al.chatHolder = nil
 	}
 }
 
