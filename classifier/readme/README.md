@@ -11,14 +11,38 @@ fetch and action tools must be tools you have. They can't be classifier
 tools (`classifier_*`). Its model is the classifier model the operator set
 for you; a definition does not name one.
 
+## Recommended workflow
+
+1. **Agree the setup with the user.** Confirm the categories, the action for
+   each, and how often to run. If the user has not said how fresh results
+   must be, ask; do not guess a short interval. Every run calls the source
+   tool even when nothing is new, so use minutes, not seconds: for email,
+   300 (five minutes) is a sensible default, 60 the shortest worth using.
+2. **Start in dry run.** Create the classifier with `"dry_run": true` unless
+   the user asks for it to act at once. It then decides but moves nothing.
+   Tell the user it is in dry run and that its decisions are kept for
+   `activity_hours` (72 by default), so they should review it within that
+   time or ask you to raise it.
+3. **Review when asked.** `classifier_status` gives the last run, counts and
+   recent decisions; `classifier_activity` gives each decision with its
+   reason and the action it would have run (`action_args`), filtered by
+   `search` (a sender, a subject word, a destination). Summarise for the
+   user: what went where, and anything that looks wrong.
+4. **Adjust.** Turn the user's corrections into rules with
+   `classifier_update`, and check a specific item with `classifier_test`
+   before relying on the change.
+5. **Go live only when the user agrees.** Set `"dry_run": false`. Every item
+   still in the source is then classified again with the current rules and
+   acted on, so say so before switching.
+
 ## A definition
 
 ```json
 {
   "id": "inbox-priority",
   "enabled": true,
-  "dry_run": false,
-  "trigger": { "every_seconds": 120 },
+  "dry_run": true,
+  "trigger": { "every_seconds": 300 },
   "source": {
     "tool": "mail_list_messages",
     "args": { "folder": "Inbox", "top": 50 },
@@ -58,7 +82,8 @@ for you; a definition does not name one.
 ```
 
 - `trigger.every_seconds`: how often it runs. A run that finds nothing new
-  costs no model call.
+  costs no model call, but it always calls the source tool (see the
+  workflow above for choosing it).
 - `source`: the tool that lists the items. `items` is the dot-path to the
   list in its result (`""` when the result is the list); `id` is the path,
   inside one element, to the item's stable ID.

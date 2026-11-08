@@ -31,6 +31,16 @@ A classifier belongs to the agent that created it and runs as that agent: the to
 
 A new or changed classifier runs as soon as it is saved, unless `dry_run` is set.
 
+### How the agent sets one up
+
+The agent's guide tells it to:
+
+1. Agree the categories, actions and interval with you, and ask how often to run if you have not said. Every run calls the source tool, so it uses minutes, not seconds (five minutes for email unless you say otherwise).
+2. Start in [dry run](#dry-run) unless you ask for it to act at once, and tell you that decisions are kept for 72 hours by default.
+3. When you ask how it is doing, review the activity log and summarise what went where.
+4. Turn your corrections into rules and check a message with `classifier_test`.
+5. Switch to live only when you agree, warning you that everything still in the source is then classified and acted on.
+
 ## Where they live
 
 Each classifier is one file, `classifiers/<id>.json` in the agent's workspace, beside `classifiers/state.db`, which records what has been handled. The agent's file tools can read the folder but not write it, so every change goes through the classifier tools and their checks.
@@ -45,8 +55,8 @@ You can edit a definition file by hand. ClawEh reads it again when it changes an
 {
   "id": "inbox-priority",
   "enabled": true,
-  "dry_run": false,
-  "trigger": { "every_seconds": 120 },
+  "dry_run": true,
+  "trigger": { "every_seconds": 300 },
   "source": {
     "tool": "mail_list_messages",
     "args": { "folder": "Inbox", "top": 50 },
