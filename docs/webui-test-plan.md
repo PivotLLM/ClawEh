@@ -97,7 +97,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 22 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 22 routes; scan the rendered text and every `aria-label`, `title` and `placeholder` for anything shaped like a translation key (`pages.…`, `navigation.…`), skipping the log viewer itself (`role="log"`) because log lines legitimately name config keys such as `agents.defaults.models` | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 
 ## E. Chat and WebSocket auth
 

@@ -171,7 +171,9 @@
     "action": {
       "edit": "Edit model",
       "setDefault": "Set as default",
-      "delete": "Delete model"
+      "delete": "Delete model",
+      "enable": "Enable model",
+      "disable": "Disable model"
     },
     "defaultOnSave": {
       "label": "Default Model",

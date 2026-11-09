@@ -286,6 +286,9 @@
 
 ### Fixed
 
+- **The Models page's enable switch is named.** Screen readers announced
+  it as `models.action.enable`; it is now "Enable model" or "Disable model".
+
 - **A CLI agent's tool output no longer floods the chat.** Agents on a CLI
   model (Claude CLI, Codex CLI, …) had every tool's own output, such as the
   full output of each `shell_exec` command, posted to the chat as a separate

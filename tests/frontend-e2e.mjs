@@ -566,7 +566,11 @@ if (useGroup("D", "i18n integrity")) {
       const body = await page.evaluate(() => {
         const clone = document.body.cloneNode(true)
         for (const el of clone.querySelectorAll('[role="log"]')) el.remove()
-        return clone.innerText ?? clone.textContent ?? ""
+        // Accessible names and hover text are text too: a leaked key there is
+        // what a screen reader announces.
+        const attrs = [...clone.querySelectorAll("[aria-label],[title],[placeholder]")]
+          .map((el) => [el.getAttribute("aria-label"), el.getAttribute("title"), el.getAttribute("placeholder")].filter(Boolean).join(" "))
+        return (clone.innerText ?? clone.textContent ?? "") + "\n" + attrs.join("\n")
       })
       await close()
       const hits = [...new Set(body.match(I18N_KEY) || [])]
