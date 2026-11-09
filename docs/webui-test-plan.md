@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-158 checks in all; the runner prints the same tally at the end.
+160 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -16,7 +16,7 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 **Run it against a dev instance, never production.** Groups F, G, N, R and T
 write. All five revert what they change — the agent created in F is deleted, the
-fields edited in G and the HTTPS port edited in R are restored to the values read
+fields edited in G (including a task model's Images settings) and the HTTPS port edited in R are restored to the values read
 beforehand, the memory domain N creates is deleted at the end, and the card and
 agent T creates are removed — but a crash
 mid-run would leave the change behind. I12 adds and removes a disabled temporary model only when no model's request timeout exceeds the turn timeout. N only ever touches the `e2e-probe`
@@ -130,6 +130,7 @@ Creates an agent called `e2e-probe` and deletes it at the end; F11, F12 and F14 
 | F12 | Create a throwaway agent `e2e-wrk` through the API with `subagents.allow_agents: ["e2e-wrk"]`; select it on `/agents` and under **Sub-Agent models** pick an enabled model from **Add sub-agent model…**, wait ~2s; then click that entry's **Remove** button, wait ~2s; remove `e2e-wrk` through the API | After the add, `subagents.models` is exactly `[that model]` and `subagents.allow_agents` is unchanged; after the remove, `subagents.models` is absent and `allow_agents` is still unchanged: the box writes one key of the block, drops it when empty, and keeps the rest. Skipped when there is no enabled model |
 | F13 | With `e2e-probe` selected, click the trash button in the card header, then Delete in the confirmation dialog | The agent is gone from `GET /api/config` |
 | F14 | Create a throwaway agent `e2e-cls` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and turn on **Allow classifiers**, wait ~2s; turn it off, wait ~2s; remove `e2e-cls` through the API | After turning it on, `classifiers` is `{enabled: true, model: <the first model ticked Classify in task_models.models>}` and a **Classifier model** selector is shown; after turning it off, `classifiers` is absent, the selector is gone and `models` is unchanged. Skipped when there is no enabled model or no model is ticked Classify |
+| F15 | Create a throwaway agent `e2e-tm` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and tick **Images** under **Allow task models**, wait ~2s; untick it, wait ~2s; remove `e2e-tm` through the API | After ticking, the box is checked and the agent's `task_models` is `{image: true}`; after unticking, the box is unchecked and `task_models` is absent. Skipped when there is no enabled model |
 
 ## G. System page
 
@@ -146,6 +147,7 @@ else is on **System**. `/config` still works and lands on `/system`;
 | G5 | Load `/config` | The browser lands on `/system` and the System page renders (Backup section present), no console errors |
 | G6 | Note `classifiers.limits.min_every_seconds` (absent = blank), set **Shortest run interval (seconds)** in the Classifiers section to `77`, wait ~2s, then put the original back (blank if it was absent), wait ~2s | The field shows the default `15` as its placeholder; after the edit the config holds `77`; after the revert it matches the original (key absent if it was absent) |
 | G7 | Note `task_models.echo_transcription` (absent = off), open `/task-models`, click **Echo transcription**, wait ~2s, click it again, wait ~2s | After the first click the config holds the opposite value; after the second it matches the original |
+| G8 | Pick the first task model ticked **Images** (else the first task model; skipped when there is none) and note its `image` and `image_api` (absent = `chat`); open `/task-models`; if it was not ticked Images, check it has no **Images through** select, tick **Images**, wait ~2s; set **Images through** to the other value, wait ~2s; set it back, wait ~2s; if Images was not ticked before, untick it, wait ~2s | The select is shown only while Images is ticked; after the change the config holds the other `image_api` (`chat` saved as absent); afterwards `image` and `image_api` match what was noted |
 
 ## R. Network page
 

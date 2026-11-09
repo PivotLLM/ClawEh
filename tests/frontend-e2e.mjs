@@ -1065,6 +1065,51 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       })
     }
   })
+
+  await check(15, "Allow task models: a kind's box writes the grant, unticking it drops the block", async () => {
+    const ID = "e2e-tm"
+    const before = await config()
+    const human = new Set((before.providers ?? []).filter((p) => p.protocol === "human").map((p) => p.name))
+    const model = (before.models ?? []).find((m) => m.enabled && !human.has(m.provider))?.model_name
+    if (!model) return "skipped, no enabled model for the agent"
+    const list = [...(before.agents.list ?? []), { id: ID, name: ID, models: [model], tools: [] }]
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `creating ${ID} = ${r.status}`)
+    const click = async () => {
+      const { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      const box = page.getByRole("checkbox", { name: "Allow task models: Images", exact: true })
+      await box.click()
+      await page.waitForTimeout(2000)
+      const state = await box.getAttribute("data-state")
+      await close()
+      return state
+    }
+    try {
+      const on = await click()
+      let a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(on === "checked", `box state after ticking = ${on}`)
+      assert(JSON.stringify(a?.task_models) === JSON.stringify({ image: true }), `task_models = ${JSON.stringify(a?.task_models)} after ticking Images`)
+      const off = await click()
+      a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(off === "unchecked", `box state after unticking = ${off}`)
+      assert(a && a.task_models === undefined, `task_models = ${JSON.stringify(a?.task_models)} after unticking, want absent`)
+      return `${ID}: images granted, then the block removed`
+    } finally {
+      const c = await config()
+      c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
+      await api("/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents: { list: c.agents.list } }),
+      })
+    }
+  })
 }
 
 // G. System page (the old Config page minus the listeners, which are group R)
@@ -1167,6 +1212,47 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect, class
     const after = (await config())?.task_models?.echo_transcription === true
     assert(after === original, `echo_transcription = ${after}, expected ${original}`)
     return `restored to ${original ? "on" : "off"}`
+  })
+
+  await check(8, "Images through is shown only for an Images model, saves and reverts", async () => {
+    const original = (await config())?.task_models?.models ?? []
+    if (original.length === 0) return "skipped, no task model on the page"
+    const row = original.find((m) => m.image === true) ?? original[0]
+    const name = row.model
+    const tickedBefore = row.image === true
+    const apiBefore = row.image_api === "images" ? "images" : "chat"
+    const other = apiBefore === "images" ? "chat" : "images"
+    const saved = async () => ((await config())?.task_models?.models ?? []).find((m) => m.model === name) ?? {}
+    const { close, page } = await open("/task-models")
+    try {
+      const images = page.getByRole("checkbox", { name: `${name}: Images`, exact: true })
+      await images.waitFor({ timeout: 10000 })
+      const select = page.locator(`[data-testid="task-model-${name}"] select`)
+      if (!tickedBefore) {
+        assert((await select.count()) === 0, "Images through is shown for a model not ticked Images")
+        await images.click()
+        await page.waitForTimeout(2000)
+        assert((await saved()).image === true, "ticking Images did not save")
+      }
+      assert((await select.count()) === 1, "no Images through select for an Images model")
+      await select.selectOption(other)
+      await page.waitForTimeout(2000)
+      const got = (await saved()).image_api ?? "chat"
+      assert(got === other, `image_api = ${got}, expected ${other}`)
+      await select.selectOption(apiBefore)
+      await page.waitForTimeout(2000)
+      if (!tickedBefore) {
+        await images.click()
+        await page.waitForTimeout(2000)
+        assert((await select.count()) === 0, "Images through still shown after unticking Images")
+      }
+    } finally {
+      await close()
+    }
+    const after = await saved()
+    assert((after.image === true) === tickedBefore, `image = ${after.image}, expected ${tickedBefore}`)
+    assert((after.image_api ?? "chat") === apiBefore, `image_api = ${after.image_api}, expected ${apiBefore}`)
+    return `${name}: ${other}, restored to ${apiBefore}${tickedBefore ? "" : " and Images unticked"}`
   })
 }
 
