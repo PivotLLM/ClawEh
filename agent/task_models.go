@@ -38,8 +38,8 @@ import (
 	"github.com/PivotLLM/ClawEh/voice"
 )
 
-// taskAttemptTimeout bounds one model call of a task when the model sets no
-// request_timeout of its own.
+// taskAttemptTimeout bounds one model call of a task when neither the model
+// nor agents.defaults sets a request_timeout.
 const taskAttemptTimeout = 5 * time.Minute
 
 // taskTempPrefix names the empty folder a CLI text call runs in, under the
@@ -95,7 +95,8 @@ var imageTypes = map[string]string{
 func (in taskInput) isImage() bool { return strings.HasPrefix(in.contentType, "image/") }
 
 func (in taskInput) isAudio() bool {
-	return strings.HasPrefix(in.contentType, "audio/") || voice.AudioType(in.name) != ""
+	return strings.HasPrefix(in.contentType, "audio/") || in.contentType == "application/ogg" ||
+		voice.AudioType(in.name) != ""
 }
 
 // isText reports whether the input reads as text: valid UTF-8 with no NUL
@@ -203,11 +204,15 @@ func (h *taskModelHost) inputs(cfg *config.Config, a *config.AgentConfig, worksp
 			if read {
 				in.data, err = readAtMost(f, maxSize)
 			}
+			sniffed := in.data
+			if !read && err == nil {
+				sniffed, err = sniff(f)
+			}
 			utils.CloseQuietly(f)
 			if err != nil {
 				return nil, fmt.Errorf("Can't use %q: %w.", p, err) //nolint:staticcheck // ST1005: user-facing sentence
 			}
-			in.contentType = contentTypeOf(in.name, in.data)
+			in.contentType = contentTypeOf(in.name, sniffed)
 			out = append(out, in)
 		}
 	}
@@ -232,18 +237,39 @@ func (h *taskModelHost) inputs(cfg *config.Config, a *config.AgentConfig, worksp
 			if err == nil && read {
 				in.data, err = readAtMost(f, maxSize)
 			}
+			if err == nil {
+				head := in.data
+				if !read {
+					head, err = sniff(f)
+				}
+				in.contentType = mediaType(meta.ContentType)
+				if in.contentType == "" || in.contentType == "application/octet-stream" {
+					in.contentType = contentTypeOf(in.name, head)
+				}
+			}
 			utils.CloseQuietly(f)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("Can't use %s: %w.", ref, err) //nolint:staticcheck // ST1005: user-facing sentence
 		}
-		in.contentType = mediaType(meta.ContentType)
-		if in.contentType == "" || in.contentType == "application/octet-stream" {
-			in.contentType = contentTypeOf(in.name, in.data)
-		}
 		out = append(out, in)
 	}
 	return out, nil
+}
+
+// sniffLen is how much of a file Check reads to tell its type when neither
+// its name nor a stored type does: what http.DetectContentType looks at.
+const sniffLen = 512
+
+// sniff reads the first sniffLen bytes of a file (fewer when it is
+// shorter), the part type detection looks at.
+func sniff(r io.Reader) ([]byte, error) {
+	buf := make([]byte, sniffLen)
+	n, err := io.ReadFull(r, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:n], nil
 }
 
 // readAtMost reads r to the end, refusing more than maxSize bytes (a file
@@ -283,7 +309,14 @@ func contentTypeOf(name string, data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-	return mediaType(http.DetectContentType(data))
+	switch t := mediaType(http.DetectContentType(data)); t {
+	case "application/ogg":
+		return "audio/ogg" // Ogg detected by its bytes: audio, as transcription APIs name it
+	case "audio/wave":
+		return "audio/wav"
+	default:
+		return t
+	}
 }
 
 // Run implements TaskModelRunner.
@@ -394,11 +427,7 @@ type callOutput struct {
 func (h *taskModelHost) call(ctx context.Context, cfg *config.Config, agentID, alias string, mc *config.ModelConfig,
 	prov *config.Provider, req toolsagents.TaskModelRequest, inputs []taskInput,
 ) (*callOutput, error) {
-	timeout := taskAttemptTimeout
-	if mc.RequestTimeout > 0 {
-		timeout = time.Duration(mc.RequestTimeout) * time.Second
-	}
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	callCtx, cancel := context.WithTimeout(ctx, attemptTimeout(cfg, mc))
 	defer cancel()
 	switch req.Kind {
 	case toolsagents.TaskKindTTS:
@@ -413,6 +442,20 @@ func (h *taskModelHost) call(ctx context.Context, cfg *config.Config, agentID, a
 		return h.chat(callCtx, cfg, agentID, alias, mc, prov, req, inputs, true)
 	default:
 		return h.chat(callCtx, cfg, agentID, alias, mc, prov, req, inputs, false)
+	}
+}
+
+// attemptTimeout is how long one model call of a task may take: the
+// model's request_timeout, else agents.defaults.request_timeout, else
+// taskAttemptTimeout.
+func attemptTimeout(cfg *config.Config, mc *config.ModelConfig) time.Duration {
+	switch {
+	case mc.RequestTimeout > 0:
+		return time.Duration(mc.RequestTimeout) * time.Second
+	case cfg.Agents.Defaults.RequestTimeout > 0:
+		return time.Duration(cfg.Agents.Defaults.RequestTimeout) * time.Second
+	default:
+		return taskAttemptTimeout
 	}
 }
 

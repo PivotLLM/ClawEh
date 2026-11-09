@@ -49,7 +49,8 @@ func (v voiceTranscript) annotation() string {
 // the agent in the echoed feedback. Returns the (possibly modified) message
 // and true if the message carried audio.
 func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.InboundMessage, target *AgentInstance) (bus.InboundMessage, bool) {
-	if al.transcriber == nil || al.mediaStore == nil || len(msg.Media) == 0 {
+	transcriber := al.currentTranscriber()
+	if transcriber == nil || al.mediaStore == nil || len(msg.Media) == 0 {
 		return msg, false
 	}
 
@@ -71,7 +72,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 			kept = append(kept, ref)
 			continue
 		}
-		result, err := al.transcriber.Transcribe(ctx, voice.AudioFile{Path: path, Filename: meta.Filename, ContentType: meta.ContentType})
+		result, err := transcriber.Transcribe(ctx, voice.AudioFile{Path: path, Filename: meta.Filename, ContentType: meta.ContentType})
 		if err != nil {
 			logger.WarnCF("voice", "Transcription failed", map[string]any{
 				"ref": ref, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error(),

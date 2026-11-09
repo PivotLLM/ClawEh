@@ -323,3 +323,35 @@ func (c *Config) TaskModelUnsupported(m TaskModel) []TaskUse {
 	}
 	return out
 }
+
+// TaskModelProblem says why the named task model can't serve use, judged
+// from the configuration alone: not on the Models page, disabled there, its
+// provider missing, or a provider that can't serve the use
+// (TaskUseSupportFor says No). "" when it can, as far as the configuration
+// tells.
+func (c *Config) TaskModelProblem(name string, use TaskUse) string {
+	exists, problem := false, "disabled on the Models page"
+	for i := range c.Models {
+		m := &c.Models[i]
+		if m.ModelName != name {
+			continue
+		}
+		exists = true
+		if !m.Enabled {
+			continue
+		}
+		p, err := c.GetProvider(m.Provider)
+		switch {
+		case err != nil:
+			problem = "provider not configured"
+		case TaskUseSupportFor(p.Protocol, use) == TaskUseNo:
+			problem = "its provider can't do " + use.Label()
+		default:
+			return ""
+		}
+	}
+	if !exists {
+		return "not on the Models page"
+	}
+	return problem
+}

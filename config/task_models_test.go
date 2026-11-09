@@ -322,3 +322,30 @@ func TestTaskOnlyProtocols_Validation(t *testing.T) {
 		t.Error("openai-chat is task-only")
 	}
 }
+
+func TestTaskModelProblem(t *testing.T) {
+	cfg := taskModelsTestConfig()
+	cfg.Models = append(cfg.Models,
+		ModelConfig{ModelName: "off", Model: "x", Provider: "openai", Enabled: false},
+		ModelConfig{ModelName: "orphan", Model: "x", Provider: "gone", Enabled: true},
+	)
+	cfg.Providers = append(cfg.Providers, Provider{Name: "el", Protocol: ElevenLabsProtocol, APIKey: "k"})
+	cfg.Models = append(cfg.Models, ModelConfig{ModelName: "scribe", Model: "scribe_v1", Provider: "el", Enabled: true})
+	for _, tc := range []struct {
+		name string
+		use  TaskUse
+		want string
+	}{
+		{"m", TaskUseVision, ""},
+		{"cc", TaskUseVision, ""}, // unknown for a CLI: not a problem
+		{"nope", TaskUseVision, "not on the Models page"},
+		{"off", TaskUseVision, "disabled on the Models page"},
+		{"orphan", TaskUseVision, "provider not configured"},
+		{"scribe", TaskUseVision, "its provider can't do Vision"},
+		{"scribe", TaskUseSTT, ""},
+	} {
+		if got := cfg.TaskModelProblem(tc.name, tc.use); got != tc.want {
+			t.Errorf("TaskModelProblem(%s, %s) = %q, want %q", tc.name, tc.use, got, tc.want)
+		}
+	}
+}

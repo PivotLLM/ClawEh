@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/PivotLLM/spawnllm/speech"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // Providers shared by the detection tests.
@@ -180,9 +182,66 @@ func TestDetectTranscriber_SkipsMissingModel(t *testing.T) {
 	if tr == nil || tr.Name() != "whisper-groq" {
 		t.Fatalf("DetectTranscriber() = %v, want the groq transcriber alone", tr)
 	}
-	if len(rec.alerts) != 2 || rec.alerts[0].EventID != "voice:config:gone" || rec.alerts[1].EventID != "voice:config:off" {
-		t.Fatalf("alerts = %+v, want one each for gone and off", rec.alerts)
+	// The missing model alerts; the disabled one is the operator's choice.
+	if len(rec.alerts) != 1 || rec.alerts[0].EventID != "voice:config:gone" ||
+		rec.alerts[0].Description != "gone: not on the Models page; voice messages are not transcribed by this model until it is fixed" {
+		t.Fatalf("alerts = %+v, want one for gone only", rec.alerts)
 	}
+}
+
+// A disabled STT model raises no alert even when it leaves transcription
+// off; the status says why it is not used.
+func TestDetectTranscriber_DisabledModelDoesNotAlert(t *testing.T) {
+	off := sttModel("off", "groq", "whisper-large-v3")
+	off.Enabled = false
+	cfg := sttConfig([]config.Provider{groqProvider}, []config.ModelConfig{off}, "off")
+	rec := &alertRecorder{}
+	if tr := DetectTranscriberWithAlerter(cfg, rec); tr != nil {
+		t.Fatalf("DetectTranscriber() = %v, want none", tr)
+	}
+	if len(rec.alerts) != 0 {
+		t.Fatalf("alerts = %+v, want none", rec.alerts)
+	}
+	st := TranscriptionStatus(cfg)
+	if len(st.Usable) != 0 || len(st.Unusable) != 1 || st.Unusable[0] != (UnusableModel{Model: "off", Reason: "disabled on the Models page"}) {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+// TranscriptionStatus is the transcriber's view, in page order, without a
+// log line or an alert.
+func TestTranscriptionStatus(t *testing.T) {
+	logs := &logBuf{}
+	restore := logger.RedirectForTest(logs)
+	defer restore()
+	cfg := sttConfig([]config.Provider{groqProvider, {Name: "nokey", Protocol: "openai-chat", BaseURL: "https://x/v1"}},
+		[]config.ModelConfig{sttModel("a", "groq", "w"), sttModel("b", "nokey", "w")}, "b", "gone", "a")
+	st := TranscriptionStatus(cfg)
+	want := []UnusableModel{{"b", "provider has no API key"}, {"gone", "not on the Models page"}}
+	if len(st.Usable) != 1 || st.Usable[0] != "a" || len(st.Unusable) != 2 || st.Unusable[0] != want[0] || st.Unusable[1] != want[1] {
+		t.Fatalf("status = %+v", st)
+	}
+	if strings.Contains(logs.String(), "Speech model skipped") {
+		t.Errorf("TranscriptionStatus logged: %s", logs.String())
+	}
+}
+
+// logBuf collects log output.
+type logBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // SpeechBackend picks the spawnllm client by protocol.

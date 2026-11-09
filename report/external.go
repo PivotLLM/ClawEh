@@ -89,8 +89,8 @@ func registryRows(cfg *config.Config) [][]string {
 
 func voiceRows(cfg *config.Config) [][]string {
 	active := "none: no Transcription (STT) task model is usable"
-	if t := voice.DetectTranscriber(cfg); t != nil {
-		active = t.Name()
+	if st := voice.TranscriptionStatus(cfg); len(st.Usable) > 0 {
+		active = strings.Join(st.Usable, ",")
 	}
 	return [][]string{
 		row("Active transcription chain", active),

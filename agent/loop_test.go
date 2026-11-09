@@ -2080,7 +2080,7 @@ func TestSetTranscriber_StoresTranscriber(t *testing.T) {
 
 	// SetTranscriber with nil should not panic.
 	al.SetTranscriber(nil)
-	if al.transcriber != nil {
+	if al.currentTranscriber() != nil {
 		t.Error("expected transcriber to be nil")
 	}
 }

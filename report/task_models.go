@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/voice"
 )
 
 // Item names of the task-model assessment rows; the WebUI links them to the
@@ -50,15 +51,43 @@ func labels(uses []config.TaskUse) []string {
 // model ticked: incoming voice messages are not transcribed and images are
 // not described for text-only models until one is. A state, not a finding,
 // so no action mark.
+//
+// When models are ticked but none can be used the row is marked and names
+// each with why: transcription by the transcriber's own rules
+// (voice.TranscriptionStatus), vision by the configuration
+// (Config.TaskModelProblem).
 func taskModelAssessment(cfg *config.Config) []assessRow {
 	var rows []assessRow
 	if len(cfg.TaskModels.ModelsFor(config.TaskUseSTT)) == 0 {
 		rows = append(rows, assessRow{false, itemSTT, "No model."})
+	} else if st := voice.TranscriptionStatus(cfg); len(st.Usable) == 0 {
+		rows = append(rows, assessRow{true, itemSTT, noUsableModel(st.Unusable)})
 	}
-	if len(cfg.TaskModels.ModelsFor(config.TaskUseVision)) == 0 {
+	vision := cfg.TaskModels.ModelsFor(config.TaskUseVision)
+	if len(vision) == 0 {
 		rows = append(rows, assessRow{false, itemVision, "No model."})
+	} else {
+		var unusable []voice.UnusableModel
+		for _, name := range vision {
+			if p := cfg.TaskModelProblem(name, config.TaskUseVision); p != "" {
+				unusable = append(unusable, voice.UnusableModel{Model: name, Reason: p})
+			}
+		}
+		if len(unusable) == len(vision) {
+			rows = append(rows, assessRow{true, itemVision, noUsableModel(unusable)})
+		}
 	}
 	return rows
+}
+
+// noUsableModel is the status of a use whose ticked models are all
+// unusable, naming each with why.
+func noUsableModel(models []voice.UnusableModel) string {
+	parts := make([]string, len(models))
+	for i, m := range models {
+		parts[i] = m.Model + " (" + m.Reason + ")"
+	}
+	return "No usable model: " + strings.Join(parts, ", ") + "."
 }
 
 // classifyNote is the classifier model status when no model is ticked

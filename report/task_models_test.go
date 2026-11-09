@@ -115,3 +115,28 @@ func TestCollectAgents_TaskModelGrant(t *testing.T) {
 		t.Errorf("grant with agent_spawn denied = %q", r[1])
 	}
 }
+
+// Models ticked but none usable: a marked row naming each with why.
+func TestAssessment_NoUsableTaskModel(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Off", Model: "x", Provider: "OpenAI", Enabled: false})
+	cfg.TaskModels.Models = []config.TaskModel{
+		{Model: "Claude CLI", STT: true},
+		{Model: "Off", STT: true, Vision: true},
+	}
+	s := collectAssessment(t.Context(), cfg, env)
+	if r := assessmentRow(t, s, itemSTT); r[0] != actionMark ||
+		r[2] != "No usable model: Claude CLI (provider protocol does not serve speech), Off (disabled on the Models page)." {
+		t.Errorf("stt row = %v", r)
+	}
+	if r := assessmentRow(t, s, itemVision); r[0] != actionMark || r[2] != "No usable model: Off (disabled on the Models page)." {
+		t.Errorf("vision row = %v", r)
+	}
+	// One usable model is enough: no row.
+	cfg.TaskModels.Models = append(cfg.TaskModels.Models, config.TaskModel{Model: "GPT", STT: true, Vision: true})
+	for _, r := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
+		if r[1] == itemSTT || r[1] == itemVision {
+			t.Errorf("row listed with a usable model: %v", r)
+		}
+	}
+}

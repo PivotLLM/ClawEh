@@ -174,7 +174,7 @@ func newTaskHostEnv(t *testing.T) *taskHostEnv {
 		{Model: "eleven", TTS: true, STT: true, TTSDefaults: &config.TTSDefaults{Voice: "v1", Format: "pcm_16000"}},
 		{Model: "claude", Image: true, ImageAPI: config.ImageAPIImages},
 	}
-	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, providers.NewProviderDispatcher(cfg))
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, providers.NewProviderDispatcher(cfg), OwnsDataDir())
 	store := media.NewFileMediaStore()
 	al.SetMediaStore(store)
 	ws := filepath.Join(t.TempDir(), "ws")
@@ -779,6 +779,7 @@ func TestContentTypeOf(t *testing.T) {
 		{"a.webm", nil, "audio/webm"},
 		{"p.JPG", nil, "image/jpeg"},
 		{"noext", pngBytes, "image/png"},
+		{"noext", append([]byte("OggS"), make([]byte, 60)...), "audio/ogg"},
 		{"notes", []byte("plain words"), "text/plain"},
 		{"empty", nil, ""},
 	} {
@@ -819,4 +820,112 @@ func TestTaskModelHost_NoImagesFallsBack(t *testing.T) {
 	if !e.al.cooldownTracker().IsAvailable("p", "empty-image") {
 		t.Error("a model that returned no image is in cooldown")
 	}
+}
+
+func TestAttemptTimeout(t *testing.T) {
+	cfg := &config.Config{}
+	if got := attemptTimeout(cfg, &config.ModelConfig{}); got != taskAttemptTimeout {
+		t.Errorf("no timeout set = %v", got)
+	}
+	cfg.Agents.Defaults.RequestTimeout = 90
+	if got := attemptTimeout(cfg, &config.ModelConfig{}); got != 90*time.Second {
+		t.Errorf("agents.defaults = %v, want 90s", got)
+	}
+	if got := attemptTimeout(cfg, &config.ModelConfig{RequestTimeout: 30}); got != 30*time.Second {
+		t.Errorf("the model's own = %v, want 30s", got)
+	}
+}
+
+// Check tells an input's type from its first bytes when neither its name nor
+// a stored type does, as Run does: an extension-less PNG is an image, an
+// extension-less Ogg file is audio, a text file is neither.
+func TestTaskModelHost_CheckSniffsExtensionlessInputs(t *testing.T) {
+	e := newTaskHostEnv(t)
+	e.write(t, "files/picture", pngBytes)
+	e.write(t, "files/voicenote", append([]byte("OggS"), make([]byte, 60)...))
+	e.write(t, "files/words", []byte("just words"))
+	for _, tc := range []struct {
+		req  toolsagents.TaskModelRequest
+		want string
+	}{
+		{toolsagents.TaskModelRequest{Kind: "image", Model: "imgapi", Prompt: "x", Files: []string{"files/picture"}}, ""},
+		{toolsagents.TaskModelRequest{Kind: "stt", Files: []string{"files/voicenote"}}, ""},
+		{toolsagents.TaskModelRequest{Kind: "stt", Files: []string{"files/words"}}, "words can't be transcribed: it is not an audio file."},
+		{toolsagents.TaskModelRequest{Kind: "image", Prompt: "x", Files: []string{"files/words"}}, "words can't be used for images: it is not an image."},
+		{toolsagents.TaskModelRequest{Kind: "image", Model: "imgapi", Prompt: "x", Media: []string{e.media(t, "blob", "", pngBytes)}}, ""},
+		{toolsagents.TaskModelRequest{Kind: "stt", Media: []string{e.media(t, "note", "", append([]byte("OggS"), make([]byte, 60)...))}}, ""},
+	} {
+		if got := e.check(t, "alice", tc.req); got != tc.want {
+			t.Errorf("%+v: Check = %q, want %q", tc.req, got, tc.want)
+		}
+		if tc.want == "" {
+			if _, err := e.run(t, "alice", tc.req); err != nil {
+				t.Errorf("%+v: Run = %v", tc.req, err)
+			}
+		}
+	}
+}
+
+// A CLI text model runs in an empty folder of its own under the temporary
+// agents' root, which is gone afterwards, and never with the bypass flags.
+func TestTaskModelHost_CLIIsolated(t *testing.T) {
+	e := newTaskHostEnv(t)
+	logDir := t.TempDir()
+	e.cfg.Providers = append(e.cfg.Providers, config.Provider{
+		Name: "Claude CLI", Protocol: "claude-cli", Command: fakeClaudeCLI(t, logDir), BypassRestrictions: true,
+	})
+	e.cfg.Models = append(e.cfg.Models, config.ModelConfig{ModelName: "cc", Model: "claude-cli", Provider: "Claude CLI", Enabled: true})
+	e.cfg.TaskModels.Models = []config.TaskModel{{Model: "cc", Text: true}}
+	if err := os.MkdirAll(e.cfg.CLIPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "hi"})
+	if err != nil || res.Text != "cli reply" {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	root := e.al.GetRegistry().TempRoot()
+	pwd := strings.TrimSpace(readLog(t, logDir, "pwd"))
+	if filepath.Dir(pwd) != realPath(t, root) || !strings.HasPrefix(filepath.Base(pwd), "task-alice-") {
+		t.Errorf("the CLI ran in %s, want a task-alice-* folder under %s", pwd, root)
+	}
+	if _, err := os.Stat(pwd); !os.IsNotExist(err) {
+		t.Errorf("the task folder is left: %v", err)
+	}
+	if left, err := filepath.Glob(filepath.Join(root, "task-*")); err != nil || len(left) != 0 {
+		t.Errorf("task folders left: %v", left)
+	}
+	if strings.Contains(readLog(t, logDir, "args"), "--dangerously-skip-permissions") {
+		t.Error("the CLI ran with the bypass flag")
+	}
+}
+
+// The transcriber can be swapped while a turn is transcribing: the turn
+// keeps the one it read, and nothing races (run with -race).
+func TestTranscriberSwapDuringTranscription(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, _, _ := freshLoop(t)
+	store := media.NewFileMediaStore()
+	al.SetMediaStore(store)
+	al.SetTranscriber(stubTranscriber{text: "first"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 200 {
+			if i%2 == 0 {
+				al.SetTranscriber(nil)
+			} else {
+				al.SetTranscriber(stubTranscriber{text: "second"})
+			}
+		}
+	}()
+	for range 200 {
+		_, got := al.prepareInbound(context.Background(), voiceMessage(t, store))
+		switch got.Content {
+		case "[voice: first]", "[voice: second]", "[voice]":
+		default:
+			t.Fatalf("content = %q", got.Content)
+		}
+	}
+	<-done
 }

@@ -309,34 +309,18 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
 	var skipped []skippedSTT
-	skip := func(alias, reason string) {
-		logger.WarnCF("voice", "Speech model skipped: "+reason, map[string]any{
-			"model": alias, "reason": reason,
-		})
-		skipped = append(skipped, skippedSTT{model: alias, reason: reason})
-	}
-	for _, alias := range cfg.TaskModels.ModelsFor(config.TaskUseSTT) {
-		found := false
-		for i := range cfg.Models {
-			m := &cfg.Models[i]
-			if m.ModelName != alias || !m.Enabled {
-				continue
-			}
-			found = true
-			p, err := cfg.GetProvider(m.Provider)
-			if err != nil {
-				skip(alias, "provider not configured")
-				continue
-			}
-			backend, reason := SpeechBackend(p)
-			if reason != "" {
-				skip(alias, reason)
-				continue
-			}
-			chain = append(chain, NewTranscriber(alias, m.Model, backend, a))
+	for _, e := range sttEntries(cfg) {
+		if e.problem == "" {
+			chain = append(chain, NewTranscriber(e.alias, e.model, e.backend, a))
+			continue
 		}
-		if !found {
-			skip(alias, "model not configured or disabled")
+		logger.WarnCF("voice", "Speech model skipped: "+e.problem, map[string]any{
+			"model": e.alias, "reason": e.problem,
+		})
+		// A model the operator disabled is a choice, not a fault: logged,
+		// never alerted.
+		if !e.disabled {
+			skipped = append(skipped, skippedSTT{model: e.alias, reason: e.problem})
 		}
 	}
 	alertSkipped(a, skipped, len(chain) == 0)
@@ -348,4 +332,76 @@ func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcr
 	default:
 		return &fallbackTranscriber{transcribers: chain}
 	}
+}
+
+// sttEntry is one model_list entry of an STT task model as the transcriber
+// would use it: its backend, or the problem that keeps it out.
+type sttEntry struct {
+	alias, model string
+	backend      SpeechClient
+	problem      string
+	// disabled: the model is on the Models page but switched off.
+	disabled bool
+}
+
+// sttEntries resolves the STT task models, in page order, into the entries
+// the transcriber would use, without logging or alerting: a name with no
+// enabled model_list entry is one entry with its problem.
+func sttEntries(cfg *config.Config) []sttEntry {
+	var out []sttEntry
+	for _, alias := range cfg.TaskModels.ModelsFor(config.TaskUseSTT) {
+		exists, enabled := false, false
+		for i := range cfg.Models {
+			m := &cfg.Models[i]
+			if m.ModelName != alias {
+				continue
+			}
+			exists = true
+			if !m.Enabled {
+				continue
+			}
+			enabled = true
+			e := sttEntry{alias: alias, model: m.Model}
+			if p, err := cfg.GetProvider(m.Provider); err != nil {
+				e.problem = "provider not configured"
+			} else {
+				e.backend, e.problem = SpeechBackend(p)
+			}
+			out = append(out, e)
+		}
+		switch {
+		case !exists:
+			out = append(out, sttEntry{alias: alias, problem: "not on the Models page"})
+		case !enabled:
+			out = append(out, sttEntry{alias: alias, problem: "disabled on the Models page", disabled: true})
+		}
+	}
+	return out
+}
+
+// STTStatus is what the transcriber would do with the STT task models,
+// worked out without logging or alerting (for Check Up and the report):
+// the models in the chain, in order, and the others with why each is not
+// used.
+type STTStatus struct {
+	Usable   []string
+	Unusable []UnusableModel
+}
+
+// UnusableModel is a ticked task model that is not used, and why.
+type UnusableModel struct {
+	Model, Reason string
+}
+
+// TranscriptionStatus reports the STT task models' state; see STTStatus.
+func TranscriptionStatus(cfg *config.Config) STTStatus {
+	var st STTStatus
+	for _, e := range sttEntries(cfg) {
+		if e.problem == "" {
+			st.Usable = append(st.Usable, e.alias)
+		} else {
+			st.Unusable = append(st.Unusable, UnusableModel{Model: e.alias, Reason: e.problem})
+		}
+	}
+	return st
 }

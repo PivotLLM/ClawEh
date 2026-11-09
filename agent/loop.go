@@ -44,10 +44,12 @@ type AgentLoop struct {
 	fallback        *providers.FallbackChain
 	channelManager  *channels.Manager
 	mediaStore      media.MediaStore
-	transcriber     voice.Transcriber
-	cmdRegistry     *commands.Registry
-	mcp             mcpRuntime
-	mu              sync.RWMutex
+	// transcriber is swapped by the gateway on every reload while turns
+	// read it: always read it once, through currentTranscriber.
+	transcriber atomic.Pointer[transcriberSlot]
+	cmdRegistry *commands.Registry
+	mcp         mcpRuntime
+	mu          sync.RWMutex
 	// activeRequests counts the turns and model calls in flight, for WaitTurns.
 	activeRequests sync.WaitGroup
 	// modelCalls counts the model calls in flight per provider, for
@@ -793,9 +795,22 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
 }
 
-// SetTranscriber injects a voice transcriber for agent-level audio transcription.
+// transcriberSlot holds the current transcriber (nil: transcription off).
+type transcriberSlot struct{ t voice.Transcriber }
+
+// SetTranscriber injects a voice transcriber for agent-level audio
+// transcription; nil turns it off. Safe while turns are transcribing: a
+// turn keeps the transcriber it read.
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
-	al.transcriber = t
+	al.transcriber.Store(&transcriberSlot{t: t})
+}
+
+// currentTranscriber is the transcriber now set, or nil.
+func (al *AgentLoop) currentTranscriber() voice.Transcriber {
+	if s := al.transcriber.Load(); s != nil {
+		return s.t
+	}
+	return nil
 }
 
 // SetDumpsDir configures the directory where diagnostic dump files are written.
