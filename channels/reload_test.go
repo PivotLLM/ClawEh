@@ -584,7 +584,7 @@ func TestReload_SharedInputs(t *testing.T) {
 	m, _ := startedManager(t, discordAndSlack(), store)
 
 	voice := discordAndSlack()
-	voice.Voice.EchoTranscription = true
+	voice.TaskModels.EchoTranscription = true
 	if res := m.Reload(context.Background(), voice, store); len(res.Kept) != 2 {
 		t.Fatalf("voice change: %+v, want both kept", res)
 	}

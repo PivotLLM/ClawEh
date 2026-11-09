@@ -36,6 +36,8 @@ type AssessmentRow struct {
 var assessmentLinks = map[string]string{
 	itemUntrustedProxy:  "/network#trusted-proxies",
 	itemEncryptedMatrix: "/manual/channels/matrix.html#encryption",
+	itemSTT:             taskModelsLink,
+	itemVision:          taskModelsLink,
 }
 
 // Assessment is the identity and the security assessment table as data, for

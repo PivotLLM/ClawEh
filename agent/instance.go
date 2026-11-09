@@ -58,7 +58,7 @@ type AgentInstance struct {
 	WorkerCandidates []providers.FallbackCandidate
 
 	// VisionClients is the ordered vision-describe side-model chain (from
-	// AgentDefaults.VisionModel + VisionModelFallbacks). When the active model is
+	// the models ticked Vision on the Task models page). When the active model is
 	// text-only and images are encountered, they are dispatched to these clients
 	// (first success wins) for a one-shot text description instead of being
 	// dropped. Empty = feature off. Wired by AgentLoop.agentBuilder.

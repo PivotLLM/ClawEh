@@ -331,8 +331,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Named message-API tokens (per-agent, long-lived webhook tokens)
 	h.registerMessageTokenRoutes(mux)
 
-	// Speech-to-text (voice transcription) backends
-	h.registerVoiceRoutes(mux)
+	// Task models: the models used for single calls, ticked per use
+	h.registerTaskModelRoutes(mux)
 
 	// HTTP/HTTPS listener settings, certificate check and regeneration
 	h.registerTLSRoutes(mux)

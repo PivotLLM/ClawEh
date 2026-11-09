@@ -17,9 +17,8 @@ func refTestConfig() *Config {
 		{ModelName: "alpha", Model: "a2", Provider: "p2", Enabled: false}, // duplicate alias: legal
 	}
 	cfg.Agents.Defaults.Models = []string{"alpha"}
-	cfg.Agents.Defaults.VisionModel = "alpha"
-	cfg.Agents.Defaults.VisionModelFallbacks = []string{"alpha"}
 	cfg.Summarization.Models = []string{"alpha"}
+	cfg.TaskModels.Models = []TaskModel{{Model: "alpha", Vision: true}}
 	cfg.Agents.List = []AgentConfig{{
 		ID:                  "alice",
 		Models:              []string{"alpha"},
@@ -31,20 +30,23 @@ func refTestConfig() *Config {
 	return cfg
 }
 
-var allSites = []string{
-	"agents.defaults.models",
-	"agents.defaults.vision_model",
-	"agents.defaults.vision_model_fallbacks",
-	"summarization.models",
-	"agents.list[alice].models",
-	"agents.list[alice].summarization_models",
-	"agents.list[alice].subagents.models",
+// allSites is every site refTestConfig references alias from; a task model's
+// site is labelled with its own name.
+func allSites(alias string) []string {
+	return []string{
+		"agents.defaults.models",
+		"summarization.models",
+		"task_models.models[" + alias + "]",
+		"agents.list[alice].models",
+		"agents.list[alice].summarization_models",
+		"agents.list[alice].subagents.models",
+	}
 }
 
 func TestModelReferences_LabelsEverySite(t *testing.T) {
 	cfg := refTestConfig()
-	if got := cfg.ModelReferences("alpha"); !reflect.DeepEqual(got, allSites) {
-		t.Fatalf("ModelReferences(alpha) = %v\nwant %v", got, allSites)
+	if got := cfg.ModelReferences("alpha"); !reflect.DeepEqual(got, allSites("alpha")) {
+		t.Fatalf("ModelReferences(alpha) = %v\nwant %v", got, allSites("alpha"))
 	}
 	if got := cfg.ModelReferences("nope"); len(got) != 0 {
 		t.Fatalf("ModelReferences(nope) = %v, want none", got)
@@ -58,8 +60,11 @@ func TestRenameModelReferences_CoversSubagentsModels(t *testing.T) {
 	if got := cfg.ModelReferences("alpha"); len(got) != 0 {
 		t.Fatalf("old alias still referenced at %v", got)
 	}
-	if got := cfg.ModelReferences("omega"); !reflect.DeepEqual(got, allSites) {
-		t.Fatalf("ModelReferences(omega) = %v\nwant %v", got, allSites)
+	if got := cfg.ModelReferences("omega"); !reflect.DeepEqual(got, allSites("omega")) {
+		t.Fatalf("ModelReferences(omega) = %v\nwant %v", got, allSites("omega"))
+	}
+	if got := cfg.TaskModels.Models[0]; got.Model != "omega" || !got.Vision {
+		t.Fatalf("task model = %+v, want omega with its Vision tick", got)
 	}
 	if got := cfg.Agents.List[0].Subagents.Models; !reflect.DeepEqual(got, []string{"omega"}) {
 		t.Fatalf("subagents.models = %v, want [omega]", got)
@@ -81,10 +86,10 @@ func TestValidateModelReferences(t *testing.T) {
 			name: "missing alias is an error naming site and alias",
 			mutate: func(c *Config) {
 				c.Agents.List[0].Models = []string{"ghost", "alpha"}
-				c.Agents.Defaults.VisionModel = "ghost"
+				c.TaskModels.Models = append(c.TaskModels.Models, TaskModel{Model: "ghost", STT: true})
 			},
 			wantErrs: []string{
-				`agents.defaults.vision_model: model "ghost" does not exist`,
+				`task_models.models[ghost]: model "ghost" does not exist`,
 				`agents.list[alice].models: model "ghost" does not exist`,
 			},
 		},
@@ -92,14 +97,17 @@ func TestValidateModelReferences(t *testing.T) {
 			name: "disabled alias is a warning",
 			mutate: func(c *Config) {
 				c.Summarization.Models = []string{"beta"}
+				c.TaskModels.Models = []TaskModel{{Model: "beta", Text: true}}
 			},
-			wantWarnings: []string{`summarization.models: model "beta" is disabled`},
+			wantWarnings: []string{
+				`summarization.models: model "beta" is disabled`,
+				`task_models.models[beta]: model "beta" is disabled`,
+			},
 		},
 		{
 			name: "empty entries are skipped",
 			mutate: func(c *Config) {
 				c.Agents.Defaults.Models = []string{"", "alpha"}
-				c.Agents.Defaults.VisionModel = ""
 			},
 		},
 	}
@@ -126,12 +134,13 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	cfg := refTestConfig()
 	cfg.Agents.List[0].Models = []string{"ghost", "alpha", "beta", "phantom"}
 	cfg.Agents.List[0].Subagents.Models = []string{"ghost"}
-	cfg.Agents.Defaults.VisionModel = "ghost"
+	cfg.TaskModels.Models = []TaskModel{{Model: "ghost", STT: true}, {Model: "alpha", Vision: true}, {Model: "phantom", Text: true}}
 
 	removed := cfg.PruneDanglingModelReferences()
 
 	want := []DanglingModelReference{
-		{Site: "agents.defaults.vision_model", Alias: "ghost"},
+		{Site: "task_models.models[ghost]", Alias: "ghost"},
+		{Site: "task_models.models[phantom]", Alias: "phantom"},
 		{Site: "agents.list[alice].models", Alias: "ghost", Agent: "alice"},
 		{Site: "agents.list[alice].models", Alias: "phantom", Agent: "alice"},
 		{Site: "agents.list[alice].subagents.models", Alias: "ghost", Agent: "alice"},
@@ -146,9 +155,9 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	if got := cfg.Agents.List[0].Subagents.Models; len(got) != 0 {
 		t.Fatalf("subagents.models = %v, want empty", got)
 	}
-	// Scalars are blanked.
-	if cfg.Agents.Defaults.VisionModel != "" {
-		t.Fatalf("vision_model = %q, want blank", cfg.Agents.Defaults.VisionModel)
+	// A task model whose model is gone is removed from the page, not blanked.
+	if got := cfg.TaskModels.Models; !reflect.DeepEqual(got, []TaskModel{{Model: "alpha", Vision: true}}) {
+		t.Fatalf("task_models.models = %+v, want only alpha", got)
 	}
 	// Nothing dangling remains, and a second pass removes nothing.
 	if errs, _ := cfg.ValidateModelReferences(); len(errs) != 0 {
@@ -157,10 +166,10 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 {
 		t.Fatalf("second prune removed %v, want nothing", again)
 	}
-	// A disabled scalar is left alone.
-	cfg.Agents.Defaults.VisionModel = "beta"
-	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 || cfg.Agents.Defaults.VisionModel != "beta" {
-		t.Fatalf("disabled vision_model: removed %v, vision_model = %q, want it kept", again, cfg.Agents.Defaults.VisionModel)
+	// A disabled model is left alone.
+	cfg.TaskModels.Models = []TaskModel{{Model: "beta", Vision: true}}
+	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 || len(cfg.TaskModels.Models) != 1 {
+		t.Fatalf("disabled task model: removed %v, task models = %+v, want it kept", again, cfg.TaskModels.Models)
 	}
 }
 

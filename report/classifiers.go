@@ -42,18 +42,20 @@ func classifiersSwitch(a *config.AgentConfig, human bool) string {
 }
 
 // classifierModelState is the "Classifier model" value and whether it is
-// marked: with the switch on, a missing model or one that is not one of the
-// agent's models (its classifiers fail every run until it is fixed).
+// marked: with the switch on, a missing model or one that is not ticked
+// Classify (its classifiers fail every run until it is fixed).
 func classifierModelState(cfg *config.Config, a *config.AgentConfig) (string, bool) {
 	model := a.ClassifierModel()
 	if !a.ClassifiersEnabled() {
 		return orValue(model, none), false
 	}
 	switch {
+	case model == "" && len(cfg.TaskModels.ModelsFor(config.TaskUseClassify)) == 0:
+		return "(none set: " + classifyNote + ")", true
 	case model == "":
 		return "(none set)", true
-	case !cfg.ClassifierModelUsable(a, model):
-		return model + " (not one of the agent's models)", true
+	case !cfg.ClassifierModelUsable(model):
+		return model + " (not a Classify model)", true
 	}
 	return model, false
 }
@@ -133,8 +135,8 @@ func truncateText(s string, n int) string {
 
 // classifierAssessment is the assessment rows for classifiers: per enabled
 // agent with the switch on (a person's agent excluded), a missing or
-// unusable classifier model and every definition file that is not run
-// because it is invalid.
+// unusable classifier model (noting when no model is ticked Classify at
+// all) and every definition file that is not run because it is invalid.
 func classifierAssessment(ctx context.Context, cfg *config.Config) []assessRow {
 	var rows []assessRow
 	for _, a := range enabledAgents(cfg) {
@@ -142,11 +144,16 @@ func classifierAssessment(ctx context.Context, cfg *config.Config) []assessRow {
 			continue
 		}
 		name := a.DisplayName()
+		noClassify := len(cfg.TaskModels.ModelsFor(config.TaskUseClassify)) == 0
 		switch model := a.ClassifierModel(); {
+		case model == "" && noClassify:
+			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", classifyNote})
 		case model == "":
 			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", "None set."})
-		case !cfg.ClassifierModelUsable(a, model):
-			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", model + " is not one of " + name + "'s models."})
+		case noClassify:
+			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", model + " is not a Classify model. " + classifyNote})
+		case !cfg.ClassifierModelUsable(model):
+			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", model + " is not a Classify model."})
 		}
 		sums, err := classifier.Inspect(ctx, classifiersDir(cfg, a), classifierCeilings(cfg))
 		if err != nil {

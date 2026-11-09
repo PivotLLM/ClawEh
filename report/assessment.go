@@ -264,6 +264,12 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
 	}
 
+	// A built-in use with no task model: voice is not transcribed, images are
+	// not described for text-only models.
+	for _, r := range taskModelAssessment(cfg) {
+		add(r.action, r.item, r.status)
+	}
+
 	// A classifier model the agent cannot use, or a definition file that is
 	// not run: its classifiers do nothing until the operator fixes it.
 	for _, r := range classifierAssessment(ctx, cfg) {

@@ -31,9 +31,11 @@ func (c *Config) modelRefSites() []modelRef {
 	d := &c.Agents.Defaults
 	sites := []modelRef{
 		{where: "agents.defaults.models", slice: &d.Models, role: "a default model"},
-		{where: "agents.defaults.vision_model", scalar: &d.VisionModel, role: "a vision model"},
-		{where: "agents.defaults.vision_model_fallbacks", slice: &d.VisionModelFallbacks, role: "a vision model"},
 		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},
+	}
+	for i := range c.TaskModels.Models {
+		m := &c.TaskModels.Models[i]
+		sites = append(sites, modelRef{where: "task_models.models[" + m.Model + "]", scalar: &m.Model, role: "a task model"})
 	}
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]
@@ -130,6 +132,7 @@ func (c *Config) PruneDanglingModelReferences() []DanglingModelReference {
 		}
 		*site.slice = kept
 	}
+	c.dropBlankTaskModels()
 	return removed
 }
 

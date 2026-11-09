@@ -49,21 +49,6 @@ type TranscriptionResponse struct {
 // JSON/base64 protocol rather than the OpenAI multipart one.
 const openRouterHost = "openrouter.ai"
 
-// sttDefaultModels maps the host of a known speech-to-text endpoint to the
-// model used when a voice.stt entry leaves its model blank. It is the single
-// source of truth for those defaults; the WebUI reads it via DefaultSTTModel.
-var sttDefaultModels = map[string]string{
-	"api.groq.com":   "whisper-large-v3",
-	"api.openai.com": "whisper-1",
-	openRouterHost:   "openai/whisper-large-v3",
-}
-
-// DefaultSTTModel returns the default transcription model for a provider base
-// URL, chosen by its host, or "" when the host is not a known STT service.
-func DefaultSTTModel(baseURL string) string {
-	return sttDefaultModels[urlHost(baseURL)]
-}
-
 // NewWhisperTranscriber builds a transcriber for an OpenAI-compatible endpoint.
 // name is the configured provider name, used in logs, Name() and alerts.
 // a receives the alert raised when the API rejects the key or account; nil
@@ -361,13 +346,15 @@ func urlHost(raw string) string {
 	return strings.ToLower(u.Hostname())
 }
 
-// sttBackend is a voice.stt entry resolved against the provider it names.
+// sttBackend is one model_list entry of an STT task model, resolved against
+// its provider.
 type sttBackend struct {
 	name, apiKey, baseURL, model string
 }
 
-// CanTranscribe reports whether a provider can serve speech-to-text: it speaks
-// an OpenAI-compatible protocol and has a base URL to send audio to.
+// CanTranscribe reports whether a provider can serve speech-to-text through
+// these transcribers: it speaks an OpenAI-compatible protocol and has a base
+// URL to send audio to.
 func CanTranscribe(p *config.Provider) bool {
 	return isOpenAIProtocol(p.Protocol) && p.BaseURL != ""
 }
@@ -376,12 +363,13 @@ func isOpenAIProtocol(protocol string) bool {
 	return protocol == "openai-chat" || protocol == "openai-responses"
 }
 
-// resolveSTT resolves an entry to the provider it names (Config.GetProvider,
-// matched case-sensitively). The endpoint and key are the provider's; the
-// model is the entry's, or the default for the provider's host. A non-empty
-// skip is the reason the entry cannot be used.
-func resolveSTT(cfg *config.Config, s *config.STTProvider) (b sttBackend, skip string) {
-	p, err := cfg.GetProvider(s.Provider)
+// resolveSTT resolves one model_list entry of the STT task model alias to its
+// provider (Config.GetProvider, matched case-sensitively). The endpoint and
+// key are the provider's, the model id the entry's. A non-empty skip is the
+// reason the entry cannot be used. These rules belong to the HTTP
+// transcribers only; config and the Task models page do not apply them.
+func resolveSTT(cfg *config.Config, alias string, m *config.ModelConfig) (b sttBackend, skip string) {
+	p, err := cfg.GetProvider(m.Provider)
 	if err != nil {
 		return b, "provider not configured"
 	}
@@ -394,25 +382,16 @@ func resolveSTT(cfg *config.Config, s *config.STTProvider) (b sttBackend, skip s
 	if p.APIKey == "" {
 		return b, "provider has no API key"
 	}
-	model := s.Model
-	if model == "" {
-		model = DefaultSTTModel(p.BaseURL)
-	}
-	if model == "" {
-		return b, "no model set and no default for this endpoint"
-	}
-	// The name carries the model so two backends on one provider can be told
-	// apart in the log, the report's chain and the rejected-key alert.
-	return sttBackend{name: p.Name + " (" + model + ")", apiKey: p.APIKey, baseURL: p.BaseURL, model: model}, ""
+	return sttBackend{name: alias, apiKey: p.APIKey, baseURL: p.BaseURL, model: m.Model}, ""
 }
 
-// skippedSTT is an enabled voice.stt entry that resolveSTT could not use.
+// skippedSTT is an STT task model that resolveSTT could not use.
 type skippedSTT struct {
-	provider, reason string
+	model, reason string
 }
 
-// alertSkipped raises one alert per skipped entry, urgent when none is usable
-// (transcription is off) and normal when another entry still serves.
+// alertSkipped raises one alert per skipped model, urgent when none is usable
+// (transcription is off) and normal when another one still serves.
 func alertSkipped(a alerter.Alerter, skipped []skippedSTT, noneUsable bool) {
 	if a == nil {
 		return
@@ -425,8 +404,8 @@ func alertSkipped(a alerter.Alerter, skipped []skippedSTT, noneUsable bool) {
 		a.Send(alerter.Alert{
 			Priority:    priority,
 			Title:       "Speech backend not usable",
-			Description: fmt.Sprintf("%s: %s; voice messages are not transcribed by this backend until it is fixed", s.provider, s.reason),
-			EventID:     "voice:config:" + s.provider,
+			Description: fmt.Sprintf("%s: %s; voice messages are not transcribed by this model until it is fixed", s.model, s.reason),
+			EventID:     "voice:config:" + s.model,
 		})
 	}
 }
@@ -469,36 +448,48 @@ func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath stri
 	return nil, lastErr
 }
 
-// DetectTranscriber builds the transcription backend from the enabled voice.stt
-// entries (each usable when it names a configured OpenAI-compatible provider with a base
-// URL and an API key, and has a model or a default for that host). Multiple enabled entries form an ordered fallback chain, tried in
-// listed order. No enabled entry means transcription is off. The result raises
-// no operator alerts; the gateway uses DetectTranscriberWithAlerter.
+// DetectTranscriber builds the transcription backend from the models ticked
+// Transcription (STT) on the Task models page, in page order. Every enabled
+// model_list entry of such a model is usable when its provider speaks an
+// OpenAI-compatible protocol and has a base URL and an API key; the usable
+// ones form an ordered fallback chain. No usable entry means transcription is
+// off. The result raises no operator alerts; the gateway uses
+// DetectTranscriberWithAlerter.
 func DetectTranscriber(cfg *config.Config) Transcriber {
 	return DetectTranscriberWithAlerter(cfg, nil)
 }
 
 // DetectTranscriberWithAlerter is DetectTranscriber with an alerter that
 // receives the alert raised when a provider rejects the key or account, and
-// one alert per enabled entry that is skipped as unusable: urgent when no
-// entry is usable (transcription is off), normal when another one is.
+// one alert per STT model that is skipped as unusable: urgent when no model
+// is usable (transcription is off), normal when another one is.
 func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
 	var skipped []skippedSTT
-	for i := range cfg.Voice.STT {
-		s := &cfg.Voice.STT[i]
-		if !s.Enabled {
-			continue
+	skip := func(alias, reason string) {
+		logger.WarnCF("voice", "Speech model skipped: "+reason, map[string]any{
+			"model": alias, "reason": reason,
+		})
+		skipped = append(skipped, skippedSTT{model: alias, reason: reason})
+	}
+	for _, alias := range cfg.TaskModels.ModelsFor(config.TaskUseSTT) {
+		found := false
+		for i := range cfg.Models {
+			m := &cfg.Models[i]
+			if m.ModelName != alias || !m.Enabled {
+				continue
+			}
+			found = true
+			b, reason := resolveSTT(cfg, alias, m)
+			if reason != "" {
+				skip(alias, reason)
+				continue
+			}
+			chain = append(chain, NewTranscriber(b.name, b.apiKey, b.baseURL, b.model, a))
 		}
-		b, skip := resolveSTT(cfg, s)
-		if skip != "" {
-			logger.WarnCF("voice", "Speech backend skipped: "+skip, map[string]any{
-				"provider": s.Provider, "reason": skip,
-			})
-			skipped = append(skipped, skippedSTT{provider: s.Provider, reason: skip})
-			continue
+		if !found {
+			skip(alias, "model not configured or disabled")
 		}
-		chain = append(chain, NewTranscriber(b.name, b.apiKey, b.baseURL, b.model, a))
 	}
 	alertSkipped(a, skipped, len(chain) == 0)
 	switch len(chain) {

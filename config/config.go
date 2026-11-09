@@ -95,7 +95,6 @@ type Config struct {
 	Gateway       GatewayConfig       `json:"gateway"`
 	Tools         ToolsConfig         `json:"tools"`
 	Devices       DevicesConfig       `json:"devices"`
-	Voice         VoiceConfig         `json:"voice"`
 	Logging       LoggingConfig       `json:"logging"`
 	Security      SecurityConfig      `json:"security,omitempty"`
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
@@ -103,6 +102,7 @@ type Config struct {
 	Backup        BackupConfig        `json:"backup,omitempty"`
 	Forum         ForumConfig         `json:"forum,omitzero"`
 	Classifiers   ClassifiersConfig   `json:"classifiers,omitzero"`
+	TaskModels    TaskModelsConfig    `json:"task_models,omitzero"`
 	Operator      OperatorConfig      `json:"operator,omitzero"`
 	// DefaultConfig marks a never-saved, auto-seeded config. DefaultConfig() sets
 	// it true and SeedDefaultConfig() preserves it on disk; the first save through

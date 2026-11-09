@@ -306,6 +306,7 @@ func (c *Config) PruneHumanProblems() []HumanProblem {
 			*site.slice = slices.DeleteFunc(*site.slice, c.IsHumanModel)
 		}
 	}
+	c.dropBlankTaskModels()
 	humanNames := map[string]bool{}
 	for i := range c.Models {
 		if c.modelIsHuman(&c.Models[i]) {

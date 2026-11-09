@@ -18,40 +18,45 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 )
 
-// TestDetectTranscriber_AlertsOnUnusableBackend: an enabled entry that cannot
-// be used raises one alert keyed by its provider, urgent when it leaves no
-// usable backend and normal when another one serves; a disabled entry raises
+// TestDetectTranscriber_AlertsOnUnusableBackend: a ticked STT model that
+// cannot be used raises one alert keyed by its name, urgent when it leaves no
+// usable model and normal when another one serves; a model not ticked raises
 // none.
 func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
+	models := []config.ModelConfig{
+		{ModelName: "alice-stt", Provider: "missing", Model: "whisper-1", Enabled: true},
+		{ModelName: "whisper-groq", Provider: "groq", Model: "whisper-large-v3", Enabled: true},
+	}
 	tests := []struct {
 		name         string
-		stt          []config.STTProvider
+		task         []config.TaskModel
 		wantAlert    bool
 		wantPriority int
 	}{
 		{
-			name:         "only entry unusable",
-			stt:          []config.STTProvider{{Provider: "alice-stt", Enabled: true}},
+			name:         "only model unusable",
+			task:         []config.TaskModel{{Model: "alice-stt", STT: true}},
 			wantAlert:    true,
 			wantPriority: alerter.Urgent,
 		},
 		{
-			name:         "another entry usable",
-			stt:          []config.STTProvider{{Provider: "alice-stt", Enabled: true}, {Provider: "groq", Enabled: true}},
+			name:         "another model usable",
+			task:         []config.TaskModel{{Model: "alice-stt", STT: true}, {Model: "whisper-groq", STT: true}},
 			wantAlert:    true,
 			wantPriority: alerter.Normal,
 		},
 		{
-			name: "disabled entry",
-			stt:  []config.STTProvider{{Provider: "alice-stt"}, {Provider: "groq", Enabled: true}},
+			name: "model not ticked",
+			task: []config.TaskModel{{Model: "alice-stt", Text: true}, {Model: "whisper-groq", STT: true}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &alertRecorder{}
 			cfg := &config.Config{
-				Providers: []config.Provider{groqProvider},
-				Voice:     config.VoiceConfig{STT: tt.stt},
+				Providers:  []config.Provider{groqProvider},
+				Models:     models,
+				TaskModels: config.TaskModelsConfig{Models: tt.task},
 			}
 			DetectTranscriberWithAlerter(cfg, rec)
 			if !tt.wantAlert {
@@ -67,7 +72,7 @@ func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
 			want := alerter.Alert{
 				Priority:    tt.wantPriority,
 				Title:       "Speech backend not usable",
-				Description: "alice-stt: provider not configured; voice messages are not transcribed by this backend until it is fixed",
+				Description: "alice-stt: provider not configured; voice messages are not transcribed by this model until it is fixed",
 				EventID:     "voice:config:alice-stt",
 			}
 			if a != want {

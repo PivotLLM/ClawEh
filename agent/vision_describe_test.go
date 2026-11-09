@@ -6,9 +6,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -211,5 +213,52 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("injected vision description not found in dispatch messages: %+v", sp.lastMessages)
+	}
+}
+
+// The vision-describe chain is the models ticked Vision on the Task models
+// page, in page order; a ticked model that is missing is skipped, and with
+// none ticked the feature is off.
+func TestWireVisionClients_TaskModelsInPageOrder(t *testing.T) {
+	cfg := ownerTestConfig(t)
+	cfg.Providers = []config.Provider{{Name: "p", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"}}
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "alpha", Model: "alpha-wire", Provider: "p", Enabled: true},
+		{ModelName: "v1", Model: "v1-wire", Provider: "p", Enabled: true},
+		{ModelName: "v2", Model: "v2-wire", Provider: "p", Enabled: true},
+	}
+	cfg.Agents.Defaults.Models = []string{"alpha"}
+	cfg.TaskModels.Models = []config.TaskModel{
+		{Model: "v2", Vision: true},
+		{Model: "gone", Vision: true},
+		{Model: "alpha", Text: true},
+		{Model: "v1", Vision: true, STT: true},
+	}
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, providers.NewProviderDispatcher(cfg))
+	agent := al.registry.Default()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+
+	al.wireVisionClients(cfg, agent)
+	got := make([]string, 0, len(agent.VisionClients))
+	for _, c := range agent.VisionClients {
+		pc, ok := c.(*providerVisionClient)
+		if !ok {
+			t.Fatalf("client is %T", c)
+		}
+		got = append(got, pc.alias+"="+pc.model)
+	}
+	if want := []string{"v2=v2-wire", "v1=v1-wire"}; !slices.Equal(got, want) {
+		t.Fatalf("vision chain = %v, want %v", got, want)
+	}
+	if agent.EffectiveVisionModel != "v2" {
+		t.Errorf("EffectiveVisionModel = %q, want v2", agent.EffectiveVisionModel)
+	}
+
+	cfg.TaskModels.Models = []config.TaskModel{{Model: "v1", STT: true}}
+	al.wireVisionClients(cfg, agent)
+	if len(agent.VisionClients) != 0 || agent.EffectiveVisionModel != "" {
+		t.Fatalf("with no Vision model: %d clients, effective %q, want none", len(agent.VisionClients), agent.EffectiveVisionModel)
 	}
 }

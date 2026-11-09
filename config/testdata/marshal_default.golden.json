@@ -698,9 +698,6 @@
     "enabled": false,
     "monitor_usb": true
   },
-  "voice": {
-    "echo_transcription": false
-  },
   "logging": {
     "file": true,
     "console": true,

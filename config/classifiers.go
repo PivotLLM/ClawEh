@@ -5,7 +5,6 @@ package config
 
 import (
 	"errors"
-	"slices"
 	"strings"
 )
 
@@ -115,38 +114,24 @@ func (a *AgentConfig) ClassifierModel() string {
 	return strings.TrimSpace(a.Classifiers.Model)
 }
 
-// agentModelList is the list of models an agent runs on: its own models, else
-// the default models.
-func (c *Config) agentModelList(a *AgentConfig) []string {
-	if len(a.Models) > 0 {
-		return a.Models
-	}
-	return c.Agents.Defaults.Models
-}
-
-// firstAgentModel is the first non-empty entry of the agent's model list, or
-// "" when it has none.
-func (c *Config) firstAgentModel(a *AgentConfig) string {
-	for _, m := range c.agentModelList(a) {
-		if m = strings.TrimSpace(m); m != "" {
-			return m
-		}
+// firstClassifyModel is the first model ticked Classify on the Task models
+// page, or "" when there is none.
+func (c *Config) firstClassifyModel() string {
+	if names := c.TaskModels.ModelsFor(TaskUseClassify); len(names) > 0 {
+		return names[0]
 	}
 	return ""
 }
 
-// ClassifierModelUsable reports whether model is one of the agent's models
-// (its own models, else the default models), whatever its classifiers
-// switch says.
-func (c *Config) ClassifierModelUsable(a *AgentConfig, model string) bool {
-	model = strings.TrimSpace(model)
-	return a != nil && model != "" &&
-		slices.ContainsFunc(c.agentModelList(a), func(m string) bool { return strings.TrimSpace(m) == model })
+// ClassifierModelUsable reports whether model can be a classifier model: it
+// is ticked Classify on the Task models page.
+func (c *Config) ClassifierModelUsable(model string) bool {
+	return c.TaskModels.Has(model, TaskUseClassify)
 }
 
 // ClassifierModelProblem is an agent whose classifiers are on and whose
-// classifier model is not usable: none is set (Missing), or Model is not one
-// of the agent's models.
+// classifier model is not usable: none is set (Missing), or Model is not a
+// Classify model.
 type ClassifierModelProblem struct {
 	Agent   string // the configured agent id
 	Model   string // the classifier model ("" when Missing)
@@ -154,9 +139,9 @@ type ClassifierModelProblem struct {
 }
 
 // ClassifierModelProblems lists every agent with the classifiers switch on
-// whose classifier model is missing or is not one of its models (its own
-// models, else the default models). Its classifiers fail every run until
-// the operator picks a usable model.
+// whose classifier model is missing or is not ticked Classify on the Task
+// models page. Its classifiers fail every run until the operator picks a
+// usable model.
 func (c *Config) ClassifierModelProblems() []ClassifierModelProblem {
 	var out []ClassifierModelProblem
 	for i := range c.Agents.List {
@@ -168,7 +153,7 @@ func (c *Config) ClassifierModelProblems() []ClassifierModelProblem {
 		switch {
 		case model == "":
 			out = append(out, ClassifierModelProblem{Agent: a.ID, Missing: true})
-		case !c.ClassifierModelUsable(a, model):
+		case !c.ClassifierModelUsable(model):
 			out = append(out, ClassifierModelProblem{Agent: a.ID, Model: model})
 		}
 	}
@@ -187,19 +172,20 @@ func newClassifierModelProblems(before, next *Config) []error {
 				return nil
 			}
 			return errors.New("Agent " + next.agentName(p.Agent) + " cannot use model " + p.Model +
-				" for its classifiers; pick one of its models.")
+				" for its classifiers; pick a Classify model.")
 		})
 }
 
 // completeClassifierModels gives every agent whose classifiers switch is on
 // and that names no classifier model (a save that turns the switch on, or
-// one that clears the model) the agent's first model at this moment. An
-// agent with no model at all is refused only when this save brings it about
-// (as for the other rules, one already in the file does not block an
-// unrelated save). A human agent is left alone: it cannot run classifiers
-// (HumanClassifiers).
+// one that clears the model) the first Classify model on the Task models
+// page. With no Classify model at all the switch is refused, only when this
+// save brings it about (as for the other rules, one already in the file does
+// not block an unrelated save). A human agent is left alone: it cannot run
+// classifiers (HumanClassifiers).
 func completeClassifierModels(before, next *Config) []error {
 	var errs []error
+	model := next.firstClassifyModel()
 	for i := range next.Agents.List {
 		a := &next.Agents.List[i]
 		if !a.ClassifiersEnabled() || a.ClassifierModel() != "" {
@@ -208,13 +194,12 @@ func completeClassifierModels(before, next *Config) []error {
 		if _, human := next.HumanModelOf(a); human {
 			continue
 		}
-		model := next.firstAgentModel(a)
 		if model == "" {
-			if was := before.AgentByID(a.ID); was.ClassifiersEnabled() && was.ClassifierModel() == "" && before.firstAgentModel(was) == "" {
+			if was := before.AgentByID(a.ID); was.ClassifiersEnabled() && was.ClassifierModel() == "" && before.firstClassifyModel() == "" {
 				continue
 			}
 			errs = append(errs, errors.New("Agent "+a.DisplayName()+
-				" has no model for its classifiers; set agents.list[].classifiers.model."))
+				" has no Classify model for its classifiers; tick Classify for a model on the Task models page."))
 			continue
 		}
 		a.Classifiers.Model = model

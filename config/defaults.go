@@ -328,9 +328,6 @@ func DefaultConfig() *Config {
 			Enabled:    false,
 			MonitorUSB: true,
 		},
-		Voice: VoiceConfig{
-			EchoTranscription: false,
-		},
 		Logging: LoggingConfig{
 			File:          global.DefaultLogFile,
 			Console:       global.DefaultLogConsole,

@@ -242,7 +242,7 @@ func TestPrepareInbound_EchoTranscription(t *testing.T) {
 			defer restore()
 			cfg := ownerTestConfig(t)
 			cfg.Agents.List = []config.AgentConfig{{ID: "alice", Name: "Alice", Default: true}}
-			cfg.Voice.EchoTranscription = echo
+			cfg.TaskModels.EchoTranscription = echo
 			msgBus := bus.NewMessageBus()
 			al := mustNewAgentLoop(t, cfg, msgBus, &recordingProvider{}, nil, OwnsDataDir())
 			store := media.NewFileMediaStore()
@@ -289,7 +289,7 @@ func TestPrepareInbound_HumanAgentNeverTranscribed(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
 	cfg := humanLoopConfig(t, 60)
-	cfg.Voice.EchoTranscription = true
+	cfg.TaskModels.EchoTranscription = true
 	al, _, model := newHumanLoopWith(t, cfg)
 	store := media.NewFileMediaStore()
 	al.SetMediaStore(store)

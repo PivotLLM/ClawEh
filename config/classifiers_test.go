@@ -136,7 +136,8 @@ func TestAgentSuiteEnabled_Classifiers(t *testing.T) {
 }
 
 // classifierTestConfig has alice on her own models and bob on the default
-// models.
+// models; "cheap" and "m" are ticked Classify, in that order, and "other" is
+// ticked Text only.
 func classifierTestConfig() *Config {
 	cfg := DefaultConfig()
 	cfg.Providers = []Provider{{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-test-0123456789"}}
@@ -150,11 +151,16 @@ func classifierTestConfig() *Config {
 		{ID: "alice", Name: "Alice", Default: true, Models: []string{"cheap", "m"}},
 		{ID: "bob", Name: "Bob"},
 	}
+	cfg.TaskModels.Models = []TaskModel{
+		{Model: "other", Text: true},
+		{Model: "cheap", Classify: true},
+		{Model: "m", Text: true, Classify: true},
+	}
 	return cfg
 }
 
-// Turning the switch on with no model writes the agent's first model at that
-// moment: its own first model, else the first default model.
+// Turning the switch on with no model writes the first Classify model on the
+// Task models page, whatever models the agent itself runs on.
 func TestStoreUpdate_ClassifierModelCompletedOnSwitchOn(t *testing.T) {
 	s := storeFor(t, classifierTestConfig())
 	if err := s.Update(func(c *Config) error {
@@ -167,25 +173,25 @@ func TestStoreUpdate_ClassifierModelCompletedOnSwitchOn(t *testing.T) {
 	if _, err := s.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Current().AgentByID("alice").ClassifierModel(); got != "cheap" {
-		t.Errorf("alice's classifier model = %q, want cheap", got)
-	}
-	if got := s.Current().AgentByID("bob").ClassifierModel(); got != "m" {
-		t.Errorf("bob's classifier model = %q, want m (the default models)", got)
+	for _, id := range []string{"alice", "bob"} {
+		if got := s.Current().AgentByID(id).ClassifierModel(); got != "cheap" {
+			t.Errorf("%s's classifier model = %q, want cheap (the first Classify model)", id, got)
+		}
 	}
 
-	// It then stays that model when the agent's own models change.
+	// It then stays that model when the page order changes.
 	if err := s.Update(func(c *Config) error {
-		c.AgentByID("alice").Models = []string{"m", "cheap"}
+		tm := c.TaskModels.Models
+		tm[1], tm[2] = tm[2], tm[1]
 		return nil
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if got := s.Current().AgentByID("alice").ClassifierModel(); got != "cheap" {
-		t.Errorf("after the models changed = %q, want cheap", got)
+		t.Errorf("after the order changed = %q, want cheap", got)
 	}
 
-	// A model the save names is kept as given.
+	// A Classify model the save names is kept as given.
 	if err := s.Update(func(c *Config) error {
 		c.AgentByID("alice").Classifiers.Model = "m"
 		return nil
@@ -229,15 +235,18 @@ func TestStoreUpdate_ClassifierModelCompletedOnEverySave(t *testing.T) {
 	}
 }
 
-func TestStoreUpdate_ClassifierSwitchOnWithoutModelsRefused(t *testing.T) {
+// With no model ticked Classify, turning the switch on is refused with a
+// sentence naming the agent and the page that fixes it, even when the agent
+// has models of its own.
+func TestStoreUpdate_ClassifierSwitchOnWithoutClassifyModelRefused(t *testing.T) {
 	cfg := classifierTestConfig()
-	cfg.Agents.Defaults.Models = nil
+	cfg.TaskModels.Models = []TaskModel{{Model: "m", Text: true}}
 	s := storeFor(t, cfg)
 	err := s.Update(func(c *Config) error {
 		c.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true}
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "Agent Bob has no model for its classifiers; set agents.list[].classifiers.model.") {
+	if err == nil || !strings.Contains(err.Error(), "Agent Bob has no Classify model for its classifiers; tick Classify for a model on the Task models page.") {
 		t.Fatalf("refusal = %v", err)
 	}
 	if s.Current().AgentByID("bob").Classifiers != nil {
@@ -253,29 +262,45 @@ func TestStoreUpdate_ClassifierSwitchOnWithoutModelsRefused(t *testing.T) {
 	}); err != nil {
 		t.Errorf("an unrelated save was refused: %v", err)
 	}
+
+	// Ticking Classify on the same save lets the switch on, with that model.
+	s = storeFor(t, classifierTestConfig())
+	if err := s.Update(func(c *Config) error {
+		c.TaskModels.Models = []TaskModel{{Model: "other", Classify: true}}
+		c.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := s.Current().AgentByID("bob").ClassifierModel(); got != "other" {
+		t.Errorf("bob's classifier model = %q, want other", got)
+	}
 }
 
+// A classifier model must be ticked Classify; being one of the agent's own
+// models is neither needed nor enough.
 func TestStoreUpdate_RefusesUnusableClassifierModel(t *testing.T) {
 	s := storeFor(t, classifierTestConfig())
 	err := s.Update(func(c *Config) error {
 		c.AgentByID("alice").Classifiers = &AgentClassifiersConfig{Enabled: true, Model: "other"}
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "Agent Alice cannot use model other for its classifiers; pick one of its models.") {
+	if err == nil || !strings.Contains(err.Error(), "Agent Alice cannot use model other for its classifiers; pick a Classify model.") {
 		t.Fatalf("refusal = %v", err)
 	}
-	// bob runs on the default models, so "m" is usable and "cheap" is not.
+	// bob runs on the default models ("m"), yet "cheap" is a Classify model.
 	if err := s.Update(func(c *Config) error {
-		c.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true, Model: "m"}
+		c.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true, Model: "cheap"}
 		return nil
 	}); err != nil {
-		t.Fatalf("a usable model was refused: %v", err)
+		t.Fatalf("a Classify model was refused: %v", err)
 	}
+	// Unticking Classify on the model in use is refused the same way.
 	if err := s.Update(func(c *Config) error {
-		c.AgentByID("bob").Classifiers.Model = "cheap"
+		c.TaskModels.Models[1].Classify = false
 		return nil
-	}); err == nil {
-		t.Fatal("a model outside the default models was accepted for bob")
+	}); err == nil || !strings.Contains(err.Error(), "Agent Bob cannot use model cheap") {
+		t.Fatalf("unticking the model in use = %v, want a refusal", err)
 	}
 	// A switched-off block is not checked.
 	if err := s.Update(func(c *Config) error {
@@ -321,6 +346,7 @@ func TestStoreUpdate_RefusesMissingClassifierModel(t *testing.T) {
 
 func TestStoreUpdate_RefusesClassifiersOnHumanAgent(t *testing.T) {
 	cfg := humanTestConfig()
+	cfg.TaskModels.Models = []TaskModel{{Model: "m", Classify: true}}
 	s := storeFor(t, cfg)
 	err := s.Update(func(c *Config) error {
 		c.AgentByID("bob").Classifiers = &AgentClassifiersConfig{Enabled: true}
@@ -329,7 +355,7 @@ func TestStoreUpdate_RefusesClassifiersOnHumanAgent(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Bob represents a person and cannot run classifiers.") {
 		t.Fatalf("refusal = %v", err)
 	}
-	if strings.Contains(err.Error(), "has no model") {
+	if strings.Contains(err.Error(), "has no Classify model") {
 		t.Errorf("a human agent's model was completed: %v", err)
 	}
 	if err := s.Update(func(c *Config) error {

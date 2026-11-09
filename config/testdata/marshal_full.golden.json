@@ -203,10 +203,6 @@
       "models": [
         "x"
       ],
-      "vision_model": "x",
-      "vision_model_fallbacks": [
-        "x"
-      ],
       "request_timeout": 1,
       "turn_timeout": 1,
       "tool_timeout": 1,
@@ -652,16 +648,6 @@
     "enabled": true,
     "monitor_usb": true
   },
-  "voice": {
-    "echo_transcription": true,
-    "stt": [
-      {
-        "provider": "x",
-        "enabled": true,
-        "model": "x"
-      }
-    ]
-  },
   "logging": {
     "file": true,
     "console": true,
@@ -758,6 +744,25 @@
       "max_activity_hours": 1,
       "min_every_seconds": 1
     }
+  },
+  "task_models": {
+    "result_text_chars": 1,
+    "echo_transcription": true,
+    "models": [
+      {
+        "model": "x",
+        "text": true,
+        "image": true,
+        "tts": true,
+        "stt": true,
+        "vision": true,
+        "classify": true,
+        "tts_defaults": {
+          "voice": "x",
+          "format": "x"
+        }
+      }
+    ]
   },
   "operator": {
     "name": "x"

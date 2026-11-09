@@ -88,19 +88,14 @@ func registryRows(cfg *config.Config) [][]string {
 }
 
 func voiceRows(cfg *config.Config) [][]string {
-	active := "none: no enabled STT backend is usable"
+	active := "none: no Transcription (STT) task model is usable"
 	if t := voice.DetectTranscriber(cfg); t != nil {
 		active = t.Name()
 	}
-	rows := make([][]string, 0, 2+len(cfg.Voice.STT))
-	rows = append(rows,
+	return [][]string{
 		row("Active transcription chain", active),
-		row("Echo transcription to the sender", onOff(cfg.Voice.EchoTranscription)),
-	)
-	for _, s := range cfg.Voice.STT {
-		rows = append(rows, row("STT backend "+s.Provider, onOff(s.Enabled)+", model "+orValue(s.Model, "default")))
+		row("Echo transcription to the sender", onOff(cfg.TaskModels.EchoTranscription)),
 	}
-	return rows
 }
 
 func collectExternal(_ context.Context, cfg *config.Config, _ Environment) Section {

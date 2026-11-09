@@ -26,9 +26,11 @@
   that category's action with the agent's own tools. The classifying model
   never has tools. Turn it on per agent with **Allow classifiers** on the
   Agents page (`agents.list[].classifiers.enabled`, off by default) and pick
-  the **Classifier model** (`agents.list[].classifiers.model`; turning the
-  switch on with no model sets the agent's first model; a model the agent
-  cannot use is refused, and a person's agent cannot run classifiers). The
+  the **Classifier model** (`agents.list[].classifiers.model`, one of the
+  models ticked **Classify** on the Task models page; turning the switch on
+  with no model sets the first Classify model, with none it is refused, a
+  model not ticked Classify is refused, and a person's agent cannot run
+  classifiers). The
   agent manages its classifiers with eleven tools: `classifier_readme`,
   `classifier_list`, `classifier_get`, `classifier_create`,
   `classifier_update`, `classifier_delete`, `classifier_validate`,
@@ -79,8 +81,38 @@
   the rest of the file is left as it is. Deleting the block and restarting
   writes the defaults back.
 
+- **Task models page.** A new page in the Models group, **Task models**
+  (`task_models` in `config.json`), lists the models ClawEh uses for single
+  calls without tools, each ticked for what it is used for: **Text**,
+  **Images**, **Speech (TTS)**, **Transcription (STT)**, **Vision** and
+  **Classify** (`task_models.models[]`: `model`, a `model_name` from the
+  Models page, listed at most once, and the booleans `text`, `image`,
+  `tts`, `stt`, `vision`, `classify`, plus `tts_defaults` with `voice` and
+  `format`). The list order is the fallback order within each use. Incoming
+  voice messages are transcribed with the Transcription (STT) models,
+  images are described for text-only models with the Vision models, and
+  classifier models are chosen from the Classify models; Text, Images and
+  Speech (TTS) are recorded for agents to use in a later release. The page
+  also holds **Text in results (characters)**
+  (`task_models.result_text_chars`, default 8000; 0 or absent uses the
+  default, negative is refused) and **Echo transcription**
+  (`task_models.echo_transcription`, environment variable
+  `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`). A model whose provider cannot
+  serve a ticked use, judged from its protocol, is marked there. Renaming a
+  model follows it onto the page, and a model on the page cannot be deleted
+  until it is taken off. Check Up shows **Speech to text: No model** and
+  **Vision: No model** while no model is ticked for them, marks a classifier
+  model when no model is ticked Classify, and the full report has a Task
+  models table. API: `GET /api/task-models`, `PUT /api/task-models`.
+
 ### Changed
 
+- **BREAKING: a classifier model must be ticked Classify.**
+  `agents.list[].classifiers.model` must name a model ticked **Classify** on
+  the Task models page; being one of the agent's own models is no longer
+  enough. An agent whose classifier model is not ticked Classify is marked
+  on Check Up and its classifiers do not run. To restore it, tick
+  **Classify** for that model on the Task models page.
 - **An `/opt/claw` install puts the binary and the `openclaw` alias in
   `/opt/claw/bin`.** `claw install` on a machine whose data directory is
   `/opt/claw` now installs `/opt/claw/bin/claw` and the alias
@@ -164,6 +196,31 @@
   created with their area's mode too, instead of fixed modes (Maestro's
   were `0755`/`0644`).
 - Updated dependencies
+
+### Removed
+
+- **BREAKING: `voice.stt` and `voice.echo_transcription` are removed, with
+  the Speech page.** Incoming voice messages are transcribed only with the
+  models ticked **Transcription (STT)** on the Task models page, and are not
+  transcribed until one is (Check Up: **Speech to text: No model**). The old
+  keys are reported as unknown at start and ignored. To restore
+  transcription, add each speech model on the Models page (its provider
+  gives the endpoint and key, as before) and tick **Transcription (STT)**
+  for it on the Task models page, in the order the old entries were tried;
+  set **Echo transcription** there (`task_models.echo_transcription`) in
+  place of `voice.echo_transcription`. The environment variable
+  `CLAW_VOICE_ECHO_TRANSCRIPTION` is now
+  `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`. `GET` and `PUT /api/voice/stt` are
+  removed.
+- **BREAKING: `agents.defaults.vision_model` and
+  `agents.defaults.vision_model_fallbacks` are removed.** Images are
+  described for text-only models only with the models ticked **Vision** on
+  the Task models page, and are not described until one is (Check Up:
+  **Vision: No model**). The old keys are reported as unknown at start and
+  ignored, and the vision fields are gone from the System page. To restore
+  it, tick **Vision** on the Task models page for the old `vision_model` and
+  then each of its fallbacks, in that order. The environment variable
+  `CLAW_AGENTS_DEFAULTS_VISION_MODEL` is removed.
 
 ### Fixed
 

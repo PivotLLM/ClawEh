@@ -104,7 +104,7 @@ func TestFactoryInputs_CoverWhatTheFactoryReads(t *testing.T) {
 	t.Run("unrelated settings", func(t *testing.T) {
 		cfg := *base
 		cfg.Channels.Slack.Enabled = true
-		cfg.Voice.EchoTranscription = !cfg.Voice.EchoTranscription
+		cfg.TaskModels.EchoTranscription = !cfg.TaskModels.EchoTranscription
 		cfg.Gateway.AllowedCIDRs = []string{"192.0.2.0/24"}
 		if inputsOf(t, &cfg) != inputsOf(t, base) {
 			t.Fatal("a setting the device channel does not read changed its inputs")

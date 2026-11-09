@@ -69,15 +69,14 @@ func TestRenameModelReferences(t *testing.T) {
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Models:               []string{"old", "old", "keep"},
-				VisionModel:          "old",
-				VisionModelFallbacks: []string{"old", "x"},
+				Models: []string{"old", "old", "keep"},
 			},
 			List: []AgentConfig{
 				{ID: "a", Models: []string{"keep", "old"}, SummarizationModels: []string{"old", "y"}},
 			},
 		},
 		Summarization: SummarizationConfig{Models: []string{"z", "old"}},
+		TaskModels:    TaskModelsConfig{Models: []TaskModel{{Model: "old", Vision: true}, {Model: "x", STT: true}}},
 	}
 
 	cfg.RenameModelReferences("old", "new")
@@ -88,8 +87,8 @@ func TestRenameModelReferences(t *testing.T) {
 	if cfg.Agents.Defaults.Models[2] != "keep" {
 		t.Error("unrelated model entry should be untouched")
 	}
-	if cfg.Agents.Defaults.VisionModel != "new" || cfg.Agents.Defaults.VisionModelFallbacks[0] != "new" {
-		t.Errorf("vision model not repointed: %v / %v", cfg.Agents.Defaults.VisionModel, cfg.Agents.Defaults.VisionModelFallbacks)
+	if tm := cfg.TaskModels.Models; tm[0].Model != "new" || !tm[0].Vision || tm[1].Model != "x" {
+		t.Errorf("task models not repointed: %+v", tm)
 	}
 	if cfg.Summarization.Models[1] != "new" {
 		t.Errorf("summarization chain not repointed: %v", cfg.Summarization.Models)

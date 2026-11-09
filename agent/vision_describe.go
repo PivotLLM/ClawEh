@@ -60,15 +60,6 @@ func (c *providerVisionClient) Complete(ctx context.Context, messages []provider
 	return visionReply{Content: resp.Content}, nil
 }
 
-// resolveVisionModelChain returns the ordered, de-duplicated vision-describe
-// model chain: the agent-defaults VisionModel first, then VisionModelFallbacks.
-// Blank entries are skipped; the first occurrence of each name wins. There is no
-// global-models merge — vision is purely the agent-defaults side-model. Reuses
-// resolveCompressModelChain's dedup semantics.
-func resolveVisionModelChain(model string, fallbacks []string) []string {
-	return resolveCompressModelChain([]string{model}, fallbacks)
-}
-
 // buildVisionLLMClient resolves a configured vision model reference into a
 // visionClient dispatched through the per-model dispatcher, mirroring
 // resolveCompressClient. Unlike compression there is NO agent-primary
@@ -111,14 +102,14 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 	}, true
 }
 
-// wireVisionClients builds the agent's vision-describe chain from the global
-// AgentDefaults.VisionModel + VisionModelFallbacks and stores it on the
+// wireVisionClients builds the agent's vision-describe chain from the models
+// ticked Vision on the Task models page, in page order, and stores it on the
 // instance. Called once per agent from agentBuilder (initial construction
-// and config reload). No configured vision model leaves VisionClients empty,
-// which keeps the feature off (images are dropped from dispatch, with a
-// hidden-attachment note from messagesForModel).
+// and config reload). No Vision model leaves VisionClients empty, which keeps
+// the feature off (images are dropped from dispatch, with a hidden-attachment
+// note from messagesForModel).
 func (al *AgentLoop) wireVisionClients(cfg *config.Config, agent *AgentInstance) {
-	names := resolveVisionModelChain(cfg.Agents.Defaults.VisionModel, cfg.Agents.Defaults.VisionModelFallbacks)
+	names := cfg.TaskModels.ModelsFor(config.TaskUseVision)
 	var clients []visionClient
 	effective := ""
 	for _, name := range names {

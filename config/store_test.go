@@ -309,7 +309,7 @@ func TestStore_UpdateAcceptsPruneOnlyChange(t *testing.T) {
 	}
 	cfg.Agents.Defaults.Models = []string{"m"} // not the template's CLI aliases
 	cfg.Agents.List[0].Models = []string{"DeepSeek 4 Pro", "m"}
-	cfg.Agents.Defaults.VisionModel = "gone"
+	cfg.TaskModels.Models = []TaskModel{{Model: "gone", Vision: true}}
 	if err = SaveConfig(s.Path(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -340,8 +340,8 @@ func TestStore_UpdateAcceptsPruneOnlyChange(t *testing.T) {
 	if got := fromDisk.Agents.List[0].Models; len(got) != 1 || got[0] != "m" {
 		t.Fatalf("on-disk models = %q, want [m]", got)
 	}
-	if fromDisk.Agents.Defaults.VisionModel != "" {
-		t.Fatalf("on-disk vision_model = %q, want it cleared", fromDisk.Agents.Defaults.VisionModel)
+	if len(fromDisk.TaskModels.Models) != 0 {
+		t.Fatalf("on-disk task models = %+v, want the missing one removed", fromDisk.TaskModels.Models)
 	}
 
 	info, err := os.Stat(s.Path())

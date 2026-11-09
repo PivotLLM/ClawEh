@@ -142,7 +142,7 @@ func LoadConfig(path string) (*Config, error) {
 // running config) until the operator fixes it.
 func (c *Config) loadProblems() []error {
 	var errs []error
-	for _, err := range []error{c.validateListeners(), c.Forum.Limits.Validate(), c.Classifiers.Validate(), c.Security.Permissions.Validate(), c.Operator.Validate()} {
+	for _, err := range []error{c.validateListeners(), c.Forum.Limits.Validate(), c.Classifiers.Validate(), c.TaskModels.Validate(), c.Security.Permissions.Validate(), c.Operator.Validate()} {
 		if err != nil {
 			errs = append(errs, err)
 		}

@@ -782,14 +782,6 @@ type AgentDefaults struct {
 	// Models is not omitempty: the defaults template fills it, so an emptied
 	// list must be written out or the next load would bring the template back.
 	Models []string `json:"models"`
-	// VisionModel is the side-model used to describe images for a text-only
-	// primary model (vision off): when the active model can't see images, they
-	// are dispatched to this model for a one-shot text description that is then
-	// injected so the active model still benefits from them. Unset = feature off
-	// (images are dropped from dispatch, with a hidden-attachment note).
-	// VisionModelFallbacks are tried in order when the primary vision model fails.
-	VisionModel          string   `json:"vision_model,omitempty"          env:"CLAW_AGENTS_DEFAULTS_VISION_MODEL"`
-	VisionModelFallbacks []string `json:"vision_model_fallbacks,omitempty"`
 	// RequestTimeout is the global default request timeout (seconds) applied to
 	// any model whose own request_timeout is 0. Default 300; CLI models override
 	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
