@@ -161,6 +161,10 @@
 
 ### Changed
 
+- **The voice alerts are now Normal priority, like every other alert.**
+  "Voice message not transcribed" and "Speech backend not usable" (when no
+  speech model was usable) were sent as Urgent.
+
 - **An `/opt/claw` install puts the binary and the `openclaw` alias in
   `/opt/claw/bin`.** `claw install` on a machine whose data directory is
   `/opt/claw` now installs `/opt/claw/bin/claw` and the alias

@@ -116,7 +116,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	return msg, true
 }
 
-// alertUntranscribed raises an urgent alert, keyed by channel, for a voice
+// alertUntranscribed raises an alert, keyed by channel, for a voice
 // message that every speech backend failed to transcribe.
 func (al *AgentLoop) alertUntranscribed(channel string, err error) {
 	details := []rune(strings.TrimSpace(err.Error()))
@@ -124,7 +124,7 @@ func (al *AgentLoop) alertUntranscribed(channel string, err error) {
 		details = details[:200]
 	}
 	al.Alerter().Send(alerter.Alert{
-		Priority:    alerter.Urgent,
+		Priority:    alerter.Normal,
 		Title:       "Voice message not transcribed",
 		Description: channel + ": every speech backend failed; the agent received the audio untranscribed",
 		Details:     string(details),

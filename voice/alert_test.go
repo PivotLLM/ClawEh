@@ -38,7 +38,7 @@ func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
 			name:         "only model unusable",
 			task:         []config.TaskModel{{Model: "alice-stt", STT: true}},
 			wantAlert:    true,
-			wantPriority: alerter.Urgent,
+			wantPriority: alerter.Normal,
 		},
 		{
 			name:         "another model usable",

@@ -234,19 +234,14 @@ type skippedSTT struct {
 	model, reason string
 }
 
-// alertSkipped raises one alert per skipped model, urgent when none is usable
-// (transcription is off) and normal when another one still serves.
-func alertSkipped(a alerter.Alerter, skipped []skippedSTT, noneUsable bool) {
+// alertSkipped raises one alert per skipped model.
+func alertSkipped(a alerter.Alerter, skipped []skippedSTT) {
 	if a == nil {
 		return
 	}
-	priority := alerter.Normal
-	if noneUsable {
-		priority = alerter.Urgent
-	}
 	for _, s := range skipped {
 		a.Send(alerter.Alert{
-			Priority:    priority,
+			Priority:    alerter.Normal,
 			Title:       "Speech backend not usable",
 			Description: fmt.Sprintf("%s: %s; voice messages are not transcribed by this model until it is fixed", s.model, s.reason),
 			EventID:     "voice:config:" + s.model,
@@ -323,7 +318,7 @@ func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcr
 			skipped = append(skipped, skippedSTT{model: e.alias, reason: e.problem})
 		}
 	}
-	alertSkipped(a, skipped, len(chain) == 0)
+	alertSkipped(a, skipped)
 	switch len(chain) {
 	case 0:
 		return nil

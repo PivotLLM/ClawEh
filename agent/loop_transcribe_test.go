@@ -118,7 +118,7 @@ func TestPrepareInbound_AlertsWhenVoiceNotTranscribed(t *testing.T) {
 		t.Fatalf("want one alert, got %+v", rec.alerts)
 	}
 	a := rec.alerts[0]
-	if a.Priority != alerter.Urgent || a.Title != "Voice message not transcribed" ||
+	if a.Priority != alerter.Normal || a.Title != "Voice message not transcribed" ||
 		a.EventID != "voice:failed:test" || a.Details != "upstream 503" ||
 		a.Description != "test: every speech backend failed; the agent received the audio untranscribed" {
 		t.Fatalf("unexpected alert %+v", a)
