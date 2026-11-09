@@ -300,6 +300,7 @@ func agentSection(ctx context.Context, cfg *config.Config, env Environment, a *c
 		row("Forum (sets up forums with other agents)", onOff(a.Forum)),
 		row("Allow classifiers", classifiersSwitch(a, human)),
 		row("Classifier model", classifierModel),
+		row("Task models (agent_spawn kinds allowed)", taskModelGrant(a)),
 		row("Character card", card),
 		row("Character card tools (edits the card library)", onOff(a.CCv3)),
 		row("Shared common directory", onOff(a.SharesCommon())),

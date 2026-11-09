@@ -109,6 +109,13 @@ func render(t *testing.T, cfg *config.Config) string {
 			onOff(cfg.AgentSuiteEnabled(a.ID, "forum")), onOff(cfg.AgentSuiteEnabled(a.ID, "ccv3")),
 			onOff(cfg.AgentSuiteEnabled(a.ID, "classifiers")))
 		w("  character card: %s\n", orNone(a.CharacterCard))
+		var kinds []string
+		for _, use := range config.TaskSpawnUses {
+			if a.TaskModelAllowed(use) {
+				kinds = append(kinds, string(use))
+			}
+		}
+		w("  task models: %s\n", list(kinds))
 
 		var native []string
 		for _, name := range catalog {

@@ -19,9 +19,12 @@ export interface TTSDefaults {
 }
 
 /** One row of the page: a model_name and its ticked uses. */
-export type TaskModel = { model: string; tts_defaults?: TTSDefaults } & Partial<
-  Record<TaskUse, boolean>
->
+export type TaskModel = {
+  model: string
+  tts_defaults?: TTSDefaults
+  /** How an Images model is called: "chat" (default) or "images". */
+  image_api?: "chat" | "images"
+} & Partial<Record<TaskUse, boolean>>
 
 export interface TaskModelsConfig {
   result_text_chars?: number

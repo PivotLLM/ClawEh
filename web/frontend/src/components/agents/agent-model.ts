@@ -34,6 +34,9 @@ export interface AgentEntry {
   /** The per-agent `classifiers` block: the switch and the one model every
    *  classifier the agent owns uses. Absent = off. */
   classifiers?: ClassifiersSettings
+  /** The per-agent `task_models` grant: the kinds of task model it may use
+   *  through agent_spawn. Absent = all off. */
+  task_models?: TaskModelGrant
   fusion?: boolean
   forum?: boolean
   /** The character card (cards/<id>.json) rendered into the system prompt;
@@ -442,6 +445,7 @@ export function parseAgent(value: unknown): AgentEntry {
     global_cron: r.global_cron === true,
     maestro: maestroFromRaw(r.maestro),
     classifiers: classifiersFromRaw(r.classifiers),
+    task_models: taskModelGrantFromRaw(r.task_models),
     fusion: r.fusion === true,
     forum: r.forum === true,
     character_card: asString(r.character_card) || undefined,
@@ -556,6 +560,57 @@ export function classifiersFromRaw(
     enabled: r.enabled === true,
     model: asString(r.model).trim() || undefined,
   }
+}
+
+/** The kinds of task model an agent can be allowed, in the page's order. */
+export const TASK_GRANT_KINDS = ["text", "image", "tts", "stt"] as const
+export type TaskGrantKind = (typeof TASK_GRANT_KINDS)[number]
+
+/** The per-agent `task_models` grant. */
+export type TaskModelGrant = Partial<Record<TaskGrantKind, boolean>>
+
+/** taskModelGrantFromRaw parses the saved grant: only true kinds are kept;
+ *  anything but an object, or no kind on, reads as absent. */
+export function taskModelGrantFromRaw(v: unknown): TaskModelGrant | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined
+  const r = asRecord(v)
+  const out: TaskModelGrant = {}
+  for (const k of TASK_GRANT_KINDS) if (r[k] === true) out[k] = true
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** setTaskModelGrant turns one kind of the agent's grant on or off; with no
+ *  kind left on the block is dropped. */
+export function setTaskModelGrant(
+  a: AgentEntry,
+  kind: TaskGrantKind,
+  on: boolean,
+): AgentEntry {
+  const next: TaskModelGrant = { ...a.task_models }
+  if (on) next[kind] = true
+  else delete next[kind]
+  return {
+    ...a,
+    task_models: Object.keys(next).length > 0 ? next : undefined,
+  }
+}
+
+/** taskModelsFor lists the models ticked for use on the Task models page
+ *  (`task_models.models`), in page order. Anything malformed is left out. */
+export function taskModelsFor(taskModels: unknown, use: string): string[] {
+  if (!taskModels || typeof taskModels !== "object") return []
+  const models = (taskModels as { models?: unknown }).models
+  if (!Array.isArray(models)) return []
+  return models
+    .filter(
+      (m): m is Record<string, unknown> & { model: string } =>
+        !!m &&
+        typeof m === "object" &&
+        typeof (m as { model?: unknown }).model === "string" &&
+        (m as Record<string, unknown>)[use] === true,
+    )
+    .map((m) => m.model.trim())
+    .filter((m) => m !== "")
 }
 
 /** classifyModels lists the models ticked Classify on the Task models page
@@ -696,6 +751,7 @@ const AGENT_PAGE_KEYS = [
   "global_cron",
   "maestro",
   "classifiers",
+  "task_models",
   "fusion",
   "forum",
   "character_card",
@@ -777,6 +833,7 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
           },
         }
       : {}),
+    ...(a.task_models ? { task_models: a.task_models } : {}),
     ...(a.fusion ? { fusion: true } : {}),
     ...(a.forum ? { forum: true } : {}),
     ...(a.character_card ? { character_card: a.character_card } : {}),

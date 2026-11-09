@@ -83,6 +83,7 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
   onGlobalCronChange: () => {},
   onMaestroChange: () => {},
   onClassifiersChange: () => {},
+  onTaskModelGrantChange: () => {},
   onFusionChange: () => {},
   onForumChange: () => {},
   onCharacterCardChange: () => {},
@@ -96,6 +97,7 @@ const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
 // Settings that do nothing for an agent that represents a person.
 const personIgnores = [
   "Allow classifiers",
+  "Allow task models",
   "Allow forum",
   "Allow character card tools",
   "Character card",
@@ -477,5 +479,38 @@ describe("AgentCard Sub-Agent models", () => {
       .closest("div")!
     fireEvent.click(within(section).getAllByTitle("Remove")[0])
     expect(onChange).toHaveBeenCalledWith(["slow"])
+  })
+})
+
+describe("AgentCard task models", () => {
+  it("ticks the granted kinds and hands a change to the page", () => {
+    const changes: [string, boolean][] = []
+    renderCard([], {
+      ...allSettings,
+      taskModelGrant: { image: true },
+      taskKindsWithModels: ["text", "image", "tts", "stt"],
+      onTaskModelGrantChange: (kind, on) => changes.push([kind, on]),
+    })
+    const images = screen.getByLabelText("Allow task models: Images")
+    expect(images.getAttribute("data-state")).toBe("checked")
+    const text = screen.getByLabelText("Allow task models: Text")
+    expect(text.getAttribute("data-state")).toBe("unchecked")
+    fireEvent.click(text)
+    fireEvent.click(images)
+    expect(changes).toEqual([
+      ["text", true],
+      ["image", false],
+    ])
+    expect(screen.queryByTestId("task-grant-no-model-text")).toBeNull()
+  })
+
+  it("links to Task models for a kind with no model ticked", () => {
+    renderCard([], { ...allSettings, taskKindsWithModels: ["text"] })
+    expect(screen.queryByTestId("task-grant-no-model-text")).toBeNull()
+    const note = screen.getByTestId("task-grant-no-model-stt")
+    expect(note.textContent).toBe(
+      "No model is ticked for this. Tick one on Task models.",
+    )
+    expect(note.querySelector("a")?.getAttribute("href")).toBe("/task-models")
   })
 })

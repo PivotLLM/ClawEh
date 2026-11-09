@@ -22,6 +22,8 @@ import {
   type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
+  TASK_GRANT_KINDS,
+  type TaskGrantKind,
   agentsPayload,
   applyMaestroEdits,
   asString,
@@ -34,7 +36,9 @@ import {
   parseAgentBindings,
   parseAgentsConfig,
   sameAgentId,
+  setTaskModelGrant,
   sortAgentList,
+  taskModelsFor,
   toggleClassifiers,
 } from "@/components/agents/agent-model"
 import { FallbacksSelect } from "@/components/agents/model-selects"
@@ -100,6 +104,9 @@ export function AgentsPage() {
         bindings: parseAgentBindings(appConfig),
         rawModels: appConfig.models,
         classifyModels: classifyModels(appConfig.task_models),
+        taskKindsWithModels: TASK_GRANT_KINDS.filter(
+          (k) => taskModelsFor(appConfig.task_models, k).length > 0,
+        ),
         rawProviders: appConfig.providers,
         clis,
         models: modelsData.models,
@@ -280,6 +287,11 @@ export function AgentsPage() {
       ...a,
       classifiers: { enabled: true, model },
     }))
+  const handleTaskModelGrant = (
+    index: number,
+    kind: TaskGrantKind,
+    on: boolean,
+  ) => toggleFlag(index, "taskmodels", (a) => setTaskModelGrant(a, kind, on))
   const handleToggleFusion = (index: number) =>
     toggleFlag(index, "fusion", (a) => ({ ...a, fusion: !a.fusion }))
   const handleToggleForum = (index: number) =>
@@ -550,6 +562,11 @@ export function AgentsPage() {
                       onClassifiersChange={() => handleToggleClassifiers(i)}
                       classifierModel={agent.classifiers?.model ?? ""}
                       classifierModels={loaded?.classifyModels ?? []}
+                      taskModelGrant={agent.task_models ?? {}}
+                      taskKindsWithModels={loaded?.taskKindsWithModels ?? []}
+                      onTaskModelGrantChange={(kind, on) =>
+                        handleTaskModelGrant(i, kind, on)
+                      }
                       onClassifierModelChange={(m) =>
                         handleClassifierModelChange(i, m)
                       }

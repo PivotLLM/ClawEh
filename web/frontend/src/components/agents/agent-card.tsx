@@ -18,6 +18,9 @@ import {
   type MountEntry,
   SPAWN_TOOL,
   type SkillInfo,
+  TASK_GRANT_KINDS,
+  type TaskGrantKind,
+  type TaskModelGrant,
   internalToolsSummary,
   settingsCardClass,
   shellAllowed,
@@ -49,7 +52,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -91,6 +96,11 @@ export interface AgentCardProps {
   classifierModel?: string
   /** The models the agent can use: its own, else the default models. */
   classifierModels?: string[]
+  /** The agent's task-model grant (agent_spawn kinds). */
+  taskModelGrant?: TaskModelGrant
+  /** The kinds that have at least one model ticked on Task models. */
+  taskKindsWithModels?: TaskGrantKind[]
+  onTaskModelGrantChange?: (kind: TaskGrantKind, on: boolean) => void
   onClassifierModelChange?: (model: string) => void
   fusion?: boolean
   forum?: boolean
@@ -170,6 +180,9 @@ export function AgentCard({
   onClassifiersChange = undefined,
   classifierModel = "",
   classifierModels = [],
+  taskModelGrant = {},
+  taskKindsWithModels = [],
+  onTaskModelGrantChange = undefined,
   onClassifierModelChange = undefined,
   fusion = false,
   forum = false,
@@ -878,6 +891,49 @@ export function AgentCard({
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {!human && onTaskModelGrantChange !== undefined && (
+          <div className="space-y-1.5" data-testid="task-model-grants">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.taskModels")}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              {t("agents.taskModelsHint")}
+            </p>
+            {TASK_GRANT_KINDS.map((kind) => {
+              const id = `task-grant-${kind}`
+              return (
+                <div key={kind} className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={id}
+                      checked={taskModelGrant[kind] === true}
+                      onCheckedChange={(v) =>
+                        onTaskModelGrantChange(kind, v === true)
+                      }
+                      aria-label={`${t("agents.taskModels")}: ${t(`agents.taskKind.${kind}`)}`}
+                    />
+                    <Label htmlFor={id} className="text-sm font-normal">
+                      {t(`agents.taskKind.${kind}`)}
+                    </Label>
+                  </div>
+                  {!taskKindsWithModels.includes(kind) && (
+                    <p
+                      data-testid={`task-grant-no-model-${kind}`}
+                      className="pl-6 text-xs text-amber-600 dark:text-amber-400"
+                    >
+                      {t("agents.taskKindNoModel")}{" "}
+                      <Link to="/task-models" className="underline">
+                        {t("navigation.task_models")}
+                      </Link>
+                      .
+                    </p>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 

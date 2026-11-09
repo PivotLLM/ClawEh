@@ -128,11 +128,15 @@
   `image`, `tts`, `stt`; absent = all off) says which kinds an agent may use
   through `agent_spawn`; any other is refused with a sentence naming the
   agent and the kind ("Alice is not allowed to use task models for
-  images.").
+  images."). On the Agents page it is **Allow task models**, one box per
+  kind (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**),
+  each noting when no model is ticked for it on Task models; Check Up lists
+  each agent's allowed kinds.
 - **Images API for task models.** `task_models.models[].image_api` chooses
   how an Images model is called: `chat` (the default: image output of a chat
   call) or `images` (OpenAI-style `/images/generations` and `/images/edits`;
-  OpenRouter's `/images`, which has no edits).
+  OpenRouter's `/images`, which has no edits). On the Task models page it is
+  **Images through**, shown when Images is ticked.
 - **Gemini and ElevenLabs speech.** Two provider protocols, `gemini` and
   `elevenlabs`, reach Google's Gemini API and ElevenLabs for speech: a model
   on one serves Transcription (STT) and Speech (TTS) on the Task models page

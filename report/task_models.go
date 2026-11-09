@@ -60,3 +60,15 @@ func taskModelAssessment(cfg *config.Config) []assessRow {
 // classifyNote is the classifier model status when no model is ticked
 // Classify at all, naming where to fix it.
 const classifyNote = "No Classify model; tick Classify on the Task models page."
+
+// taskModelGrant is the kinds of task model the agent may use through
+// agent_spawn, by their labels, or "off".
+func taskModelGrant(a *config.AgentConfig) string {
+	var kinds []string
+	for _, use := range config.TaskSpawnUses {
+		if a.TaskModelAllowed(use) {
+			kinds = append(kinds, use.Label())
+		}
+	}
+	return joinOr(kinds, "off")
+}

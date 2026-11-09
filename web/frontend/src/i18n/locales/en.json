@@ -50,6 +50,15 @@
     "classifierModelUnusableOption": "{{model}} (not a Classify model)",
     "classifierModelUnusable": "Not a Classify model, so its classifiers fail. Pick another.",
     "classifierNoClassifyModels": "No model is ticked Classify. Tick one on",
+    "taskModels": "Allow task models",
+    "taskModelsHint": "Lets this agent call task models through agent_spawn, for the kinds ticked.",
+    "taskKind": {
+      "text": "Text",
+      "image": "Images",
+      "tts": "Speech (TTS)",
+      "stt": "Transcription (STT)"
+    },
+    "taskKindNoModel": "No model is ticked for this. Tick one on",
     "forum": "Allow forum",
     "forumHint": "Lets this agent hold forums with the other agents it may message.",
     "characterCard": "Character card",

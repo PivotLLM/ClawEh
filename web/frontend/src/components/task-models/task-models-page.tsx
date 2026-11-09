@@ -285,6 +285,31 @@ export function TaskModelsPage() {
                       </p>
                     )}
 
+                    {row.image === true && (
+                      <div className="flex max-w-sm flex-col gap-1.5">
+                        <Label htmlFor={`task-${i}-image-api`}>
+                          Images through
+                        </Label>
+                        <select
+                          id={`task-${i}-image-api`}
+                          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                          value={row.image_api === "images" ? "images" : "chat"}
+                          onChange={(e) =>
+                            changeRow(i, (r) => ({
+                              ...r,
+                              image_api:
+                                e.target.value === "images"
+                                  ? "images"
+                                  : undefined,
+                            }))
+                          }
+                        >
+                          <option value="chat">Chat (image output)</option>
+                          <option value="images">Images API</option>
+                        </select>
+                      </div>
+                    )}
+
                     {row.tts === true && (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="flex flex-col gap-1.5">

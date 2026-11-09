@@ -6,6 +6,9 @@ import {
   classifiersFromRaw,
   classifyModels,
   parseAgent,
+  setTaskModelGrant,
+  taskModelGrantFromRaw,
+  taskModelsFor,
   toggleClassifiers,
 } from "./agent-model"
 
@@ -93,5 +96,54 @@ describe("toggleClassifiers", () => {
     const loadedOff = bob({ classifiers: { enabled: false, model: "slow" } })
     expect(loadedOff.classifiers).toEqual({ enabled: false, model: "slow" })
     expect(agentPayload(loadedOff)).not.toHaveProperty("classifiers")
+  })
+})
+
+describe("task model grant", () => {
+  const bob = (extra: Partial<AgentEntry> = {}): AgentEntry =>
+    parseAgent({ id: "bob", ...extra })
+
+  it("reads only the kinds that are on", () => {
+    for (const v of [undefined, null, true, [], {}, { text: "yes" }]) {
+      expect(taskModelGrantFromRaw(v)).toBeUndefined()
+    }
+    expect(
+      taskModelGrantFromRaw({ text: true, image: false, stt: true, x: true }),
+    ).toEqual({
+      text: true,
+      stt: true,
+    })
+  })
+
+  it("turns kinds on and off, dropping the block when none is on", () => {
+    const on = setTaskModelGrant(bob(), "image", true)
+    expect(agentPayload(on).task_models).toEqual({ image: true })
+    const both = setTaskModelGrant(on, "tts", true)
+    expect(agentPayload(both).task_models).toEqual({ image: true, tts: true })
+    const off = setTaskModelGrant(
+      setTaskModelGrant(both, "image", false),
+      "tts",
+      false,
+    )
+    expect(off.task_models).toBeUndefined()
+    expect(agentPayload(off)).not.toHaveProperty("task_models")
+  })
+
+  it("keeps a loaded grant on save", () => {
+    const loaded = parseAgent({ id: "bob", task_models: { stt: true } })
+    expect(agentPayload(loaded).task_models).toEqual({ stt: true })
+  })
+
+  it("lists the models ticked for a use, in page order", () => {
+    const tm = {
+      models: [
+        { model: "a", tts: true },
+        { model: "b", text: true },
+        { model: " c ", tts: true },
+      ],
+    }
+    expect(taskModelsFor(tm, "tts")).toEqual(["a", "c"])
+    expect(taskModelsFor(tm, "image")).toEqual([])
+    expect(taskModelsFor(undefined, "tts")).toEqual([])
   })
 })

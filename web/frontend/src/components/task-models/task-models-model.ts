@@ -87,7 +87,8 @@ export function parseResultChars(text: string): number | null {
 }
 
 /** taskModelsPayload is the block the page saves: TTS defaults only on a
- *  model ticked Speech (TTS) and only when one is set, the limit left out
+ *  model ticked Speech (TTS) and only when one is set, image_api only when
+ *  Images is ticked and it is not the default (chat), the limit left out
  *  when it is the default. */
 export function taskModelsPayload(
   rows: TaskModel[],
@@ -97,6 +98,7 @@ export function taskModelsPayload(
   const models = rows.map((r) => {
     const out: TaskModel = { model: r.model }
     for (const u of usesOf(r)) out[u] = true
+    if (r.image === true && r.image_api === "images") out.image_api = "images"
     const voice = r.tts_defaults?.voice?.trim() ?? ""
     const format = r.tts_defaults?.format?.trim() ?? ""
     if (r.tts === true && (voice || format)) {

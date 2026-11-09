@@ -90,3 +90,18 @@ func TestAssessment_TaskModelRows(t *testing.T) {
 		}
 	}
 }
+
+// The per-agent row lists the kinds the agent may use, or off.
+func TestCollectAgents_TaskModelGrant(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	settings := func(id string) Table {
+		return findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), id), "Settings")
+	}
+	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "off" {
+		t.Errorf("no grant = %q", r[1])
+	}
+	cfg.Agents.List[0].TaskModels = &config.AgentTaskModels{Image: true, STT: true}
+	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Images, Transcription (STT)" {
+		t.Errorf("grant = %q", r[1])
+	}
+}

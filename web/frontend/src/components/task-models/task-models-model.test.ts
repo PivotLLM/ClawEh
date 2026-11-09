@@ -119,3 +119,23 @@ describe("taskModelsPayload", () => {
     })
   })
 })
+
+describe("image_api", () => {
+  it("is saved only for an Images model on the images API", () => {
+    expect(
+      taskModelsPayload(
+        [
+          { model: "a", image: true, image_api: "images" },
+          { model: "b", image: true, image_api: "chat" },
+          { model: "c", text: true, image_api: "images" },
+        ],
+        0,
+        false,
+      ).models,
+    ).toEqual([
+      { model: "a", image: true, image_api: "images" },
+      { model: "b", image: true },
+      { model: "c", text: true },
+    ])
+  })
+})
