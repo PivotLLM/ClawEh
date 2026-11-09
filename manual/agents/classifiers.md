@@ -9,7 +9,7 @@ Each item costs one model call. **The model that classifies never has tools**: i
 On the **Agents** page, on the agent's card:
 
 1. Turn on **Allow classifiers**. The agent gets the `classifier_*` tools and its classifiers start running.
-2. Pick the **Classifier model**. The list holds the models the agent can use (its own models, else the default models), CLI models included.
+2. Pick the **Classifier model**. The list holds the models ticked **Classify** on the [Task models](../providers/task-models.md) page, CLI models included. Turning the switch on picks the first one; with none, the switch is refused until you tick Classify for a model.
 
 When you turn the switch on and no model is set, the agent's first model is written in. It stays that model until you pick another, even if the agent's models change. Every classifier the agent owns uses this one model; agents cannot change it.
 
@@ -191,7 +191,7 @@ A definition that leaves its own settings out uses: `items_per_run` = `max_items
 
 [Check Up](../admin/checkup.md) shows:
 
-- **Classifier model (agent)**: none set, or not one of the agent's models.
+- **Classifier model (agent)**: none set, or not ticked Classify (the row says so when no model is ticked Classify at all).
 - **Classifier (agent: id)**: a definition file that is not run, with the reason.
 
 The full report lists, per agent, **Allow classifiers** and **Classifier model**, and a **Classifiers** table: each classifier with enabled, dry run, model, last run, its counts and last error. Invalid files and files owned by another agent are marked.

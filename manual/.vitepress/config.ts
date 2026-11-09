@@ -39,6 +39,7 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: "Providers, models and fallback", link: "/providers/concepts" },
+          { text: "Task models", link: "/providers/task-models" },
           { text: "Cloud APIs", link: "/providers/cloud-apis" },
           { text: "OpenRouter", link: "/providers/openrouter" },
           { text: "Amazon Bedrock", link: "/providers/bedrock" },

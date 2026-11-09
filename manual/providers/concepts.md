@@ -123,7 +123,7 @@ Every turn is also bounded by **Turn timeout (s)** on the System page (`agents.d
 
 ## Models used on the side
 
-Besides the agent's own models, two chains are set on the **System** page.
+Besides the agent's own models, the memory chain is set on the **System** page and the vision chain on the [Task models](./task-models.md) page.
 
 ### Memory models
 
@@ -142,7 +142,7 @@ A model can see images only when its **Vision (tool-result images)** setting (`v
 - **User message** (`user_message`): images are added as a follow-up message. Works on chat-completion models.
 - **Tool response** (`tool_response`): images are attached to the tool result itself. The OpenAI Responses API (`openai-responses`) and xAI accept this; plain OpenAI chat does not, so use **User message** there.
 
-When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the **Vision models** chain (`agents.defaults.vision_model`, then `agents.defaults.vision_model_fallbacks`) for a text description and gives the agent that description. With no vision model set, images are dropped for such models.
+When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the models ticked **Vision** on the [Task models](./task-models.md) page, in order, for a text description and gives the agent that description. With no Vision model, images are dropped for such models.
 
 ## Other model settings
 

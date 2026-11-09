@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-157 checks in all; the runner prints the same tally at the end.
+158 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -16,7 +16,7 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 **Run it against a dev instance, never production.** Groups F, G, N, R and T
 write. All five revert what they change — the agent created in F is deleted, the
-field edited in G and the HTTPS port edited in R are restored to the values read
+fields edited in G and the HTTPS port edited in R are restored to the values read
 beforehand, the memory domain N creates is deleted at the end, and the card and
 agent T creates are removed — but a crash
 mid-run would leave the change behind. I12 adds and removes a disabled temporary model only when no model's request timeout exceeds the turn timeout. N only ever touches the `e2e-probe`
@@ -79,7 +79,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 `/`, `/agents`, `/audit`, `/agent/bindings`, `/agent/skills`, `/agent/cards`,
 `/channels`, `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`,
 `/mcp/servers`, `/memory`, `/models`, `/network`, `/providers`, `/report`,
-`/system`, `/voice`, `/setup`, `/status`.
+`/system`, `/task-models`, `/setup`, `/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -129,7 +129,7 @@ Creates an agent called `e2e-probe` and deletes it at the end; F11, F12 and F14 
 | F11 | Create a throwaway agent `e2e-msg` through the API with `subagents.models` set to an enabled model; select it on `/agents` and under **May message** tick the first other agent (by its displayed name), wait ~2s; remove `e2e-msg` through the API | `subagents.allow_agents` is exactly that agent's id and `subagents.models` is unchanged: the box writes one key of the block and keeps the rest. Skipped when there is no other agent or no enabled model |
 | F12 | Create a throwaway agent `e2e-wrk` through the API with `subagents.allow_agents: ["e2e-wrk"]`; select it on `/agents` and under **Sub-Agent models** pick an enabled model from **Add sub-agent model…**, wait ~2s; then click that entry's **Remove** button, wait ~2s; remove `e2e-wrk` through the API | After the add, `subagents.models` is exactly `[that model]` and `subagents.allow_agents` is unchanged; after the remove, `subagents.models` is absent and `allow_agents` is still unchanged: the box writes one key of the block, drops it when empty, and keeps the rest. Skipped when there is no enabled model |
 | F13 | With `e2e-probe` selected, click the trash button in the card header, then Delete in the confirmation dialog | The agent is gone from `GET /api/config` |
-| F14 | Create a throwaway agent `e2e-cls` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and turn on **Allow classifiers**, wait ~2s; turn it off, wait ~2s; remove `e2e-cls` through the API | After turning it on, `classifiers` is `{enabled: true, model: <that model>}` and a **Classifier model** selector is shown; after turning it off, `classifiers` is absent, the selector is gone and `models` is unchanged. Skipped when there is no enabled model |
+| F14 | Create a throwaway agent `e2e-cls` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and turn on **Allow classifiers**, wait ~2s; turn it off, wait ~2s; remove `e2e-cls` through the API | After turning it on, `classifiers` is `{enabled: true, model: <the first model ticked Classify in task_models.models>}` and a **Classifier model** selector is shown; after turning it off, `classifiers` is absent, the selector is gone and `models` is unchanged. Skipped when there is no enabled model or no model is ticked Classify |
 
 ## G. System page
 
@@ -145,6 +145,7 @@ else is on **System**. `/config` still works and lands on `/system`;
 | G4 | Load `/config/raw` | The configuration document renders |
 | G5 | Load `/config` | The browser lands on `/system` and the System page renders (Backup section present), no console errors |
 | G6 | Note `classifiers.limits.min_every_seconds` (absent = blank), set **Shortest run interval (seconds)** in the Classifiers section to `77`, wait ~2s, then put the original back (blank if it was absent), wait ~2s | The field shows the default `15` as its placeholder; after the edit the config holds `77`; after the revert it matches the original (key absent if it was absent) |
+| G7 | Note `task_models.echo_transcription` (absent = off), open `/task-models`, click **Echo transcription**, wait ~2s, click it again, wait ~2s | After the first click the config holds the opposite value; after the second it matches the original |
 
 ## R. Network page
 
@@ -220,19 +221,19 @@ The client address shown after a pending request's name (`remote_ip` from
 device asking to pair, so it is not checked here; `devices-page.test.tsx`
 covers it.
 
-## K. Logs, MCP, memory, voice, report
+## K. Logs, MCP, memory, task models, report
 
 | ID | Process | Expected |
 |---|---|---|
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
-| K3 | Load `/memory` and `/voice` | Both render, no console errors |
+| K3 | Load `/memory` and `/task-models` | Both render, no console errors |
 | K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Full report** button whose `href` is `/api/report/pdf`; no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 | K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
-| K9 | `curl -b jar $BASE/api/voice/stt`, then load `/voice` and read it **before clicking anything** | One backend row per `stt[]` entry, each with its provider selected, and no *No transcription backends configured* line; with none configured, that line and no rows. Enabled backends are tried in order: the first usable one is labelled **Primary**, every later usable one **Fallback**; one whose provider is missing from `providers[]` reads *Not used: provider not configured.*, one whose provider has `ready: false` reads *Not used: provider has no API key.*, one with no model and a provider whose `default_model` is empty reads *Not used: needs a model.*; a disabled one carries no label. The page used to seed its rows from an empty list when the query was already cached, said nothing was configured, and the first **Add backend** then saved that empty list over the real configuration |
+| K9 | `curl -b jar $BASE/api/task-models`, then load `/task-models` and read it **before clicking anything** | One row per `task_models.models[]` entry, in that order, each use's checkbox (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**, **Vision**, **Classify**, labelled `<model>: <use>`) ticked exactly as the entry says, and no *No task models.* line; with none configured, that line and no rows. A row is marked *<model>'s provider can't do …* exactly when one of its ticked uses has `support` `"no"` for that model in `models[]`. Nothing may be saved by loading the page |
 | K10 | Open `/agent/bindings`, then click through the sidebar: **Services** → **MCP** → **Servers**, then **Config**, then **Network**, then **System**, reading each page before clicking anything on it | `/mcp/servers` lists every server in `tools.mcp.servers` (from `GET /api/config`) and shows *No external servers configured.* only when there are none; `/mcp/config` shows `mcp_host.listen` in **Listen Address** and `mcp_host.enabled` on **Enabled**; `/system` shows `backup.dest` in the backup destination and `agents.defaults.max_tokens` in **Max tokens**. Reached this way the config query is answered from the browser cache, and the three pages used to keep their empty defaults, which the next edit then saved over the real configuration |
 
 ## L. Setup wizard

@@ -295,7 +295,7 @@ production instance directly; test against a dev instance.
   never offered to the model and every path (in-loop, MCP host, watch probes) finds
   it missing like any other tool the agent lacks; nothing refuses it by name at call
   time (`agent/shell_permission_test.go`).
-- **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `manual/agents/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting and never outlasts the asker's deadline (`askRegistry.wait`), a request whose asker stops waiting is withdrawn in the chat and an answer that reaches no asker is acknowledged (`humanAnswerUnused`), while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → `tools.OutcomePersonCancelled`, a request the channel could not post ends at once with `tools.OutcomePersonUnreachable` and a line from the channel's reason (`humanUnreachableError`: "Bob's chat is not set up." / "is unavailable." / "Bob's device is offline." / "Bob's chat can't be reached." / "Couldn't reach Bob's chat."), shutdown → cancelled and withdrawn, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "That request was withdrawn.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/vision/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
+- **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `manual/agents/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting and never outlasts the asker's deadline (`askRegistry.wait`), a request whose asker stops waiting is withdrawn in the chat and an answer that reaches no asker is acknowledged (`humanAnswerUnused`), while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → `tools.OutcomePersonCancelled`, a request the channel could not post ends at once with `tools.OutcomePersonUnreachable` and a line from the channel's reason (`humanUnreachableError`: "Bob's chat is not set up." / "is unavailable." / "Bob's device is offline." / "Bob's chat can't be reached." / "Couldn't reach Bob's chat."), shutdown → cancelled and withdrawn, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "That request was withdrawn.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/task/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
 - **Character cards** (`ccv3/`, design in `private/ccv3.md`; `manual/agents/character-cards.md`):
   Character Card V3 documents in one library, `<CLAW_HOME>/cards/<id>.json`
   (`config.CardsPath()`, created by `internal/layout`, in the backup; ids follow
@@ -432,7 +432,8 @@ production instance directly; test against a dev instance.
   `private/classifier-impl.md` whose §12 Decisions win; `manual/agents/classifiers.md`):
   an agent with the per-agent switch `classifiers` (`agents.list[].classifiers`
   `{enabled, model}`, `AgentSuiteEnabled` case "classifiers", default off, WebUI
-  "Allow classifiers" + "Classifier model" on the Agents page) gets the eleven
+  "Allow classifiers" + "Classifier model" on the Agents page, which lists only
+  the models ticked Classify on Task models) gets the eleven
   `classifier_*` tools from `tools/classifier` (suite provider, namespace
   `classifier`; `SetService` installs the one `*classifier.Service`, built by
   `internal/gateway/classifier.go` BEFORE `NewAgentLoop`, started once the loop
@@ -473,15 +474,47 @@ production instance directly; test against a dev instance.
   `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,
   `max_parallel` 8, `max_activity_hours` 720, `min_every_seconds` 15, the
   minimum `trigger.every_seconds`; 0/absent = default, negative refused; System page **Classifiers**, `classifiers-section.tsx`, defaults
-  shared with the frontend through `config/testdata/classifier_defaults.json`). `Store.Update` writes the agent's
-  first model when a save turns the switch on with none
-  (`completeClassifierModels`), refuses a new unusable model
-  (`newClassifierModelProblems`) and a human agent with the switch on
-  (`HumanClassifiers`). Check Up (`report/classifiers.go`, reading the folders
+  shared with the frontend through `config/testdata/classifier_defaults.json`). A classifier
+  model must be ticked Classify on Task models (`Config.ClassifierModelUsable`,
+  also checked by `ClassifierHost.Complete`): `Store.Update` writes the first
+  Classify model when a save turns the switch on with none
+  (`completeClassifierModels`; with no Classify model at all it refuses, naming
+  the agent and the Task models page), refuses a new model not ticked Classify
+  (`newClassifierModelProblems`, so also unticking the model in use) and a
+  human agent with the switch on (`HumanClassifiers`); one already in the file
+  is only marked. Check Up (`report/classifiers.go`, reading the folders
   with `classifier.Inspect(ctx, base, ceilings)`): per-agent "Allow classifiers" and
-  "Classifier model" rows (unusable marked), a "Classifiers" table per agent
+  "Classifier model" rows (unusable marked, saying so when no model is ticked
+  Classify), a "Classifiers" table per agent
   (invalid and foreign-owned files marked), assessment rows "Classifier model
   (<agent>)" and "Classifier (<agent>: <id>)", a Data row.
+- **Task models** (`config/task_models.go`, design `private/task-models.md`
+  whose §2 decisions win; `manual/providers/task-models.md`): `task_models`
+  (`result_text_chars`, 0/absent = `DefaultTaskResultTextChars` 8000, negative
+  refused; `echo_transcription`, env `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`;
+  `models[]` of `{model, text, image, tts, stt, vision, classify,
+  tts_defaults{voice, format}}`). `model` is a `model_list[].model_name`, at
+  most once, never blank (`TaskModelsConfig.Validate`, at load and on save);
+  list order is the fallback order per use (`ModelsFor(use)`). Each entry is a
+  model reference site (`task_models.models[<name>]`, role "a task model":
+  rename follows it, delete is refused, a missing model is pruned and the
+  entry dropped, `dropBlankTaskModels`, as is a human model). Built-in uses go
+  by use in page order: incoming voice uses the `stt` models
+  (`voice.DetectTranscriberWithAlerter`: every enabled `model_list` entry of
+  such a name gives provider + model id to the existing whisper/OpenRouter
+  transcribers; the OpenAI-protocol + base_url + api_key rule lives there
+  only), vision describes use the `vision` models (`wireVisionClients`),
+  classifier models must be `classify` models (see Classifiers). Text, Images
+  and TTS are only recorded for now (phase B: `agent_spawn` kinds, per-agent
+  grants, spawnllm STT/TTS/images). `TaskUseSupportFor(protocol, use)` says
+  yes/no/unknown from the protocol alone (STT: openai-chat/-responses; vision:
+  HTTP protocols, unknown for CLI; text/classify: any but a person;
+  images/TTS: unknown). WebUI **Task models** page (`/task-models`, Models
+  group; `GET`/`PUT /api/task-models`, the PUT replaces the block through
+  `h.updateConfig` and reloads; the GET adds per-model support), defaults
+  shared with the frontend through `config/testdata/task_model_defaults.json`.
+  Check Up: "Speech to text" / "Vision" assessment rows ("No model.", linked to
+  the page) and a "Task models" table in the providers section.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.
@@ -790,13 +823,14 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 157 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 158 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
 - **Dev only.** Groups F, G, N, S and T write (F creates an agent and, in F11, a
   throwaway agent whose May message it ticks, and in F14 one whose
-  classifiers switch it toggles, G edits two config fields, N
+  classifiers switch it toggles, G edits three config fields, one of them
+  on the Task models page, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent
   it attaches the card to; I12 adds a temporary model only when no model's

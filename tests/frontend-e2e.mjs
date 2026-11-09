@@ -269,7 +269,7 @@ const ROUTES = [
   "/providers",
   "/report",
   "/system",
-  "/voice",
+  "/task-models",
   "/setup",
   "/status",
 ]
@@ -1017,13 +1017,15 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(14, "Allow classifiers writes the agent's first model, turning it off drops the block", async () => {
+  await check(14, "Allow classifiers writes the first Classify model, turning it off drops the block", async () => {
     const ID = "e2e-cls"
     const before = await config()
     // A person's model would hide the switch: pick a model on any other protocol.
     const human = new Set((before.providers ?? []).filter((p) => p.protocol === "human").map((p) => p.name))
     const model = (before.models ?? []).find((m) => m.enabled && !human.has(m.provider))?.model_name
     if (!model) return "skipped, no enabled model for the agent"
+    const classify = (before.task_models?.models ?? []).find((m) => m.classify === true)?.model
+    if (!classify) return "skipped, no model is ticked Classify on the Task models page"
     const list = [...(before.agents.list ?? []), { id: ID, name: ID, models: [model], tools: [] }]
     const r = await api("/api/config", {
       method: "PATCH",
@@ -1045,14 +1047,14 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       const shownOn = await toggle()
       let a = (await config()).agents.list.find((x) => x.id === ID)
       assert(a?.classifiers?.enabled === true, `classifiers = ${JSON.stringify(a?.classifiers)} after turning it on`)
-      assert(a.classifiers.model === model, `classifiers.model = ${JSON.stringify(a.classifiers.model)}; expected the agent's first model ${model}`)
+      assert(a.classifiers.model === classify, `classifiers.model = ${JSON.stringify(a.classifiers.model)}; expected the first Classify model ${classify}`)
       assert(shownOn > 0, "no Classifier model selector with the switch on")
       const shownOff = await toggle()
       a = (await config()).agents.list.find((x) => x.id === ID)
       assert(a && a.classifiers === undefined, `classifiers = ${JSON.stringify(a?.classifiers)} after turning it off, want absent`)
       assert(shownOff === 0, "the Classifier model selector is still shown with the switch off")
       assert(JSON.stringify(a.models) === JSON.stringify([model]), "models changed with the toggle")
-      return `${ID}: classifiers on with model ${model}, then removed`
+      return `${ID}: classifiers on with model ${classify}, then removed`
     } finally {
       const c = await config()
       c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== ID)
@@ -1066,7 +1068,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
 }
 
 // G. System page (the old Config page minus the listeners, which are group R)
-if (useGroup("G", "System page — load, edit, persist, restore, redirect, classifiers")) {
+if (useGroup("G", "System page — load, edit, persist, restore, redirect, classifiers, task models")) {
   let original
   await check(1, "system page renders the moved sections", async () => {
     const { close, text, problems } = await open("/system")
@@ -1146,6 +1148,25 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect, class
       `min_every_seconds = ${after}, expected ${original || "absent"}`,
     )
     return `restored to ${original || "absent"}`
+  })
+  await check(7, "Echo transcription on the Task models page saves and reverts", async () => {
+    const original = (await config())?.task_models?.echo_transcription === true
+    const { close, page } = await open("/task-models")
+    try {
+      const echo = page.getByRole("switch", { name: "Echo transcription", exact: true })
+      await echo.waitFor({ timeout: 10000 })
+      await echo.click()
+      await page.waitForTimeout(2000)
+      const saved = (await config())?.task_models?.echo_transcription === true
+      assert(saved === !original, `echo_transcription = ${saved}, expected ${!original}`)
+      await echo.click()
+      await page.waitForTimeout(2000)
+    } finally {
+      await close()
+    }
+    const after = (await config())?.task_models?.echo_transcription === true
+    assert(after === original, `echo_transcription = ${after}, expected ${original}`)
+    return `restored to ${original ? "on" : "off"}`
   })
 }
 
@@ -1929,7 +1950,7 @@ if (useGroup("J", "Devices")) {
 }
 
 // K. Remaining pages with live data
-if (useGroup("K", "Logs, MCP, memory, voice, report")) {
+if (useGroup("K", "Logs, MCP, memory, task models, report")) {
   await check(1, "logs page shows log lines", async () => {
     const { close, text } = await open("/logs")
     const body = await text()
@@ -1945,8 +1966,8 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
   })
-  await check(3, "memory and voice pages render", async () => {
-    for (const p of ["/memory", "/voice"]) {
+  await check(3, "memory and task models pages render", async () => {
+    for (const p of ["/memory", "/task-models"]) {
       const { close, text, problems } = await open(p)
       const body = await text()
       await close()
@@ -2025,56 +2046,42 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     return `${json.assessment.length} rows`
   })
 
-  await check(9, "the Speech page lists the configured backends on first load", async () => {
-    // Before any click. The page used to seed its rows from an empty list when
-    // the query was already cached, said nothing was configured, and the first
-    // "Add backend" then saved that empty list over the real configuration.
-    const voice = (await api("/api/voice/stt")).json ?? {}
-    const stt = voice.stt ?? []
-    const { close, page, problems } = await open("/voice")
-    await page.getByText("Transcription backends").waitFor({ timeout: 10000 })
-    const selects = page.locator("select[id^=stt-provider-]")
-    if (stt.length > 0) {
-      await selects.first().waitFor({ state: "visible", timeout: 10000 })
+  await check(9, "the Task models page lists the configured models on first load", async () => {
+    // Before any click: the rows must come from the saved block, never an
+    // empty list that the first edit would save over the configuration.
+    const data = (await api("/api/task-models")).json ?? {}
+    const want = data.task_models?.models ?? []
+    const options = data.models ?? []
+    const uses = ["text", "image", "tts", "stt", "vision", "classify"]
+    const labels = { text: "Text", image: "Images", tts: "Speech (TTS)", stt: "Transcription (STT)", vision: "Vision", classify: "Classify" }
+    const { close, page, problems } = await open("/task-models")
+    await page.getByText("Text in results (characters)").waitFor({ timeout: 10000 })
+    const rows = page.locator('[data-testid^="task-model-"]:not([data-testid^="task-model-unsupported-"])')
+    const names = await rows.evaluateAll((els) => els.map((e) => e.dataset.testid.slice("task-model-".length)))
+    const ticks = []
+    for (const m of want) {
+      const row = []
+      for (const u of uses) {
+        const state = await page.getByRole("checkbox", { name: `${m.model}: ${labels[u]}`, exact: true }).getAttribute("data-state")
+        row.push((state === "checked") === (m[u] === true))
+      }
+      ticks.push(row.every(Boolean))
     }
-    const rows = await selects.count()
-    const providers = rows ? await selects.evaluateAll((els) => els.map((e) => e.value)) : []
-    // The label each row carries: Primary, Fallback, Not used, or none.
-    const labels = rows
-      ? await selects.evaluateAll((els) =>
-          els.map((e) => {
-            const text = e.closest("div.rounded-md.border")?.textContent ?? ""
-            return /Not used/.test(text) ? "Not used" : /Primary/.test(text) ? "Primary" : /Fallback/.test(text) ? "Fallback" : ""
-          }),
-        )
-      : []
-    const empty = await page.getByText(/No transcription backends configured/).count()
+    const marked = await page.locator('[data-testid^="task-model-unsupported-"]').evaluateAll((els) =>
+      els.map((e) => e.dataset.testid.slice("task-model-unsupported-".length)),
+    )
+    const empty = await page.getByText("No task models.", { exact: true }).count()
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    assert(rows === stt.length, `${rows} backend rows for ${stt.length} configured`)
-    assert(empty === (stt.length === 0 ? 1 : 0), `empty-state shown ${empty} times with ${stt.length} configured`)
-    for (let i = 0; i < stt.length; i++) {
-      assert(providers[i] === stt[i].provider, `row ${i} shows ${providers[i]}, config ${stt[i].provider}`)
-    }
-    // Enabled backends are tried in order: the first usable one is Primary,
-    // the others Fallback; one whose provider is not listed, has no API key
-    // or has no model (its own or a default) is Not used; a disabled one
-    // carries no label.
-    const options = voice.providers ?? []
-    let primarySeen = false
-    for (let i = 0; i < stt.length; i++) {
-      const b = stt[i]
-      const option = options.find((p) => p.name === b.provider)
-      const usable = Boolean(option && option.ready && (b.model?.trim() || option.default_model))
-      let want = ""
-      if (b.enabled && !usable) want = "Not used"
-      else if (b.enabled) {
-        want = primarySeen ? "Fallback" : "Primary"
-        primarySeen = true
-      }
-      assert(labels[i] === want, `row ${i} (${b.provider}) is labelled "${labels[i]}", expected "${want}"`)
-    }
-    return rows ? stt.map((b, i) => `${providers[i]} ${labels[i] || "disabled"}`).join(", ") : "none configured — empty state shown"
+    assert(JSON.stringify(names) === JSON.stringify(want.map((m) => m.model)), `rows ${JSON.stringify(names)}, config ${JSON.stringify(want.map((m) => m.model))}`)
+    assert(ticks.every(Boolean), `a checkbox does not match the config: ${JSON.stringify(ticks)}`)
+    assert(empty === (want.length === 0 ? 1 : 0), `empty state shown ${empty} times with ${want.length} configured`)
+    // A ticked use the provider cannot serve is marked; nothing else is.
+    const wantMarked = want
+      .filter((m) => uses.some((u) => m[u] === true && options.find((o) => o.name === m.model)?.support?.[u] === "no"))
+      .map((m) => m.model)
+    assert(JSON.stringify(marked) === JSON.stringify(wantMarked), `marked ${JSON.stringify(marked)}, expected ${JSON.stringify(wantMarked)}`)
+    return want.length ? want.map((m) => m.model).join(", ") : "none configured — empty state shown"
   })
 
   await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {

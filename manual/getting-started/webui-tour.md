@@ -60,6 +60,12 @@ The models agents can use, each tied to a provider. **Add Model** adds one.
 
 See [Providers, models and fallback](../providers/concepts.md).
 
+### Task models
+
+The models ClawEh uses for single calls without tools, each ticked for what it is for: **Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**, **Vision** and **Classify**. Each use tries its models from the top down. The **Settings** card holds **Text in results (characters)** and **Echo transcription**.
+
+See [Task models](../providers/task-models.md).
+
 ## Channels
 
 One page per chat channel, in alphabetical order: **Discord**, **Matrix**, **SecMsg**, **Slack**, **Telegram** and **Web** (the WebUI chat). Each page holds the channel's credentials and **Allow From**, the list of people who may write.
@@ -73,10 +79,6 @@ See [Channels](../channels/index.md), which links to the page for each channel.
 Pair a Rabbit R1 or a voice app, approve pending devices, choose which agent each device talks to, and remove devices. The cards are **Pair a device**, **Pending approvals** and **Paired devices**.
 
 See [Devices](../channels/devices.md).
-
-### Speech
-
-Transcribe voice messages before they reach the agent. **Add backend** adds a transcription backend: a provider from the **Providers** page (any OpenAI-compatible Whisper endpoint) and a model; enabled ones are tried in order, the first marked **Primary** and the rest **Fallback**. With none, voice messages reach the agent untranscribed.
 
 ### Network
 
