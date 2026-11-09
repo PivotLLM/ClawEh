@@ -541,3 +541,34 @@ describe("AgentCard task models and agent_spawn", () => {
     expect(screen.queryByTestId("task-models-no-spawn")).not.toBeNull()
   })
 })
+
+describe("AgentCard task models while saving", () => {
+  it("disables the boxes while a grant change is saved", () => {
+    const changes: string[] = []
+    renderCard([], {
+      ...allSettings,
+      taskModelsSaving: true,
+      onTaskModelGrantChange: (kind) => changes.push(kind),
+    })
+    for (const label of [
+      "Text",
+      "Images",
+      "Speech (TTS)",
+      "Transcription (STT)",
+    ]) {
+      const box = screen.getByLabelText(`Allow task models: ${label}`)
+      expect(box.hasAttribute("disabled")).toBe(true)
+      fireEvent.click(box)
+    }
+    expect(changes).toEqual([])
+  })
+
+  it("enables them again once saved", () => {
+    renderCard([], { ...allSettings, taskModelsSaving: false })
+    expect(
+      screen
+        .getByLabelText("Allow task models: Images")
+        .hasAttribute("disabled"),
+    ).toBe(false)
+  })
+})

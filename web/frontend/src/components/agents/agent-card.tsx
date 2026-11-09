@@ -101,6 +101,9 @@ export interface AgentCardProps {
   /** The kinds that have at least one model ticked on Task models. */
   taskKindsWithModels?: TaskGrantKind[]
   onTaskModelGrantChange?: (kind: TaskGrantKind, on: boolean) => void
+  /** A grant change is being saved: the boxes wait for it, so a second
+   *  click can't save over the first. */
+  taskModelsSaving?: boolean
   onClassifierModelChange?: (model: string) => void
   fusion?: boolean
   forum?: boolean
@@ -183,6 +186,7 @@ export function AgentCard({
   taskModelGrant = {},
   taskKindsWithModels = [],
   onTaskModelGrantChange = undefined,
+  taskModelsSaving = false,
   onClassifierModelChange = undefined,
   fusion = false,
   forum = false,
@@ -918,6 +922,7 @@ export function AgentCard({
                     <Checkbox
                       id={id}
                       checked={taskModelGrant[kind] === true}
+                      disabled={taskModelsSaving}
                       onCheckedChange={(v) =>
                         onTaskModelGrantChange(kind, v === true)
                       }

@@ -86,18 +86,15 @@ export function TaskModelsPage() {
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
-  useEffect(
-    () => () => {
-      clearTimeout(saveTimer.current)
-      clearTimeout(savedTimer.current)
-    },
-    [],
-  )
+  // pendingSave: an edit is waiting for its debounced save. Leaving the
+  // page saves it at once rather than dropping it.
+  const pendingSave = useRef(false)
 
   // doSave writes the whole block. It does not refetch the page, so a field
   // being typed is not replaced mid-edit; the Agents page, whose classifier
   // models follow the Classify ticks, is refreshed.
   const doSave = async () => {
+    pendingSave.current = false
     const s = stateRef.current
     const chars = parseResultChars(s.resultChars)
     if (chars === null) return // the field shows why
@@ -119,8 +116,20 @@ export function TaskModelsPage() {
   })
   const scheduleSave = () => {
     clearTimeout(saveTimer.current)
+    pendingSave.current = true
     saveTimer.current = setTimeout(() => void doSaveRef.current(), 600)
   }
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+      if (pendingSave.current) {
+        pendingSave.current = false
+        void doSaveRef.current()
+      }
+    },
+    [],
+  )
 
   const change = (fn: (s: PageState) => PageState) => {
     setState(fn)

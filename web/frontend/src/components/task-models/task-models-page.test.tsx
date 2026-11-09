@@ -171,3 +171,27 @@ describe("TaskModelsPage", () => {
     expect(puts[0]).toMatchObject({ echo_transcription: true })
   })
 })
+
+describe("TaskModelsPage leaving with an edit pending", () => {
+  it("saves the edit at once instead of dropping it", async () => {
+    const { puts } = mockFetch()
+    const view = renderPage(newClient())
+    await screen.findByLabelText("whisper: Transcription (STT)")
+    fireEvent.click(screen.getByLabelText("whisper: Text"))
+    expect(puts).toEqual([])
+    view.unmount()
+    await waitFor(() => expect(puts.length).toBe(1))
+    expect(
+      (puts[0] as { models: { model: string; text?: boolean }[] }).models[0],
+    ).toEqual({ model: "whisper", text: true, stt: true })
+  })
+
+  it("saves nothing when there is no pending edit", async () => {
+    const { puts } = mockFetch()
+    const view = renderPage(newClient())
+    await screen.findByLabelText("whisper: Transcription (STT)")
+    view.unmount()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(puts).toEqual([])
+  })
+})

@@ -567,6 +567,7 @@ export function AgentsPage() {
                       onTaskModelGrantChange={(kind, on) =>
                         handleTaskModelGrant(i, kind, on)
                       }
+                      taskModelsSaving={saving === `taskmodels-${i}`}
                       onClassifierModelChange={(m) =>
                         handleClassifierModelChange(i, m)
                       }
