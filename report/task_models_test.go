@@ -73,7 +73,7 @@ func TestAssessment_TaskModelRows(t *testing.T) {
 	links := 0
 	for _, r := range a.Assessment {
 		if r.Item == itemSTT || r.Item == itemVision {
-			if r.Link != "/models/task" {
+			if r.Link != "/task-models" {
 				t.Errorf("%s link = %q", r.Item, r.Link)
 			}
 			links++

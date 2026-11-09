@@ -5,6 +5,7 @@ import {
   IconAtom,
   IconBook,
   IconBrain,
+  IconChecklist,
   IconCpu,
   IconDeviceMobile,
   IconExternalLink,
@@ -14,7 +15,6 @@ import {
   IconMasksTheater,
   IconMessageCircle,
   IconMessages,
-  IconMicrophone,
   IconNetwork,
   IconPlugConnected,
   IconReport,
@@ -173,6 +173,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             icon: IconAtom,
             translateTitle: true,
           },
+          {
+            title: "navigation.task_models",
+            url: "/task-models",
+            icon: IconChecklist,
+            translateTitle: true,
+          },
         ],
       },
       {
@@ -195,12 +201,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "Devices",
             url: "/devices",
             icon: IconDeviceMobile,
-            translateTitle: false,
-          },
-          {
-            title: "Speech",
-            url: "/voice",
-            icon: IconMicrophone,
             translateTitle: false,
           },
           {

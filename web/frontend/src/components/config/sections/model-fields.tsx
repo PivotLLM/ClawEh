@@ -148,23 +148,3 @@ export function SummarizationModelsField({
     />
   )
 }
-
-// VisionModelsField: the ordered global vision-describe model chain. When an
-// agent's model can't see images, images are dispatched to the first working
-// model here for a text description (fallbacks tried in order). Empty = off
-// (images are dropped for non-vision models, as before).
-export function VisionModelsField({ value, onChange }: ModelListFieldProps) {
-  const { t } = useTranslation()
-  return (
-    <ModelChainField
-      value={value}
-      onChange={onChange}
-      label={t("pages.config.vision_models")}
-      hint={t("pages.config.vision_models_hint")}
-      emptyText={t("pages.config.vision_models_empty")}
-      addText={t("pages.config.vision_models_add")}
-      moveUpTitle={t("pages.config.vision_models_move_up")}
-      removeTitle={t("pages.config.vision_models_remove")}
-    />
-  )
-}

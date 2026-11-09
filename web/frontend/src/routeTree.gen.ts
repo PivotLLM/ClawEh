@@ -27,7 +27,7 @@ import { Route as ReportRouteImport } from './routes/report'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as SystemRouteImport } from './routes/system'
-import { Route as VoiceRouteImport } from './routes/voice'
+import { Route as TaskModelsRouteImport } from './routes/task-models'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 import { Route as AgentCardsRouteImport } from './routes/agent/cards'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
@@ -126,9 +126,9 @@ const SystemRoute = SystemRouteImport.update({
   path: '/system',
   getParentRoute: () => rootRouteImport,
 } as any)
-const VoiceRoute = VoiceRouteImport.update({
-  id: '/voice',
-  path: '/voice',
+const TaskModelsRoute = TaskModelsRouteImport.update({
+  id: '/task-models',
+  path: '/task-models',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentBindingsRoute = AgentBindingsRouteImport.update({
@@ -186,7 +186,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/system': typeof SystemRoute
-  '/voice': typeof VoiceRoute
+  '/task-models': typeof TaskModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/cards': typeof AgentCardsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -214,7 +214,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/system': typeof SystemRoute
-  '/voice': typeof VoiceRoute
+  '/task-models': typeof TaskModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/cards': typeof AgentCardsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -243,7 +243,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/system': typeof SystemRoute
-  '/voice': typeof VoiceRoute
+  '/task-models': typeof TaskModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/cards': typeof AgentCardsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -273,7 +273,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/status'
     | '/system'
-    | '/voice'
+    | '/task-models'
     | '/agent/bindings'
     | '/agent/cards'
     | '/agent/skills'
@@ -301,7 +301,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/status'
     | '/system'
-    | '/voice'
+    | '/task-models'
     | '/agent/bindings'
     | '/agent/cards'
     | '/agent/skills'
@@ -329,7 +329,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/status'
     | '/system'
-    | '/voice'
+    | '/task-models'
     | '/agent/bindings'
     | '/agent/cards'
     | '/agent/skills'
@@ -358,7 +358,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   StatusRoute: typeof StatusRoute
   SystemRoute: typeof SystemRoute
-  VoiceRoute: typeof VoiceRoute
+  TaskModelsRoute: typeof TaskModelsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -489,11 +489,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SystemRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/voice': {
-      id: '/voice'
-      path: '/voice'
-      fullPath: '/voice'
-      preLoaderRoute: typeof VoiceRouteImport
+    '/task-models': {
+      id: '/task-models'
+      path: '/task-models'
+      fullPath: '/task-models'
+      preLoaderRoute: typeof TaskModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent/bindings': {
@@ -616,7 +616,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   StatusRoute: StatusRoute,
   SystemRoute: SystemRoute,
-  VoiceRoute: VoiceRoute,
+  TaskModelsRoute: TaskModelsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

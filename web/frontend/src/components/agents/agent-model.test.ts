@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest"
 
+import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 import {
   agentsPayload,
   applyMaestroEdits,
-  maestroEditsFromAgent,
-  maestroFromRaw,
-  maestroPayload,
   cliBypassWarnings,
   fusionAccessView,
   internalToolsSummary,
+  maestroEditsFromAgent,
+  maestroFromRaw,
+  maestroPayload,
   mayMessageRows,
   mcpAccessEntries,
   mcpAccessView,
@@ -23,7 +24,6 @@ import {
   withAllAgents,
   withShellAllowed,
 } from "./agent-model"
-import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 
 describe("maestro block", () => {
   it("parses the object form and drops invalid values", () => {
@@ -140,7 +140,9 @@ describe("mcp access", () => {
       servers,
       ["wxca", "microsoft365"],
     )
-    expect(rows.slice(2)).toEqual([{ name: "old", checked: true, configured: false }])
+    expect(rows.slice(2)).toEqual([
+      { name: "old", checked: true, configured: false },
+    ])
   })
 })
 
@@ -171,8 +173,16 @@ describe("fusion services", () => {
     const servers = ["simpledoc", "github"]
     const both = ["simpledoc", ...services]
     let entries = ["simpledoc"]
-    expect(mcpAccessView(entries, servers, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
-    expect(fusionAccessView(entries, both)[0]).toEqual({ name: "simpledoc", checked: true, configured: true })
+    expect(mcpAccessView(entries, servers, both)[0]).toEqual({
+      name: "simpledoc",
+      checked: true,
+      configured: true,
+    })
+    expect(fusionAccessView(entries, both)[0]).toEqual({
+      name: "simpledoc",
+      checked: true,
+      configured: true,
+    })
     // Unticking it in either list removes the one entry, so both rows clear.
     entries = toggleAccessEntry(entries, "simpledoc")
     expect(entries).toEqual([])
@@ -191,8 +201,16 @@ describe("fusion services", () => {
 
 describe("cli bypass warnings", () => {
   const models = [
-    { model_name: "Claude CLI Opus", provider: "Claude CLI", extra_args: ["--dangerously-skip-permissions", "--no-chrome"] },
-    { model_name: "Codex", provider: "Codex CLI", extra_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+    {
+      model_name: "Claude CLI Opus",
+      provider: "Claude CLI",
+      extra_args: ["--dangerously-skip-permissions", "--no-chrome"],
+    },
+    {
+      model_name: "Codex",
+      provider: "Codex CLI",
+      extra_args: ["--dangerously-bypass-approvals-and-sandbox"],
+    },
     { model_name: "OR Flash", provider: "OpenRouter" },
   ]
   const providers = [
@@ -202,23 +220,44 @@ describe("cli bypass warnings", () => {
   ]
   const clis = [
     { protocol: "claude-cli", bypass_args: ["--dangerously-skip-permissions"] },
-    { protocol: "codex-cli", bypass_args: ["--dangerously-bypass-approvals-and-sandbox"] },
+    {
+      protocol: "codex-cli",
+      bypass_args: ["--dangerously-bypass-approvals-and-sandbox"],
+    },
   ]
 
   it("flags a model whose bypass flag is dropped because the provider setting is off", () => {
-    expect(cliBypassWarnings(["Claude CLI Opus", "Codex", "OR Flash"], [], models, providers, clis)).toEqual([
-      { model: "Claude CLI Opus", provider: "Claude CLI", flag: "--dangerously-skip-permissions" },
+    expect(
+      cliBypassWarnings(
+        ["Claude CLI Opus", "Codex", "OR Flash"],
+        [],
+        models,
+        providers,
+        clis,
+      ),
+    ).toEqual([
+      {
+        model: "Claude CLI Opus",
+        provider: "Claude CLI",
+        flag: "--dangerously-skip-permissions",
+      },
     ])
   })
 
   it("falls back to the default chain when the agent has none", () => {
-    expect(cliBypassWarnings([], ["Claude CLI Opus"], models, providers, clis)).toHaveLength(1)
-    expect(cliBypassWarnings([], ["OR Flash"], models, providers, clis)).toEqual([])
+    expect(
+      cliBypassWarnings([], ["Claude CLI Opus"], models, providers, clis),
+    ).toHaveLength(1)
+    expect(
+      cliBypassWarnings([], ["OR Flash"], models, providers, clis),
+    ).toEqual([])
   })
 
   it("is quiet for unknown models, HTTP providers and missing data", () => {
     expect(cliBypassWarnings(["Nope"], [], models, providers, clis)).toEqual([])
-    expect(cliBypassWarnings(["Claude CLI Opus"], [], undefined, undefined, [])).toEqual([])
+    expect(
+      cliBypassWarnings(["Claude CLI Opus"], [], undefined, undefined, []),
+    ).toEqual([])
   })
 })
 
@@ -299,12 +338,14 @@ describe("agentsPayload", () => {
   it("writes May message into subagents.allow_agents, keeping models", () => {
     const cfg = parseAgentsConfig(loaded)
     const edit = (allow: string[]) =>
-      (agentsPayload({
-        ...cfg,
-        list: (cfg.list ?? []).map((a) =>
-          a.id === "alice" ? { ...a, allow_agents: allow } : a,
-        ),
-      }) as { agents: { list: Record<string, unknown>[] } }).agents.list[0]
+      (
+        agentsPayload({
+          ...cfg,
+          list: (cfg.list ?? []).map((a) =>
+            a.id === "alice" ? { ...a, allow_agents: allow } : a,
+          ),
+        }) as { agents: { list: Record<string, unknown>[] } }
+      ).agents.list[0]
     expect(edit(["*"]).subagents).toEqual({
       allow_agents: ["*"],
       models: ["fast"],
@@ -391,12 +432,14 @@ describe("agentsPayload", () => {
   it("toggling Allow forum on Alice writes forum and keeps everything else", () => {
     const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
       // As handleToggleForum applies it: only Alice's forum flag flips.
-      (agentsPayload({
-        ...cfg,
-        list: (cfg.list ?? []).map((a) =>
-          a.id === "alice" ? { ...a, forum: !a.forum } : a,
-        ),
-      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+      (
+        agentsPayload({
+          ...cfg,
+          list: (cfg.list ?? []).map((a) =>
+            a.id === "alice" ? { ...a, forum: !a.forum } : a,
+          ),
+        }) as { agents: { list: Record<string, unknown>[] } }
+      ).agents.list
 
     const on = Object.fromEntries(
       toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
@@ -438,12 +481,14 @@ describe("agentsPayload", () => {
   it("toggling Allow character card tools on Alice writes ccv3 and keeps everything else", () => {
     const toggle = (cfg: ReturnType<typeof parseAgentsConfig>) =>
       // As handleToggleCCv3 applies it: only Alice's ccv3 flag flips.
-      (agentsPayload({
-        ...cfg,
-        list: (cfg.list ?? []).map((a) =>
-          a.id === "alice" ? { ...a, ccv3: !a.ccv3 } : a,
-        ),
-      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+      (
+        agentsPayload({
+          ...cfg,
+          list: (cfg.list ?? []).map((a) =>
+            a.id === "alice" ? { ...a, ccv3: !a.ccv3 } : a,
+          ),
+        }) as { agents: { list: Record<string, unknown>[] } }
+      ).agents.list
 
     const on = Object.fromEntries(
       toggle(parseAgentsConfig(loaded)).map((a) => [a.id, a]),
@@ -535,12 +580,14 @@ describe("agentsPayload", () => {
       id: string | undefined,
     ) =>
       // As handleCharacterCardChange applies it: "" becomes undefined.
-      (agentsPayload({
-        ...cfg,
-        list: (cfg.list ?? []).map((a) =>
-          a.id === "alice" ? { ...a, character_card: id || undefined } : a,
-        ),
-      }) as { agents: { list: Record<string, unknown>[] } }).agents.list
+      (
+        agentsPayload({
+          ...cfg,
+          list: (cfg.list ?? []).map((a) =>
+            a.id === "alice" ? { ...a, character_card: id || undefined } : a,
+          ),
+        }) as { agents: { list: Record<string, unknown>[] } }
+      ).agents.list
 
     const set = Object.fromEntries(
       setCard(parseAgentsConfig(loaded), "sage").map((a) => [a.id, a]),
@@ -560,9 +607,7 @@ describe("agentsPayload", () => {
       agents: { list: Record<string, unknown>[] }
     }
     expect(kept.agents.list[0].character_card).toBe("sage")
-    const cleared = Object.fromEntries(
-      setCard(cfgOn, "").map((a) => [a.id, a]),
-    )
+    const cleared = Object.fromEntries(setCard(cfgOn, "").map((a) => [a.id, a]))
     expect(cleared.alice).not.toHaveProperty("character_card")
     expect(cleared.alice).toMatchObject(unedited("alice"))
   })
@@ -818,7 +863,7 @@ describe("May message", () => {
     ])
   })
 
-  it("All agents writes only \"*\" and turning it off keeps named entries", () => {
+  it('All agents writes only "*" and turning it off keeps named entries', () => {
     expect(withAllAgents(["bob"], true)).toEqual(["*"])
     expect(withAllAgents(["*", "bob"], false)).toEqual(["bob"])
     expect(withAllAgents(["*"], false)).toEqual([])

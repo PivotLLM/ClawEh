@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
+import { CARDS_QUERY_KEY, getCards } from "@/api/cards"
 import {
   type AgentToolCatalogResponse,
   HUMAN_AGENTS_QUERY_KEY,
@@ -13,7 +14,6 @@ import {
   getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
-import { CARDS_QUERY_KEY, getCards } from "@/api/cards"
 import { type ModelInfo, getModels } from "@/api/models"
 import { listCLIs } from "@/api/system"
 import { AgentCard } from "@/components/agents/agent-card"
@@ -22,11 +22,11 @@ import {
   type AgentEntry,
   type AgentsConfig,
   type SkillInfo,
-  agentModelList,
   agentsPayload,
   applyMaestroEdits,
   asString,
   bindingViewsForAgent,
+  classifyModels,
   cliBypassWarnings,
   fetchSkills,
   internalToolsSummary,
@@ -99,6 +99,7 @@ export function AgentsPage() {
         agentsCfg: parseAgentsConfig(appConfig),
         bindings: parseAgentBindings(appConfig),
         rawModels: appConfig.models,
+        classifyModels: classifyModels(appConfig.task_models),
         rawProviders: appConfig.providers,
         clis,
         models: modelsData.models,
@@ -272,7 +273,7 @@ export function AgentsPage() {
     }))
   const handleToggleClassifiers = (index: number) =>
     toggleFlag(index, "classifiers", (a) =>
-      toggleClassifiers(a, agentsCfg.defaults.models ?? []),
+      toggleClassifiers(a, loaded?.classifyModels ?? []),
     )
   const handleClassifierModelChange = (index: number, model: string) =>
     toggleFlag(index, "classifiers", (a) => ({
@@ -548,10 +549,7 @@ export function AgentsPage() {
                       classifiers={agent.classifiers?.enabled === true}
                       onClassifiersChange={() => handleToggleClassifiers(i)}
                       classifierModel={agent.classifiers?.model ?? ""}
-                      classifierModels={agentModelList(
-                        agent,
-                        agentsCfg.defaults.models ?? [],
-                      )}
+                      classifierModels={loaded?.classifyModels ?? []}
                       onClassifierModelChange={(m) =>
                         handleClassifierModelChange(i, m)
                       }
@@ -579,9 +577,7 @@ export function AgentsPage() {
                       onDenyToolsChange={(dt) => edit(i, { denyTools: dt })}
                       allowAgents={e.allowAgents}
                       configuredAgents={agentsCfg.list ?? []}
-                      onAllowAgentsChange={(aa) =>
-                        edit(i, { allowAgents: aa })
-                      }
+                      onAllowAgentsChange={(aa) => edit(i, { allowAgents: aa })}
                       agentBindings={bindingViewsForAgent(bindings, agent.id)}
                       onSetDefaultBinding={(target, deliverTo) =>
                         handleSetDefaultBinding(agent.id, target, deliverTo)

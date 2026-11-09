@@ -13,7 +13,7 @@ const (
 )
 
 // taskModelsLink is the WebUI page where task models are ticked.
-const taskModelsLink = "/models/task"
+const taskModelsLink = "/task-models"
 
 // taskModelsTable is one row per task model: its ticked uses and the uses its
 // provider cannot serve (known from the protocol), highlighted.

@@ -203,14 +203,22 @@ describe("AgentCard classifiers", () => {
     expect(screen.queryByText("Classifier model")).toBeNull()
   })
 
-  it("marks a model the agent cannot use where it is set", () => {
+  it("marks a model that is not a Classify model where it is set", () => {
     renderCard([], withSwitch(true, "gone"))
     expect(screen.getByTestId("classifier-model-unusable").textContent).toBe(
-      "Not one of this agent's models, so its classifiers fail. Pick another.",
+      "Not a Classify model, so its classifiers fail. Pick another.",
     )
-    expect(
-      screen.queryByText("gone (not one of this agent's models)"),
-    ).not.toBeNull()
+    expect(screen.queryByText("gone (not a Classify model)")).not.toBeNull()
+    expect(screen.queryByTestId("classifier-no-classify-models")).toBeNull()
+  })
+
+  it("links to Task models when no model is ticked Classify", () => {
+    renderCard([], { ...withSwitch(false, ""), classifierModels: [] })
+    const note = screen.getByTestId("classifier-no-classify-models")
+    expect(note.textContent).toBe(
+      "No model is ticked Classify. Tick one on Task models.",
+    )
+    expect(note.querySelector("a")?.getAttribute("href")).toBe("/task-models")
   })
 })
 

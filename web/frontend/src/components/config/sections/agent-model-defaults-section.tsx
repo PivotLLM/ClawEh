@@ -2,10 +2,7 @@ import { useTranslation } from "react-i18next"
 
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { type CoreConfigForm } from "@/components/config/form-model"
-import {
-  SummarizationModelsField,
-  VisionModelsField,
-} from "@/components/config/sections/model-fields"
+import { SummarizationModelsField } from "@/components/config/sections/model-fields"
 import {
   ConfigSectionCard,
   type UpdateCoreField,
@@ -106,11 +103,6 @@ export function AgentModelDefaultsSection({
       <SummarizationModelsField
         value={form.summarizationModels}
         onChange={(next) => onFieldChange("summarizationModels", next)}
-      />
-
-      <VisionModelsField
-        value={form.visionModels}
-        onChange={(next) => onFieldChange("visionModels", next)}
       />
 
       <SwitchCardField

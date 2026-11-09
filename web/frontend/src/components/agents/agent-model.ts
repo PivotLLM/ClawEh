@@ -558,25 +558,34 @@ export function classifiersFromRaw(
   }
 }
 
-/** agentModelList is the models an agent runs on: its own, else the default
- *  models. The classifier model must be one of them. */
-export function agentModelList(
-  a: Pick<AgentEntry, "models">,
-  defaultModels: string[],
-): string[] {
-  return a.models && a.models.length > 0 ? a.models : defaultModels
+/** classifyModels lists the models ticked Classify on the Task models page
+ *  (`task_models.models`), in page order: the models a classifier model may
+ *  be. Anything malformed is left out. */
+export function classifyModels(taskModels: unknown): string[] {
+  if (!taskModels || typeof taskModels !== "object") return []
+  const models = (taskModels as { models?: unknown }).models
+  if (!Array.isArray(models)) return []
+  return models
+    .filter(
+      (m): m is { model: string; classify: true } =>
+        !!m &&
+        typeof m === "object" &&
+        typeof (m as { model?: unknown }).model === "string" &&
+        (m as { classify?: unknown }).classify === true,
+    )
+    .map((m) => m.model.trim())
+    .filter((m) => m !== "")
 }
 
 /** toggleClassifiers turns the agent's classifiers switch over. Turning it
- *  on with no model set writes the agent's first model; turning it off drops
- *  the block. */
+ *  on with no model set writes the first Classify model; turning it off
+ *  drops the block. With no Classify model the server refuses the switch. */
 export function toggleClassifiers(
   a: AgentEntry,
-  defaultModels: string[],
+  classify: string[],
 ): AgentEntry {
   if (a.classifiers?.enabled) return { ...a, classifiers: undefined }
-  const model =
-    a.classifiers?.model || agentModelList(a, defaultModels)[0] || undefined
+  const model = a.classifiers?.model || classify[0] || undefined
   return { ...a, classifiers: { enabled: true, model } }
 }
 

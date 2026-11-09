@@ -337,8 +337,6 @@ export function SystemPage() {
               request_timeout: requestTimeout,
               turn_timeout: turnTimeout,
               models: defaultModels,
-              vision_model: form.visionModels[0] ?? "",
-              vision_model_fallbacks: form.visionModels.slice(1),
               temperature: defaultTemperaturePayload,
               compression: {
                 trigger: nullableInts({

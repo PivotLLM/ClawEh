@@ -1,10 +1,10 @@
 import { useState } from "react"
 
 import {
+  type MCPAccessServer,
   fusionAccessView,
   mcpAccessView,
   toggleAccessEntry,
-  type MCPAccessServer,
 } from "@/components/agents/agent-model"
 import { Checkbox } from "@/components/ui/checkbox"
 
@@ -52,8 +52,8 @@ export function MCPAccessSelect({
           <>
             <AccessGrid rows={mcpRows} onToggle={toggle} />
             <p className="text-muted-foreground text-xs">
-              A checked server grants all of its tools. Nothing checked = no
-              MCP tools.
+              A checked server grants all of its tools. Nothing checked = no MCP
+              tools.
             </p>
           </>
         )}
@@ -65,8 +65,8 @@ export function MCPAccessSelect({
           </p>
           <AccessGrid rows={fusionRows} onToggle={toggle} />
           <p className="text-muted-foreground text-xs">
-            A checked service grants all of its tools when Fusion is on.
-            Nothing checked = no Fusion tools.
+            A checked service grants all of its tools when Fusion is on. Nothing
+            checked = no Fusion tools.
           </p>
         </div>
       )}
