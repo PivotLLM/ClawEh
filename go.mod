@@ -87,3 +87,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+replace github.com/PivotLLM/spawnllm => /home/eric/source/spawnllm

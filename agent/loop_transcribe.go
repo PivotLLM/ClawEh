@@ -79,6 +79,9 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 			transcriptions = append(transcriptions, voiceTranscript{failed: true})
 			continue
 		}
+		if result.CostUSD != nil {
+			al.recordSpend(*result.CostUSD)
+		}
 		transcriptions = append(transcriptions, voiceTranscript{text: result.Text})
 	}
 

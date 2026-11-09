@@ -230,9 +230,18 @@ func TestTaskUseSupportFor(t *testing.T) {
 		{"claude-cli", TaskUseVision, TaskUseUnknown},
 		{"claude-cli", TaskUseText, TaskUseYes},
 		{"azure", TaskUseClassify, TaskUseYes},
-		{"openai-chat", TaskUseImage, TaskUseUnknown},
-		{"openai-chat", TaskUseTTS, TaskUseUnknown},
+		{"openai-chat", TaskUseImage, TaskUseYes},
+		{"anthropic", TaskUseImage, TaskUseUnknown},
+		{"openai-chat", TaskUseTTS, TaskUseYes},
+		{"anthropic", TaskUseTTS, TaskUseNo},
 		{HumanProtocol, TaskUseText, TaskUseNo},
+		{GeminiProtocol, TaskUseSTT, TaskUseYes},
+		{GeminiProtocol, TaskUseTTS, TaskUseYes},
+		{GeminiProtocol, TaskUseText, TaskUseNo},
+		{GeminiProtocol, TaskUseImage, TaskUseNo},
+		{ElevenLabsProtocol, TaskUseSTT, TaskUseYes},
+		{ElevenLabsProtocol, TaskUseTTS, TaskUseYes},
+		{ElevenLabsProtocol, TaskUseVision, TaskUseNo},
 	} {
 		if got := TaskUseSupportFor(tc.protocol, tc.use); got != tc.want {
 			t.Errorf("TaskUseSupportFor(%s, %s) = %v, want %v", tc.protocol, tc.use, got, tc.want)
@@ -250,5 +259,66 @@ func TestTaskModelUnsupported(t *testing.T) {
 	}
 	if got := cfg.TaskModelUnsupported(TaskModel{Model: "gone", STT: true}); got != nil {
 		t.Errorf("missing model = %v, want nil", got)
+	}
+}
+
+func TestTaskModels_ImageAPI(t *testing.T) {
+	for _, tc := range []struct {
+		api, want string
+		bad       bool
+	}{{"", ImageAPIChat, false}, {"chat", ImageAPIChat, false}, {"images", ImageAPIImages, false}, {"dalle", ImageAPIChat, true}} {
+		m := TaskModel{Model: "m", Image: true, ImageAPI: tc.api}
+		if got := m.EffectiveImageAPI(); got != tc.want {
+			t.Errorf("EffectiveImageAPI(%q) = %q, want %q", tc.api, got, tc.want)
+		}
+		err := TaskModelsConfig{Models: []TaskModel{m}}.Validate()
+		if (err != nil) != tc.bad {
+			t.Errorf("Validate(image_api %q) = %v, want refused %v", tc.api, err, tc.bad)
+		}
+		if tc.bad && !strings.Contains(err.Error(), `Task model m: image_api must be "chat" or "images".`) {
+			t.Errorf("refusal = %v", err)
+		}
+	}
+}
+
+func TestAgentConfig_TaskModelAllowed(t *testing.T) {
+	var none *AgentConfig
+	off := &AgentConfig{ID: "alice"}
+	some := &AgentConfig{ID: "bob", TaskModels: &AgentTaskModels{Image: true, STT: true}}
+	for _, use := range TaskSpawnUses {
+		if none.TaskModelAllowed(use) || off.TaskModelAllowed(use) {
+			t.Errorf("%s allowed without a grant", use)
+		}
+	}
+	if !some.TaskModelAllowed(TaskUseImage) || !some.TaskModelAllowed(TaskUseSTT) ||
+		some.TaskModelAllowed(TaskUseText) || some.TaskModelAllowed(TaskUseTTS) || some.TaskModelAllowed(TaskUseVision) {
+		t.Errorf("grant %+v not followed", some.TaskModels)
+	}
+}
+
+// gemini and elevenlabs are HTTP protocols with an optional base URL and a
+// required API key; a model on one has no chat client.
+func TestTaskOnlyProtocols_Validation(t *testing.T) {
+	for _, proto := range []string{GeminiProtocol, ElevenLabsProtocol} {
+		if !TaskOnlyProtocol(proto) {
+			t.Errorf("%s is not task-only", proto)
+		}
+		c := &Config{Providers: []Provider{{Name: "v", Protocol: proto, APIKey: "k"}}}
+		if err := c.ValidateProviders(); err != nil {
+			t.Errorf("%s without base_url: %v", proto, err)
+		}
+		c.Providers[0].APIKey = ""
+		if err := c.ValidateProviders(); err == nil || !strings.Contains(err.Error(), "api_key is required") {
+			t.Errorf("%s without api_key = %v", proto, err)
+		}
+		if err := c.ValidateProvider(0); err == nil {
+			t.Errorf("%s without api_key accepted by ValidateProvider", proto)
+		}
+		if dp, _ := c.PruneInvalid(); dp != 1 {
+			t.Errorf("%s without api_key not pruned", proto)
+		}
+	}
+	if TaskOnlyProtocol("openai-chat") {
+		t.Error("openai-chat is task-only")
 	}
 }

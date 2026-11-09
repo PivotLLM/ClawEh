@@ -100,6 +100,9 @@ type AgentConfig struct {
 	// its classifiers run (their definitions are kept). Definitions and state
 	// live under <workspace>/classifiers.
 	Classifiers *AgentClassifiersConfig `json:"classifiers,omitempty"`
+	// TaskModels grants the agent task models of each kind through
+	// agent_spawn's kind argument. Absent = all off.
+	TaskModels *AgentTaskModels `json:"task_models,omitempty"`
 
 	// CharacterCard names a card in the character-card library
 	// (<CLAW_HOME>/cards/<id>.json, Config.CardsPath) that is rendered into

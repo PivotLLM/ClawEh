@@ -29,7 +29,8 @@
   the **Classifier model** (`agents.list[].classifiers.model`, one of the
   models ticked **Classify** on the Task models page; turning the switch on
   with no model sets the first Classify model, with none it is refused, a
-  model not ticked Classify is refused, and a person's agent cannot run
+  model not ticked Classify is refused (one already in the file is marked on
+  Check Up and its classifiers do not run), and a person's agent cannot run
   classifiers). The
   agent manages its classifiers with eleven tools: `classifier_readme`,
   `classifier_list`, `classifier_get`, `classifier_create`,
@@ -104,15 +105,18 @@
   **Vision: No model** while no model is ticked for them, marks a classifier
   model when no model is ticked Classify, and the full report has a Task
   models table. API: `GET /api/task-models`, `PUT /api/task-models`.
+- **Gemini and ElevenLabs speech.** Two provider protocols, `gemini` and
+  `elevenlabs`, reach Google's Gemini API and ElevenLabs for speech: a model
+  on one serves Transcription (STT) and Speech (TTS) on the Task models page
+  and nothing else (an agent can't chat with it). The base URL is optional
+  (the vendor's own) and the API key is required. Voice messages can now be
+  transcribed by Gemini and ElevenLabs Scribe as well as by OpenAI-style
+  endpoints (OpenAI, Groq, OpenRouter, local Whisper servers); the calls go
+  through spawnllm, and a transcription's reported cost counts toward
+  `agents.defaults.daily_spend_alert_usd`.
 
 ### Changed
 
-- **BREAKING: a classifier model must be ticked Classify.**
-  `agents.list[].classifiers.model` must name a model ticked **Classify** on
-  the Task models page; being one of the agent's own models is no longer
-  enough. An agent whose classifier model is not ticked Classify is marked
-  on Check Up and its classifiers do not run. To restore it, tick
-  **Classify** for that model on the Task models page.
 - **An `/opt/claw` install puts the binary and the `openclaw` alias in
   `/opt/claw/bin`.** `claw install` on a machine whose data directory is
   `/opt/claw` now installs `/opt/claw/bin/claw` and the alias

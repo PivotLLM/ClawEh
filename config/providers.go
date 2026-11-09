@@ -88,8 +88,10 @@ type Provider struct {
 	Name string `json:"name"` // Unique identifier referenced by ModelConfig.Provider
 	// Protocol is the wire format: openai-chat, openai-responses, azure,
 	// anthropic, anthropic-messages, claude-cli, codex-cli, antigravity-cli,
-	// cursor-cli. "anthropic" and "anthropic-messages" are the same thing —
-	// Anthropic speaks one wire format — and both reach the Messages adapter.
+	// cursor-cli, human, gemini, elevenlabs. "anthropic" and
+	// "anthropic-messages" are the same thing — Anthropic speaks one wire
+	// format — and both reach the Messages adapter. "gemini" and
+	// "elevenlabs" serve task models only (speech; see TaskOnlyProtocol).
 	Protocol string `json:"protocol"`
 	BaseURL  string `json:"base_url,omitempty"`
 	APIKey   string `json:"api_key,omitempty"`
@@ -320,6 +322,37 @@ var validProtocols = map[string]struct{}{
 	"cursor-cli": {},
 	// A model on it represents a person: see human.go.
 	HumanProtocol: {},
+	// Task models only (TaskOnlyProtocol).
+	GeminiProtocol:     {},
+	ElevenLabsProtocol: {},
+}
+
+// The protocols of the vendors whose speech APIs are not OpenAI-style. A
+// model on one serves task models only: it has no chat client.
+const (
+	GeminiProtocol     = "gemini"
+	ElevenLabsProtocol = "elevenlabs"
+)
+
+// TaskOnlyProtocol reports whether a provider protocol serves task models
+// only (Gemini's and ElevenLabs' own APIs). Its base_url is optional (the
+// vendor's default) and its api_key is required.
+func TaskOnlyProtocol(protocol string) bool {
+	return protocol == GeminiProtocol || protocol == ElevenLabsProtocol
+}
+
+// protocolProblem is why a provider's protocol settings are not valid, or "".
+func protocolProblem(p *Provider) string {
+	if _, ok := validProtocols[p.Protocol]; !ok {
+		return fmt.Sprintf("unknown protocol %q", p.Protocol)
+	}
+	if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+		return fmt.Sprintf("base_url is required for protocol %q", p.Protocol)
+	}
+	if TaskOnlyProtocol(p.Protocol) && strings.TrimSpace(p.APIKey) == "" {
+		return fmt.Sprintf("api_key is required for protocol %q", p.Protocol)
+	}
+	return ""
 }
 
 // httpProtocols are the protocols that require a base_url.
@@ -380,11 +413,8 @@ func (c *Config) ValidateProviders() error {
 			return fmt.Errorf("providers[%d]: duplicate provider name %q", i, p.Name)
 		}
 		seen[p.Name] = struct{}{}
-		if _, ok := validProtocols[p.Protocol]; !ok {
-			return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
-		}
-		if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
-			return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
+		if problem := protocolProblem(p); problem != "" {
+			return fmt.Errorf("provider %q: %s", p.Name, problem)
 		}
 	}
 	return nil
@@ -458,11 +488,8 @@ func (c *Config) ValidateProvider(idx int) error {
 			return fmt.Errorf("duplicate provider name %q", p.Name)
 		}
 	}
-	if _, ok := validProtocols[p.Protocol]; !ok {
-		return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
-	}
-	if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
-		return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
+	if problem := protocolProblem(p); problem != "" {
+		return fmt.Errorf("provider %q: %s", p.Name, problem)
 	}
 	return nil
 }
@@ -484,10 +511,8 @@ func (c *Config) PruneInvalid() (droppedProviders, droppedModels int) {
 			reason = "name is required"
 		} else if _, dup := seen[p.Name]; dup {
 			reason = "duplicate provider name"
-		} else if _, ok := validProtocols[p.Protocol]; !ok {
-			reason = fmt.Sprintf("unknown protocol %q", p.Protocol)
-		} else if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
-			reason = fmt.Sprintf("base_url is required for protocol %q", p.Protocol)
+		} else {
+			reason = protocolProblem(&p)
 		}
 		if reason != "" {
 			logger.WarnCF("config", "ignoring invalid provider", map[string]any{

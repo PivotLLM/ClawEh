@@ -93,6 +93,12 @@
           "enabled": true,
           "model": "x"
         },
+        "task_models": {
+          "text": true,
+          "image": true,
+          "tts": true,
+          "stt": true
+        },
         "character_card": "x",
         "cogmem": true,
         "share_common": true,
@@ -757,6 +763,7 @@
         "stt": true,
         "vision": true,
         "classify": true,
+        "image_api": "x",
         "tts_defaults": {
           "voice": "x",
           "format": "x"

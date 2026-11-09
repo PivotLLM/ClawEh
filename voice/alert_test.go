@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PivotLLM/spawnllm/speech"
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -118,16 +119,15 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 	}
 	longBody := strings.Repeat("é", 300)
 
+	// One model on an OpenAI-style host and one on OpenRouter (whose JSON
+	// body spawnllm picks by host): both alert the same way.
 	build := map[string]func(base string, a alerter.Alerter) Transcriber{
 		"groq": func(base string, a alerter.Alerter) Transcriber {
-			tr := NewWhisperTranscriber("groq", "sk-bad", "", "", a)
-			tr.apiBase = base
-			return tr
+			return NewTranscriber("groq", "whisper-1", speech.NewOpenAI(base, "sk-bad"), a)
 		},
 		"openrouter": func(base string, a alerter.Alerter) Transcriber {
-			tr := NewOpenRouterTranscriber("openrouter", "sk-bad", "", "", a)
-			tr.apiBase = base
-			return tr
+			return NewTranscriber("openrouter", "openai/whisper-1",
+				speech.NewOpenAI(base, "sk-bad", speech.WithTranscriptionAPI(speech.TranscriptionInputAudio)), a)
 		},
 	}
 

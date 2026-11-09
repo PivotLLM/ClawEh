@@ -90,7 +90,9 @@ func TestHandleGetTaskModels(t *testing.T) {
 		{"cc", "vision", "unknown"},
 		{"cc", "text", "yes"},
 		{"mixed", "stt", "no"}, // one of its entries cannot
-		{"custom-default", "tts", "unknown"},
+		{"custom-default", "tts", "yes"},
+		{"sonnet", "tts", "no"},
+		{"cc", "image", "unknown"},
 	} {
 		if s := byName[tc.model].Support[tc.use]; s != tc.want {
 			t.Errorf("%s %s = %q, want %q", tc.model, tc.use, s, tc.want)

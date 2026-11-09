@@ -15,6 +15,10 @@ export const PROTOCOL_OPTIONS = [
   "antigravity-cli",
   "cursor-cli",
   "human",
+  // Speech only (Task models): Google's Gemini API and ElevenLabs. Base URL
+  // optional (the vendor's), API key required.
+  "gemini",
+  "elevenlabs",
 ] as const
 
 export type Protocol = (typeof PROTOCOL_OPTIONS)[number]

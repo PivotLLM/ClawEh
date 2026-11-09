@@ -35,6 +35,10 @@ type TaskModel struct {
 	STT      bool   `json:"stt,omitempty"`
 	Vision   bool   `json:"vision,omitempty"`
 	Classify bool   `json:"classify,omitempty"`
+	// ImageAPI is how an Images model is called: "chat" (the default: image
+	// output of a chat call) or "images" (the OpenAI-style image endpoints,
+	// /images/generations and /images/edits; OpenRouter's /images).
+	ImageAPI string `json:"image_api,omitempty"`
 	// TTSDefaults are the voice and format a speech call uses unless the
 	// caller names its own.
 	TTSDefaults *TTSDefaults `json:"tts_defaults,omitempty"`
@@ -79,6 +83,20 @@ func (u TaskUse) Label() string {
 		return "Classify"
 	}
 	return string(u)
+}
+
+// The values of TaskModel.ImageAPI.
+const (
+	ImageAPIChat   = "chat"
+	ImageAPIImages = "images"
+)
+
+// EffectiveImageAPI is image_api with "" at its default, chat.
+func (m TaskModel) EffectiveImageAPI() string {
+	if m.ImageAPI == ImageAPIImages {
+		return ImageAPIImages
+	}
+	return ImageAPIChat
 }
 
 // DefaultTaskResultTextChars is the default of task_models.result_text_chars.
@@ -159,6 +177,9 @@ func (t TaskModelsConfig) Validate() error {
 		case seen[name]:
 			errs = append(errs, fmt.Errorf("Task model %s is listed twice.", name)) //nolint:staticcheck // ST1005: user-facing sentence
 		}
+		if api := m.ImageAPI; api != "" && api != ImageAPIChat && api != ImageAPIImages {
+			errs = append(errs, fmt.Errorf("Task model %s: image_api must be %q or %q.", name, ImageAPIChat, ImageAPIImages)) //nolint:staticcheck // ST1005: user-facing sentence
+		}
 		seen[name] = true
 	}
 	return errors.Join(errs...)
@@ -184,20 +205,32 @@ const (
 )
 
 // TaskUseSupportFor says whether a provider with this protocol can serve use,
-// from the protocol alone. A person (human protocol) serves none; text and
-// classify run on any model; transcription needs the OpenAI-style
-// /audio/transcriptions endpoint (openai-chat, openai-responses); vision needs
-// an HTTP chat API that takes images. Images and speech (TTS) are not known
-// from the protocol.
+// from the protocol alone:
+//   - a person (human protocol) serves none;
+//   - gemini and elevenlabs (task-only protocols) serve speech and
+//     transcription only;
+//   - text and classify run on any other model;
+//   - transcription and speech need OpenAI-style /audio endpoints
+//     (openai-chat, openai-responses);
+//   - vision needs an HTTP chat API that takes images (unknown for a CLI);
+//   - images: OpenAI-style protocols can (chat image output or the images
+//     endpoints); for the others it is not known.
 func TaskUseSupportFor(protocol string, use TaskUse) TaskUseSupport {
 	if IsHumanProtocol(protocol) {
+		return TaskUseNo
+	}
+	openAI := protocol == "openai-chat" || protocol == "openai-responses"
+	if TaskOnlyProtocol(protocol) {
+		if use == TaskUseSTT || use == TaskUseTTS {
+			return TaskUseYes
+		}
 		return TaskUseNo
 	}
 	switch use {
 	case TaskUseText, TaskUseClassify:
 		return TaskUseYes
-	case TaskUseSTT:
-		if protocol == "openai-chat" || protocol == "openai-responses" {
+	case TaskUseSTT, TaskUseTTS:
+		if openAI {
 			return TaskUseYes
 		}
 		return TaskUseNo
@@ -206,8 +239,62 @@ func TaskUseSupportFor(protocol string, use TaskUse) TaskUseSupport {
 			return TaskUseYes
 		}
 		return TaskUseUnknown
-	default: // images and speech: not known from the protocol
+	case TaskUseImage:
+		if openAI {
+			return TaskUseYes
+		}
 		return TaskUseUnknown
+	default:
+		return TaskUseUnknown
+	}
+}
+
+// AgentTaskModels is an agent's grant to use task models through
+// agent_spawn, one switch per kind. Absent = all off.
+type AgentTaskModels struct {
+	Text  bool `json:"text,omitempty"`
+	Image bool `json:"image,omitempty"`
+	TTS   bool `json:"tts,omitempty"`
+	STT   bool `json:"stt,omitempty"`
+}
+
+// TaskSpawnUses are the uses an agent can be granted, in the Agents page's
+// order.
+var TaskSpawnUses = []TaskUse{TaskUseText, TaskUseImage, TaskUseTTS, TaskUseSTT}
+
+// TaskModelAllowed reports whether the agent may use task models of use
+// through agent_spawn.
+func (a *AgentConfig) TaskModelAllowed(use TaskUse) bool {
+	if a == nil || a.TaskModels == nil {
+		return false
+	}
+	switch use {
+	case TaskUseText:
+		return a.TaskModels.Text
+	case TaskUseImage:
+		return a.TaskModels.Image
+	case TaskUseTTS:
+		return a.TaskModels.TTS
+	case TaskUseSTT:
+		return a.TaskModels.STT
+	default:
+		return false
+	}
+}
+
+// TaskSpawnKindName is a spawnable use as a refusal names it ("images").
+func TaskSpawnKindName(use TaskUse) string {
+	switch use {
+	case TaskUseText:
+		return "text"
+	case TaskUseImage:
+		return "images"
+	case TaskUseTTS:
+		return "speech"
+	case TaskUseSTT:
+		return "transcription"
+	default:
+		return string(use)
 	}
 }
 

@@ -132,6 +132,10 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	case config.HumanProtocol:
 		return NewHumanProvider(model.ModelName, time.Duration(model.RequestTimeout)*time.Second), modelID, nil
 
+	// Speech vendors' own APIs: task models only, no chat client.
+	case config.GeminiProtocol, config.ElevenLabsProtocol:
+		return nil, "", fmt.Errorf("provider %q: protocol %q serves task models only (speech), not chat", prov.Name, prov.Protocol)
+
 	default:
 		return nil, "", fmt.Errorf("provider %q: unknown protocol %q", prov.Name, prov.Protocol)
 	}
