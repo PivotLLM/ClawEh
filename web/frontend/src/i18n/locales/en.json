@@ -51,7 +51,8 @@
     "classifierModelUnusable": "Not a Classify model, so its classifiers fail. Pick another.",
     "classifierNoClassifyModels": "No model is ticked Classify. Tick one on",
     "taskModels": "Allow task models",
-    "taskModelsHint": "Lets this agent call task models through agent_spawn, for the kinds ticked.",
+    "taskModelsHint": "Lets this agent call task models through agent_spawn, for the kinds ticked. Input files also need a file-reading tool.",
+    "taskModelsNoSpawn": "Needs the agent_spawn tool.",
     "taskKind": {
       "text": "Text",
       "image": "Images",

@@ -135,8 +135,9 @@
   agent and the kind ("Alice is not allowed to use task models for
   images."). On the Agents page it is **Allow task models**, one box per
   kind (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**),
-  each noting when no model is ticked for it on Task models; Check Up lists
-  each agent's allowed kinds.
+  each noting when no model is ticked for it on Task models, and the card
+  says "Needs the agent_spawn tool." for an agent without it; Check Up lists
+  each agent's allowed kinds, marked "(ignored: no agent_spawn)" then.
 - **Images API for task models.** `task_models.models[].image_api` chooses
   how an Images model is called: `chat` (the default: image output of a chat
   call) or `images` (OpenAI-style `/images/generations` and `/images/edits`;

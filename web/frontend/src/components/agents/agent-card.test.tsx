@@ -514,3 +514,30 @@ describe("AgentCard task models", () => {
     expect(note.querySelector("a")?.getAttribute("href")).toBe("/task-models")
   })
 })
+
+describe("AgentCard task models and agent_spawn", () => {
+  it("says the boxes need agent_spawn when the agent lacks it", () => {
+    renderCard([], { ...allSettings, taskKindsWithModels: ["text"] })
+    expect(screen.getByTestId("task-models-no-spawn").textContent).toBe(
+      "Needs the agent_spawn tool.",
+    )
+  })
+
+  it("says nothing when the agent has agent_spawn", () => {
+    renderCard([], {
+      ...allSettings,
+      tools: ["agent_spawn"],
+      taskKindsWithModels: ["text"],
+    })
+    expect(screen.queryByTestId("task-models-no-spawn")).toBeNull()
+  })
+
+  it("says it again when agent_spawn is denied", () => {
+    renderCard([], {
+      ...allSettings,
+      tools: ["agent_spawn"],
+      denyTools: ["agent_*"],
+    })
+    expect(screen.queryByTestId("task-models-no-spawn")).not.toBeNull()
+  })
+})

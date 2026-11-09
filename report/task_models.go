@@ -3,7 +3,11 @@
 
 package report
 
-import "github.com/PivotLLM/ClawEh/config"
+import (
+	"strings"
+
+	"github.com/PivotLLM/ClawEh/config"
+)
 
 // Item names of the task-model assessment rows; the WebUI links them to the
 // Task models page (assessmentLinks).
@@ -62,7 +66,8 @@ func taskModelAssessment(cfg *config.Config) []assessRow {
 const classifyNote = "No Classify model; tick Classify on the Task models page."
 
 // taskModelGrant is the kinds of task model the agent may use through
-// agent_spawn, by their labels, or "off".
+// agent_spawn, by their labels, or "off"; a grant is marked ignored when
+// the agent lacks agent_spawn, which is how it uses them.
 func taskModelGrant(a *config.AgentConfig) string {
 	var kinds []string
 	for _, use := range config.TaskSpawnUses {
@@ -70,5 +75,15 @@ func taskModelGrant(a *config.AgentConfig) string {
 			kinds = append(kinds, use.Label())
 		}
 	}
-	return joinOr(kinds, "off")
+	if len(kinds) == 0 {
+		return "off"
+	}
+	out := strings.Join(kinds, ", ")
+	if !a.IsToolAllowed(spawnTool) {
+		out += " (ignored: no agent_spawn)"
+	}
+	return out
 }
+
+// spawnTool is the tool an agent calls task models with.
+const spawnTool = "agent_spawn"

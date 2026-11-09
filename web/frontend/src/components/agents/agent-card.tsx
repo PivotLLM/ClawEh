@@ -902,6 +902,14 @@ export function AgentCard({
             <p className="text-muted-foreground text-xs">
               {t("agents.taskModelsHint")}
             </p>
+            {!toolGranted(tools, denyTools, SPAWN_TOOL) && (
+              <p
+                data-testid="task-models-no-spawn"
+                className="text-xs text-amber-600 dark:text-amber-400"
+              >
+                {t("agents.taskModelsNoSpawn")}
+              </p>
+            )}
             {TASK_GRANT_KINDS.map((kind) => {
               const id = `task-grant-${kind}`
               return (

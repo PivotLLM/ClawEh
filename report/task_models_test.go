@@ -4,6 +4,7 @@
 package report
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -101,7 +102,16 @@ func TestCollectAgents_TaskModelGrant(t *testing.T) {
 		t.Errorf("no grant = %q", r[1])
 	}
 	cfg.Agents.List[0].TaskModels = &config.AgentTaskModels{Image: true, STT: true}
+	cfg.Agents.List[0].Tools = []string{"file_read_bytes"}
+	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Images, Transcription (STT) (ignored: no agent_spawn)" {
+		t.Errorf("grant without agent_spawn = %q", r[1])
+	}
+	cfg.Agents.List[0].Tools = []string{"agent_spawn"}
 	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Images, Transcription (STT)" {
 		t.Errorf("grant = %q", r[1])
+	}
+	cfg.Agents.List[0].DenyTools = []string{"agent_spawn"}
+	if _, r := findRow(t, settings("alice"), "Task models"); !strings.HasSuffix(r[1], "(ignored: no agent_spawn)") {
+		t.Errorf("grant with agent_spawn denied = %q", r[1])
 	}
 }

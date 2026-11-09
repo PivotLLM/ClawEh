@@ -102,7 +102,10 @@ card on the **Agents** page (`agents.list[].task_models`: `text`, `image`,
 `tts`, `stt`; all off by default). Any other kind is refused, for example
 "Alice is not allowed to use task models for images." A kind with no model
 ticked here is noted under its box. The agent also needs `agent_spawn` among
-its tools. Check Up lists each agent's allowed kinds.
+its tools: without it the boxes do nothing, and the card says "Needs the
+agent_spawn tool." To pass input `files`, it also needs a file-reading tool
+(**file_read_lines** or **file_read_bytes**). Check Up lists each agent's
+allowed kinds, marked "(ignored: no agent_spawn)" when it lacks the tool.
 
 ## Settings
 
