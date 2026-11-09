@@ -269,6 +269,9 @@ production instance directly; test against a dev instance.
   the chat another turn or an earlier one answered. With several turns running,
   `msg_send`, `msg_send_file`, `session_clear` and a callback `agent_spawn` refuse,
   and ForUser/breadcrumbs/background results are dropped with a log line.
+  A tool's immediate ForUser output is sent only with
+  `agents.defaults.stream_tool_activity` on, in the loop and on the MCP host
+  (`mcpserver.WithToolOutput`); background results are not gated.
 - **Tool grants**: an agent has only the native tools its own `tools` list names
   (`AgentConfig.IsToolAllowed`, the one rule for the loop, the MCP host, clones,
   sub-agents and Check Up); an absent or empty list means none, there is no

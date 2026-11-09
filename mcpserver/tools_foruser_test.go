@@ -50,7 +50,7 @@ func TestDispatch_ForUserPublishedToOriginatingChannel(t *testing.T) {
 		}
 	}()
 
-	out, isErr := dispatchToolCall(context.Background(), "write_file",
+	out, isErr := dispatchToolCall(withToolOutput(context.Background(), toolOutputAlways), "write_file",
 		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
@@ -75,6 +75,72 @@ func TestDispatch_ForUserPublishedToOriginatingChannel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected outbound publish of ForUser payload, none observed")
+	}
+}
+
+// toolOutputAlways turns tool output on (stream_tool_activity true).
+func toolOutputAlways() bool { return true }
+
+// A tool's own output reaches the chat only with tool output on, as in the
+// agent loop: with the switch off, or none set, nothing is published (a CLI
+// agent's shell_exec output must not flood the chat), and the call's ForLLM is
+// unaffected. The switch is read on every call.
+func TestDispatch_ForUserOnlyWithToolOutputOn(t *testing.T) {
+	rf := &mockTool{
+		name:   "write_file",
+		params: map[string]any{},
+		result: &tools.ToolResult{ForLLM: "wrote ok", ForUser: "command output"},
+	}
+	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+	defer st.BeginTurn("agent:alice:main", "slack", "C123")()
+
+	msgBus := bus.NewMessageBus()
+	defer msgBus.Close()
+	collected := make(chan bus.OutboundMessage, 4)
+	go func() {
+		for {
+			msg, ok := msgBus.SubscribeOutbound(t.Context())
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	on := false
+	cases := []struct {
+		name string
+		ctx  context.Context
+		on   bool
+		want bool
+	}{
+		{"no switch", context.Background(), false, false},
+		{"switch off", withToolOutput(context.Background(), func() bool { return on }), false, false},
+		{"switch on", withToolOutput(context.Background(), func() bool { return on }), true, true},
+		{"switch off again", withToolOutput(context.Background(), func() bool { return on }), false, false},
+	}
+	for _, tc := range cases {
+		on = tc.on
+		out, isErr := dispatchToolCall(tc.ctx, "write_file",
+			map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
+		if isErr || out != "wrote ok" {
+			t.Fatalf("%s: got %q (error %v), want the ForLLM", tc.name, out, isErr)
+		}
+		select {
+		case got := <-collected:
+			if !tc.want {
+				t.Fatalf("%s: published %+v, want nothing", tc.name, got)
+			}
+			if got.Channel != "slack" || got.ChatID != "C123" || got.Content != "command output" {
+				t.Fatalf("%s: published %+v, want the output to slack/C123", tc.name, got)
+			}
+		case <-time.After(150 * time.Millisecond):
+			if tc.want {
+				t.Fatalf("%s: nothing published, want the output", tc.name)
+			}
+		}
 	}
 }
 
@@ -112,7 +178,7 @@ func TestDispatch_SilentToolResultIsNotPublished(t *testing.T) {
 		}
 	}()
 
-	out, isErr := dispatchToolCall(context.Background(), "write_file",
+	out, isErr := dispatchToolCall(withToolOutput(context.Background(), toolOutputAlways), "write_file",
 		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
@@ -170,7 +236,7 @@ func TestDispatch_ForUserDroppedWhenNoActiveChannel(t *testing.T) {
 		}
 	}()
 
-	out, isErr := dispatchToolCall(context.Background(), "write_file",
+	out, isErr := dispatchToolCall(withToolOutput(context.Background(), toolOutputAlways), "write_file",
 		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success despite missing channel, got error: %s", out)
@@ -238,7 +304,7 @@ func TestDispatch_MCPResponseContainsOnlyForLLM(t *testing.T) {
 		}
 	}()
 
-	out, isErr := dispatchToolCall(context.Background(), "write_file",
+	out, isErr := dispatchToolCall(withToolOutput(context.Background(), toolOutputAlways), "write_file",
 		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
@@ -293,5 +359,63 @@ func TestSessionTokenStore_ReplyChatPerTurn(t *testing.T) {
 	endTelegram()
 	if rc, ok := chat(tok); ok {
 		t.Fatalf("all ended: ReplyChat = %+v, want none", rc)
+	}
+}
+
+// WithToolOutput reaches the server's own tools/call handler: off (or not
+// given) publishes nothing, on publishes the tool's output to the turn's chat.
+func TestServer_WithToolOutput(t *testing.T) {
+	rf := &mockTool{
+		name:   "write_file",
+		params: map[string]any{},
+		result: &tools.ToolResult{ForLLM: "wrote ok", ForUser: "command output"},
+	}
+	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
+	store := NewSessionTokenStore()
+	tok := store.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+	defer store.BeginTurn("agent:alice:main", "slack", "C123")()
+
+	msgBus := bus.NewMessageBus()
+	defer msgBus.Close()
+	collected := make(chan bus.OutboundMessage, 4)
+	go func() {
+		for {
+			msg, ok := msgBus.SubscribeOutbound(t.Context())
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	on := false
+	for _, tc := range []struct {
+		name string
+		opts []Option
+		on   bool
+		want bool
+	}{
+		{"not given", nil, false, false},
+		{"off", []Option{WithToolOutput(func() bool { return on })}, false, false},
+		{"on", []Option{WithToolOutput(func() bool { return on })}, true, true},
+	} {
+		on = tc.on
+		srv := rebuild(t, nil, store, regs, append([]Option{WithMessageBus(msgBus)}, tc.opts...)...)
+		if out, isErr := callTool(t, srv, "write_file", tok); isErr || out != "wrote ok" {
+			t.Fatalf("%s: got %q (error %v)", tc.name, out, isErr)
+		}
+		select {
+		case got := <-collected:
+			if !tc.want || got.Content != "command output" || got.Channel != "slack" || got.ChatID != "C123" {
+				t.Fatalf("%s: published %+v", tc.name, got)
+			}
+		case <-time.After(150 * time.Millisecond):
+			if tc.want {
+				t.Fatalf("%s: nothing published, want the output", tc.name)
+			}
+		}
+		if err := srv.Shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
 	}
 }

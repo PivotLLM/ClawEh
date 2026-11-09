@@ -120,6 +120,7 @@ type dispatchDeps struct {
 	policy           acl.Policy
 	msgBus           *bus.MessageBus
 	toolActivity     ToolActivityNotifier
+	toolOutput       func() bool
 	activeDispatches *atomic.Int32
 }
 
@@ -367,6 +368,7 @@ func (ep *endpointCatalogue) handler(toolName string) server.ToolHandlerFunc {
 			args = map[string]any{}
 		}
 		ep.mode.prepareArgs(ctx, args)
+		ctx = withToolOutput(ctx, deps.toolOutput)
 		out, isErr := dispatchToolCall(ctx, toolName, args,
 			deps.sessionTokens, deps.resolver, deps.tracker, deps.policy, deps.msgBus, deps.toolActivity)
 		if isErr {
@@ -583,9 +585,12 @@ func dispatchToolCall(
 
 	// Side-channel publish of the immediate ForUser to the originating user. The
 	// MCP response envelope to the caller carries only ForLLM; ForUser is delivered
-	// out-of-band over the message bus to the chat of the call's turn.
+	// out-of-band over the message bus to the chat of the call's turn, only when
+	// tool output is on (stream_tool_activity), as in the agent loop.
 	// (Async completions are handled by asyncCb above.)
-	publishMCPForUser(ctx, msgBus, rec, dest, toolName, result)
+	if toolOutputOn(ctx) {
+		publishMCPForUser(ctx, msgBus, rec, dest, toolName, result)
+	}
 
 	out = agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
@@ -751,6 +756,24 @@ func publishMCPForUser(
 			"channel":     channel,
 			"content_len": len(result.ForUser),
 		})
+}
+
+// toolOutputKey carries the endpoint's tool-output switch (WithToolOutput) to
+// dispatchToolCall.
+type toolOutputKey struct{}
+
+func withToolOutput(ctx context.Context, on func() bool) context.Context {
+	if on == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, toolOutputKey{}, on)
+}
+
+// toolOutputOn reports whether a tool's immediate ForUser output is sent to the
+// chat: only when the switch is set and reports true.
+func toolOutputOn(ctx context.Context) bool {
+	on, ok := ctx.Value(toolOutputKey{}).(func() bool)
+	return ok && on != nil && on()
 }
 
 // noChatReason names, for the log, why a call had no chat to send to.

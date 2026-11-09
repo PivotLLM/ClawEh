@@ -57,6 +57,9 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
 		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
+		// A tool's own output reaches the chat only with stream_tool_activity,
+		// as in the agent loop.
+		mcpserver.WithToolOutput(func() bool { return agentLoop.GetConfig().Agents.Defaults.StreamToolActivity }),
 		mcpserver.WithAlerter(agentLoop.Alerter()),
 		mcpserver.WithOnServeError(services.fatal.handlerFor("mcpserver")),
 	)

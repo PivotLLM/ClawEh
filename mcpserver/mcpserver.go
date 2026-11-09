@@ -95,6 +95,7 @@ type MCPServer struct {
 	policy        acl.Policy           // per-agent tools/call ACL; defaults to acl.Default
 	msgBus        *bus.MessageBus      // outbound publish target for tool ForUser payloads (optional)
 	toolActivity  ToolActivityNotifier // "/tools on" breadcrumb renderer for MCP-routed calls (optional)
+	toolOutput    func() bool          // whether a tool's own output goes to the chat (optional; nil = never)
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
@@ -231,6 +232,14 @@ func WithToolActivityNotifier(n ToolActivityNotifier) Option {
 	return func(m *MCPServer) { m.toolActivity = n }
 }
 
+// WithToolOutput supplies the switch for a tool's own output (ForUser): it is
+// sent to the chat of the call's turn only while on reports true, read on
+// every call, as the agent loop does with agents.defaults.stream_tool_activity.
+// When nil, it is never sent. Background results are not affected.
+func WithToolOutput(on func() bool) Option {
+	return func(m *MCPServer) { m.toolOutput = on }
+}
+
 // WithAlerter routes a listener death after startup to an alerter.
 func WithAlerter(a alerter.Alerter) Option {
 	return func(m *MCPServer) { m.alerter = a }
@@ -317,6 +326,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		policy:           m.policy,
 		msgBus:           m.msgBus,
 		toolActivity:     m.toolActivity,
+		toolOutput:       m.toolOutput,
 		activeDispatches: &m.activeDispatches,
 	}
 

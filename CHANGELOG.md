@@ -167,6 +167,12 @@
 
 ### Fixed
 
+- **A CLI agent's tool output no longer floods the chat.** Agents on a CLI
+  model (Claude CLI, Codex CLI, …) had every tool's own output, such as the
+  full output of each `shell_exec` command, posted to the chat as a separate
+  message. It now follows `agents.defaults.stream_tool_activity`, as it
+  already did for other models: off by default, so only the agent's reply is
+  sent. Set it to `true` to see tool output again.
 - **Every Telegram bot gets the typing indicator and placeholder by default.**
   Only the first bot in `channels.telegram` had `typing.enabled` and
   `placeholder.enabled` on when its config left them out; the others had them

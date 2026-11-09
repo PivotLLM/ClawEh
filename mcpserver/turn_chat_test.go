@@ -66,7 +66,8 @@ func (h *turnChatHost) call(token, tool string) (string, bool) {
 	if tool == "msg_send" {
 		args["content"] = "hello"
 	}
-	return dispatchToolCall(context.Background(), tool, args, h.st,
+	// Tool output on: these tests check where it goes.
+	return dispatchToolCall(withToolOutput(context.Background(), toolOutputAlways), tool, args, h.st,
 		resolverFor(map[string]*tools.ToolRegistry{"alice": h.reg}), nil, nil, h.msgBus, nil)
 }
 
