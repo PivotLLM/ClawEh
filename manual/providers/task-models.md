@@ -17,6 +17,26 @@ group of the sidebar.
 | **Vision** | `vision` | Describes images for an agent whose model can't see them. See [Vision](#vision). |
 | **Classify** | `classify` | The models an agent's **Classifier model** can be. See [Classifiers](../agents/classifiers.md). |
 
+## Upgrading from the Speech page and the vision model settings
+
+Releases before 0.6.4 set transcription with `voice.stt` (the Speech page)
+and image descriptions with `agents.defaults.vision_model` and
+`vision_model_fallbacks`. Those settings are no longer read, and the first
+save of any page rewrites `config.json` without them, so **before saving
+anything after the upgrade**, copy them from `config.json`:
+
+- each `voice.stt` entry's provider and model, in order, and
+  `voice.echo_transcription`;
+- `agents.defaults.vision_model` and `agents.defaults.vision_model_fallbacks`.
+
+There is no automatic migration. Then add each speech model on the Models
+page, on the provider its entry named, and tick **Transcription (STT)** here,
+in the old order. An entry with a blank model used its provider host's
+default: `api.openai.com` → `whisper-1`, `api.groq.com` →
+`whisper-large-v3`, `openrouter.ai` → `openai/whisper-large-v3`. Tick
+**Vision** for the old vision model, then each fallback, in that order, and
+set **Echo transcription** below if it was on.
+
 ## Set it up
 
 1. Add the model on the [Models](./concepts.md) page first. Its provider gives
@@ -137,7 +157,11 @@ variable `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION` sets **Echo transcription**.
 ## Check Up
 
 [Check Up](../admin/checkup.md) shows **Speech to text** and **Vision** with
-"No model." while nothing is ticked for them, and the full report has a
+"No model." while nothing is ticked for them, and marks them with "No usable
+model: …", naming each ticked model and why, when models are ticked but none
+can be used (disabled, not on the Models page, a provider that can't serve
+it or lacks its key). A disabled transcription model raises no alert. The
+full report has a
 **Task models** table: each model, its uses, and the uses its provider can't
 serve.
 

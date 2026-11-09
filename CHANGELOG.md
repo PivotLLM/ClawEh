@@ -92,8 +92,10 @@
   `format`). The list order is the fallback order within each use. Incoming
   voice messages are transcribed with the Transcription (STT) models,
   images are described for text-only models with the Vision models, and
-  classifier models are chosen from the Classify models; Text, Images and
-  Speech (TTS) are recorded for agents to use in a later release. The page
+  classifier models are chosen from the Classify models; agents use Text,
+  Images, Speech (TTS) and Transcription (STT) models through `agent_spawn`
+  (below). Check Up says when models are ticked for transcription or
+  vision but none can be used, naming each and why. The page
   also holds **Text in results (characters)**
   (`task_models.result_text_chars`, default 8000; 0 or absent uses the
   default, negative is refused) and **Echo transcription**
@@ -151,7 +153,9 @@
   transcribed by Gemini and ElevenLabs Scribe as well as by OpenAI-style
   endpoints (OpenAI, Groq, OpenRouter, local Whisper servers); the calls go
   through spawnllm, and a transcription's reported cost counts toward
-  `agents.defaults.daily_spend_alert_usd`. Gemini's answer to a bad key (a
+  `agents.defaults.daily_spend_alert_usd`. A model ticked Transcription
+  (STT) that is disabled on the Models page raises no alert. Gemini's
+  answer to a bad key (a
   400 with `API_KEY_INVALID`) raises **Voice transcription rejected** like a
   401 does.
 
@@ -247,12 +251,19 @@
   the Speech page.** Incoming voice messages are transcribed only with the
   models ticked **Transcription (STT)** on the Task models page, and are not
   transcribed until one is (Check Up: **Speech to text: No model**). The old
-  keys are reported as unknown at start and ignored. To restore
-  transcription, add each speech model on the Models page (its provider
-  gives the endpoint and key, as before) and tick **Transcription (STT)**
-  for it on the Task models page, in the order the old entries were tried;
-  set **Echo transcription** there (`task_models.echo_transcription`) in
-  place of `voice.echo_transcription`. The environment variable
+  keys are reported as unknown at start and ignored, and the first save of
+  any page rewrites `config.json` without them: **before saving anything
+  after the upgrade, copy the old `voice` block** (each `voice.stt` entry's
+  provider and model, in order, and `echo_transcription`). There is no
+  automatic migration. Then, for each old entry in order, add its model on
+  the Models page on that entry's provider (the provider gives the endpoint
+  and key, as before) and tick **Transcription (STT)** for it on the Task
+  models page. An entry with a blank model used the provider host's
+  default, which is now written out: `api.openai.com` → `whisper-1`,
+  `api.groq.com` → `whisper-large-v3`, `openrouter.ai` →
+  `openai/whisper-large-v3`. Set **Echo transcription** there
+  (`task_models.echo_transcription`) in place of
+  `voice.echo_transcription`. The environment variable
   `CLAW_VOICE_ECHO_TRANSCRIPTION` is now
   `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`. `GET` and `PUT /api/voice/stt` are
   removed.
@@ -261,9 +272,12 @@
   described for text-only models only with the models ticked **Vision** on
   the Task models page, and are not described until one is (Check Up:
   **Vision: No model**). The old keys are reported as unknown at start and
-  ignored, and the vision fields are gone from the System page. To restore
-  it, tick **Vision** on the Task models page for the old `vision_model` and
-  then each of its fallbacks, in that order. The environment variable
+  ignored, the vision fields are gone from the System page, and the first
+  save of any page rewrites `config.json` without them: **before saving
+  anything after the upgrade, copy the values of `vision_model` and
+  `vision_model_fallbacks`**. There is no automatic migration. Then tick
+  **Vision** on the Task models page for the old `vision_model` and then
+  each of its fallbacks, in that order. The environment variable
   `CLAW_AGENTS_DEFAULTS_VISION_MODEL` is removed.
 
 ### Fixed

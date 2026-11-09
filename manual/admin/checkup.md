@@ -56,7 +56,7 @@ These rows are information only:
 - **File confinement vs shell (agent)**: the agent's file tools are confined, but it can run shell commands, which are not.
 - **Allow CLI to bypass restrictions (provider)** and **CLI bypass not allowed (provider)**: whether each CLI provider may skip its own permission prompts. See [CLI providers](../providers/cli-providers.md#allow-cli-to-bypass-restrictions).
 - **No tools (agent)**: the agent has no tools. See [Tools and skills](../agents/tools-and-skills.md).
-- **Speech to text** and **Vision**: "No model." while no model is ticked for that use on the [Task models](../providers/task-models.md) page, so voice messages are not transcribed, or images are not described for models that can't see them. The row links to the page.
+- **Speech to text** and **Vision**: "No model." while no model is ticked for that use (marked "No usable model: …", naming each model and why, when models are ticked but none can be used) on the [Task models](../providers/task-models.md) page, so voice messages are not transcribed, or images are not described for models that can't see them. The row links to the page.
 - **Classifier model (agent)** and **Classifier (agent: id)**: the agent's classifier model is not set or not ticked Classify on the [Task models](../providers/task-models.md) page (the row says so when no model is), or a classifier definition is invalid and not run. See [Classifiers](../agents/classifiers.md#check-up).
 - **MCP servers running local programs**: [MCP servers](../mcp.md#external-mcp-servers) started as programs on this machine.
 - **Sub-agent spawning**: how deep [sub-agents](../agents/subagents.md) may nest.

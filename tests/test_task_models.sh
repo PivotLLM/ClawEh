@@ -25,8 +25,11 @@
 #     say so;
 #   - Bob's image call is refused, naming Bob and the kind;
 #   - every call is an audit row (task_model), the failed model's as error;
-#   - every output file has the agents area's exact modes, and no output is
-#     written outside Alice's workspace.
+#   - every call's result names at least one file under
+#     files/generated/<today>/, each with the agents area's exact modes, and
+#     no output is written outside the agents' workspaces (the isolated
+#     folder a CLI text model runs in, removed afterwards, is checked by
+#     agent's TestTaskModelHost_CLIIsolated; no CLI runs here).
 #
 # Usage: tests/test_task_models.sh <claw-binary>
 # Environment: PROBE_PATH (default probe), KEEP=1 keeps the temporary folder.
@@ -115,8 +118,20 @@ wait_for() {
     return 1
 }
 
-# outputs <result>: the workspace paths of the files a result names.
-outputs() { echo "$1" | grep -oE 'files/generated/[0-9]{4}-[0-9]{2}-[0-9]{2}/[A-Za-z0-9._-]+' | sort -u; }
+# outputs <result>: the workspace paths of the files a result names under
+# today's folder.
+outputs() { echo "$1" | grep -oE "files/generated/$TODAY/[A-Za-z0-9._-]+" | sort -u; }
+
+# named_outputs <what> <result>: sets PATHS to outputs, failing the check
+# when the result names none (so the per-file checks never pass by looping
+# over nothing).
+PATHS=""
+named_outputs() {
+    PATHS="$(outputs "$2")"
+    if [ -z "$PATHS" ]; then
+        fail "$1: the result names no file under files/generated/$TODAY/"
+    fi
+}
 
 # expect <what> <text> <needle...>: every needle is in text.
 expect() {
@@ -248,7 +263,8 @@ TODAY="$(date +%F)"
 # ---- 1. Text, with fallback. ----
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"text","task":"Say something.","mode":"wait","name":"t1"}')"
 expect "text: the next model answers after the 503" "$OUT" "kind text): ok." "Model: txt" "Model txt-down failed" "TEXT-REPLY"
-for p in $(outputs "$OUT"); do
+named_outputs text "$OUT"
+for p in $PATHS; do
     check_output "$p" "text"
     if [ "$(cat "$WS/$p")" = "TEXT-REPLY" ]; then pass "text: the .md file holds the reply"; else fail "text: $p holds $(cat "$WS/$p")"; fi
 done
@@ -262,7 +278,8 @@ fi
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"image","task":"A cat.","mode":"wait","name":"i1"}')"
 expect "image: chat image output" "$OUT" "kind image): ok." "Model: imgchat" ".png" "msg_send_file" "IMAGE-WORDS"
 PNGS=0
-for p in $(outputs "$OUT"); do
+named_outputs "image (chat)" "$OUT"
+for p in $PATHS; do
     check_output "$p" "image (chat)"
     case "$p" in *.png) if head -c 8 "$WS/$p" | od -An -tx1 | grep -q '89 50 4e 47'; then PNGS=$((PNGS + 1)); fi ;; esac
 done
@@ -271,17 +288,21 @@ if echo "$OUT" | grep -q 'base64'; then fail "image (chat): the result carries i
 
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"image","model":"imgapi","task":"A dog.","mode":"wait","name":"i2"}')"
 expect "image: images API generation" "$OUT" "kind image): ok." "Model: imgapi" ".png"
-for p in $(outputs "$OUT"); do check_output "$p" "image (generation)"; done
+named_outputs "image (generation)" "$OUT"
+for p in $PATHS; do check_output "$p" "image (generation)"; done
 if [ "$(stub_calls '/v1/images/generations model=gpt-image-1')" = 1 ]; then pass "image: /v1/images/generations called"; else fail "image: no generation call"; fi
 
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"image","model":"imgapi","task":"Make it red.","files":["files/in.png"],"mode":"wait","name":"i3"}')"
 expect "image: images API edit of a workspace file" "$OUT" "kind image): ok." ".png"
+named_outputs "image (edit)" "$OUT"
+for p in $PATHS; do check_output "$p" "image (edit)"; done
 if [ "$(stub_calls '/v1/images/edits model=gpt-image-1 images=1')" = 1 ]; then pass "image: /v1/images/edits called with the input image"; else fail "image: no edit call: $(grep edits "$STUB_LOG")"; fi
 
 # ---- 3. Speech. ----
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"tts","task":"Hello Bob.","mode":"wait","name":"s1"}')"
 expect "tts: OpenAI-style speech" "$OUT" "kind tts): ok." "Model: tts" ".mp3"
-for p in $(outputs "$OUT"); do
+named_outputs "tts (mp3)" "$OUT"
+for p in $PATHS; do
     check_output "$p" "tts (mp3)"
     if [ "$(head -c 3 "$WS/$p")" = "ID3" ]; then pass "tts: the mp3 is the audio returned"; else fail "tts: $p is not the audio returned"; fi
 done
@@ -289,7 +310,8 @@ if [ "$(stub_calls '/v1/audio/speech model=tts-1 voice=alloy format=mp3')" = 1 ]
 
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"tts","model":"gtts","task":"Hello Bob.","mode":"wait","name":"s2"}')"
 expect "tts: Gemini speech" "$OUT" "kind tts): ok." "Model: gtts" ".wav"
-for p in $(outputs "$OUT"); do
+named_outputs "tts (wav)" "$OUT"
+for p in $PATHS; do
     check_output "$p" "tts (wav)"
     HEADER="$(python3 -I -c '
 import struct, sys
@@ -302,7 +324,8 @@ done
 # ---- 4. Transcription. ----
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"stt","files":["files/clip.ogg"],"mode":"wait","name":"r1"}')"
 expect "stt: a workspace audio file transcribed" "$OUT" "kind stt): ok." "Model: stt" "TRANSCRIPT-TEXT"
-for p in $(outputs "$OUT"); do
+named_outputs stt "$OUT"
+for p in $PATHS; do
     check_output "$p" "stt"
     if [ "$(cat "$WS/$p")" = "TRANSCRIPT-TEXT" ]; then pass "stt: the transcript is saved"; else fail "stt: $p holds $(cat "$WS/$p")"; fi
 done
