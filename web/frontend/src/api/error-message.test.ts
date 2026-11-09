@@ -39,9 +39,9 @@ describe("a refused configuration save", () => {
       "Bob (human) represents a person and can't be a summarization model.",
     ],
     [
-      "reserved mount",
-      'Alice\'s mount "Tasks" uses a reserved name; choose another name.',
-      'Alice\'s mount "Tasks" uses a reserved name; choose another name.',
+      "allowed folder",
+      'Alice\'s allowed folder "src" must be an absolute path.',
+      'Alice\'s allowed folder "src" must be an absolute path.',
     ],
     [
       "agent id",
@@ -55,12 +55,12 @@ describe("a refused configuration save", () => {
 
   it("shows every sentence of several refusals", async () => {
     refusal(
-      'Alice\'s mount "Tasks" uses a reserved name; choose another name.',
-      'Bob\'s mount "files" uses a reserved name; choose another name.',
+      'Alice\'s allowed folder "src" must be an absolute path.',
+      'Bob\'s allowed folder "notes" must be an absolute path.',
     )
     await expect(patchAppConfig({})).rejects.toThrow(
-      'Alice\'s mount "Tasks" uses a reserved name; choose another name. ' +
-        'Bob\'s mount "files" uses a reserved name; choose another name.',
+      'Alice\'s allowed folder "src" must be an absolute path. ' +
+        'Bob\'s allowed folder "notes" must be an absolute path.',
     )
   })
 

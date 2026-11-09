@@ -43,7 +43,6 @@ vi.mock("./message-tokens-section", () => ({
 }))
 
 function renderCard(
-  ignoredMounts: string[],
   extra: Partial<React.ComponentProps<typeof AgentCard>> = {},
 ) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -58,12 +57,11 @@ function renderCard(
         availableSkills={[]}
         availableTools={{ tools: [], default_tools: [] }}
         models={[]}
-        mounts={[
-          { name: "files", path: "/srv/a", notify: false, writable: false },
-          { name: "notes", path: "/srv/b", notify: false, writable: false },
+        allowedFolders={[
+          { path: "/srv/src", notify: true },
+          { path: "/srv/ref", notify: false },
         ]}
-        onMountsChange={() => {}}
-        ignoredMounts={ignoredMounts}
+        onAllowedFoldersChange={() => {}}
         onModelsChange={() => {}}
         onSkillsChange={() => {}}
         onToolsChange={() => {}}
@@ -110,28 +108,51 @@ const personIgnores = [
   "Event memory retention (days)",
   "Retired memory retention (days)",
   "Rotating Tokens",
-  "Mounts (external folders, beside files/)",
+  "Allowed folders",
   "Memory models (optional)",
   "Sub-Agent models (tried in order)",
 ]
 
-describe("AgentCard mounts", () => {
-  it("marks a mount ignored for a reserved name in its row", () => {
-    renderCard(["files"])
-    const notes = screen.getAllByTestId("ignored-mount")
-    expect(notes).toHaveLength(1)
-    expect(notes[0].textContent).toBe('Ignored: "files" is a reserved name.')
+describe("AgentCard allowed folders", () => {
+  it("shows one row per folder with its path and notify box, and no name or write control", () => {
+    renderCard()
+    expect(screen.getByText("Allowed folders")).toBeTruthy()
+    expect(
+      screen.getByText(
+        "File tools can use these folders. Write access follows file permissions.",
+      ),
+    ).toBeTruthy()
+    const paths = screen.getAllByLabelText("Folder path") as HTMLInputElement[]
+    expect(paths.map((p) => p.value)).toEqual(["/srv/src", "/srv/ref"])
+    const notify = screen.getAllByRole("checkbox", {
+      name: "Notify on new files",
+    })
+    expect(notify.map((c) => c.getAttribute("aria-checked"))).toEqual([
+      "true",
+      "false",
+    ])
+    expect(screen.queryByText(/write/i, { selector: "label" })).toBeNull()
   })
 
-  it("shows no note when no mount is ignored", () => {
-    renderCard([])
-    expect(screen.queryAllByTestId("ignored-mount")).toHaveLength(0)
+  it("adds an empty row and removes a row", () => {
+    const onChange = vi.fn()
+    renderCard({ onAllowedFoldersChange: onChange })
+    fireEvent.click(screen.getByText("Add folder"))
+    expect(onChange).toHaveBeenLastCalledWith([
+      { path: "/srv/src", notify: true },
+      { path: "/srv/ref", notify: false },
+      { path: "", notify: false },
+    ])
+    fireEvent.click(screen.getAllByLabelText("Remove folder")[0])
+    expect(onChange).toHaveBeenLastCalledWith([
+      { path: "/srv/ref", notify: false },
+    ])
   })
 })
 
 describe("AgentCard character card", () => {
   it("warns when the saved card is not in the library", () => {
-    renderCard([], {
+    renderCard({
       ...allSettings,
       characterCard: "ghost",
       availableCards: [{ id: "alice", name: "Alice" }],
@@ -145,7 +166,7 @@ describe("AgentCard character card", () => {
   })
 
   it("shows no warning for a card the library has", () => {
-    renderCard([], {
+    renderCard({
       ...allSettings,
       characterCard: "alice",
       availableCards: [{ id: "alice", name: "Alice" }],
@@ -155,7 +176,7 @@ describe("AgentCard character card", () => {
   })
 
   it("shows no warning when no card is set", () => {
-    renderCard([], { ...allSettings, characterCard: "" })
+    renderCard({ ...allSettings, characterCard: "" })
     expect(screen.queryByTestId("character-card-missing")).toBeNull()
   })
 })
@@ -173,12 +194,12 @@ describe("AgentCard classifiers", () => {
   })
 
   it("shows the model selector only while the switch is on", () => {
-    renderCard([], withSwitch(false, ""))
+    renderCard(withSwitch(false, ""))
     expect(screen.queryByText("Classifier model")).toBeNull()
   })
 
   it("shows the model with no warning when the agent can use it", () => {
-    renderCard([], withSwitch(true, "fast"))
+    renderCard(withSwitch(true, "fast"))
     expect(screen.queryByText("Classifier model")).not.toBeNull()
     expect(screen.queryByTestId("classifier-model-unusable")).toBeNull()
   })
@@ -186,7 +207,7 @@ describe("AgentCard classifiers", () => {
   it("hands the switch over to the page, on and off", () => {
     const changes: boolean[] = []
     for (const on of [false, true]) {
-      renderCard([], {
+      renderCard({
         ...withSwitch(on, on ? "fast" : ""),
         onClassifiersChange: (v) => changes.push(v),
       })
@@ -197,7 +218,7 @@ describe("AgentCard classifiers", () => {
   })
 
   it("shows no classifier settings without a handler", () => {
-    renderCard([], {
+    renderCard({
       ...withSwitch(true, "fast"),
       onClassifiersChange: undefined,
     })
@@ -206,7 +227,7 @@ describe("AgentCard classifiers", () => {
   })
 
   it("marks a model that is not a Classify model where it is set", () => {
-    renderCard([], withSwitch(true, "gone"))
+    renderCard(withSwitch(true, "gone"))
     expect(screen.getByTestId("classifier-model-unusable").textContent).toBe(
       "Not a Classify model, so its classifiers fail. Pick another.",
     )
@@ -215,7 +236,7 @@ describe("AgentCard classifiers", () => {
   })
 
   it("links to Task models when no model is ticked Classify", () => {
-    renderCard([], { ...withSwitch(false, ""), classifierModels: [] })
+    renderCard({ ...withSwitch(false, ""), classifierModels: [] })
     const note = screen.getByTestId("classifier-no-classify-models")
     expect(note.textContent).toBe(
       "No model is ticked Classify. Tick one on Task models.",
@@ -226,13 +247,13 @@ describe("AgentCard classifiers", () => {
 
 describe("AgentCard for a person", () => {
   it("shows every setting for an ordinary agent", () => {
-    renderCard([], allSettings)
+    renderCard(allSettings)
     const missing = personIgnores.filter((l) => screen.queryByText(l) === null)
     expect(missing).toEqual([])
   })
 
   it("hides the settings that have no effect for a person", () => {
-    renderCard([], { ...allSettings, human: true })
+    renderCard({ ...allSettings, human: true })
     const shown = personIgnores.filter((l) => screen.queryByText(l) !== null)
     expect(shown).toEqual([])
     expect(
@@ -243,7 +264,7 @@ describe("AgentCard for a person", () => {
   })
 
   it("names the page a human-agent note links to", () => {
-    renderCard([], {
+    renderCard({
       human: true,
       humanNotes: [
         {
@@ -272,20 +293,20 @@ describe("AgentCard for a person", () => {
   }
 
   it("labels an agent with no tools", () => {
-    renderCard([], { availableTools: catalog, tools: [] })
+    renderCard({ availableTools: catalog, tools: [] })
     expect(screen.queryByText("Internal tools: No tools")).not.toBeNull()
   })
 
   it("Default tools writes the standard set into the list", () => {
     const onToolsChange = vi.fn()
-    renderCard([], { availableTools: catalog, tools: [], onToolsChange })
+    renderCard({ availableTools: catalog, tools: [], onToolsChange })
     fireEvent.click(screen.getByRole("button", { name: "Default tools" }))
     expect(onToolsChange).toHaveBeenCalledWith(["file_read", "msg_send"])
   })
 
   it("Default tools keeps shell commands allowed", () => {
     const onToolsChange = vi.fn()
-    renderCard([], {
+    renderCard({
       availableTools: catalog,
       tools: ["web_fetch", "shell_exec"],
       onToolsChange,
@@ -300,7 +321,7 @@ describe("AgentCard for a person", () => {
 
   it("asks before deleting an agent", () => {
     const onDelete = vi.fn()
-    renderCard([], { name: "Alice", onDelete })
+    renderCard({ name: "Alice", onDelete })
     fireEvent.click(screen.getByRole("button", { name: "Delete agent alice" }))
     expect(onDelete).not.toHaveBeenCalled()
     expect(screen.getByText("Delete Alice?")).toBeTruthy()
@@ -325,7 +346,7 @@ describe("AgentCard May message", () => {
     extra: Partial<React.ComponentProps<typeof AgentCard>> = {},
   ) => {
     const onAllowAgentsChange = vi.fn()
-    renderCard([], {
+    renderCard({
       name: "Alice",
       configuredAgents: agents,
       onAllowAgentsChange,
@@ -423,7 +444,7 @@ describe("AgentCard Sub-Agent models", () => {
   const models = [model("fast", 0), model("slow", 1)]
 
   it("lists the saved worker models in order and says they are exclusive", () => {
-    renderCard([], {
+    renderCard({
       models,
       subagentModels: ["slow", "fast"],
       onSubagentModelsChange: () => {},
@@ -444,7 +465,7 @@ describe("AgentCard Sub-Agent models", () => {
   })
 
   it("says workers use the agent's own models when the list is empty", () => {
-    renderCard([], { models, onSubagentModelsChange: () => {} })
+    renderCard({ models, onSubagentModelsChange: () => {} })
     expect(
       screen.queryByText("Sub-agents use the models above."),
     ).not.toBeNull()
@@ -453,7 +474,7 @@ describe("AgentCard Sub-Agent models", () => {
 
   it("adding a model reports the new list", () => {
     const onChange = vi.fn()
-    renderCard([], {
+    renderCard({
       models,
       subagentModels: ["fast"],
       onSubagentModelsChange: onChange,
@@ -469,7 +490,7 @@ describe("AgentCard Sub-Agent models", () => {
 
   it("removing a model reports the list without it", () => {
     const onChange = vi.fn()
-    renderCard([], {
+    renderCard({
       models,
       subagentModels: ["fast", "slow"],
       onSubagentModelsChange: onChange,
@@ -485,7 +506,7 @@ describe("AgentCard Sub-Agent models", () => {
 describe("AgentCard task models", () => {
   it("ticks the granted kinds and hands a change to the page", () => {
     const changes: [string, boolean][] = []
-    renderCard([], {
+    renderCard({
       ...allSettings,
       taskModelGrant: { image: true },
       taskKindsWithModels: ["text", "image", "tts", "stt"],
@@ -505,7 +526,7 @@ describe("AgentCard task models", () => {
   })
 
   it("links to Task models for a kind with no model ticked", () => {
-    renderCard([], { ...allSettings, taskKindsWithModels: ["text"] })
+    renderCard({ ...allSettings, taskKindsWithModels: ["text"] })
     expect(screen.queryByTestId("task-grant-no-model-text")).toBeNull()
     const note = screen.getByTestId("task-grant-no-model-stt")
     expect(note.textContent).toBe(
@@ -517,14 +538,14 @@ describe("AgentCard task models", () => {
 
 describe("AgentCard task models and agent_spawn", () => {
   it("says the boxes need agent_spawn when the agent lacks it", () => {
-    renderCard([], { ...allSettings, taskKindsWithModels: ["text"] })
+    renderCard({ ...allSettings, taskKindsWithModels: ["text"] })
     expect(screen.getByTestId("task-models-no-spawn").textContent).toBe(
       "Needs the agent_spawn tool.",
     )
   })
 
   it("says nothing when the agent has agent_spawn", () => {
-    renderCard([], {
+    renderCard({
       ...allSettings,
       tools: ["agent_spawn"],
       taskKindsWithModels: ["text"],
@@ -533,7 +554,7 @@ describe("AgentCard task models and agent_spawn", () => {
   })
 
   it("says it again when agent_spawn is denied", () => {
-    renderCard([], {
+    renderCard({
       ...allSettings,
       tools: ["agent_spawn"],
       denyTools: ["agent_*"],
@@ -545,7 +566,7 @@ describe("AgentCard task models and agent_spawn", () => {
 describe("AgentCard task models while saving", () => {
   it("disables the boxes while a grant change is saved", () => {
     const changes: string[] = []
-    renderCard([], {
+    renderCard({
       ...allSettings,
       taskModelsSaving: true,
       onTaskModelGrantChange: (kind) => changes.push(kind),
@@ -564,7 +585,7 @@ describe("AgentCard task models while saving", () => {
   })
 
   it("enables them again once saved", () => {
-    renderCard([], { ...allSettings, taskModelsSaving: false })
+    renderCard({ ...allSettings, taskModelsSaving: false })
     expect(
       screen
         .getByLabelText("Allow task models: Images")

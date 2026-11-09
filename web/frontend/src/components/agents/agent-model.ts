@@ -45,7 +45,8 @@ export interface AgentEntry {
   /** The ccv3 suite: the card-library tool. */
   ccv3?: boolean
   cogmem?: boolean
-  mounts?: MountEntry[]
+  /** allowed_folders: real folders the file tools may use. */
+  allowed_folders?: AllowedFolderEntry[]
   mcp_tools?: string[]
   /** Tools the agent may never call, even when tools / mcp_tools admit them. */
   deny_tools?: string[]
@@ -61,11 +62,9 @@ export interface AgentEntry {
   raw?: Record<string, unknown>
 }
 
-export interface MountEntry {
-  name: string
+export interface AllowedFolderEntry {
   path: string
   notify?: boolean
-  writable?: boolean
 }
 
 export interface AgentsConfig {
@@ -451,13 +450,11 @@ export function parseAgent(value: unknown): AgentEntry {
     character_card: asString(r.character_card) || undefined,
     ccv3: r.ccv3 === true,
     cogmem: r.cogmem !== false,
-    mounts: asArray(r.mounts).map((m) => {
-      const mr = asRecord(m)
+    allowed_folders: asArray(r.allowed_folders).map((f) => {
+      const fr = asRecord(f)
       return {
-        name: asString(mr.name),
-        path: asString(mr.path),
-        notify: mr.notify === true,
-        writable: mr.writable === true,
+        path: asString(fr.path),
+        notify: fr.notify === true,
       }
     }),
   }
@@ -759,7 +756,7 @@ const AGENT_PAGE_KEYS = [
   "cogmem",
   "mcp_tools",
   "deny_tools",
-  "mounts",
+  "allowed_folders",
   "subagents",
 ]
 
@@ -839,22 +836,20 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
     ...(a.character_card ? { character_card: a.character_card } : {}),
     ...(a.ccv3 ? { ccv3: true } : {}),
     ...(a.cogmem === false ? { cogmem: false } : {}),
-    // Always sent (like tools/mounts) so clearing the box persists; the
+    // Always sent (like tools/allowed_folders) so clearing the box persists; the
     // backend drops an empty slice on save (omitempty).
     mcp_tools: a.mcp_tools ?? [],
     // Always sent so clearing the list persists; blank rows (an entry being
     // typed) are dropped. The backend drops an empty slice on save.
     deny_tools: (a.deny_tools ?? []).map((d) => d.trim()).filter(Boolean),
     ...subagentsPayload(raw, a.allow_agents, a.subagent_models),
-    // Always sent (like tools) so removing all mounts persists; the backend
-    // drops an empty slice on save (omitempty).
-    mounts: (a.mounts ?? [])
-      .filter((m) => m.name.trim() !== "" && m.path.trim() !== "")
-      .map((m) => ({
-        name: m.name.trim(),
-        path: m.path.trim(),
-        ...(m.notify ? { notify: true } : {}),
-        ...(m.writable ? { writable: true } : {}),
+    // Always sent (like tools) so removing every folder persists; blank rows
+    // are dropped. The backend drops an empty slice on save (omitempty).
+    allowed_folders: (a.allowed_folders ?? [])
+      .filter((f) => f.path.trim() !== "")
+      .map((f) => ({
+        path: f.path.trim(),
+        ...(f.notify ? { notify: true } : {}),
       })),
   }
 }

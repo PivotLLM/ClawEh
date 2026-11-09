@@ -738,16 +738,16 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
   })
 
-  await check(6, "Allow shell commands adds and removes the explicit shell_exec entry", async () => {
+  await check(6, "Allow shell commands (full account access) adds and removes the explicit shell_exec entry", async () => {
     if (!created) return "skipped, never created"
     const before = (await config()).agents.list.find((x) => x.id === PROBE)
     const others = (before?.tools ?? []).filter((t) => t !== "shell_exec")
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    const box = page.getByRole("switch", { name: "Allow shell commands", exact: true }).first()
-    assert((await box.count()) > 0, 'no "Allow shell commands" switch on the card')
-    assert(!(await box.isChecked()), '"Allow shell commands" already on for a new agent')
+    const box = page.getByRole("switch", { name: "Allow shell commands (full account access)", exact: true }).first()
+    assert((await box.count()) > 0, 'no "Allow shell commands (full account access)" switch on the card')
+    assert(!(await box.isChecked()), '"Allow shell commands (full account access)" already on for a new agent')
     await box.click()
     await page.waitForTimeout(2000)
     let a = (await config()).agents.list.find((x) => x.id === PROBE)

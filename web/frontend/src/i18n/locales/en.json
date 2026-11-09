@@ -12,7 +12,7 @@
     "workerModelsAdd": "Add sub-agent model…",
     "workerModelsEmptyHint": "Sub-agents use the models above.",
     "workerModelsHint": "Sub-agents this agent starts run on these models and no others.",
-    "allowShell": "Allow shell commands",
+    "allowShell": "Allow shell commands (full account access)",
     "allowShellHint": "Lets this agent run commands on this machine. Off by default.",
     "allowShellDenied": "Ignored: blocked by Denied tools.",
     "mayMessage": "May message",
@@ -86,7 +86,12 @@
     "humanIgnored": "Ignored: {{message}}",
     "bypassNotAllowed": "{{provider}} is not allowed to bypass its restrictions.",
     "bypassAllow": "Allow it",
-    "mountReserved": "Ignored: \"{{name}}\" is a reserved name."
+    "allowedFolders": "Allowed folders",
+    "allowedFoldersHint": "File tools can use these folders. Write access follows file permissions.",
+    "allowedFolderPath": "Folder path",
+    "allowedFolderNotify": "Notify on new files",
+    "allowedFolderAdd": "Add folder",
+    "allowedFolderRemove": "Remove folder"
   },
   "navigation": {
     "chat": "Chat",
@@ -511,7 +516,7 @@
       "common_dir": "Common directory",
       "common_dir_hint": "Folder agents share files through. Blank uses the common folder in the data directory.",
       "restrict_workspace": "Restrict to workspace",
-      "restrict_workspace_hint": "Only allow file operations inside workspace.",
+      "restrict_workspace_hint": "Keeps file tools inside the workspace; shell commands are not limited.",
       "stream_tool_activity": "Stream tool activity",
       "stream_tool_activity_hint": "When enabled, the assistant's inter-tool narration and each tool's intermediate output are sent to the chat as it works. When disabled (default), the user receives only the final answer.",
       "max_tokens": "Max tokens",

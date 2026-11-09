@@ -13,6 +13,7 @@ import {
   mayMessageRows,
   mcpAccessEntries,
   mcpAccessView,
+  parseAgent,
   parseAgentsConfig,
   shellAllowed,
   shellDenied,
@@ -784,6 +785,37 @@ describe("agentsPayload", () => {
     expect(shellDenied([])).toBe(false)
   })
 
+  it("reads and writes allowed folders, dropping blank rows", () => {
+    const a = parseAgent({
+      id: "alice",
+      allowed_folders: [
+        { path: "/srv/src", notify: true },
+        { path: "/srv/ref" },
+      ],
+    })
+    expect(a.allowed_folders).toEqual([
+      { path: "/srv/src", notify: true },
+      { path: "/srv/ref", notify: false },
+    ])
+    const out = agentsPayload({
+      defaults: {},
+      list: [
+        {
+          ...a,
+          allowed_folders: [
+            ...(a.allowed_folders ?? []),
+            { path: "  ", notify: true },
+          ],
+        },
+      ],
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(out.agents.list[0].allowed_folders).toEqual([
+      { path: "/srv/src", notify: true },
+      { path: "/srv/ref" },
+    ])
+    expect(out.agents.list[0]).not.toHaveProperty("mounts")
+  })
+
   it("writes an agent added on the page from its edited fields only", () => {
     const out = agentsPayload({
       defaults: {},
@@ -796,7 +828,7 @@ describe("agentsPayload", () => {
         message: null,
         mcp_tools: [],
         deny_tools: [],
-        mounts: [],
+        allowed_folders: [],
       },
     ])
     expect(out).not.toHaveProperty("agents.defaults")

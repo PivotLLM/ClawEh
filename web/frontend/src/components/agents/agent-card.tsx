@@ -12,10 +12,10 @@ import {
 import { type ModelInfo } from "@/api/models"
 import {
   type AgentBindingView,
+  type AllowedFolderEntry,
   type CLIBypassWarning,
   MESSAGE_TOOL,
   type MaestroRunnerEdits,
-  type MountEntry,
   SPAWN_TOOL,
   type SkillInfo,
   TASK_GRANT_KINDS,
@@ -116,10 +116,8 @@ export interface AgentCardProps {
   ccv3?: boolean
   onCCv3Change?: (v: boolean) => void
   cogmem?: boolean
-  mounts?: MountEntry[]
-  onMountsChange?: (mounts: MountEntry[]) => void
-  /** Saved mount names ignored because they are reserved (GET /api/agents/mounts/ignored). */
-  ignoredMounts?: string[]
+  allowedFolders?: AllowedFolderEntry[]
+  onAllowedFoldersChange?: (folders: AllowedFolderEntry[]) => void
   mcpTools?: string[]
   onMCPToolsChange?: (mcpTools: string[]) => void
   denyTools?: string[]
@@ -196,9 +194,8 @@ export function AgentCard({
   ccv3 = false,
   onCCv3Change = undefined,
   cogmem = true,
-  mounts = [],
-  onMountsChange = undefined,
-  ignoredMounts = [],
+  allowedFolders = [],
+  onAllowedFoldersChange = undefined,
   mcpTools = [],
   onMCPToolsChange = undefined,
   denyTools = [],
@@ -524,72 +521,52 @@ export function AgentCard({
           </div>
         )}
 
-      {!human && onMountsChange !== undefined && (
+      {!human && onAllowedFoldersChange !== undefined && (
         <div className={settingsCardClass}>
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">
-              Mounts (external folders, beside files/)
+              {t("agents.allowedFolders")}
             </p>
             <p className="text-muted-foreground text-xs">
-              Read-only unless <span className="font-medium">write</span> is
-              enabled. Turn on <span className="font-medium">notify</span> to
-              alert the agent when a new file appears.
+              {t("agents.allowedFoldersHint")}
             </p>
-            {mounts.map((m, mi) => {
-              const set = (patch: Partial<MountEntry>) =>
-                onMountsChange(
-                  mounts.map((x, j) => (j === mi ? { ...x, ...patch } : x)),
+            {allowedFolders.map((f, fi) => {
+              const set = (patch: Partial<AllowedFolderEntry>) =>
+                onAllowedFoldersChange(
+                  allowedFolders.map((x, j) =>
+                    j === fi ? { ...x, ...patch } : x,
+                  ),
                 )
               return (
-                <div key={mi} className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      value={m.name}
-                      onChange={(e) => set({ name: e.target.value })}
-                      placeholder="name (e.g. notes)"
-                      className="h-7 w-32 font-mono text-xs"
+                <div key={fi} className="flex items-center gap-1.5">
+                  <Input
+                    value={f.path}
+                    onChange={(e) => set({ path: e.target.value })}
+                    placeholder="/srv/src"
+                    aria-label={t("agents.allowedFolderPath")}
+                    className="h-7 flex-1 font-mono text-xs"
+                  />
+                  <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
+                    <Checkbox
+                      checked={f.notify === true}
+                      onCheckedChange={(c) => set({ notify: c === true })}
                     />
-                    <Input
-                      value={m.path}
-                      onChange={(e) => set({ path: e.target.value })}
-                      placeholder="/absolute/path"
-                      className="h-7 flex-1 font-mono text-xs"
-                    />
-                    <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
-                      <Switch
-                        checked={m.writable === true}
-                        onCheckedChange={(c) => set({ writable: c })}
-                      />
-                      write
-                    </label>
-                    <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
-                      <Switch
-                        checked={m.notify === true}
-                        onCheckedChange={(c) => set({ notify: c })}
-                      />
-                      notify
-                    </label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
-                      aria-label="remove mount"
-                      onClick={() =>
-                        onMountsChange(mounts.filter((_, j) => j !== mi))
-                      }
-                    >
-                      <IconTrash className="size-3.5" />
-                    </Button>
-                  </div>
-                  {ignoredMounts.includes(m.name) && (
-                    <p
-                      data-testid="ignored-mount"
-                      className="text-xs text-amber-600 dark:text-amber-400"
-                    >
-                      {t("agents.mountReserved", { name: m.name })}
-                    </p>
-                  )}
+                    {t("agents.allowedFolderNotify")}
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label={t("agents.allowedFolderRemove")}
+                    onClick={() =>
+                      onAllowedFoldersChange(
+                        allowedFolders.filter((_, j) => j !== fi),
+                      )
+                    }
+                  >
+                    <IconTrash className="size-3.5" />
+                  </Button>
                 </div>
               )
             })}
@@ -599,14 +576,14 @@ export function AgentCard({
               size="sm"
               className="h-6 px-2 text-xs"
               onClick={() =>
-                onMountsChange([
-                  ...mounts,
-                  { name: "", path: "", notify: false, writable: false },
+                onAllowedFoldersChange([
+                  ...allowedFolders,
+                  { path: "", notify: false },
                 ])
               }
             >
               <IconPlus className="size-3.5" />
-              Add mount
+              {t("agents.allowedFolderAdd")}
             </Button>
           </div>
         </div>

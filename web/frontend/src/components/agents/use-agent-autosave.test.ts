@@ -41,7 +41,7 @@ describe("editsFromAgent", () => {
       temperature: undefined,
       summarizationModels: [],
       shareCommon: true,
-      mounts: [],
+      allowedFolders: [],
       mcpTools: [],
       denyTools: [],
       allowAgents: [],

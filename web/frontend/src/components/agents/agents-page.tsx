@@ -11,7 +11,6 @@ import {
   getAgentTools,
   getAppConfig,
   getHumanAgents,
-  getIgnoredMounts,
   patchAppConfig,
 } from "@/api/channels"
 import { type ModelInfo, getModels } from "@/api/models"
@@ -124,21 +123,13 @@ export function AgentsPage() {
     queryKey: HUMAN_AGENTS_QUERY_KEY,
     queryFn: getHumanAgents,
   })
-  // Saved mounts set aside for a reserved name; each is marked in its row.
-  const { data: ignoredMounts } = useQuery({
-    queryKey: ["agents-ignored-mounts"],
-    queryFn: getIgnoredMounts,
-  })
   // The character-card library, for each card's Character card select.
   const { data: cardsData } = useQuery({
     queryKey: CARDS_QUERY_KEY,
     queryFn: getCards,
   })
   const refreshAgentNotes = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY }),
-      queryClient.invalidateQueries({ queryKey: ["agents-ignored-mounts"] }),
-    ])
+    queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
 
   const fetchError = loadError
     ? loadError instanceof Error
@@ -190,7 +181,7 @@ export function AgentsPage() {
           ? edits.summarizationModels
           : undefined,
       share_common: edits.shareCommon,
-      mounts: edits.mounts,
+      allowed_folders: edits.allowedFolders,
       mcp_tools: edits.mcpTools,
       deny_tools: edits.denyTools,
       allow_agents: edits.allowAgents,
@@ -584,11 +575,10 @@ export function AgentsPage() {
                       onCCv3Change={() => handleToggleCCv3(i)}
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
-                      mounts={e.mounts}
-                      ignoredMounts={(ignoredMounts ?? [])
-                        .filter((m) => sameAgentId(m.agent, agent.id))
-                        .map((m) => m.mount)}
-                      onMountsChange={(ms) => edit(i, { mounts: ms })}
+                      allowedFolders={e.allowedFolders}
+                      onAllowedFoldersChange={(fs) =>
+                        edit(i, { allowedFolders: fs })
+                      }
                       mcpTools={e.mcpTools}
                       onMCPToolsChange={(mt) => edit(i, { mcpTools: mt })}
                       denyTools={e.denyTools}
