@@ -851,18 +851,20 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 160 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 170 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
-- **Dev only.** Groups F, G, N, S and T write (F creates an agent and, in F11, a
+- **Dev only.** Groups F, G, N, S, T and U write (F creates an agent and, in F11, a
   throwaway agent whose May message it ticks, in F14 one whose
   classifiers switch it toggles and in F15 one whose Images task-model
   grant it toggles, G edits three config fields and, in G8, one task
   model's Images settings on the Task models page, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent
-  it attaches the card to; I12 adds a temporary model only when no model's
+  it attaches the card to, U adds two task models, ticks and reorders
+  them, edits the Task models settings and creates a throwaway agent
+  `e2e-tmk` whose four grants it ticks, then writes the block back; I12 adds a temporary model only when no model's
   request timeout exceeds the turn timeout). All of them revert what they
   change. The runner refuses port 18790 unless `--allow-prod` is given.
   Never point it at production.

@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-160 checks in all; the runner prints the same tally at the end.
+170 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -14,11 +14,11 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 ## Before you start
 
-**Run it against a dev instance, never production.** Groups F, G, N, R and T
-write. All five revert what they change — the agent created in F is deleted, the
+**Run it against a dev instance, never production.** Groups F, G, N, R, T and U
+write. All six revert what they change — the agent created in F is deleted, the
 fields edited in G (including a task model's Images settings) and the HTTPS port edited in R are restored to the values read
-beforehand, the memory domain N creates is deleted at the end, and the card and
-agent T creates are removed — but a crash
+beforehand, the memory domain N creates is deleted at the end, the card and
+agent T creates are removed, and the task models block U edits is put back as it was read — but a crash
 mid-run would leave the change behind. I12 adds and removes a disabled temporary model only when no model's request timeout exceeds the turn timeout. N only ever touches the `e2e-probe`
 domain it created, so an agent's real memory is not at risk, but it is still a
 write. R8 regenerates the self-signed certificate (a new self-signed one takes
@@ -148,6 +148,23 @@ else is on **System**. `/config` still works and lands on `/system`;
 | G6 | Note `classifiers.limits.min_every_seconds` (absent = blank), set **Shortest run interval (seconds)** in the Classifiers section to `77`, wait ~2s, then put the original back (blank if it was absent), wait ~2s | The field shows the default `15` as its placeholder; after the edit the config holds `77`; after the revert it matches the original (key absent if it was absent) |
 | G7 | Note `task_models.echo_transcription` (absent = off), open `/task-models`, click **Echo transcription**, wait ~2s, click it again, wait ~2s | After the first click the config holds the opposite value; after the second it matches the original |
 | G8 | Pick the first task model ticked **Images** (else the first task model; skipped when there is none) and note its `image` and `image_api` (absent = `chat`); open `/task-models`; if it was not ticked Images, check it has no **Images through** select, tick **Images**, wait ~2s; set **Images through** to the other value, wait ~2s; set it back, wait ~2s; if Images was not ticked before, untick it, wait ~2s | The select is shown only while Images is ticked; after the change the config holds the other `image_api` (`chat` saved as absent); afterwards `image` and `image_api` match what was noted |
+
+## U. Task models page
+
+Every check edits `task_models`; the group reads the block (`GET /api/task-models`) first and writes it back at the end. The models it adds are enabled models not yet on the page; the one it ticks uses on is, when there is one, a model whose provider serves speech and has an API key, and **Transcription (STT)** is ticked only on such a model, so no check can raise the "Speech backend not usable" alert.
+
+| ID | Process | Expected |
+|---|---|---|
+| U1 | Open `/task-models`; pick an enabled model not on the page in **Model to add**, click **Add model**, wait ~2s; do the same for a second one | Each gets a row and leaves the **Model to add** list; `task_models.models` is the old list followed by the two, each saved as `{model}` alone. Skipped when every enabled model is listed |
+| U2 | On the first added row, tick each use in turn (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)** only for a speech model, **Vision**, **Classify**), waiting ~2s after each; then untick them all | After each tick the saved entry has exactly the uses ticked so far; at the end it is `{model}` again |
+| U3 | On the same row, check there is no **Voice** field; tick **Speech (TTS)**, fill **Voice** `alloy` and **Format** `mp3`, wait ~2s; clear **Format**, wait ~2s; untick **Speech (TTS)**, wait ~2s | Voice and Format appear only while TTS is ticked; `tts_defaults` is `{voice: alloy, format: mp3}`, then `{voice: alloy}`; after unticking the entry is `{model}` |
+| U4 | With two or more rows, read the order; click **Move <last> up**, wait ~2s; then **Move <last> down**, wait ~2s | The first row's **Move up** and the last row's **Move down** are disabled; after Move up the last two are swapped on the page and in the config; after Move down the order is as read |
+| U5 | Read the placeholder of **Text in results (characters)**; type `1234`, wait ~2s; type `12a`, wait ~2s; clear it, wait ~2s | Placeholder is `defaults.result_text_chars` (8000); `1234` is saved; `12a` shows *Enter a whole number, or leave it blank.* and saves nothing; blank saves the default (key absent) |
+| U6 | Type `4321` in **Text in results** and at once click the **Models** link, wait ~2s; put the original value back through the API | `result_text_chars` is `4321`: an edit still waiting for its save is saved when the page is left |
+| U7 | Turn **Echo transcription** on; when no model is ticked STT and a speech model was added, tick its **Transcription (STT)**, wait ~2s, untick it, wait ~2s; put echo back through the API | *No model is ticked Transcription (STT), so nothing is transcribed.* is shown exactly while echo is on and no model is ticked STT |
+| U8 | Create a throwaway agent `e2e-tmk` through the API with one enabled model and no tools; select it on `/agents`; read **Allow task models**; tick its four boxes, ~2s apart; when no model was ticked Text, tick Text on the first added model through the API, reload `/agents`, select `e2e-tmk` again, then untick it; remove `e2e-tmk` | Each kind with no model ticked has the note *No model is ticked for this. Tick one on Task models.* linking to `/task-models`, and only those; *Needs the agent_spawn tool.* is shown; the Classify note is shown exactly when no model is ticked Classify; after the ticks `task_models` is `{text, image, tts, stt}` all true; with a Text model ticked the Text note is gone |
+| U9 | `GET /api/report/assessment`; when no model is ticked Vision, tick Vision on the first added model through the API, read it again, then untick it; load `/report` | **Speech to text** and **Vision** read *No model.* exactly when no model is ticked for them; with Vision ticked the Vision row no longer says so, and it does again after unticking; the Check Up page shows the rows the API lists, no console errors |
+| U10 | Click **Remove <model>** on each added row, ~2s apart | The rows are gone and `task_models.models` lists the same models as before U1 |
 
 ## R. Network page
 
