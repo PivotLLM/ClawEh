@@ -231,7 +231,7 @@ func withEchoChannel(t *testing.T, al *AgentLoop, msgBus *bus.MessageBus) *echoC
 	return ch
 }
 
-// TestPrepareInbound_EchoTranscription: with voice.echo_transcription on, the
+// TestPrepareInbound_EchoTranscription: with task_models.echo_transcription on, the
 // sender is told what was heard, and a voice message that could not be
 // understood is answered with a sentence naming the agent, as a reply to it;
 // with it off, nothing is sent.
