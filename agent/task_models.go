@@ -57,6 +57,9 @@ type taskModelHost struct {
 	// httpClient is used by the speech and image clients; nil is the
 	// default (no timeout of its own: each call has a context deadline).
 	httpClient *http.Client
+	// clone is the short id of the clone whose spawner this is, "" for any
+	// other agent: its audit rows say so, as its tool calls' do.
+	clone string
 }
 
 var _ toolsagents.TaskModelRunner = (*taskModelHost)(nil)
@@ -75,28 +78,55 @@ func kindUse(kind string) config.TaskUse {
 	}
 }
 
-// taskInput is one input file, read in full.
+// taskInput is one input file. Check only opens and checks it; Run reads
+// it in full (data).
 type taskInput struct {
 	name        string
 	contentType string
 	data        []byte
 }
 
-func (in taskInput) isImage() bool { return strings.HasPrefix(in.contentType, "image/") }
-func (in taskInput) isText() bool {
-	return strings.HasPrefix(in.contentType, "text/") || in.contentType == "application/json" ||
-		(in.contentType == "" || in.contentType == "application/octet-stream") && utf8.Valid(in.data)
+// audioTypes are the audio formats a transcription takes, by extension:
+// explicit, so the result does not depend on the host's mime.types.
+var audioTypes = map[string]string{
+	".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+	".mp3": "audio/mpeg", ".mpga": "audio/mpeg", ".mpeg": "audio/mpeg",
+	".m4a": "audio/mp4", ".mp4": "audio/mp4",
+	".wav": "audio/wav", ".flac": "audio/flac",
+	".webm": "audio/webm", ".weba": "audio/webm",
+	".aac": "audio/aac", ".amr": "audio/amr",
 }
 
-// Check implements TaskModelRunner.
+// imageTypes are the image formats, by extension.
+var imageTypes = map[string]string{
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".gif": "image/gif", ".webp": "image/webp",
+}
+
+func (in taskInput) isImage() bool { return strings.HasPrefix(in.contentType, "image/") }
+
+func (in taskInput) isAudio() bool {
+	return strings.HasPrefix(in.contentType, "audio/") || audioTypes[strings.ToLower(filepath.Ext(in.name))] != ""
+}
+
+// isText reports whether the input reads as text: valid UTF-8 with no NUL
+// byte, whatever type its name suggests (yaml, sh, json, …), unless it is
+// an image or audio.
+func (in taskInput) isText() bool {
+	return !in.isImage() && !in.isAudio() && utf8.Valid(in.data) && !bytes.ContainsRune(in.data, 0)
+}
+
+// Check implements TaskModelRunner: every rule, the inputs opened and
+// checked but not read.
 func (h *taskModelHost) Check(_ context.Context, agentID, workspace string, req toolsagents.TaskModelRequest) error {
-	_, _, err := h.prepare(agentID, workspace, req)
+	_, _, err := h.prepare(agentID, workspace, req, false)
 	return err
 }
 
 // prepare applies every rule a call must pass and returns the candidate
-// model names and the inputs read.
-func (h *taskModelHost) prepare(agentID, workspace string, req toolsagents.TaskModelRequest) ([]string, []taskInput, error) {
+// model names and the inputs, read in full when read is set. The checks that
+// need an input's bytes (text) run only then.
+func (h *taskModelHost) prepare(agentID, workspace string, req toolsagents.TaskModelRequest, read bool) ([]string, []taskInput, error) {
 	cfg := h.al.GetConfig()
 	if cfg == nil {
 		return nil, nil, errLoopNotReady
@@ -110,8 +140,7 @@ func (h *taskModelHost) prepare(agentID, workspace string, req toolsagents.TaskM
 	if !a.TaskModelAllowed(use) {
 		return nil, nil, fmt.Errorf("%s is not allowed to use task models for %s.", name, config.TaskSpawnKindName(use)) //nolint:staticcheck // ST1005: user-facing sentence
 	}
-	ticked := cfg.TaskModels.ModelsFor(use)
-	candidates := ticked
+	candidates := cfg.TaskModels.ModelsFor(use)
 	if req.Model != "" {
 		if !cfg.TaskModels.Has(req.Model, use) {
 			return nil, nil, fmt.Errorf("Model %s is not a task model for %s; tick it on the Task models page.", req.Model, config.TaskSpawnKindName(use)) //nolint:staticcheck // ST1005: user-facing sentence
@@ -121,39 +150,53 @@ func (h *taskModelHost) prepare(agentID, workspace string, req toolsagents.TaskM
 	if len(candidates) == 0 {
 		return nil, nil, fmt.Errorf("No model is ticked for %s on the Task models page.", config.TaskSpawnKindName(use)) //nolint:staticcheck // ST1005: user-facing sentence
 	}
-	inputs, err := h.readInputs(cfg, a, workspace, req)
+	inputs, err := h.inputs(cfg, a, workspace, req, read)
 	if err != nil {
 		return nil, nil, err
 	}
-	switch req.Kind {
+	if err := checkInputKinds(req.Kind, inputs, read); err != nil {
+		return nil, nil, err
+	}
+	return candidates, inputs, nil
+}
+
+// checkInputKinds refuses inputs a kind can't use. Text needs the bytes, so
+// it is checked only once they are read.
+func checkInputKinds(kind string, inputs []taskInput, read bool) error {
+	switch kind {
 	case toolsagents.TaskKindSTT:
 		if len(inputs) != 1 {
-			return nil, nil, errors.New("Transcription needs exactly one audio file in files or media.") //nolint:staticcheck // ST1005: user-facing sentence
+			return errors.New("Transcription needs exactly one audio file in files or media.") //nolint:staticcheck // ST1005: user-facing sentence
+		}
+		if !inputs[0].isAudio() {
+			return fmt.Errorf("%s can't be transcribed: it is not an audio file.", inputs[0].name) //nolint:staticcheck // ST1005: user-facing sentence
 		}
 	case toolsagents.TaskKindTTS:
 		if len(inputs) > 0 {
-			return nil, nil, errors.New("Speech takes no files: give the text to speak as task.") //nolint:staticcheck // ST1005: user-facing sentence
+			return errors.New("Speech takes no files: give the text to speak as task.") //nolint:staticcheck // ST1005: user-facing sentence
 		}
 	case toolsagents.TaskKindText:
 		for _, in := range inputs {
-			if !in.isText() && !in.isImage() {
-				return nil, nil, fmt.Errorf("%s can't be used for text: it is neither text nor an image.", in.name) //nolint:staticcheck // ST1005: user-facing sentence
+			if in.isAudio() || read && !in.isImage() && !in.isText() {
+				return fmt.Errorf("%s can't be used for text: it is neither text nor an image.", in.name) //nolint:staticcheck // ST1005: user-facing sentence
 			}
 		}
 	case toolsagents.TaskKindImage:
 		for _, in := range inputs {
 			if !in.isImage() {
-				return nil, nil, fmt.Errorf("%s can't be used for images: it is not an image.", in.name) //nolint:staticcheck // ST1005: user-facing sentence
+				return fmt.Errorf("%s can't be used for images: it is not an image.", in.name) //nolint:staticcheck // ST1005: user-facing sentence
 			}
 		}
 	}
-	return candidates, inputs, nil
+	return nil
 }
 
-// readInputs reads the request's files with the agent's file permission
-// (as msg_send_file does: only for an agent granted a file-reading tool,
-// each opened once and checked) and its media refs from the media store.
-func (h *taskModelHost) readInputs(cfg *config.Config, a *config.AgentConfig, workspace string, req toolsagents.TaskModelRequest) ([]taskInput, error) {
+// inputs opens the request's files with the agent's file permission (as
+// msg_send_file does: only for an agent granted a file-reading tool, each
+// opened once and checked: the file checked, regular, within
+// max_media_size) and resolves its media refs from the media store; with
+// read, each is read in full.
+func (h *taskModelHost) inputs(cfg *config.Config, a *config.AgentConfig, workspace string, req toolsagents.TaskModelRequest, read bool) ([]taskInput, error) {
 	maxSize := int64(cfg.Agents.Defaults.GetMaxMediaSize())
 	var out []taskInput
 	if len(req.Files) > 0 {
@@ -166,12 +209,17 @@ func (h *taskModelHost) readInputs(cfg *config.Config, a *config.AgentConfig, wo
 			if problem != "" {
 				return nil, errors.New(problem)
 			}
-			data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+			in := taskInput{name: filepath.Base(p)}
+			var err error
+			if read {
+				in.data, err = readAtMost(f, maxSize)
+			}
 			utils.CloseQuietly(f)
 			if err != nil {
 				return nil, fmt.Errorf("Can't use %q: %w.", p, err) //nolint:staticcheck // ST1005: user-facing sentence
 			}
-			out = append(out, taskInput{name: filepath.Base(p), contentType: contentTypeOf(p, data), data: data})
+			in.contentType = contentTypeOf(in.name, in.data)
+			out = append(out, in)
 		}
 	}
 	for _, ref := range req.Media {
@@ -182,55 +230,77 @@ func (h *taskModelHost) readInputs(cfg *config.Config, a *config.AgentConfig, wo
 		if err != nil {
 			return nil, fmt.Errorf("Can't use %s: it is no longer available.", ref) //nolint:staticcheck // ST1005: user-facing sentence
 		}
-		data, err := readLimited(path, maxSize)
+		in := taskInput{name: meta.Filename}
+		if in.name == "" {
+			in.name = filepath.Base(path)
+		}
+		f, err := os.Open(path) //nolint:gosec // a path the media store resolved
+		if err == nil {
+			var info os.FileInfo
+			if info, err = f.Stat(); err == nil && info.Size() > maxSize {
+				err = fmt.Errorf("it is %d bytes, more than the limit of %d bytes", info.Size(), maxSize)
+			}
+			if err == nil && read {
+				in.data, err = readAtMost(f, maxSize)
+			}
+			utils.CloseQuietly(f)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("Can't use %s: %w.", ref, err) //nolint:staticcheck // ST1005: user-facing sentence
 		}
-		name := meta.Filename
-		if name == "" {
-			name = filepath.Base(path)
+		in.contentType = mediaType(meta.ContentType)
+		if in.contentType == "" || in.contentType == "application/octet-stream" {
+			in.contentType = contentTypeOf(in.name, in.data)
 		}
-		ct := meta.ContentType
-		if ct == "" {
-			ct = contentTypeOf(name, data)
-		}
-		out = append(out, taskInput{name: name, contentType: ct, data: data})
+		out = append(out, in)
 	}
 	return out, nil
 }
 
-// readLimited reads a media-store file of at most maxSize bytes.
-func readLimited(path string, maxSize int64) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // a path the media store resolved
-	if err != nil {
-		return nil, err
-	}
-	defer utils.CloseQuietly(f)
-	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+// readAtMost reads r to the end, refusing more than maxSize bytes (a file
+// that grew after it was checked).
+func readAtMost(r io.Reader, maxSize int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxSize+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > maxSize {
-		return nil, fmt.Errorf("more than the limit of %d bytes", maxSize)
+		return nil, fmt.Errorf("it is more than the limit of %d bytes", maxSize)
 	}
 	return data, nil
 }
 
-// contentTypeOf is the media type of a file: by its extension, else by its
-// bytes, without parameters.
-func contentTypeOf(name string, data []byte) string {
-	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
-	if ct == "" {
-		ct = http.DetectContentType(data)
+// mediaType is a content type reduced to type/subtype, lower case; "" when
+// it does not parse.
+func mediaType(ct string) string {
+	mt, _, err := mime.ParseMediaType(strings.TrimSpace(ct))
+	if err != nil {
+		return ""
 	}
-	ct, _, _ = strings.Cut(ct, ";")
-	return strings.TrimSpace(ct)
+	return strings.ToLower(mt)
+}
+
+// contentTypeOf is the media type of a file: audio and images by their
+// extension (an explicit table), else by the bytes when there are any, else
+// "".
+func contentTypeOf(name string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if t := audioTypes[ext]; t != "" {
+		return t
+	}
+	if t := imageTypes[ext]; t != "" {
+		return t
+	}
+	if len(data) == 0 {
+		return ""
+	}
+	return mediaType(http.DetectContentType(data))
 }
 
 // Run implements TaskModelRunner.
 func (h *taskModelHost) Run(ctx context.Context, agentID, workspace string, req toolsagents.TaskModelRequest) (*toolsagents.TaskModelResult, error) {
 	res := &toolsagents.TaskModelResult{}
-	candidates, inputs, err := h.prepare(agentID, workspace, req)
+	candidates, inputs, err := h.prepare(agentID, workspace, req, true)
 	if err != nil {
 		return res, err
 	}
@@ -266,7 +336,7 @@ func (h *taskModelHost) Run(ctx context.Context, agentID, workspace string, req 
 		}
 		if callErr != nil {
 			if ctx.Err() == nil && tracker != nil {
-				if fe := providers.ClassifyError(callErr, mc.Provider, mc.Model); fe != nil {
+				if fe := providers.ClassifyError(callErr, mc.Provider, mc.Model); fe != nil && cooldownWorthy(fe) {
 					tracker.MarkFailure(mc.Provider, mc.Model, fe.Reason, fe.Status, fe.RetryAfter)
 				}
 			}
@@ -299,6 +369,25 @@ func (h *taskModelHost) Run(ctx context.Context, agentID, workspace string, req 
 	return res, errors.New("no task model served this call")
 }
 
+// cooldownWorthy reports whether a failure says the model can't serve
+// anyone for a while (rate limit, overload, an outage, a timeout, the key
+// or the account), so it is put in cooldown. A failure the request caused
+// (a bad input, a format or size the model refused, an unknown model) is
+// not: the model stays available to the agents chatting with it and to the
+// next call.
+func cooldownWorthy(fe *providers.FailoverError) bool {
+	if fe.Status >= 500 {
+		return true
+	}
+	switch fe.Reason {
+	case providers.FailoverRateLimit, providers.FailoverOverloaded, providers.FailoverTimeout,
+		providers.FailoverAuth, providers.FailoverBilling:
+		return true
+	default:
+		return false
+	}
+}
+
 // callOutput is what one model call returned.
 type callOutput struct {
 	text   string
@@ -306,8 +395,10 @@ type callOutput struct {
 	audio  []byte
 	// audioType is the audio's media type, as the API declared it.
 	audioType string
-	usage     *protocoltypes.TaskUsage
-	cost      *float64
+	// format is the audio format the call asked for (the API's terms).
+	format string
+	usage  *protocoltypes.TaskUsage
+	cost   *float64
 }
 
 // call makes one model call of the kind.
@@ -457,12 +548,9 @@ func (h *taskModelHost) speak(ctx context.Context, cfg *config.Config, alias str
 	if err != nil {
 		return nil, err
 	}
-	out := &callOutput{audio: sp.Audio, audioType: sp.ContentType, usage: sp.Usage, cost: sp.CostUSD}
+	out := &callOutput{audio: sp.Audio, audioType: sp.ContentType, format: format, usage: sp.Usage, cost: sp.CostUSD}
 	if len(sp.Audio) == 0 {
 		return out, errors.New("the model returned no audio")
-	}
-	if out.audioType == "" {
-		out.audioType = formatType(format)
 	}
 	return out, nil
 }
@@ -500,8 +588,15 @@ func (h *taskModelHost) save(cfg *config.Config, workspace, kind string, out *ca
 	switch kind {
 	case toolsagents.TaskKindTTS:
 		data, ext := out.audio, audioExtension(out.audioType)
-		if rate, ok := pcmRate(out.audioType); ok {
+		switch audio, rate := audioKind(out.audioType, out.format); audio {
+		case "pcm":
 			data, ext = wavFromPCM(out.audio, rate), ".wav"
+		case "ulaw":
+			ext = ".ulaw"
+		default:
+			if ext == ".bin" {
+				ext = audioExtension(formatType(out.format))
+			}
 		}
 		rel, err := saveGenerated(h.al, cfg, workspace, "speech", ext, data)
 		if err != nil {
@@ -523,7 +618,13 @@ func (h *taskModelHost) save(cfg *config.Config, workspace, kind string, out *ca
 			res.Paths = append(res.Paths, rel)
 		}
 		if strings.TrimSpace(out.text) != "" {
-			res.Text = cutText(out.text, cfg.TaskModels.EffectiveResultTextChars(), "")
+			// The model's words beside the images: kept like a text result.
+			rel, err := saveGenerated(h.al, cfg, workspace, "text", ".md", []byte(out.text))
+			if err != nil {
+				return err
+			}
+			res.Paths = append(res.Paths, rel)
+			res.Text = cutText(out.text, cfg.TaskModels.EffectiveResultTextChars(), rel)
 		}
 	default: // text, stt
 		prefix := "text"
@@ -572,18 +673,43 @@ func saveGenerated(al *AgentLoop, cfg *config.Config, workspace, prefix, ext str
 	return rel, nil
 }
 
-// pcmRate reports whether a media type is raw 16-bit PCM (audio/L16, as
-// Gemini returns it) and its sample rate (24000 when not given).
-func pcmRate(contentType string) (int, bool) {
+// audioKind says how synthesized audio is saved: "pcm" (raw 16-bit
+// little-endian mono PCM, wrapped in WAV at rate), "ulaw" (raw µ-law, saved
+// as it is) or "" (a container format, saved as it is). The content type
+// decides (audio/L16 as Gemini returns it, with its rate); when it does not
+// tell, the format asked for does (ElevenLabs pcm_16000, ulaw_8000; OpenAI
+// pcm, 24 kHz).
+func audioKind(contentType, format string) (string, int) {
 	mt, params, err := mime.ParseMediaType(contentType)
-	if err != nil || !strings.EqualFold(mt, "audio/l16") && !strings.EqualFold(mt, "audio/pcm") {
-		return 0, false
+	if err != nil {
+		mt = ""
 	}
-	rate := 24000
-	if r, err := strconv.Atoi(params["rate"]); err == nil && r > 0 {
-		rate = r
+	mt = strings.ToLower(mt)
+	f := strings.ToLower(strings.TrimSpace(format))
+	formatRate := func(def int) int {
+		if _, r, ok := strings.Cut(f, "_"); ok {
+			if n, err := strconv.Atoi(r); err == nil && n > 0 {
+				return n
+			}
+		}
+		return def
 	}
-	return rate, true
+	switch {
+	case mt == "audio/l16" || mt == "audio/pcm":
+		if r, err := strconv.Atoi(params["rate"]); err == nil && r > 0 {
+			return "pcm", r
+		}
+		return "pcm", formatRate(24000)
+	case mt == "audio/basic" || mt == "audio/x-mulaw" || mt == "audio/mulaw" || mt == "audio/ulaw":
+		return "ulaw", 0
+	case mt != "" && mt != "application/octet-stream":
+		return "", 0
+	case f == "pcm" || strings.HasPrefix(f, "pcm_"):
+		return "pcm", formatRate(24000)
+	case strings.HasPrefix(f, "ulaw_"):
+		return "ulaw", 0
+	}
+	return "", 0
 }
 
 // wavFromPCM wraps 16-bit signed little-endian mono PCM in a WAV header.
@@ -707,7 +833,11 @@ func (h *taskModelHost) audit(agentID, kind, model, outcome, summary string) {
 	if store == nil {
 		return
 	}
-	b, err := json.Marshal(map[string]any{"kind": kind, "model": model})
+	details := map[string]any{"kind": kind, "model": model}
+	if h.clone != "" {
+		details["clone"] = h.clone
+	}
+	b, err := json.Marshal(details)
 	if err != nil {
 		b = []byte(`{}`)
 	}

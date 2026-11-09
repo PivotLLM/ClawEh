@@ -167,3 +167,32 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 		})
 	}
 }
+
+// Gemini answers a bad key with 400 and API_KEY_INVALID: that alerts like
+// a 401; any other 400 does not.
+func TestTranscribe_AlertsOnGeminiKeyInvalid(t *testing.T) {
+	audioPath := filepath.Join(t.TempDir(), "clip.ogg")
+	if err := os.WriteFile(audioPath, []byte("fake-audio-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		body  string
+		alert bool
+	}{
+		{`{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}`, true},
+		{`{"error":{"code":400,"message":"Invalid audio."}}`, false},
+	} {
+		rec := &alertRecorder{}
+		srv := statusServer(t, http.StatusBadRequest, tc.body)
+		tr := NewTranscriber("gemini-stt", "gemini-2.5-flash", speech.NewGemini(srv.URL, "bad"), rec)
+		if _, err := tr.Transcribe(context.Background(), audioPath); err == nil {
+			t.Fatal("a 400 transcribed")
+		}
+		if got := len(rec.alerts) == 1; got != tc.alert {
+			t.Errorf("body %s: alerts = %+v, want alert %v", tc.body, rec.alerts, tc.alert)
+		}
+		if tc.alert && rec.alerts[0].EventID != "voice:gemini-stt" {
+			t.Errorf("alert = %+v", rec.alerts[0])
+		}
+	}
+}

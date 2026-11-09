@@ -251,7 +251,12 @@ func (sm *SubagentManager) SpawnCallback(
 func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, resumed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			sm.finalize(rec, "", 0, fmt.Errorf("panic: %v", r), cb)
+			err := fmt.Errorf("panic: %v", r)
+			if rec.Kind != "" {
+				sm.finishTaskRecord(rec, nil, err, cb)
+				return
+			}
+			sm.finalize(rec, "", 0, err, cb)
 		}
 	}()
 

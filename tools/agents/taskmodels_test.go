@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // fakeTaskRunner records the requests it gets and answers with res/err;
@@ -202,5 +203,82 @@ func TestParseFilesArg(t *testing.T) {
 	}
 	if got, bad := parseFilesArg(nil); got != nil || bad != "" {
 		t.Error("absent files refused")
+	}
+}
+
+// A task-model call interrupted by a restart is relaunched by the
+// supervisor and delivers its task-model result; the runner gets the
+// record's request.
+func TestSupervise_RelaunchesTaskModelCall(t *testing.T) {
+	runner := &fakeTaskRunner{res: &TaskModelResult{Model: "whisper", Paths: []string{"files/generated/d/transcript-1.md"}, Text: "heard"}}
+	sp, ws := newTaskSpawner(t, runner)
+	dir := filepath.Join(ws, "tasks")
+	rec := &TaskRecord{
+		UUID: "uuid-task", Name: "t", OwnerAgentID: "alice", Mode: "callback", Kind: "stt",
+		Task: "names: Bob", Files: []string{"files/a.ogg"}, Model: "whisper",
+		Channel: "cli", ChatID: "direct", Status: StatusRunning, CreatedAt: nowRFC(),
+		RetryAfter: nowEpoch() - 1, ResultsPath: relResultsPath("uuid-task"),
+	}
+	if err := writeStatus(dir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := markRun(dir, rec.UUID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *tools.ToolResult, 1)
+	sp.mgr.SuperviseOnce(nowEpoch(), func(*TaskRecord) tools.AsyncCallback {
+		return func(_ context.Context, r *tools.ToolResult) { done <- r }
+	})
+	select {
+	case r := <-done:
+		if r.IsError || !strings.Contains(r.ForLLM, "[TASK RESULT] Task 't'") || !strings.Contains(r.ForLLM, "kind stt): ok.") || !strings.Contains(r.ForLLM, "heard") {
+			t.Fatalf("result = %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the interrupted call was not relaunched")
+	}
+	runner.mu.Lock()
+	got := runner.runs
+	runner.mu.Unlock()
+	if len(got) != 1 || got[0].Kind != "stt" || got[0].Prompt != "names: Bob" || got[0].Files[0] != "files/a.ogg" || got[0].Model != "whisper" {
+		t.Errorf("runner got %+v", got)
+	}
+	st, err := sp.TaskStatus("uuid-task")
+	if err != nil || st.Status != StatusDone || st.Restarts != 1 {
+		t.Errorf("status = %+v, %v", st, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "uuid-task.run")); !os.IsNotExist(err) {
+		t.Errorf("run marker left: %v", err)
+	}
+}
+
+// panicRunner panics in Run.
+type panicRunner struct{ fakeTaskRunner }
+
+func (p *panicRunner) Run(context.Context, string, string, TaskModelRequest) (*TaskModelResult, error) {
+	panic("boom")
+}
+
+// A runner that panics in a background call ends the task as a failed
+// task-model call, reported like one.
+func TestSpawnTask_CallbackPanicFinalizesAsTask(t *testing.T) {
+	sp, _ := newTaskSpawner(t, &panicRunner{})
+	done := make(chan *global.Result, 1)
+	ack := mustSpawn(t, sp, context.Background(), global.SpawnRequest{
+		Mode: global.SpawnCallback, Kind: "text", Task: "x", Name: "p",
+		OnResult: func(r *global.Result) { done <- r },
+	})
+	select {
+	case r := <-done:
+		if !r.IsError || !strings.Contains(r.ForLLM, "[TASK RESULT] Task 'p'") || !strings.Contains(r.ForLLM, "Error: panic: boom") {
+			t.Fatalf("result = %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no callback after a panic")
+	}
+	id := ack.ForLLM[strings.Index(ack.ForLLM, "uuid: ")+6:][:36]
+	st, err := sp.TaskStatus(id)
+	if err != nil || st.Status != StatusError || !strings.Contains(st.Error, "panic: boom") {
+		t.Errorf("status = %+v, %v", st, err)
 	}
 }

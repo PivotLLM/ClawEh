@@ -165,6 +165,12 @@ func (sm *SubagentManager) runTaskModel(ctx context.Context, rec *TaskRecord) (*
 func (sm *SubagentManager) runTaskRecord(rec *TaskRecord, cb tools.AsyncCallback) {
 	runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
 	res, err := sm.runTaskModel(runCtx, rec)
+	sm.finishTaskRecord(rec, res, err, cb)
+}
+
+// finishTaskRecord records a background task-model call's result, clears
+// its run marker and live entry, and delivers the result to cb.
+func (sm *SubagentManager) finishTaskRecord(rec *TaskRecord, res *TaskModelResult, err error, cb tools.AsyncCallback) {
 	result := sm.recordTaskResults(rec, res, err)
 	clearRun(sm.tasksDir(), rec.UUID)
 	sm.live.Remove(rec.UUID)

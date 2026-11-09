@@ -154,12 +154,14 @@ func orNop(a alerter.Alerter) alerter.Alerter {
 }
 
 // alertRejected raises an alert when the API turned the request away for a
-// reason that persists across requests: bad credentials (401/403) or an
-// exhausted account (402). Other statuses are per-request failures and stay
-// in the log only.
+// reason that persists across requests: bad credentials (401/403, or
+// Gemini's 400 API_KEY_INVALID) or an exhausted account (402). Other
+// statuses are per-request failures and stay in the log only.
 func alertRejected(a alerter.Alerter, model string, status int, body string) {
-	switch status {
-	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+	switch {
+	case status == http.StatusUnauthorized, status == http.StatusPaymentRequired, status == http.StatusForbidden:
+	// Gemini answers a bad key with 400 and the reason API_KEY_INVALID.
+	case status == http.StatusBadRequest && strings.Contains(body, "API_KEY_INVALID"):
 	default:
 		return
 	}

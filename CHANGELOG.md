@@ -119,9 +119,14 @@
   source's) under `files/generated/<date>/`: text and transcripts as `.md`,
   returned inline up to `task_models.result_text_chars` and cut after it with
   the file named; images and audio are returned as paths, to send with
-  `msg_send_file`. `wait` and `callback` modes, `agent_status` and
-  `agent_list` work as for sub-agents. Speech from Gemini, which returns raw
-  PCM, is saved as a WAV file. A reported cost counts toward
+  `msg_send_file`; words an image model writes beside its images are kept
+  like text. `wait` and `callback` modes, `agent_status` and `agent_list`
+  work as for sub-agents. Raw PCM speech (Gemini, ElevenLabs `pcm_*`, OpenAI
+  `pcm`) is saved as a WAV file, µ-law (`ulaw_*`) as a raw `.ulaw` file. A
+  transcription input must be an audio file (by its name or type); any file
+  that reads as text can be a text input. A model that fails because of the
+  request (a 400 or 404) is skipped for this call only; a rate limit, an
+  outage, a timeout or a key problem puts it in cooldown, as for chat. A reported cost counts toward
   `agents.defaults.daily_spend_alert_usd`, every attempt is logged, and each
   call is recorded in the audit log as **Task model** (`task_model`).
 - **Per-agent task-model grants.** `agents.list[].task_models` (`text`,
@@ -145,7 +150,9 @@
   transcribed by Gemini and ElevenLabs Scribe as well as by OpenAI-style
   endpoints (OpenAI, Groq, OpenRouter, local Whisper servers); the calls go
   through spawnllm, and a transcription's reported cost counts toward
-  `agents.defaults.daily_spend_alert_usd`.
+  `agents.defaults.daily_spend_alert_usd`. Gemini's answer to a bad key (a
+  400 with `API_KEY_INVALID`) raises **Voice transcription rejected** like a
+  401 does.
 
 ### Changed
 

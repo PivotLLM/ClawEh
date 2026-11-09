@@ -206,7 +206,7 @@ func (al *AgentLoop) newSpawner(
 		WorkerModelsSet:   al.hasWorkerModels,
 		RunFull:           al.runSubagentTask,
 		Alerter:           al.Alerter(),
-		TaskRunner:        &taskModelHost{al: al},
+		TaskRunner:        &taskModelHost{al: al, clone: cloneMarker(currentAgent)},
 	})
 	currentAgent.spawnMgr = spawnMgr
 	spawner := toolsagents.NewSpawner(spawnMgr)
