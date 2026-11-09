@@ -68,7 +68,7 @@ func restartServicesBody(t *testing.T) string {
 	return sb.String()
 }
 
-// dottedName renders a call target as source text ("services.MountWatcher.Start"),
+// dottedName renders a call target as source text ("services.FolderWatcher.Start"),
 // so a guard can name the whole selector chain rather than just its last segment.
 func dottedName(e ast.Expr) string {
 	switch v := e.(type) {
@@ -97,28 +97,28 @@ func TestReloadReAppliesTheAllowlist(t *testing.T) {
 	}
 }
 
-// TestReloadRebuildsTheMountWatcher guards both halves of the panic fixed
+// TestReloadRebuildsTheFolderWatcher guards both halves of the panic fixed
 // alongside it: stopAndCleanupServices stops the watcher on every reload, so if
-// restartServices does not build a new one, mount notifications die silently
+// restartServices does not build a new one, new-file notifications die silently
 // after the first reload — and the old code then closed an already-closed
 // channel on the second, taking the process down.
-func TestReloadRebuildsTheMountWatcher(t *testing.T) {
+func TestReloadRebuildsTheFolderWatcher(t *testing.T) {
 	body := restartServicesBody(t)
-	if !strings.Contains(body, "mountwatch.New") {
-		t.Fatal("restartServices no longer rebuilds services.MountWatcher; mount notifications stop after the first config reload")
+	if !strings.Contains(body, "folderwatch.New") {
+		t.Fatal("restartServices no longer rebuilds services.FolderWatcher; new-file notifications stop after the first config reload")
 	}
-	if !strings.Contains(body, "services.MountWatcher.Start") {
-		t.Fatal("restartServices builds a mount watcher but never starts it")
+	if !strings.Contains(body, "services.FolderWatcher.Start") {
+		t.Fatal("restartServices builds a folder watcher but never starts it")
 	}
 }
 
 // TestReloadRebuildsTheServicesItStops keeps the two halves of a reload in step:
 // anything stopAndCleanupServices tears down has to be rebuilt here, which is
-// exactly the invariant the mount watcher broke.
+// exactly the invariant the folder watcher broke.
 func TestReloadRebuildsTheServicesItStops(t *testing.T) {
 	body := restartServicesBody(t)
 	for _, want := range []string{
-		"mountwatch.New",        // mount watcher
+		"folderwatch.New",       // allowed folder watcher
 		"ChannelManager.Reload", // channels (kept running; reloaded in place)
 		"devices.NewService",    // device service
 		"setupCronTool",         // cron

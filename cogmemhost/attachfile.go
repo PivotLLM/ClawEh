@@ -5,7 +5,7 @@
 // at. It is the seam between cogmem (which never touches the filesystem) and the
 // file tools' permission stack: every read goes through files.Reader, so a
 // memory can only attach a document the agent is already allowed to read —
-// files/, an external mount such as maestro/, or an allow-listed host path.
+// files/, maestro/, an allowed folder, or an allow-listed host path.
 //
 // It is imported by the agent wiring (per-turn loading) and by the cogmem tools
 // (create-time validation) so both apply one identical rule.

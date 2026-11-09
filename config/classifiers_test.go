@@ -385,20 +385,9 @@ func TestPruneHumanProblems_TurnsClassifiersOff(t *testing.T) {
 	}
 }
 
-func TestReservedWorkspaceName_Classifiers(t *testing.T) {
-	if !IsReservedWorkspaceName("Classifiers") {
-		t.Error("classifiers is not a reserved workspace name")
-	}
+func TestAlwaysReadable_Classifiers(t *testing.T) {
 	if !slices.Contains(AlwaysReadableWorkspaceDirs, "classifiers") {
 		t.Error("classifiers is not always readable")
-	}
-	s := storeFor(t, classifierTestConfig())
-	err := s.Update(func(c *Config) error {
-		c.AgentByID("alice").Mounts = []MountConfig{{Name: "classifiers", Path: t.TempDir()}}
-		return nil
-	})
-	if err == nil {
-		t.Fatal("a mount named classifiers was accepted")
 	}
 }
 

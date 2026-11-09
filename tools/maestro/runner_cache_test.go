@@ -368,21 +368,3 @@ func TestRunnerCache_ConcurrentRegistrationsShareOneRunner(t *testing.T) {
 		}
 	}
 }
-
-// TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner: a new mount (a new
-// reference directory) on an idle runner builds a new runner.
-func TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner(t *testing.T) {
-	reg := newRegistration(t, "alice-reload-mount")
-	reg.register(t, newGatedRunner())
-	before := cachedRunnerFor(reg.agentID())
-
-	reg.cfg.Agents.List[0].Mounts = []config.MountConfig{{Name: "standards", Path: t.TempDir()}}
-	reg.register(t, newGatedRunner())
-	after := cachedEntry(reg.agentID())
-	if after == nil || after.runner == before {
-		t.Fatal("an idle runner was kept although the agent's mounts changed")
-	}
-	if len(after.spec.refDirs) != 1 || after.spec.refDirs[0].Mount != "standards" {
-		t.Errorf("new runner's reference dirs = %+v, want the standards mount", after.spec.refDirs)
-	}
-}

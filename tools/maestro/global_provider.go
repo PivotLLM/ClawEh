@@ -94,13 +94,11 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if agentCfg == nil {
 		agentCfg = c.AgentByID(deps.AgentID)
 	}
-	refDirs := referenceDirsFromMounts(agentCfg, workspace)
 	runCfg := runnerConfig(c.AgentMaestro(deps.AgentID))
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
 		mconfig.WithRunner(runCfg),
-		mconfig.WithReferenceDirs(refDirs),
 		// What Maestro creates under base takes the agents area's modes.
 		mconfig.WithFileModes(modes.Dir, modes.File),
 	)
@@ -110,11 +108,6 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		alertMaestroDisabled(deps.AgentID, base, err)
 		return nil
 	}
-	for _, rd := range refDirs {
-		logger.InfoCF("maestro", "mount available in maestro reference domain",
-			map[string]any{"agent": deps.AgentID, "mount": rd.Mount, "path": rd.Path})
-	}
-
 	// Maestro's operational log goes to the central logger (component "maestro",
 	// tagged with the agent) so it shows in the Web UI and rotates with claw.log.
 	// Maestro's per-project logs are audit records and stay in the project.
@@ -139,7 +132,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if cd.TempAgent {
 		run, swap = sharedRunner(deps.AgentID, disp, mcfg, mlog)
 	} else {
-		run, swap = runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, refDirs: refDirs, modes: modes},
+		run, swap = runnerFor(deps.AgentID, runnerSpec{base: base, runCfg: runCfg, modes: modes},
 			disp, mcfg, mlog)
 	}
 	p := &mmaestro.Provider{}

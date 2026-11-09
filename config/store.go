@@ -127,6 +127,9 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// security.permissions is always written in full: a save that dropped a
 	// key (a raw edit, a PUT without the block) puts its default back.
 	completePermissions(&next.Security.Permissions)
+	// A config submitted with the retired mounts list (PUT /api/config) is
+	// migrated as a load would migrate it.
+	next.migrateLegacyMounts()
 	// An agent whose classifiers switch is on with no model gets its first
 	// model (classifiers.go), before the model checks below see it.
 	refusals = append(refusals, completeClassifierModels(s.cur, next)...)
@@ -138,8 +141,8 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// The human-agent rules (human.go) are enforced the same way: only a
 	// problem this update introduces is refused.
 	refusals = append(refusals, newHumanProblems(s.cur, next)...)
-	// So is a mount named after a workspace folder (mount_names.go).
-	refusals = append(refusals, newReservedMounts(s.cur, next)...)
+	// So is an allowed folder whose path is not absolute (allowed_folders.go).
+	refusals = append(refusals, newAllowedFolderProblems(s.cur, next)...)
 	// And a character card on a human agent (character_card.go).
 	refusals = append(refusals, newCardsOnHumanAgents(s.cur, next)...)
 	// And a classifier model the agent cannot use (classifiers.go).

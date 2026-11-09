@@ -1,7 +1,7 @@
 // ClawEh
 // License: MIT
 
-package mountwatch
+package folderwatch
 
 import (
 	"context"
@@ -31,9 +31,9 @@ func (r *alertRecorder) Urgent(string, string, ...string)    {}
 func (r *alertRecorder) Emergency(string, string, ...string) {}
 func (r *alertRecorder) Close(context.Context) error         { return nil }
 
-// TestDetectNewFiles_AlertsWhenMarkerNotWritten: a mount whose marker cannot
-// be written raises one low alert keyed by the mount path; a writable mount
-// raises none.
+// TestDetectNewFiles_AlertsWhenMarkerNotWritten: a folder whose marker cannot
+// be written raises one low alert keyed by the folder path, naming the agent
+// and the folder; a writable folder raises none.
 func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root, permission denial tests don't apply")
@@ -42,9 +42,9 @@ func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
 	w := New(func() *config.Config { return nil }, nil, time.Hour, rec)
 
 	ok := t.TempDir()
-	w.detectNewFiles("notes", ok)
+	w.detectNewFiles("Alice", ok)
 	if len(rec.alerts) != 0 {
-		t.Fatalf("writable mount must not alert, got %+v", rec.alerts)
+		t.Fatalf("writable folder must not alert, got %+v", rec.alerts)
 	}
 
 	ro := filepath.Join(t.TempDir(), "ro")
@@ -56,9 +56,10 @@ func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	w.detectNewFiles("notes", ro)
-	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "mount:"+ro ||
-		rec.alerts[0].Title != "Mount marker not written" {
-		t.Fatalf("marker write failure must alert low once for the mount, got %+v", rec.alerts)
+	w.detectNewFiles("Alice", ro)
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "allowed-folder:"+ro ||
+		rec.alerts[0].Title != "Allowed folder marker not written" ||
+		rec.alerts[0].Description != "Alice's allowed folder "+ro+": the same files may be reported again" {
+		t.Fatalf("marker write failure must alert low once for the folder, got %+v", rec.alerts)
 	}
 }

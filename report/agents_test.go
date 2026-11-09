@@ -71,12 +71,12 @@ func TestCollectAgents_FolderAccessResolved(t *testing.T) {
 	bob := agentSub(t, s, "bob")
 	ofa := findTable(t, bob, "Folder access")
 	_, docs := findRow(t, ofa, filepath.Join(env.DataDir, "docs"))
-	if docs[1] != "[read]" || !strings.Contains(docs[2], "mount docs, notify") {
-		t.Errorf("mount row = %v", docs)
+	if docs[1] != "[read/write]" || !strings.Contains(docs[2], "allowed folder; write access follows file permissions, notify") {
+		t.Errorf("allowed folder row = %v", docs)
 	}
 	opsWS := filepath.Join(cfg.BaseDir(), "bob")
 	_, maestro := findRow(t, ofa, filepath.Join(opsWS, "maestro"))
-	if maestro[1] != "[write]" || !strings.Contains(maestro[2], "Maestro data (auto mount)") {
+	if maestro[1] != "[read/write]" || !strings.Contains(maestro[2], "Maestro data") {
 		t.Errorf("maestro row = %v", maestro)
 	}
 }

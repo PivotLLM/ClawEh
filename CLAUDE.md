@@ -134,7 +134,7 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   `cfg.AgentModes(path)` — agents area for configured agents, secrets for temporary ones;
   `perms.ModesFor`/`CardModes`; `forum.Host.Modes`; `ccv3.WithModes`;
   `state.NewManager` modes), else from the process default (`perms.CurrentPolicy()`
-  `.ModesFor/MkdirAll/WriteFile` for the file tools, task/cron stores, skills, mount
+  `.ModesFor/MkdirAll/WriteFile` for the file tools, task/cron stores, skills, allowed-folder
   markers; `perms.SecretModes()` / `perms.EnsureSecretFile` for secret stores); ctxengine and cogmem get them through their permission options, and every
   opener of an agent's cogmem store passes `cogmemhost.StoreOptions`, since opening
   resets the database files to the given mode.
@@ -449,8 +449,7 @@ production instance directly; test against a dev instance.
   modes. The on-disk names are in the import-free leaf
   `classifier/classifierfs` (`BaseDirName`, `StateFile`, `DefinitionExt`,
   `TempPrefix`; config, backup, file tools, Check Up use it); the folder is in
-  `ReservedWorkspaceNames` and `AlwaysReadableWorkspaceDirs` (read, never
-  written, by the file tools). **Invariant: `classifier` imports no ClawEh
+  `AlwaysReadableWorkspaceDirs` (read, never written, by the file tools). **Invariant: `classifier` imports no ClawEh
   package but `classifier/classifierfs`, `internal/mergepatch` and
   `internal/dotpath`** (`classifier/imports_test.go`); `internal/dotpath` is
   the one path rule shared with watch probes. The host is
@@ -608,13 +607,26 @@ production instance directly; test against a dev instance.
   `Refusal() bool` method, which packages that do not import `tools` use, such as the forum)
   is an expected refusal (`tools.IsExpectedRefusal`) and logs at WARN "Tool call refused",
   not ERROR.
-- **Mounts** (`agents.list[].mounts`, `tools/files/mounts.go`): an external folder reached
-  as `<name>/...` beside the workspace folders. The names ClawEh uses inside a workspace
-  are `config.ReservedWorkspaceNames` (one list; add a folder there when code starts
-  creating one): a mount with such a name (any case) is refused by `Store.Update` when a
-  save introduces it, and one already in the file is set aside by `EffectiveMounts`
-  (WARN at load, `GET /api/agents/mounts/ignored` marks it on the Agents page, a Check Up
-  row). The automatic `maestro` mount is the only mount with a reserved name.
+- **Allowed folders** (`agents.list[].allowed_folders`: `{path, notify}`,
+  `config/allowed_folders.go`, `tools/files/allowed.go`): real host folders an agent's
+  file tools use by their absolute path besides the workspace. There is no name and no
+  writable flag: ClawEh attempts reads and writes inside a folder and the folder's file
+  permissions decide (a permission error is the refusal "permission denied: <path> is
+  read-only for this app"). `allowedFs`, the outermost file-system layer, serves a path
+  that resolves (links followed) inside an allowed folder from that folder's `os.Root`
+  sandbox, past the workspace read/write scopes; a path that names an allowed folder but
+  leads out of every one is refused when the agent is confined; relative paths keep
+  resolving from the workspace. `tools/files.AgentFolders` lists the folders the provider
+  registers per workspace (`SetAllowedFoldersForWorkspace`): each existing absolute
+  allowed folder plus `<workspace>/maestro` when Maestro is on (no mount: `maestro/` is
+  simply part of the workspace then). `files.Reader` uses the same table, so
+  `msg_send_file`, cogmem attachments, forum sources and task-model files follow the same
+  rule. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
+  be an absolute path."). The retired `mounts` list is migrated at load and on save
+  (`migrateLegacyMounts`: path and notify kept, one WARN per entry). The prompt lists each
+  folder by its path, "(read-only)" when `fileutil.Writable` (access(2) W_OK) says no.
+  New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
+  headerless pre-0.6.4 marker baselines).
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.
   Config agents are built from config and rebuilt on reload (`Reload` builds the
   whole new set, then swaps it in one step with `al.cfg`; a replaced instance is
@@ -657,7 +669,7 @@ production instance directly; test against a dev instance.
   `BuildFunc` (`AgentLoop.agentBuilder`: instance + tools), a `RetireFunc`
   (`retireAgent`: close the session, revoke tokens) and an `InsertedFunc`
   (`agentInserted`: MCP tools once visible). An agent has a **workspace**
-  (prompt files, `files/`, skills, Maestro, tasks, mounts) and a **state dir**
+  (prompt files, `files/`, skills, Maestro, tasks) and a **state dir**
   (`sessions/` and `cogmem/`): the same directory for a config agent,
   `internal/temp/<uuid>/` for a temporary one. Anything deriving a conversation
   or memory path uses `AgentInstance.StateDir` / `ToolDeps.EffectiveStateDir()`.

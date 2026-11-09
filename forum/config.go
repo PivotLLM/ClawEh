@@ -80,8 +80,8 @@ type Source struct {
 	// own. nil means absent.
 	Inline json.RawMessage `json:"inline,omitempty"`
 	// File is a path the launching agent's file tools would read: relative
-	// to its workspace, or under one of its mounts (maestro/..., a
-	// configured mount); the host resolves it (preflightEnv.ResolveFile).
+	// to its workspace (maestro/... included), or absolute in one of its
+	// allowed folders; the host resolves it (preflightEnv.ResolveFile).
 	// It is read once at launch and copied into sources/, so later
 	// edits do not affect a running forum.
 	File string `json:"file,omitempty"`

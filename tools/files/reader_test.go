@@ -75,44 +75,46 @@ func TestReaderDeniesTraversalAndAbsolutePaths(t *testing.T) {
 	}
 }
 
-// Mounts (e.g. the auto maestro/ tree) are readable through the Reader, so a
-// memory may attach a document that lives outside the workspace but inside a
-// mount the agent already has.
-func TestReaderReadsThroughMount(t *testing.T) {
+// Allowed folders and maestro/ are readable through the Reader, so a memory
+// may attach a document that lives outside the workspace but inside a folder
+// the agent already has.
+func TestReaderReadsAllowedFolders(t *testing.T) {
 	ws := t.TempDir()
-	mountDir := t.TempDir()
-	writeFile(t, filepath.Join(mountDir, "style.md"), "mounted doc")
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "style.md"), "folder doc")
+	writeFile(t, filepath.Join(ws, "maestro", "plan.md"), "maestro doc")
 	SetReadScopeSubdirs([]string{"files"})
 	defer SetReadScopeSubdirs(nil)
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "maestro", Path: mountDir}})
-	defer SetMountsForWorkspace(ws, nil)
+	allowFolders(t, ws, src, filepath.Join(ws, "maestro"))
 
-	got, err := NewReader(readerConfig(), ws).ReadFile("maestro/style.md")
-	if err != nil {
-		t.Fatalf("read through mount: %v", err)
+	r := NewReader(readerConfig(), ws)
+	if got, err := r.ReadFile(filepath.Join(src, "style.md")); err != nil || string(got) != "folder doc" {
+		t.Fatalf("read in allowed folder: %q %v", got, err)
 	}
-	if string(got) != "mounted doc" {
-		t.Fatalf("unexpected content: %q", got)
+	if got, err := r.ReadFile("maestro/plan.md"); err != nil || string(got) != "maestro doc" {
+		t.Fatalf("read maestro/: %q %v", got, err)
 	}
 }
 
-// A mount registered after the Reader was constructed must still be visible:
-// the file tools install mounts at registration time, which can happen later.
-func TestReaderPicksUpLateRegisteredMount(t *testing.T) {
+// A folder registered after the Reader was constructed must still be
+// visible: the file tools install folders at registration time, which can
+// happen later.
+func TestReaderPicksUpLateRegisteredFolder(t *testing.T) {
 	ws := t.TempDir()
-	mountDir := t.TempDir()
-	writeFile(t, filepath.Join(mountDir, "late.md"), "late doc")
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "late.md"), "late doc")
+	SetReadScopeSubdirs([]string{"files"})
+	defer SetReadScopeSubdirs(nil)
 
 	r := NewReader(readerConfig(), ws)
-	if _, err := r.ReadFile("maestro/late.md"); err == nil {
-		t.Fatal("expected failure before the mount exists")
+	if _, err := r.ReadFile(filepath.Join(src, "late.md")); err == nil {
+		t.Fatal("expected failure before the folder is allowed")
 	}
 
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "maestro", Path: mountDir}})
-	defer SetMountsForWorkspace(ws, nil)
+	allowFolders(t, ws, src)
 
-	if _, err := r.ReadFile("maestro/late.md"); err != nil {
-		t.Fatalf("late mount not honored: %v", err)
+	if _, err := r.ReadFile(filepath.Join(src, "late.md")); err != nil {
+		t.Fatalf("late folder not honored: %v", err)
 	}
 }
 
@@ -157,8 +159,8 @@ func TestReadFileLimitRespectsPermissions(t *testing.T) {
 }
 
 // Resolve gives the host path of what the agent may read (a workspace path or
-// a mount path) and refuses the rest; Allowed checks a host path the same way,
-// inside a mount as that mount's path.
+// one in an allowed folder) and refuses the rest; Allowed checks a host path
+// the same way.
 func TestReaderResolveAndAllowed(t *testing.T) {
 	ws := t.TempDir()
 	mountDir := t.TempDir()
@@ -169,13 +171,13 @@ func TestReaderResolveAndAllowed(t *testing.T) {
 	writeFile(t, outside, "{}")
 	SetReadScopeSubdirs([]string{"files"})
 	defer SetReadScopeSubdirs(nil)
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "library", Path: mountDir}})
-	defer SetMountsForWorkspace(ws, nil)
+	allowFolders(t, ws, mountDir)
 	r := NewReader(readerConfig(), ws)
 
+	brief := filepath.Join(mountDir, "refs", "brief.md")
 	for ref, want := range map[string]string{
-		"files/forum.json":      filepath.Join(ws, "files", "forum.json"),
-		"library/refs/brief.md": filepath.Join(mountDir, "refs", "brief.md"),
+		"files/forum.json": filepath.Join(ws, "files", "forum.json"),
+		brief:              brief,
 	} {
 		got, err := r.Resolve(ref)
 		if err != nil || got != want {

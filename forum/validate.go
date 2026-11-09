@@ -264,20 +264,19 @@ func (v *staticValidator) sources() {
 			}
 		}
 		if hasFile {
-			if msg := relativePathProblem(src.File); msg != "" {
+			if msg := sourcePathProblem(src.File); msg != "" {
 				v.addf(path+".file", "%q %s", src.File, msg)
 			}
 		}
 	}
 }
 
-// relativePathProblem says why a source file path is not acceptable, or
-// returns "" for a relative path that stays below its base directory.
-func relativePathProblem(p string) string {
+// sourcePathProblem says why a source file path is not acceptable, or returns
+// "" for a path without "..": relative (to the workspace) or absolute (in an
+// allowed folder). Whether the agent may read it is the host's check
+// (preflightEnv.ResolveFile).
+func sourcePathProblem(p string) string {
 	slashed := filepath.ToSlash(p)
-	if filepath.IsAbs(p) || strings.HasPrefix(slashed, "/") || filepath.VolumeName(p) != "" {
-		return "must be a relative path"
-	}
 	for elem := range strings.SplitSeq(slashed, "/") {
 		if elem == ".." {
 			return `must not contain ".."`

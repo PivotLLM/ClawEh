@@ -101,12 +101,12 @@ func TestPatchConfig_StoreRefusalsAreJSON(t *testing.T) {
 			want:  []string{"Bob (human) represents a person and can't be a summarization model."},
 		},
 		{
-			name: "reserved mounts",
-			patch: `{"agents":{"list":[{"id":"main","name":"Main","default":true,"mounts":[` +
-				`{"name":"Tasks","path":"/tmp/a"},{"name":"files","path":"/tmp/b"}]}]}}`,
+			name: "relative allowed folders",
+			patch: `{"agents":{"list":[{"id":"main","name":"Main","default":true,"allowed_folders":[` +
+				`{"path":"src"},{"path":"/srv/src"},{"path":"./ref"}]}]}}`,
 			want: []string{
-				`Main's mount "Tasks" uses a reserved name; choose another name.`,
-				`Main's mount "files" uses a reserved name; choose another name.`,
+				`Main's allowed folder "src" must be an absolute path.`,
+				`Main's allowed folder "./ref" must be an absolute path.`,
 			},
 		},
 		{

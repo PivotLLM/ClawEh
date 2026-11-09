@@ -99,11 +99,10 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			SetReadScopeSubdirs(effectiveReadSubdirs(c.Agents.Defaults.WorkspaceReadSubdirs))
 		}
 
-		// External mounts (per agent) plus auto maestro/ when the suite is on:
-		// expose extra top-level dirs beside files/. Must be registered before
-		// constructing the tools, which capture their fileSystem (mount-aware)
-		// at build time.
-		SetMountsForWorkspace(workspace, resolveAgentMounts(cd.AgentCfg, workspace))
+		// The agent's allowed folders, plus <workspace>/maestro when the suite
+		// is on. Must be registered before constructing the tools, which
+		// capture their fileSystem at build time.
+		SetAllowedFoldersForWorkspace(workspace, AgentFolders(cd.AgentCfg, workspace))
 
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
@@ -365,61 +364,43 @@ var readLinesSchema = map[string]any{
 	"required": []string{"path"},
 }
 
-// resolveAgentMounts validates an agent's effective mounts (configured + auto
-// Maestro when enabled) into usable specs. Invalid entries (bad name,
-// missing/non-directory path, duplicate) are dropped with a WARN so one broken
-// mount can't take the agent down. The auto Maestro mount creates
-// <workspace>/maestro if needed.
-func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountSpec {
+// AgentFolders returns the folders an agent's file tools may use besides its
+// workspace scope: each allowed folder that is an existing directory (others
+// are skipped with a WARN naming the agent and the path, so one broken entry
+// cannot take the agent down) and, with Maestro on, <workspace>/maestro,
+// created if needed.
+func AgentFolders(agentCfg *config.AgentConfig, workspace string) []string {
 	if agentCfg == nil {
 		return nil
 	}
-	// Ensure the auto Maestro tree exists before Stat validation.
+	var out []string
+	for _, f := range agentCfg.AllowedFolders {
+		if !filepath.IsAbs(strings.TrimSpace(f.Path)) {
+			logger.WarnCF("tools", "skipping allowed folder: not an absolute path",
+				map[string]any{"agent": agentCfg.ID, "path": f.Path})
+		}
+	}
+	for _, p := range agentCfg.AllowedFolderPaths() {
+		info, err := os.Stat(p)
+		if err != nil || !info.IsDir() {
+			logger.WarnCF("tools", "skipping allowed folder: not an existing directory",
+				map[string]any{"agent": agentCfg.ID, "path": p})
+			continue
+		}
+		out = append(out, p)
+	}
 	if agentCfg.MaestroEnabled() && strings.TrimSpace(workspace) != "" {
 		base := config.MaestroDataDir(workspace)
 		if err := modePolicy().MkdirAll(base); err != nil {
-			logger.WarnCF("tools", "failed to create maestro data dir for mount", map[string]any{
+			logger.WarnCF("tools", "failed to create maestro data dir", map[string]any{
 				"path":  base,
 				"error": err.Error(),
 			})
+		} else {
+			out = append(out, base)
 		}
 	}
-	mounts := agentCfg.EffectiveMounts(workspace)
-	if len(mounts) == 0 {
-		return nil
-	}
-	var specs []MountSpec
-	seen := map[string]bool{}
-	for _, mc := range mounts {
-		name := strings.TrimSpace(mc.Name)
-		// EffectiveMounts has already set aside configured mounts with a
-		// reserved name, so a "maestro" here is the automatic one, which
-		// alone may use that name: only the configured mounts are validated.
-		if name != config.MaestroMountName {
-			if err := config.ValidateMountName(name); err != nil {
-				logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
-				continue
-			}
-		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			logger.WarnCF("tools", "skipping duplicate mount name", map[string]any{"name": name})
-			continue
-		}
-		abs, err := filepath.Abs(strings.TrimSpace(mc.Path))
-		if err != nil {
-			logger.WarnCF("tools", "skipping mount: bad path", map[string]any{"name": name, "path": mc.Path})
-			continue
-		}
-		info, serr := os.Stat(abs)
-		if serr != nil || !info.IsDir() {
-			logger.WarnCF("tools", "skipping mount: not an existing directory", map[string]any{"name": name, "path": abs})
-			continue
-		}
-		seen[key] = true
-		specs = append(specs, MountSpec{Name: name, Path: abs, Writable: mc.Writable})
-	}
-	return specs
+	return out
 }
 
 // effectiveReadSubdirs returns the read scope for the configured subdirs: the

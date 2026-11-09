@@ -140,22 +140,29 @@ func TestLoaderReportsUnreadableFile(t *testing.T) {
 	}
 }
 
-// A memory may point into a mount (the auto maestro/ tree), because the file
-// tools can read it.
-func TestLoaderReadsThroughMount(t *testing.T) {
+// A memory may point into an allowed folder, because the file tools can read
+// it; a path outside every allowed folder is refused.
+func TestLoaderReadsAllowedFolder(t *testing.T) {
 	ws := setupWorkspace(t)
-	mountDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(mountDir, "style.md"), []byte("mounted"), 0o644); err != nil {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "style.md"), []byte("from the folder"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	files.SetMountsForWorkspace(ws, []files.MountSpec{{Name: "maestro", Path: mountDir}})
-	defer files.SetMountsForWorkspace(ws, nil)
-
-	att, err := NewLoader(testConfig(), "agent", ws)("maestro/style.md", 1024)
-	if err != nil {
-		t.Fatalf("load through mount: %v", err)
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "secret.md"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if att.Content != "mounted" {
+	files.SetAllowedFoldersForWorkspace(ws, []string{src})
+	defer files.SetAllowedFoldersForWorkspace(ws, nil)
+
+	att, err := NewLoader(testConfig(), "agent", ws)(filepath.Join(src, "style.md"), 1024)
+	if err != nil {
+		t.Fatalf("load from allowed folder: %v", err)
+	}
+	if att.Content != "from the folder" {
 		t.Fatalf("unexpected content: %q", att.Content)
+	}
+	if _, err := NewLoader(testConfig(), "agent", ws)(filepath.Join(other, "secret.md"), 1024); err == nil {
+		t.Fatal("a file outside every allowed folder was loaded")
 	}
 }

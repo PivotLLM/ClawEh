@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 	"github.com/PivotLLM/ClawEh/devices"
+	"github.com/PivotLLM/ClawEh/folderwatch"
 	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
@@ -29,7 +30,6 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 	"github.com/PivotLLM/ClawEh/media"
-	"github.com/PivotLLM/ClawEh/mountwatch"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
@@ -42,10 +42,10 @@ import (
 
 // gatewayServices holds references to all running services
 type gatewayServices struct {
-	CronService  *cron.CronService
-	CronTool     *toolschedule.CronTool
-	MountWatcher *mountwatch.Watcher
-	MediaStore   media.MediaStore
+	CronService   *cron.CronService
+	CronTool      *toolschedule.CronTool
+	FolderWatcher *folderwatch.Watcher
+	MediaStore    media.MediaStore
 	// mediaCleanup is what MediaStore was started with; a reload replaces
 	// the store only when it changes, since every channel holds the store.
 	mediaCleanup media.MediaCleanerConfig
@@ -107,10 +107,10 @@ func setupAndStartServices(
 		return nil, err
 	}
 
-	// Watch notify-enabled external mounts for new files (cron-style notices).
-	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0, agentLoop.Alerter())
-	services.MountWatcher.Start()
-	logger.InfoC("mountwatch", "Mount watcher started")
+	// Watch notify-enabled allowed folders for new files (cron-style notices).
+	services.FolderWatcher = folderwatch.New(agentLoop.GetConfig, msgBus, 0, agentLoop.Alerter())
+	services.FolderWatcher.Start()
+	logger.InfoC("folderwatch", "Allowed folder watcher started")
 
 	// Stage downloaded media under the instance data dir (e.g. ~/.claw/media,
 	// /opt/claw/media) rather than shared /tmp, so files stay app-owned and two
@@ -503,8 +503,8 @@ func stopAndCleanupServices(
 		services.DeviceService.Stop()
 		phases.done("device service stopped")
 	}
-	if services.MountWatcher != nil {
-		services.MountWatcher.Stop()
+	if services.FolderWatcher != nil {
+		services.FolderWatcher.Stop()
 	}
 	if services.CronTool != nil {
 		services.CronTool.StopListeners()
@@ -670,12 +670,12 @@ func restartServices(
 		return err
 	}
 
-	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
-	// without this a reload would silently end mount notifications for the rest of
+	// Re-create the folder watcher. stopAndCleanupServices stopped the old one, so
+	// without this a reload would silently end new-file notifications for the rest of
 	// the process's life — and every service around it is rebuilt the same way.
-	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0, al.Alerter())
-	services.MountWatcher.Start() //nolint:contextcheck,nolintlint // background poller whose lifetime is Stop(), not the run context
-	logger.InfoC("mountwatch", "Mount watcher restarted")
+	services.FolderWatcher = folderwatch.New(al.GetConfig, msgBus, 0, al.Alerter())
+	services.FolderWatcher.Start() //nolint:contextcheck,nolintlint // background poller whose lifetime is Stop(), not the run context
+	logger.InfoC("folderwatch", "Allowed folder watcher restarted")
 
 	// The channels keep running through a reload; only those whose settings
 	// changed are rebuilt. The media store is replaced only when its cleanup

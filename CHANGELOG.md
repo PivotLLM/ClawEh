@@ -176,18 +176,40 @@
 - **BREAKING: `msg_send_file` takes a list of files.** Its arguments are now
   `files`, a list of 1 to 10 `{"path", "filename"}` entries sent in order;
   the old `path` and `filename` arguments are refused. A file can be sent
-  only when the agent may read it with the file tools (workspace, mounts,
-  common and always-readable folders, `restrict_to_workspace`), and only by
+  only when the agent may read it with the file tools (workspace, allowed
+  folders, common and always-readable folders, `restrict_to_workspace`), and only by
   an agent granted `file_read_lines` or `file_read_bytes`: add one of them to
   `agents.list[].tools` for an agent that sends files. The tool's own path
   rule is gone. Files go to the chat the turn's reply goes to, never
   to another agent, and the agent is told, per file, whether each was sent or
   why not. A chat that cannot receive files (WebUI, devices, SecMsg) is
   refused with "This chat can't receive files."
-- **BREAKING: `classifiers` is a reserved workspace folder name.** A mount
-  named `classifiers` (any case) is refused on save, and one already in
-  `config.json` is ignored at start and marked on the Agents page and Check
-  Up. To keep it, rename the mount in `agents.list[].mounts`.
+- **BREAKING: mounts are replaced by allowed folders.**
+  `agents.list[].mounts` is now `agents.list[].allowed_folders`, a list of
+  `{"path": "/srv/src", "notify": true}`: an absolute folder path (a save
+  with any other path is refused) and the optional new-file notice. The
+  agent uses a folder by its real path (`/srv/src/notes.md`), no longer as
+  `<name>/...`; tell agents whose prompts or skills name the old paths.
+  There is no name and no write switch: write access follows the folder's
+  file permissions for the account ClawEh runs as, and a write the account
+  cannot make returns "permission denied: <path> is read-only for this
+  app". The agent's prompt lists each folder by its path, marked read-only
+  when the account cannot write it. Old `mounts` entries are migrated when
+  the configuration loads (path and notify kept, name and write switch
+  dropped, one warning per entry naming the agent and the path), and the
+  next save writes only `allowed_folders`; make a folder read-only with
+  `chmod` where the old entry was not writable. The same rule applies to
+  every file the app reads for an agent: `msg_send_file`, memory
+  attachments, task-model files and forum sources, which may now be an
+  absolute path in an allowed folder. Maestro no longer gets an automatic
+  mount: with Maestro on, `maestro/` is part of the workspace the file tools
+  read and write, and Maestro's reference library no longer lists the
+  agent's other folders (Maestro's file import can still read them). The
+  new-file notice now names the agent and the folder; the first scan after
+  the upgrade only records what each folder holds. The reserved folder names
+  for mounts are gone, and with them `GET /api/agents/mounts/ignored`, the
+  Agents page marking and the Check Up row. On the Agents page the editor is
+  **Allowed folders** (a path and **Notify on new files** per folder).
 - **BREAKING: the data directory is set to exactly the configured modes at
   every start.** Before, the startup check only removed group and other
   access and only touched folders and secret files. Now every folder and

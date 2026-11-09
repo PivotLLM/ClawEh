@@ -1,6 +1,6 @@
 //go:build !windows
 
-package mountwatch
+package folderwatch
 
 import (
 	"os"
@@ -24,13 +24,13 @@ func TestWriteSeen_ConfiguredMode(t *testing.T) {
 	perms.SetPolicy(perms.PolicyFor(cfg))
 	t.Cleanup(func() { perms.SetPolicy(perms.Policy{}) })
 
-	mount := filepath.Join(home, "agents", "alice", "inbox")
-	if err := os.MkdirAll(mount, 0o750); err != nil {
+	folder := filepath.Join(home, "agents", "alice", "inbox")
+	if err := os.MkdirAll(folder, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(mount, markerFile)
+	marker := filepath.Join(folder, markerFile)
 	w := New(func() *config.Config { return cfg }, nil, 0, nil)
-	w.writeSeen(mount, marker, []string{"a.txt"})
+	w.writeSeen("Alice", folder, marker, []string{"a.txt"})
 	fi, err := os.Stat(marker)
 	if err != nil {
 		t.Fatal(err)

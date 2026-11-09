@@ -354,7 +354,7 @@ func TestAssessment_FileConfinementVsShell(t *testing.T) {
 		if r[0] != "" {
 			t.Errorf("%s mark = %q, want blank: awareness, not an action", id, r[0])
 		}
-		if r[2] != "File tools are confined to the workspace for "+id+", but shell_exec is available and is not confined." {
+		if r[2] != "File tools are confined to the workspace and allowed folders for "+id+", but shell_exec is available and is not confined." {
 			t.Errorf("%s status = %q", id, r[2])
 		}
 	}
@@ -526,24 +526,6 @@ func TestAssessment_ShellExplicitOnly(t *testing.T) {
 	// One sentence: the CLI note follows after a semicolon.
 	if r[2] != "No enabled agent is allowed shell commands; CLI models with Allow CLI to bypass restrictions have their own shell." {
 		t.Errorf("both denied: shell row = %v", r)
-	}
-}
-
-// TestAssessment_IgnoredMount: a mount named after a workspace folder gets an
-// action row naming the agent and the mount; a normal mount gets none.
-func TestAssessment_IgnoredMount(t *testing.T) {
-	cfg, env := fixtureConfig(t)
-	cfg.Agents.List[0].Mounts = []config.MountConfig{{Name: "notes", Path: t.TempDir()}}
-	for _, row := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
-		if strings.HasPrefix(row[1], "Mount (") {
-			t.Errorf("row present for a normal mount: %v", row)
-		}
-	}
-	cfg.Agents.List[0].Mounts = append(cfg.Agents.List[0].Mounts, config.MountConfig{Name: "Files", Path: t.TempDir()})
-	// The row names the agent by its display name.
-	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Mount (Alice)")
-	if r[0] == "" || r[2] != `Ignored: "Files" is a reserved name.` {
-		t.Errorf("row = %v", r)
 	}
 }
 

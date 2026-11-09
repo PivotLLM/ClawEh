@@ -16,6 +16,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
@@ -27,7 +28,7 @@ type ContextBuilder struct {
 	skillsLoader        *skills.SkillsLoader
 	skillsFilter        []string
 	memory              *MemoryStore
-	mounts              []config.MountConfig
+	allowedFolders      []string
 	toolDiscoveryActive bool
 	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
 	maestroEnabled bool
@@ -129,32 +130,30 @@ func (cb *ContextBuilder) WithMemoryGuidance(text string) *ContextBuilder {
 	return cb
 }
 
-// WithMounts records the agent's external folder mounts so the system prompt can
-// tell the agent which top-level folders it can reach.
-func (cb *ContextBuilder) WithMounts(mounts []config.MountConfig) *ContextBuilder {
-	cb.mounts = mounts
+// WithAllowedFolders records the agent's allowed folders (absolute paths) so
+// the system prompt can tell the agent which folders its file tools can reach.
+func (cb *ContextBuilder) WithAllowedFolders(paths []string) *ContextBuilder {
+	cb.allowedFolders = paths
 	return cb
 }
 
-// accessibleFolders is the short list of top-level folders the file tools can
-// reach: files/ and skills/ always, plus each configured (or auto Maestro) mount.
+// accessibleFolders is the short list of folders the file tools can reach:
+// files/ and skills/ always, maestro/ with Maestro on, then each allowed
+// folder by its real path, marked read-only when the app's account cannot
+// write it (checked as the prompt is built).
 func (cb *ContextBuilder) accessibleFolders() string {
 	parts := []string{"files/ (read/write)", "skills/ (read-only)"}
-	for _, m := range cb.mounts {
-		name := strings.TrimSpace(m.Name)
-		if name == "" {
-			continue
+	if cb.maestroEnabled {
+		parts = append(parts, config.MaestroDirName+"/ (read/write)")
+	}
+	for _, p := range cb.allowedFolders {
+		if info, err := os.Stat(p); err != nil || !info.IsDir() {
+			continue // the file tools skip it too
 		}
-		access := "read-only"
-		if m.Writable {
-			access = "read/write"
-		}
-		// Maestro's tree lives inside the agent workspace; other mounts are
-		// typically external host paths.
-		if strings.EqualFold(name, config.MaestroMountName) {
-			parts = append(parts, fmt.Sprintf("%s/ (%s)", name, access))
+		if fileutil.Writable(p) {
+			parts = append(parts, p)
 		} else {
-			parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
+			parts = append(parts, p+" (read-only)")
 		}
 	}
 	return strings.Join(parts, ", ")

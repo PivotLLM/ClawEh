@@ -179,6 +179,12 @@
           "notify_user": true,
           "arg_bytes": 1
         },
+        "allowed_folders": [
+          {
+            "path": "x",
+            "notify": true
+          }
+        ],
         "mounts": [
           {
             "name": "x",

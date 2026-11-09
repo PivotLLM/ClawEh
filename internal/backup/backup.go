@@ -497,7 +497,7 @@ const (
 // file renamed into place), so a plain copy reads each one before or after a
 // write, never torn.
 func collectMaestro(agentsDir, prefix, skip string, fn func(path, name string, db bool)) error {
-	return collectAgentFolder(agentsDir, prefix, config.MaestroMountName, skip,
+	return collectAgentFolder(agentsDir, prefix, config.MaestroDirName, skip,
 		func(_ string, d fs.DirEntry) bool {
 			if d.IsDir() {
 				return false

@@ -116,8 +116,9 @@ again. That is a new run; earlier runs stay readable with `run`.
 characters); replies and notices then name the forum "<name> (<id>)"
 instead of the ID alone.
 
-A source `file` is read as your file tools read that path (your
-workspace, or a mount such as `maestro/`).
+A source `file` is read as your file tools read that path (relative to
+your workspace, such as `maestro/...`, or absolute in one of your allowed
+folders).
 
 A source has either `inline` or `file`: to turn an inline source into a
 file, remove `inline` in the same patch, as in

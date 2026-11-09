@@ -18,7 +18,6 @@ import (
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -64,11 +63,15 @@ func parityContextBuilder(t *testing.T) *ContextBuilder {
 		}
 	}
 
+	notes := filepath.Join(ws, "notes")
+	if err := os.MkdirAll(notes, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cb := NewContextBuilder(ws).
 		WithSkillsFilter([]string{"*"}).
 		WithToolDiscovery(true).
 		WithMemoryGuidance("**Memory** - Retrieve before you assume.").
-		WithMounts([]config.MountConfig{{Name: "notes", Path: "/srv/notes", Writable: true}})
+		WithAllowedFolders([]string{notes})
 	cb.now = func() time.Time { return time.Date(2026, 9, 14, 8, 30, 0, 0, time.UTC) }
 	return cb
 }

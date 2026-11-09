@@ -12,7 +12,7 @@ import (
 )
 
 // filesSummary states, from the same inputs the Agents section uses, whether
-// agents are confined to their workspace and mounts.
+// agents are confined to their workspace and allowed folders.
 func filesSummary(cfg *config.Config, env Environment) string {
 	agents := enabledAgents(cfg)
 	ids := agentIDs(agents)
@@ -33,10 +33,10 @@ func filesSummary(cfg *config.Config, env Environment) string {
 		for _, id := range ids {
 			parts = append(parts, "agent "+id+" can read anything user "+user+" can read")
 		}
-		return strings.Join(parts, "; ") + "; writes confined to the workspace write area and mounts " +
+		return strings.Join(parts, "; ") + "; writes confined to the workspace write area and allowed folders " +
 			"(allow_read_outside_workspace is on)."
 	default:
-		return n + " of " + n + " agents confined to their workspace and mounts (" + strings.Join(ids, ", ") +
+		return n + " of " + n + " agents confined to their workspace and allowed folders (" + strings.Join(ids, ", ") +
 			"); allow-listed host patterns: " + itoa(len(cfg.Tools.AllowReadPaths)) + " read, " +
 			itoa(len(cfg.Tools.AllowWritePaths)) + " write."
 	}

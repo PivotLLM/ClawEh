@@ -69,10 +69,9 @@ type AgentConfig struct {
 	// Maestro configures the Maestro task-orchestration tool suite (projects,
 	// playbooks, tasks) for this agent. Absent or disabled means no Maestro
 	// tools. When enabled, the agent gets the entire Maestro toolset, with
-	// per-agent data under <workspace>/maestro, and that directory is
-	// auto-mounted read/write for native file_* tools as maestro/ (unless the
-	// agent already defines a mount named "maestro"). The runner settings inside
-	// the block are passed to Maestro; unset ones take Maestro's defaults.
+	// per-agent data under <workspace>/maestro, which the native file_* tools
+	// may then read and write as maestro/. The runner settings inside the block
+	// are passed to Maestro; unset ones take Maestro's defaults.
 	Maestro *MaestroConfig `json:"maestro,omitempty"`
 
 	// Fusion switches on the MCPFusion config-driven REST-API tool suite for the
@@ -172,9 +171,15 @@ type AgentConfig struct {
 	// built-in defaults.
 	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
 
-	// Mounts expose external directory trees as top-level names in this agent's
-	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
-	Mounts []MountConfig `json:"mounts,omitempty"`
+	// AllowedFolders are real host folders this agent's file tools may use by
+	// their absolute path, besides its workspace. Write access follows the
+	// file-system permissions of the account ClawEh runs as.
+	AllowedFolders []AllowedFolderConfig `json:"allowed_folders,omitempty"`
+
+	// LegacyMounts is the retired `mounts` list, retained ONLY as an inlet for
+	// migrateLegacyMounts, which turns each entry into an allowed folder at
+	// load and clears it; nothing else reads it.
+	LegacyMounts []LegacyMountConfig `json:"mounts,omitempty" removed:"true"`
 
 	// MCPTools is the per-agent allow-list for external MCP-client tools and,
 	// when Fusion is on, for Fusion services. It is kept separate from the
@@ -200,42 +205,21 @@ type AgentConfig struct {
 	DenyTools []string `json:"deny_tools,omitempty"`
 }
 
-// MountConfig mounts an external directory tree as a top-level name in an agent's
-// space, beside files/ and skills/. The whole tree under Path is reachable as
-// `<Name>/...`; access is sandboxed to the mount (no `..` escape). Read + write.
-type MountConfig struct {
-	Name string `json:"name"` // single path component, [A-Za-z0-9-] only
-	Path string `json:"path"` // absolute external directory
-	// Notify watches the mount tree for new files and notifies the agent on its
+// AllowedFolderConfig is one folder an agent's file tools may use besides its
+// workspace, by its real absolute path.
+type AllowedFolderConfig struct {
+	Path string `json:"path"` // absolute directory
+	// Notify watches the folder for new files and notifies the agent on its
 	// default channel (cron-style) when one appears.
 	Notify bool `json:"notify,omitempty"`
-	// Writable opens the mount for writing. It defaults to false (read-only), so
-	// an agent can only modify a mounted folder when write access is explicitly
-	// granted; read-only mounts reject every write/delete.
-	Writable bool `json:"writable,omitempty"`
 }
 
-var mountNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
-
-// ValidateMountName checks a mount name: a single path component of letters,
-// digits, and hyphens, not one of ReservedWorkspaceNames (in any case).
-func ValidateMountName(name string) error {
-	if !mountNameRe.MatchString(name) {
-		return fmt.Errorf("mount name %q: use only letters, digits, and '-' (a single directory name)", name)
-	}
-	if IsReservedWorkspaceName(name) {
-		return fmt.Errorf("mount name %q is reserved", name)
-	}
-	return nil
-}
-
-// MaestroMountName is the top-level file-tool path for Maestro data when the
-// suite is enabled (peer of files/ and skills/).
-const MaestroMountName = "maestro"
+// MaestroDirName is the workspace folder that holds an agent's Maestro data.
+const MaestroDirName = "maestro"
 
 // MaestroDataDir is the on-disk Maestro tree for an agent workspace.
 func MaestroDataDir(workspace string) string {
-	return filepath.Join(workspace, MaestroMountName)
+	return filepath.Join(workspace, MaestroDirName)
 }
 
 // MaestroConfig is the per-agent Maestro block. It replaced the earlier boolean
@@ -293,36 +277,6 @@ func (m *MaestroConfig) ParallelAllowed() bool {
 // MaestroEnabled reports whether the Maestro suite is on for this agent.
 func (a *AgentConfig) MaestroEnabled() bool {
 	return a != nil && a.Maestro != nil && a.Maestro.Enabled
-}
-
-// EffectiveMounts returns the agent's configured mounts, less any whose name
-// is reserved (IgnoredMounts: the workspace folder wins), plus an
-// auto-injected read/write mount of <workspace>/maestro when Maestro is
-// enabled. The returned Path for the auto mount is absolute when workspace is
-// non-empty. Does not create the directory — the files provider does that
-// when installing mounts.
-func (a *AgentConfig) EffectiveMounts(workspace string) []MountConfig {
-	if a == nil {
-		return nil
-	}
-	var out []MountConfig
-	for _, m := range a.Mounts {
-		if !IsReservedWorkspaceName(m.Name) {
-			out = append(out, m)
-		}
-	}
-	if !a.MaestroEnabled() || strings.TrimSpace(workspace) == "" {
-		return out
-	}
-	abs := MaestroDataDir(workspace)
-	if a, err := filepath.Abs(abs); err == nil {
-		abs = a
-	}
-	return append(out, MountConfig{
-		Name:     MaestroMountName,
-		Path:     abs,
-		Writable: true,
-	})
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -757,6 +711,8 @@ func (c *Config) ValidateBindings() error {
 }
 
 type AgentDefaults struct {
+	// RestrictToWorkspace confines the file tools to the workspace and the
+	// agent's allowed folders. It does not affect shell_exec.
 	RestrictToWorkspace bool `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	// StreamToolActivity, when true, sends the model's inter-tool narration and
 	// each tool's user-facing output to the channel as it happens. When false

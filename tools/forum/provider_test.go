@@ -193,7 +193,7 @@ func (modelsHost) Models(context.Context, string) ([]forumpkg.ModelInfo, error) 
 // the workspace, a configured mount and the maestro mount, and a mount wins
 // over a workspace folder of the same name just as it does for the tools.
 func TestSourcesResolveLikeTheFileTools(t *testing.T) {
-	ws, docsMount, maestroMount := t.TempDir(), t.TempDir(), t.TempDir()
+	ws, docsMount := t.TempDir(), t.TempDir()
 	write := func(p, content string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -205,23 +205,21 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	}
 	write(filepath.Join(ws, "files", "brief.md"), "workspace brief")
 	write(filepath.Join(ws, "docs", "chapter.md"), "workspace folder")
-	write(filepath.Join(docsMount, "chapter.md"), "mounted chapter")
-	write(filepath.Join(maestroMount, "notes.md"), "maestro notes")
-	files.SetMountsForWorkspace(ws, []files.MountSpec{
-		{Name: "docs", Path: docsMount},
-		{Name: config.MaestroMountName, Path: maestroMount},
-	})
-	t.Cleanup(func() { files.SetMountsForWorkspace(ws, nil) })
+	write(filepath.Join(docsMount, "chapter.md"), "folder chapter")
+	write(filepath.Join(ws, "maestro", "notes.md"), "maestro notes")
+	files.SetAllowedFoldersForWorkspace(ws, []string{docsMount, filepath.Join(ws, "maestro")})
+	t.Cleanup(func() { files.SetAllowedFoldersForWorkspace(ws, nil) })
 	cfg := scopeConfig()
 	cfg.Agents.Defaults.RestrictToWorkspace = true
 	h := &toolHost{cfg: cfg, agentID: "alice", workspace: ws}
 
-	refs := map[string]string{"brief": "files/brief.md", "chapter": "docs/chapter.md", "notes": "maestro/notes.md"}
-	raw := `{"version": 1, "name": "mounts",
+	chapter := filepath.Join(docsMount, "chapter.md")
+	refs := map[string]string{"brief": "files/brief.md", "chapter": chapter, "notes": "maestro/notes.md"}
+	raw := `{"version": 1, "name": "folders",
 	  "brief": {"purpose": "p", "task": "t"},
 	  "sources": {
 	    "brief":   {"decode": "markdown", "file": "files/brief.md"},
-	    "chapter": {"decode": "markdown", "file": "docs/chapter.md"},
+	    "chapter": {"decode": "markdown", "file": "` + chapter + `"},
 	    "notes":   {"decode": "markdown", "file": "maestro/notes.md"}},
 	  "participants": {"reader": {"model": "m"}},
 	  "limits": {"max_calls": 2, "max_duration_seconds": 60, "call_timeout_seconds": 30,
@@ -253,11 +251,9 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 			t.Errorf("source %s (%s) resolves to %q (%v), the file tools read %q", id, ref, got, readErr, want)
 		}
 	}
-	abs, err := h.ResolveFile("alice", "docs/chapter.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, readErr := os.ReadFile(abs); readErr != nil || string(got) != "mounted chapter" {
-		t.Errorf("docs/chapter.md = %q (%v), want the mount's file", got, readErr)
+	// docs/ is the workspace folder: the allowed folder is reached only by
+	// its own path.
+	if abs, err := h.ResolveFile("alice", "docs/chapter.md"); err == nil && abs == chapter {
+		t.Error("docs/chapter.md resolved to the allowed folder's file")
 	}
 }

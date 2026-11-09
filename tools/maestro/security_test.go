@@ -39,16 +39,16 @@ func (h *maestroHarness) projectHasSecret(project string) bool {
 	return strings.Contains(lst, "secret.txt")
 }
 
-// TestSecurity_ImportTraversalFromMountRefused: a source that starts inside a
-// mount but climbs out with ".." is refused (paths are resolved before the
+// TestSecurity_ImportTraversalFromFolderRefused: a source that starts inside
+// an allowed folder but climbs out with ".." is refused (paths are resolved before the
 // sandbox check).
-func TestSecurity_ImportTraversalFromMountRefused(t *testing.T) {
+func TestSecurity_ImportTraversalFromFolderRefused(t *testing.T) {
 	h := newMaestroHarness(t)
 	const project = "sec"
 	h.call("maestro_project_create", map[string]any{"name": project, "title": "Sec", "disclaimer_template": "none"}, false)
 	outside := writeSecret(t)
 	// t.TempDir() directories are siblings under one parent, so ".." from the
-	// mount reaches the secret's directory.
+	// folder reaches the secret's directory.
 	traversal := filepath.Join(h.mount, "..", filepath.Base(filepath.Dir(outside)), "secret.txt")
 	if _, err := os.Stat(traversal); err != nil {
 		t.Fatalf("traversal path does not resolve: %v", err)
@@ -62,7 +62,7 @@ func TestSecurity_ImportTraversalFromMountRefused(t *testing.T) {
 	}
 }
 
-// TestSecurity_ImportSymlinkEscapeRefused: a symlink inside a mount that points
+// TestSecurity_ImportSymlinkEscapeRefused: a symlink inside an allowed folder that points
 // outside the agent's reach is refused as a source and skipped inside a
 // directory import.
 func TestSecurity_ImportSymlinkEscapeRefused(t *testing.T) {
@@ -127,61 +127,6 @@ func TestSecurity_ImportInsideWorkspaceAllowed(t *testing.T) {
 	res := h.call("maestro_file_import", map[string]any{"project": project, "source": own}, false)
 	if !strings.Contains(res, `"files_imported":1`) {
 		t.Errorf("workspace import = %s", res)
-	}
-}
-
-// ---- reference domain isolation and mount handling ---------------------------
-
-// TestSecurity_ReferenceDomainIsPerAgent: one agent's mounts do not appear in
-// another agent's Maestro reference domain.
-func TestSecurity_ReferenceDomainIsPerAgent(t *testing.T) {
-	a := newMaestroHarness(t)
-	otherMount := t.TempDir()
-	if err := os.WriteFile(filepath.Join(otherMount, "policy.md"), []byte("p"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{{
-		ID: "bob", Maestro: &config.MaestroConfig{Enabled: true},
-		Mounts: []config.MountConfig{{Name: "policies", Path: otherMount}},
-	}}}}
-	built := tools.NamespacedProvider("maestro", GlobalProvider).Build(tools.ToolDeps{
-		Cfg: cfg, AgentCfg: &cfg.Agents.List[0], AgentID: "bob", Workspace: t.TempDir(), Spawn: &scriptedRunner{},
-	})
-	var bobList tools.Tool
-	for _, tl := range built {
-		if tl.Name() == "maestro_file_list" {
-			bobList = tl
-		}
-	}
-	res := bobList.Execute(context.Background(), map[string]any{"source": "reference"})
-	if strings.Contains(res.ForLLM, "standards/") || !strings.Contains(res.ForLLM, "policies/") {
-		t.Errorf("bob's reference domain = %s (must show policies/, not alice's standards/)", res.ForLLM)
-	}
-	aliceRes := a.call("maestro_file_list", map[string]any{"source": "reference"}, false)
-	if strings.Contains(aliceRes, "policies/") {
-		t.Error("alice's reference domain shows bob's mount")
-	}
-}
-
-// TestReferenceDirs_UserMaestroMountAndInvalidNamesSkipped: an operator mount
-// literally named "maestro" (any case) and a mount with an invalid name are
-// both left out of the reference domain instead of breaking registration.
-func TestReferenceDirs_UserMaestroMountAndInvalidNamesSkipped(t *testing.T) {
-	ws := t.TempDir()
-	good := t.TempDir()
-	a := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}, Mounts: []config.MountConfig{
-		{Name: "MAESTRO", Path: t.TempDir()},
-		{Name: "bad/name", Path: t.TempDir()},
-		{Name: "docs", Path: good},
-	}}
-	dirs := referenceDirsFromMounts(a, ws)
-	if len(dirs) != 1 || dirs[0].Mount != "docs" {
-		t.Fatalf("dirs = %+v, want only docs", dirs)
-	}
-	// And Maestro accepts what we hand it.
-	c := mconfig.New(mconfig.WithBaseDir(filepath.Join(ws, "maestro")), mconfig.WithReferenceDirs(dirs))
-	if err := c.Prepare(); err != nil {
-		t.Fatalf("Prepare with mapped dirs: %v", err)
 	}
 }
 

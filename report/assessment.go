@@ -236,9 +236,9 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 	case !d.RestrictToWorkspace:
 		add(true, "File confinement", "restrict_to_workspace is off: "+ids+" can read and write anything user "+user+" can access.")
 	case d.AllowReadOutsideWorkspace:
-		add(true, "File confinement", "allow_read_outside_workspace is on: "+ids+" can read anything user "+user+" can read; writes stay in the workspace and mounts.")
+		add(true, "File confinement", "allow_read_outside_workspace is on: "+ids+" can read anything user "+user+" can read; writes stay in the workspace and allowed folders.")
 	default:
-		add(false, "File confinement", "Agents are confined to their workspace, mounts and the allow-listed patterns ("+ids+").")
+		add(false, "File confinement", "Agents are confined to their workspace, allowed folders and the allow-listed patterns ("+ids+").")
 	}
 
 	var shell []string
@@ -259,10 +259,6 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		shellText += "; CLI models with Allow CLI to bypass restrictions have their own shell"
 	}
 	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText+".")
-	// A mount named after a workspace folder is set aside at load.
-	for _, m := range cfg.IgnoredMounts() {
-		add(true, "Mount ("+agentNames(cfg, []string{m.Agent})[0]+")", "Ignored: \""+m.Mount+"\" is a reserved name.")
-	}
 
 	// A built-in use with no task model: voice is not transcribed, images are
 	// not described for text-only models.
@@ -281,7 +277,7 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 	if d.RestrictToWorkspace {
 		for _, id := range shell {
 			add(false, "File confinement vs shell ("+id+")",
-				"File tools are confined to the workspace for "+id+", but shell_exec is available and is not confined.")
+				"File tools are confined to the workspace and allowed folders for "+id+", but shell_exec is available and is not confined.")
 		}
 	}
 

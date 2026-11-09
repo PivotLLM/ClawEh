@@ -587,63 +587,6 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 	}
 }
 
-func TestValidateMountName(t *testing.T) {
-	ok := []string{"notes", "notes-bob", "a1", "X-9", "filesx", "my-tasks"}
-	bad := make([]string, 0, 5+3*len(ReservedWorkspaceNames))
-	bad = append(bad, "notes bob", "notes/sub", "notes.md", "no_tes", "")
-	for _, r := range ReservedWorkspaceNames {
-		bad = append(bad, r, strings.ToUpper(r), strings.ToUpper(r[:1])+r[1:])
-	}
-	for _, n := range ok {
-		if err := ValidateMountName(n); err != nil {
-			t.Errorf("ValidateMountName(%q) unexpected error: %v", n, err)
-		}
-	}
-	for _, n := range bad {
-		if err := ValidateMountName(n); err == nil {
-			t.Errorf("ValidateMountName(%q) should have failed", n)
-		}
-	}
-}
-
-func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
-	ws := t.TempDir()
-	a := &AgentConfig{ID: "alice", Maestro: &MaestroConfig{Enabled: true}}
-	got := a.EffectiveMounts(ws)
-	if len(got) != 1 || got[0].Name != MaestroMountName || !got[0].Writable {
-		t.Fatalf("expected auto writable maestro mount, got %+v", got)
-	}
-	wantPath, err := filepath.Abs(MaestroDataDir(ws))
-	if err != nil {
-		t.Fatalf("abs: %v", err)
-	}
-	if got[0].Path != wantPath {
-		t.Fatalf("path = %q, want %q", got[0].Path, wantPath)
-	}
-
-	// Maestro off → no auto mount.
-	a.Maestro = &MaestroConfig{Enabled: false}
-	if mounts := a.EffectiveMounts(ws); len(mounts) != 0 {
-		t.Fatalf("maestro off: expected no mounts, mounts %+v", mounts)
-	}
-
-	// A configured mount named "maestro" is reserved and ignored: the auto
-	// mount of the workspace folder is used.
-	a.Maestro = &MaestroConfig{Enabled: true}
-	a.Mounts = []MountConfig{{Name: "Maestro", Path: "/tmp/custom", Writable: false}}
-	got = a.EffectiveMounts(ws)
-	if len(got) != 1 || got[0].Path != wantPath || !got[0].Writable {
-		t.Fatalf("reserved maestro mount should be ignored, got %+v", got)
-	}
-
-	// Other mounts preserved alongside auto maestro.
-	a.Mounts = []MountConfig{{Name: "notes", Path: "/tmp/notes", Writable: true}}
-	got = a.EffectiveMounts(ws)
-	if len(got) != 2 || got[0].Name != "notes" || got[1].Name != MaestroMountName || !got[1].Writable {
-		t.Fatalf("expected notes + auto maestro, got %+v", got)
-	}
-}
-
 func TestMCPClientEffectivelyEnabled(t *testing.T) {
 	srv := func(enabled bool) map[string]MCPServerConfig {
 		return map[string]MCPServerConfig{"s": {Enabled: enabled, Type: "http", URL: "http://x"}}

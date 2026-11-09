@@ -47,7 +47,7 @@ func TestValidateStaticRejects(t *testing.T) {
 		{"source neither", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText} }, "sources.report", []string{"exactly one of inline or file"}},
 		{"text inline not a string", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, Inline: cfgtRaw(`{"a":1}`)} }, "sources.report.inline", []string{"JSON string", `"text"`}},
 		{"markdown inline not a string", func(c *Config) { c.Sources["report"] = Source{Decode: FormatMarkdown, Inline: cfgtRaw(`3`)} }, "sources.report.inline", []string{"JSON string"}},
-		{"file absolute", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "/etc/passwd"} }, "sources.report.file", []string{"relative"}},
+		{"file absolute escapes", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "/srv/src/../secret.txt"} }, "sources.report.file", []string{`".."`}},
 		{"file escapes", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: "docs/../../secret.txt"} }, "sources.report.file", []string{`".."`}},
 		{"file is dot-dot", func(c *Config) { c.Sources["report"] = Source{Decode: FormatText, File: ".."} }, "sources.report.file", []string{`".."`}},
 		{"source IDs differing in case", func(c *Config) { c.Sources["Report"] = Source{Decode: FormatText, Inline: cfgtRaw(`"x"`)} }, "sources.report", []string{`"Report"`, `"report"`, "letter case"}},

@@ -35,7 +35,7 @@ Version 0.6.0 represents a significant evolution toward a more secure business-c
 - **Character cards** — Give an agent, a sub-agent or a forum participant a character to play from a library of Character Card V3 files, imported from and exported to other tools.
 - **Maestro built-in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
 - **MCP server and client** — ClawEh provides its tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
-- **Files, mounts and scheduled jobs** — Sandboxed file tools, external folders mounted per agent, and reminders and recurring jobs.
+- **Files, allowed folders and scheduled jobs** — Sandboxed file tools, extra host folders allowed per agent, and reminders and recurring jobs.
 - **Message API** — Named tokens let other applications send a message to a chosen agent.
 - **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON.
 

@@ -384,8 +384,8 @@ func newAgentContextBuilder(spec agentreg.Spec, agentCfg *config.AgentConfig, cf
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
 	if agentCfg != nil {
-		if mounts := agentCfg.EffectiveMounts(spec.Workspace); len(mounts) > 0 {
-			contextBuilder = contextBuilder.WithMounts(mounts)
+		if folders := agentCfg.AllowedFolderPaths(); len(folders) > 0 {
+			contextBuilder = contextBuilder.WithAllowedFolders(folders)
 		}
 		contextBuilder = contextBuilder.WithMaestro(agentCfg.MaestroEnabled())
 	}

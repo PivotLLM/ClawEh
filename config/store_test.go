@@ -383,7 +383,7 @@ func TestStore_EmptiedDefaultModelsStayEmpty(t *testing.T) {
 }
 
 // Update reports every refusal together: those its callback raised as a
-// ValidationError, the model, human and mount rules, the listener settings
+// ValidationError, the model and human rules, the listener settings
 // (all of them, not the first), the forum limits and the agent ids.
 func TestStoreUpdate_ReportsEveryRefusal(t *testing.T) {
 	s := newTestStore(t)

@@ -111,8 +111,8 @@ type Spec struct {
 	Origin Origin
 	// SourceID is the config agent a clone was made from; empty otherwise.
 	SourceID string
-	// Workspace holds the prompt files, files/, skills, Maestro data, task
-	// records and mounts. A clone shares its source's.
+	// Workspace holds the prompt files, files/, skills, Maestro data and task
+	// records. A clone shares its source's.
 	Workspace string
 	// StateDir holds the conversation archive (sessions/) and the cognitive
 	// memory (cogmem/). It is the workspace for a config agent and

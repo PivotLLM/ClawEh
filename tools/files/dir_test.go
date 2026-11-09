@@ -105,24 +105,17 @@ func TestFileMkdir_SandboxConfinedToWriteSubdir(t *testing.T) {
 	mustNotExist(t, filepath.Join(filepath.Dir(ws), "outside"))
 }
 
-func TestFileMkdir_Mounts(t *testing.T) {
+func TestFileMkdir_AllowedFolder(t *testing.T) {
 	ws := t.TempDir()
-	rw, ro := t.TempDir(), t.TempDir()
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: rw, Writable: true}, {Name: "ref", Path: ro}})
-	defer SetMountsForWorkspace(ws, nil)
+	rw := t.TempDir()
+	allowFolders(t, ws, rw)
 	tool := NewMkdirToolScoped(ws, true, "files")
 	ctx := context.Background()
 
-	if res := tool.Execute(ctx, map[string]any{"path": "notes/a/b"}); res.IsError {
-		t.Fatalf("mkdir in a writable mount failed: %s", res.ForLLM)
+	if res := tool.Execute(ctx, map[string]any{"path": filepath.Join(rw, "a", "b")}); res.IsError {
+		t.Fatalf("mkdir in an allowed folder failed: %s", res.ForLLM)
 	}
 	mustExist(t, filepath.Join(rw, "a", "b"))
-
-	res := tool.Execute(ctx, map[string]any{"path": "ref/a"})
-	if !res.IsError || !tools.IsExpectedRefusal(res.Err) || !contains(res.ForLLM, "read-only") {
-		t.Fatalf("mkdir in a read-only mount should be an expected refusal, got: %s", res.ForLLM)
-	}
-	mustNotExist(t, filepath.Join(ro, "a"))
 }
 
 func TestFileRmdir(t *testing.T) {
@@ -208,12 +201,11 @@ func TestFileRmdir_SandboxRoots(t *testing.T) {
 	mount := t.TempDir()
 	mkTree(t, ws, map[string]string{"files/keep.txt": "k", "files/alice/a.txt": "a", "skills/s.md": "s"})
 	mkTree(t, mount, map[string]string{"m.txt": "m"})
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mount, Writable: true}})
-	defer SetMountsForWorkspace(ws, nil)
+	allowFolders(t, ws, mount)
 	tool := NewRmdirToolScoped(ws, true, "files")
 	ctx := context.Background()
 
-	for _, p := range []string{"files", "files/", "./files", filepath.Join(ws, "files"), "notes", "notes/", "skills", ".", "..", filepath.Dir(ws)} {
+	for _, p := range []string{"files", "files/", "./files", filepath.Join(ws, "files"), mount, mount + "/", "skills", ".", "..", filepath.Dir(ws)} {
 		res := tool.Execute(ctx, map[string]any{"path": p, "sure": true, "recursive": true})
 		if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
 			t.Fatalf("rmdir %q should be an expected refusal, got: %s", p, res.ForLLM)
@@ -444,36 +436,28 @@ func TestFileMove_FolderSandbox(t *testing.T) {
 	mustRead(t, filepath.Join(ws, "files", "archive", "alice", "a.txt"), "a")
 }
 
-// TestFileMove_FolderAcrossMount moves a folder from the write folder into a
-// writable mount (a different sandbox root), and refuses one into a read-only
-// mount before copying anything.
-func TestFileMove_FolderAcrossMount(t *testing.T) {
+// TestFileMove_FolderIntoAllowedFolder moves a folder from the write folder
+// into an allowed folder (a different sandbox root), and refuses to move the
+// allowed folder itself.
+func TestFileMove_FolderIntoAllowedFolder(t *testing.T) {
 	ws := t.TempDir()
-	rw, ro := t.TempDir(), t.TempDir()
+	rw := t.TempDir()
 	mkTree(t, ws, map[string]string{"files/bob/a.txt": "a", "files/bob/sub/b.txt": "b"})
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: rw, Writable: true}, {Name: "ref", Path: ro}})
-	defer SetMountsForWorkspace(ws, nil)
+	allowFolders(t, ws, rw)
 	tool := NewMoveFileToolScoped(ws, true, "files")
 	ctx := context.Background()
 
-	res := tool.Execute(ctx, map[string]any{"source_path": "files/bob", "destination_path": "ref/bob"})
-	if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
-		t.Fatalf("move into a read-only mount should be refused, got: %s", res.ForLLM)
-	}
-	mustRead(t, filepath.Join(ws, "files", "bob", "a.txt"), "a")
-	mustNotExist(t, filepath.Join(ro, "bob"))
-
-	res = tool.Execute(ctx, map[string]any{"source_path": "files/bob", "destination_path": "notes/bob"})
+	res := tool.Execute(ctx, map[string]any{"source_path": "files/bob", "destination_path": filepath.Join(rw, "bob")})
 	if res.IsError {
-		t.Fatalf("move into a writable mount failed: %s", res.ForLLM)
+		t.Fatalf("move into an allowed folder failed: %s", res.ForLLM)
 	}
 	mustNotExist(t, filepath.Join(ws, "files", "bob"))
 	mustRead(t, filepath.Join(rw, "bob", "a.txt"), "a")
 	mustRead(t, filepath.Join(rw, "bob", "sub", "b.txt"), "b")
 
-	res = tool.Execute(ctx, map[string]any{"source_path": "notes", "destination_path": "files/notes"})
+	res = tool.Execute(ctx, map[string]any{"source_path": rw, "destination_path": "files/notes"})
 	if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
-		t.Fatalf("moving a mount root should be refused, got: %s", res.ForLLM)
+		t.Fatalf("moving an allowed folder should be refused, got: %s", res.ForLLM)
 	}
 	mustExist(t, filepath.Join(rw, "bob", "a.txt"))
 }

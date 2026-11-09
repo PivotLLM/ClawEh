@@ -662,7 +662,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 const maxRecursiveListEntries = 1000
 
 // listRecursive walks the tree under start via the sandboxed fs (scoping and
-// mounts still apply), listing entries with workspace-relative paths. Hidden
+// allowed folders still apply), listing entries with workspace-relative paths. Hidden
 // directories (.git, etc.) and the .claw marker are skipped.
 func (t *ListDirTool) listRecursive(start string) *tools.ToolResult {
 	var b strings.Builder
@@ -681,7 +681,7 @@ func (t *ListDirTool) listRecursive(start string) *tools.ToolResult {
 				return
 			}
 			name := e.Name()
-			if name == global.MountMarkerFile {
+			if name == global.FolderMarkerFile {
 				continue
 			}
 			child := filepath.Join(dir, name)
@@ -711,8 +711,8 @@ func (t *ListDirTool) listRecursive(start string) *tools.ToolResult {
 func formatDirEntries(entries []os.DirEntry) *tools.ToolResult {
 	var result strings.Builder
 	for _, entry := range entries {
-		// Hide the claw-internal mount watermark from agents.
-		if entry.Name() == global.MountMarkerFile {
+		// Hide the claw-internal new-file marker from agents.
+		if entry.Name() == global.FolderMarkerFile {
 			continue
 		}
 		if entry.IsDir() {
@@ -760,7 +760,7 @@ func checkWrite(fsys fileSystem, path string) error {
 
 // rootChecker is implemented by the layers that have a root folder an agent
 // must not remove: the sandbox's workspace, the write folder (e.g. files/) and
-// each mount's root.
+// each allowed folder.
 type rootChecker interface {
 	isRoot(path string) bool
 }
@@ -993,7 +993,10 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 
 		// pid+nano for human/cross-process readability; the atomic counter
 		// guarantees uniqueness across concurrent goroutines within this process.
-		tmpRelPath := fmt.Sprintf(".tmp-%d-%d-%d", os.Getpid(), time.Now().UnixNano(), tmpFileSeq.Add(1))
+		// The temp file sits beside the target, so the write needs only the
+		// target folder's permission (an allowed folder may be writable below
+		// a read-only root).
+		tmpRelPath := filepath.Join(dir, fmt.Sprintf(".tmp-%d-%d-%d", os.Getpid(), time.Now().UnixNano(), tmpFileSeq.Add(1)))
 
 		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
@@ -1026,7 +1029,7 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 			return fmt.Errorf("failed to rename temp file over target: %w", err)
 		}
 
-		if dirFile, err := root.Open("."); err == nil {
+		if dirFile, err := root.Open(dir); err == nil {
 			if syncErr := dirFile.Sync(); syncErr != nil {
 				logger.WarnCF("tool", "failed to sync directory after write", map[string]any{"path": relPath, "error": syncErr.Error()})
 			}
@@ -1250,12 +1253,13 @@ func (w *whitelistFs) isRoot(path string) bool {
 // buildFs returns the appropriate fileSystem implementation based on restriction
 // settings and optional path whitelist patterns.
 func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
-	return withMounts(workspace, buildBaseFs(workspace, restrict, patterns))
+	return withAllowedFolders(workspace, restrict, buildBaseFs(workspace, restrict, patterns))
 }
 
-// buildBaseFs is buildFs without the external-mount layer; buildWriteFs uses it
-// so the write-scope sits inside the mount layer (mountFs is always outermost,
-// so mount paths bypass the workspace read/write scopes and use their own sandbox).
+// buildBaseFs is buildFs without the allowed-folders layer; buildWriteFs uses
+// it so the write-scope sits inside that layer (allowedFs is always outermost,
+// so paths in an allowed folder bypass the workspace read/write scopes and use
+// the folder's own sandbox).
 func buildBaseFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
 	if !restrict {
 		return &hostFs{}
@@ -1403,17 +1407,18 @@ func (r *readScopedFs) isRoot(path string) bool { return isRoot(r.inner, path) }
 func buildWriteFs(workspace string, restrict bool, writeSubdir string, patterns []*regexp.Regexp) fileSystem {
 	base := buildBaseFs(workspace, restrict, patterns)
 	if !restrict || writeSubdir == "" {
-		return withMounts(workspace, base)
+		return withAllowedFolders(workspace, restrict, base)
 	}
-	// mountFs stays outermost so writes to a mount (`<name>/...`) are not rejected
-	// by the workspace write-scope; non-mount writes still confine to writeSubdir.
+	// allowedFs stays outermost so writes into an allowed folder are not
+	// rejected by the workspace write-scope; other writes still confine to
+	// writeSubdir.
 	scoped := &writeScopedFs{
 		inner:     base,
 		workspace: workspace,
 		writeRoot: filepath.Join(workspace, writeSubdir),
 		patterns:  patterns,
 	}
-	return withMounts(workspace, scoped)
+	return withAllowedFolders(workspace, restrict, scoped)
 }
 
 // writeScopedFs wraps an inner fileSystem to allow reads across the whole

@@ -124,7 +124,8 @@ func (h *toolHost) Scope(call *global.ToolCall) (forumpkg.Scope, error) {
 }
 
 // ResolveFile resolves ref the way the agent's file tools would read it:
-// relative to the workspace, or under one of its mounts (maestro/...).
+// relative to the workspace (maestro/... included), or absolute in one of its
+// allowed folders.
 func (h *toolHost) ResolveFile(agentID, ref string) (string, error) {
 	if err := h.same(agentID); err != nil {
 		return "", err

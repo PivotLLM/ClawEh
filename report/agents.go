@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/forum/forumfs"
 )
 
@@ -131,15 +132,21 @@ func agentFolderAccess(cfg *config.Config, env Environment, a *config.AgentConfi
 		}
 	}
 
-	for _, m := range a.EffectiveMounts(ws) {
-		note := "mount " + m.Name
-		if strings.EqualFold(m.Name, config.MaestroMountName) && m.Path == config.MaestroDataDir(ws) {
-			note = "Maestro data (auto mount)"
+	if a.MaestroEnabled() {
+		fa.add(config.MaestroDataDir(ws), true, true, "Maestro data")
+	}
+	notify := map[string]bool{}
+	for _, f := range a.AllowedFolders {
+		if f.Notify {
+			notify[filepath.Clean(strings.TrimSpace(f.Path))] = true
 		}
-		if m.Notify {
+	}
+	for _, p := range a.AllowedFolderPaths() {
+		note := "allowed folder; write access follows file permissions"
+		if notify[p] {
 			note += ", notify"
 		}
-		fa.add(m.Path, !m.Writable, m.Writable, note)
+		fa.add(p, true, fileutil.Writable(p), note)
 	}
 	fa.add(cfg.SkillsPath(), true, false, "global skills")
 	if a.SharesCommon() {

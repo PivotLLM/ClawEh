@@ -35,7 +35,7 @@ type preflightEnv struct {
 	Ceilings Ceilings
 	// ResolveFile maps a source `file` reference to the absolute host path
 	// the launching agent's file tools would read for it (workspace,
-	// workspace folders and mounts), or fails with a message for the
+	// workspace folders and allowed folders), or fails with a message for the
 	// agent. nil is a host wiring error once a file source is present.
 	ResolveFile func(ref string) (absPath string, err error)
 	// ReadAllowed reports whether the launching agent may read an absolute

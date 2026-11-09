@@ -26,6 +26,8 @@ type cloneFixture struct {
 	cfg   *config.Config
 	model *recordingProvider
 	main  *AgentInstance
+	// mountDir is the agent's allowed folder.
+	mountDir string
 }
 
 const (
@@ -46,7 +48,7 @@ func newCloneFixture(t *testing.T) *cloneFixture {
 	a := &cfg.Agents.List[0]
 	a.MCPTools = []string{"svc"}
 	a.Maestro = &config.MaestroConfig{Enabled: true}
-	a.Mounts = []config.MountConfig{{Name: "ref", Path: mountDir}}
+	a.AllowedFolders = []config.AllowedFolderConfig{{Path: mountDir}}
 	cfg.Tools.MCP.Servers = map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: ts.URL},
 	}
@@ -67,7 +69,7 @@ func newCloneFixture(t *testing.T) *cloneFixture {
 	if res := runTool(t, main, "cogmem_memory_create", map[string]any{"type": "fact", "text": sourceMemory}); res.IsError {
 		t.Fatalf("source memory_create: %s", res.ForLLM)
 	}
-	return &cloneFixture{al: al, cfg: cfg, model: model, main: main}
+	return &cloneFixture{al: al, cfg: cfg, model: model, main: main, mountDir: mountDir}
 }
 
 func sortedTools(a *AgentInstance) []string {
@@ -133,7 +135,7 @@ func TestClone_IsACopyOfItsSource(t *testing.T) {
 		t.Fatalf("clone static prompt differs from the source's:\nclone  %q\nsource %q", got, want)
 	}
 
-	for path, text := range map[string]string{"files/notes.txt": "from files", "ref/mounted.txt": "from the mount"} {
+	for path, text := range map[string]string{"files/notes.txt": "from files", filepath.Join(f.mountDir, "mounted.txt"): "from the mount"} {
 		res := runTool(t, clone, "file_read_lines", map[string]any{"path": path})
 		if res.IsError || !strings.Contains(res.ForLLM, text) {
 			t.Fatalf("clone reading %s: %s", path, res.ForLLM)

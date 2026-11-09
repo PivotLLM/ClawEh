@@ -16,7 +16,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 	}
 	tb := s.Tables[0]
 	_, files := findRow(t, tb, "Files")
-	want := "2 of 2 agents confined to their workspace and mounts (alice, bob); allow-listed host patterns: 1 read, 1 write."
+	want := "2 of 2 agents confined to their workspace and allowed folders (alice, bob); allow-listed host patterns: 1 read, 1 write."
 	if files[1] != want {
 		t.Errorf("Files = %q\nwant %q", files[1], want)
 	}

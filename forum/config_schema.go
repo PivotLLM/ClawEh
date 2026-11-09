@@ -67,7 +67,7 @@ var (
 
 		"Source.decode": {desc: "How the source is read", enum: formats},
 		"Source.inline": {desc: "The source content: a string for text and markdown, any JSON value for json. Set exactly one of inline and file"},
-		"Source.file":   {desc: "A path your file tools can read (relative to your workspace, or under a mount such as maestro/), read once at launch. Set exactly one of inline and file"},
+		"Source.file":   {desc: "A path your file tools can read (relative to your workspace, such as maestro/..., or absolute in one of your allowed folders), read once at launch. Set exactly one of inline and file"},
 
 		"Participant.agent":          {desc: "An existing agent itself, with its conversation, memory and tools; must be in your allowed agents"},
 		"Participant.clone":          {desc: "A temporary copy of this agent, deleted when the forum ends; must be in your allowed agents"},

@@ -24,25 +24,6 @@ func TestRunnerConfig_Mapping(t *testing.T) {
 	}
 }
 
-func TestReferenceDirsFromMounts(t *testing.T) {
-	ws := t.TempDir()
-	docs := t.TempDir()
-	a := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}, Mounts: []config.MountConfig{
-		{Name: "docs", Path: docs, Writable: true},
-		{Name: "gone", Path: filepath.Join(t.TempDir(), "missing")},
-	}}
-	dirs := referenceDirsFromMounts(a, ws)
-	if len(dirs) != 1 || dirs[0].Mount != "docs" || dirs[0].Path != docs {
-		t.Fatalf("dirs = %+v, want only docs→%s (missing dir skipped, auto maestro mount skipped)", dirs, docs)
-	}
-	if _, err := os.Stat(filepath.Join(t.TempDir(), "missing")); !os.IsNotExist(err) {
-		t.Error("a missing mount directory must not be created")
-	}
-	if referenceDirsFromMounts(nil, ws) != nil {
-		t.Error("nil agent must map to no dirs")
-	}
-}
-
 // realTempDir is t.TempDir() with symlinks resolved. importAllowed compares
 // resolved paths (Maestro hands it the real path of every candidate), and on
 // macOS the temp root is a symlink (/var -> /private/var), so paths built from
@@ -63,7 +44,7 @@ func TestImportAllowed_RestrictedAgent(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Agents.Defaults.RestrictToWorkspace = true
 	cfg.Tools.AllowReadPaths = []string{"^" + allowed + "/"}
-	a := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}, Mounts: []config.MountConfig{{Name: "m", Path: mount}}}
+	a := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}, AllowedFolders: []config.AllowedFolderConfig{{Path: mount}}}
 	ok := importAllowed(cfg, a, ws)
 
 	for _, p := range []string{

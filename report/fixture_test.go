@@ -99,7 +99,7 @@ func fixtureEnv(dataDir string) Environment {
 
 // fixtureConfig builds a small realistic config under a fresh CLAW_HOME:
 // one API provider with a key, two CLI providers, two agents (one with a
-// symlinked workspace, one with explicit tools and a mount), MCP servers of
+// symlinked workspace, one with explicit tools and an allowed folder), MCP servers of
 // both transports, and every channel type with a fake credential.
 func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	t.Helper()
@@ -145,8 +145,8 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 		{ID: "alice", Name: "Alice", Default: true, Workspace: linkWS, MCPTools: []string{"fusion", "nothing"}},
 		{
 			ID: "bob", Name: "Bob", Tools: []string{"file_read", "shell_exec"}, GlobalCron: true,
-			Mounts:  []config.MountConfig{{Name: "docs", Path: docs, Notify: true}},
-			Maestro: &config.MaestroConfig{Enabled: true, MaxConcurrent: 3},
+			AllowedFolders: []config.AllowedFolderConfig{{Path: docs, Notify: true}},
+			Maestro:        &config.MaestroConfig{Enabled: true, MaxConcurrent: 3},
 		},
 	}
 	cfg.Tools.AllowReadPaths = []string{"^/srv/shared/"}

@@ -4,9 +4,9 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
-
-	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestAccessibleFolders(t *testing.T) {
@@ -15,16 +15,35 @@ func TestAccessibleFolders(t *testing.T) {
 		t.Fatalf("base folders = %q", got)
 	}
 
-	// Mounts default to read-only; only Writable mounts show read/write.
-	// Maestro is in-workspace, so it is not labeled "external".
-	cb.mounts = []config.MountConfig{
-		{Name: "notes"},
-		{Name: ""},
-		{Name: "data", Writable: true},
-		{Name: "maestro", Writable: true},
+	// Allowed folders are listed by their real path; one the account cannot
+	// write is marked read-only; a missing one is left out. Maestro is part
+	// of the workspace.
+	base := t.TempDir()
+	src := filepath.Join(base, "src")
+	ref := filepath.Join(base, "ref")
+	for _, d := range []string{src, ref} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	want := "files/ (read/write), skills/ (read-only), notes/ (external, read-only), data/ (external, read/write), maestro/ (read/write)"
+	readOnly := os.Geteuid() != 0
+	if readOnly {
+		if err := os.Chmod(ref, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chmod(ref, 0o700); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	cb.allowedFolders = []string{src, ref, filepath.Join(base, "missing")}
+	cb.maestroEnabled = true
+	want := "files/ (read/write), skills/ (read-only), maestro/ (read/write), " + src + ", " + ref
+	if readOnly {
+		want += " (read-only)"
+	}
 	if got := cb.accessibleFolders(); got != want {
-		t.Fatalf("with mounts = %q, want %q", got, want)
+		t.Fatalf("with folders = %q, want %q", got, want)
 	}
 }

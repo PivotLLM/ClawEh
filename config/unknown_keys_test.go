@@ -143,7 +143,7 @@ func TestUnknownPatchKeys_FullConfigAccepted(t *testing.T) {
 	if err = json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	want := make([]string, 0, 17)
+	want := make([]string, 0, 18)
 	for _, scope := range []string{"agents.defaults.", "agents.list[0]."} {
 		for _, k := range []string{
 			"compress_chars_per_token", "compress_message_threshold", "compress_min_percent",
@@ -153,7 +153,7 @@ func TestUnknownPatchKeys_FullConfigAccepted(t *testing.T) {
 			want = append(want, scope+k)
 		}
 	}
-	want = append(want, "channels.discord.mention_only")
+	want = append(want, "agents.list[0].mounts", "channels.discord.mention_only")
 	slices.Sort(want)
 	if got := UnknownPatchKeys(doc); !slices.Equal(got, want) {
 		t.Errorf("UnknownPatchKeys on a full config = %v, want exactly the migration-only keys %v", got, want)

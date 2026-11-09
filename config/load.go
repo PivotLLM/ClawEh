@@ -101,7 +101,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	warnLegacyCompressModel(data)
 	warnLegacyMaestroBool(cfg)
-	warnReservedMounts(cfg)
+	cfg.migrateLegacyMounts()
 
 	if err := env.Parse(cfg); err != nil {
 		return nil, err

@@ -43,7 +43,7 @@ type ToolHost interface {
 	// allow. The tool returns that refusal to the agent as a tool error.
 	Scope(call *toolspec.ToolCall) (Scope, error)
 	// ResolveFile resolves a source file reference to the absolute path the
-	// agent's file tools would read for it (workspace and mounts), or fails
+	// agent's file tools would read for it (workspace and allowed folders), or fails
 	// with a message for the agent.
 	ResolveFile(agentID, ref string) (absPath string, err error)
 	// ReadAllowed reports whether the agent may read an absolute path.
