@@ -86,17 +86,6 @@ type taskInput struct {
 	data        []byte
 }
 
-// audioTypes are the audio formats a transcription takes, by extension:
-// explicit, so the result does not depend on the host's mime.types.
-var audioTypes = map[string]string{
-	".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
-	".mp3": "audio/mpeg", ".mpga": "audio/mpeg", ".mpeg": "audio/mpeg",
-	".m4a": "audio/mp4", ".mp4": "audio/mp4",
-	".wav": "audio/wav", ".flac": "audio/flac",
-	".webm": "audio/webm", ".weba": "audio/webm",
-	".aac": "audio/aac", ".amr": "audio/amr",
-}
-
 // imageTypes are the image formats, by extension.
 var imageTypes = map[string]string{
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -106,7 +95,7 @@ var imageTypes = map[string]string{
 func (in taskInput) isImage() bool { return strings.HasPrefix(in.contentType, "image/") }
 
 func (in taskInput) isAudio() bool {
-	return strings.HasPrefix(in.contentType, "audio/") || audioTypes[strings.ToLower(filepath.Ext(in.name))] != ""
+	return strings.HasPrefix(in.contentType, "audio/") || voice.AudioType(in.name) != ""
 }
 
 // isText reports whether the input reads as text: valid UTF-8 with no NUL
@@ -285,7 +274,7 @@ func mediaType(ct string) string {
 // "".
 func contentTypeOf(name string, data []byte) string {
 	ext := strings.ToLower(filepath.Ext(name))
-	if t := audioTypes[ext]; t != "" {
+	if t := voice.AudioType(name); t != "" {
 		return t
 	}
 	if t := imageTypes[ext]; t != "" {

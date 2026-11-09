@@ -78,6 +78,8 @@ func (v *vendorServer) handle(w http.ResponseWriter, r *http.Request) {
 			"choices": []any{map[string]any{"message": msg, "finish_reason": "stop"}},
 			"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
 		})
+	case strings.HasSuffix(r.URL.Path, "/images/generations") && strings.Contains(body, "empty-image"):
+		encodeOrFail(w, enc, map[string]any{"data": []any{}})
 	case strings.HasSuffix(r.URL.Path, "/images/generations"), strings.HasSuffix(r.URL.Path, "/images/edits"):
 		encodeOrFail(w, enc, map[string]any{"data": []any{map[string]any{"b64_json": base64.StdEncoding.EncodeToString(pngBytes)}}})
 	case strings.HasSuffix(r.URL.Path, "/audio/speech"):
@@ -798,5 +800,23 @@ func TestReadAtMost(t *testing.T) {
 	}
 	if _, err := readAtMost(strings.NewReader("12345"), 4); err == nil || err.Error() != "it is more than the limit of 4 bytes" {
 		t.Errorf("over the limit: %v", err)
+	}
+}
+
+// An images API that returns no image is an ordinary failure of that model:
+// the next Images model is tried, and the empty one is not put in cooldown.
+func TestTaskModelHost_NoImagesFallsBack(t *testing.T) {
+	e := newTaskHostEnv(t)
+	e.cfg.Models = append(e.cfg.Models, config.ModelConfig{ModelName: "empty", Model: "empty-image", Provider: "p", Enabled: true})
+	e.cfg.TaskModels.Models = []config.TaskModel{
+		{Model: "empty", Image: true, ImageAPI: config.ImageAPIImages},
+		{Model: "imgapi", Image: true, ImageAPI: config.ImageAPIImages},
+	}
+	res, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"})
+	if err != nil || res.Model != "imgapi" || len(res.Attempts) != 1 || res.Attempts[0].Model != "empty" || len(res.Paths) != 1 {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	if !e.al.cooldownTracker().IsAvailable("p", "empty-image") {
+		t.Error("a model that returned no image is in cooldown")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
+	"github.com/PivotLLM/ClawEh/voice"
 )
 
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
@@ -70,7 +71,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 			kept = append(kept, ref)
 			continue
 		}
-		result, err := al.transcriber.Transcribe(ctx, path)
+		result, err := al.transcriber.Transcribe(ctx, voice.AudioFile{Path: path, Filename: meta.Filename, ContentType: meta.ContentType})
 		if err != nil {
 			logger.WarnCF("voice", "Transcription failed", map[string]any{
 				"ref": ref, "channel": msg.Channel, "chat_id": msg.ChatID, "error": err.Error(),

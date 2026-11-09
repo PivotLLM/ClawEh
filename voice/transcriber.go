@@ -27,7 +27,58 @@ import (
 // Transcriber turns one audio file into text.
 type Transcriber interface {
 	Name() string
-	Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error)
+	Transcribe(ctx context.Context, audio AudioFile) (*TranscriptionResponse, error)
+}
+
+// AudioFile is one audio file to transcribe: where it is, and the name and
+// media type it came with (a voice note's own name and type, which the media
+// store keeps beside a path that may have no extension). The APIs need the
+// format: the name's extension, else the type's.
+type AudioFile struct {
+	Path        string
+	Filename    string
+	ContentType string
+}
+
+// audioTypes are the audio formats a transcription takes, by extension: an
+// explicit table, so the result does not depend on the host's mime.types.
+var audioTypes = map[string]string{
+	".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+	".mp3": "audio/mpeg", ".mpga": "audio/mpeg", ".mpeg": "audio/mpeg",
+	".m4a": "audio/mp4", ".mp4": "audio/mp4",
+	".wav": "audio/wav", ".flac": "audio/flac",
+	".webm": "audio/webm", ".weba": "audio/webm",
+	".aac": "audio/aac", ".amr": "audio/amr",
+}
+
+// AudioType is the media type of an audio file name by its extension, ""
+// when the extension is not a known audio format.
+func AudioType(name string) string {
+	return audioTypes[strings.ToLower(filepath.Ext(name))]
+}
+
+// upload is the file name and media type an audio file is sent with: its
+// own name (else the path's), and its own type reduced to type/subtype, else
+// the one its name's extension gives.
+func (a AudioFile) upload() (string, string) {
+	name := filepath.Base(a.Filename)
+	if a.Filename == "" {
+		name = filepath.Base(a.Path)
+	}
+	ct := ""
+	if mt, _, err := mime.ParseMediaType(strings.TrimSpace(a.ContentType)); err == nil && mt != "application/octet-stream" {
+		ct = strings.ToLower(mt)
+	}
+	if ct == "" {
+		ct = AudioType(name)
+	}
+	if ct == "" {
+		ct = AudioType(a.Path)
+	}
+	if filepath.Ext(name) == "" && filepath.Ext(a.Path) != "" && ct == AudioType(a.Path) {
+		name = filepath.Base(a.Path)
+	}
+	return name, ct
 }
 
 // TranscriptionResponse is one transcription's result.
@@ -109,9 +160,9 @@ func NewTranscriber(name, model string, backend speech.Transcriber, a alerter.Al
 func (t *speechTranscriber) Name() string { return t.name }
 
 // Transcribe sends the file to the model, giving it attemptTimeout.
-func (t *speechTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
-	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath, "model": t.name})
-	f, err := os.Open(audioFilePath) //nolint:gosec // audio path comes from the media store (loop_transcribe)
+func (t *speechTranscriber) Transcribe(ctx context.Context, audio AudioFile) (*TranscriptionResponse, error) {
+	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audio.Path, "model": t.name})
+	f, err := os.Open(audio.Path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
 	}
@@ -120,11 +171,12 @@ func (t *speechTranscriber) Transcribe(ctx context.Context, audioFilePath string
 	callCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
 	defer cancel()
 	start := time.Now()
+	filename, contentType := audio.upload()
 	res, err := t.backend.Transcribe(callCtx, &speech.TranscribeRequest{
 		Model:       t.model,
 		Audio:       f,
-		Filename:    filepath.Base(audioFilePath),
-		ContentType: mime.TypeByExtension(filepath.Ext(audioFilePath)),
+		Filename:    filename,
+		ContentType: contentType,
 	})
 	if err != nil {
 		if se, ok := errors.AsType[*common.HTTPStatusError](err); ok {
@@ -217,10 +269,10 @@ func (f *fallbackTranscriber) Name() string {
 	return strings.Join(names, ",")
 }
 
-func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
+func (f *fallbackTranscriber) Transcribe(ctx context.Context, audio AudioFile) (*TranscriptionResponse, error) {
 	var lastErr error
 	for i, t := range f.transcribers {
-		result, err := t.Transcribe(ctx, audioFilePath)
+		result, err := t.Transcribe(ctx, audio)
 		if err == nil {
 			return result, nil
 		}

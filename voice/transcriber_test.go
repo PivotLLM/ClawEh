@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/spawnllm/speech"
+
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -232,7 +234,7 @@ func TestTranscribe_ThroughSpawnllm(t *testing.T) {
 	if tr == nil || tr.Name() != "fast-stt" {
 		t.Fatalf("DetectTranscriber() = %v", tr)
 	}
-	resp, err := tr.Transcribe(context.Background(), audioPath)
+	resp, err := tr.Transcribe(context.Background(), AudioFile{Path: audioPath})
 	if err != nil {
 		t.Fatalf("Transcribe() error: %v", err)
 	}
@@ -242,7 +244,7 @@ func TestTranscribe_ThroughSpawnllm(t *testing.T) {
 	if len(*seen) != 1 || !strings.HasPrefix((*seen)[0], "/v1/audio/transcriptions Bearer sk-test multipart/form-data") {
 		t.Errorf("requests = %v", *seen)
 	}
-	if _, err := tr.Transcribe(context.Background(), filepath.Join(t.TempDir(), "nonexistent.ogg")); err == nil {
+	if _, err := tr.Transcribe(context.Background(), AudioFile{Path: filepath.Join(t.TempDir(), "nonexistent.ogg")}); err == nil {
 		t.Error("a missing file transcribed")
 	}
 }
@@ -255,7 +257,7 @@ type stubTranscriber struct {
 }
 
 func (s stubTranscriber) Name() string { return s.name }
-func (s stubTranscriber) Transcribe(context.Context, string) (*TranscriptionResponse, error) {
+func (s stubTranscriber) Transcribe(context.Context, AudioFile) (*TranscriptionResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -268,7 +270,7 @@ func TestFallbackTranscriber(t *testing.T) {
 			stubTranscriber{name: "a", err: errors.New("boom")},
 			stubTranscriber{name: "b", text: "from b"},
 		}}
-		got, err := f.Transcribe(context.Background(), "x")
+		got, err := f.Transcribe(context.Background(), AudioFile{Path: "x"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -282,7 +284,7 @@ func TestFallbackTranscriber(t *testing.T) {
 			stubTranscriber{name: "a", text: ""}, // silence
 			stubTranscriber{name: "b", text: "should not reach"},
 		}}
-		got, err := f.Transcribe(context.Background(), "x")
+		got, err := f.Transcribe(context.Background(), AudioFile{Path: "x"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -296,9 +298,60 @@ func TestFallbackTranscriber(t *testing.T) {
 			stubTranscriber{name: "a", err: errors.New("first")},
 			stubTranscriber{name: "b", err: errors.New("last")},
 		}}
-		_, err := f.Transcribe(context.Background(), "x")
+		_, err := f.Transcribe(context.Background(), AudioFile{Path: "x"})
 		if err == nil || err.Error() != "last" {
 			t.Errorf("err = %v, want %q", err, "last")
 		}
 	})
+}
+
+// The upload's name and type: the file's own name and type when it has
+// them, else what the path's extension says.
+func TestAudioFileUpload(t *testing.T) {
+	for _, tc := range []struct {
+		in         AudioFile
+		name, kind string
+	}{
+		{AudioFile{Path: "/m/file_3", Filename: "file_3.oga", ContentType: "audio/ogg"}, "file_3.oga", "audio/ogg"},
+		{AudioFile{Path: "/m/file_3", Filename: "voice", ContentType: "Audio/OGG; codecs=opus"}, "voice", "audio/ogg"},
+		{AudioFile{Path: "/m/clip.mp3"}, "clip.mp3", "audio/mpeg"},
+		{AudioFile{Path: "/m/x.oga", Filename: "voice", ContentType: "application/octet-stream"}, "x.oga", "audio/ogg"},
+		{AudioFile{Path: "/m/x", Filename: "note.m4a"}, "note.m4a", "audio/mp4"},
+		{AudioFile{Path: "/m/x"}, "x", ""},
+	} {
+		if name, kind := tc.in.upload(); name != tc.name || kind != tc.kind {
+			t.Errorf("upload(%+v) = %q, %q; want %q, %q", tc.in, name, kind, tc.name, tc.kind)
+		}
+	}
+}
+
+// A Telegram voice note (.oga) stored under a path without an extension
+// reaches OpenRouter as input_audio format "ogg".
+func TestTranscribe_OGAVoiceNoteToOpenRouter(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"text":"heard"}`)); err != nil {
+			return
+		}
+	}))
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "file_3")
+	if err := os.WriteFile(path, []byte("OggS"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := NewTranscriber("or", "openai/whisper-1",
+		speech.NewOpenAI(srv.URL, "k", speech.WithTranscriptionAPI(speech.TranscriptionInputAudio)), nil)
+	res, err := tr.Transcribe(context.Background(), AudioFile{Path: path, Filename: "file_3.oga", ContentType: "audio/ogg"})
+	if err != nil || res.Text != "heard" {
+		t.Fatalf("Transcribe = %+v, %v", res, err)
+	}
+	audio, ok := body["input_audio"].(map[string]any)
+	if !ok || audio["format"] != "ogg" {
+		t.Errorf("input_audio = %v, want format ogg", body["input_audio"])
+	}
 }

@@ -32,7 +32,7 @@ type stubTranscriber struct {
 
 func (s stubTranscriber) Name() string { return "stub" }
 
-func (s stubTranscriber) Transcribe(context.Context, string) (*voice.TranscriptionResponse, error) {
+func (s stubTranscriber) Transcribe(context.Context, voice.AudioFile) (*voice.TranscriptionResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -277,7 +277,7 @@ type failTranscriber struct{ t *testing.T }
 
 func (failTranscriber) Name() string { return "fail" }
 
-func (f failTranscriber) Transcribe(context.Context, string) (*voice.TranscriptionResponse, error) {
+func (f failTranscriber) Transcribe(context.Context, voice.AudioFile) (*voice.TranscriptionResponse, error) {
 	f.t.Error("a voice message to a human agent was transcribed")
 	return &voice.TranscriptionResponse{Text: "heard"}, nil
 }
@@ -317,5 +317,45 @@ func TestPrepareInbound_HumanAgentNeverTranscribed(t *testing.T) {
 	}
 	if n := model.count(); n != 0 {
 		t.Fatalf("a model was called %d times", n)
+	}
+}
+
+// recordingTranscriber records the audio files it is given.
+type recordingTranscriber struct {
+	got *[]voice.AudioFile
+}
+
+func (r recordingTranscriber) Name() string { return "recording" }
+
+func (r recordingTranscriber) Transcribe(_ context.Context, a voice.AudioFile) (*voice.TranscriptionResponse, error) {
+	*r.got = append(*r.got, a)
+	return &voice.TranscriptionResponse{Text: "ok"}, nil
+}
+
+// A voice note is handed to the transcriber with the name and type it came
+// with, not only its stored path (a Telegram .oga note may be stored under a
+// name without that extension).
+func TestPrepareInbound_VoicePassesNameAndType(t *testing.T) {
+	restore := logger.RedirectForTest(&safeBufLoop{})
+	defer restore()
+	al, _, _ := freshLoop(t)
+	store := media.NewFileMediaStore()
+	al.SetMediaStore(store)
+	var got []voice.AudioFile
+	al.SetTranscriber(recordingTranscriber{got: &got})
+
+	src := filepath.Join(t.TempDir(), "file_3")
+	if err := os.WriteFile(src, []byte("OggS"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Store(src, media.MediaMeta{Filename: "file_3.oga", ContentType: "audio/ogg", Source: "telegram"}, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := toAgent("main", "m1", "[voice]")
+	msg.Media = []string{ref}
+	al.prepareInbound(context.Background(), msg)
+	if len(got) != 1 || got[0].Path != src || got[0].Filename != "file_3.oga" || got[0].ContentType != "audio/ogg" {
+		t.Fatalf("transcriber got %+v", got)
 	}
 }

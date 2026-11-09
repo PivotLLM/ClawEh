@@ -136,7 +136,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 			rec := &alertRecorder{}
 			for _, status := range []int{http.StatusInternalServerError, http.StatusTooManyRequests} {
 				tr := newTranscriber(statusServer(t, status, "later").URL, rec)
-				if _, err := tr.Transcribe(context.Background(), audioPath); err == nil {
+				if _, err := tr.Transcribe(context.Background(), AudioFile{Path: audioPath}); err == nil {
 					t.Fatalf("status %d must fail", status)
 				}
 			}
@@ -147,7 +147,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 			for _, status := range []int{http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden} {
 				rec := &alertRecorder{}
 				tr := newTranscriber(statusServer(t, status, longBody).URL, rec)
-				if _, err := tr.Transcribe(context.Background(), audioPath); err == nil {
+				if _, err := tr.Transcribe(context.Background(), AudioFile{Path: audioPath}); err == nil {
 					t.Fatalf("status %d must fail", status)
 				}
 				if len(rec.alerts) != 1 {
@@ -185,7 +185,7 @@ func TestTranscribe_AlertsOnGeminiKeyInvalid(t *testing.T) {
 		rec := &alertRecorder{}
 		srv := statusServer(t, http.StatusBadRequest, tc.body)
 		tr := NewTranscriber("gemini-stt", "gemini-2.5-flash", speech.NewGemini(srv.URL, "bad"), rec)
-		if _, err := tr.Transcribe(context.Background(), audioPath); err == nil {
+		if _, err := tr.Transcribe(context.Background(), AudioFile{Path: audioPath}); err == nil {
 			t.Fatal("a 400 transcribed")
 		}
 		if got := len(rec.alerts) == 1; got != tc.alert {
