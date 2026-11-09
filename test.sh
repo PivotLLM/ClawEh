@@ -855,6 +855,17 @@ EOF
                         integ_fail "classifiers end to end (tests/test_classifier.sh) failed; see its output above"
                     fi
 
+                    # Task models end to end: its own gateway and a stub
+                    # vendor (hermetic), agent_spawn driven over MCP.
+                    echo ""
+                    echo "${BOLD}--- Task models end to end ---${NC}"
+                    echo ""
+                    if PROBE_PATH="$PROBE_BIN" bash "$SCRIPT_DIR/tests/test_task_models.sh" "$INTEG_BIN"; then
+                        INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                    else
+                        integ_fail "task models end to end (tests/test_task_models.sh) failed; see its output above"
+                    fi
+
                     # ---- Workspace re-population: delete alice's dir and restart ----
                     if [ "${CLAW_TEST_CLI:-}" = "1" ]; then
                         echo ""
