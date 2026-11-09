@@ -36,7 +36,7 @@ func (globalShellProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		cd = v
 	}
 	if c != nil {
-		t, err := NewExecToolWithConfig(cd.Workspace, c.Agents.Defaults.RestrictToWorkspace, c)
+		t, err := NewExecToolWithConfig(cd.Workspace, c)
 		if err == nil {
 			execTool = t
 		}

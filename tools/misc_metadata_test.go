@@ -84,7 +84,7 @@ func TestSendFileTool_Metadata(t *testing.T) {
 
 func TestExecTool_Metadata(t *testing.T) {
 	cfg := config.DefaultConfig()
-	tool, err := toolsshell.NewExecToolWithConfig(t.TempDir(), true, cfg)
+	tool, err := toolsshell.NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}

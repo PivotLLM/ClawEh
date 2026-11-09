@@ -17,7 +17,7 @@ import (
 // the agent does not have when it does not, for a session token and a
 // service token alike. The chat plays no part.
 func TestDispatch_ShellFollowsTheTokensAgent(t *testing.T) {
-	exec, err := shell.NewExecTool("", false)
+	exec, err := shell.NewExecTool("")
 	if err != nil {
 		t.Fatal(err)
 	}

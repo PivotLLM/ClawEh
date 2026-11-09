@@ -287,7 +287,7 @@ production instance directly; test against a dev instance.
   Agents page's "All skills" writes `["*"]`), absent or empty = none.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
   switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
-  shell commands") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,
+  shell commands (full account access)") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,
   `config.ShellExecTool`). A `"*"` or prefix entry never includes it. Clones inherit it. There is no channel rule: it applies on every channel and to
   everything acting as the agent (clones, asks, forum turns, MCP session and service
   tokens, cron watch probes). Fresh temporary and human agents have no tools. It is
@@ -627,6 +627,11 @@ production instance directly; test against a dev instance.
   folder by its path, "(read-only)" when `fileutil.Writable` (access(2) W_OK) says no.
   New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
   headerless pre-0.6.4 marker baselines).
+- **Shell guard** (`tools/shell`): `shell_exec` refuses commands only by the deny
+  patterns, the allow patterns and the custom allow patterns; it does not look at the
+  paths a command names, and `working_dir` may be any directory (relative to the
+  workspace; default the workspace). `restrict_to_workspace` does not affect it: a
+  command runs with the app account's full access.
 - **Agent registry** (`agentreg`): every agent the loop can run, with its origin.
   Config agents are built from config and rebuilt on reload (`Reload` builds the
   whole new set, then swaps it in one step with `al.cfg`; a replaced instance is

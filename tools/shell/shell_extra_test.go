@@ -9,7 +9,7 @@ import (
 // TestExecTool_SetAllowPatterns_ValidPatterns verifies SetAllowPatterns accepts valid patterns.
 func TestExecTool_SetAllowPatterns_ValidPatterns(t *testing.T) {
 	cfg := config.DefaultConfig()
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -23,7 +23,7 @@ func TestExecTool_SetAllowPatterns_ValidPatterns(t *testing.T) {
 // TestExecTool_SetAllowPatterns_InvalidPattern verifies SetAllowPatterns rejects invalid regex.
 func TestExecTool_SetAllowPatterns_InvalidPattern(t *testing.T) {
 	cfg := config.DefaultConfig()
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -37,7 +37,7 @@ func TestExecTool_SetAllowPatterns_InvalidPattern(t *testing.T) {
 // TestExecTool_SetAllowPatterns_EmptySlice verifies SetAllowPatterns with empty slice.
 func TestExecTool_SetAllowPatterns_EmptySlice(t *testing.T) {
 	cfg := config.DefaultConfig()
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestNewExecToolWithConfig_DenyPatternsDisabled(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Tools.Exec.EnableDenyPatterns = false
 
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -68,7 +68,7 @@ func TestNewExecToolWithConfig_CustomDenyPatterns(t *testing.T) {
 	cfg.Tools.Exec.EnableDenyPatterns = true
 	cfg.Tools.Exec.CustomDenyPatterns = []string{`^rm\s+-rf\s+/`}
 
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNewExecToolWithConfig_InvalidCustomDenyPattern(t *testing.T) {
 	cfg.Tools.Exec.EnableDenyPatterns = true
 	cfg.Tools.Exec.CustomDenyPatterns = []string{`[invalid`}
 
-	_, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	_, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err == nil {
 		t.Error("NewExecToolWithConfig() expected error for invalid deny pattern")
 	}
@@ -94,7 +94,7 @@ func TestNewExecToolWithConfig_CustomAllowPatterns(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Tools.Exec.CustomAllowPatterns = []string{`^echo\b`}
 
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -108,7 +108,7 @@ func TestNewExecToolWithConfig_InvalidCustomAllowPattern(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Tools.Exec.CustomAllowPatterns = []string{`[invalid`}
 
-	_, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	_, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err == nil {
 		t.Error("NewExecToolWithConfig() expected error for invalid allow pattern")
 	}
@@ -119,7 +119,7 @@ func TestNewExecToolWithConfig_CustomTimeout(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Tools.Exec.TimeoutSeconds = 120
 
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, cfg)
+	tool, err := NewExecToolWithConfig(t.TempDir(), cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestNewExecToolWithConfig_CustomTimeout(t *testing.T) {
 
 // TestNewExecToolWithConfig_NilConfig verifies nil config uses defaults.
 func TestNewExecToolWithConfig_NilConfig(t *testing.T) {
-	tool, err := NewExecToolWithConfig(t.TempDir(), false, nil)
+	tool, err := NewExecToolWithConfig(t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig(nil) error = %v", err)
 	}

@@ -16,7 +16,7 @@ import (
 
 // TestShellTool_Success verifies successful command execution
 func TestShellTool_Success(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -46,7 +46,7 @@ func TestShellTool_Success(t *testing.T) {
 
 // TestShellTool_Failure verifies failed command execution
 func TestShellTool_Failure(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -76,7 +76,7 @@ func TestShellTool_Failure(t *testing.T) {
 
 // TestShellTool_Timeout verifies command timeout handling
 func TestShellTool_Timeout(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -110,7 +110,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -134,7 +134,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 
 // TestShellTool_DangerousCommand verifies safety guard blocks dangerous commands
 func TestShellTool_DangerousCommand(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -161,7 +161,7 @@ func TestShellTool_DangerousCommand(t *testing.T) {
 }
 
 func TestShellTool_DangerousCommand_KillBlocked(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -182,7 +182,7 @@ func TestShellTool_DangerousCommand_KillBlocked(t *testing.T) {
 
 // TestShellTool_MissingCommand verifies error handling for missing command
 func TestShellTool_MissingCommand(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -200,7 +200,7 @@ func TestShellTool_MissingCommand(t *testing.T) {
 
 // TestShellTool_StderrCapture verifies stderr is captured and included
 func TestShellTool_StderrCapture(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -223,7 +223,7 @@ func TestShellTool_StderrCapture(t *testing.T) {
 
 // TestShellTool_OutputTruncation verifies long output is truncated
 func TestShellTool_OutputTruncation(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
@@ -242,76 +242,6 @@ func TestShellTool_OutputTruncation(t *testing.T) {
 	}
 }
 
-// TestShellTool_WorkingDir_OutsideWorkspace verifies that working_dir cannot escape the workspace directly
-func TestShellTool_WorkingDir_OutsideWorkspace(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	outsideDir := filepath.Join(root, "outside")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatalf("failed to create workspace: %v", err)
-	}
-	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
-		t.Fatalf("failed to create outside dir: %v", err)
-	}
-
-	tool, err := NewExecTool(workspace, true)
-	if err != nil {
-		t.Errorf("unable to configure exec tool: %s", err)
-	}
-
-	result := tool.Execute(context.Background(), map[string]any{
-		"command":     "pwd",
-		"working_dir": outsideDir,
-	})
-
-	if !result.IsError {
-		t.Fatalf("expected working_dir outside workspace to be blocked, got output: %s", result.ForLLM)
-	}
-	if !strings.Contains(result.ForLLM, "blocked") {
-		t.Errorf("expected 'blocked' in error, got: %s", result.ForLLM)
-	}
-}
-
-// TestShellTool_WorkingDir_SymlinkEscape verifies that a symlink inside the workspace
-// pointing outside cannot be used as working_dir to escape the sandbox.
-func TestShellTool_WorkingDir_SymlinkEscape(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	secretDir := filepath.Join(root, "secret")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatalf("failed to create workspace: %v", err)
-	}
-	if err := os.MkdirAll(secretDir, 0o755); err != nil {
-		t.Fatalf("failed to create secret dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(secretDir, "secret.txt"), []byte("top secret"), 0o644); err != nil {
-		t.Fatalf("failed to write secret file: %v", err)
-	}
-
-	// symlink lives inside the workspace but resolves to secretDir outside it
-	link := filepath.Join(workspace, "escape")
-	if err := os.Symlink(secretDir, link); err != nil {
-		t.Skipf("symlinks not supported in this environment: %v", err)
-	}
-
-	tool, err := NewExecTool(workspace, true)
-	if err != nil {
-		t.Errorf("unable to configure exec tool: %s", err)
-	}
-
-	result := tool.Execute(context.Background(), map[string]any{
-		"command":     "cat secret.txt",
-		"working_dir": link,
-	})
-
-	if !result.IsError {
-		t.Fatalf("expected symlink working_dir escape to be blocked, got output: %s", result.ForLLM)
-	}
-	if !strings.Contains(result.ForLLM, "blocked") {
-		t.Errorf("expected 'blocked' in error, got: %s", result.ForLLM)
-	}
-}
-
 // TestShellTool_RunsOnEveryChannel: shell_exec has no channel rule. Whether
 // an agent may run it is its tool permission alone (enforced where the tool
 // is registered and dispatched), so the tool itself runs the same on a chat
@@ -320,7 +250,7 @@ func TestShellTool_RunsOnEveryChannel(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tools.Exec.EnableDenyPatterns = true
 
-	tool, err := NewExecToolWithConfig("", false, cfg)
+	tool, err := NewExecToolWithConfig("", cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error: %v", err)
 	}
@@ -336,41 +266,10 @@ func TestShellTool_RunsOnEveryChannel(t *testing.T) {
 	}
 }
 
-// TestShellTool_RestrictToWorkspace verifies workspace restriction
-func TestShellTool_RestrictToWorkspace(t *testing.T) {
-	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, false)
-	if err != nil {
-		t.Errorf("unable to configure exec tool: %s", err)
-	}
-
-	tool.SetRestrictToWorkspace(true)
-
-	ctx := context.Background()
-	args := map[string]any{
-		"command": "cat ../../etc/passwd",
-	}
-
-	result := tool.Execute(ctx, args)
-
-	// Path traversal should be blocked
-	if !result.IsError {
-		t.Errorf("Expected path traversal to be blocked with restrictToWorkspace=true")
-	}
-
-	if !strings.Contains(result.ForLLM, "blocked") && !strings.Contains(result.ForUser, "blocked") {
-		t.Errorf(
-			"Expected 'blocked' message for path traversal, got ForLLM: %s, ForUser: %s",
-			result.ForLLM,
-			result.ForUser,
-		)
-	}
-}
-
 // TestShellTool_DevNullAllowed verifies that /dev/null redirections are not blocked (issue #964).
 func TestShellTool_DevNullAllowed(t *testing.T) {
 	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, true)
+	tool, err := NewExecTool(tmpDir)
 	if err != nil {
 		t.Fatalf("unable to configure exec tool: %s", err)
 	}
@@ -394,7 +293,7 @@ func TestShellTool_DevNullAllowed(t *testing.T) {
 
 // TestShellTool_BlockDevices verifies that writes to block devices are blocked (issue #965).
 func TestShellTool_BlockDevices(t *testing.T) {
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Fatalf("unable to configure exec tool: %s", err)
 	}
@@ -421,30 +320,6 @@ func TestShellTool_BlockDevices(t *testing.T) {
 	}
 }
 
-// TestShellTool_SafePathsInWorkspaceRestriction verifies that safe kernel pseudo-devices
-// are allowed even when workspace restriction is active.
-func TestShellTool_SafePathsInWorkspaceRestriction(t *testing.T) {
-	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, true)
-	if err != nil {
-		t.Fatalf("unable to configure exec tool: %s", err)
-	}
-
-	// These reference paths outside workspace but should be allowed via safePaths.
-	commands := []string{
-		"cat /dev/urandom | head -c 16 | od",
-		"echo test > /dev/null",
-		"dd if=/dev/zero bs=1 count=1",
-	}
-
-	for _, cmd := range commands {
-		result := tool.Execute(context.Background(), map[string]any{"command": cmd})
-		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
-			t.Errorf("safe path should not be blocked by workspace check: %s\n  error: %s", cmd, result.ForLLM)
-		}
-	}
-}
-
 // TestShellTool_CustomAllowPatterns verifies that custom allow patterns exempt
 // commands from deny pattern checks.
 func TestShellTool_CustomAllowPatterns(t *testing.T) {
@@ -457,7 +332,7 @@ func TestShellTool_CustomAllowPatterns(t *testing.T) {
 		},
 	}
 
-	tool, err := NewExecToolWithConfig("", false, cfg)
+	tool, err := NewExecToolWithConfig("", cfg)
 	if err != nil {
 		t.Fatalf("unable to configure exec tool: %s", err)
 	}
@@ -479,105 +354,60 @@ func TestShellTool_CustomAllowPatterns(t *testing.T) {
 	}
 }
 
-// TestShellTool_URLsNotBlocked verifies that commands containing URLs are not
-// incorrectly blocked by the workspace restriction safety guard (issue #1203).
-func TestShellTool_URLsNotBlocked(t *testing.T) {
-	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, true)
+// TestShellTool_NoPathConfinement: the shell does not refuse a command by the
+// paths it names. Absolute paths outside the workspace, ".." and a
+// working_dir outside the workspace (directly or through a link) all run,
+// while the deny patterns still refuse what they match.
+func TestShellTool_NoPathConfinement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX commands")
+	}
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{filepath.Join(workspace, "files"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "note.txt"), []byte("outside note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(workspace, "out")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Tools.Exec.EnableDenyPatterns = true
+	tool, err := NewExecToolWithConfig(workspace, cfg)
 	if err != nil {
-		t.Fatalf("unable to configure exec tool: %s", err)
+		t.Fatal(err)
 	}
+	ctx := context.Background()
 
-	// These commands contain URLs and should NOT be blocked by workspace restriction.
-	// The URL path components (e.g., "//github.com") should be recognized as URLs,
-	// not as file system paths. Also includes bare-domain URLs (no scheme prefix).
-	commands := []string{
-		"agent-browser open https://github.com",
-		"curl https://api.example.com/data",
-		"wget http://example.com/file",
-		"browser open https://github.com/user/repo",
-		"fetch ftp://ftp.example.com/file.txt",
-		"git clone https://github.com/PivotLLM/ClawEh.git",
-		// Bare-domain URLs (no scheme prefix) — curl accepts these
-		`curl -s "wttr.in/K1V+1A8?m&T"`,
-		`curl -s wttr.in/Ottawa`,
-		`curl wttr.in/Paris?format=j1`,
-	}
-
-	for _, cmd := range commands {
-		result := tool.Execute(context.Background(), map[string]any{"command": cmd})
-		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
-			t.Errorf("command with URL should not be blocked by workspace check: %s\n  error: %s", cmd, result.ForLLM)
-		}
-	}
-}
-
-// TestShellTool_FileURISandboxing verifies that file:// URIs that escape the
-// workspace are still blocked, even though other URLs are allowed (issue #1254).
-func TestShellTool_FileURISandboxing(t *testing.T) {
-	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, true)
-	if err != nil {
-		t.Fatalf("unable to configure exec tool: %s", err)
-	}
-
-	// These file:// URIs should be blocked if they reference paths outside the workspace.
-	// Unlike web URLs (http://, https://, ftp://), file:// URIs can be used to escape the sandbox.
-	blockedCommands := []string{
-		"cat file:///etc/passwd",
-		"cat file:///etc/hosts",
-		"cat file:///root/.ssh/id_rsa",
-	}
-
-	for _, cmd := range blockedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"command": cmd})
-		if !result.IsError || !strings.Contains(result.ForLLM, "path outside working dir") {
-			t.Errorf("file:// URI outside workspace should be blocked: %s", cmd)
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"absolute path outside the workspace", map[string]any{"command": "cat " + filepath.Join(outside, "note.txt")}, "outside note"},
+		{"parent path", map[string]any{"command": "cat ../outside/note.txt"}, "outside note"},
+		{"working_dir outside the workspace", map[string]any{"command": "cat note.txt", "working_dir": outside}, "outside note"},
+		{"working_dir through a link", map[string]any{"command": "cat note.txt", "working_dir": link}, "outside note"},
+		{"relative working_dir starts at the workspace", map[string]any{"command": "pwd", "working_dir": "files"}, filepath.Join("workspace", "files")},
+	} {
+		res := tool.Execute(ctx, tc.args)
+		if res.IsError || !strings.Contains(res.ForLLM, tc.want) {
+			t.Errorf("%s: got %q, want output containing %q", tc.name, res.ForLLM, tc.want)
 		}
 	}
 
-	// These file:// URIs should be allowed if they reference paths inside the workspace.
-	// Create a test file inside the temp directory
-	testFile := filepath.Join(tmpDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0o644); err != nil {
-		t.Fatalf("failed to create test file: %s", err)
+	res := tool.Execute(ctx, map[string]any{"command": "rm -rf " + outside, "working_dir": outside})
+	if !res.IsError || !strings.Contains(res.ForLLM, "dangerous pattern") {
+		t.Errorf("deny pattern outside the workspace: %q", res.ForLLM)
 	}
-
-	allowedCommands := []string{
-		"cat file://" + testFile,
-	}
-
-	for _, cmd := range allowedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"command": cmd})
-		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
-			t.Errorf("file:// URI inside workspace should be allowed: %s\n  error: %s", cmd, result.ForLLM)
-		}
-	}
-}
-
-// TestShellTool_URLBypassPrevented verifies that a command cannot bypass the workspace
-// sandbox by smuggling a real path after a URL that contains the same //path substring.
-// e.g. "echo https://etc/passwd && cat //etc/passwd" must still be blocked.
-func TestShellTool_URLBypassPrevented(t *testing.T) {
-	tmpDir := t.TempDir()
-	tool, err := NewExecTool(tmpDir, true)
-	if err != nil {
-		t.Fatalf("unable to configure exec tool: %s", err)
-	}
-
-	// The path //etc/passwd appears twice: once as the host part of an https URL
-	// and once as a real (escaped) absolute path. The guard must block the command
-	// because the second occurrence is a genuine out-of-workspace path.
-	blockedCommands := []string{
-		"echo https://etc/passwd && cat //etc/passwd",
-		"curl https://host/file && ls //etc",
-	}
-
-	for _, cmd := range blockedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"command": cmd})
-		if !result.IsError || !strings.Contains(result.ForLLM, "path outside working dir") {
-			t.Errorf("bypass attempt should be blocked: %q\n  got: %s", cmd, result.ForLLM)
-		}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("denied command ran: %v", err)
 	}
 }
 
@@ -591,7 +421,7 @@ func TestShellTool_ChildEnvIsAllowlisted(t *testing.T) {
 	t.Setenv("ALERTER_PUSHOVER_TOKEN", "secret-alerter")
 	t.Setenv("CLAWEH_TEST_MARKER", "visible-only-if-inherited")
 
-	tool, err := NewExecTool("", false)
+	tool, err := NewExecTool("")
 	if err != nil {
 		t.Fatalf("unable to configure exec tool: %s", err)
 	}

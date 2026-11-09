@@ -15,7 +15,7 @@ func TestExecTool_AllowPatterns_BlocksNonMatchingCommands(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Tools.Exec.EnableDenyPatterns = false
 
-	tool, err := NewExecToolWithConfig("", true, cfg)
+	tool, err := NewExecToolWithConfig("", cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
@@ -40,26 +40,5 @@ func TestExecTool_AllowPatterns_BlocksNonMatchingCommands(t *testing.T) {
 	}
 	if !strings.Contains(result.ForLLM, "not in allowlist") {
 		t.Errorf("error = %q, want 'not in allowlist'", result.ForLLM)
-	}
-}
-
-func TestExecTool_PathTraversal_Blocked(t *testing.T) {
-	dir := t.TempDir()
-	cfg := config.DefaultConfig()
-	cfg.Tools.Exec.EnableDenyPatterns = false
-
-	tool, err := NewExecToolWithConfig(dir, true, cfg)
-	if err != nil {
-		t.Fatalf("NewExecToolWithConfig() error = %v", err)
-	}
-	tool.SetRestrictToWorkspace(true)
-
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-
-	result := tool.Execute(ctx, map[string]any{
-		"command": "cat ../../../etc/passwd",
-	})
-	if !result.IsError {
-		t.Error("path traversal '../' should be blocked")
 	}
 }

@@ -210,6 +210,16 @@
   for mounts are gone, and with them `GET /api/agents/mounts/ignored`, the
   Agents page marking and the Check Up row. On the Agents page the editor is
   **Allowed folders** (a path and **Notify on new files** per folder).
+- **BREAKING: `shell_exec` no longer refuses commands by path.** The checks
+  for `..`, for absolute paths outside the working folder and for a
+  `working_dir` outside the workspace are gone: a command runs with the full
+  access of the account ClawEh runs as, as it always could by other means.
+  `working_dir` may be any folder (a relative one starts at the workspace,
+  the default). The deny patterns, allow patterns, custom allow patterns,
+  timeouts and output handling are unchanged, and
+  `agents.defaults.restrict_to_workspace` now applies to the file tools only.
+  The Agents page switch reads **Allow shell commands (full account
+  access)**. To keep an agent away from files, do not give it `shell_exec`.
 - **BREAKING: the data directory is set to exactly the configured modes at
   every start.** Before, the startup check only removed group and other
   access and only touched folders and secret files. Now every folder and
