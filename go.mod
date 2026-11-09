@@ -7,7 +7,7 @@ require (
 	github.com/PivotLLM/Maestro v0.5.8
 	github.com/PivotLLM/cogmem v0.0.9
 	github.com/PivotLLM/ctxengine v0.0.10
-	github.com/PivotLLM/spawnllm v0.1.24
+	github.com/PivotLLM/spawnllm v0.1.25
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.6
@@ -87,5 +87,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/PivotLLM/spawnllm => /home/eric/source/spawnllm
